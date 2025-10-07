@@ -25,7 +25,7 @@ async def redis_client():
     """Create a test Redis client."""
     config = DevNousConfig()
     client = aioredis.from_url(
-        config.redis_url,
+        config.database.redis_url,
         decode_responses=True,
         encoding="utf-8"
     )
