@@ -1,0 +1,294 @@
+# Docker Compose for Parallel Tournament Management System Testing
+# Provides isolated test environment with PostgreSQL, Redis, and monitoring
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: tournament-postgres-test
+    environment:
+      POSTGRES_DB: tournament_test
+      POSTGRES_USER: testuser
+      POSTGRES_PASSWORD: <test-password>
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+      # - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U testuser -d tournament_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tournament-test-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Redis Cache
+  redis-test:
+    image: redis:7-alpine
+    container_name: tournament-redis-test
+    command: redis-server --appendonly yes --requirepass <test-password>
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "<test-password>", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - tournament-test-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+  # Redis Streams for async processing
+  redis-streams-test:
+    image: redis:7-alpine
+    container_name: tournament-redis-streams-test
+    command: redis-server --appendonly yes --requirepass <test-streams-password>
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_streams_test_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "<test-streams-password>", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    networks:
+      - tournament-test-net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # Tournament System Application
+  tournament-system-test:
+    build:
+      context: ..
+      dockerfile: docker/tournament-system.Dockerfile
+      target: test
+    container_name: tournament-system-test
+    environment:
+      - ENVIRONMENT=test
+      - DATABASE_URL=postgresql://testuser:<test-password>@postgres-test:5432/tournament_test
+      - REDIS_URL=redis://:<test-password>@redis-test:6379/0
+      - REDIS_STREAMS_URL=redis://:<test-streams-password>@redis-streams-test:6379/0
+      - TEST_DATABASE_URL=postgresql://testuser:<test-password>@postgres-test:5432/tournament_test
+      - TEST_REDIS_URL=redis://:<test-password>@redis-test:6379/1
+      - REGISTRATION_WORKERS=16
+      - SCHEDULING_WORKERS=8
+      - FINANCIAL_WORKERS=4
+      - LOG_LEVEL=DEBUG
+      - GUNICORN_WORKERS=2
+      - PYTHONPATH=/app
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+    volumes:
+      - ../samchat-mvp:/app/samchat-mvp:ro
+      - ../test-reports:/app/reports
+      - ../logs:/app/logs
+    depends_on:
+      postgres-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+      redis-streams-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - tournament-test-net
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+
+  # Locust Load Testing
+  locust-test:
+    image: locustio/locust:latest
+    container_name: tournament-locust-test
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./locust:/mnt/locust
+    environment:
+      - TARGET_URL=http://tournament-system-test:8000
+    command: -f /mnt/locust/locustfile.py --host=http://tournament-system-test:8000
+    depends_on:
+      tournament-system-test:
+        condition: service_healthy
+    networks:
+      - tournament-test-net
+    profiles:
+      - load-testing
+
+  # Prometheus Monitoring
+  prometheus-test:
+    image: prom/prometheus:latest
+    container_name: tournament-prometheus-test
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_test_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=1h'
+      - '--web.enable-lifecycle'
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tournament-test-net
+    profiles:
+      - monitoring
+
+  # Grafana Dashboard
+  grafana-test:
+    image: grafana/grafana:latest
+    container_name: tournament-grafana-test
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_test_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      prometheus-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - tournament-test-net
+    profiles:
+      - monitoring
+
+  # Mock External Services
+  mock-services:
+    image: mockserver/mockserver:latest
+    container_name: tournament-mock-services
+    ports:
+      - "1080:1080"
+    environment:
+      MOCKSERVER_PROPERTY_FILE: /config/mockserver.properties
+    volumes:
+      - ./mock-services:/config:ro
+    command: -serverPort 1080
+    networks:
+      - tournament-test-net
+    profiles:
+      - integration
+
+  # Zookeeper for Kafka
+  zookeeper-test:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: tournament-zookeeper-test
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - tournament-test-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+
+  # Kafka Message Broker
+  kafka-test:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: tournament-kafka-test
+    depends_on:
+      zookeeper-test:
+        condition: service_healthy
+    ports:
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-test:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 1
+    networks:
+      - tournament-test-net
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9093"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+volumes:
+  postgres_test_data:
+    driver: local
+  redis_test_data:
+    driver: local
+  redis_streams_test_data:
+    driver: local
+  prometheus_test_data:
+    driver: local
+  grafana_test_data:
+    driver: local
+
+networks:
+  tournament-test-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
