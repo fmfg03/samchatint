@@ -4,6 +4,13 @@
 
 The DevNous Messaging Platform Orchestration Layer is a comprehensive, production-ready messaging system that integrates all messaging platform adapters (WhatsApp, Telegram, Slack) with advanced context-aware processing, emotional intelligence, and cross-platform conversation management.
 
+Important:
+
+- This guide documents a standalone DevNous messaging/orchestration surface.
+- Paths, database examples, and service references here are not the current production bootstrap for the live `sam.chat` deployment in this repository.
+- For the active runtime/install split, see:
+  - `docs/install_matrix.md`
+
 ## 🏗️ Architecture Components
 
 ### 1. Unified Messaging Orchestrator

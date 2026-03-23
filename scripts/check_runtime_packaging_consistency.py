@@ -12,12 +12,26 @@ from __future__ import annotations
 import sys
 import tempfile
 from pathlib import Path
+import re
 
 import tomllib
 from setuptools.build_meta import prepare_metadata_for_build_wheel
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DOC_PATTERN_CHECK_DIRS = [
+    ROOT / "docs" / "api",
+    ROOT / "docs" / "deployment",
+    ROOT / "docs" / "security",
+    ROOT / "docs" / "operations",
+]
+LEGACY_DOC_PATTERNS = [
+    re.compile(r"api\.devnous\.example\.com"),
+    re.compile(r"\bdevnous\.example\.com\b"),
+    re.compile(r"postgresql://[^\s`\"]*devnous", re.IGNORECASE),
+    re.compile(r"/var/log/devnous"),
+    re.compile(r"\bdevnous\s+(?:server|health|logs|config|db)\b"),
+]
 
 
 def _read(path: str) -> str:
@@ -27,6 +41,18 @@ def _read(path: str) -> str:
 def _require(condition: bool, message: str, errors: list[str]) -> None:
     if not condition:
         errors.append(message)
+
+
+def _iter_docs_with_legacy_patterns() -> list[Path]:
+    matched: list[Path] = []
+    for base in DOC_PATTERN_CHECK_DIRS:
+        if not base.exists():
+            continue
+        for path in sorted(base.rglob("*.md")):
+            text = path.read_text(encoding="utf-8")
+            if any(pattern.search(text) for pattern in LEGACY_DOC_PATTERNS):
+                matched.append(path)
+    return matched
 
 
 def main() -> int:
@@ -114,6 +140,14 @@ def main() -> int:
         "Runtime package metadata missing expected runtime dependency",
         errors,
     )
+
+    for path in _iter_docs_with_legacy_patterns():
+        text = path.read_text(encoding="utf-8")
+        _require(
+            "docs/install_matrix.md" in text,
+            f"{path.relative_to(ROOT)} contains legacy DevNous/runtime patterns but does not reference docs/install_matrix.md",
+            errors,
+        )
 
     if errors:
         for error in errors:
