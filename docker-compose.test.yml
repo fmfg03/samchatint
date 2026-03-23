@@ -11,7 +11,7 @@ services:
     environment:
       POSTGRES_DB: tournament_test
       POSTGRES_USER: testuser
-      POSTGRES_PASSWORD: <test-password>
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD}
       POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
     ports:
       - "5433:5432"
@@ -38,13 +38,13 @@ services:
   redis-test:
     image: redis:7-alpine
     container_name: tournament-redis-test
-    command: redis-server --appendonly yes --requirepass <test-password>
+    command: redis-server --appendonly yes --requirepass ${TEST_REDIS_PASSWORD}
     ports:
       - "6380:6379"
     volumes:
       - redis_test_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "<test-password>", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${TEST_REDIS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -63,13 +63,13 @@ services:
   redis-streams-test:
     image: redis:7-alpine
     container_name: tournament-redis-streams-test
-    command: redis-server --appendonly yes --requirepass <test-streams-password>
+    command: redis-server --appendonly yes --requirepass ${TEST_REDIS_STREAMS_PASSWORD}
     ports:
       - "6380:6379"
     volumes:
       - redis_streams_test_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "<test-streams-password>", "ping"]
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${TEST_REDIS_STREAMS_PASSWORD}", "ping"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -90,11 +90,11 @@ services:
     container_name: tournament-system-test
     environment:
       - ENVIRONMENT=test
-      - DATABASE_URL=postgresql://testuser:<test-password>@postgres-test:5432/tournament_test
-      - REDIS_URL=redis://:<test-password>@redis-test:6379/0
-      - REDIS_STREAMS_URL=redis://:<test-streams-password>@redis-streams-test:6379/0
-      - TEST_DATABASE_URL=postgresql://testuser:<test-password>@postgres-test:5432/tournament_test
-      - TEST_REDIS_URL=redis://:<test-password>@redis-test:6379/1
+      - DATABASE_URL=postgresql://testuser:${TEST_POSTGRES_PASSWORD}@postgres-test:5432/tournament_test
+      - REDIS_URL=redis://:${TEST_REDIS_PASSWORD}@redis-test:6379/0
+      - REDIS_STREAMS_URL=redis://:${TEST_REDIS_STREAMS_PASSWORD}@redis-streams-test:6379/0
+      - TEST_DATABASE_URL=postgresql://testuser:${TEST_POSTGRES_PASSWORD}@postgres-test:5432/tournament_test
+      - TEST_REDIS_URL=redis://:${TEST_REDIS_PASSWORD}@redis-test:6379/1
       - REGISTRATION_WORKERS=16
       - SCHEDULING_WORKERS=8
       - FINANCIAL_WORKERS=4

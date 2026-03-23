@@ -246,8 +246,8 @@ Test Categories:
 
 2. **Verify Connectivity** (10 minutes):
    ```bash
-   psql postgresql://testuser:<test-password>@localhost:5432/tournament_test -c "SELECT 1"
-   redis-cli -a <test-password> PING
+   psql postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test -c "SELECT 1"
+   redis-cli -a <test-redis-password> PING
    kafka-topics.sh --bootstrap-server localhost:9092 --list
    ```
 

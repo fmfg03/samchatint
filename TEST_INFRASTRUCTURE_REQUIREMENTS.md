@@ -27,10 +27,10 @@ All 3 critical missing test suites have been **successfully created** (2,100+ li
 ```yaml
 Database: tournament_test
 User: testuser
-Password: <test-password>
+Password: <test-postgres-password>
 Host: localhost
 Port: 5432
-Connection String: postgresql://testuser:<test-password>@localhost:5432/tournament_test
+Connection String: postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test
 ```
 
 **Tests Requiring PostgreSQL** (18 tests):
@@ -50,8 +50,8 @@ Connection String: postgresql://testuser:<test-password>@localhost:5432/tourname
 ```yaml
 Host: localhost
 Port: 6379
-Password: <test-password>
-Connection String: redis://:<test-password>@localhost:6379/0
+Password: <test-redis-password>
+Connection String: redis://:<test-redis-password>@localhost:6379/0
 ```
 
 **Tests Requiring Redis** (23 tests):
@@ -99,8 +99,8 @@ docker compose -f docker-compose.test.yml up -d postgres-test redis-test
 docker compose -f docker-compose.test.yml ps
 
 # Verify connectivity
-psql postgresql://testuser:<test-password>@localhost:5432/tournament_test -c "SELECT 1"
-redis-cli -a <test-password> PING
+psql postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test -c "SELECT 1"
+redis-cli -a <test-redis-password> PING
 ```
 
 **Add Kafka to docker-compose.test.yml**:
@@ -142,7 +142,7 @@ sudo apt-get install postgresql-15
 
 # Create test database
 sudo -u postgres psql -c "CREATE DATABASE tournament_test;"
-sudo -u postgres psql -c "CREATE USER testuser WITH PASSWORD '<test-password>';"
+sudo -u postgres psql -c "CREATE USER testuser WITH PASSWORD '<test-postgres-password>';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE tournament_test TO testuser;"
 ```
 
@@ -152,7 +152,7 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE tournament_test TO te
 sudo apt-get install redis-server
 
 # Configure password in /etc/redis/redis.conf
-requirepass <test-password>
+requirepass <test-redis-password>
 
 # Restart Redis
 sudo systemctl restart redis-server
@@ -182,11 +182,11 @@ Before running tests, verify all infrastructure is available:
 
 ```bash
 # 1. Verify PostgreSQL
-psql postgresql://testuser:<test-password>@localhost:5432/tournament_test -c "SELECT 1"
+psql postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test -c "SELECT 1"
 # Expected output: 1 row
 
 # 2. Verify Redis
-redis-cli -a <test-password> PING
+redis-cli -a <test-redis-password> PING
 # Expected output: PONG
 
 # 3. Verify Kafka
@@ -245,13 +245,13 @@ The tests currently use: `config.database.postgresql_url`
 
 Ensure your environment has:
 ```bash
-export POSTGRESQL_URL="postgresql://testuser:<test-password>@localhost:5432/tournament_test"
+export POSTGRESQL_URL="postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test"
 ```
 
 Or update `/root/samchat/src/devnous/config.py`:
 ```python
 postgresql_url: str = Field(
-    default="postgresql://testuser:<test-password>@localhost:5432/tournament_test",
+    default="postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test",
     env="POSTGRESQL_URL"
 )
 ```
@@ -262,13 +262,13 @@ The tests currently use: `config.database.redis_url`
 
 Ensure your environment has:
 ```bash
-export REDIS_URL="redis://:<test-password>@localhost:6379/0"
+export REDIS_URL="redis://:<test-redis-password>@localhost:6379/0"
 ```
 
 Or update `/root/samchat/src/devnous/config.py`:
 ```python
 redis_url: str = Field(
-    default="redis://:<test-password>@localhost:6379/0",
+    default="redis://:<test-redis-password>@localhost:6379/0",
     env="REDIS_URL"
 )
 ```
@@ -296,9 +296,9 @@ class KafkaConfig:
 **Error**: `password authentication failed for user "devnous"`
 
 **Solution**:
-1. Check config uses correct credentials (testuser/<test-password>)
+1. Check config uses correct credentials (`testuser` plus the configured test PostgreSQL password)
 2. Verify PostgreSQL is running: `sudo systemctl status postgresql`
-3. Test connection: `psql postgresql://testuser:<test-password>@localhost:5432/tournament_test`
+3. Test connection: `psql postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test`
 
 ### Redis Connection Errors
 
@@ -306,8 +306,8 @@ class KafkaConfig:
 
 **Solution**:
 1. Check Redis is running: `sudo systemctl status redis`
-2. Verify password in redis.conf: `requirepass <test-password>`
-3. Test connection: `redis-cli -a <test-password> PING`
+2. Verify password in redis.conf: `requirepass <test-redis-password>`
+3. Test connection: `redis-cli -a <test-redis-password> PING`
 
 ### Kafka Connection Errors
 
@@ -354,7 +354,7 @@ jobs:
         env:
           POSTGRES_DB: tournament_test
           POSTGRES_USER: testuser
-          POSTGRES_PASSWORD: <test-password>
+          POSTGRES_PASSWORD: <test-postgres-password>
         ports:
           - 5432:5432
         options: >-
@@ -397,7 +397,7 @@ jobs:
 
       - name: Run integration tests
         env:
-          POSTGRESQL_URL: postgresql://testuser:<test-password>@localhost:5432/tournament_test
+          POSTGRESQL_URL: postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test
           REDIS_URL: redis://localhost:6379/0
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
         run: |

@@ -572,8 +572,8 @@ The created test suites are **production-ready integration tests** that require 
 
 ```bash
 # Required Services
-1. PostgreSQL 15 → postgresql://testuser:<test-password>@localhost:5432/tournament_test
-2. Redis 7       → redis://:<test-password>@localhost:6379/0
+1. PostgreSQL 15 → postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test
+2. Redis 7       → redis://:<test-redis-password>@localhost:6379/0
 3. Kafka 3.5+    → localhost:9092
 
 # Available via docker-compose

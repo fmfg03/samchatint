@@ -500,8 +500,8 @@ docker compose -f docker-compose.test.yml up -d postgres-test redis-test
 
 # 4. Verify services healthy (2 min)
 docker compose -f docker-compose.test.yml ps
-psql postgresql://testuser:<test-password>@localhost:5432/tournament_test -c "SELECT 1"
-redis-cli -a <test-password> PING
+psql postgresql://testuser:<test-postgres-password>@localhost:5432/tournament_test -c "SELECT 1"
+redis-cli -a <test-redis-password> PING
 
 # 5. Run first test suite (10 min)
 source test_env/bin/activate
