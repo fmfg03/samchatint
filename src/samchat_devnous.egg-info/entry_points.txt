@@ -1,0 +1,3 @@
+[console_scripts]
+samchat = samchat.main:cli
+samchat-tests = run_tests:main
