@@ -9,6 +9,13 @@
 
 This document provides comprehensive database schema documentation for the SamChat/DevNous system. The database is designed for high-performance debate orchestration, context detection, memory management, and enterprise messaging integration.
 
+Important:
+
+- This document primarily describes the standalone DevNous schema family and related operational examples.
+- Database names such as `devnous` or `devnous_prod` here are reference examples, not the current production database names for the live `sam.chat` deployment in this repository.
+- For the active runtime/install split, see:
+  - `docs/install_matrix.md`
+
 ## Table of Contents
 
 - [Database Architecture](#database-architecture)
