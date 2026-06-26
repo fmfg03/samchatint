@@ -4010,6 +4010,7 @@ async def admin_invoices(
 @router.get("/admin/gastos/expenses/export")
 async def export_expenses(
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
     numero_referencia: Optional[str] = Query(None),
     proyecto: Optional[str] = Query(None),
     cantidad_min: Optional[float] = Query(None),
@@ -4247,6 +4248,7 @@ async def export_expenses(
 @router.get("/admin/gastos/invoices/export")
 async def export_invoices(
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
     nova_request_id: Optional[str] = Query(None),
     estado_factura: Optional[str] = Query(None),
     has_error: Optional[bool] = Query(None),
@@ -7217,6 +7219,7 @@ async def create_tournament(
     categorias: Optional[str] = Form(None),
     active: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Create a local gastos project/tournament manually."""
     try:
@@ -7272,6 +7275,7 @@ async def create_tournament_from_operations(
     display_order: int = Form(-1),
     active: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Create a local gastos project from an existing operations tournament."""
     try:
@@ -7349,6 +7353,7 @@ async def link_tournament_to_operations(
     tournament_id: UUIDType,
     linked_operations_tournament_id: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Link or unlink a local gastos project to an operations tournament."""
     await _ensure_tournaments_admin_schema(session)
@@ -7411,6 +7416,7 @@ async def edit_tournament_form(
     tournament_id: UUIDType,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Edit tournament form."""
     await _ensure_tournaments_admin_schema(session)
@@ -7589,6 +7595,7 @@ async def update_tournament(
     etapas: Optional[str] = Form(None),
     categorias: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Update a tournament."""
     normalized_name = (name or "").strip()
@@ -7686,7 +7693,9 @@ async def update_tournament(
 
 @router.post("/admin/torneos/toggle/{tournament_id}")
 async def toggle_tournament(
-    tournament_id: UUIDType, session: AsyncSession = Depends(get_db_session)
+    tournament_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Toggle tournament active status."""
     await _ensure_tournaments_admin_schema(session)
@@ -7720,7 +7729,9 @@ async def toggle_tournament(
 
 @router.post("/admin/torneos/delete/{tournament_id}")
 async def delete_tournament(
-    tournament_id: UUIDType, session: AsyncSession = Depends(get_db_session)
+    tournament_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
 ):
     """Delete a tournament."""
     await _ensure_tournaments_admin_schema(session)
