@@ -1,0 +1,475 @@
+{% extends "base.html" %}
+
+{% block title %}{{ team.name }} - Copa Telmex{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+    <a href="/teams" style="color: #667eea; text-decoration: none;">← Volver a Equipos</a>
+    <div style="display: flex; gap: 10px;">
+        <button onclick="editTeam()" class="btn" style="background: #667eea;">✏️ Editar Equipo</button>
+        <button onclick="deleteTeam()" class="btn" style="background: #dc3545;">🗑️ Eliminar Equipo</button>
+    </div>
+</div>
+
+<h2 style="margin-bottom: 30px;">⚽ {{ team.name }}</h2>
+
+{% if team.roster_image_path %}
+<div style="background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h3 style="margin-top: 0; margin-bottom: 15px; color: #667eea;">📸 Imagen del Roster OCR</h3>
+    <div style="text-align: center;">
+        <img src="/{{ team.roster_image_path }}"
+             alt="Roster de {{ team.name }}"
+             style="max-width: 100%; height: auto; border-radius: 4px; border: 1px solid #ddd; cursor: pointer;"
+             onclick="window.open('/{{ team.roster_image_path }}', '_blank')">
+        <p style="margin-top: 10px; font-size: 12px; color: #6c757d;">Click en la imagen para ver en tamaño completo</p>
+    </div>
+</div>
+{% endif %}
+
+<div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px;">
+        <div>
+            <strong style="color: #6c757d;">Categoría:</strong><br>
+            {{ team.category }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Rama:</strong><br>
+            {{ team.gender }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Liga:</strong><br>
+            {{ team.league }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Teléfono Liga:</strong><br>
+            {{ team.get('league_phone', 'N/A') }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Dirección Liga:</strong><br>
+            {{ team.get('league_address', 'N/A') }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Representante:</strong><br>
+            {{ team.representative_name }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Teléfono Contacto:</strong><br>
+            {{ team.get('contact_phone', 'N/A') }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Estado:</strong><br>
+            {{ team.state }}
+        </div>
+        <div>
+            <strong style="color: #6c757d;">Municipio:</strong><br>
+            {{ team.municipality }}
+        </div>
+    </div>
+</div>
+
+<h3 style="margin-bottom: 20px;">👥 Jugadores ({{ players|length }})</h3>
+
+{% if players %}
+<table>
+    <thead>
+        <tr>
+            <th>Foto</th>
+            <th>Nombre Completo</th>
+            <th>Fecha de Nacimiento</th>
+            <th>CURP</th>
+            <th>Email</th>
+            <th>Confianza OCR</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for player in players %}
+        <tr id="player-row-{{ player.id }}">
+            <td>
+                {% if player.photo_url %}
+                <img src="{{ player.photo_url }}" alt="Foto de {{ player.full_name }}" style="width: 54px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid #cbd5e1;">
+                {% else %}
+                <span style="color: #94a3b8;">Sin foto</span>
+                {% endif %}
+            </td>
+            <td><strong>{{ player.full_name }}</strong></td>
+            <td>{{ player.birth_date }}</td>
+            <td>{{ player.curp }}</td>
+            <td>{{ player.email }}</td>
+            <td>{{ player.ocr_confidence }}</td>
+            <td>
+                {% if player.verified_by_human %}
+                    <span class="badge badge-success">✅ Verificado</span>
+                {% elif player.needs_review %}
+                    <span class="badge badge-warning">⚠️ Necesita Revisión</span>
+                {% else %}
+                    <span class="badge badge-success">✅ Validado</span>
+                {% endif %}
+            </td>
+            <td>
+                <button onclick="editPlayer('{{ player.id }}')" class="btn-sm" style="background: #667eea; margin-right: 5px;">✏️</button>
+                {% if player.needs_review %}
+                <button onclick="verifyPlayer('{{ player.id }}')" class="btn-sm" style="background: #28a745; margin-right: 5px;">✓</button>
+                {% endif %}
+                <button onclick="deletePlayer('{{ player.id }}')" class="btn-sm" style="background: #dc3545;">🗑️</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div style="padding: 40px; text-align: center; color: #6c757d; background: #f8f9fa; border-radius: 8px;">
+    <p>No hay jugadores registrados en este equipo.</p>
+</div>
+{% endif %}
+
+<!-- Modal para editar equipo -->
+<div id="editTeamModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('editTeamModal')">&times;</span>
+        <h3>✏️ Editar Equipo</h3>
+        <form id="editTeamForm">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <label>Nombre del Equipo:</label>
+                    <input type="text" name="name" value="{{ team.name }}" required>
+                </div>
+                <div>
+                    <label>Categoría:</label>
+                    <select name="category">
+                        <option value="U10" {% if team.category == 'U10' %}selected{% endif %}>U10</option>
+                        <option value="U12" {% if team.category == 'U12' %}selected{% endif %}>U12</option>
+                        <option value="U14" {% if team.category == 'U14' %}selected{% endif %}>U14</option>
+                        <option value="U16" {% if team.category == 'U16' %}selected{% endif %}>U16</option>
+                        <option value="U18" {% if team.category == 'U18' %}selected{% endif %}>U18</option>
+                        <option value="Juvenil" {% if team.category == 'Juvenil' %}selected{% endif %}>Juvenil</option>
+                        <option value="Open" {% if team.category == 'Open' %}selected{% endif %}>Open</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Rama:</label>
+                    <select name="gender">
+                        <option value="Varonil" {% if team.gender == 'Varonil' %}selected{% endif %}>Varonil</option>
+                        <option value="Femenil" {% if team.gender == 'Femenil' %}selected{% endif %}>Femenil</option>
+                    </select>
+                </div>
+                <div>
+                    <label>Liga:</label>
+                    <input type="text" name="league" value="{{ team.league }}">
+                </div>
+                <div>
+                    <label>Teléfono Liga:</label>
+                    <input type="text" name="league_phone" value="{{ team.get('league_phone', '') }}">
+                </div>
+                <div>
+                    <label>Dirección Liga:</label>
+                    <input type="text" name="league_address" value="{{ team.get('league_address', '') }}">
+                </div>
+                <div>
+                    <label>Representante:</label>
+                    <input type="text" name="representative_name" value="{{ team.representative_name }}">
+                </div>
+                <div>
+                    <label>Teléfono Contacto:</label>
+                    <input type="text" name="contact_phone" value="{{ team.get('contact_phone', '') }}">
+                </div>
+                <div>
+                    <label>Estado:</label>
+                    <input type="text" name="state" value="{{ team.state }}">
+                </div>
+                <div>
+                    <label>Municipio:</label>
+                    <input type="text" name="municipality" value="{{ team.municipality }}">
+                </div>
+            </div>
+            <div style="margin-top: 20px; text-align: right;">
+                <button type="button" onclick="closeModal('editTeamModal')" class="btn" style="background: #6c757d;">Cancelar</button>
+                <button type="submit" class="btn" style="background: #28a745;">💾 Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal para editar jugador -->
+<div id="editPlayerModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeModal('editPlayerModal')">&times;</span>
+        <h3>✏️ Editar Jugador</h3>
+        <form id="editPlayerForm">
+            <input type="hidden" id="edit-player-id" name="player_id">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div>
+                    <label>Nombre:</label>
+                    <input type="text" id="edit-first-name" name="first_name" required>
+                </div>
+                <div>
+                    <label>Apellidos:</label>
+                    <input type="text" id="edit-last-name" name="last_name" required>
+                </div>
+                <div>
+                    <label>Fecha de Nacimiento:</label>
+                    <input type="date" id="edit-birth-date" name="birth_date">
+                </div>
+                <div>
+                    <label>CURP:</label>
+                    <input type="text" id="edit-curp" name="curp" maxlength="18">
+                </div>
+                <div style="grid-column: 1 / -1;">
+                    <label>Email:</label>
+                    <input type="email" id="edit-email" name="email">
+                </div>
+            </div>
+            <div style="margin-top: 20px; text-align: right;">
+                <button type="button" onclick="closeModal('editPlayerModal')" class="btn" style="background: #6c757d;">Cancelar</button>
+                <button type="submit" class="btn" style="background: #28a745;">💾 Guardar</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+const teamId = '{{ team.id }}';
+const playersData = {{ players | tojson }};
+
+// Modal functions
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+// Team functions
+function editTeam() {
+    document.getElementById('editTeamModal').style.display = 'block';
+}
+
+async function deleteTeam() {
+    if (!confirm('¿Estás seguro de que deseas eliminar este equipo y todos sus jugadores?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/team/${teamId}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            window.location.href = '/teams';
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert('Error al eliminar el equipo: ' + error);
+    }
+}
+
+// Player functions
+function editPlayer(playerId) {
+    const player = playersData.find(p => p.id === playerId);
+    if (!player) return;
+
+    // Split full name
+    const nameParts = player.full_name.split(' ');
+    const firstName = nameParts[0];
+    const lastName = nameParts.slice(1).join(' ');
+
+    document.getElementById('edit-player-id').value = playerId;
+    document.getElementById('edit-first-name').value = firstName;
+    document.getElementById('edit-last-name').value = lastName;
+    document.getElementById('edit-birth-date').value = player.birth_date !== 'N/A' ? player.birth_date : '';
+    document.getElementById('edit-curp').value = player.curp !== 'N/A' ? player.curp : '';
+    document.getElementById('edit-email').value = player.email !== 'N/A' ? player.email : '';
+
+    document.getElementById('editPlayerModal').style.display = 'block';
+}
+
+async function verifyPlayer(playerId) {
+    if (!confirm('¿Marcar este jugador como verificado?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/player/${playerId}/verify`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert('Error al verificar jugador: ' + error);
+    }
+}
+
+async function deletePlayer(playerId) {
+    if (!confirm('¿Estás seguro de que deseas eliminar este jugador?')) {
+        return;
+    }
+
+    try {
+        const response = await fetch(`/api/player/${playerId}`, {
+            method: 'DELETE'
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            document.getElementById(`player-row-${playerId}`).remove();
+            alert(data.message);
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert('Error al eliminar jugador: ' + error);
+    }
+}
+
+// Form submissions
+document.getElementById('editTeamForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const formData = new FormData(e.target);
+
+    try {
+        const response = await fetch(`/api/team/${teamId}/edit`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert('Error al actualizar equipo: ' + error);
+    }
+});
+
+document.getElementById('editPlayerForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const playerId = document.getElementById('edit-player-id').value;
+    const formData = new FormData(e.target);
+
+    try {
+        const response = await fetch(`/api/player/${playerId}/edit`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + data.message);
+        }
+    } catch (error) {
+        alert('Error al actualizar jugador: ' + error);
+    }
+});
+
+// Close modals when clicking outside
+window.onclick = function(event) {
+    const modals = ['editTeamModal', 'editPlayerModal'];
+    modals.forEach(modalId => {
+        const modal = document.getElementById(modalId);
+        if (event.target == modal) {
+            modal.style.display = 'none';
+        }
+    });
+}
+</script>
+
+<style>
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.4);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 5% auto;
+    padding: 30px;
+    border: 1px solid #888;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 800px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+.close {
+    color: #aaa;
+    float: right;
+    font-size: 28px;
+    font-weight: bold;
+    line-height: 20px;
+    cursor: pointer;
+}
+
+.close:hover,
+.close:focus {
+    color: #000;
+}
+
+.modal-content label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #333;
+}
+
+.modal-content input,
+.modal-content select {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 12px;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    cursor: pointer;
+}
+
+.btn-sm:hover {
+    opacity: 0.8;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+.badge-success {
+    background: #28a745;
+    color: white;
+}
+
+.badge-warning {
+    background: #ffc107;
+    color: #333;
+}
+</style>
+{% endblock %}

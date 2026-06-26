@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Equipos - Copa Telmex{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 30px;">📁 Equipos Registrados</h2>
+
+{% if teams %}
+<table>
+    <thead>
+        <tr>
+            <th>Nombre</th>
+            <th>Categoría</th>
+            <th>Rama</th>
+            <th>Estado</th>
+            <th>Jugadores</th>
+            <th>Fecha de Registro</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for team in teams %}
+        <tr>
+            <td><strong>{{ team.name }}</strong></td>
+            <td>{{ team.category }}</td>
+            <td>{{ team.gender }}</td>
+            <td>{{ team.state }}</td>
+            <td>
+                <span class="badge badge-success">{{ team.player_count }} jugador(es)</span>
+            </td>
+            <td>{{ team.created_at }}</td>
+            <td>
+                <a href="/team/{{ team.id }}" class="btn" style="padding: 5px 12px; font-size: 0.9rem;">
+                    Ver Detalles
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div style="padding: 60px; text-align: center; color: #6c757d;">
+    <h3>📭 No hay equipos registrados</h3>
+    <p style="margin-top: 10px;">Los equipos aparecerán aquí cuando se registren a través del bot de Telegram.</p>
+</div>
+{% endif %}
+{% endblock %}

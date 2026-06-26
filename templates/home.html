@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Copa Telmex{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 30px;">📊 Estadísticas Generales</h2>
+
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="value">{{ stats.total_teams }}</div>
+        <div class="label">Equipos</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="value">{{ stats.total_players }}</div>
+        <div class="label">Jugadores</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="value">{{ stats.total_ocr_registrations }}</div>
+        <div class="label">Registros OCR</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="value">{{ "%.0f"|format(stats.average_ocr_confidence * 100) }}%</div>
+        <div class="label">Confianza Promedio</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="value">{{ stats.players_needing_review }}</div>
+        <div class="label">Pendientes Revisión</div>
+    </div>
+
+    <div class="stat-card">
+        <div class="value">{{ "%.0f"|format(stats.review_rate) }}%</div>
+        <div class="label">Tasa de Revisión</div>
+    </div>
+</div>
+
+<div style="margin-top: 40px;">
+    <h3 style="margin-bottom: 20px;">📋 Acciones Rápidas</h3>
+
+    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+        <a href="/teams" class="btn">📁 Ver Equipos</a>
+        <a href="/players" class="btn">👥 Ver Jugadores</a>
+        <a href="/players?needs_review=true" class="btn">⚠️ Revisar Pendientes ({{ stats.players_needing_review }})</a>
+        <a href="/registration-review/new" class="btn">🧾 Nueva Precaptura</a>
+    </div>
+</div>
+
+{% if pending_reviews > 0 %}
+<div style="margin-top: 40px; padding: 20px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
+    <h3 style="color: #856404; margin-bottom: 10px;">⚠️ Atención Requerida</h3>
+    <p style="color: #856404;">
+        Hay <strong>{{ pending_reviews }}</strong> registro(s) pendientes de revisión humana.
+        <a href="/players?needs_review=true" style="color: #667eea; text-decoration: underline;">Ver ahora</a>
+    </p>
+</div>
+{% endif %}
+
+<div style="margin-top: 40px;">
+    <h3 style="margin-bottom: 20px;">ℹ️ Acerca del Sistema</h3>
+
+    <p style="line-height: 1.6; color: #6c757d;">
+        Este dashboard muestra los registros OCR y ahora también las sesiones de precaptura para revisar cédulas
+        antes de capturarlas definitivamente a la base. Los datos se almacenan en PostgreSQL y se actualizan desde la web y Telegram.
+    </p>
+
+    <div style="margin-top: 20px; padding: 15px; background: #f8f9fa; border-radius: 4px;">
+        <h4 style="margin-bottom: 10px;">🤖 Características:</h4>
+        <ul style="margin-left: 20px; color: #6c757d; line-height: 1.8;">
+            <li>OCR local y revisión previa a captura</li>
+            <li>Validación automática de nombres mexicanos</li>
+            <li>Verificación humana para casos de baja confianza</li>
+            <li>Almacenamiento persistente en PostgreSQL</li>
+            <li>Dashboard web en tiempo real</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

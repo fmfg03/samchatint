@@ -1,0 +1,119 @@
+# Copa Telmex Telcel - Tournament Configuration
+
+tournament_id: liga_telmex_telcel
+name: Copa Telmex Telcel 2026
+description: Copa nacional de béisbol Liga Telmex Telcel
+start_date: 2026-01-15
+end_date: 2027-01-31
+
+# Contact information
+contact:
+  email: info@ligatelmextelcel.com
+  phone: "+52 55 1234 5678"
+  website: https://ligatelmextelcel.com
+
+# Database configuration
+database:
+  name: liga_telmex_telcel
+  user: liga_user
+  password: liga_pass_2026
+  host: localhost
+  port: 5432
+
+# Tournament stages
+stages:
+  - id: fase_colectiva
+    name: "Fase Colectiva (Inscripción)"
+    description: "Registro de equipos y jugadores en fase colectiva"
+    start_date: 2026-05-01
+    end_date: 2026-08-02
+    status: planned
+
+  - id: fase_estatal
+    name: "Fase Estatal"
+    description: "Competencias estatales para clasificar a la fase nacional"
+    start_date: 2026-08-17
+    end_date: 2026-09-03
+    status: planned
+
+  - id: fase_nacional
+    name: "Fase Nacional"
+    description: "Fase nacional del torneo"
+    start_date: 2026-09-19
+    end_date: 2026-09-26
+    status: planned
+    location: "Por definir"
+    is_final: true
+
+  - id: viaje_campeones
+    name: "Viaje de Campeones"
+    description: "Viaje y premiación para equipos campeones"
+    start_date: 2027-01-01
+    end_date: 2027-01-31
+    status: planned
+    is_awards: true
+
+# Modules configuration
+modules:
+  finance:
+    enabled: true
+    registration_fee: 3000.00
+    currency: MXN
+    payment_methods:
+      - cash
+      - transfer
+      - card
+    sponsorship_tiers:
+      platinum: 150000
+      gold: 75000
+      silver: 35000
+      bronze: 15000
+
+  operations:
+    enabled: true
+    max_teams: 64
+    max_players_per_team: 20
+    categories:
+      - "13 años varonil"
+      - "14 años varonil"
+    genders:
+      - varonil
+    sport: "beisbol"
+    ocr_enabled: true
+    ocr_provider: claude_structured
+    min_age: 13
+    max_age: 14
+
+  marketing:
+    enabled: true
+    social_media:
+      facebook: https://facebook.com/ligatelmextelcel
+      twitter: https://twitter.com/ligatelmextelcel
+      instagram: https://instagram.com/ligatelmextelcel
+    email_notifications: true
+    sms_notifications: false
+
+# Telegram bot configuration
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  webhook_url: null  # Use polling if null
+  admin_chat_ids:
+    - 892216787
+
+# Notification thresholds
+alerts:
+  low_registration_threshold: 8  # Alert if less than this many teams per category
+  payment_reminder_days: 14  # Days before stage to remind payment
+  budget_warning_threshold: 0.85  # Warn if expenses exceed 85% of income
+
+# Tournament specific settings
+tournament_settings:
+  sport: "beisbol"
+  format: "eliminación directa"
+  teams_per_category: 32
+  players_per_team: 15-20
+  substitution_rules: "ilimitadas"
+  game_duration: "7 innings"
+  mercy_rule: "10 carreras de diferencia después del 5to inning"
+  equipment_provided: true
+  uniform_requirements: true

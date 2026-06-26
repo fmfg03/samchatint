@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}Precaptura OCR - Copa Telmex{% endblock %}
+
+{% block content %}
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
+    <div>
+        <h2 style="margin-bottom: 8px;">🧾 Precaptura OCR</h2>
+        <p style="color: #6c757d;">Sesiones temporales para revisar cédulas antes de capturar a la base final.</p>
+    </div>
+    <a href="/registration-review/new" class="btn">Nueva revisión</a>
+</div>
+
+{% if sessions %}
+<table>
+    <thead>
+        <tr>
+            <th>Sesión</th>
+            <th>Estado</th>
+            <th>Proveedor</th>
+            <th>Torneo</th>
+            <th>Jugadores</th>
+            <th>Problemas</th>
+            <th>Inicio</th>
+            <th>Acción</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in sessions %}
+        <tr>
+            <td>
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    {% if item.cover_url %}
+                    <img src="{{ item.cover_url }}" alt="preview" style="width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;">
+                    {% endif %}
+                    <div>
+                        <strong>{{ item.id[:8] }}</strong><br>
+                        <small>{{ item.source }}</small>
+                    </div>
+                </div>
+            </td>
+            <td>
+                {% if item.status == 'committed' %}
+                <span class="badge badge-success">Capturado</span>
+                {% elif item.needs_review %}
+                <span class="badge badge-warning">{{ item.status }}</span>
+                {% else %}
+                <span class="badge badge-success">{{ item.status }}</span>
+                {% endif %}
+            </td>
+            <td>{{ item.provider }}</td>
+            <td>{{ item.tournament_slug or 'Sin definir' }}</td>
+            <td>{{ item.player_count }}</td>
+            <td>{{ item.issue_count }}</td>
+            <td>{{ item.started_at }}</td>
+            <td>
+                <a href="/registration-review/{{ item.id }}" class="btn">Abrir</a>
+                {% if item.committed_team_id %}
+                <a href="/team/{{ item.committed_team_id }}" class="btn" style="background: #28a745;">Equipo</a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div style="padding: 32px; border: 1px dashed #cbd5e1; border-radius: 12px; text-align: center; color: #64748b;">
+    <p style="margin-bottom: 12px;">Todavía no hay sesiones de precaptura.</p>
+    <a href="/registration-review/new" class="btn">Subir cédula</a>
+</div>
+{% endif %}
+{% endblock %}

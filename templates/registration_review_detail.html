@@ -1,0 +1,569 @@
+{% extends "base.html" %}
+
+{% block title %}Revisión {{ review_session.id }} - Copa Telmex{% endblock %}
+
+{% block content %}
+<style>
+    .review-layout {
+        display: grid;
+        grid-template-columns: minmax(300px, 0.95fr) minmax(420px, 1.2fr);
+        gap: 24px;
+        align-items: start;
+    }
+    .review-card {
+        background: #fff;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 18px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+    }
+    .issue-list {
+        margin: 0;
+        padding-left: 18px;
+        color: #475569;
+    }
+    .issue-summary {
+        display: grid;
+        gap: 10px;
+    }
+    .issue-alert {
+        border-radius: 12px;
+        padding: 10px 12px;
+        border: 1px solid #e2e8f0;
+        background: #f8fafc;
+    }
+    .issue-alert[data-level="error"] {
+        background: #fef2f2;
+        border-color: #fecaca;
+        color: #991b1b;
+    }
+    .issue-alert[data-level="warning"] {
+        background: #fffbeb;
+        border-color: #fde68a;
+        color: #92400e;
+    }
+    .issue-level {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+    }
+    .thumb-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+    }
+    .thumb-grid img {
+        width: 100%;
+        height: 92px;
+        object-fit: cover;
+        border-radius: 10px;
+        border: 1px solid #dbe2ea;
+    }
+    .doc-stage {
+        position: relative;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid #dbe2ea;
+        background: #0f172a;
+    }
+    .doc-stage img {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+    .doc-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+    }
+    .overlay-box {
+        position: absolute;
+        border: 2px solid rgba(14, 165, 233, 0.95);
+        background: rgba(14, 165, 233, 0.12);
+        border-radius: 8px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.18);
+        opacity: 0.78;
+    }
+    .overlay-box[data-kind="photo"] {
+        border-color: rgba(34, 197, 94, 0.95);
+        background: rgba(34, 197, 94, 0.12);
+    }
+    .overlay-box[data-kind="field"] {
+        border-color: rgba(245, 158, 11, 0.95);
+        background: rgba(245, 158, 11, 0.12);
+    }
+    .overlay-label {
+        position: absolute;
+        top: -22px;
+        left: 0;
+        background: rgba(15, 23, 42, 0.92);
+        color: #f8fafc;
+        border-radius: 999px;
+        padding: 2px 7px;
+        font-size: 11px;
+        white-space: nowrap;
+    }
+    .overlay-box.is-active {
+        opacity: 1;
+        border-width: 3px;
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.18), 0 0 20px rgba(14, 165, 233, 0.4);
+        z-index: 2;
+    }
+    .overlay-box.is-muted {
+        opacity: 0.22;
+    }
+    .field-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+    }
+    .field-grid label,
+    .stack-field label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .stack-field {
+        margin-bottom: 12px;
+    }
+    .player-row {
+        border: 1px solid #e2e8f0;
+        border-radius: 14px;
+        padding: 14px;
+        margin-bottom: 14px;
+        background: #f8fafc;
+    }
+    .player-row.has-alerts {
+        border-color: #f59e0b;
+        box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.18);
+    }
+    .player-row.is-focused {
+        border-color: #0f766e;
+        box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.18);
+    }
+    .player-row h4 {
+        margin-bottom: 10px;
+    }
+    .player-card-grid {
+        display: grid;
+        grid-template-columns: minmax(110px, 132px) minmax(0, 1fr);
+        gap: 14px;
+        align-items: start;
+    }
+    .player-photo-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .player-photo-frame {
+        width: 100%;
+        aspect-ratio: 0.78;
+        border-radius: 12px;
+        overflow: hidden;
+        border: 1px solid #cbd5e1;
+        background: linear-gradient(180deg, #e2e8f0, #f8fafc);
+        display: grid;
+        place-items: center;
+    }
+    .player-photo-frame img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+    }
+    .player-photo-empty {
+        text-align: center;
+        color: #64748b;
+        font-size: 0.85rem;
+        padding: 12px;
+        line-height: 1.35;
+    }
+    .player-meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        color: #64748b;
+        font-size: 0.92rem;
+    }
+    .issue-chip-list {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+    }
+    .issue-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: #fff7ed;
+        border: 1px solid #fdba74;
+        color: #9a3412;
+        font-size: 0.82rem;
+        line-height: 1.2;
+    }
+    @media (max-width: 980px) {
+        .review-layout {
+            grid-template-columns: 1fr;
+        }
+        .player-card-grid {
+            grid-template-columns: 1fr;
+        }
+        .player-photo-panel {
+            max-width: 148px;
+        }
+    }
+</style>
+
+<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
+    <div>
+        <a href="/registration-review" style="color: #667eea; text-decoration: none;">← Volver a precaptura</a>
+        <h2 style="margin: 10px 0 6px;">🧾 Revisión {{ review_session.id }}</h2>
+        <p style="color: #6c757d;">
+            Estado: <strong>{{ review_session.status }}</strong> · Proveedor: <strong>{{ review_session.provider }}</strong> ·
+            Torneo: <strong>{{ review_session.tournament_slug or 'Sin definir' }}</strong> ·
+            Confianza global: <strong>{{ overall_confidence }}</strong>
+        </p>
+    </div>
+    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+        <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post">
+            <button type="submit" class="btn" style="border: none; cursor: pointer; background: #0f766e;">Reprocesar</button>
+        </form>
+    </div>
+</div>
+
+<div class="review-layout">
+    <div class="review-card">
+        <h3 style="margin-bottom: 10px;">Documento</h3>
+        {% if assets %}
+        <div class="doc-stage">
+            <img id="review-main-image" src="{{ assets[0].image_url }}" alt="Documento principal">
+            <div id="review-overlay" class="doc-overlay"></div>
+        </div>
+        <div class="thumb-grid">
+            {% for asset in assets %}
+            <a href="{{ asset.image_url }}" target="_blank" rel="noopener" data-review-thumb data-page-index="{{ asset.page_index }}">
+                <img src="{{ asset.image_url }}" alt="Página {{ asset.page_index }}">
+            </a>
+            {% endfor %}
+        </div>
+        <p style="margin-top: 10px; color: #64748b;">Las cajas resaltan filas/fotos/campos detectados por OCR para la página activa.</p>
+        {% else %}
+        <p style="color: #6c757d;">No hay imágenes asociadas a esta sesión.</p>
+        {% endif %}
+
+        <div style="margin-top: 18px;">
+            <form action="/api/registration-review/{{ review_session.id }}/assets" method="post" enctype="multipart/form-data" style="margin-bottom: 18px; padding: 14px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #f8fafc;">
+                <label style="display: block; font-weight: 600; margin-bottom: 8px;">Agregar más fotos a esta sesión</label>
+                <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" multiple required style="width: 100%; margin-bottom: 10px;">
+                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;">Subir y anexar</button>
+            </form>
+            <h4 style="margin-bottom: 10px;">Señales de revisión</h4>
+            {% if validation.blockers %}
+            <div class="issue-summary" style="margin-bottom: 14px;">
+                {% for blocker in validation.blockers %}
+                <div class="issue-alert" data-level="error">
+                    <div class="issue-level">Bloqueo</div>
+                    <div>{{ blocker.message }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if validation.issues %}
+            <div class="issue-summary">
+                {% for issue in validation.issues %}
+                <div class="issue-alert" data-level="{{ issue.level or 'warning' }}">
+                    <div class="issue-level">
+                        {% if issue.level == 'error' %}Error{% else %}Alerta{% endif %}
+                    </div>
+                    <div>{{ issue.message }}</div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p style="color: #15803d;">No hay alertas duras en el draft actual.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="review-card">
+        <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
+            <h3 style="margin-bottom: 14px;">Datos del equipo</h3>
+            <div class="field-grid" style="margin-bottom: 16px;">
+                <div>
+                    <label>Equipo</label>
+                    <input type="text" name="team_name" value="{{ team.name or '' }}" required style="width: 100%;">
+                </div>
+                <div>
+                    <label>Categoría</label>
+                    <input type="text" name="team_category" value="{{ team.category or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Rama</label>
+                    <input type="text" name="team_gender" value="{{ team.gender or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Liga</label>
+                    <input type="text" name="team_league" value="{{ team.league or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Municipio</label>
+                    <input type="text" name="team_municipality" value="{{ team.municipality or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Estado</label>
+                    <input type="text" name="team_state" value="{{ team.state or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Torneo de captura</label>
+                    <select name="tournament_slug" style="width: 100%;">
+                        {% for option in tournament_options %}
+                        <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <h3 style="margin-bottom: 14px;">Responsable</h3>
+            <div class="field-grid" style="margin-bottom: 16px;">
+                <div>
+                    <label>Nombre</label>
+                    <input type="text" name="manager_name" value="{{ manager.name or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Rol</label>
+                    <input type="text" name="manager_role" value="{{ manager.role or 'delegado' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Teléfono</label>
+                    <input type="text" name="manager_phone" value="{{ manager.phone or '' }}" style="width: 100%;">
+                </div>
+                <div>
+                    <label>Email</label>
+                    <input type="email" name="manager_email" value="{{ manager.email or '' }}" style="width: 100%;">
+                </div>
+            </div>
+
+            <div class="stack-field">
+                <label>Notas del draft</label>
+                <textarea name="notes" rows="3" style="width: 100%;">{{ notes }}</textarea>
+            </div>
+
+            <h3 style="margin: 20px 0 14px;">Jugadores detectados ({{ players|length }})</h3>
+            <input type="hidden" name="player_count" value="{{ players|length }}">
+
+            {% for player in players %}
+            <div class="player-row {% if player.issues %}has-alerts{% endif %}" data-player-row data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}">
+                <h4>Jugador {{ player.index }}</h4>
+                <div class="player-card-grid">
+                    <div class="player-photo-panel">
+                        <div class="player-photo-frame">
+                            {% if player.photo_preview_url %}
+                            <img src="{{ player.photo_preview_url }}" alt="Foto detectada de {{ player.name or ('Jugador ' ~ player.index) }}">
+                            {% else %}
+                            <div class="player-photo-empty">
+                                Sin foto detectada
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% if player.photo_preview_url %}
+                        <small style="color: #64748b;">
+                            {% if player.photo_preview_mode == 'ctt_estimated' %}
+                            Foto estimada con el layout fijo de la cédula. Se guarda al capturar.
+                            {% elif player.photo_preview_mode == 'heuristic' %}
+                            Foto estimada por geometría general de la cédula. Se guarda al capturar.
+                            {% else %}
+                            Foto detectada por OCR. Se guarda al capturar.
+                            {% endif %}
+                        </small>
+                        {% else %}
+                        <small style="color: #94a3b8;">No se detectó ni pudo estimarse una foto útil para este jugador.</small>
+                        {% endif %}
+                    </div>
+                    <div>
+                        <div class="field-grid">
+                            <div style="grid-column: 1 / -1;">
+                                <label>Nombre completo</label>
+                                <input type="text" name="player_{{ loop.index0 }}_name" value="{{ player.name }}" style="width: 100%;" data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="name">
+                            </div>
+                            <div>
+                                <label>Fecha de nacimiento</label>
+                                <input type="text" name="player_{{ loop.index0 }}_birth_date" value="{{ player.birth_date }}" placeholder="DD/MM/YYYY" style="width: 100%;" data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="birth_date">
+                            </div>
+                            <div>
+                                <label>CURP</label>
+                                <input type="text" name="player_{{ loop.index0 }}_curp" value="{{ player.curp }}" maxlength="18" style="width: 100%;" data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="curp">
+                            </div>
+                        </div>
+                        <div class="player-meta">
+                            <label style="display: inline-flex; gap: 8px; align-items: center;">
+                                <input type="checkbox" name="player_{{ loop.index0 }}_needs_review" value="1" {% if player.needs_review %}checked{% endif %} data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="row">
+                                Marcar para revisión
+                            </label>
+                            <span>Confianza OCR: {{ player.confidence_pct }}</span>
+                            <span>Página origen: {{ player.source_page }}</span>
+                            {% if player.has_photo_region %}
+                            <button type="button" class="btn" style="background: #15803d; border: none; cursor: pointer; padding: 6px 10px;" data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="photo">Ver foto detectada</button>
+                            {% endif %}
+                        </div>
+                        {% if player.issues %}
+                        <div class="issue-chip-list">
+                            {% for issue in player.issues %}
+                            <span class="issue-chip">{{ issue }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
+                <button type="submit" class="btn" style="border: none; cursor: pointer;">Guardar borrador</button>
+                <button
+                    type="submit"
+                    formaction="/api/registration-review/{{ review_session.id }}/commit"
+                    class="btn"
+                    style="border: none; {% if validation.ready_to_commit %}cursor: pointer; background: #28a745;{% else %}cursor: not-allowed; background: #94a3b8;{% endif %}"
+                    data-commit-button="1"
+                    {% if not validation.ready_to_commit %}disabled title="Corrige los bloqueos antes de capturar"{% endif %}
+                >Aprobar y capturar</button>
+                <a href="/api/registration-review/{{ review_session.id }}" class="btn" style="background: #0f766e;" target="_blank" rel="noopener">Ver JSON</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% if assets %}
+<script>
+    const reviewAssets = {{ assets|tojson }};
+    const reviewLayout = {{ layout_regions|tojson }};
+    const reviewValidation = {{ validation|tojson }};
+    const mainImage = document.getElementById('review-main-image');
+    const overlayRoot = document.getElementById('review-overlay');
+    const thumbLinks = document.querySelectorAll('[data-review-thumb]');
+    const playerRows = document.querySelectorAll('[data-player-row]');
+    const playerInputs = document.querySelectorAll('[data-player-input]');
+    const reviewEditForm = document.getElementById('review-edit-form');
+
+    function renderOverlays(pageIndex, activePlayerIndex = null, activeFieldKey = null) {
+        if (!overlayRoot) return;
+        const pageKey = String(pageIndex);
+        const overlays = (reviewLayout.pages && reviewLayout.pages[pageKey]) || [];
+        overlayRoot.innerHTML = '';
+        overlays.forEach((item) => {
+            const box = document.createElement('div');
+            box.className = 'overlay-box';
+            box.dataset.kind = item.kind || 'field';
+            box.dataset.playerIndex = item.player_index || '';
+            box.dataset.fieldKey = item.field_key || '';
+            box.style.left = `${item.x_pct}%`;
+            box.style.top = `${item.y_pct}%`;
+            box.style.width = `${item.width_pct}%`;
+            box.style.height = `${item.height_pct}%`;
+            if (activePlayerIndex !== null) {
+                const samePlayer = Number(item.player_index || 0) === Number(activePlayerIndex);
+                const fieldMatches = !activeFieldKey
+                    || activeFieldKey === 'row'
+                    || (item.field_key && item.field_key === activeFieldKey)
+                    || (activeFieldKey === 'photo' && item.kind === 'photo')
+                    || (activeFieldKey !== 'photo' && item.kind === 'row' && samePlayer);
+                if (samePlayer && fieldMatches) {
+                    box.classList.add('is-active');
+                } else {
+                    box.classList.add('is-muted');
+                }
+            }
+            const label = document.createElement('div');
+            label.className = 'overlay-label';
+            label.textContent = item.label || item.kind || 'OCR';
+            box.appendChild(label);
+            overlayRoot.appendChild(box);
+        });
+    }
+
+    function selectPage(pageIndex, activePlayerIndex = null, activeFieldKey = null) {
+        const asset = reviewAssets.find((item) => Number(item.page_index) === Number(pageIndex));
+        if (!asset || !mainImage) return;
+        mainImage.src = asset.image_url;
+        renderOverlays(pageIndex, activePlayerIndex, activeFieldKey);
+        thumbLinks.forEach((link) => {
+            const img = link.querySelector('img');
+            if (!img) return;
+            img.style.outline = Number(link.dataset.pageIndex) === Number(pageIndex) ? '3px solid #0f766e' : 'none';
+        });
+    }
+
+    function focusPlayer(playerIndex, sourcePage, fieldKey = null) {
+        playerRows.forEach((row) => {
+            row.classList.toggle('is-focused', Number(row.dataset.playerIndex) === Number(playerIndex));
+        });
+        selectPage(sourcePage, playerIndex, fieldKey);
+    }
+
+    thumbLinks.forEach((link) => {
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
+            playerRows.forEach((row) => row.classList.remove('is-focused'));
+            selectPage(link.dataset.pageIndex);
+            window.open(link.href, '_blank', 'noopener');
+        });
+    });
+
+    playerRows.forEach((row) => {
+        row.addEventListener('click', () => {
+            focusPlayer(row.dataset.playerIndex, row.dataset.sourcePage, 'row');
+        });
+    });
+
+    playerInputs.forEach((input) => {
+        input.addEventListener('focus', () => {
+            focusPlayer(input.dataset.playerIndex, input.dataset.sourcePage, input.dataset.fieldKey || null);
+        });
+        input.addEventListener('click', () => {
+            focusPlayer(input.dataset.playerIndex, input.dataset.sourcePage, input.dataset.fieldKey || null);
+        });
+    });
+
+    if (reviewEditForm) {
+        reviewEditForm.addEventListener('submit', (event) => {
+            const submitter = event.submitter;
+            if (!submitter || submitter.dataset.commitButton !== '1') {
+                return;
+            }
+            const blockers = Array.isArray(reviewValidation.blockers) ? reviewValidation.blockers : [];
+            if (blockers.length) {
+                window.alert(
+                    'No puedes capturar esta cédula todavía:\\n\\n- '
+                    + blockers.map((item) => item.message).join('\\n- ')
+                );
+                event.preventDefault();
+                return;
+            }
+            const warningMessages = Array.isArray(reviewValidation.capture_warning_messages)
+                ? reviewValidation.capture_warning_messages
+                : [];
+            if (!warningMessages.length) {
+                return;
+            }
+            const confirmation = window.confirm(
+                'Esta captura tiene alertas importantes:\\n\\n- '
+                + warningMessages.join('\\n- ')
+                + '\\n\\n¿Quieres capturarla de todos modos?'
+            );
+            if (!confirmation) {
+                event.preventDefault();
+            }
+        });
+    }
+
+    selectPage(reviewAssets[0].page_index);
+</script>
+{% endif %}
+{% endblock %}
