@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
+
+if [[ ! -x "$VENV_PYTHON" ]]; then
+    echo "Error: no encontré $VENV_PYTHON. Crea o repara el virtualenv primero." >&2
+    exit 1
+fi
+
+export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+
+exec "$VENV_PYTHON" -m pytest "$@"

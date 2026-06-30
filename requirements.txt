@@ -11,6 +11,7 @@ rich>=14.2.0
 
 # Web framework
 fastapi>=0.121.0
+python-multipart>=0.0.9
 uvicorn[standard]>=0.24.0
 websockets>=12.0  # For real-time WebSocket connections
 
@@ -41,6 +42,7 @@ structlog>=23.1.0
 numpy>=1.24.0
 scikit-learn>=1.3.0
 scipy>=1.11.0
+Pillow>=12.0.0
 
 # Adaptive memory management dependencies
 chromadb>=0.4.0
@@ -93,3 +95,5 @@ google-auth>=2.41.0
 google-auth-oauthlib>=1.2.0
 google-auth-httplib2>=0.2.0
 google-api-python-client>=2.184.0
+openpyxl>=3.1.0
+lxml>=5.0.0
