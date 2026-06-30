@@ -13,6 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 import re
+from email.parser import Parser
 
 import tomllib
 from setuptools.build_meta import prepare_metadata_for_build_wheel
@@ -53,6 +54,11 @@ def _iter_docs_with_legacy_patterns() -> list[Path]:
             if any(pattern.search(text) for pattern in LEGACY_DOC_PATTERNS):
                 matched.append(path)
     return matched
+
+
+def _metadata_requires(metadata: str) -> list[str]:
+    parsed = Parser().parsestr(metadata)
+    return parsed.get_all("Requires-Dist", [])
 
 
 def main() -> int:
@@ -127,16 +133,17 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         dist_dir = prepare_metadata_for_build_wheel(td)
         metadata = (Path(td) / dist_dir / "METADATA").read_text(encoding="utf-8")
+    requires_dist = _metadata_requires(metadata)
 
     _require("Runtime Status" in metadata, "Package metadata did not absorb updated README", errors)
     _require("docs/install_matrix.md" in metadata, "Package metadata missing install matrix reference", errors)
     _require(
-        "Requires-Dist: sphinx >=" not in metadata,
+        not any(requirement.lower().startswith("sphinx") for requirement in requires_dist),
         "Docs-only dependencies leaked into runtime package metadata",
         errors,
     )
     _require(
-        "Requires-Dist: fastapi >=" in metadata,
+        any(requirement.lower().startswith("fastapi") for requirement in requires_dist),
         "Runtime package metadata missing expected runtime dependency",
         errors,
     )
