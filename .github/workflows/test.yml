@@ -94,15 +94,14 @@ jobs:
     - name: Run linting (if available)
       run: |
         if command -v black &> /dev/null; then
-          black --check src/ tests/
+          black --check src/ tests/ || true
         fi
         if command -v isort &> /dev/null; then
-          isort --check-only src/ tests/
+          isort --check-only src/ tests/ || true
         fi
         if command -v flake8 &> /dev/null; then
-          flake8 src/ tests/
+          flake8 src/ tests/ || true
         fi
-      continue-on-error: true
 
     - name: Run basic tests
       if: ${{ hashFiles('scripts/test_runner.py') != '' }}
@@ -143,6 +142,7 @@ jobs:
     - name: Comment PR with test results
       if: github.event_name == 'pull_request'
       uses: actions/github-script@v7
+      continue-on-error: true
       with:
         script: |
           const fs = require('fs');
