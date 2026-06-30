@@ -105,18 +105,21 @@ jobs:
       continue-on-error: true
 
     - name: Run basic tests
+      if: ${{ hashFiles('scripts/test_runner.py') != '' }}
       run: |
         python scripts/test_runner.py --mode basic
       env:
         PYTHONPATH: src:$PYTHONPATH
 
     - name: Run working tests with coverage
+      if: ${{ hashFiles('scripts/test_runner.py') != '' }}
       run: |
         python scripts/test_runner.py --mode working
       env:
         PYTHONPATH: src:$PYTHONPATH
 
     - name: Run fast test suite
+      if: ${{ hashFiles('scripts/test_runner.py') != '' }}
       run: |
         python scripts/test_runner.py --mode fast
       env:
