@@ -99,8 +99,10 @@ from .turn_service import (
 )
 from .provider_execution import execute_provider as _execute_provider
 from .agent_runtime import (
+    build_agent_shadow_trace as _build_agent_shadow_trace,
     build_agent_runtime_trace as _build_agent_runtime_trace,
     evaluate_runtime_tool_call as _evaluate_runtime_tool_call,
+    evaluate_shadow_activation as _evaluate_shadow_activation,
     is_agent_runtime_enabled as _is_agent_runtime_enabled,
 )
 from .rag import get_rag_store
@@ -7744,10 +7746,29 @@ async def _assistant_turn(
     language_prompt = _assistant_response_language_prompt(raw_message)
     tool_defs = _assistant_tool_defs(route_info)
     agent_runtime_enabled = _is_agent_runtime_enabled()
-    tool_registry = _assistant_tool_registry() if agent_runtime_enabled else {}
+    shadow_activation = _evaluate_shadow_activation(
+        employee_id=getattr(current_empleado, "id", None),
+        email=getattr(current_empleado, "email", None),
+        tenant_id=getattr(current_empleado, "tenant_id", None),
+    )
+    agent_shadow_enabled = shadow_activation.enabled and not agent_runtime_enabled
+    tool_registry = (
+        _assistant_tool_registry()
+        if agent_runtime_enabled or agent_shadow_enabled
+        else {}
+    )
     if agent_runtime_enabled:
         tool_trace.append(
             _build_agent_runtime_trace(
+                route_info=route_info,
+                tool_defs=tool_defs,
+                registry=tool_registry,
+            )
+        )
+    else:
+        tool_trace.append(
+            _build_agent_shadow_trace(
+                activation=shadow_activation,
                 route_info=route_info,
                 tool_defs=tool_defs,
                 registry=tool_registry,
