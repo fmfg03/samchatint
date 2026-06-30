@@ -75,8 +75,21 @@ jobs:
 
     - name: Wait for services
       run: |
-        timeout 30 bash -c 'until redis-cli -h localhost ping; do sleep 1; done'
-        timeout 30 bash -c 'until pg_isready -h localhost -p 5432; do sleep 1; done'
+        python - <<'PY'
+        import socket
+        import time
+
+        deadline = time.time() + 30
+        for host, port in [("localhost", 6379), ("localhost", 5432)]:
+            while True:
+                try:
+                    with socket.create_connection((host, port), timeout=2):
+                        break
+                except OSError:
+                    if time.time() >= deadline:
+                        raise
+                    time.sleep(1)
+        PY
 
     - name: Run linting (if available)
       run: |
