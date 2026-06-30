@@ -18,6 +18,11 @@ SHADOW_ALLOWED_EMPLOYEE_ID = "SHADOW_ALLOWED_EMPLOYEE_ID"
 SHADOW_ALLOWED_TENANT_EMPLOYEE = "SHADOW_ALLOWED_TENANT_EMPLOYEE"
 SHADOW_ALLOWED_EMAIL_FALLBACK = "SHADOW_ALLOWED_EMAIL_FALLBACK"
 
+RUNTIME_DISABLED = "RUNTIME_DISABLED"
+RUNTIME_ALLOWLIST_EMPTY = "RUNTIME_ALLOWLIST_EMPTY"
+RUNTIME_SUBJECT_NOT_ALLOWED = "RUNTIME_SUBJECT_NOT_ALLOWED"
+RUNTIME_ALLOWED_EMPLOYEE_ID = "RUNTIME_ALLOWED_EMPLOYEE_ID"
+
 
 @dataclass
 class AgentRuntimeTrace:
@@ -55,18 +60,47 @@ class ShadowActivation:
         }
 
 
+@dataclass(frozen=True)
+class RuntimeActivation:
+    enabled: bool
+    decision: str
+    employee_id_present: bool
+
+    def to_trace(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "decision": self.decision,
+            "subject": {
+                "employee_id_present": self.employee_id_present,
+            },
+            "readonly_only": is_agent_runtime_readonly_only(),
+            "writes_enabled": is_agent_writes_enabled(),
+        }
+
+
 def is_agent_runtime_enabled() -> bool:
     return (
-        (os.getenv("ASSISTANT_AGENT_RUNTIME_ENABLED") or "").strip().lower()
-        in TRUE_VALUES
-    )
+        os.getenv("ASSISTANT_AGENT_RUNTIME_ENABLED") or ""
+    ).strip().lower() in TRUE_VALUES
 
 
 def is_agent_shadow_enabled() -> bool:
     return (
-        (os.getenv("ASSISTANT_AGENT_SHADOW_ENABLED") or "").strip().lower()
-        in TRUE_VALUES
-    )
+        os.getenv("ASSISTANT_AGENT_SHADOW_ENABLED") or ""
+    ).strip().lower() in TRUE_VALUES
+
+
+def is_agent_runtime_readonly_only() -> bool:
+    raw = os.getenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY")
+    if raw is None:
+        return True
+    return raw.strip().lower() in TRUE_VALUES
+
+
+def is_agent_writes_enabled() -> bool:
+    return (
+        os.getenv("ASSISTANT_AGENT_WRITES_ENABLED") or ""
+    ).strip().lower() in TRUE_VALUES
 
 
 def _csv_set(env_var: str) -> Set[str]:
@@ -86,6 +120,42 @@ def _email_hash(email: Optional[str]) -> Optional[str]:
     return f"sha256:{digest}"
 
 
+def evaluate_runtime_activation(
+    *,
+    employee_id: Optional[Any] = None,
+) -> RuntimeActivation:
+    employee_key = str(employee_id).strip() if employee_id is not None else ""
+    employee_ids = _csv_set("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS")
+    employee_id_present = bool(employee_key)
+
+    if not is_agent_runtime_enabled():
+        return RuntimeActivation(
+            enabled=False,
+            decision=RUNTIME_DISABLED,
+            employee_id_present=employee_id_present,
+        )
+
+    if not employee_ids:
+        return RuntimeActivation(
+            enabled=False,
+            decision=RUNTIME_ALLOWLIST_EMPTY,
+            employee_id_present=employee_id_present,
+        )
+
+    if employee_key and employee_key in employee_ids:
+        return RuntimeActivation(
+            enabled=True,
+            decision=RUNTIME_ALLOWED_EMPLOYEE_ID,
+            employee_id_present=True,
+        )
+
+    return RuntimeActivation(
+        enabled=False,
+        decision=RUNTIME_SUBJECT_NOT_ALLOWED,
+        employee_id_present=employee_id_present,
+    )
+
+
 def evaluate_shadow_activation(
     *,
     employee_id: Optional[Any] = None,
@@ -99,8 +169,7 @@ def evaluate_shadow_activation(
     tenant_ids = _csv_set("ASSISTANT_AGENT_SHADOW_TENANT_IDS")
     subjects = _csv_set("ASSISTANT_AGENT_SHADOW_SUBJECTS")
     emails = {
-        _normalize_email(value)
-        for value in _csv_set("ASSISTANT_AGENT_SHADOW_EMAILS")
+        _normalize_email(value) for value in _csv_set("ASSISTANT_AGENT_SHADOW_EMAILS")
     }
     emails.discard("")
 
@@ -191,6 +260,26 @@ def build_agent_shadow_trace(
     return {"assistant_agent_shadow": trace}
 
 
+def build_agent_runtime_activation_trace(
+    *,
+    activation: RuntimeActivation,
+    route_info: Mapping[str, Any],
+    tool_defs: Iterable[Mapping[str, Any]],
+    registry: Mapping[str, AssistantToolSpec],
+) -> Dict[str, Any]:
+    trace = activation.to_trace()
+    trace["route"] = str(route_info.get("route") or "")
+    trace["surface"] = str(route_info.get("domain") or "") or None
+    trace["available_tools"] = []
+    if activation.enabled:
+        trace["available_tools"] = build_agent_runtime_trace(
+            route_info=route_info,
+            tool_defs=tool_defs,
+            registry=registry,
+        )["assistant_agent_runtime"]["available_tools"]
+    return {"assistant_agent_runtime_activation": trace}
+
+
 def _tool_name(tool_def: Mapping[str, Any]) -> str:
     return str(((tool_def.get("function") or {}).get("name")) or "").strip()
 
@@ -228,6 +317,25 @@ def evaluate_runtime_tool_call(
     if not trace.get("tool_name"):
         trace["tool_name"] = (tool_name or "").strip()
     trace["args_keys"] = sorted(str(key) for key in args.keys())
+    if spec is not None and spec.operation_type == "write":
+        if is_agent_runtime_readonly_only():
+            trace.update(
+                {
+                    "allowed": False,
+                    "requires_confirmation": False,
+                    "reason": "runtime_readonly_write_blocked",
+                    "decision": "deny",
+                }
+            )
+        elif not is_agent_writes_enabled():
+            trace.update(
+                {
+                    "allowed": False,
+                    "requires_confirmation": False,
+                    "reason": "runtime_write_disabled",
+                    "decision": "deny",
+                }
+            )
     return trace
 
 
