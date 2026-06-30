@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from samchat.assistant.agent_runtime import (
     build_agent_runtime_trace,
+    build_agent_runtime_activation_trace,
     build_agent_shadow_trace,
+    evaluate_runtime_activation,
     evaluate_runtime_tool_call,
     evaluate_shadow_activation,
     evaluate_shadow_tool_call,
+    is_agent_runtime_readonly_only,
+    is_agent_writes_enabled,
     is_agent_runtime_enabled,
     is_agent_shadow_enabled,
 )
@@ -37,6 +41,58 @@ def test_agent_runtime_flag_accepts_true_values(monkeypatch) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "on")
 
     assert is_agent_runtime_enabled() is True
+
+
+def test_agent_runtime_readonly_defaults_enabled(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", raising=False)
+
+    assert is_agent_runtime_readonly_only() is True
+
+
+def test_agent_writes_default_disabled(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_AGENT_WRITES_ENABLED", raising=False)
+
+    assert is_agent_writes_enabled() is False
+
+
+def test_runtime_activation_requires_global_flag(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_ENABLED", raising=False)
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
+
+    activation = evaluate_runtime_activation(employee_id="emp-1")
+
+    assert activation.enabled is False
+    assert activation.decision == "RUNTIME_DISABLED"
+
+
+def test_runtime_activation_requires_employee_allowlist(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", raising=False)
+
+    activation = evaluate_runtime_activation(employee_id="emp-1")
+
+    assert activation.enabled is False
+    assert activation.decision == "RUNTIME_ALLOWLIST_EMPTY"
+
+
+def test_runtime_activation_denies_non_allowlisted_employee(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
+
+    activation = evaluate_runtime_activation(employee_id="emp-2")
+
+    assert activation.enabled is False
+    assert activation.decision == "RUNTIME_SUBJECT_NOT_ALLOWED"
+
+
+def test_runtime_activation_allows_employee_id(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1,emp-2")
+
+    activation = evaluate_runtime_activation(employee_id="emp-2")
+
+    assert activation.enabled is True
+    assert activation.decision == "RUNTIME_ALLOWED_EMPLOYEE_ID"
 
 
 def test_agent_shadow_flag_is_independent_from_real_runtime(monkeypatch) -> None:
@@ -168,7 +224,27 @@ def test_build_agent_runtime_trace_records_available_registered_tools() -> None:
     ]
 
 
-def test_evaluate_runtime_tool_call_records_args_keys_and_policy() -> None:
+def test_runtime_activation_trace_records_denial_without_tools(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
+    activation = evaluate_runtime_activation(employee_id="emp-2")
+
+    trace = build_agent_runtime_activation_trace(
+        activation=activation,
+        route_info={"route": "lookup_sql", "domain": "finance"},
+        tool_defs=[{"type": "function", "function": {"name": "finance_ops_query"}}],
+        registry=_registry(),
+    )["assistant_agent_runtime_activation"]
+
+    assert trace["enabled"] is False
+    assert trace["decision"] == "RUNTIME_SUBJECT_NOT_ALLOWED"
+    assert trace["available_tools"] == []
+
+
+def test_evaluate_runtime_tool_call_blocks_write_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", raising=False)
+    monkeypatch.delenv("ASSISTANT_AGENT_WRITES_ENABLED", raising=False)
+
     decision = evaluate_runtime_tool_call(
         tool_name="finance_expense_create",
         args={"amount": 100, "concepto": "Hospedaje"},
@@ -176,8 +252,9 @@ def test_evaluate_runtime_tool_call_records_args_keys_and_policy() -> None:
         registry=_registry(),
     )
 
-    assert decision["decision"] == "confirm"
-    assert decision["requires_confirmation"] is True
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "runtime_readonly_write_blocked"
+    assert decision["requires_confirmation"] is False
     assert decision["args_keys"] == ["amount", "concepto"]
 
 
@@ -192,6 +269,24 @@ def test_evaluate_runtime_tool_call_denies_unknown_tool() -> None:
     assert decision["decision"] == "deny"
     assert decision["reason"] == "unknown_tool"
     assert decision["tool_name"] == "unknown_tool"
+
+
+def test_runtime_write_can_require_confirmation_only_when_explicitly_enabled(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "true")
+
+    decision = evaluate_runtime_tool_call(
+        tool_name="finance_expense_create",
+        args={"amount": 100},
+        role="admin",
+        registry=_registry(),
+    )
+
+    assert decision["decision"] == "confirm"
+    assert decision["requires_confirmation"] is True
+    assert decision["reason"] == "write_requires_confirmation"
 
 
 def test_shadow_unknown_tool_blocks_without_handler() -> None:
@@ -229,7 +324,10 @@ def test_shadow_unauthorized_read_blocks_without_handler() -> None:
     assert trace["handler_invoked"] is False
 
 
-def test_shadow_write_without_confirmation_is_pending_without_handler() -> None:
+def test_shadow_write_without_confirmation_blocks_without_handler(monkeypatch) -> None:
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", raising=False)
+    monkeypatch.delenv("ASSISTANT_AGENT_WRITES_ENABLED", raising=False)
+
     trace = evaluate_shadow_tool_call(
         tool_name="finance_expense_create",
         args={"amount": 100},
@@ -237,6 +335,7 @@ def test_shadow_write_without_confirmation_is_pending_without_handler() -> None:
         registry=_registry(),
     )["assistant_agent_shadow_policy"]
 
-    assert trace["outcome"] == "PENDING"
-    assert trace["policy"]["decision"] == "confirm"
+    assert trace["outcome"] == "BLOCK"
+    assert trace["policy"]["decision"] == "deny"
+    assert trace["policy"]["reason"] == "runtime_readonly_write_blocked"
     assert trace["handler_invoked"] is False

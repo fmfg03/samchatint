@@ -99,10 +99,13 @@ from .turn_service import (
 )
 from .provider_execution import execute_provider as _execute_provider
 from .agent_runtime import (
+    build_agent_runtime_activation_trace as _build_agent_runtime_activation_trace,
     build_agent_shadow_trace as _build_agent_shadow_trace,
     build_agent_runtime_trace as _build_agent_runtime_trace,
+    evaluate_runtime_activation as _evaluate_runtime_activation,
     evaluate_runtime_tool_call as _evaluate_runtime_tool_call,
     evaluate_shadow_activation as _evaluate_shadow_activation,
+    is_agent_runtime_readonly_only as _is_agent_runtime_readonly_only,
     is_agent_runtime_enabled as _is_agent_runtime_enabled,
 )
 from .rag import get_rag_store
@@ -7745,7 +7748,12 @@ async def _assistant_turn(
     route_prompt = _assistant_route_system_prompt(route_info)
     language_prompt = _assistant_response_language_prompt(raw_message)
     tool_defs = _assistant_tool_defs(route_info)
-    agent_runtime_enabled = _is_agent_runtime_enabled()
+    runtime_activation = _evaluate_runtime_activation(
+        employee_id=getattr(current_empleado, "id", None),
+    )
+    agent_runtime_enabled = runtime_activation.enabled
+    if agent_runtime_enabled and _is_agent_runtime_readonly_only():
+        tool_defs = _tool_defs_filtered(READ_TOOLS)
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
         email=getattr(current_empleado, "email", None),
@@ -7757,6 +7765,15 @@ async def _assistant_turn(
         if agent_runtime_enabled or agent_shadow_enabled
         else {}
     )
+    if _is_agent_runtime_enabled():
+        tool_trace.append(
+            _build_agent_runtime_activation_trace(
+                activation=runtime_activation,
+                route_info=route_info,
+                tool_defs=tool_defs,
+                registry=tool_registry,
+            )
+        )
     if agent_runtime_enabled:
         tool_trace.append(
             _build_agent_runtime_trace(

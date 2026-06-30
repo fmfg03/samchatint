@@ -150,7 +150,10 @@ async def test_flag_on_unknown_tool_is_denied_without_side_effects():
 
 
 @pytest.mark.asyncio
-async def test_flag_on_write_requires_confirmation_without_tool_side_effect():
+async def test_flag_on_write_blocks_without_tool_side_effect(monkeypatch):
+    monkeypatch.delenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", raising=False)
+    monkeypatch.delenv("ASSISTANT_AGENT_WRITES_ENABLED", raising=False)
+
     def evaluator(tool_name, args, role):
         return evaluate_runtime_tool_call(
             tool_name=tool_name,
@@ -159,20 +162,27 @@ async def test_flag_on_write_requires_confirmation_without_tool_side_effect():
             registry=_registry(),
         )
 
-    result, tool_trace, run_read_tool, session = await _run_ollama_contract(
-        tool_name="finance_expense_create",
-        args={"amount": 100},
-        role="admin",
-        tool_policy_evaluator=evaluator,
-    )
+    recorder = {}
+    with pytest.raises(HTTPException) as exc_info:
+        await _run_ollama_contract(
+            tool_name="finance_expense_create",
+            args={"amount": 100},
+            role="admin",
+            tool_policy_evaluator=evaluator,
+            recorder=recorder,
+        )
 
-    assert result.pending_confirmation.tool_name == "finance_expense_create"
-    assert run_read_tool.await_count == 0
-    assert session.commit.await_count == 2
+    assert exc_info.value.status_code == 403
+    assert "runtime_readonly_write_blocked" in exc_info.value.detail
+    assert recorder["run_read_tool"].await_count == 0
+    assert recorder["session"].commit.await_count == 0
     policy_items = [
-        item["assistant_policy"] for item in tool_trace if "assistant_policy" in item
+        item["assistant_policy"]
+        for item in recorder["tool_trace"]
+        if "assistant_policy" in item
     ]
-    assert policy_items[-1]["decision"] == "confirm"
+    assert policy_items[-1]["decision"] == "deny"
+    assert policy_items[-1]["reason"] == "runtime_readonly_write_blocked"
 
 
 @pytest.mark.asyncio
