@@ -1,0 +1,79 @@
+name: Assistant Scoped Gate
+
+on:
+  push:
+    branches: [master, main, develop]
+  pull_request:
+    branches: [master, main, develop]
+
+jobs:
+  assistant-scoped-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Detect assistant scoped gate files
+        id: detect
+        shell: bash
+        run: |
+          required=(
+            "scripts/pytestw"
+            "tests/unit/test_assistant_tool_registry.py"
+            "tests/unit/test_assistant_policy.py"
+            "tests/unit/test_assistant_agent_runtime.py"
+            "tests/unit/test_assistant_agent_runtime_contract.py"
+            "tests/unit/test_assistant_inference_router.py"
+            "tests/unit/test_assistant_action_router_contracts.py"
+            "tests/unit/test_assistant_router_error_handling.py"
+          )
+          missing=0
+          for path in "${required[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "missing: $path"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -eq 0 ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Assistant scoped gate skipped: baseline files are not present in this ref."
+          fi
+
+      - name: Set up Python
+        if: steps.detect.outputs.available == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        if: steps.detect.outputs.available == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+
+      - name: Compile runtime and tests
+        if: steps.detect.outputs.available == 'true'
+        run: |
+          python3 -m compileall -q -x '(^|/)(\.venv|venv|node_modules|tmp|artifacts|cleanup-backups)(/|$)' src tests
+
+      - name: Run assistant scoped tests
+        if: steps.detect.outputs.available == 'true'
+        run: |
+          ./scripts/pytestw tests/unit/test_assistant_tool_registry.py \
+            tests/unit/test_assistant_policy.py \
+            tests/unit/test_assistant_agent_runtime.py \
+            tests/unit/test_assistant_agent_runtime_contract.py \
+            tests/unit/test_assistant_inference_router.py \
+            tests/unit/test_assistant_action_router_contracts.py \
+            tests/unit/test_assistant_router_error_handling.py
+
+      - name: Check diff hygiene
+        if: steps.detect.outputs.available == 'true'
+        run: |
+          git diff --check
