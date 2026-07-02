@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+import functools
 import json
+import os
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -11,11 +16,157 @@ RunReadToolFn = Callable[..., Awaitable[Dict[str, Any]]]
 OllamaChatFn = Callable[..., Awaitable[Dict[str, Any]]]
 ToolPolicyEvaluatorFn = Callable[[str, Dict[str, Any], Optional[str]], Dict[str, Any]]
 
+PROVIDER_TIMEOUT_REASON = "PROVIDER_TIMEOUT"
+RUNTIME_BUDGET_REASON = "RUNTIME_BUDGET_EXCEEDED"
+
+_ANTHROPIC_EXECUTOR: ThreadPoolExecutor | None = None
+_ANTHROPIC_EXECUTOR_LIMIT: int | None = None
+_ANTHROPIC_SEMAPHORE: asyncio.Semaphore | None = None
+_ANTHROPIC_SEMAPHORE_LIMIT: int | None = None
+
+
+def _env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float((os.getenv(name) or "").strip() or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int((os.getenv(name) or "").strip() or default)
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _provider_timeout_seconds() -> float:
+    return _env_float(
+        "ASSISTANT_AGENT_PROVIDER_TIMEOUT_SECONDS",
+        15.0,
+        minimum=0.01,
+        maximum=300.0,
+    )
+
+
+def _runtime_total_budget_seconds() -> float:
+    return _env_float(
+        "ASSISTANT_AGENT_RUNTIME_TOTAL_BUDGET_SECONDS",
+        20.0,
+        minimum=0.01,
+        maximum=600.0,
+    )
+
+
+def _provider_max_concurrency() -> int:
+    return _env_int(
+        "ASSISTANT_AGENT_PROVIDER_MAX_CONCURRENCY",
+        2,
+        minimum=1,
+        maximum=16,
+    )
+
+
+def _anthropic_executor(limit: int) -> ThreadPoolExecutor:
+    global _ANTHROPIC_EXECUTOR, _ANTHROPIC_EXECUTOR_LIMIT
+    if _ANTHROPIC_EXECUTOR is None or _ANTHROPIC_EXECUTOR_LIMIT != limit:
+        if _ANTHROPIC_EXECUTOR is not None:
+            _ANTHROPIC_EXECUTOR.shutdown(wait=False, cancel_futures=True)
+        _ANTHROPIC_EXECUTOR = ThreadPoolExecutor(
+            max_workers=limit,
+            thread_name_prefix="assistant-anthropic",
+        )
+        _ANTHROPIC_EXECUTOR_LIMIT = limit
+    return _ANTHROPIC_EXECUTOR
+
+
+def _anthropic_semaphore(limit: int) -> asyncio.Semaphore:
+    global _ANTHROPIC_SEMAPHORE, _ANTHROPIC_SEMAPHORE_LIMIT
+    if _ANTHROPIC_SEMAPHORE is None or _ANTHROPIC_SEMAPHORE_LIMIT != limit:
+        _ANTHROPIC_SEMAPHORE = asyncio.Semaphore(limit)
+        _ANTHROPIC_SEMAPHORE_LIMIT = limit
+    return _ANTHROPIC_SEMAPHORE
+
+
+async def _anthropic_messages_create(
+    client: Any,
+    *,
+    timeout_seconds: float,
+    concurrency_limit: int,
+    **kwargs: Any,
+) -> Any:
+    semaphore = _anthropic_semaphore(concurrency_limit)
+    loop = asyncio.get_running_loop()
+    call = functools.partial(client.messages.create, **kwargs)
+    async with semaphore:
+        future = loop.run_in_executor(_anthropic_executor(concurrency_limit), call)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout_seconds)
+        except asyncio.TimeoutError as exc:
+            raise HTTPException(
+                status_code=504,
+                detail=PROVIDER_TIMEOUT_REASON,
+            ) from exc
+
 
 def _pending_summary(tool_name: str, args: Dict[str, Any]) -> str:
     return (
         f"El asistente quiere ejecutar: {tool_name} con estos parametros:\n"
         f"{json.dumps(args, ensure_ascii=False, indent=2)}"
+    )
+
+
+async def _provider_controlled_failure_response(
+    *,
+    run_id: Any,
+    reason: str,
+    provider: str,
+    model: str,
+    route_info: Dict[str, Any],
+    normalized_mode: str,
+    raw_message: str,
+    conversation: Any,
+    current_empleado: Any,
+    session: Any,
+    tool_trace: List[Dict[str, Any]],
+    assistant_run_cls: Any,
+    assistant_message_cls: Any,
+    message_response_cls: Any,
+) -> Any:
+    message = (
+        "El proveedor del asistente tardó demasiado en responder. "
+        "No ejecuté acciones ni cambios; intenta de nuevo con una consulta más corta."
+    )
+    assistant_msg = assistant_message_cls(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=message,
+        tool_name=None,
+        tool_payload=None,
+    )
+    session.add(assistant_msg)
+    run = assistant_run_cls(
+        id=run_id,
+        conversation_id=conversation.id,
+        empleado_id=current_empleado.id,
+        status="provider_timeout",
+        model=f"{provider}:{model}:{route_info['route']}:{normalized_mode}",
+        user_message=raw_message,
+        assistant_message=message,
+        tool_trace=tool_trace,
+        pending_tool_name=None,
+        pending_tool_args=None,
+        created_at=datetime.utcnow(),
+    )
+    session.add(run)
+    conversation.updated_at = datetime.utcnow()
+    await session.commit()
+    return message_response_cls(
+        assistant_message=message,
+        run_id=str(run_id),
+        tool_trace=tool_trace,
+        pending_confirmation=None,
     )
 
 
@@ -278,6 +429,10 @@ async def execute_anthropic_provider(
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_anthropic_client()
+    started_at = time.monotonic()
+    total_budget_seconds = _runtime_total_budget_seconds()
+    provider_timeout_seconds = _provider_timeout_seconds()
+    provider_concurrency = _provider_max_concurrency()
     system_prompt = assistant_system_prompt()
     system_prompt = f"{system_prompt}\n\n{route_prompt}"
     system_prompt = f"{system_prompt}\n\n{language_prompt}"
@@ -304,14 +459,77 @@ async def execute_anthropic_provider(
     anthropic_messages.append({"role": "user", "content": raw_message})
 
     for _ in range(6):
-        resp = client.messages.create(
-            model=model,
-            system=system_prompt,
-            messages=anthropic_messages,
-            tools=tool_defs_anthropic(tool_defs),
-            max_tokens=max_tokens,
-            temperature=0.2,
-        )
+        elapsed = time.monotonic() - started_at
+        remaining_budget = total_budget_seconds - elapsed
+        if remaining_budget <= 0:
+            tool_trace.append(
+                {
+                    "provider_error": {
+                        "provider": "anthropic",
+                        "reason": RUNTIME_BUDGET_REASON,
+                        "elapsed_seconds": round(elapsed, 3),
+                        "total_budget_seconds": total_budget_seconds,
+                    }
+                }
+            )
+            raise HTTPException(status_code=504, detail=RUNTIME_BUDGET_REASON)
+        call_timeout = min(provider_timeout_seconds, remaining_budget)
+        call_started = time.monotonic()
+        try:
+            resp = await _anthropic_messages_create(
+                client,
+                timeout_seconds=call_timeout,
+                concurrency_limit=provider_concurrency,
+                model=model,
+                system=system_prompt,
+                messages=anthropic_messages,
+                tools=tool_defs_anthropic(tool_defs),
+                max_tokens=max_tokens,
+                temperature=0.2,
+            )
+            tool_trace.append(
+                {
+                    "provider_call": {
+                        "provider": "anthropic",
+                        "model": model,
+                        "duration_seconds": round(time.monotonic() - call_started, 3),
+                        "timeout_seconds": call_timeout,
+                        "concurrency_limit": provider_concurrency,
+                    }
+                }
+            )
+        except HTTPException as exc:
+            if exc.status_code == 504:
+                tool_trace.append(
+                    {
+                        "provider_error": {
+                            "provider": "anthropic",
+                            "reason": exc.detail,
+                            "duration_seconds": round(
+                                time.monotonic() - call_started, 3
+                            ),
+                            "timeout_seconds": call_timeout,
+                            "concurrency_limit": provider_concurrency,
+                        }
+                    }
+                )
+                return await _provider_controlled_failure_response(
+                    run_id=run_id,
+                    reason=str(exc.detail or PROVIDER_TIMEOUT_REASON),
+                    provider="anthropic",
+                    model=model,
+                    route_info=route_info,
+                    normalized_mode=normalized_mode,
+                    raw_message=raw_message,
+                    conversation=conversation,
+                    current_empleado=current_empleado,
+                    session=session,
+                    tool_trace=tool_trace,
+                    assistant_run_cls=assistant_run_cls,
+                    assistant_message_cls=assistant_message_cls,
+                    message_response_cls=message_response_cls,
+                )
+            raise
         blocks = getattr(resp, "content", []) or []
         assistant_text = anthropic_text_from_blocks(blocks)
         tool_uses = [b for b in blocks if getattr(b, "type", "") == "tool_use"]
