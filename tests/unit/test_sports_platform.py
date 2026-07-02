@@ -162,10 +162,16 @@ def test_sponsor_media_declares_marketing_accelerator_modules():
 
     assert "sponsor_media" in platform
     sponsor_media = platform["sponsor_media"]
+    assert sponsor_media["status"] == "commercial_snapshot_v0"
     modules = sponsor_media["modules"]
     assert [module["id"] for module in modules] == [
         "video_recap_sponsor_proof",
         "content_rendering_sponsor_evidence",
+        "sponsor_obligation_tracker",
+        "brand_compliance_logo_evidence",
+        "content_approval_queue",
+        "matchday_content_command_center",
+        "sponsor_proof_package_builder",
     ]
 
     for module in modules:
@@ -191,16 +197,38 @@ def test_sponsor_media_declares_marketing_accelerator_modules():
     assert "highlights" not in rendering_module["outputs"]
     assert "daily_recaps" not in rendering_module["outputs"]
 
+    assert (
+        modules_by_id["sponsor_obligation_tracker"]["function"]
+        == "track_sponsor_deliverables_against_contract_commitments"
+    )
+    assert "sponsor_deliverable_matrix" in modules_by_id[
+        "sponsor_obligation_tracker"
+    ]["outputs"]
+    assert "missing_evidence_alerts" in modules_by_id[
+        "sponsor_obligation_tracker"
+    ]["outputs"]
+    assert "logo_presence_checks" in modules_by_id[
+        "brand_compliance_logo_evidence"
+    ]["outputs"]
+    assert "approved_packages" in modules_by_id["content_approval_queue"]["outputs"]
+    assert "active_sponsors_by_match" in modules_by_id[
+        "matchday_content_command_center"
+    ]["outputs"]
+    assert "obligation_coverage_summary" in modules_by_id[
+        "sponsor_proof_package_builder"
+    ]["outputs"]
+
     expected_boundary = {
         "not_autonomous_publishing",
         "not_creative_replacement",
         "not_canva_replacement",
         "not_video_editor_replacement",
         "requires_brand_or_sponsor_approval",
+        "evidence_assistive_not_guaranteed_detection",
     }
     assert set(sponsor_media["claim_boundary"]) == expected_boundary
-    assert set(video_module["claim_boundary"]) == expected_boundary
-    assert set(rendering_module["claim_boundary"]) == expected_boundary
+    for module in modules:
+        assert set(module["claim_boundary"]) == expected_boundary
 
 
 @pytest.mark.asyncio

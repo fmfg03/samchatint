@@ -120,12 +120,17 @@ Por esa razón, este bloque debe revisarse aparte y no debe reducir el reconocim
 
 ### Add-on marketing/sponsor sugerido
 
-Además del cierre rápido anterior, el pack de marketing puede incorporar dos aceleradores diferenciados:
+Además del cierre rápido anterior, el pack de marketing puede incorporar siete capacidades sponsor/media diferenciadas:
 
 - `Agente de Video Recap & Sponsor Proof`: automatización asistida para primeros cortes de highlights, recaps diarios, reels, clips de patrocinador, compilados de branding y evidencia audiovisual. Base conceptual: `browser-use/video-use`.
 - `Content Rendering & Sponsor Evidence Agent`: fábrica de render/captura/exportación para tarjetas de partido, tarjetas de marcador, social cards, PDFs sponsor, capturas de dashboard/evento, paquete diario de evidencia y metadata por asset. Base conceptual: Cloudflare Browser Run.
+- `Sponsor Obligation Tracker`: convierte acuerdos de patrocinio en matriz rastreable de menciones, logos, posts, banners, entregables, fechas, evidencia y aprobaciones.
+- `Brand Compliance & Logo Evidence Agent`: pre-revisión asistida de logos, menciones y evidencia de marca en piezas, fotos, videos o reportes, sin prometer detección perfecta.
+- `Content Approval Queue`: cola de aprobación para posts, videos, PDFs, press releases y piezas sponsor, con estado, timestamps, aprobador, comentarios y trazabilidad.
+- `Matchday Content Command Center`: snapshot por jornada con partidos, piezas pendientes, highlights esperados, sponsors activos, evidencia faltante, aprobaciones atoradas, prensa/ceremonias/eventos y recap diario.
+- `Sponsor Proof Package Builder`: armado del paquete diario/final por sponsor con evidencia, galería, links, export de dashboard y resumen de cobertura de obligaciones.
 
-Estos componentes deben presentarse como aceleradores con templates, apoyo de LLM/editor humano y aprobación de marca o sponsor. No deben venderse como publicación autónoma, reemplazo creativo, reemplazo de Canva, reemplazo del editor de video ni renderizado productivo ya integrado.
+Estos componentes deben presentarse como capacidades read-only y aceleradores con templates, apoyo de LLM/editor humano y aprobación de marca o sponsor. No deben venderse como publicación autónoma, reemplazo creativo, reemplazo de Canva, reemplazo del editor de video, renderizado productivo ya integrado ni detección garantizada de evidencia/branding.
 
 Rango comercial inicial recomendado para el add-on de video recap y evidencia sponsor: `35,000-75,000 MXN` por torneo/proyecto, según profundidad de setup, integración con dashboard, Google Drive, convenciones de naming, tags sponsor y flujo de aprobación.
 

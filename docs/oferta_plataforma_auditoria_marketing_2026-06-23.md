@@ -84,7 +84,7 @@ Frente a la lectura más antigua de abril, hoy la defendibilidad del frente mark
 - Perfiles públicos / marketing de equipo
 - Consolidación parcial de evidencia de activación
 - Reportes y snapshots operativos de marketing
-- Declaración read-only en Plataforma Sports de dos aceleradores sponsor/media: `Agente de Video Recap & Sponsor Proof` y `Content Rendering & Sponsor Evidence Agent`
+- Declaración read-only en Plataforma Sports de siete capacidades sponsor/media, incluyendo video recap, render/captura, tracking de obligaciones, pre-revisión de marca, cola de aprobación, command center de jornada y armado de paquetes de evidencia sponsor.
 
 ### Hecho incompleto
 
@@ -136,14 +136,19 @@ La brecha real ya no es construir un módulo genérico de comunicaciones, sino c
 - proof-of-performance
 - reportes sponsor diarios/finales
 
-### Aceleradores Sponsor/Media Propuestos
+### Capacidades Sponsor/Media Propuestas
 
-Dentro del pack de marketing conviene presentar dos submódulos complementarios, separados por función:
+Dentro del pack de marketing conviene presentar siete submódulos complementarios, separados por función:
 
 - `Agente de Video Recap & Sponsor Proof`: acelerador conceptual basado en `browser-use/video-use` para primeros cortes de highlights, recaps diarios, reels, clips de patrocinador, compilados de branding y evidencia audiovisual.
 - `Content Rendering & Sponsor Evidence Agent`: acelerador conceptual basado en Cloudflare Browser Run para renderizar/capturar/exportar tarjetas de partido, tarjetas de marcador, social cards, PDFs sponsor, screenshots de dashboard/evento, paquete diario de evidencia y metadata por asset.
+- `Sponsor Obligation Tracker`: matriz de compromisos contra entregables por sponsor, obligaciones pendientes/cumplidas, alertas de evidencia faltante y score de cumplimiento comercial.
+- `Brand Compliance & Logo Evidence Agent`: pre-revisión asistida de presencia de logos, menciones, flags de branding faltante o incorrecto, frames de evidencia y notas para aprobación.
+- `Content Approval Queue`: trazabilidad de piezas en draft, revisión automática, revisión de operaciones, aprobación sponsor/marca, timestamps, comentarios y paquetes aprobados.
+- `Matchday Content Command Center`: snapshot de jornada con partidos del día, piezas pendientes, highlights esperados, sponsors activos por partido, evidencia faltante, aprobaciones atoradas, prensa/ceremonias/eventos y recap diario pendiente.
+- `Sponsor Proof Package Builder`: armado de paquetes diarios/finales por patrocinador con índice de evidencia, galería, links de posts, export de dashboard y resumen de cobertura de obligaciones.
 
-El encuadre comercial correcto es venderlos como aceleradores con plantillas, apoyo de LLM/editor humano y aprobación de marca o sponsor. No deben presentarse como publicación autónoma, reemplazo creativo, reemplazo de Canva, reemplazo del editor de video ni renderizado productivo ya integrado.
+El encuadre comercial correcto es venderlos como capacidades read-only y aceleradores con plantillas, apoyo de LLM/editor humano y aprobación de marca o sponsor. No deben presentarse como publicación autónoma, reemplazo creativo, reemplazo de Canva, reemplazo del editor de video, renderizado productivo ya integrado ni detección perfecta de evidencia/branding.
 
 Como add-on inicial, el rango recomendado para automatización de video recap y evidencia sponsor es `35,000-75,000 MXN` por torneo/proyecto, dependiendo de si el alcance incluye solo setup/workflow o también integración con dashboard, Google Drive, convenciones de naming, tags de sponsor y aprobación.
 

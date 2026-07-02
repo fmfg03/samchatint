@@ -99,12 +99,19 @@ Los principales faltantes son:
 
 En otras palabras: la base de marketing ya existe, pero aún falta cerrar la automatización sponsor/branding prometida en el alcance original.
 
-Como aceleradores de ese cierre, Plataforma Sports puede presentar dos submódulos dentro del pack de marketing:
+Como aceleradores de ese cierre, Plataforma Sports puede presentar siete capacidades dentro del pack de marketing:
 
 - `Agente de Video Recap & Sponsor Proof`: primeros cortes asistidos para highlights, recaps diarios, reels, clips de patrocinador, compilados de branding y evidencia audiovisual, tomando `browser-use/video-use` como referencia conceptual.
 - `Content Rendering & Sponsor Evidence Agent`: generación de tarjetas PNG, social cards, PDFs sponsor, screenshots de dashboard/evento, paquetes diarios de evidencia y metadata por asset, tomando Cloudflare Browser Run como referencia conceptual.
+- `Sponsor Obligation Tracker`: control de compromisos de patrocinio contra entregables, evidencia, fechas, aprobaciones y score de cumplimiento comercial.
+- `Brand Compliance & Logo Evidence Agent`: pre-revisión asistida de logos, menciones y branding en piezas, fotos, videos o reportes.
+- `Content Approval Queue`: trazabilidad de aprobación para posts, videos, PDFs, press releases y piezas sponsor.
+- `Matchday Content Command Center`: snapshot operativo de jornada con piezas pendientes, sponsors activos, evidencia faltante, aprobaciones atoradas y recap diario.
+- `Sponsor Proof Package Builder`: armado del paquete diario/final por sponsor con evidencia, galería, links, dashboard exportable y cobertura de obligaciones.
 
-La posición comercial debe ser explícita: son aceleradores con plantillas, apoyo de LLM/editor humano y aprobación de marca o sponsor; no son publicación autónoma, no reemplazan el criterio creativo, no reemplazan Canva, no reemplazan al editor de video y no implican renderizado productivo ya integrado.
+La posición comercial debe ser explícita: son capacidades read-only y aceleradores con plantillas, apoyo de LLM/editor humano y aprobación de marca o sponsor; no son publicación autónoma, no reemplazan el criterio creativo, no reemplazan Canva, no reemplazan al editor de video, no implican renderizado productivo ya integrado y no prometen detección perfecta de evidencia/branding.
+
+Con esta narrativa, Plataforma Sports no solo crea contenido: controla obligaciones de patrocinio, genera evidencia, revisa cumplimiento de marca y arma paquetes verificables para sponsors.
 
 ## Qué se construyó por encima del alcance original
 
