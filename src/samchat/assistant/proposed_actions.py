@@ -7,6 +7,7 @@ from uuid import uuid4
 
 PROPOSED_ACTION_STATUS = "proposed"
 APPROVAL_REQUIRED = "human_approval_required"
+WRITES_DISABLED_DECISION = "writes_disabled_fail_closed"
 
 
 @dataclass(frozen=True)
@@ -69,4 +70,48 @@ def proposal_execution_attempt_trace(
         "side_effects_detected": 0,
         "external_notification_enqueued": False,
         "audit_language": "proposed",
+    }
+
+
+def approval_shell_decision(
+    *,
+    proposal: ProposedAction,
+    approved_by: Optional[str],
+    writes_enabled: bool,
+) -> Dict[str, Any]:
+    approver_present = bool((approved_by or "").strip())
+    if not writes_enabled:
+        return {
+            "proposal_id": proposal.proposal_id,
+            "decision": "deny",
+            "reason": WRITES_DISABLED_DECISION,
+            "approver_present": approver_present,
+            "handler_invoked": False,
+            "side_effects_detected": 0,
+            "external_notification_enqueued": False,
+            "audit_language": "prepared",
+            "receipt_status": "not_executed",
+        }
+    if not approver_present:
+        return {
+            "proposal_id": proposal.proposal_id,
+            "decision": "deny",
+            "reason": "approval_missing",
+            "approver_present": False,
+            "handler_invoked": False,
+            "side_effects_detected": 0,
+            "external_notification_enqueued": False,
+            "audit_language": "proposed",
+            "receipt_status": "not_executed",
+        }
+    return {
+        "proposal_id": proposal.proposal_id,
+        "decision": "pending",
+        "reason": "execution_boundary_not_implemented",
+        "approver_present": True,
+        "handler_invoked": False,
+        "side_effects_detected": 0,
+        "external_notification_enqueued": False,
+        "audit_language": "proposed",
+        "receipt_status": "not_executed",
     }

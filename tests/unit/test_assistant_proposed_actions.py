@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from samchat.assistant.proposed_actions import (
     APPROVAL_REQUIRED,
+    WRITES_DISABLED_DECISION,
+    approval_shell_decision,
     create_proposed_action,
     proposal_execution_attempt_trace,
 )
@@ -64,3 +66,63 @@ def test_proposal_with_writes_enabled_still_requires_approval_shell() -> None:
     assert trace["handler_invoked"] is False
     assert trace["side_effects_detected"] == 0
     assert trace["audit_language"] == "proposed"
+
+
+def test_approval_shell_fails_closed_when_writes_disabled() -> None:
+    proposal = create_proposed_action(
+        action_type="expense_clarification",
+        title="Preparar aclaración",
+        payload={"expense_id": "exp-1"},
+    )
+
+    decision = approval_shell_decision(
+        proposal=proposal,
+        approved_by="admin-1",
+        writes_enabled=False,
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == WRITES_DISABLED_DECISION
+    assert decision["handler_invoked"] is False
+    assert decision["side_effects_detected"] == 0
+    assert decision["external_notification_enqueued"] is False
+    assert decision["audit_language"] == "prepared"
+    assert decision["receipt_status"] == "not_executed"
+
+
+def test_approval_shell_requires_human_approver() -> None:
+    proposal = create_proposed_action(
+        action_type="operational_checklist",
+        title="Checklist",
+        payload={},
+    )
+
+    decision = approval_shell_decision(
+        proposal=proposal,
+        approved_by=None,
+        writes_enabled=True,
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "approval_missing"
+    assert decision["handler_invoked"] is False
+
+
+def test_approval_shell_does_not_execute_even_with_approver() -> None:
+    proposal = create_proposed_action(
+        action_type="finance_review",
+        title="Revisión",
+        payload={"scope": "readonly"},
+    )
+
+    decision = approval_shell_decision(
+        proposal=proposal,
+        approved_by="admin-1",
+        writes_enabled=True,
+    )
+
+    assert decision["decision"] == "pending"
+    assert decision["reason"] == "execution_boundary_not_implemented"
+    assert decision["handler_invoked"] is False
+    assert decision["side_effects_detected"] == 0
+    assert decision["receipt_status"] == "not_executed"
