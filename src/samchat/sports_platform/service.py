@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .sponsor_media import build_sponsor_media_v1_snapshot
+
 
 def _safe_int(value: Any) -> int:
     try:
@@ -634,6 +636,7 @@ def _build_sponsor_media_dashboard(
     return {
         "title": "Sponsor/Media dashboard",
         "status": "commercial_snapshot_v0",
+        **build_sponsor_media_v1_snapshot(),
         "proof_points": [
             {"label": "Equipos", "value": _safe_int(summary.get("teams_count"))},
             {"label": "Jugadores", "value": _safe_int(summary.get("players_count"))},

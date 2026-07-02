@@ -229,6 +229,17 @@ def test_sponsor_media_declares_marketing_accelerator_modules():
     assert set(sponsor_media["claim_boundary"]) == expected_boundary
     for module in modules:
         assert set(module["claim_boundary"]) == expected_boundary
+    assert sponsor_media["proof_of_performance_v1"]["status"] == "internal_v1"
+    assert sponsor_media["approval_workflow_v1"]["status"] == "state_machine_v1"
+    assert sponsor_media["direct_social_publishing"] == {
+        "status": "client_not_authorized",
+        "reason": (
+            "Fundacion Telmex requires human review and "
+            "manual/human-supervised publishing."
+        ),
+        "external_publishing_enabled": False,
+        "manual_distribution_required": True,
+    }
 
 
 @pytest.mark.asyncio
