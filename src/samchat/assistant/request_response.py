@@ -40,11 +40,16 @@ def render_request_report(
         table = _markdown_table(result.columns, result.rows)
         if table:
             parts.append(table)
+            if result.summary and result.summary.strip() not in {
+                result.title.strip(),
+                "Reporte read-only generado.",
+            }:
+                parts.extend(["", result.summary.strip()])
         else:
             parts.append(result.summary)
         if result.caveats:
             parts.extend(["", *[item for item in result.caveats if item]])
-        return "\n".join(part for part in parts if part != "")
+        return "\n".join(parts).strip()
 
     if result.status == "empty":
         return f"{result.summary}\nNo ejecuté cambios."

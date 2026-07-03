@@ -92,6 +92,64 @@ def _columns(rows: List[Dict[str, Any]]) -> List[str]:
     return columns[:8]
 
 
+def _format_money(value: Any) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _payment_pending_overview_result(
+    *,
+    data: Mapping[str, Any],
+    route: RequestRoute,
+) -> Optional[RequestReportResult]:
+    if route.canonical_action != "receipts.pending_payment_overview":
+        return None
+    if "pending_count" not in data and "total_pendiente" not in data:
+        return None
+
+    pending_count = int(data.get("pending_count") or 0)
+    terceros = int(data.get("solicitud_terceros") or 0)
+    personal = int(data.get("solicitud_personal") or 0)
+    total_pendiente = data.get("total_pendiente") or 0
+
+    if pending_count <= 0:
+        return RequestReportResult(
+            status="empty",
+            title="Pagos pendientes",
+            summary="No encontré pagos pendientes. No ejecuté cambios.",
+            columns=[],
+            rows=[],
+            caveats=[],
+            exportable=False,
+            provider_called=False,
+            actions_executed=[],
+            canonical_action=route.canonical_action,
+            raw_result=dict(data),
+        )
+
+    return RequestReportResult(
+        status="success",
+        title="Pagos pendientes",
+        summary=(
+            f"Encontré {pending_count} pagos pendientes. "
+            f"Total pendiente: {_format_money(total_pendiente)}. No ejecuté cambios."
+        ),
+        columns=["tipo", "cantidad"],
+        rows=[
+            {"tipo": "Solicitudes de terceros", "cantidad": terceros},
+            {"tipo": "Solicitudes personales", "cantidad": personal},
+        ],
+        caveats=[],
+        exportable=True,
+        provider_called=False,
+        actions_executed=[],
+        canonical_action=route.canonical_action,
+        raw_result=dict(data),
+    )
+
+
 async def run_read_only_report(
     *,
     intent: OperationalRequestIntent,
@@ -212,6 +270,10 @@ async def run_read_only_report(
         )
 
     data = dict(executed.get("data") or executed)
+    payment_result = _payment_pending_overview_result(data=data, route=route)
+    if payment_result is not None:
+        return payment_result
+
     rows = _rows_from_mapping(data)
     status = "success" if rows or data else "empty"
     return RequestReportResult(

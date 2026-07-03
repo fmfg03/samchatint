@@ -113,6 +113,44 @@ async def test_cfdi_request_uses_injected_read_only_action_executor():
 
 
 @pytest.mark.asyncio
+async def test_pending_payments_aggregate_renders_as_operator_table():
+    intent = detect_request_intent("que pagos tenemos pendientes")
+    route = route_request(intent)
+
+    async def executor(action, payload):
+        assert action == "receipts.pending_payment_overview"
+        return {
+            "data": {
+                "pending_count": 2,
+                "total_pendiente": 29722.16,
+                "solicitud_terceros": 2,
+                "solicitud_personal": 0,
+            }
+        }
+
+    result = await run_read_only_report(
+        intent=intent,
+        route=route,
+        action_executor=executor,
+    )
+    rendered = render_request_report(intent=intent, route=route, result=result)
+
+    assert result.status == "success"
+    assert result.title == "Pagos pendientes"
+    assert result.columns == ["tipo", "cantidad"]
+    assert result.rows == [
+        {"tipo": "Solicitudes de terceros", "cantidad": 2},
+        {"tipo": "Solicitudes personales", "cantidad": 0},
+    ]
+    assert "Pagos pendientes" in rendered
+    assert "| Solicitudes de terceros | 2 |" in rendered
+    assert "Total pendiente" in rendered
+    assert "$29,722.16" in rendered
+    assert "{'pending_count'" not in rendered
+    assert "No ejecuté cambios." in rendered
+
+
+@pytest.mark.asyncio
 async def test_missing_read_only_executor_returns_unavailable_not_provider():
     intent = detect_request_intent("Qué pagos vencen esta semana")
     route = route_request(intent)
