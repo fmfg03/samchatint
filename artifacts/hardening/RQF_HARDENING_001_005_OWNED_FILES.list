@@ -1,0 +1,16 @@
+copa_telmex_dashboard.py
+src/devnous/gastos/routes/webhook_handler.py
+src/samchat/assistant/router.py
+telegram_roster_ocr_bot.py
+src/samchat/__init__.py
+src/devnous/__init__.py
+tests/unit/test_registration_review_security.py
+tests/unit/gastos/test_tocino_webhook_routes.py
+tests/unit/test_assistant_request_router_integration.py
+tests/unit/test_assistant_analyst_routing_integration.py
+tests/unit/test_assistant_action_router_contracts.py
+tests/unit/test_assistant_document_runtime_smoke.py
+scripts/pytestw
+artifacts/deployment/SAMCHAT_LIVE_RUNTIME_SOURCE_OF_TRUTH.md
+artifacts/repo_hygiene/SAMCHAT_GENERATED_AND_LEGACY_SURFACES_POLICY.md
+artifacts/hardening/RQF_HARDENING_001_005_CLOSEOUT.md

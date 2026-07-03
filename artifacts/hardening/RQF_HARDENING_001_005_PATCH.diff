@@ -1,0 +1,588 @@
+diff --git a/artifacts/deployment/SAMCHAT_LIVE_RUNTIME_SOURCE_OF_TRUTH.md b/artifacts/deployment/SAMCHAT_LIVE_RUNTIME_SOURCE_OF_TRUTH.md
+new file mode 100644
+index 000000000..6e09abd20
+--- /dev/null
++++ b/artifacts/deployment/SAMCHAT_LIVE_RUNTIME_SOURCE_OF_TRUTH.md
+@@ -0,0 +1,42 @@
++# SamChat Live Runtime Source Of Truth
++
++Created for `RQF_HARDENING_001_005` on 2026-07-03.
++
++## Observed Checkout
++
++- Working directory: `/root/samchat`
++- Clean-pack base used for this branch: `c22c9b2f8`
++- Note: `main` is not automatically the live source of truth. The live identity must be confirmed from the deployed checkout, service unit, and process command.
++
++## Live Runtime Identity
++
++- Live service name: `samchat-gastos.service`
++- Runtime entrypoint: `uvicorn copa_telmex_dashboard:app --host 127.0.0.1 --port 8000`
++- Live web app module: `copa_telmex_dashboard.py`
++- Secondary repo surfaces such as `src/devnous/api.py`, `src/samchat/main.py`, and `mcp_platform_launcher.py` are not interchangeable with the live gastos dashboard runtime.
++
++## Assistant Safety Flags
++
++Expected current safety posture:
++
++- `ASSISTANT_AGENT_RUNTIME_ENABLED=false`
++- `ASSISTANT_AGENT_RUNTIME_READONLY_ONLY=true`
++- `ASSISTANT_AGENT_WRITES_ENABLED=false`
++- `ASSISTANT_AGENT_SHADOW_ENABLED=false`
++
++These values document the expected deployed safety mode. Do not print or persist secret values while verifying runtime environment.
++
++## Health Checks
++
++Run against localhost from the deployment host:
++
++```bash
++curl -sS http://127.0.0.1:8000/healthz
++curl -sS http://127.0.0.1:8000/readyz
++```
++
++If the service is exposed through a reverse proxy, verify proxy health separately without assuming it changes the Python runtime identity.
++
++## Frontend Artifact Note
++
++Nested frontend source-to-dist mapping still requires an explicit build and deploy contract. In particular, do not delete or regenerate nested `dist` artifacts such as `goal-fest-page/dist` or `copatelmex/dist` until the live frontend dependency map is proven.
+diff --git a/artifacts/hardening/RQF_HARDENING_001_005_CLOSEOUT.md b/artifacts/hardening/RQF_HARDENING_001_005_CLOSEOUT.md
+new file mode 100644
+index 000000000..89f98cda2
+--- /dev/null
++++ b/artifacts/hardening/RQF_HARDENING_001_005_CLOSEOUT.md
+@@ -0,0 +1,51 @@
++# RQF_HARDENING_001_005 Closeout
++
++Date: 2026-07-03
++
++## Branch And Head
++
++- Clean-pack branch: `rqf/hardening-001-005-clean`
++- Clean-pack base: `c22c9b2f8`
++- Base selection note: local committed refs do not combine `333a2ff44e495b09c494afbde3a86167470057fa` ancestry with tracked `copa_telmex_dashboard.py`; `c22c9b2f8` is the local committed live-runtime base containing the dashboard entrypoint.
++
++## Files Changed By This Sprint
++
++- `copa_telmex_dashboard.py`
++- `src/devnous/gastos/routes/webhook_handler.py`
++- `src/samchat/assistant/router.py`
++- `telegram_roster_ocr_bot.py`
++- `tests/unit/test_registration_review_security.py`
++- `tests/unit/gastos/test_tocino_webhook_routes.py`
++- `tests/unit/test_assistant_request_router_integration.py`
++- `tests/unit/test_assistant_analyst_routing_integration.py`
++- `tests/unit/test_assistant_action_router_contracts.py`
++- `tests/unit/test_assistant_document_runtime_smoke.py`
++- `artifacts/deployment/SAMCHAT_LIVE_RUNTIME_SOURCE_OF_TRUTH.md`
++- `artifacts/repo_hygiene/SAMCHAT_GENERATED_AND_LEGACY_SURFACES_POLICY.md`
++- `artifacts/hardening/RQF_HARDENING_001_005_CLOSEOUT.md`
++
++## Config Guards Added
++
++- Added explicit production-mode detection using `SAMCHAT_ENV`, `ENVIRONMENT`, `APP_ENV`, or `FASTAPI_ENV` values `production`, `prod`, or `live`.
++- Added dashboard startup guard so explicit production mode without `DATABASE_URL` raises a startup `RuntimeError`.
++- Preserved the existing local/dev database fallback when production mode is not explicitly set.
++- Existing session-secret startup guard remains in place through `SESSION_SECRET_KEY`.
++
++## Webhook Fail-Closed Behavior
++
++- Tocino webhook now rejects payloads in explicit production mode when `TOCINO_WEBHOOK_SECRET` is missing.
++- Rejection happens before JSON payload processing and before DB write-path execution.
++- Configured webhook secrets continue to use the existing HMAC verification behavior.
++- Secret values are not printed or persisted.
++
++## Tests Added Or Restored
++
++- Restored `tests/unit/test_assistant_request_router_integration.py`.
++- Restored `tests/unit/test_assistant_analyst_routing_integration.py`.
++- Added thin compatibility validation tests for action-router and deterministic runtime smoke because the clean live-runtime base did not include those files.
++- Added production/dev DB guard tests.
++- Added production missing-secret and configured-secret Tocino webhook tests.
++
++## Explicit Non-Changes
++
++No DB schema, migration, auth workflow semantics, OCR execution, provider call, external webhook call, or product feature workflow was changed by this sprint.
+diff --git a/artifacts/repo_hygiene/SAMCHAT_GENERATED_AND_LEGACY_SURFACES_POLICY.md b/artifacts/repo_hygiene/SAMCHAT_GENERATED_AND_LEGACY_SURFACES_POLICY.md
+new file mode 100644
+index 000000000..59ccd5a9c
+--- /dev/null
++++ b/artifacts/repo_hygiene/SAMCHAT_GENERATED_AND_LEGACY_SURFACES_POLICY.md
+@@ -0,0 +1,32 @@
++# SamChat Generated And Legacy Surfaces Policy
++
++Created for `RQF_HARDENING_001_005` on 2026-07-03.
++
++## Normal Scan Exclusions
++
++Exclude generated or environment-owned directories from routine code-quality scans unless the scan specifically targets runtime packaging:
++
++- `node_modules`
++- `dist`, unless the directory is a proven runtime artifact
++- `__pycache__`
++- Python virtualenv directories such as `.venv`, `venv`, `.venv-*`, and `env`
++- Graphify outputs and cache directories
++
++## Legacy Surfaces Requiring Quarantine Or Runbook
++
++Do not delete or execute these categories casually. First map process, cron, systemd, deployment, and DB dependencies:
++
++- Root Telegram/OCR bot scripts
++- Migration, seed, purge, and backfill scripts
++- Old deployment trees and deployment helper copies
++
++## Must Not Delete Without Further Proof
++
++- `goal-fest-page/dist` until live frontend mapping is proven
++- `copatelmex/dist` until live frontend mapping is proven
++- OCR scripts until cron, systemd, and process references are checked
++- Migration and backfill scripts until the DB runbook is mapped
++
++## Review Rule
++
++Generated-artifact cleanup should be handled as an explicit repository hygiene task with its own evidence log. It should not be bundled into runtime hardening, finance workflow changes, assistant routing work, or deployment fixes.
+diff --git a/copa_telmex_dashboard.py b/copa_telmex_dashboard.py
+index 6708d8415..ea9fccc56 100644
+--- a/copa_telmex_dashboard.py
++++ b/copa_telmex_dashboard.py
+@@ -210,6 +210,32 @@ def _require_session_secret_key() -> str:
+     return secret
+ 
+ 
++PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
++
++
++def _samchat_runtime_env() -> str:
++    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
++        value = (os.getenv(name) or "").strip().lower()
++        if value:
++            return value
++    return ""
++
++
++def _is_production_runtime() -> bool:
++    return _samchat_runtime_env() in PRODUCTION_ENV_VALUES
++
++
++def _require_database_url_for_runtime() -> str:
++    configured_url = (os.getenv("DATABASE_URL") or "").strip()
++    if configured_url:
++        return configured_url
++    if _is_production_runtime():
++        raise RuntimeError(
++            "DATABASE_URL must be configured before starting samchat-gastos in production mode."
++        )
++    return "postgresql+asyncpg://copa_user:copa_pass_2025@localhost:5432/copa_telmex"
++
++
+ REVIEW_ALLOWED_SESSION_ROLES = frozenset(
+     {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}
+ )
+@@ -1157,7 +1183,7 @@ app.include_router(assistant_router)
+ app.include_router(assistant_router, prefix="/copa-america", include_in_schema=False)
+ 
+ # Database setup: use DATABASE_URL in production (e.g. sam.chat) so the same DB backs /admin/gastos
+-_db_url = os.getenv("DATABASE_URL") or "postgresql+asyncpg://copa_user:copa_pass_2025@localhost:5432/copa_telmex"
++_db_url = _require_database_url_for_runtime()
+ if _db_url.startswith("postgresql://") and "+asyncpg" not in _db_url:
+     _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+ db_url = _db_url
+diff --git a/scripts/pytestw b/scripts/pytestw
+new file mode 100755
+index 000000000..58fefd510
+--- /dev/null
++++ b/scripts/pytestw
+@@ -0,0 +1,14 @@
++#!/usr/bin/env bash
++
++set -euo pipefail
++
++ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
++VENV_PYTHON="$ROOT_DIR/.venv/bin/python"
++
++if [[ -x "$VENV_PYTHON" ]]; then
++    export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
++    exec "$VENV_PYTHON" -m pytest "$@"
++fi
++
++export PYTHONPATH="$ROOT_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
++exec python3 -m pytest "$@"
+diff --git a/src/devnous/__init__.py b/src/devnous/__init__.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/src/devnous/gastos/routes/webhook_handler.py b/src/devnous/gastos/routes/webhook_handler.py
+index 559544334..bccb1746a 100644
+--- a/src/devnous/gastos/routes/webhook_handler.py
++++ b/src/devnous/gastos/routes/webhook_handler.py
+@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
+ 
+ router = APIRouter()
+ 
++PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
++
++
++def _samchat_runtime_env() -> str:
++    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
++        value = (os.getenv(name) or "").strip().lower()
++        if value:
++            return value
++    return ""
++
++
++def _is_production_runtime() -> bool:
++    return _samchat_runtime_env() in PRODUCTION_ENV_VALUES
++
++
++def _tocino_webhook_secret_for_runtime() -> str:
++    secret = (os.getenv("TOCINO_WEBHOOK_SECRET") or "").strip()
++    if secret:
++        return secret
++    if _is_production_runtime():
++        logger.error("TOCINO_WEBHOOK_SECRET is missing in production mode")
++        raise HTTPException(
++            status_code=503,
++            detail="Webhook signature verification is not configured",
++        )
++    return ""
++
+ 
+ async def _upsert_gasto_adjunto_tocino(
+     session: AsyncSession,
+@@ -537,8 +564,8 @@ async def receive_tocino_webhook(
+     
+     signature_header_name = os.getenv("TOCINO_WEBHOOK_SIGNATURE_HEADER", "typeform-signature").lower()
+     
+-    # Verify signature if secret is configured
+-    webhook_secret = os.getenv("TOCINO_WEBHOOK_SECRET")
++    # Verify signature when configured; fail closed in explicit production mode.
++    webhook_secret = _tocino_webhook_secret_for_runtime()
+     if webhook_secret:
+         configured_signature = request.headers.get(signature_header_name)
+         signature_to_verify = configured_signature or typeform_signature
+diff --git a/src/samchat/__init__.py b/src/samchat/__init__.py
+new file mode 100644
+index 000000000..e69de29bb
+diff --git a/src/samchat/assistant/router.py b/src/samchat/assistant/router.py
+index 865f3c729..68ce20ebe 100644
+--- a/src/samchat/assistant/router.py
++++ b/src/samchat/assistant/router.py
+@@ -1789,6 +1789,10 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
+         "cómo vamos",
+         "hallazgo",
+         "hallazgos",
++        "riesgo",
++        "riesgos",
++        "contrato",
++        "contratos",
+         "resumen ejecutivo",
+         "ejecutivo",
+         "dashboard",
+diff --git a/tests/unit/gastos/test_tocino_webhook_routes.py b/tests/unit/gastos/test_tocino_webhook_routes.py
+new file mode 100644
+index 000000000..11c687dcb
+--- /dev/null
++++ b/tests/unit/gastos/test_tocino_webhook_routes.py
+@@ -0,0 +1,84 @@
++from __future__ import annotations
++
++import hashlib
++import hmac
++import json
++from types import SimpleNamespace
++from unittest.mock import AsyncMock
++
++import pytest
++from fastapi import HTTPException
++
++from devnous.gastos.routes import webhook_handler
++
++
++@pytest.fixture(autouse=True)
++def _clear_runtime_env(monkeypatch):
++    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
++        monkeypatch.delenv(name, raising=False)
++    monkeypatch.delenv("TOCINO_WEBHOOK_SECRET", raising=False)
++    monkeypatch.delenv("TOCINO_WEBHOOK_SIGNATURE_HEADER", raising=False)
++
++
++@pytest.mark.asyncio
++async def test_receive_tocino_webhook_rejects_missing_secret_in_production(monkeypatch):
++    monkeypatch.setenv("SAMCHAT_ENV", "production")
++    payload = {"ticket_id": "T-1", "nova_request_id": "N-1", "status": "finalizado"}
++    session = AsyncMock()
++    request = SimpleNamespace(
++        headers={},
++        body=AsyncMock(return_value=json.dumps(payload).encode("utf-8")),
++    )
++    apply_mock = AsyncMock()
++    monkeypatch.setattr(webhook_handler, "apply_tocino_payload_to_db", apply_mock)
++
++    with pytest.raises(HTTPException) as exc_info:
++        await webhook_handler.receive_tocino_webhook(
++            request=request,
++            typeform_signature=None,
++            session=session,
++        )
++
++    assert exc_info.value.status_code == 503
++    assert exc_info.value.detail == "Webhook signature verification is not configured"
++    apply_mock.assert_not_called()
++    session.rollback.assert_not_awaited()
++
++
++@pytest.mark.asyncio
++async def test_receive_tocino_webhook_accepts_configured_secret(monkeypatch):
++    monkeypatch.setenv("SAMCHAT_ENV", "production")
++    monkeypatch.setenv("TOCINO_WEBHOOK_SECRET", "test-webhook-secret")
++    payload = {"ticket_id": "T-1", "nova_request_id": "N-1", "status": "finalizado"}
++    body = json.dumps(payload).encode("utf-8")
++    signature = hmac.new(
++        b"test-webhook-secret",
++        body,
++        hashlib.sha256,
++    ).hexdigest()
++    session = AsyncMock()
++    request = SimpleNamespace(
++        headers={"typeform-signature": signature},
++        body=AsyncMock(return_value=body),
++    )
++    monkeypatch.setattr(
++        webhook_handler,
++        "apply_tocino_payload_to_db",
++        AsyncMock(
++            return_value={
++                "status": "success",
++                "nova_request_id": "N-1",
++                "estado_factura": "completada",
++                "synced_to_expenses": True,
++            }
++        ),
++    )
++
++    result = await webhook_handler.receive_tocino_webhook(
++        request=request,
++        typeform_signature=None,
++        session=session,
++    )
++
++    assert result["status"] == "success"
++    assert result["nova_request_id"] == "N-1"
+diff --git a/tests/unit/test_assistant_action_router_contracts.py b/tests/unit/test_assistant_action_router_contracts.py
+new file mode 100644
+index 000000000..1611a38bf
+--- /dev/null
++++ b/tests/unit/test_assistant_action_router_contracts.py
+@@ -0,0 +1,14 @@
++from samchat.assistant.action_router import supported_actions, supported_read_actions, supported_write_actions
++
++
++def test_action_router_exposes_read_and_write_contracts():
++    actions = set(supported_actions())
++
++    assert "executive.realtime_report" in actions
++    assert "receipts.request_cfdi" in actions
++    assert set(supported_read_actions()).issubset(actions)
++    assert set(supported_write_actions()).issubset(actions)
++
++
++def test_action_router_keeps_read_write_sets_disjoint():
++    assert set(supported_read_actions()).isdisjoint(set(supported_write_actions()))
+diff --git a/tests/unit/test_assistant_analyst_routing_integration.py b/tests/unit/test_assistant_analyst_routing_integration.py
+new file mode 100644
+index 000000000..bd2c4193a
+--- /dev/null
++++ b/tests/unit/test_assistant_analyst_routing_integration.py
+@@ -0,0 +1,23 @@
++from __future__ import annotations
++
++from samchat.assistant.router import _assistant_classify_request, _assistant_route_system_prompt
++
++
++def test_analyst_does_not_steal_operational_write_requests():
++    route = _assistant_classify_request(
++        "Crea una solicitud de pago para balones del torneo sub 17."
++    )
++
++    assert route["route"] == "agentic_write"
++    assert route["domain"] in {"finance", "mixed"}
++    assert route["has_write_intent"] is True
++
++
++def test_analyst_handles_contract_risk_requests():
++    route = _assistant_classify_request("Qué riesgos ves en este contrato")
++
++    assert route["route"] == "reporting"
++    assert route["domain"] == "generic"
++    prompt = _assistant_route_system_prompt(route)
++    assert "Consulta analitica" in prompt
++    assert "riesgos" in prompt
+diff --git a/tests/unit/test_assistant_document_runtime_smoke.py b/tests/unit/test_assistant_document_runtime_smoke.py
+new file mode 100644
+index 000000000..7b25f9b28
+--- /dev/null
++++ b/tests/unit/test_assistant_document_runtime_smoke.py
+@@ -0,0 +1,43 @@
++from samchat.assistant.conversation_service import run_message_turn_with_pending
++
++
++async def test_deterministic_pending_bypasses_provider_path():
++    async def pending_loader(**_kwargs):
++        return None
++
++    async def provider_must_not_run(**_kwargs):  # pragma: no cover - sentinel
++        raise AssertionError("provider path was called")
++
++    async def build_response(**_kwargs):
++        class Response:
++            assistant_message = "ok"
++            tool_trace = [{"provider_called": False}]
++
++        return Response()
++
++    class Obj:
++        id = "id-1"
++
++    response = await run_message_turn_with_pending(
++        raw_message="registrar deterministico",
++        conversation=Obj(),
++        current_empleado=Obj(),
++        session=object(),
++        request=None,
++        tournament_key=None,
++        bi_year=None,
++        bi_scope=None,
++        bi_segment=None,
++        assistant_mode=None,
++        openai_api_key=None,
++        latest_pending_run_for_conversation=pending_loader,
++        is_explicit_approval_message=lambda _text: False,
++        is_explicit_rejection_message=lambda _text: False,
++        confirm_pending_run=provider_must_not_run,
++        deterministic_pending_builders=[lambda **_kwargs: ("tool", {}, "message")],
++        build_deterministic_pending_response=build_response,
++        assistant_turn=provider_must_not_run,
++        maybe_append_export_prompt=lambda message, _trace: message,
++    )
++
++    assert response.tool_trace[0]["provider_called"] is False
+diff --git a/tests/unit/test_assistant_request_router_integration.py b/tests/unit/test_assistant_request_router_integration.py
+new file mode 100644
+index 000000000..e3a17cb82
+--- /dev/null
++++ b/tests/unit/test_assistant_request_router_integration.py
+@@ -0,0 +1,73 @@
++from __future__ import annotations
++
++from types import SimpleNamespace
++
++import pytest
++
++from samchat.assistant.conversation_service import run_message_turn_with_pending
++from samchat.assistant.router import _assistant_classify_request, _assistant_route_system_prompt
++
++
++async def _none_pending(**_kwargs):
++    return None
++
++
++async def _provider_must_not_be_called(**_kwargs):  # pragma: no cover - sentinel
++    raise AssertionError("provider path was called for deterministic request")
++
++
++def _append_noop(message, _trace):
++    return message
++
++
++@pytest.mark.asyncio
++async def test_deterministic_request_route_wins_without_provider_call():
++    route = _assistant_classify_request("Compara gasto 2026 vs 2025 por concepto")
++
++    assert route["route"] == "reporting"
++    assert route["domain"] == "finance"
++    assert "Consulta analitica" in _assistant_route_system_prompt(route)
++
++    async def build_response(**kwargs):
++        return SimpleNamespace(
++            assistant_message="deterministic response",
++            tool_trace=[
++                {
++                    "deterministic_pending": {
++                        "provider_called": False,
++                        "source": "request-router-integration",
++                    }
++                }
++            ],
++            pending_confirmation=None,
++        )
++
++    response = await run_message_turn_with_pending(
++        raw_message="Compara gasto 2026 vs 2025 por concepto",
++        conversation=SimpleNamespace(id="conv-1"),
++        current_empleado=SimpleNamespace(id="emp-1"),
++        session=SimpleNamespace(),
++        request=None,
++        tournament_key=None,
++        bi_year=None,
++        bi_scope=None,
++        bi_segment=None,
++        assistant_mode=None,
++        openai_api_key=None,
++        latest_pending_run_for_conversation=_none_pending,
++        is_explicit_approval_message=lambda _text: False,
++        is_explicit_rejection_message=lambda _text: False,
++        confirm_pending_run=_provider_must_not_be_called,
++        deterministic_pending_builders=[
++            lambda **_kwargs: (
++                "assistant_canonical_query",
++                {"action": "executive.realtime_report"},
++                "deterministic request",
++            )
++        ],
++        build_deterministic_pending_response=build_response,
++        assistant_turn=_provider_must_not_be_called,
++        maybe_append_export_prompt=_append_noop,
++    )
++
++    assert response.tool_trace[0]["deterministic_pending"]["provider_called"] is False
+diff --git a/tests/unit/test_registration_review_security.py b/tests/unit/test_registration_review_security.py
+new file mode 100644
+index 000000000..d8a34037e
+--- /dev/null
++++ b/tests/unit/test_registration_review_security.py
+@@ -0,0 +1,36 @@
++import os
++
++os.environ.setdefault("SESSION_SECRET_KEY", "test-session-secret")
++
++import pytest
++
++import copa_telmex_dashboard as dashboard
++
++
++def test_session_secret_missing_fails_fast(monkeypatch):
++    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
++
++    with pytest.raises(RuntimeError) as exc_info:
++        dashboard._require_session_secret_key()
++
++    assert "SESSION_SECRET_KEY" in str(exc_info.value)
++
++
++def test_production_missing_database_url_fails_fast(monkeypatch):
++    monkeypatch.setenv("SAMCHAT_ENV", "production")
++    monkeypatch.delenv("DATABASE_URL", raising=False)
++
++    with pytest.raises(RuntimeError) as exc_info:
++        dashboard._require_database_url_for_runtime()
++
++    assert "DATABASE_URL" in str(exc_info.value)
++
++
++def test_dev_missing_database_url_keeps_local_fallback(monkeypatch):
++    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
++        monkeypatch.delenv(name, raising=False)
++    monkeypatch.delenv("DATABASE_URL", raising=False)
++
++    db_url = dashboard._require_database_url_for_runtime()
++
++    assert db_url.startswith("postgresql+asyncpg://")

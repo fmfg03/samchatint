@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
+
+
+def _samchat_runtime_env() -> str:
+    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
+        value = (os.getenv(name) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _is_production_runtime() -> bool:
+    return _samchat_runtime_env() in PRODUCTION_ENV_VALUES
+
+
+def _tocino_webhook_secret_for_runtime() -> str:
+    secret = (os.getenv("TOCINO_WEBHOOK_SECRET") or "").strip()
+    if secret:
+        return secret
+    if _is_production_runtime():
+        logger.error("TOCINO_WEBHOOK_SECRET is missing in production mode")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification is not configured",
+        )
+    return ""
+
 
 async def _upsert_gasto_adjunto_tocino(
     session: AsyncSession,
@@ -537,8 +564,8 @@ async def receive_tocino_webhook(
     
     signature_header_name = os.getenv("TOCINO_WEBHOOK_SIGNATURE_HEADER", "typeform-signature").lower()
     
-    # Verify signature if secret is configured
-    webhook_secret = os.getenv("TOCINO_WEBHOOK_SECRET")
+    # Verify signature when configured; fail closed in explicit production mode.
+    webhook_secret = _tocino_webhook_secret_for_runtime()
     if webhook_secret:
         configured_signature = request.headers.get(signature_header_name)
         signature_to_verify = configured_signature or typeform_signature
