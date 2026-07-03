@@ -3954,8 +3954,29 @@ def _has_exportable_report_trace(tool_trace: Any) -> bool:
     return _extract_report_payload_from_trace(tool_trace) is not None
 
 
+def _is_failed_or_incomplete_assistant_message(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    blocked_phrases = (
+        "tardó demasiado",
+        "tardo demasiado",
+        "provider_timeout",
+        "no se pudo generar",
+        "no pude generar",
+        "no encontré resultados",
+        "no encontre resultados",
+        "sin resultados",
+        "intenta de nuevo",
+        "unexpected processing error",
+    )
+    return any(phrase in text for phrase in blocked_phrases)
+
+
 def _maybe_append_export_prompt(message: str, tool_trace: Any) -> str:
     text = (message or "").strip()
+    if _is_failed_or_incomplete_assistant_message(text):
+        return text
     if not _has_exportable_report_trace(tool_trace):
         return text
     hint = "¿Quieres que te lo exporte ahora? Responde Excel (CSV) o PDF."
