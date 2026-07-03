@@ -145,3 +145,21 @@ async def test_document_confirmation_command_wins_over_analyst():
     assert "No encontre una accion documental propuesta" in response.assistant_message
     assert response.tool_trace[0].get("document_confirmation_live_wiring")
     assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+
+@pytest.mark.asyncio
+async def test_contract_risk_request_uses_analyst_without_provider():
+    context = (
+        "DOCUMENT_INTAKE_RESULT JSON:\n"
+        '{"detected_document_type":"contract","summary":"Contrato con obligaciones de pago y entregables pendientes","missing_fields":[]}\n\n'
+        "Archivo procesado."
+    )
+    response = await _run_message(
+        "Qué riesgos ves en este contrato",
+        session=_FakeSession(latest_contents=[context]),
+    )
+
+    assert "Riesgos visibles con el contexto disponible" in response.assistant_message
+    assert "Contrato con obligaciones" in response.assistant_message
+    trace = response.tool_trace[0]["analyst_workbench_live_wiring"]
+    assert trace["status"] == "success"
+    assert trace["provider_called"] is False
