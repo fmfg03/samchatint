@@ -3954,8 +3954,29 @@ def _has_exportable_report_trace(tool_trace: Any) -> bool:
     return _extract_report_payload_from_trace(tool_trace) is not None
 
 
+def _is_failed_or_incomplete_assistant_message(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    blocked_phrases = (
+        "tardó demasiado",
+        "tardo demasiado",
+        "provider_timeout",
+        "no se pudo generar",
+        "no pude generar",
+        "no encontré resultados",
+        "no encontre resultados",
+        "sin resultados",
+        "intenta de nuevo",
+        "unexpected processing error",
+    )
+    return any(phrase in text for phrase in blocked_phrases)
+
+
 def _maybe_append_export_prompt(message: str, tool_trace: Any) -> str:
     text = (message or "").strip()
+    if _is_failed_or_incomplete_assistant_message(text):
+        return text
     if not _has_exportable_report_trace(tool_trace):
         return text
     hint = "¿Quieres que te lo exporte ahora? Responde Excel (CSV) o PDF."
@@ -11412,6 +11433,30 @@ async def create_message(
         )
         await session.commit()
 
+        async def document_action_router_executor(
+            canonical_action: str, payload: Dict[str, Any]
+        ) -> Dict[str, Any]:
+            if canonical_action not in supported_read_actions():
+                raise ValueError(
+                    "document confirmation live wiring only executes read actions"
+                )
+            result = await execute_canonical_action(
+                canonical_action,
+                session=session,
+                context={
+                    "tournament_key": conversation.tournament_key,
+                    "responsible_user_id": str(
+                        getattr(current_empleado, "id", "") or ""
+                    ),
+                },
+                payload=payload,
+            )
+            return {
+                "summary": str(result.data.get("summary") or result.status),
+                "status": result.status,
+                "action": result.action,
+            }
+
         return await run_message_turn_with_pending(
             raw_message=payload.message,
             conversation=conversation,
@@ -11439,6 +11484,7 @@ async def create_message(
             build_deterministic_pending_response=_build_deterministic_pending_response,
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
+            document_action_router_executor=document_action_router_executor,
         )
     except HTTPException:
         raise

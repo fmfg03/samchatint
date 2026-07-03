@@ -19,6 +19,7 @@ from samchat.assistant.router import (
     _extract_uuid_candidates,
     _is_explicit_approval_message,
     _is_explicit_rejection_message,
+    _maybe_append_export_prompt,
 )
 
 
@@ -164,6 +165,42 @@ def test_confirmation_message_helpers_detect_common_yes_and_no_forms() -> None:
     assert _is_explicit_rejection_message("cancela")
     assert _is_explicit_rejection_message("/cancel")
     assert not _is_explicit_rejection_message("adelante")
+
+
+def test_export_prompt_is_not_appended_to_provider_timeout() -> None:
+    message = (
+        "El proveedor del asistente tardó demasiado en responder. "
+        "No ejecuté acciones ni cambios; intenta de nuevo con una consulta más corta."
+    )
+    stale_exportable_trace = [
+        {
+            "tool": "finance.realtime_report",
+            "result": {
+                "totals": {"monto": 100},
+                "breakdown": {"items": [{"concepto": "Hospedaje"}]},
+            },
+        }
+    ]
+
+    assert _maybe_append_export_prompt(message, stale_exportable_trace) == message
+
+
+def test_export_prompt_is_appended_to_successful_report() -> None:
+    message = "Comparativo listo."
+    trace = [
+        {
+            "tool": "finance.realtime_report",
+            "result": {
+                "totals": {"monto": 100},
+                "breakdown": {"items": [{"concepto": "Hospedaje"}]},
+            },
+        }
+    ]
+
+    result = _maybe_append_export_prompt(message, trace)
+
+    assert result.startswith(message)
+    assert "¿Quieres que te lo exporte ahora?" in result
 
 
 def test_build_expense_canonical_pending_prefers_operations_action_when_phase_exists():
