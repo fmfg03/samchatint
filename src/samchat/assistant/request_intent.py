@@ -189,9 +189,9 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             missing_fields=missing,
         )
 
-    if any(
-        token in normalized
-        for token in ("direccion", "directivo", "ejecutivo", "atorando", "riesgos")
+    if any(token in normalized for token in ("direccion", "directivo", "ejecutivo", "atorando")) or (
+        "riesgos" in normalized
+        and any(token in normalized for token in ("semana", "operacion", "finanzas", "reporte"))
     ):
         return _intent(
             raw_text=raw_text,
