@@ -18,6 +18,12 @@ from .document_conversation import (
     render_document_intake_for_conversation,
 )
 from .document_confirmation import AsyncActionRouterExecutor
+from .finance_query_intent import detect_finance_comparison_intent
+from .finance_query_service import (
+    FinanceRowsProvider,
+    render_finance_comparison_result,
+    run_read_only_comparison,
+)
 
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -204,6 +210,61 @@ async def _build_document_confirmation_response(
     return _response_object(assistant_message=message, tool_trace=tool_trace)
 
 
+async def _build_finance_comparison_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
+) -> Optional[Any]:
+    intent = detect_finance_comparison_intent(raw_message)
+    if intent is None:
+        return None
+
+    result = await run_read_only_comparison(
+        intent=intent,
+        session=session,
+        rows_provider=finance_rows_provider,
+    )
+    rendered = render_finance_comparison_result(result)
+    trace_result: dict[str, Any] = {
+        "status": result.status,
+        "source": result.source,
+        "row_count": len(result.rows),
+        "exportable": result.exportable,
+    }
+    if result.exportable and result.rows:
+        trace_result["rows"] = result.rows
+
+    tool_trace = [
+        {
+            "finance_query_live_wiring": {
+                "stage": "deterministic_read_only_comparison",
+                "metric": intent.metric,
+                "years": intent.years,
+                "group_by": intent.group_by,
+                "comparison": intent.comparison,
+                "status": result.status,
+                "source": result.source,
+                "row_count": len(result.rows),
+                "provider_called": False,
+                "writes_attempted": False,
+            },
+            "tool": "finance.read_only_comparison",
+            "result": trace_result,
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def run_conversation_turn(
     *,
     raw_message: str,
@@ -220,6 +281,7 @@ async def run_conversation_turn(
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
     document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
 ) -> Any:
     document_response = await _build_document_upload_response(
         raw_message=raw_message,
@@ -239,6 +301,16 @@ async def run_conversation_turn(
     )
     if document_response is not None:
         return document_response
+
+    finance_response = await _build_finance_comparison_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if finance_response is not None:
+        return finance_response
 
     response = await assistant_turn(
         raw_message=raw_message,
@@ -282,6 +354,7 @@ async def run_message_turn_with_pending(
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
     document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
 ) -> Any:
     pending_run = await latest_pending_run_for_conversation(
         session=session,
@@ -349,6 +422,16 @@ async def run_message_turn_with_pending(
     if document_response is not None:
         return document_response
 
+    finance_response = await _build_finance_comparison_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if finance_response is not None:
+        return finance_response
+
     return await run_conversation_turn(
         raw_message=raw_message,
         conversation=conversation,
@@ -364,4 +447,5 @@ async def run_message_turn_with_pending(
         assistant_turn=assistant_turn,
         maybe_append_export_prompt=maybe_append_export_prompt,
         document_action_router_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
     )
