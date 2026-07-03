@@ -24,6 +24,10 @@ from .finance_query_service import (
     render_finance_comparison_result,
     run_read_only_comparison,
 )
+from .request_intent import detect_request_intent
+from .request_reports import run_read_only_report
+from .request_response import build_request_trace, render_request_report
+from .request_router import route_request
 
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -265,6 +269,38 @@ async def _build_finance_comparison_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+async def _build_request_intelligence_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    action_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
+) -> Optional[Any]:
+    intent = detect_request_intent(raw_message)
+    if intent.domain == "unknown":
+        return None
+    route = route_request(intent)
+    result = await run_read_only_report(
+        intent=intent,
+        route=route,
+        session=session,
+        finance_rows_provider=finance_rows_provider,
+        action_executor=action_executor,
+    )
+    rendered = render_request_report(intent=intent, route=route, result=result)
+    tool_trace = build_request_trace(intent=intent, route=route, result=result)
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def run_conversation_turn(
     *,
     raw_message: str,
@@ -301,6 +337,17 @@ async def run_conversation_turn(
     )
     if document_response is not None:
         return document_response
+
+    request_response = await _build_request_intelligence_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        action_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if request_response is not None:
+        return request_response
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
@@ -421,6 +468,17 @@ async def run_message_turn_with_pending(
     )
     if document_response is not None:
         return document_response
+
+    request_response = await _build_request_intelligence_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        action_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if request_response is not None:
+        return request_response
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
