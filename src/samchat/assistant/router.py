@@ -98,7 +98,13 @@ from .turn_service import (
     prepare_turn_state as _prepare_turn_state,
 )
 from .provider_execution import execute_provider as _execute_provider
+from .agent_runtime import (
+    build_agent_runtime_trace as _build_agent_runtime_trace,
+    evaluate_runtime_tool_call as _evaluate_runtime_tool_call,
+    is_agent_runtime_enabled as _is_agent_runtime_enabled,
+)
 from .rag import get_rag_store
+from .tool_registry import build_tool_registry as _build_tool_registry
 from samchat.budgets.service import (
     build_budget_snapshot,
     list_budget_lines,
@@ -1789,6 +1795,10 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         "cómo vamos",
         "hallazgo",
         "hallazgos",
+        "riesgo",
+        "riesgos",
+        "contrato",
+        "contratos",
         "resumen ejecutivo",
         "ejecutivo",
         "dashboard",
@@ -2274,6 +2284,17 @@ DEV_WRITE_TOOLS = {
     "dev_file_write",
     "dev_file_replace",
 }
+
+
+def _assistant_tool_registry() -> Dict[str, Any]:
+    return _build_tool_registry(
+        tool_defs=_tool_defs(),
+        read_tools=READ_TOOLS,
+        write_tools=WRITE_TOOLS,
+        finance_tools=FINANCE_READ_TOOLS | FINANCE_WRITE_TOOLS,
+        tournament_tools=TOURNAMENT_READ_TOOLS | TOURNAMENT_WRITE_TOOLS,
+        dev_tools=DEV_READ_TOOLS | DEV_WRITE_TOOLS,
+    )
 
 
 def _tool_defs_filtered(allowed_names: set[str]) -> List[Dict[str, Any]]:
@@ -3937,8 +3958,29 @@ def _has_exportable_report_trace(tool_trace: Any) -> bool:
     return _extract_report_payload_from_trace(tool_trace) is not None
 
 
+def _is_failed_or_incomplete_assistant_message(message: str) -> bool:
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    blocked_phrases = (
+        "tardó demasiado",
+        "tardo demasiado",
+        "provider_timeout",
+        "no se pudo generar",
+        "no pude generar",
+        "no encontré resultados",
+        "no encontre resultados",
+        "sin resultados",
+        "intenta de nuevo",
+        "unexpected processing error",
+    )
+    return any(phrase in text for phrase in blocked_phrases)
+
+
 def _maybe_append_export_prompt(message: str, tool_trace: Any) -> str:
     text = (message or "").strip()
+    if _is_failed_or_incomplete_assistant_message(text):
+        return text
     if not _has_exportable_report_trace(tool_trace):
         return text
     hint = "¿Quieres que te lo exporte ahora? Responde Excel (CSV) o PDF."
@@ -7726,6 +7768,16 @@ async def _assistant_turn(
     route_prompt = _assistant_route_system_prompt(route_info)
     language_prompt = _assistant_response_language_prompt(raw_message)
     tool_defs = _assistant_tool_defs(route_info)
+    agent_runtime_enabled = _is_agent_runtime_enabled()
+    tool_registry = _assistant_tool_registry() if agent_runtime_enabled else {}
+    if agent_runtime_enabled:
+        tool_trace.append(
+            _build_agent_runtime_trace(
+                route_info=route_info,
+                tool_defs=tool_defs,
+                registry=tool_registry,
+            )
+        )
     max_tokens = _assistant_max_tokens(mode=normalized_mode, route=route_info["route"])
     try:
         workspace_context = await _build_workspace_context(
@@ -7784,6 +7836,18 @@ async def _assistant_turn(
     )
 
     provider_errors: List[str] = []
+    tool_policy_evaluator = None
+    if agent_runtime_enabled:
+        def _runtime_tool_policy_evaluator(tool_name, args, role):
+            return _evaluate_runtime_tool_call(
+                tool_name=tool_name,
+                args=args,
+                role=role,
+                registry=tool_registry,
+            )
+
+        tool_policy_evaluator = _runtime_tool_policy_evaluator
+
     for provider in _assistant_provider_order(
         normalized_mode,
         route_info=route_info,
@@ -7840,6 +7904,7 @@ async def _assistant_turn(
                 assistant_run_cls=AssistantRun,
                 assistant_message_cls=AssistantMessage,
                 message_response_cls=MessageResponse,
+                tool_policy_evaluator=tool_policy_evaluator,
             )
 
         except HTTPException as exc:
@@ -11372,6 +11437,30 @@ async def create_message(
         )
         await session.commit()
 
+        async def document_action_router_executor(
+            canonical_action: str, payload: Dict[str, Any]
+        ) -> Dict[str, Any]:
+            if canonical_action not in supported_read_actions():
+                raise ValueError(
+                    "document confirmation live wiring only executes read actions"
+                )
+            result = await execute_canonical_action(
+                canonical_action,
+                session=session,
+                context={
+                    "tournament_key": conversation.tournament_key,
+                    "responsible_user_id": str(
+                        getattr(current_empleado, "id", "") or ""
+                    ),
+                },
+                payload=payload,
+            )
+            return {
+                "summary": str(result.data.get("summary") or result.status),
+                "status": result.status,
+                "action": result.action,
+            }
+
         return await run_message_turn_with_pending(
             raw_message=payload.message,
             conversation=conversation,
@@ -11399,6 +11488,7 @@ async def create_message(
             build_deterministic_pending_response=_build_deterministic_pending_response,
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
+            document_action_router_executor=document_action_router_executor,
         )
     except HTTPException:
         raise
