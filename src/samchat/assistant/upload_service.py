@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import HTTPException, UploadFile
 
+from .document_intake import build_document_intake_result
 from .file_parsing import (
     extract_document_text_from_bytes,
     spreadsheet_looks_like_roster,
@@ -25,6 +27,17 @@ AnthropicTextExtractor = Callable[..., Awaitable[str]]
 ProviderOrderResolver = Callable[..., List[str]]
 OpenAIClientFactory = Callable[[Optional[str]], Any]
 RosterExtractor = Callable[[List[dict[str, Any]]], dict[str, Any]]
+
+
+def _document_intake_context(result: Dict[str, Any]) -> str:
+    return (
+        "DOCUMENT_INTAKE_RESULT JSON:\n"
+        f"{json.dumps(result, ensure_ascii=False, sort_keys=True)}\n\n"
+        "Instrucciones de seguridad: usa este resultado como intake documental. "
+        "No afirmes que una accion write fue ejecutada. "
+        "Si hay proposed_actions, presentalas como propuestas y pide confirmacion "
+        "explicita antes de cualquier ejecucion por action_router/canonical adapters.\n\n"
+    )
 
 
 async def extract_text_from_media(
@@ -60,20 +73,28 @@ async def extract_text_from_media(
             filename=upload.filename or "",
             content_type=content_type,
         )
+        intake = build_document_intake_result(
+            file_name=upload.filename or "",
+            file_kind="spreadsheet",
+            records=records,
+            text=note or "",
+        ).to_dict()
         if not spreadsheet_looks_like_roster(records):
-            return build_spreadsheet_upload_context(
+            context = build_spreadsheet_upload_context(
                 preview_text=spreadsheet_preview_text(
                     records=records,
                     filename=upload.filename or "",
                     note=note,
                 )
             )
+            return _document_intake_context(intake) + context
         roster_payload = extract_roster_from_records(records)
-        return build_roster_upload_context(
+        context = build_roster_upload_context(
             roster_payload=roster_payload,
             filename=upload.filename,
             note=note,
         )
+        return _document_intake_context(intake) + context
 
     if kind == "text":
         parsed_text = extract_document_text_from_bytes(
@@ -90,11 +111,17 @@ async def extract_text_from_media(
                     "Formatos recomendados: .txt, .md, .docx"
                 ),
             )
-        return build_text_upload_context(
+        intake = build_document_intake_result(
+            file_name=upload.filename or "",
+            file_kind="text",
+            text=parsed_text,
+        ).to_dict()
+        context = build_text_upload_context(
             parsed_text=parsed_text,
             filename=upload.filename,
             note=note,
         )
+        return _document_intake_context(intake) + context
 
     if kind == "voice":
         client = get_openai_client(openai_api_key)
@@ -168,7 +195,13 @@ async def extract_text_from_media(
             status_code=400, detail="No se pudo extraer texto del archivo"
         )
 
-    return build_media_upload_context(
+    intake = build_document_intake_result(
+        file_name=upload.filename or "",
+        file_kind=kind,
+        text=extracted,
+        user_context={"note": note} if note else None,
+    ).to_dict()
+    return _document_intake_context(intake) + build_media_upload_context(
         kind=kind,
         extracted_text=extracted,
         note=note,

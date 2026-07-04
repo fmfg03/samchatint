@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 RunReadToolFn = Callable[..., Awaitable[Dict[str, Any]]]
 OllamaChatFn = Callable[..., Awaitable[Dict[str, Any]]]
+ToolPolicyEvaluatorFn = Callable[[str, Dict[str, Any], Optional[str]], Dict[str, Any]]
 
 
 def _pending_summary(tool_name: str, args: Dict[str, Any]) -> str:
@@ -16,6 +17,29 @@ def _pending_summary(tool_name: str, args: Dict[str, Any]) -> str:
         f"El asistente quiere ejecutar: {tool_name} con estos parametros:\n"
         f"{json.dumps(args, ensure_ascii=False, indent=2)}"
     )
+
+
+def _evaluate_tool_policy(
+    *,
+    tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn],
+    tool_trace: List[Dict[str, Any]],
+    tool_name: str,
+    args: Dict[str, Any],
+    current_role: Optional[str],
+) -> Optional[Dict[str, Any]]:
+    if tool_policy_evaluator is None:
+        return None
+    decision = tool_policy_evaluator(tool_name, args, current_role)
+    tool_trace.append({"assistant_policy": decision})
+    if decision.get("decision") == "deny":
+        tool_trace.append(
+            {"blocked_tool": {"tool": tool_name, "reason": decision.get("reason")}}
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Tool blocked by assistant policy: {decision.get('reason')}",
+        )
+    return decision
 
 
 async def execute_ollama_provider(
@@ -51,6 +75,7 @@ async def execute_ollama_provider(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     ollama_messages = list(messages)
@@ -92,8 +117,17 @@ async def execute_ollama_provider(
                 if not isinstance(args, dict):
                     args = {}
                 tool_trace.append({"tool": tool_name, "args": args})
+                policy_decision = _evaluate_tool_policy(
+                    tool_policy_evaluator=tool_policy_evaluator,
+                    tool_trace=tool_trace,
+                    tool_name=tool_name,
+                    args=args,
+                    current_role=getattr(current_empleado, "rol", None),
+                )
 
-                if tool_name in write_tools:
+                if tool_name in write_tools or (
+                    policy_decision and policy_decision.get("decision") == "confirm"
+                ):
                     pending_confirmation = pending_confirmation_cls(
                         run_id=str(run_id),
                         tool_name=tool_name,
@@ -240,6 +274,7 @@ async def execute_anthropic_provider(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_anthropic_client()
@@ -293,8 +328,17 @@ async def execute_anthropic_provider(
                 tool_name = getattr(call, "name", "")
                 args = getattr(call, "input", {}) or {}
                 tool_trace.append({"tool": tool_name, "args": args})
+                policy_decision = _evaluate_tool_policy(
+                    tool_policy_evaluator=tool_policy_evaluator,
+                    tool_trace=tool_trace,
+                    tool_name=tool_name,
+                    args=args,
+                    current_role=getattr(current_empleado, "rol", None),
+                )
 
-                if tool_name in write_tools:
+                if tool_name in write_tools or (
+                    policy_decision and policy_decision.get("decision") == "confirm"
+                ):
                     pending_confirmation = pending_confirmation_cls(
                         run_id=str(run_id),
                         tool_name=tool_name,
@@ -432,6 +476,7 @@ async def execute_openai_provider(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_openai_client(openai_api_key)
@@ -461,7 +506,16 @@ async def execute_openai_provider(
                 except json.JSONDecodeError:
                     args = {}
                 tool_trace.append({"tool": tool_name, "args": args})
-                if tool_name in write_tools:
+                policy_decision = _evaluate_tool_policy(
+                    tool_policy_evaluator=tool_policy_evaluator,
+                    tool_trace=tool_trace,
+                    tool_name=tool_name,
+                    args=args,
+                    current_role=getattr(current_empleado, "rol", None),
+                )
+                if tool_name in write_tools or (
+                    policy_decision and policy_decision.get("decision") == "confirm"
+                ):
                     pending_confirmation = pending_confirmation_cls(
                         run_id=str(run_id),
                         tool_name=tool_name,
@@ -610,6 +664,7 @@ async def execute_provider(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
 ) -> Any:
     if provider == "ollama":
         return await execute_ollama_provider(
@@ -644,6 +699,7 @@ async def execute_provider(
             assistant_run_cls=assistant_run_cls,
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
+            tool_policy_evaluator=tool_policy_evaluator,
         )
     if provider == "anthropic":
         return await execute_anthropic_provider(
@@ -686,6 +742,7 @@ async def execute_provider(
             assistant_run_cls=assistant_run_cls,
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
+            tool_policy_evaluator=tool_policy_evaluator,
         )
     return await execute_openai_provider(
         model=model,
@@ -716,4 +773,5 @@ async def execute_provider(
         assistant_run_cls=assistant_run_cls,
         assistant_message_cls=assistant_message_cls,
         message_response_cls=message_response_cls,
+        tool_policy_evaluator=tool_policy_evaluator,
     )

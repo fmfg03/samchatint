@@ -1,6 +1,40 @@
 from __future__ import annotations
 
+import os
+import uuid
+from datetime import datetime
+from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
+
+from sqlalchemy import select
+
+from devnous.gastos.models import AssistantMessage
+
+from .action_router import supported_actions
+from .analyst_intent import detect_analyst_intent
+from .analyst_response import build_analyst_trace, render_analyst_result
+from .analyst_workbench import (
+    AnalystEvidence,
+    extract_analyst_evidence_from_messages,
+    run_analyst_workbench,
+)
+from .document_conversation import (
+    extract_document_intake_result_from_text,
+    handle_document_confirmation_command_async,
+    parse_document_confirmation_command,
+    render_document_intake_for_conversation,
+)
+from .document_confirmation import AsyncActionRouterExecutor
+from .finance_query_intent import detect_finance_comparison_intent
+from .finance_query_service import (
+    FinanceRowsProvider,
+    render_finance_comparison_result,
+    run_read_only_comparison,
+)
+from .request_intent import detect_request_intent
+from .request_reports import run_read_only_report
+from .request_response import build_request_trace, render_request_report
+from .request_router import route_request
 
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -10,6 +44,315 @@ PendingRunLoaderFn = Callable[..., Awaitable[Any]]
 ConfirmPendingRunFn = Callable[..., Awaitable[Any]]
 DeterministicPendingBuilderFn = Callable[..., Any]
 DeterministicResponseBuilderFn = Callable[..., Awaitable[Any]]
+MaybeAppendExportPromptFn = Callable[[str, Any], str]
+
+
+def _document_writes_enabled() -> bool:
+    return os.getenv("ASSISTANT_AGENT_WRITES_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _response_object(
+    *,
+    assistant_message: str,
+    tool_trace: list[dict[str, Any]],
+    run_id: Optional[str] = None,
+) -> Any:
+    return SimpleNamespace(
+        assistant_message=assistant_message,
+        run_id=run_id or str(uuid.uuid4()),
+        tool_trace=tool_trace,
+        pending_confirmation=None,
+    )
+
+
+async def _persist_document_conversation_messages(
+    *,
+    raw_message: str,
+    assistant_message: str,
+    conversation: Any,
+    session: Any,
+) -> None:
+    session.add(
+        AssistantMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=raw_message,
+            tool_name=None,
+            tool_payload=None,
+        )
+    )
+    session.add(
+        AssistantMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=assistant_message,
+            tool_name=None,
+            tool_payload=None,
+        )
+    )
+    conversation.updated_at = datetime.utcnow()
+    await session.commit()
+
+
+async def _latest_document_intake_result(
+    *,
+    session: Any,
+    conversation_id: Any,
+    limit: int = 30,
+) -> Optional[dict[str, Any]]:
+    rows = (
+        await session.execute(
+            select(AssistantMessage)
+            .where(AssistantMessage.conversation_id == conversation_id)
+            .order_by(AssistantMessage.created_at.desc())
+            .limit(limit)
+        )
+    ).scalars()
+    for message in rows:
+        intake = extract_document_intake_result_from_text(message.content or "")
+        if intake is not None:
+            return intake
+    return None
+
+
+async def _latest_analyst_evidence(
+    *,
+    session: Any,
+    conversation_id: Any,
+    limit: int = 20,
+) -> list[AnalystEvidence]:
+    try:
+        rows = (
+            await session.execute(
+                select(AssistantMessage)
+                .where(AssistantMessage.conversation_id == conversation_id)
+                .order_by(AssistantMessage.created_at.desc())
+                .limit(limit)
+            )
+        ).scalars()
+    except Exception:
+        return []
+    return extract_analyst_evidence_from_messages(rows)
+
+
+async def _build_document_upload_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    intake = extract_document_intake_result_from_text(raw_message)
+    if intake is None:
+        return None
+    rendered = render_document_intake_for_conversation(intake)
+    tool_trace = [
+        {
+            "document_intake_live_wiring": {
+                "stage": "upload_render",
+                "detected_document_type": intake.get("detected_document_type"),
+                "proposed_action_count": len(intake.get("proposed_actions") or []),
+                "missing_field_count": len(intake.get("missing_fields") or []),
+                "provider_called": False,
+            }
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+async def _build_document_confirmation_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor],
+) -> Optional[Any]:
+    command = parse_document_confirmation_command(raw_message)
+    if command is None:
+        return None
+    intake = await _latest_document_intake_result(
+        session=session,
+        conversation_id=conversation.id,
+    )
+    if intake is None:
+        message = (
+            "No encontre una accion documental propuesta en esta conversacion. "
+            "Sube el documento de nuevo o confirma desde el mensaje que contiene "
+            "el proposed_action_id."
+        )
+        tool_trace = [
+            {
+                "document_confirmation_live_wiring": {
+                    "stage": "confirmation",
+                    "status": "rejected",
+                    "blocked_reason": "document_intake_context_missing",
+                    "provider_called": False,
+                }
+            }
+        ]
+        message = maybe_append_export_prompt(message, tool_trace)
+        await _persist_document_conversation_messages(
+            raw_message=raw_message,
+            assistant_message=message,
+            conversation=conversation,
+            session=session,
+        )
+        return _response_object(assistant_message=message, tool_trace=tool_trace)
+
+    result = await handle_document_confirmation_command_async(
+        text=raw_message,
+        intake_result=intake,
+        supported_actions=supported_actions(),
+        writes_enabled=_document_writes_enabled(),
+        action_router_executor=document_action_router_executor,
+    )
+    tool_trace = [
+        {
+            "document_confirmation_live_wiring": {
+                "stage": "confirmation",
+                "status": result.status,
+                "blocked_reason": result.blocked_reason,
+                "executed": result.executed,
+                "provider_called": False,
+                "confirmation": result.confirmation,
+            }
+        }
+    ]
+    message = maybe_append_export_prompt(result.message, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=message,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=message, tool_trace=tool_trace)
+
+
+async def _build_finance_comparison_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
+) -> Optional[Any]:
+    intent = detect_finance_comparison_intent(raw_message)
+    if intent is None:
+        return None
+
+    result = await run_read_only_comparison(
+        intent=intent,
+        session=session,
+        rows_provider=finance_rows_provider,
+    )
+    rendered = render_finance_comparison_result(result)
+    trace_result: dict[str, Any] = {
+        "status": result.status,
+        "source": result.source,
+        "row_count": len(result.rows),
+        "exportable": result.exportable,
+    }
+    if result.exportable and result.rows:
+        trace_result["rows"] = result.rows
+
+    tool_trace = [
+        {
+            "finance_query_live_wiring": {
+                "stage": "deterministic_read_only_comparison",
+                "metric": intent.metric,
+                "years": intent.years,
+                "group_by": intent.group_by,
+                "comparison": intent.comparison,
+                "status": result.status,
+                "source": result.source,
+                "row_count": len(result.rows),
+                "provider_called": False,
+                "writes_attempted": False,
+            },
+            "tool": "finance.read_only_comparison",
+            "result": trace_result,
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+async def _build_request_intelligence_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    action_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
+) -> Optional[Any]:
+    intent = detect_request_intent(raw_message)
+    if intent.domain == "unknown":
+        return None
+    route = route_request(intent)
+    result = await run_read_only_report(
+        intent=intent,
+        route=route,
+        session=session,
+        finance_rows_provider=finance_rows_provider,
+        action_executor=action_executor,
+    )
+    rendered = render_request_report(intent=intent, route=route, result=result)
+    tool_trace = build_request_trace(intent=intent, route=route, result=result)
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+async def _build_analyst_workbench_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    intent = detect_analyst_intent(raw_message)
+    if intent is None or intent.requires_operational_route:
+        return None
+    evidence = await _latest_analyst_evidence(
+        session=session,
+        conversation_id=conversation.id,
+    )
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+    rendered = render_analyst_result(result)
+    tool_trace = build_analyst_trace(intent=intent, result=result)
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
 async def run_conversation_turn(
@@ -27,7 +370,58 @@ async def run_conversation_turn(
     openai_api_key: Optional[str],
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
 ) -> Any:
+    document_response = await _build_document_upload_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if document_response is not None:
+        return document_response
+
+    document_response = await _build_document_confirmation_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        document_action_router_executor=document_action_router_executor,
+    )
+    if document_response is not None:
+        return document_response
+
+    request_response = await _build_request_intelligence_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        action_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if request_response is not None:
+        return request_response
+
+    analyst_response = await _build_analyst_workbench_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if analyst_response is not None:
+        return analyst_response
+
+    finance_response = await _build_finance_comparison_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if finance_response is not None:
+        return finance_response
+
     response = await assistant_turn(
         raw_message=raw_message,
         conversation=conversation,
@@ -69,6 +463,8 @@ async def run_message_turn_with_pending(
     build_deterministic_pending_response: DeterministicResponseBuilderFn,
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
+    finance_rows_provider: Optional[FinanceRowsProvider] = None,
 ) -> Any:
     pending_run = await latest_pending_run_for_conversation(
         session=session,
@@ -126,6 +522,46 @@ async def run_message_turn_with_pending(
             session=session,
         )
 
+    document_response = await _build_document_confirmation_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        document_action_router_executor=document_action_router_executor,
+    )
+    if document_response is not None:
+        return document_response
+
+    request_response = await _build_request_intelligence_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        action_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if request_response is not None:
+        return request_response
+
+    analyst_response = await _build_analyst_workbench_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if analyst_response is not None:
+        return analyst_response
+
+    finance_response = await _build_finance_comparison_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if finance_response is not None:
+        return finance_response
+
     return await run_conversation_turn(
         raw_message=raw_message,
         conversation=conversation,
@@ -140,4 +576,6 @@ async def run_message_turn_with_pending(
         openai_api_key=openai_api_key,
         assistant_turn=assistant_turn,
         maybe_append_export_prompt=maybe_append_export_prompt,
+        document_action_router_executor=document_action_router_executor,
+        finance_rows_provider=finance_rows_provider,
     )
