@@ -216,3 +216,23 @@ def test_readyz_returns_503_when_schema_health_is_not_ok(monkeypatch):
     assert response.status_code == 503
     assert payload["ok"] is False
     assert payload["status"] == "degraded"
+
+
+def test_production_missing_database_url_fails_fast(monkeypatch):
+    monkeypatch.setenv("SAMCHAT_ENV", "production")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        dashboard._require_database_url_for_runtime()
+
+    assert "DATABASE_URL" in str(exc_info.value)
+
+
+def test_dev_missing_database_url_keeps_local_fallback(monkeypatch):
+    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    db_url = dashboard._require_database_url_for_runtime()
+
+    assert db_url.startswith("postgresql+asyncpg://")
