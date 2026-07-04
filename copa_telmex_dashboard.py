@@ -210,6 +210,32 @@ def _require_session_secret_key() -> str:
     return secret
 
 
+PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
+
+
+def _samchat_runtime_env() -> str:
+    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
+        value = (os.getenv(name) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _is_production_runtime() -> bool:
+    return _samchat_runtime_env() in PRODUCTION_ENV_VALUES
+
+
+def _require_database_url_for_runtime() -> str:
+    configured_url = (os.getenv("DATABASE_URL") or "").strip()
+    if configured_url:
+        return configured_url
+    if _is_production_runtime():
+        raise RuntimeError(
+            "DATABASE_URL must be configured before starting samchat-gastos in production mode."
+        )
+    return "postgresql+asyncpg://copa_user:copa_pass_2025@localhost:5432/copa_telmex"
+
+
 REVIEW_ALLOWED_SESSION_ROLES = frozenset(
     {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}
 )
@@ -1157,7 +1183,7 @@ app.include_router(assistant_router)
 app.include_router(assistant_router, prefix="/copa-america", include_in_schema=False)
 
 # Database setup: use DATABASE_URL in production (e.g. sam.chat) so the same DB backs /admin/gastos
-_db_url = os.getenv("DATABASE_URL") or "postgresql+asyncpg://copa_user:copa_pass_2025@localhost:5432/copa_telmex"
+_db_url = _require_database_url_for_runtime()
 if _db_url.startswith("postgresql://") and "+asyncpg" not in _db_url:
     _db_url = _db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 db_url = _db_url
