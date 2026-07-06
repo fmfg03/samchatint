@@ -7349,8 +7349,14 @@ async def _run_read_tool(
     bi_scope: Optional[str] = None,
 ) -> Dict[str, Any]:
     if tool_name == "assistant_canonical_query":
+        canonical_action = str(args.get("action") or "").strip()
+        if canonical_action not in supported_read_actions():
+            raise HTTPException(
+                status_code=403,
+                detail="assistant_canonical_query only allows read-only actions",
+            )
         result = await execute_canonical_action(
-            str(args.get("action") or "").strip(),
+            canonical_action,
             session=gastos_session,
             context=args.get("context"),
             payload=args.get("payload"),
