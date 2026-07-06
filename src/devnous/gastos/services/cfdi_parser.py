@@ -7,21 +7,69 @@ Extracts all fields from CFDI XML files and returns structured data.
 import logging
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from ipaddress import ip_address, ip_network
 from typing import Dict, List, Optional, Any
+from urllib.parse import urlparse
 import requests
 
 logger = logging.getLogger(__name__)
 
+MAX_CFDI_XML_DOWNLOAD_BYTES = 15 * 1024 * 1024
+_CFDI_XML_CHUNK_BYTES = 1024 * 1024
+_PRIVATE_NETS = (
+    ip_network("10.0.0.0/8"),
+    ip_network("172.16.0.0/12"),
+    ip_network("192.168.0.0/16"),
+    ip_network("127.0.0.0/8"),
+    ip_network("::1/128"),
+    ip_network("fc00::/7"),
+    ip_network("fe80::/10"),
+)
+
+
+def _cfdi_xml_url_allowed(url: str) -> bool:
+    try:
+        parsed = urlparse((url or "").strip())
+    except Exception:
+        return False
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    host = (parsed.hostname or "").strip().lower()
+    if not host or host == "localhost":
+        return False
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return True
+    return not any(address in net for net in _PRIVATE_NETS)
+
 
 def download_xml(url: str) -> Optional[str]:
     """Download XML file from URL."""
+    if not _cfdi_xml_url_allowed(url):
+        logger.warning("Blocked CFDI XML download from disallowed URL")
+        return None
     try:
-        response = requests.get(url, timeout=30)
+        response = requests.get(
+            url,
+            timeout=30,
+            stream=True,
+            allow_redirects=False,
+        )
         if response.status_code == 200:
-            return response.text
-        else:
-            logger.error(f"Failed to download XML: {response.status_code}")
-            return None
+            chunks = []
+            total = 0
+            for chunk in response.iter_content(chunk_size=_CFDI_XML_CHUNK_BYTES):
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > MAX_CFDI_XML_DOWNLOAD_BYTES:
+                    logger.warning("CFDI XML download exceeded max size")
+                    return None
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8", errors="replace")
+        logger.error(f"Failed to download XML: {response.status_code}")
+        return None
     except Exception as e:
         logger.error(f"Error downloading XML: {e}")
         return None
@@ -241,7 +289,6 @@ def extract_cfdi_data(xml_url: str) -> Dict[str, Any]:
         return {}
     
     return parse_cfdi_xml(xml_content)
-
 
 
 
