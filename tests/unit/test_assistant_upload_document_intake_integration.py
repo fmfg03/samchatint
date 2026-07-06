@@ -9,7 +9,11 @@ from starlette.datastructures import Headers, UploadFile
 
 from samchat.assistant.action_router import supported_actions
 import samchat.assistant.upload_service as upload_service
-from samchat.assistant.upload_service import extract_text_from_media
+from samchat.assistant.upload_service import (
+    _looks_like_image_bytes,
+    _looks_like_voice_bytes,
+    extract_text_from_media,
+)
 
 
 def _upload(filename: str, content_type: str, body: bytes) -> UploadFile:
@@ -293,3 +297,41 @@ async def test_voice_upload_rejects_non_audio_mime_before_provider_call() -> Non
 
     assert exc_info.value.status_code == 400
     assert "audio" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_image_upload_rejects_mime_spoofed_bytes_before_provider_call() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await _run_upload_async(
+            "image",
+            _upload("fake.png", "image/png", b"not actually a png"),
+            b"not actually a png",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "image" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_upload_rejects_mime_spoofed_bytes_before_provider_call() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await _run_upload_async(
+            "voice",
+            _upload("fake.wav", "audio/wav", b"not actually a wav"),
+            b"not actually a wav",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "audio" in str(exc_info.value.detail).lower()
+
+
+def test_upload_magic_byte_helpers_accept_supported_image_and_voice_headers() -> None:
+    assert _looks_like_image_bytes(b"\x89PNG\r\n\x1a\npayload", "image/png")
+    assert _looks_like_image_bytes(b"\xff\xd8\xffpayload", "image/jpeg")
+    assert _looks_like_image_bytes(b"GIF89apayload", "image/gif")
+    assert _looks_like_image_bytes(b"RIFF\x00\x00\x00\x00WEBPpayload", "image/webp")
+
+    assert _looks_like_voice_bytes(b"RIFF\x00\x00\x00\x00WAVEpayload", "audio/wav")
+    assert _looks_like_voice_bytes(b"ID3payload", "audio/mpeg")
+    assert _looks_like_voice_bytes(b"OggSpayload", "audio/ogg")
+    assert _looks_like_voice_bytes(b"\x1a\x45\xdf\xa3payload", "audio/webm")
