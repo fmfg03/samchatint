@@ -40,6 +40,38 @@ _ALLOWED_VOICE_MIME_TYPES = {
 }
 
 
+def _looks_like_image_bytes(raw: bytes, content_type: str) -> bool:
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime == "image/png":
+        return raw.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return raw.startswith(b"\xff\xd8\xff")
+    if mime == "image/gif":
+        return raw.startswith((b"GIF87a", b"GIF89a"))
+    if mime == "image/webp":
+        return len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    return False
+
+
+def _looks_like_voice_bytes(raw: bytes, content_type: str) -> bool:
+    mime = content_type.split(";", 1)[0].strip().lower()
+    if mime in {"audio/wav", "audio/x-wav"}:
+        return len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WAVE"
+    if mime in {"audio/mpeg", "audio/mp3"}:
+        return (
+            raw.startswith(b"ID3")
+            or raw.startswith(b"\xff\xfb")
+            or raw.startswith(b"\xff\xf3")
+        )
+    if mime in {"audio/ogg", "audio/opus"}:
+        return raw.startswith(b"OggS")
+    if mime in {"audio/webm", "video/webm"}:
+        return raw.startswith(b"\x1a\x45\xdf\xa3")
+    if mime in {"audio/mp4", "audio/m4a", "audio/aac"}:
+        return len(raw) >= 12 and raw[4:8] == b"ftyp"
+    return False
+
+
 def _document_intake_context(result: Dict[str, Any]) -> str:
     return (
         "DOCUMENT_INTAKE_RESULT JSON:\n"
@@ -82,6 +114,11 @@ async def extract_text_from_media(
             status_code=400,
             detail="Image uploads must be JPEG, PNG, WEBP, or GIF.",
         )
+    if kind == "image" and not _looks_like_image_bytes(raw, normalized_content_type):
+        raise HTTPException(
+            status_code=400,
+            detail="Image upload content does not match the declared image type.",
+        )
     if kind == "voice" and not (
         normalized_content_type in _ALLOWED_VOICE_MIME_TYPES
         or any(
@@ -92,6 +129,11 @@ async def extract_text_from_media(
         raise HTTPException(
             status_code=400,
             detail="Voice uploads must use an audio MIME type or video/webm.",
+        )
+    if kind == "voice" and not _looks_like_voice_bytes(raw, normalized_content_type):
+        raise HTTPException(
+            status_code=400,
+            detail="Voice upload content does not match the declared audio type.",
         )
 
     extracted = ""
