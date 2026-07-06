@@ -8,6 +8,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from fastapi import HTTPException, UploadFile
 
+from devnous.gastos.utils.receipt_bytes import read_upload_limited
+
 from .document_intake import build_document_intake_result
 from .file_parsing import (
     extract_document_text_from_bytes,
@@ -38,6 +40,7 @@ _ALLOWED_VOICE_MIME_PREFIXES = ("audio/",)
 _ALLOWED_VOICE_MIME_TYPES = {
     "video/webm",
 }
+_ASSISTANT_MEDIA_UPLOAD_MAX_BYTES = 15 * 1024 * 1024
 
 
 def _looks_like_image_bytes(raw: bytes, content_type: str) -> bool:
@@ -96,10 +99,18 @@ async def extract_text_from_media(
     extract_roster_from_records: RosterExtractor,
 ) -> str:
     if raw is None:
-        raw = await upload.read()
+        try:
+            raw = await read_upload_limited(
+                upload,
+                max_bytes=_ASSISTANT_MEDIA_UPLOAD_MAX_BYTES,
+                too_large_message="Max file size is 15MB",
+                empty_message="Uploaded file is empty",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
-    if len(raw) > 15 * 1024 * 1024:
+    if len(raw) > _ASSISTANT_MEDIA_UPLOAD_MAX_BYTES:
         raise HTTPException(status_code=400, detail="Max file size is 15MB")
 
     content_type = upload.content_type or "application/octet-stream"
