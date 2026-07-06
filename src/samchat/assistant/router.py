@@ -58,6 +58,7 @@ from devnous.gastos.routes.dependencies import (
     get_db_session,
     has_permission,
 )
+from devnous.gastos.utils.receipt_bytes import read_upload_limited
 
 from .db import get_tournament_session_maker
 from .action_router import (
@@ -160,6 +161,7 @@ logger = logging.getLogger(__name__)
 _RATE_LIMIT_LOCK = Lock()
 _MESSAGE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
 _CONFIRM_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
+_ASSISTANT_MEDIA_UPLOAD_MAX_BYTES = 15 * 1024 * 1024
 
 
 def _assistant_request_origin(request: Optional[Request]) -> Optional[Dict[str, Any]]:
@@ -11591,7 +11593,15 @@ async def create_media_message(
             module_context=module_context_payload,
         )
         await session.commit()
-        raw_file = await file.read()
+        try:
+            raw_file = await read_upload_limited(
+                file,
+                max_bytes=_ASSISTANT_MEDIA_UPLOAD_MAX_BYTES,
+                too_large_message="Max file size is 15MB",
+                empty_message="Uploaded file is empty",
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         await file.seek(0)
         if (kind or "").strip().lower() in {"image", "voice"} and raw_file:
             _store_last_media_draft(
