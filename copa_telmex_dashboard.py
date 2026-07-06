@@ -22,7 +22,7 @@ from pathlib import Path
 from datetime import datetime, date, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
 from urllib.parse import urlparse
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 from uuid import UUID
 
 # Load environment variables from .env file
@@ -240,6 +240,7 @@ REVIEW_ALLOWED_SESSION_ROLES = frozenset(
     {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}
 )
 TEAM_PLAYER_MUTATION_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
+LEGACY_COPA_DASHBOARD_ALLOWED_SESSION_ROLES = REVIEW_ALLOWED_SESSION_ROLES
 REVIEW_SESSION_MAX_FILES = 4
 MAX_REVIEW_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_REVIEW_IMAGE_PIXELS = 25_000_000
@@ -298,6 +299,29 @@ def _ensure_registration_review_access(
         raise HTTPException(
             status_code=403,
             detail="No tienes permisos para operar la precaptura de cédulas.",
+        )
+    return None
+
+
+def _ensure_legacy_copa_dashboard_access(
+    request: Request,
+    *,
+    html_fallback: Optional[str] = None,
+) -> Optional[RedirectResponse]:
+    if not _has_internal_session(request):
+        if html_fallback:
+            return _redirect_to_login(request, fallback=html_fallback)
+        raise HTTPException(
+            status_code=401,
+            detail="No has iniciado sesión. Inicia sesión para continuar.",
+            headers={"Location": "/login"},
+        )
+
+    role = _normalized_session_role(request)
+    if role not in LEGACY_COPA_DASHBOARD_ALLOWED_SESSION_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar datos de equipos o jugadores.",
         )
     return None
 
@@ -1164,7 +1188,56 @@ app.add_middleware(
 # Mount static files directory for photos
 photos_dir = Path(__file__).parent / "photos"
 photos_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/photos", StaticFiles(directory=str(photos_dir)), name="photos")
+PUBLIC_PHOTO_TOP_LEVEL_DIRS = frozenset({"public"})
+
+
+def _normalized_photo_asset_path(asset_path: str) -> str:
+    return unquote(str(asset_path or "")).replace("\\", "/").lstrip("/")
+
+
+def _resolve_photo_asset_path(asset_path: str) -> Path:
+    normalized = _normalized_photo_asset_path(asset_path)
+    if not normalized:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    root = photos_dir.resolve()
+    candidate = (root / normalized).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    if not candidate.is_file():
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return candidate
+
+
+def _is_requested_public_photo_asset(asset_path: str) -> bool:
+    parts = [part for part in _normalized_photo_asset_path(asset_path).split("/") if part]
+    return bool(parts) and parts[0] in PUBLIC_PHOTO_TOP_LEVEL_DIRS
+
+
+def _is_public_photo_asset_path(asset_path: Path) -> bool:
+    for public_dir_name in PUBLIC_PHOTO_TOP_LEVEL_DIRS:
+        public_root = (photos_dir / public_dir_name).resolve()
+        try:
+            asset_path.relative_to(public_root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+@app.get("/photos/{path:path}", include_in_schema=False)
+async def serve_photo_asset(path: str, request: Request):
+    requested_public_asset = _is_requested_public_photo_asset(path)
+    asset_path = _resolve_photo_asset_path(path)
+    public_asset = _is_public_photo_asset_path(asset_path)
+    if requested_public_asset and not public_asset:
+        raise HTTPException(status_code=404, detail="Photo not found")
+    if not public_asset:
+        _ensure_legacy_copa_dashboard_access(request)
+    return FileResponse(str(asset_path))
 
 # Mount static files directory for general static files (manuals, etc.)
 static_dir = Path(__file__).parent / "static"
@@ -2823,6 +2896,9 @@ async def tournament_selector(request: Request):
 @app.get("/dashboard", response_class=HTMLResponse)
 async def home(request: Request):
     """Dashboard page with statistics"""
+    redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback="/dashboard")
+    if redirect is not None:
+        return redirect
     try:
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
@@ -2845,8 +2921,9 @@ async def home(request: Request):
 
 
 @app.get("/api/stats", response_class=JSONResponse)
-async def get_stats():
+async def get_stats(request: Request):
     """API endpoint for statistics"""
+    _ensure_legacy_copa_dashboard_access(request)
     async with async_session_maker() as session:
         copa_db = CopaTelmexDB(session)
         stats = await copa_db.get_registration_stats()
@@ -2856,6 +2933,9 @@ async def get_stats():
 @app.get("/teams", response_class=HTMLResponse)
 async def list_teams(request: Request):
     """List all teams"""
+    redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback="/teams")
+    if redirect is not None:
+        return redirect
     try:
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
@@ -2904,6 +2984,9 @@ async def list_teams(request: Request):
 @app.get("/team/{team_id}", response_class=HTMLResponse)
 async def view_team(request: Request, team_id: str):
     """View team details and players"""
+    redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback=f"/team/{team_id}")
+    if redirect is not None:
+        return redirect
     try:
         from uuid import UUID
 
@@ -2968,6 +3051,9 @@ async def view_team(request: Request, team_id: str):
 @app.get("/players", response_class=HTMLResponse)
 async def list_players(request: Request, needs_review: Optional[bool] = None):
     """List all players or players needing review"""
+    redirect = _ensure_legacy_copa_dashboard_access(request, html_fallback="/players")
+    if redirect is not None:
+        return redirect
     try:
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
