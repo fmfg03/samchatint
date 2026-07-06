@@ -1572,7 +1572,8 @@ async def _assistant_text_response(
                         {"role": role, "content": m.get("content") or ""}
                     )
                 anthropic_messages.append({"role": "user", "content": prompt_user})
-                resp = client.messages.create(
+                resp = await asyncio.to_thread(
+                    client.messages.create,
                     model=model,
                     system=system_text,
                     messages=anthropic_messages,
@@ -1597,7 +1598,8 @@ async def _assistant_text_response(
                 *history_messages,
                 {"role": "user", "content": prompt_user},
             ]
-            resp = client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=model,
                 messages=messages,
                 temperature=0.2,
