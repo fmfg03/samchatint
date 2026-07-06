@@ -15909,7 +15909,7 @@ async def admin_proveedores_clientes(
             <body style="font-family: sans-serif; padding: 20px;">
                 <h1>❌ Error al cargar la página</h1>
                 <p>Ocurrió un error al cargar la página de proveedores y clientes.</p>
-                <p><strong>Error:</strong> {str(e)}</p>
+                <p><strong>Error:</strong> Internal server error. Revisa los logs del servidor para el detalle técnico.</p>
                 <p><a href="/panel">⬅️ Volver al Panel</a></p>
             </body>
             </html>
@@ -20244,7 +20244,10 @@ async def cleanup_contable_gasto(
     except Exception as exc:
         logger.error("Error saving accounting cleanup: %s", exc, exc_info=True)
         await session.rollback()
-        return PlainTextResponse(f"Error: {str(exc)}", status_code=500)
+        return PlainTextResponse(
+            "Error: Internal server error. Revisa los logs del servidor para el detalle técnico.",
+            status_code=500,
+        )
 
 
 @router.post("/admin/gastos/{gasto_id}/asignar-cuenta-contable")
@@ -20383,4 +20386,7 @@ async def asignar_cuenta_contable(
     except Exception as e:
         logger.error(f"Error assigning cuenta contable: {e}", exc_info=True)
         await session.rollback()
-        return PlainTextResponse(f"Error: {str(e)}", status_code=500)
+        return PlainTextResponse(
+            "Error: Internal server error. Revisa los logs del servidor para el detalle técnico.",
+            status_code=500,
+        )
