@@ -127,9 +127,11 @@ from ..services.customer_success_usage import (
 )
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
 from ..utils.receipt_bytes import (
+    MAX_DECODE_BYTES,
     fetch_expense_ids_with_archivo_data,
     fetch_gasto_adjuntos_meta_batch,
     html_expense_archivos_cell,
+    read_upload_limited,
 )
 from ..empleado_rol_normalize import normalize_empleado_rol_from_form
 from .dependencies import (
@@ -4607,11 +4609,13 @@ async def _read_sat_efirma_upload(
         allowed_extensions=allowed_extensions,
         label=label,
     )
-    contents = await upload.read()
+    contents = await read_upload_limited(
+        upload,
+        max_bytes=_SAT_EFIRMA_MAX_FILE_BYTES,
+        too_large_message=f"{label} excede el tamaño máximo de 1 MB.",
+    )
     if not contents:
         raise ValueError(f"{label} no puede estar vacío.")
-    if len(contents) > _SAT_EFIRMA_MAX_FILE_BYTES:
-        raise ValueError(f"{label} excede el tamaño máximo de 1 MB.")
     return contents
 
 
@@ -12183,7 +12187,11 @@ async def admin_presupuestos_import_lines(
 ):
     _require_budget_access(current_empleado, "line_update")
     try:
-        payload = await archivo_presupuesto.read()
+        payload = await read_upload_limited(
+            archivo_presupuesto,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo de presupuesto excede el tamaño máximo permitido.",
+        )
         if not payload:
             raise ValueError("El archivo de presupuesto está vacío.")
         result = await import_budget_lines_upload(
@@ -13983,7 +13991,11 @@ async def carga_masiva_coi_post(
                 url="/admin/contabilidad/coi/carga-masiva?error_msg=Debe seleccionar un archivo XLSX válido",
                 status_code=303,
             )
-        contents = await archivo_xlsx.read()
+        contents = await read_upload_limited(
+            archivo_xlsx,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo XLSX excede el tamaño máximo permitido",
+        )
         if not contents:
             return RedirectResponse(
                 url="/admin/contabilidad/coi/carga-masiva?error_msg=El archivo está vacío",
@@ -14153,7 +14165,11 @@ async def carga_masiva_auxiliar_post(
                 url="/admin/contabilidad/auxiliar/carga-masiva?error_msg=Debe seleccionar un archivo XLSX válido",
                 status_code=303,
             )
-        contents = await archivo_xlsx.read()
+        contents = await read_upload_limited(
+            archivo_xlsx,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo XLSX excede el tamaño máximo permitido",
+        )
         if not contents:
             return RedirectResponse(
                 url="/admin/contabilidad/auxiliar/carga-masiva?error_msg=El archivo está vacío",
@@ -14367,7 +14383,11 @@ async def carga_masiva_banco_post(
                 url="/admin/contabilidad/banco/carga-masiva?error_msg=Debe seleccionar un archivo CSV válido",
                 status_code=303,
             )
-        contents = await archivo_csv.read()
+        contents = await read_upload_limited(
+            archivo_csv,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo CSV excede el tamaño máximo permitido",
+        )
         if not contents:
             return RedirectResponse(
                 url="/admin/contabilidad/banco/carga-masiva?error_msg=El archivo está vacío",
@@ -14531,7 +14551,11 @@ async def carga_masiva_runa_nomina_post(
                 url="/admin/nomina/runa/carga-masiva?error_msg=Debe seleccionar un archivo XLSX válido",
                 status_code=303,
             )
-        contents = await archivo_xlsx.read()
+        contents = await read_upload_limited(
+            archivo_xlsx,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo XLSX excede el tamaño máximo permitido",
+        )
         if not contents:
             return RedirectResponse(
                 url="/admin/nomina/runa/carga-masiva?error_msg=El archivo está vacío",
@@ -14934,7 +14958,11 @@ async def carga_masiva_cuentas_contables_post(
                 status_code=303,
             )
 
-        contents = await archivo_csv.read()
+        contents = await read_upload_limited(
+            archivo_csv,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo excede el tamaño máximo permitido",
+        )
         try:
             import_rows = parse_cuentas_contables_upload(filename, contents)
         except ValueError as exc:
@@ -16754,7 +16782,11 @@ async def carga_masiva_proveedores_clientes_post(
                 status_code=303,
             )
 
-        contents = await archivo_csv.read()
+        contents = await read_upload_limited(
+            archivo_csv,
+            max_bytes=MAX_DECODE_BYTES,
+            too_large_message="El archivo excede el tamaño máximo permitido",
+        )
         try:
             import_rows = parse_proveedores_clientes_upload(filename, contents)
         except ValueError as exc:
@@ -17169,7 +17201,11 @@ async def carga_masiva_cfdis_post(
 
         # Read and decode CSV file with UTF-8/Latin-1 fallback
         try:
-            contents = await archivo_csv.read()
+            contents = await read_upload_limited(
+                archivo_csv,
+                max_bytes=MAX_DECODE_BYTES,
+                too_large_message="El archivo CSV excede el tamaño máximo permitido",
+            )
         except Exception as read_error:
             logger.error(f"Error reading CSV file: {read_error}")
             return RedirectResponse(
