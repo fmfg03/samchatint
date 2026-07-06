@@ -3611,8 +3611,10 @@ async def list_budget_versions(
     session: AsyncSession,
     *,
     edition_year: Optional[int] = None,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     filters = []
     params: dict[str, Any] = {}
     if edition_year is not None:
@@ -4162,8 +4164,13 @@ async def _select_budget_version(
     *,
     edition_year: int,
     version_id: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> Optional[dict[str, Any]]:
-    versions = await list_budget_versions(session, edition_year=edition_year)
+    versions = await list_budget_versions(
+        session,
+        edition_year=edition_year,
+        ensure_schema=ensure_schema,
+    )
     if version_id:
         for version in versions:
             if version["id"] == version_id:
@@ -4176,6 +4183,23 @@ async def _select_budget_version(
         version for version in versions if _safe_str(version.get("status")) == preferred_status
     ]
     return same_status_versions[0] if same_status_versions else latest_by_priority[0]
+
+
+async def _budget_snapshot_schema_ready(session: AsyncSession) -> bool:
+    """Return whether snapshot tables exist without creating or altering schema."""
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                    to_regclass('public.budget_versions') IS NOT NULL
+                    AND to_regclass('public.budget_lines') IS NOT NULL
+                    AS ready
+                """
+            )
+        )
+    ).scalar_one()
+    return bool(row)
 
 
 async def _build_budget_finance_comparison(
@@ -4266,13 +4290,18 @@ async def build_budget_snapshot(
     edition_year: int = 2026,
     version_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
-    selected_version = await _select_budget_version(
-        session,
-        edition_year=edition_year,
-        version_id=version_id,
-    )
     aliases = budget_alias_candidates(tournament_name or "", tournament_slug or "")
+    schema_ready = await _budget_snapshot_schema_ready(session)
+    selected_version = (
+        await _select_budget_version(
+            session,
+            edition_year=edition_year,
+            version_id=version_id,
+            ensure_schema=False,
+        )
+        if schema_ready
+        else None
+    )
 
     if not selected_version:
         artifact_rows = load_budget_artifact_rows()
