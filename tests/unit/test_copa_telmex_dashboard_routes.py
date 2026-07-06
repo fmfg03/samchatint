@@ -1,6 +1,5 @@
 import asyncio
 import json
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -55,9 +54,10 @@ class _MissingPlayerSessionContext:
 def test_view_team_preserves_not_found_http_exception(monkeypatch):
     monkeypatch.setattr(dashboard, "async_session_maker", lambda: _FakeSessionContext())
     monkeypatch.setattr(dashboard, "CopaTelmexDB", _MissingTeamDB)
+    request = _FakeRequest(session={"empleado_id": "admin-1", "rol": "admin"})
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(dashboard.view_team(SimpleNamespace(), str(uuid4())))
+        asyncio.run(dashboard.view_team(request, str(uuid4())))
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Team not found"
@@ -172,6 +172,35 @@ class _FakeConn:
 
     async def execute(self, statement):
         self.calls.append(str(statement))
+
+
+class _ExplodingDB:
+    def __init__(self, session):
+        self.session = session
+
+    async def get_registration_stats(self):
+        raise RuntimeError("postgres://user:pass@db/private?curp=SENSITIVE")
+
+
+def test_internal_server_error_uses_generic_detail():
+    exc = dashboard._internal_server_error()
+
+    assert exc.status_code == 500
+    assert exc.detail == "Internal server error"
+
+
+def test_legacy_dashboard_does_not_expose_internal_exception(monkeypatch):
+    monkeypatch.setattr(dashboard, "async_session_maker", lambda: _FakeSessionContext())
+    monkeypatch.setattr(dashboard, "CopaTelmexDB", _ExplodingDB)
+    request = _FakeRequest(session={"empleado_id": "admin-1", "rol": "admin"})
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(dashboard.home(request))
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "Internal server error"
+    assert "postgres://user:pass" not in exc_info.value.detail
+    assert "SENSITIVE" not in exc_info.value.detail
 
 
 def test_healthz_returns_healthy_payload():
