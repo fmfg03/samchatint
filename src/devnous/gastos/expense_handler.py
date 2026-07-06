@@ -9,7 +9,6 @@ Manages the conversational flow for expense reporting:
 import base64
 import hashlib
 import logging
-import os
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional, List
@@ -31,7 +30,10 @@ from .services.tournament_project_visibility import (
     fetch_active_tournaments_for_telegram_user,
     visibility_validation_error,
 )
-from .services.expense_service import tocino_payment_fields
+from .services.expense_service import (
+    build_tocino_payload_from_env,
+    tocino_payment_fields,
+)
 from .services.tocino_client import TocinoClient, TocinoAPIError, get_tocino_client
 
 logger = logging.getLogger(__name__)
@@ -1145,60 +1147,16 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                     else:
                         # RFC ID provided but not found, fallback to env vars
                         logger.warning(f"RFC {rfc_id} not found, using environment variables")
-                        tocino_payload = {
-                            "tax_id": os.getenv("TOCINO_TAX_ID", "RFC123456789"),
-                    "taxpayer": os.getenv("TOCINO_TAXPAYER", "JUAN PEREZ GARCIA"),
-                    "taxpayer_name": os.getenv("TOCINO_TAXPAYER_NAME", "JUAN"),
-                    "taxpayer_last_name": os.getenv("TOCINO_TAXPAYER_LAST_NAME", "PEREZ"),
-                    "taxpayer_second_last_name": os.getenv("TOCINO_TAXPAYER_SECOND_LAST_NAME", "GARCIA"),
-                    "street_address_1": os.getenv("TOCINO_STREET_ADDRESS_1", "CALLE PRINCIPAL"),
-                    "ext_num": os.getenv("TOCINO_EXT_NUM", "123"),
-                    "int_num": os.getenv("TOCINO_INT_NUM", ""),
-                    "street_address_2": os.getenv("TOCINO_STREET_ADDRESS_2", ""),
-                    "city": os.getenv("TOCINO_CITY", "CIUDAD DE MEXICO"),
-                    "state": os.getenv("TOCINO_STATE", "MEXICO"),
-                    "country": "México",
-                    "postal_code": os.getenv("TOCINO_POSTAL_CODE", "12345"),
-                    "fiscal_regimen_code": os.getenv("TOCINO_FISCAL_REGIMEN", "626"),
-                            "cfdi_use_code": data.get('cfdi_use', 'G03'),
-                            "csf_pdf": "",
-                            "filename": state.file_name or "receipt.jpg",
-                            "file": state.file_data,  # Base64 encoded file
-                        }
-                        tocino_payload.update(
-                            tocino_payment_fields(
-                                metodo_pago=data.get("metodo_pago"),
-                                ultimos_4_digitos=data.get("ultimos_4_digitos"),
-                            )
+                        tocino_payload = build_tocino_payload_from_env(
+                            expense,
+                            data.get('cfdi_use', 'G03'),
                         )
                 else:
                     # No RFC ID provided, fallback to environment variables
                     logger.warning("No RFC ID in state data, using environment variables")
-                    tocino_payload = {
-                        "tax_id": os.getenv("TOCINO_TAX_ID", "RFC123456789"),
-                        "taxpayer": os.getenv("TOCINO_TAXPAYER", "JUAN PEREZ GARCIA"),
-                        "taxpayer_name": os.getenv("TOCINO_TAXPAYER_NAME", "JUAN"),
-                        "taxpayer_last_name": os.getenv("TOCINO_TAXPAYER_LAST_NAME", "PEREZ"),
-                        "taxpayer_second_last_name": os.getenv("TOCINO_TAXPAYER_SECOND_LAST_NAME", "GARCIA"),
-                        "street_address_1": os.getenv("TOCINO_STREET_ADDRESS_1", "CALLE PRINCIPAL"),
-                        "ext_num": os.getenv("TOCINO_EXT_NUM", "123"),
-                        "int_num": os.getenv("TOCINO_INT_NUM", ""),
-                        "street_address_2": os.getenv("TOCINO_STREET_ADDRESS_2", ""),
-                        "city": os.getenv("TOCINO_CITY", "CIUDAD DE MEXICO"),
-                        "state": os.getenv("TOCINO_STATE", "MEXICO"),
-                        "country": "México",
-                        "postal_code": os.getenv("TOCINO_POSTAL_CODE", "12345"),
-                        "fiscal_regimen_code": os.getenv("TOCINO_FISCAL_REGIMEN", "626"),
-                        "cfdi_use_code": data.get('cfdi_use', 'G03'),
-                    "csf_pdf": "",
-                    "filename": state.file_name or "receipt.jpg",
-                    "file": state.file_data,  # Base64 encoded file
-                }
-                    tocino_payload.update(
-                        tocino_payment_fields(
-                            metodo_pago=data.get("metodo_pago"),
-                            ultimos_4_digitos=data.get("ultimos_4_digitos"),
-                        )
+                    tocino_payload = build_tocino_payload_from_env(
+                        expense,
+                        data.get('cfdi_use', 'G03'),
                     )
                 
                 # Submit to Tocino

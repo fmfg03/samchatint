@@ -21,6 +21,13 @@ from .tocino_client import TocinoClient, TocinoAPIError, get_tocino_client
 
 logger = logging.getLogger(__name__)
 
+REQUIRED_TOCINO_ENV_FIELDS = (
+    "TOCINO_TAX_ID",
+    "TOCINO_TAXPAYER",
+    "TOCINO_POSTAL_CODE",
+    "TOCINO_FISCAL_REGIMEN",
+)
+
 # Department mapping (full name -> code)
 DEPARTAMENTO_MAP = {
     "Mercadotecnia": "M",
@@ -501,23 +508,52 @@ async def trigger_cfdi_generation(
         return None
 
 
-def _build_tocino_payload_from_env(expense: ExpenseReport, cfdi_use: str) -> Dict[str, Any]:
+def _required_tocino_env(name: str) -> str:
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        raise ValueError(
+            "Missing required Tocino taxpayer configuration: " + name
+        )
+    return value
+
+
+def _optional_tocino_env(name: str) -> str:
+    return (os.getenv(name) or "").strip()
+
+
+def build_tocino_payload_from_env(
+    expense: ExpenseReport, cfdi_use: str
+) -> Dict[str, Any]:
     """Build Tocino payload from environment variables."""
+    missing = [
+        name
+        for name in REQUIRED_TOCINO_ENV_FIELDS
+        if not (os.getenv(name) or "").strip()
+    ]
+    if missing:
+        raise ValueError(
+            "Missing required Tocino taxpayer configuration: "
+            + ", ".join(missing)
+        )
     payload: Dict[str, Any] = {
-        "tax_id": os.getenv("TOCINO_TAX_ID", "RFC123456789"),
-        "taxpayer": os.getenv("TOCINO_TAXPAYER", "JUAN PEREZ GARCIA"),
-        "taxpayer_name": os.getenv("TOCINO_TAXPAYER_NAME", "JUAN"),
-        "taxpayer_last_name": os.getenv("TOCINO_TAXPAYER_LAST_NAME", "PEREZ"),
-        "taxpayer_second_last_name": os.getenv("TOCINO_TAXPAYER_SECOND_LAST_NAME", "GARCIA"),
-        "street_address_1": os.getenv("TOCINO_STREET_ADDRESS_1", "CALLE PRINCIPAL"),
-        "ext_num": os.getenv("TOCINO_EXT_NUM", "123"),
-        "int_num": os.getenv("TOCINO_INT_NUM", ""),
-        "street_address_2": os.getenv("TOCINO_STREET_ADDRESS_2", ""),
-        "city": os.getenv("TOCINO_CITY", "CIUDAD DE MEXICO"),
-        "state": os.getenv("TOCINO_STATE", "MEXICO"),
+        "tax_id": _required_tocino_env("TOCINO_TAX_ID"),
+        "taxpayer": _required_tocino_env("TOCINO_TAXPAYER"),
+        "taxpayer_name": _optional_tocino_env("TOCINO_TAXPAYER_NAME"),
+        "taxpayer_last_name": _optional_tocino_env(
+            "TOCINO_TAXPAYER_LAST_NAME"
+        ),
+        "taxpayer_second_last_name": _optional_tocino_env(
+            "TOCINO_TAXPAYER_SECOND_LAST_NAME"
+        ),
+        "street_address_1": _optional_tocino_env("TOCINO_STREET_ADDRESS_1"),
+        "ext_num": _optional_tocino_env("TOCINO_EXT_NUM"),
+        "int_num": _optional_tocino_env("TOCINO_INT_NUM"),
+        "street_address_2": _optional_tocino_env("TOCINO_STREET_ADDRESS_2"),
+        "city": _optional_tocino_env("TOCINO_CITY"),
+        "state": _optional_tocino_env("TOCINO_STATE"),
         "country": "México",
-        "postal_code": os.getenv("TOCINO_POSTAL_CODE", "12345"),
-        "fiscal_regimen_code": os.getenv("TOCINO_FISCAL_REGIMEN", "626"),
+        "postal_code": _required_tocino_env("TOCINO_POSTAL_CODE"),
+        "fiscal_regimen_code": _required_tocino_env("TOCINO_FISCAL_REGIMEN"),
         "cfdi_use_code": cfdi_use,
         "csf_pdf": "",
         "filename": expense.archivo_nombre or "receipt.jpg",
@@ -525,3 +561,6 @@ def _build_tocino_payload_from_env(expense: ExpenseReport, cfdi_use: str) -> Dic
     }
     payload.update(tocino_payment_fields(expense=expense))
     return payload
+
+
+_build_tocino_payload_from_env = build_tocino_payload_from_env
