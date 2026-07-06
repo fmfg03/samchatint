@@ -113,7 +113,10 @@ async def process_cfdi_xml_async(
     except Exception as e:
         logger.error(f"Error processing CFDI XML: {e}", exc_info=True)
         await session.rollback()
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": "Unexpected CFDI XML processing error",
+        }
 
 
 async def backfill_all_cfdis_async(session: AsyncSession) -> Dict[str, Any]:
