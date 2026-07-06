@@ -7411,7 +7411,8 @@ async def _run_read_tool(
         )
 
     if tool_name == "finance_ops_query":
-        return await finance_ops_query(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_ops_query(gastos_session, **args)
 
     if tool_name == "finance_strategy_snapshot":
         if bi_scope and not args.get("bi_scope"):
@@ -7419,13 +7420,16 @@ async def _run_read_tool(
         if bi_year and not args.get("date_from") and not args.get("date_to"):
             args["date_from"] = f"{int(bi_year)}-01-01"
             args["date_to"] = f"{int(bi_year)}-12-31"
-        return await finance_strategy_snapshot(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_strategy_snapshot(gastos_session, **args)
 
     if tool_name == "finance_accounting_report":
-        return await finance_accounting_report(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_accounting_report(gastos_session, **args)
 
     if tool_name == "finance_expense_workflow_status":
-        return await finance_expense_workflow_status(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_expense_workflow_status(gastos_session, **args)
 
     if tool_name == "finance_realtime_report":
         if bi_scope and not args.get("bi_scope"):
@@ -7433,10 +7437,12 @@ async def _run_read_tool(
         if bi_year and not args.get("date_from") and not args.get("date_to"):
             args["date_from"] = f"{int(bi_year)}-01-01"
             args["date_to"] = f"{int(bi_year)}-12-31"
-        return await finance_realtime_report(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_realtime_report(gastos_session, **args)
 
     if tool_name == "finance_vendor_payments":
-        return await finance_vendor_payments(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_vendor_payments(gastos_session, **args)
 
     if tool_name == "finance_alerts_scan":
         if bi_scope and not args.get("bi_scope"):
@@ -7444,10 +7450,12 @@ async def _run_read_tool(
         if bi_year and not args.get("date_from") and not args.get("date_to"):
             args["date_from"] = f"{int(bi_year)}-01-01"
             args["date_to"] = f"{int(bi_year)}-12-31"
-        return await finance_alerts_scan(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_alerts_scan(gastos_session, **args)
 
     if tool_name == "finance_expense_search":
-        return await finance_expense_search(gastos_session, **args)
+        with gastos_session.no_autoflush:
+            return await finance_expense_search(gastos_session, **args)
 
     if tool_name == "tournament_expediente_snapshot":
         try:
@@ -7460,11 +7468,12 @@ async def _run_read_tool(
         include_finance = bool(args.get("include_finance", True)) and (
             normalized_role == "finanzas" or _is_admin(current_role)
         )
-        return await _build_tournament_expediente_snapshot(
-            session=gastos_session,
-            tournament_uuid=tournament_uuid,
-            include_finance=include_finance,
-        )
+        with gastos_session.no_autoflush:
+            return await _build_tournament_expediente_snapshot(
+                session=gastos_session,
+                tournament_uuid=tournament_uuid,
+                include_finance=include_finance,
+            )
 
     if tool_name == "tournament_registration_breakdown":
         tkey = (
@@ -7502,16 +7511,17 @@ async def _run_read_tool(
         return await dev_run_checks(**args)
 
     if tool_name == "db_read_universal":
-        return await _db_read_universal(
-            gastos_session=gastos_session,
-            data_source=str(args.get("data_source") or ""),
-            table=str(args.get("table") or ""),
-            columns=args.get("columns"),
-            filters=args.get("filters"),
-            order_by=args.get("order_by"),
-            order_dir=str(args.get("order_dir") or "desc"),
-            limit=int(args.get("limit") or 100),
-        )
+        with gastos_session.no_autoflush:
+            return await _db_read_universal(
+                gastos_session=gastos_session,
+                data_source=str(args.get("data_source") or ""),
+                table=str(args.get("table") or ""),
+                columns=args.get("columns"),
+                filters=args.get("filters"),
+                order_by=args.get("order_by"),
+                order_dir=str(args.get("order_dir") or "desc"),
+                limit=int(args.get("limit") or 100),
+            )
 
     raise HTTPException(status_code=400, detail=f"Unknown tool: {tool_name}")
 
