@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -304,7 +305,8 @@ async def execute_anthropic_provider(
     anthropic_messages.append({"role": "user", "content": raw_message})
 
     for _ in range(6):
-        resp = client.messages.create(
+        resp = await asyncio.to_thread(
+            client.messages.create,
             model=model,
             system=system_prompt,
             messages=anthropic_messages,
@@ -482,7 +484,8 @@ async def execute_openai_provider(
     client = get_openai_client(openai_api_key)
     openai_messages = list(messages)
     for _ in range(6):
-        resp = client.chat.completions.create(
+        resp = await asyncio.to_thread(
+            client.chat.completions.create,
             model=model,
             messages=openai_messages,
             tools=tool_defs,
