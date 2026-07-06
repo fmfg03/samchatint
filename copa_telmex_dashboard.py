@@ -342,6 +342,13 @@ def _ensure_team_player_mutation_access(request: Request) -> None:
         )
 
 
+def _internal_server_error() -> HTTPException:
+    return HTTPException(
+        status_code=500,
+        detail="Internal server error",
+    )
+
+
 async def _read_upload_limited(upload: Any) -> bytes:
     payload = bytearray()
     while True:
@@ -2917,7 +2924,7 @@ async def home(request: Request):
             )
     except Exception as e:
         logger.error(f"Error loading home page: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.get("/api/stats", response_class=JSONResponse)
@@ -2978,7 +2985,7 @@ async def list_teams(request: Request):
             )
     except Exception as e:
         logger.error(f"Error loading teams: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.get("/team/{team_id}", response_class=HTMLResponse)
@@ -3045,7 +3052,7 @@ async def view_team(request: Request, team_id: str):
         raise
     except Exception as e:
         logger.error(f"Error loading team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.get("/players", response_class=HTMLResponse)
@@ -3099,7 +3106,7 @@ async def list_players(request: Request, needs_review: Optional[bool] = None):
             )
     except Exception as e:
         logger.error(f"Error loading players: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.get("/registration-review", response_class=HTMLResponse)
@@ -3151,7 +3158,7 @@ async def list_registration_review_sessions(request: Request):
             )
     except Exception as e:
         logger.error("Error loading review sessions: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.get("/registration-review/new", response_class=HTMLResponse)
@@ -3931,7 +3938,7 @@ async def edit_team(
         raise
     except Exception as e:
         logger.error(f"Error updating team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.post("/api/player/{player_id}/edit", response_class=JSONResponse)
@@ -3981,7 +3988,7 @@ async def edit_player(
         raise
     except Exception as e:
         logger.error(f"Error updating player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.post("/api/player/{player_id}/verify", response_class=JSONResponse)
@@ -4015,7 +4022,7 @@ async def verify_player(player_id: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error verifying player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.delete("/api/player/{player_id}", response_class=JSONResponse)
@@ -4047,7 +4054,7 @@ async def delete_player(player_id: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error deleting player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 @app.delete("/api/team/{team_id}", response_class=JSONResponse)
@@ -4076,7 +4083,7 @@ async def delete_team(team_id: str, request: Request):
         raise
     except Exception as e:
         logger.error(f"Error deleting team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise _internal_server_error()
 
 
 if __name__ == "__main__":
