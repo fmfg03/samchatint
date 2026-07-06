@@ -118,6 +118,13 @@ async def execute_canonical_action(
         if isinstance(context, AssistantContext)
         else AssistantContext.from_dict(context)
     )
+    if action in supported_read_actions():
+        with session.no_autoflush:
+            return await adapter(
+                session,
+                context=normalized_context,
+                payload=payload or {},
+            )
     return await adapter(
         session,
         context=normalized_context,
