@@ -123,6 +123,7 @@ from ..services.documento_payment_service import (
 from ..services.cuenta_settlement_service import (
     CuentaSettlementPermissionError,
     CuentaSettlementValidationError,
+    MAX_COMPROBANTE_BYTES,
     cancel_cuenta_settlement,
     compute_cuenta_saldo_adjustments,
     register_cuenta_settlement,
@@ -206,6 +207,7 @@ from .solicitud_transferencia_ui import (
 )
 from ..utils.receipt_bytes import (
     LEGACY_RECEIPT_KEY,
+    MAX_DECODE_BYTES,
     MAX_SOLICITUD_ATTACHMENT_BYTES,
     MAX_SOLICITUD_PDF_BYTES,
     ReceiptDecodeError,
@@ -13573,8 +13575,20 @@ async def crear_gasto(
                     status_code=303
                 )
             
-            # Read file content
-            file_content = await archivo.read()
+            try:
+                file_content = await read_upload_limited(
+                    archivo,
+                    max_bytes=MAX_DECODE_BYTES,
+                    too_large_message="El archivo del recibo excede el tamaño máximo permitido",
+                )
+            except ValueError as exc:
+                return RedirectResponse(
+                    url=_append_error_params(
+                        "/gastos/nuevo",
+                        error_msg=str(exc),
+                    ),
+                    status_code=303,
+                )
             # Convert file to base64
             archivo_data = base64.b64encode(file_content).decode('utf-8')
             # Get filename
@@ -14057,7 +14071,20 @@ async def carga_masiva_amex_post(
             cfdi_mensual_report = cfdi_result.scalar_one_or_none()
         
         # Read and decode CSV file
-        contents = await archivo_csv.read()
+        try:
+            contents = await read_upload_limited(
+                archivo_csv,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                too_large_message="El archivo CSV excede el tamaño máximo permitido",
+            )
+        except ValueError as exc:
+            return RedirectResponse(
+                url=_append_error_params(
+                    "/gastos/carga-masiva-amex",
+                    error_msg=str(exc),
+                ),
+                status_code=303,
+            )
         # Try utf-8-sig first (handles BOM), fallback to utf-8
         try:
             text = contents.decode('utf-8-sig')
@@ -28571,7 +28598,21 @@ async def saldar_cuenta_submit(
     comprobante_filename: Optional[str] = None
     comprobante_mime: Optional[str] = None
     if comprobante is not None:
-        comprobante_bytes = await comprobante.read()
+        try:
+            comprobante_bytes = await read_upload_limited(
+                comprobante,
+                max_bytes=MAX_COMPROBANTE_BYTES,
+                too_large_message="El comprobante excede el tamaño máximo permitido.",
+            )
+        except ValueError as exc:
+            return RedirectResponse(
+                url=_append_error_params(
+                    f"/informes-de-gastos/{cuenta_id}/saldar",
+                    error="comprobante_too_large",
+                    error_msg=str(exc),
+                ),
+                status_code=303,
+            )
         comprobante_filename = comprobante.filename
         comprobante_mime = comprobante.content_type
 
