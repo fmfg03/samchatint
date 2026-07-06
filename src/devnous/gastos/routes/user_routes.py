@@ -331,6 +331,10 @@ def _safe_redirect_base(return_to: Optional[str], fallback: str = "/admin/contab
     return redirect_base
 
 
+def _internal_server_error() -> HTTPException:
+    return HTTPException(status_code=500, detail="Internal server error")
+
+
 async def _resolve_latest_bank_source(session: AsyncSession) -> tuple[AccountingImportRun, Path]:
     latest_run_result = await session.execute(
         select(AccountingImportRun)
@@ -16713,7 +16717,7 @@ async def descargar_gasto_comprobante(
     try:
         raw = decode_base64_to_bytes(expense.archivo_data)
     except ReceiptDecodeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_server_error() from e
     media_type = resolve_media_type(expense.archivo_nombre, raw)
     media_type, disposition = comprobante_response_headers(
         expense.archivo_nombre, media_type
@@ -16770,7 +16774,7 @@ async def descargar_gasto_adjunto(
             nombre_archivo=adjunto.get("nombre_archivo"),
         )
     except ReceiptDecodeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_server_error() from e
     media_type, disposition = comprobante_response_headers(fname, media_type)
     return Response(
         content=raw,
@@ -16812,7 +16816,7 @@ async def descargar_documento_adjunto(
             nombre_archivo=adjunto.get("nombre_archivo"),
         )
     except ReceiptDecodeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_server_error() from e
     ref = (documento.numero_referencia or str(documento.id)[:8]).replace(" ", "_")
     archivo_nombre = fname or f"solicitud-{ref}"
     media_type = resolve_media_type(archivo_nombre, raw)
@@ -28974,7 +28978,7 @@ async def descargar_reembolso_adjunto(
             nombre_archivo=adjunto.get("nombre_archivo"),
         )
     except ReceiptDecodeError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise _internal_server_error() from e
     media_type, disposition = comprobante_response_headers(fname, media_type)
     return Response(
         content=raw,
