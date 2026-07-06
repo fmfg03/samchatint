@@ -553,6 +553,36 @@ def get_assistant_rag_health_snapshot() -> Dict[str, Any]:
     }
 
 
+async def _rag_search_async(
+    *,
+    client: Any = None,
+    query: str,
+    top_k: int,
+    min_score: float,
+) -> List[Dict[str, Any]]:
+    return await asyncio.to_thread(
+        get_rag_store().search,
+        client=client,
+        query=query,
+        top_k=top_k,
+        min_score=min_score,
+    )
+
+
+async def _rag_ingest_async(
+    *,
+    paths: List[str],
+    reset: bool,
+    max_files: int,
+) -> Dict[str, Any]:
+    return await asyncio.to_thread(
+        get_rag_store().ingest,
+        paths=paths,
+        reset=reset,
+        max_files=max_files,
+    )
+
+
 def _ensure_citations(answer: str, sources: List[Dict[str, Any]]) -> str:
     text = (answer or "").strip()
     if not text:
@@ -1033,7 +1063,7 @@ async def _build_hybrid_retrieval(
     rag_top_k = int(os.getenv("ASSISTANT_RAG_TOP_K", "5"))
     rag_min_score = float(os.getenv("ASSISTANT_RAG_MIN_SCORE", "0.15"))
     weights = _rag_weights()
-    rag_results = get_rag_store().search(
+    rag_results = await _rag_search_async(
         client=client,
         query=query,
         top_k=rag_top_k,
@@ -1542,7 +1572,8 @@ async def _assistant_text_response(
                         {"role": role, "content": m.get("content") or ""}
                     )
                 anthropic_messages.append({"role": "user", "content": prompt_user})
-                resp = client.messages.create(
+                resp = await asyncio.to_thread(
+                    client.messages.create,
                     model=model,
                     system=system_text,
                     messages=anthropic_messages,
@@ -1567,7 +1598,8 @@ async def _assistant_text_response(
                 *history_messages,
                 {"role": "user", "content": prompt_user},
             ]
-            resp = client.chat.completions.create(
+            resp = await asyncio.to_thread(
+                client.chat.completions.create,
                 model=model,
                 messages=messages,
                 temperature=0.2,
@@ -11663,7 +11695,7 @@ async def rag_search(
     payload: RAGSearchRequest,
     current_empleado=Depends(get_current_empleado),
 ):
-    results = get_rag_store().search(
+    results = await _rag_search_async(
         query=payload.query,
         top_k=payload.top_k,
         min_score=payload.min_score,
@@ -11680,7 +11712,7 @@ async def rag_ingest(
         raise HTTPException(
             status_code=403, detail="RAG ingest requires superadmin role"
         )
-    result = get_rag_store().ingest(
+    result = await _rag_ingest_async(
         paths=payload.paths,
         reset=payload.reset,
         max_files=payload.max_files,
@@ -11735,7 +11767,7 @@ async def rag_codex_update(
     ingest_result = None
     if payload.auto_ingest:
         ingest_paths = payload.paths or ["docs", "reports", "codex.md"]
-        ingest_result = get_rag_store().ingest(
+        ingest_result = await _rag_ingest_async(
             paths=ingest_paths,
             reset=False,
             max_files=payload.max_files,
