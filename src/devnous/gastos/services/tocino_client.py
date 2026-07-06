@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 
 # Tocino external API (see bacon.tocino.ai docs)
 TICKETS_SUBMIT_PATH = "/api/external/tickets/"
+_REDACTED = "[REDACTED]"
+_TOCINO_LOG_REDACT_KEYS = frozenset(
+    {
+        "tax_id",
+        "taxpayer",
+        "taxpayer_name",
+        "taxpayer_last_name",
+        "taxpayer_second_last_name",
+        "street_address_1",
+        "street_address_2",
+        "ext_num",
+        "int_num",
+        "postal_code",
+        "card_last_digits",
+        "csf_pdf",
+    }
+)
 
 
 class TocinoAPIError(Exception):
@@ -29,6 +46,20 @@ class TocinoAPIError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.response_text = response_text
+
+
+def redact_tocino_payload_for_log(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a log-safe Tocino payload snapshot."""
+
+    safe: Dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == "file":
+            continue
+        if key in _TOCINO_LOG_REDACT_KEYS:
+            safe[key] = _REDACTED if value else value
+        else:
+            safe[key] = value
+    return safe
 
 
 @dataclass
@@ -73,8 +104,18 @@ class TocinoClient:
         headers = self._build_headers()
 
         logger.info("Sending ticket to Tocino", extra={"endpoint": endpoint})
-        logger.debug("Tocino request headers", extra={"headers": {k: v for k, v in headers.items() if k != "X-API-KEY"}})
-        logger.debug("Tocino request payload", extra={"payload": {k: v for k, v in payload.items() if k != "file"}})
+        logger.debug(
+            "Tocino request headers",
+            extra={
+                "headers": {
+                    k: v for k, v in headers.items() if k != "X-API-KEY"
+                }
+            },
+        )
+        logger.debug(
+            "Tocino request payload",
+            extra={"payload": redact_tocino_payload_for_log(payload)},
+        )
 
         try:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
