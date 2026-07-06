@@ -240,9 +240,14 @@ async def update_single_invoice(session: AsyncSession, expense_id: str) -> Optio
     except TocinoAPIError as e:
         logger.error(f"Expense {expense_id}: Tocino API error", extra={"error": str(e)})
         await session.rollback()
-        return {"status": "error", "message": str(e)}
+        return {
+            "status": "error",
+            "message": "Unexpected Tocino invoice status error",
+        }
     except Exception as e:
         logger.error(f"Expense {expense_id}: Unexpected error", extra={"error": str(e)})
         await session.rollback()
-        return {"status": "error", "message": str(e)}
-
+        return {
+            "status": "error",
+            "message": "Unexpected invoice status update error",
+        }
