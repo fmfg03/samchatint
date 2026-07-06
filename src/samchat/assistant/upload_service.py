@@ -68,7 +68,8 @@ async def extract_text_from_media(
 
     extracted = ""
     if kind == "spreadsheet":
-        records = spreadsheet_records_from_bytes(
+        records = await asyncio.to_thread(
+            spreadsheet_records_from_bytes,
             raw=raw,
             filename=upload.filename or "",
             content_type=content_type,
@@ -97,7 +98,8 @@ async def extract_text_from_media(
         return _document_intake_context(intake) + context
 
     if kind == "text":
-        parsed_text = extract_document_text_from_bytes(
+        parsed_text = await asyncio.to_thread(
+            extract_document_text_from_bytes,
             raw=raw,
             filename=upload.filename,
             mime_type=content_type,

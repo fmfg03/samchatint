@@ -1,10 +1,13 @@
 import asyncio
 import json
+import time
 from io import BytesIO
 
+import pytest
 from starlette.datastructures import Headers, UploadFile
 
 from samchat.assistant.action_router import supported_actions
+import samchat.assistant.upload_service as upload_service
 from samchat.assistant.upload_service import extract_text_from_media
 
 
@@ -68,6 +71,76 @@ def _assert_existing_canonical_actions_only(intake: dict) -> None:
     allowed = set(supported_actions())
     for action in intake.get("proposed_actions") or []:
         assert action["canonical_action"] in allowed
+
+
+async def _measure_event_loop_delay(coro, *, sleep_delay: float = 0.02) -> float:
+    ticks = []
+
+    async def ticker():
+        await asyncio.sleep(sleep_delay)
+        ticks.append(time.perf_counter())
+
+    started_at = time.perf_counter()
+    await asyncio.gather(coro, ticker())
+    assert ticks
+    return ticks[0] - started_at
+
+
+async def _run_upload_async(
+    kind: str, upload: UploadFile, raw: bytes, note: str | None = None
+) -> str:
+    return await extract_text_from_media(
+        kind=kind,
+        upload=upload,
+        note=note,
+        raw=raw,
+        extract_text_from_image_anthropic=_forbidden_provider_call,
+        assistant_provider_order=_forbidden_provider_order,
+        get_openai_client=_forbidden_openai_client,
+        extract_roster_from_records=_roster_payload,
+    )
+
+
+@pytest.mark.asyncio
+async def test_spreadsheet_upload_parsing_does_not_block_event_loop(monkeypatch):
+    def _slow_spreadsheet_parser(**_kwargs):
+        time.sleep(0.2)
+        return [{"Cuenta": "1000", "Descripcion": "Banco"}]
+
+    monkeypatch.setattr(
+        upload_service, "spreadsheet_records_from_bytes", _slow_spreadsheet_parser
+    )
+
+    delay = await _measure_event_loop_delay(
+        _run_upload_async(
+            "spreadsheet",
+            _upload("balanza.csv", "text/csv", b"Cuenta,Descripcion\n1000,Banco\n"),
+            b"Cuenta,Descripcion\n1000,Banco\n",
+        )
+    )
+
+    assert delay < 0.08
+
+
+@pytest.mark.asyncio
+async def test_text_upload_parsing_does_not_block_event_loop(monkeypatch):
+    def _slow_text_parser(**_kwargs):
+        time.sleep(0.2)
+        return "texto extraido"
+
+    monkeypatch.setattr(
+        upload_service, "extract_document_text_from_bytes", _slow_text_parser
+    )
+
+    delay = await _measure_event_loop_delay(
+        _run_upload_async(
+            "text",
+            _upload("nota.txt", "text/plain", b"texto"),
+            b"texto",
+        )
+    )
+
+    assert delay < 0.08
 
 
 def test_upload_accounting_balance_context_surfaces_intake_and_blocks_writes() -> None:
