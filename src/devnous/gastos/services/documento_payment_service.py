@@ -13,7 +13,6 @@ from sqlalchemy.orm import selectinload
 
 from ..models import Aprobacion, Documento, Empleado, Reembolso, Tournament
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
-from .documento_workflow_service import promote_solicitudes_ready_for_payment
 from .expense_service import create_expense_from_data
 
 logger = logging.getLogger(__name__)
@@ -433,8 +432,6 @@ async def get_pending_document_payment_overview(
             "insufficient_role",
             "Access denied. Insufficient permissions.",
         )
-
-    await promote_solicitudes_ready_for_payment(session, actor_id=actor_uuid)
 
     result = await session.execute(
         select(Documento)
