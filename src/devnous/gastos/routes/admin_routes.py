@@ -3748,7 +3748,7 @@ async def admin_expenses(
         return _render_admin_error_page(
             title="Error al cargar gastos",
             message="La bandeja de gastos no pudo renderizarse en esta solicitud. Puedes volver a finanzas o abrir otra consola administrativa.",
-            detail=str(e),
+            detail="Internal server error. Revisa los logs del servidor para el detalle técnico.",
             current_empleado=current_empleado,
             return_href="/admin/gastos",
             return_label="Volver a finanzas",
@@ -4002,7 +4002,7 @@ async def admin_invoices(
         return _render_admin_error_page(
             title="Error al cargar facturas y CFDI",
             message="La vista fiscal no pudo completarse. El resto del workspace sigue disponible para continuar la operación.",
-            detail=str(e),
+            detail="Internal server error. Revisa los logs del servidor para el detalle técnico.",
             current_empleado=current_empleado,
             return_href="/admin/gastos",
             return_label="Volver a finanzas",
@@ -19011,7 +19011,7 @@ async def cfdi_matching_control_room(
         return _render_admin_error_page(
             title="Error al cargar matching CFDI",
             message="La consola de emparejamiento no pudo renderizarse. Puedes volver a finanzas o revisar otra bandeja sin perder el shell administrativo.",
-            detail=str(e),
+            detail="Internal server error. Revisa los logs del servidor para el detalle técnico.",
             current_empleado=current_empleado,
             return_href="/admin/gastos",
             return_label="Volver a finanzas",
