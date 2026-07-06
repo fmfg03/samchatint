@@ -24,6 +24,32 @@ def _upload(filename: str, content_type: str, body: bytes) -> UploadFile:
     )
 
 
+class _LargeChunkedUpload:
+    def __init__(self, *, total_size: int, content_type: str = "text/plain"):
+        self.filename = "large.txt"
+        self.content_type = content_type
+        self.remaining = total_size
+        self.total_size = total_size
+        self.bytes_returned = 0
+        self.read_calls = 0
+        self.seek_calls = 0
+
+    async def read(self, size: int = -1) -> bytes:
+        self.read_calls += 1
+        if self.remaining <= 0:
+            return b""
+        if size is None or size < 0:
+            chunk_size = self.remaining
+        else:
+            chunk_size = min(size, self.remaining)
+        self.remaining -= chunk_size
+        self.bytes_returned += chunk_size
+        return b"x" * chunk_size
+
+    async def seek(self, _offset: int) -> None:
+        self.seek_calls += 1
+
+
 def _parse_intake_context(context: str) -> dict:
     assert context.startswith("DOCUMENT_INTAKE_RESULT JSON:\n")
     raw_json = context.split("DOCUMENT_INTAKE_RESULT JSON:\n", 1)[1].split("\n\n", 1)[0]
@@ -146,6 +172,27 @@ async def test_text_upload_parsing_does_not_block_event_loop(monkeypatch):
     )
 
     assert delay < 0.08
+
+
+@pytest.mark.asyncio
+async def test_media_upload_without_preloaded_raw_rejects_before_consuming_full_stream():
+    upload = _LargeChunkedUpload(total_size=20 * 1024 * 1024)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await extract_text_from_media(
+            kind="text",
+            upload=upload,
+            note=None,
+            extract_text_from_image_anthropic=_forbidden_provider_call,
+            assistant_provider_order=_forbidden_provider_order,
+            get_openai_client=_forbidden_openai_client,
+            extract_roster_from_records=_roster_payload,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Max file size is 15MB"
+    assert upload.bytes_returned < upload.total_size
+    assert upload.read_calls > 1
 
 
 def test_upload_accounting_balance_context_surfaces_intake_and_blocks_writes() -> None:
