@@ -225,6 +225,7 @@ from ..utils.receipt_bytes import (
     html_expense_archivos_cell,
     is_pdf_content,
     load_adjunto_payload_bytes,
+    read_upload_limited,
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
@@ -22711,6 +22712,25 @@ async def _render_solicitud_terceros_form(
     return html
 
 
+async def _read_solicitud_upload_limited(
+    upload: UploadFile,
+    *,
+    max_bytes: int,
+    error_code: str,
+    too_large_message: str,
+    empty_message: Optional[str] = None,
+) -> bytes:
+    try:
+        return await read_upload_limited(
+            upload,
+            max_bytes=max_bytes,
+            too_large_message=too_large_message,
+            empty_message=empty_message,
+        )
+    except ValueError as exc:
+        raise SolicitudValidationError(error_code, str(exc)) from exc
+
+
 @router.post("/documentos/nueva-solicitud-terceros")
 async def crear_nueva_solicitud_terceros(
     request: Request,
@@ -22747,11 +22767,21 @@ async def crear_nueva_solicitud_terceros(
         pdf_filename = None
         attachments: List[SolicitudTercerosAttachment] = []
         if archivo_pdf and archivo_pdf.filename:
-            pdf_bytes = await archivo_pdf.read()
+            pdf_bytes = await _read_solicitud_upload_limited(
+                archivo_pdf,
+                max_bytes=MAX_SOLICITUD_PDF_BYTES,
+                error_code="pdf_too_large",
+                too_large_message="El PDF excede el tamaño máximo permitido.",
+            )
             pdf_filename = archivo_pdf.filename or "solicitud.pdf"
 
         if archivo_xml and archivo_xml.filename:
-            raw = await archivo_xml.read()
+            raw = await _read_solicitud_upload_limited(
+                archivo_xml,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                error_code="attachment_too_large",
+                too_large_message="Uno de los archivos adjuntos excede el tamaño máximo permitido.",
+            )
             content_type = (archivo_xml.content_type or "").split(";", 1)[0].strip().lower()
             attachments.append(
                 SolicitudTercerosAttachment(
@@ -22765,7 +22795,12 @@ async def crear_nueva_solicitud_terceros(
         for upload in archivos_generales or []:
             if not upload or not upload.filename:
                 continue
-            raw = await upload.read()
+            raw = await _read_solicitud_upload_limited(
+                upload,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                error_code="attachment_too_large",
+                too_large_message="Uno de los archivos adjuntos excede el tamaño máximo permitido.",
+            )
             content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
             attachments.append(
                 SolicitudTercerosAttachment(
@@ -22931,11 +22966,21 @@ async def _read_solicitud_terceros_attachments_from_form(
     pdf_filename: Optional[str] = None
     attachments: List[SolicitudTercerosAttachment] = []
     if archivo_pdf and archivo_pdf.filename:
-        pdf_bytes = await archivo_pdf.read()
+        pdf_bytes = await _read_solicitud_upload_limited(
+            archivo_pdf,
+            max_bytes=MAX_SOLICITUD_PDF_BYTES,
+            error_code="pdf_too_large",
+            too_large_message="El PDF excede el tamaño máximo permitido.",
+        )
         pdf_filename = archivo_pdf.filename or "solicitud.pdf"
 
     if archivo_xml and archivo_xml.filename:
-        raw = await archivo_xml.read()
+        raw = await _read_solicitud_upload_limited(
+            archivo_xml,
+            max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+            error_code="attachment_too_large",
+            too_large_message="Uno de los archivos adjuntos excede el tamaño máximo permitido.",
+        )
         content_type = (archivo_xml.content_type or "").split(";", 1)[0].strip().lower()
         attachments.append(
             SolicitudTercerosAttachment(
@@ -22949,7 +22994,12 @@ async def _read_solicitud_terceros_attachments_from_form(
     for upload in archivos_generales or []:
         if not upload or not upload.filename:
             continue
-        raw = await upload.read()
+        raw = await _read_solicitud_upload_limited(
+            upload,
+            max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+            error_code="attachment_too_large",
+            too_large_message="Uno de los archivos adjuntos excede el tamaño máximo permitido.",
+        )
         content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
         attachments.append(
             SolicitudTercerosAttachment(
@@ -23173,7 +23223,24 @@ async def agregar_documento_adjuntos(
         for upload in archivos or []:
             if not upload or not upload.filename:
                 continue
-            raw = await upload.read()
+            raw = await _read_solicitud_upload_limited(
+                upload,
+                max_bytes=(
+                    MAX_SOLICITUD_PDF_BYTES
+                    if categoria_norm == "cfdi_pdf"
+                    else MAX_SOLICITUD_ATTACHMENT_BYTES
+                ),
+                error_code=(
+                    "pdf_too_large"
+                    if categoria_norm == "cfdi_pdf"
+                    else "attachment_too_large"
+                ),
+                too_large_message=(
+                    "El PDF excede el tamaño máximo permitido."
+                    if categoria_norm == "cfdi_pdf"
+                    else "Uno de los archivos adjuntos excede el tamaño máximo permitido."
+                ),
+            )
             content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
             uploads.append(
                 SolicitudTercerosAttachment(
@@ -26247,19 +26314,22 @@ async def crear_gasto_rapido_en_informe(
 
         xml_bytes: Optional[bytes] = None
         if cfdi_xml and cfdi_xml.filename:
-            xml_bytes = await cfdi_xml.read()
-            if xml_bytes and len(xml_bytes) > MAX_SOLICITUD_ATTACHMENT_BYTES:
-                raise ValueError("El CFDI XML excede el tamaño máximo permitido")
+            xml_bytes = await read_upload_limited(
+                cfdi_xml,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                too_large_message="El CFDI XML excede el tamaño máximo permitido",
+            )
             if xml_bytes and not xml_bytes.strip():
                 xml_bytes = None
 
         pdf_bytes: Optional[bytes] = None
         if cfdi_pdf and cfdi_pdf.filename:
-            pdf_bytes = await cfdi_pdf.read()
-            if not pdf_bytes:
-                raise ValueError("El CFDI PDF está vacío")
-            if len(pdf_bytes) > MAX_SOLICITUD_PDF_BYTES:
-                raise ValueError("El CFDI PDF excede el tamaño máximo permitido")
+            pdf_bytes = await read_upload_limited(
+                cfdi_pdf,
+                max_bytes=MAX_SOLICITUD_PDF_BYTES,
+                too_large_message="El CFDI PDF excede el tamaño máximo permitido",
+                empty_message="El CFDI PDF está vacío",
+            )
             if not is_pdf_content(pdf_bytes):
                 raise ValueError("El archivo CFDI PDF debe ser un PDF válido")
 
@@ -26278,7 +26348,11 @@ async def crear_gasto_rapido_en_informe(
         for upload in materialidad_uploads:
             if not upload or not upload.filename:
                 continue
-            raw = await upload.read()
+            raw = await read_upload_limited(
+                upload,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                too_large_message="Uno de los archivos adjuntos excede el tamaño máximo permitido.",
+            )
             materialidades.append(
                 validate_solicitud_terceros_attachment(
                     SolicitudTercerosAttachment(
@@ -27485,18 +27559,28 @@ async def _load_cfdi_autofill_bytes(
     pdf_bytes: Optional[bytes] = None
 
     if xml_upload and xml_upload.filename:
-        xml_bytes = await xml_upload.read()
+        try:
+            xml_bytes = await read_upload_limited(
+                xml_upload,
+                max_bytes=MAX_SOLICITUD_ATTACHMENT_BYTES,
+                too_large_message="El CFDI XML excede el tamaño máximo permitido.",
+                empty_message="El CFDI XML está vacío.",
+            )
+        except ValueError as exc:
+            return None, None, str(exc)
         if not xml_bytes:
             return None, None, "El CFDI XML está vacío."
-        if len(xml_bytes) > MAX_SOLICITUD_ATTACHMENT_BYTES:
-            return None, None, "El CFDI XML excede el tamaño máximo permitido."
 
     if pdf_upload and pdf_upload.filename:
-        pdf_bytes = await pdf_upload.read()
-        if not pdf_bytes:
-            return None, None, "El CFDI PDF está vacío."
-        if len(pdf_bytes) > MAX_SOLICITUD_PDF_BYTES:
-            return None, None, "El CFDI PDF excede el tamaño máximo permitido."
+        try:
+            pdf_bytes = await read_upload_limited(
+                pdf_upload,
+                max_bytes=MAX_SOLICITUD_PDF_BYTES,
+                too_large_message="El CFDI PDF excede el tamaño máximo permitido.",
+                empty_message="El CFDI PDF está vacío.",
+            )
+        except ValueError as exc:
+            return None, None, str(exc)
         if not is_pdf_content(pdf_bytes):
             return None, None, "El archivo debe ser un PDF válido."
 
