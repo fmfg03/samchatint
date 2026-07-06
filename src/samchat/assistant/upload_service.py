@@ -28,6 +28,17 @@ ProviderOrderResolver = Callable[..., List[str]]
 OpenAIClientFactory = Callable[[Optional[str]], Any]
 RosterExtractor = Callable[[List[dict[str, Any]]], dict[str, Any]]
 
+_ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+}
+_ALLOWED_VOICE_MIME_PREFIXES = ("audio/",)
+_ALLOWED_VOICE_MIME_TYPES = {
+    "video/webm",
+}
+
 
 def _document_intake_context(result: Dict[str, Any]) -> str:
     return (
@@ -64,6 +75,23 @@ async def extract_text_from_media(
     if kind not in {"image", "voice", "spreadsheet", "text"}:
         raise HTTPException(
             status_code=400, detail="kind must be image, voice, spreadsheet or text"
+        )
+    normalized_content_type = content_type.split(";", 1)[0].strip().lower()
+    if kind == "image" and normalized_content_type not in _ALLOWED_IMAGE_MIME_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="Image uploads must be JPEG, PNG, WEBP, or GIF.",
+        )
+    if kind == "voice" and not (
+        normalized_content_type in _ALLOWED_VOICE_MIME_TYPES
+        or any(
+            normalized_content_type.startswith(prefix)
+            for prefix in _ALLOWED_VOICE_MIME_PREFIXES
+        )
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Voice uploads must use an audio MIME type or video/webm.",
         )
 
     extracted = ""

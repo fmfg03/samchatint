@@ -4,6 +4,7 @@ import time
 from io import BytesIO
 
 import pytest
+from fastapi import HTTPException
 from starlette.datastructures import Headers, UploadFile
 
 from samchat.assistant.action_router import supported_actions
@@ -266,3 +267,29 @@ def test_upload_unknown_context_has_summary_question_and_no_write_proposal() -> 
     assert intake["missing_fields"] == ["target_workflow"]
     assert intake["questions_for_user"] == ["Indica a que workflow pertenece este documento."]
     assert intake["safety"]["blocked_reason"] == "unsupported_document_type"
+
+
+@pytest.mark.asyncio
+async def test_image_upload_rejects_non_image_mime_before_provider_call() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await _run_upload_async(
+            "image",
+            _upload("nota.txt", "text/plain", b"texto"),
+            b"texto",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "image" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_voice_upload_rejects_non_audio_mime_before_provider_call() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        await _run_upload_async(
+            "voice",
+            _upload("imagen.png", "image/png", b"not really audio"),
+            b"not really audio",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "audio" in str(exc_info.value.detail).lower()
