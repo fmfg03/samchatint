@@ -28,6 +28,7 @@ MAX_DECODE_BYTES = 40 * 1024 * 1024
 MAX_SOLICITUD_PDF_BYTES = 15 * 1024 * 1024
 MAX_SOLICITUD_ATTACHMENT_BYTES = 15 * 1024 * 1024
 MAX_REMOTE_URL_BYTES = 40 * 1024 * 1024
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 
 ALLOWED_SOLICITUD_ATTACHMENT_MIME_TYPES = frozenset(
     {
@@ -65,6 +66,30 @@ _ADJUNTO_COLUMN_CACHE: Optional[Set[str]] = None
 
 class ReceiptDecodeError(ValueError):
     """Invalid or oversized receipt payload."""
+
+
+async def read_upload_limited(
+    upload: Any,
+    *,
+    max_bytes: int,
+    too_large_message: str,
+    empty_message: Optional[str] = None,
+    chunk_size: int = UPLOAD_READ_CHUNK_BYTES,
+) -> bytes:
+    chunks: List[bytes] = []
+    total = 0
+    while True:
+        chunk = await upload.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise ValueError(too_large_message)
+        chunks.append(chunk)
+    payload = b"".join(chunks)
+    if empty_message is not None and not payload:
+        raise ValueError(empty_message)
+    return payload
 
 
 def is_probably_url(value: Optional[str]) -> bool:
