@@ -16,6 +16,10 @@ def _function_source(module_source: str, name: str) -> str:
 def test_remaining_admin_500_errors_do_not_render_raw_exception_details():
     module_source = ADMIN_ROUTES.read_text()
     raw_error_targets = {
+        "create_rfc": [
+            'content=f"<h2>Error: {str(e)}</h2><a href=\'/admin/rfc\'>Volver</a>"',
+            'content=f"<h2>Error: {str(e)}</h2><a href="/admin/rfc">Volver</a>"',
+        ],
         "admin_proveedores_clientes": [
             "<strong>Error:</strong> {str(e)}",
         ],
