@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from io import BytesIO
 from types import SimpleNamespace
+from urllib import error as urllib_error
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +14,91 @@ import samchat.assistant.router as assistant_router
 
 def _empleado():
     return SimpleNamespace(id=uuid.uuid4(), rol="admin", nombre="Test User")
+
+
+def _http_error(body: bytes, *, code: int = 403) -> urllib_error.HTTPError:
+    return urllib_error.HTTPError(
+        url="https://example.invalid/private",
+        code=code,
+        msg="Forbidden",
+        hdrs={},
+        fp=BytesIO(body),
+    )
+
+
+def test_supabase_auth_error_detail_does_not_expose_remote_body(monkeypatch):
+    monkeypatch.setattr(
+        assistant_router.urllib_request,
+        "urlopen",
+        MagicMock(
+            side_effect=_http_error(
+                b'{"error":"invalid token","access_token":"SECRET_REMOTE_TOKEN"}',
+                code=401,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        assistant_router._sync_fetch_json(
+            "https://example.invalid/auth",
+            headers={"Authorization": "Bearer local-token"},
+        )
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Supabase auth rejected token"
+    assert "SECRET_REMOTE_TOKEN" not in exc_info.value.detail
+
+
+def test_supabase_storage_error_detail_does_not_expose_remote_body(monkeypatch):
+    monkeypatch.setattr(
+        assistant_router.urllib_request,
+        "urlopen",
+        MagicMock(
+            side_effect=_http_error(
+                b'{"signed_url":"https://storage.example/SECRET_OBJECT"}',
+                code=403,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        assistant_router._sync_fetch_bytes(
+            "https://example.invalid/storage",
+            headers={"Authorization": "Bearer local-token"},
+        )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "No se pudo descargar archivo privado"
+    assert "SECRET_OBJECT" not in exc_info.value.detail
+
+
+def test_sendgrid_error_detail_does_not_expose_remote_body(monkeypatch):
+    monkeypatch.setenv("SENDGRID_API_KEY", "test-sendgrid-key")
+    monkeypatch.setattr(
+        assistant_router.urllib_request,
+        "urlopen",
+        MagicMock(
+            side_effect=_http_error(
+                b'{"message":"rejected","email":"private@example.com","token":"SECRET"}',
+                code=400,
+            )
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        assistant_router._sync_sendgrid_request(
+            {
+                "personalizations": [{"to": [{"email": "private@example.com"}]}],
+                "from": {"email": "sender@example.com"},
+                "subject": "test",
+                "content": [{"type": "text/plain", "value": "hello"}],
+            }
+        )
+
+    assert exc_info.value.status_code == 502
+    assert exc_info.value.detail == "SendGrid rejected request"
+    assert "private@example.com" not in exc_info.value.detail
+    assert "SECRET" not in exc_info.value.detail
 
 
 @pytest.mark.asyncio

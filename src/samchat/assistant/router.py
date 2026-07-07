@@ -5583,13 +5583,12 @@ def _sync_fetch_json(
         with urllib_request.urlopen(req, timeout=timeout) as res:
             body = res.read().decode("utf-8", errors="replace")
     except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
         raise HTTPException(
-            status_code=401, detail=f"Supabase auth rejected token: {detail}"
+            status_code=401, detail="Supabase auth rejected token"
         ) from exc
     except urllib_error.URLError as exc:
         raise HTTPException(
-            status_code=502, detail=f"Supabase unreachable: {exc}"
+            status_code=502, detail="Supabase unreachable"
         ) from exc
 
     try:
@@ -5610,14 +5609,13 @@ def _sync_fetch_bytes(
         with urllib_request.urlopen(req, timeout=timeout) as res:
             return res.read()
     except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
         raise HTTPException(
             status_code=exc.code if exc.code in {400, 401, 403, 404} else 502,
-            detail=f"No se pudo descargar archivo privado: {detail}",
+            detail="No se pudo descargar archivo privado",
         ) from exc
     except urllib_error.URLError as exc:
         raise HTTPException(
-            status_code=502, detail=f"Supabase storage unreachable: {exc}"
+            status_code=502, detail="Supabase storage unreachable"
         ) from exc
 
 
@@ -5650,13 +5648,12 @@ def _sync_sendgrid_request(
                 "body": response_body,
             }
     except urllib_error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
         raise HTTPException(
-            status_code=502, detail=f"SendGrid rejected request: {detail or exc.reason}"
+            status_code=502, detail="SendGrid rejected request"
         ) from exc
     except urllib_error.URLError as exc:
         raise HTTPException(
-            status_code=502, detail=f"SendGrid unreachable: {exc}"
+            status_code=502, detail="SendGrid unreachable"
         ) from exc
 
 
