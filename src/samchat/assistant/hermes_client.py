@@ -9,6 +9,10 @@ from typing import Any, Dict, List, Optional
 import requests
 
 
+_ASSISTANT_UNREACHABLE_MESSAGE = "Samchat assistant unreachable"
+_ASSISTANT_REQUEST_FAILED_MESSAGE = "Samchat assistant request failed"
+
+
 class SamchatAssistantAPIError(Exception):
     """Raised when the Samchat assistant API returns an error."""
 
@@ -111,7 +115,10 @@ class HermesSamchatAssistantClient:
                 timeout=self.timeout_seconds,
             )
         except requests.RequestException as exc:
-            raise SamchatAssistantAPIError(str(exc), status_code=0) from exc
+            raise SamchatAssistantAPIError(
+                _ASSISTANT_UNREACHABLE_MESSAGE,
+                status_code=0,
+            ) from exc
 
         try:
             parsed = response.json()
@@ -119,14 +126,9 @@ class HermesSamchatAssistantClient:
             parsed = None
 
         if response.status_code >= 400:
-            if isinstance(parsed, dict):
-                message = str(parsed.get("detail") or parsed)
-            else:
-                message = response.text or f"HTTP {response.status_code}"
             raise SamchatAssistantAPIError(
-                message,
+                _ASSISTANT_REQUEST_FAILED_MESSAGE,
                 status_code=response.status_code,
-                response_text=response.text,
             )
 
         if isinstance(parsed, (dict, list)):
