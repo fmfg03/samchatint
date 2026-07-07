@@ -75,7 +75,7 @@ def decode_spreadsheet_xlsx(raw: bytes) -> List[Dict[str, Any]]:
         workbook = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
     except Exception as exc:
         raise HTTPException(
-            status_code=400, detail=f"No se pudo leer el archivo XLSX: {exc}"
+            status_code=400, detail="No se pudo leer el archivo XLSX"
         ) from exc
 
     sheet = workbook[workbook.sheetnames[0]]
@@ -128,7 +128,7 @@ def spreadsheet_records_from_bytes(
         raise
     except Exception as exc:
         raise HTTPException(
-            status_code=400, detail=f"No se pudo leer el archivo tabular: {exc}"
+            status_code=400, detail="No se pudo leer el archivo tabular"
         ) from exc
 
 
@@ -246,7 +246,7 @@ def extract_document_text_from_bytes(
             return "\n\n".join(pages).strip()
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail=f"No se pudo extraer texto del PDF: {exc}"
+                status_code=400, detail="No se pudo extraer texto del PDF"
             ) from exc
 
     if name.endswith(".docx") or "wordprocessingml.document" in mime:
@@ -262,7 +262,7 @@ def extract_document_text_from_bytes(
             ).strip()
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail=f"No se pudo leer DOCX: {exc}"
+                status_code=400, detail="No se pudo leer DOCX"
             ) from exc
 
     if allow_spreadsheet and (
@@ -286,7 +286,7 @@ def extract_document_text_from_bytes(
             return "\n".join(lines).strip()
         except Exception as exc:
             raise HTTPException(
-                status_code=400, detail=f"No se pudo leer XLSX: {exc}"
+                status_code=400, detail="No se pudo leer XLSX"
             ) from exc
 
     return (decode_bytes_text(raw) or "").strip()
