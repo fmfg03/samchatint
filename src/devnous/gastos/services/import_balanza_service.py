@@ -125,7 +125,10 @@ def _detect_balanza_header(ws) -> Optional[int]:
 
 
 def _parse_balanza_xlsx_rows(contents: bytes) -> List[CuentaContableImportRow]:
-    wb = load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    try:
+        wb = load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError("No se pudo leer el archivo XLSX.") from exc
     ws = wb[wb.sheetnames[0]]
     header_row = _detect_balanza_header(ws)
     if not header_row:

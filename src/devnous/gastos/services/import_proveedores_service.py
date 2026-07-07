@@ -156,7 +156,10 @@ def _detect_rfc_xlsx_header(ws) -> Optional[int]:
 
 
 def _parse_rfc_xlsx_rows(contents: bytes) -> List[ProveedorImportRow]:
-    wb = load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    try:
+        wb = load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    except Exception as exc:
+        raise ValueError("No se pudo leer el archivo XLSX.") from exc
     ws = wb[wb.sheetnames[0]]
     header_row = _detect_rfc_xlsx_header(ws)
     if not header_row:
