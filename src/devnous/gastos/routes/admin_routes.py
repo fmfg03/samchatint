@@ -8228,9 +8228,13 @@ async def create_rfc(
             """
         )
     except Exception as e:
-        logger.error(f"Error creating RFC: {e}")
+        await session.rollback()
+        logger.error("Error creating RFC: %s", e, exc_info=True)
         return HTMLResponse(
-            content=f"<h2>Error: {str(e)}</h2><a href='/admin/rfc'>Volver</a>",
+            content=(
+                "<h2>Error: No se pudo crear el RFC.</h2>"
+                "<a href='/admin/rfc'>Volver</a>"
+            ),
             status_code=400,
         )
 
