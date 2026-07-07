@@ -48,6 +48,14 @@ class TocinoAPIError(Exception):
         self.response_text = response_text
 
 
+def _safe_tocino_error_message(status_code: int, *, operation: str) -> str:
+    if operation == "status":
+        return "Tocino status check failed"
+    if status_code == 0:
+        return "Tocino API unreachable"
+    return "Tocino API request failed"
+
+
 def redact_tocino_payload_for_log(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Return a log-safe Tocino payload snapshot."""
 
@@ -121,7 +129,10 @@ class TocinoClient:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
         except requests.RequestException as exc:
             logger.exception("Network error while calling Tocino API")
-            raise TocinoAPIError(str(exc), status_code=0) from exc
+            raise TocinoAPIError(
+                _safe_tocino_error_message(0, operation="submit"),
+                status_code=0,
+            ) from exc
 
         logger.info(
             "Received response from Tocino",
@@ -154,7 +165,12 @@ class TocinoClient:
             extra={"status_code": response.status_code, "error_message": message},
         )
 
-        raise TocinoAPIError(message=message, status_code=response.status_code, response_text=response.text)
+        raise TocinoAPIError(
+            message=_safe_tocino_error_message(
+                response.status_code, operation="submit"
+            ),
+            status_code=response.status_code,
+        )
 
     def check_invoice_status(self, ticket_id: str) -> Dict[str, Any]:
         """Check the status of a ticket by ticket_id.
@@ -188,7 +204,12 @@ class TocinoClient:
                 data = response.json()
             except ValueError:
                 logger.warning("Tocino status response is not valid JSON")
-                raise TocinoAPIError("Invalid JSON response", status_code=response.status_code, response_text=response.text)
+                raise TocinoAPIError(
+                    _safe_tocino_error_message(
+                        response.status_code, operation="status"
+                    ),
+                    status_code=response.status_code,
+                )
             
             logger.info("Received invoice status", extra={
                 "ticket_id": ticket_id,
@@ -201,11 +222,19 @@ class TocinoClient:
             else:
                 message = data.get("detail") or data.get("message") or data.get("error") or str(data)
                 logger.error("Tocino status check failed", extra={"status_code": response.status_code, "error_message": message})
-                raise TocinoAPIError(message=message, status_code=response.status_code, response_text=str(data))
+                raise TocinoAPIError(
+                    message=_safe_tocino_error_message(
+                        response.status_code, operation="status"
+                    ),
+                    status_code=response.status_code,
+                )
                 
         except requests.RequestException as exc:
             logger.error("Error checking invoice status", extra={"ticket_id": ticket_id, "error": str(exc)})
-            raise TocinoAPIError(str(exc), status_code=0) from exc
+            raise TocinoAPIError(
+                _safe_tocino_error_message(0, operation="status"),
+                status_code=0,
+            ) from exc
 
 
 def get_tocino_client(api_key: str = None, base_url: str = None) -> TocinoClient:
@@ -257,4 +286,3 @@ def test_connection(sample_payload: Optional[Dict[str, Any]] = None) -> bool:
     except TocinoAPIError as exc:
         logger.warning("Tocino test connection failed", extra={"status_code": exc.status_code, "error_message": str(exc)})
         return False
-
