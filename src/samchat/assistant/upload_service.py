@@ -270,7 +270,7 @@ async def extract_text_from_media(
         if not extracted and errors:
             raise HTTPException(
                 status_code=400,
-                detail=f"No se pudo extraer texto de imagen: {errors[-1]}",
+                detail="No se pudo extraer texto de imagen",
             )
 
     if not extracted:
