@@ -175,13 +175,22 @@ async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
                 results["updated"] += 1
                 
         except TocinoAPIError as e:
-            error_msg = f"Expense {gasto.id}: Tocino API error: {str(e)}"
-            logger.error(error_msg)
+            logger.error(
+                "Expense %s: Tocino API error",
+                gasto.id,
+                extra={"error": str(e)},
+            )
+            error_msg = f"Expense {gasto.id}: Unexpected Tocino invoice status error"
             results["errors"].append(error_msg)
             
         except Exception as e:
-            error_msg = f"Expense {gasto.id}: Unexpected error: {str(e)}"
-            logger.error(error_msg, exc_info=True)
+            logger.error(
+                "Expense %s: Unexpected invoice status update error",
+                gasto.id,
+                extra={"error": str(e)},
+                exc_info=True,
+            )
+            error_msg = f"Expense {gasto.id}: Unexpected invoice status update error"
             results["errors"].append(error_msg)
     
     # Commit all updates
