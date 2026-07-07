@@ -221,7 +221,11 @@ Total partidos: {len(self.matches)}
 
         except Exception as e:
             logger.error(f"❌ OCR Error: {e}", exc_info=True)
-            return f"❌ *Error*\n\n`{str(e)}`\n\nPor favor intenta de nuevo."
+            return (
+                "❌ *Error*\n\n"
+                "`No se pudo procesar el registro OCR.`\n\n"
+                "Por favor intenta de nuevo."
+            )
 
     def _call_claude_vision(self, image_b64: str) -> Dict[str, Any]:
         """Call Claude Vision API (blocking operation)"""
@@ -293,7 +297,11 @@ Total partidos: {len(self.matches)}
 
         except Exception as e:
             logger.error(f"❌ Claude Vision error: {e}", exc_info=True)
-            return {'player_name': '', 'confidence': 0.0, 'error': str(e)}
+            return {
+                'player_name': '',
+                'confidence': 0.0,
+                'error': 'claude_vision_processing_failed',
+            }
 
     async def _request_human_verification(
         self,
