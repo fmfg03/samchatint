@@ -98,11 +98,10 @@ def send_sendgrid_mail_sync(
                 return False, status, response_body or "SendGrid error"
             return True, status, response_body
     except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        return False, int(exc.code or 502), detail or str(exc.reason)
+        return False, int(exc.code or 502), "SendGrid request failed"
     except urllib.error.URLError as exc:
         logger.warning("SendGrid URLError: %s", exc)
-        return False, 0, str(exc)
+        return False, 0, "SendGrid unreachable"
 
 
 async def send_sendgrid_mail_async(
