@@ -133,6 +133,46 @@ async def _run_upload_async(
 
 
 @pytest.mark.asyncio
+async def test_image_upload_provider_errors_are_not_exposed_to_client():
+    async def _leaky_anthropic_error(**_kwargs):
+        raise RuntimeError("anthropic leaked SECRET_ANTHROPIC_TRACE")
+
+    class _OpenAIClient:
+        class _Chat:
+            class _Completions:
+                @staticmethod
+                def create(**_kwargs):
+                    raise RuntimeError("openai leaked SECRET_OPENAI_TRACE")
+
+            completions = _Completions()
+
+        chat = _Chat()
+
+    def _provider_order(**_kwargs):
+        return ["anthropic", "openai"]
+
+    def _openai_client(_api_key):
+        return _OpenAIClient()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await extract_text_from_media(
+            kind="image",
+            upload=_upload("receipt.png", "image/png", b"\x89PNG\r\n\x1a\nfake"),
+            note=None,
+            raw=b"\x89PNG\r\n\x1a\nfake",
+            extract_text_from_image_anthropic=_leaky_anthropic_error,
+            assistant_provider_order=_provider_order,
+            get_openai_client=_openai_client,
+            extract_roster_from_records=_roster_payload,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "No se pudo extraer texto de imagen"
+    assert "SECRET_ANTHROPIC_TRACE" not in exc_info.value.detail
+    assert "SECRET_OPENAI_TRACE" not in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_spreadsheet_upload_parsing_does_not_block_event_loop(monkeypatch):
     def _slow_spreadsheet_parser(**_kwargs):
         time.sleep(0.2)
