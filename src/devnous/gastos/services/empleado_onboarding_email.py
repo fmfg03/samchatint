@@ -70,6 +70,5 @@ async def send_initial_password_email(
     )
     return (
         False,
-        "No se pudo enviar el correo automáticamente; comparte la contraseña manualmente. "
-        f"(Detalle: {detail[:200] if detail else 'sin detalle'})",
+        "No se pudo enviar el correo automáticamente; comparte la contraseña manualmente.",
     )
