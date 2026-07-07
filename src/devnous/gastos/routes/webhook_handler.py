@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
+DEFAULT_TOCINO_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024
 
 
 def _samchat_runtime_env() -> str:
@@ -55,6 +56,39 @@ def _tocino_webhook_secret_for_runtime() -> str:
             detail="Webhook signature verification is not configured",
         )
     return ""
+
+
+def _tocino_webhook_max_body_bytes() -> int:
+    raw = (os.getenv("TOCINO_WEBHOOK_MAX_BODY_BYTES") or "").strip()
+    if not raw:
+        return DEFAULT_TOCINO_WEBHOOK_MAX_BODY_BYTES
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_TOCINO_WEBHOOK_MAX_BODY_BYTES
+
+
+async def _read_limited_webhook_body(request: Request) -> bytes:
+    max_bytes = _tocino_webhook_max_body_bytes()
+    content_length = (request.headers.get("content-length") or "").strip()
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Webhook payload too large",
+                )
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length")
+
+    body = bytearray()
+    async for chunk in request.stream():
+        if not chunk:
+            continue
+        body.extend(chunk)
+        if len(body) > max_bytes:
+            raise HTTPException(status_code=413, detail="Webhook payload too large")
+    return bytes(body)
 
 
 async def _upsert_gasto_adjunto_tocino(
@@ -558,8 +592,8 @@ async def receive_tocino_webhook(
     It stores the full payload in invoice_reports and syncs key fields to expense_reports.
     """
 
-    # Read request body as bytes for signature verification and JSON parsing
-    body_bytes = await request.body()
+    # Read request body as bytes for signature verification and JSON parsing.
+    body_bytes = await _read_limited_webhook_body(request)
     body_length = len(body_bytes)
 
     signature_header_name = os.getenv("TOCINO_WEBHOOK_SIGNATURE_HEADER", "typeform-signature").lower()
