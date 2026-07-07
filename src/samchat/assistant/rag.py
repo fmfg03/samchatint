@@ -32,6 +32,50 @@ ALLOWED_EXTENSIONS = {
 }
 
 
+SENSITIVE_PATH_PARTS = {
+    ".git",
+    ".hg",
+    ".svn",
+    ".venv",
+    "venv",
+    "node_modules",
+    "__pycache__",
+    ".secrets",
+    "secrets",
+    "secret",
+    "credentials",
+    "credential",
+    "test_env",
+    "private",
+}
+
+SENSITIVE_FILENAME_MARKERS = {
+    "api_key",
+    "apikey",
+    "auth_token",
+    "credential",
+    "credentials",
+    "passwd",
+    "password",
+    "private_key",
+    "secret",
+    "service_account",
+    "token",
+}
+
+SENSITIVE_PREFIXES = (".env",)
+
+SENSITIVE_SUFFIXES = {
+    ".crt",
+    ".csr",
+    ".der",
+    ".key",
+    ".p12",
+    ".pem",
+    ".pfx",
+}
+
+
 @dataclass
 class RAGChunk:
     chunk_id: str
@@ -95,6 +139,33 @@ class LocalRAGStore:
             start = max(start + 1, end - overlap)
         return chunks
 
+    def _is_safe_ingest_file(self, path: Path, *, base_dir: Path) -> bool:
+        if path.is_symlink():
+            return False
+        try:
+            base_resolved = base_dir.resolve()
+            resolved = path.resolve()
+            relative = resolved.relative_to(base_resolved)
+        except (OSError, ValueError):
+            return False
+        if path.suffix.lower() not in ALLOWED_EXTENSIONS:
+            return False
+        relative_parts = [part.lower() for part in relative.parts]
+        if any(part in SENSITIVE_PATH_PARTS for part in relative_parts[:-1]):
+            return False
+        name = path.name.lower()
+        stem = path.stem.lower()
+        if name.startswith(SENSITIVE_PREFIXES):
+            return False
+        if path.suffix.lower() in SENSITIVE_SUFFIXES:
+            return False
+        normalized_stem = re.sub(r"[^a-z0-9]+", "_", stem).strip("_")
+        normalized_for_match = f"_{normalized_stem}_"
+        return not any(
+            f"_{marker}_" in normalized_for_match
+            for marker in SENSITIVE_FILENAME_MARKERS
+        )
+
     def _iter_files(
         self,
         paths: List[str],
@@ -110,11 +181,11 @@ class LocalRAGStore:
             if not p.exists():
                 continue
             if p.is_file():
-                if p.suffix.lower() in ALLOWED_EXTENSIONS:
+                if self._is_safe_ingest_file(p, base_dir=base_dir):
                     collected.append(p)
             else:
                 for f in p.rglob("*"):
-                    if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS:
+                    if f.is_file() and self._is_safe_ingest_file(f, base_dir=base_dir):
                         collected.append(f)
                         if len(collected) >= max_files:
                             return collected
