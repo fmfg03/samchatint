@@ -35,6 +35,11 @@ jobs:
             "tests/unit/test_assistant_response_strategy.py"
             "tests/unit/test_assistant_self_critique.py"
             "tests/unit/test_assistant_situation_model.py"
+            "tests/unit/test_assistant_action_planner.py"
+            "tests/unit/test_assistant_cognitive_pipeline.py"
+            "tests/unit/test_assistant_cognitive_scenarios.py"
+            "tests/unit/test_assistant_cognitive_trace.py"
+            "tests/unit/test_assistant_response_drafter.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -87,7 +92,12 @@ jobs:
             tests/unit/test_assistant_readonly_quality_metrics.py \
             tests/unit/test_assistant_response_strategy.py \
             tests/unit/test_assistant_self_critique.py \
-            tests/unit/test_assistant_situation_model.py
+            tests/unit/test_assistant_situation_model.py \
+            tests/unit/test_assistant_action_planner.py \
+            tests/unit/test_assistant_cognitive_pipeline.py \
+            tests/unit/test_assistant_cognitive_scenarios.py \
+            tests/unit/test_assistant_cognitive_trace.py \
+            tests/unit/test_assistant_response_drafter.py
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'
