@@ -69,3 +69,17 @@ def test_readonly_utility_metrics_fails_closed_for_plural_side_effect_count(
     payload = metrics.to_trace()
     assert payload["side_effects_detected"] == 2
     assert payload["readonly_safe"] is False
+
+
+def test_readonly_utility_metrics_ignores_non_mapping_tool_results() -> None:
+    metrics = evaluate_readonly_utility_metrics(
+        assistant_message="No hubo un resultado estructurado.",
+        tool_trace=[
+            {"tool": "finance_ops_query", "result": None},
+            {"tool": "finance_alerts_scan", "result": "timeout"},
+        ],
+    )
+
+    payload = metrics.to_trace()
+    assert payload["tool_success_count"] == 0
+    assert payload["tool_failure_count"] == 0

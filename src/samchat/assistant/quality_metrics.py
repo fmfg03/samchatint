@@ -70,10 +70,11 @@ def evaluate_readonly_utility_metrics(
                 provider_timeout_count += 1
         if "tool" in item and "result" in item:
             result = item.get("result")
-            if isinstance(result, Mapping) and result.get("error"):
-                tool_failure_count += 1
-            else:
-                tool_success_count += 1
+            if isinstance(result, Mapping):
+                if result.get("error"):
+                    tool_failure_count += 1
+                else:
+                    tool_success_count += 1
         decision = _decision_from_trace(item)
         if decision in {"allow", "RUNTIME_ALLOWED_EMPLOYEE_ID"}:
             runtime_allowed_count += 1

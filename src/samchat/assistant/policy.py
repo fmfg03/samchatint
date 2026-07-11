@@ -88,9 +88,13 @@ def evaluate_readonly_capability(
             "writes_enabled": writes_enabled,
         }
     if requested.endswith(".write") or ".write." in requested:
+        if writes_enabled:
+            reason = "write_capability_denied"
+        else:
+            reason = "writes_disabled"
         return {
             "decision": "deny",
-            "reason": "writes_disabled",
+            "reason": reason,
             "role": normalized_role,
             "capability": requested,
             "writes_enabled": writes_enabled,

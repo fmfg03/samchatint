@@ -131,6 +131,19 @@ def test_role_capability_map_denies_write_capability_when_writes_disabled() -> N
     assert decision["writes_enabled"] is False
 
 
+def test_role_capability_map_denies_write_capability_when_writes_enabled(
+) -> None:
+    decision = evaluate_readonly_capability(
+        role="superadmin",
+        capability="finance.expense.write",
+        writes_enabled=True,
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "write_capability_denied"
+    assert decision["writes_enabled"] is True
+
+
 def test_role_capability_map_explains_capability_denial() -> None:
     decision = evaluate_readonly_capability(
         role="empleado",
