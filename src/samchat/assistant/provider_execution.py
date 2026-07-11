@@ -97,17 +97,22 @@ async def _anthropic_messages_create(
     **kwargs: Any,
 ) -> Any:
     semaphore = _anthropic_semaphore(concurrency_limit)
-    loop = asyncio.get_running_loop()
     call = functools.partial(client.messages.create, **kwargs)
     async with semaphore:
-        future = loop.run_in_executor(_anthropic_executor(concurrency_limit), call)
-        try:
-            return await asyncio.wait_for(future, timeout=timeout_seconds)
-        except asyncio.TimeoutError as exc:
-            raise HTTPException(
-                status_code=504,
-                detail=PROVIDER_TIMEOUT_REASON,
-            ) from exc
+        future = _anthropic_executor(concurrency_limit).submit(call)
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            if future.done():
+                return future.result()
+            if time.monotonic() >= deadline:
+                future.cancel()
+                exc = TimeoutError(PROVIDER_TIMEOUT_REASON)
+                raise HTTPException(
+                    status_code=504,
+                    detail=PROVIDER_TIMEOUT_REASON,
+                ) from exc
+            sleep_seconds = min(0.01, max(0.0, deadline - time.monotonic()))
+            await asyncio.sleep(sleep_seconds)
 
 
 def _pending_summary(tool_name: str, args: Dict[str, Any]) -> str:
