@@ -49,6 +49,9 @@ jobs:
             "tests/unit/test_assistant_document_live_wiring.py"
             "tests/unit/test_assistant_document_runtime_smoke.py"
             "tests/unit/test_assistant_upload_document_intake_integration.py"
+            "tests/unit/test_assistant_finance_query_intent.py"
+            "tests/unit/test_assistant_finance_query_read_only.py"
+            "tests/unit/test_assistant_finance_query_router_integration.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -115,7 +118,10 @@ jobs:
             tests/unit/test_assistant_document_intake.py \
             tests/unit/test_assistant_document_live_wiring.py \
             tests/unit/test_assistant_document_runtime_smoke.py \
-            tests/unit/test_assistant_upload_document_intake_integration.py
+            tests/unit/test_assistant_upload_document_intake_integration.py \
+            tests/unit/test_assistant_finance_query_intent.py \
+            tests/unit/test_assistant_finance_query_read_only.py \
+            tests/unit/test_assistant_finance_query_router_integration.py
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'
