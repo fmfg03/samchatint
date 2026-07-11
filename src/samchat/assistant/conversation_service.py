@@ -11,6 +11,13 @@ from sqlalchemy import select
 from devnous.gastos.models import AssistantMessage
 
 from .action_router import supported_actions
+from .analyst_intent import detect_analyst_intent
+from .analyst_response import build_analyst_trace, render_analyst_result
+from .analyst_workbench import (
+    AnalystEvidence,
+    extract_analyst_evidence_from_messages,
+    run_analyst_workbench,
+)
 from .document_confirmation import AsyncActionRouterExecutor
 from .document_conversation import (
     extract_document_intake_result_from_text,
@@ -41,7 +48,8 @@ MaybeAppendExportPromptFn = Callable[[str, Any], str]
 
 
 def _document_writes_enabled() -> bool:
-    return os.getenv("ASSISTANT_AGENT_WRITES_ENABLED", "false").strip().lower() in {
+    value = os.getenv("ASSISTANT_AGENT_WRITES_ENABLED", "false")
+    return value.strip().lower() in {
         "1",
         "true",
         "yes",
@@ -107,10 +115,32 @@ async def _latest_document_intake_result(
         )
     ).scalars()
     for message in rows:
-        intake = extract_document_intake_result_from_text(message.content or "")
+        intake = extract_document_intake_result_from_text(
+            message.content or ""
+        )
         if intake is not None:
             return intake
     return None
+
+
+async def _latest_analyst_evidence(
+    *,
+    session: Any,
+    conversation_id: Any,
+    limit: int = 20,
+) -> list[AnalystEvidence]:
+    try:
+        rows = (
+            await session.execute(
+                select(AssistantMessage)
+                .where(AssistantMessage.conversation_id == conversation_id)
+                .order_by(AssistantMessage.created_at.desc())
+                .limit(limit)
+            )
+        ).scalars()
+    except Exception:
+        return []
+    return extract_analyst_evidence_from_messages(rows)
 
 
 async def _build_document_upload_response(
@@ -129,7 +159,9 @@ async def _build_document_upload_response(
             "document_intake_live_wiring": {
                 "stage": "upload_render",
                 "detected_document_type": intake.get("detected_document_type"),
-                "proposed_action_count": len(intake.get("proposed_actions") or []),
+                "proposed_action_count": len(
+                    intake.get("proposed_actions") or []
+                ),
                 "missing_field_count": len(intake.get("missing_fields") or []),
                 "provider_called": False,
             }
@@ -162,8 +194,10 @@ async def _build_document_confirmation_response(
     )
     if intake is None:
         message = (
-            "No encontre una accion documental propuesta en esta conversacion. "
-            "Sube el documento de nuevo o confirma desde el mensaje que contiene "
+            "No encontre una accion documental propuesta en esta "
+            "conversacion. "
+            "Sube el documento de nuevo o confirma desde el mensaje que "
+            "contiene "
             "el proposed_action_id."
         )
         tool_trace = [
@@ -183,7 +217,10 @@ async def _build_document_confirmation_response(
             conversation=conversation,
             session=session,
         )
-        return _response_object(assistant_message=message, tool_trace=tool_trace)
+        return _response_object(
+            assistant_message=message,
+            tool_trace=tool_trace,
+        )
 
     result = await handle_document_confirmation_command_async(
         text=raw_message,
@@ -302,6 +339,34 @@ async def _build_request_intelligence_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+async def _build_analyst_workbench_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    intent = detect_analyst_intent(raw_message)
+    if intent is None or intent.requires_operational_route:
+        return None
+
+    evidence = await _latest_analyst_evidence(
+        session=session,
+        conversation_id=conversation.id,
+    )
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+    rendered = render_analyst_result(result)
+    tool_trace = build_analyst_trace(intent=intent, result=result)
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def run_conversation_turn(
     *,
     raw_message: str,
@@ -351,6 +416,15 @@ async def run_conversation_turn(
     )
     if request_response is not None:
         return request_response
+
+    analyst_response = await _build_analyst_workbench_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if analyst_response is not None:
+        return analyst_response
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
@@ -484,6 +558,15 @@ async def run_message_turn_with_pending(
     )
     if request_response is not None:
         return request_response
+
+    analyst_response = await _build_analyst_workbench_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if analyst_response is not None:
+        return analyst_response
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
