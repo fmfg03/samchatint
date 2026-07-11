@@ -40,6 +40,15 @@ jobs:
             "tests/unit/test_assistant_cognitive_scenarios.py"
             "tests/unit/test_assistant_cognitive_trace.py"
             "tests/unit/test_assistant_response_drafter.py"
+            "tests/unit/test_assistant_document_action_planner.py"
+            "tests/unit/test_assistant_document_classifier.py"
+            "tests/unit/test_assistant_document_confirmation.py"
+            "tests/unit/test_assistant_document_confirmation_execution_gate.py"
+            "tests/unit/test_assistant_document_conversation_confirmation_loop.py"
+            "tests/unit/test_assistant_document_intake.py"
+            "tests/unit/test_assistant_document_live_wiring.py"
+            "tests/unit/test_assistant_document_runtime_smoke.py"
+            "tests/unit/test_assistant_upload_document_intake_integration.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -97,7 +106,16 @@ jobs:
             tests/unit/test_assistant_cognitive_pipeline.py \
             tests/unit/test_assistant_cognitive_scenarios.py \
             tests/unit/test_assistant_cognitive_trace.py \
-            tests/unit/test_assistant_response_drafter.py
+            tests/unit/test_assistant_response_drafter.py \
+            tests/unit/test_assistant_document_action_planner.py \
+            tests/unit/test_assistant_document_classifier.py \
+            tests/unit/test_assistant_document_confirmation.py \
+            tests/unit/test_assistant_document_confirmation_execution_gate.py \
+            tests/unit/test_assistant_document_conversation_confirmation_loop.py \
+            tests/unit/test_assistant_document_intake.py \
+            tests/unit/test_assistant_document_live_wiring.py \
+            tests/unit/test_assistant_document_runtime_smoke.py \
+            tests/unit/test_assistant_upload_document_intake_integration.py
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'
