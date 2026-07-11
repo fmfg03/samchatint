@@ -11450,6 +11450,30 @@ async def create_message(
         )
         await session.commit()
 
+        async def document_action_router_executor(
+            canonical_action: str, payload: Dict[str, Any]
+        ) -> Dict[str, Any]:
+            if canonical_action not in supported_read_actions():
+                raise ValueError(
+                    "document confirmation live wiring only executes read actions"
+                )
+            result = await execute_canonical_action(
+                canonical_action,
+                session=session,
+                context={
+                    "tournament_key": conversation.tournament_key,
+                    "responsible_user_id": str(
+                        getattr(current_empleado, "id", "") or ""
+                    ),
+                },
+                payload=payload,
+            )
+            return {
+                "summary": str(result.data.get("summary") or result.status),
+                "status": result.status,
+                "action": result.action,
+            }
+
         return await run_message_turn_with_pending(
             raw_message=payload.message,
             conversation=conversation,
@@ -11477,6 +11501,7 @@ async def create_message(
             build_deterministic_pending_response=_build_deterministic_pending_response,
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
+            document_action_router_executor=document_action_router_executor,
         )
     except HTTPException:
         raise
@@ -11567,6 +11592,7 @@ async def create_media_message(
             openai_api_key=openai_api_key,
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
+            document_action_router_executor=None,
         )
     except HTTPException:
         raise
