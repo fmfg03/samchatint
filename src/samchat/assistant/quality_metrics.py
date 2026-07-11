@@ -39,6 +39,13 @@ def _decision_from_trace(item: Mapping[str, Any]) -> Optional[str]:
     return None
 
 
+def _side_effect_count_from_trace(item: Mapping[str, Any]) -> int:
+    count = item.get("side_effects_detected")
+    if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+        return count
+    return int(item.get("side_effect_detected") is True)
+
+
 def evaluate_readonly_utility_metrics(
     *,
     assistant_message: str,
@@ -74,8 +81,7 @@ def evaluate_readonly_utility_metrics(
             runtime_denied_count += 1
         if item.get("handler_invoked") is True and item.get("operation_type") == "write":
             write_handlers_invoked += 1
-        if item.get("side_effect_detected") is True:
-            side_effects_detected += 1
+        side_effects_detected += _side_effect_count_from_trace(item)
 
     return ReadOnlyUtilityMetrics(
         useful_answer_present=bool((assistant_message or "").strip()),

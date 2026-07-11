@@ -52,3 +52,20 @@ def test_readonly_utility_metrics_counts_denied_runtime_decisions() -> None:
     assert payload["write_handlers_invoked"] == 0
     assert payload["side_effects_detected"] == 0
     assert payload["readonly_safe"] is True
+
+
+def test_readonly_utility_metrics_fails_closed_for_plural_side_effect_count(
+) -> None:
+    metrics = evaluate_readonly_utility_metrics(
+        assistant_message="Preparé una propuesta sin ejecutarla.",
+        tool_trace=[
+            {
+                "side_effects_detected": 2,
+                "side_effect_detected": True,
+            }
+        ],
+    )
+
+    payload = metrics.to_trace()
+    assert payload["side_effects_detected"] == 2
+    assert payload["readonly_safe"] is False
