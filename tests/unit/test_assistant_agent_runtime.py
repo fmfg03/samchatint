@@ -5,6 +5,7 @@ from samchat.assistant.agent_runtime import (
     build_agent_runtime_activation_trace,
     build_agent_shadow_trace,
     evaluate_runtime_activation,
+    evaluate_runtime_canary_subjects,
     evaluate_runtime_tool_call,
     evaluate_shadow_activation,
     evaluate_shadow_tool_call,
@@ -93,6 +94,33 @@ def test_runtime_activation_allows_employee_id(monkeypatch) -> None:
 
     assert activation.enabled is True
     assert activation.decision == "RUNTIME_ALLOWED_EMPLOYEE_ID"
+    assert activation.to_trace()["subject"]["employee_id_hash"].startswith("sha256:")
+
+
+def test_runtime_canary_evaluates_multiple_explicit_employees(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1,emp-2")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "false")
+
+    summary = evaluate_runtime_canary_subjects(
+        employee_ids=["emp-1", "emp-2", "emp-denied"]
+    )
+
+    assert summary["runtime_allowed"] == 2
+    assert summary["runtime_denied"] == 1
+    assert summary["writes_enabled"] is False
+    assert summary["readonly_only"] is True
+    assert summary["general_runtime"] is False
+    assert summary["write_handlers_invoked"] == 0
+    assert summary["side_effects_detected"] == 0
+    assert [item["decision"] for item in summary["decisions"]] == [
+        "RUNTIME_ALLOWED_EMPLOYEE_ID",
+        "RUNTIME_ALLOWED_EMPLOYEE_ID",
+        "RUNTIME_SUBJECT_NOT_ALLOWED",
+    ]
+    assert all(item["handler_invoked"] is False for item in summary["decisions"])
+    assert "emp-1" not in str(summary)
 
 
 def test_agent_shadow_flag_is_independent_from_real_runtime(monkeypatch) -> None:

@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from samchat.assistant.policy import evaluate_tool_policy, normalize_role
+from samchat.assistant.policy import (
+    evaluate_readonly_capability,
+    evaluate_tool_policy,
+    normalize_role,
+    readonly_capabilities_for_role,
+)
 from samchat.assistant.tool_registry import AssistantToolSpec
 
 
@@ -94,3 +99,43 @@ def test_policy_denies_write_tool_for_insufficient_role() -> None:
     assert decision.allowed is False
     assert decision.decision == "deny"
     assert decision.reason == "role_not_allowed:admin"
+
+
+def test_role_capability_map_allows_finance_readonly_capabilities() -> None:
+    capabilities = readonly_capabilities_for_role("finanzas")
+
+    assert "finance.ops.read" in capabilities
+    assert "finance.alerts.read" in capabilities
+    assert "database.read" not in capabilities
+
+
+def test_role_capability_map_denies_unknown_role() -> None:
+    decision = evaluate_readonly_capability(
+        role="externo",
+        capability="finance.ops.read",
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "unknown_role:externo"
+
+
+def test_role_capability_map_denies_write_capability_when_writes_disabled() -> None:
+    decision = evaluate_readonly_capability(
+        role="superadmin",
+        capability="finance.expense.write",
+        writes_enabled=False,
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "writes_disabled"
+    assert decision["writes_enabled"] is False
+
+
+def test_role_capability_map_explains_capability_denial() -> None:
+    decision = evaluate_readonly_capability(
+        role="empleado",
+        capability="finance.ops.read",
+    )
+
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "capability_not_allowed:finance.ops.read"

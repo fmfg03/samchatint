@@ -65,6 +65,7 @@ class RuntimeActivation:
     enabled: bool
     decision: str
     employee_id_present: bool
+    employee_id_hash: Optional[str] = None
 
     def to_trace(self) -> Dict[str, Any]:
         return {
@@ -72,6 +73,7 @@ class RuntimeActivation:
             "decision": self.decision,
             "subject": {
                 "employee_id_present": self.employee_id_present,
+                "employee_id_hash": self.employee_id_hash,
             },
             "readonly_only": is_agent_runtime_readonly_only(),
             "writes_enabled": is_agent_writes_enabled(),
@@ -120,6 +122,14 @@ def _email_hash(email: Optional[str]) -> Optional[str]:
     return f"sha256:{digest}"
 
 
+def _stable_subject_hash(value: Optional[Any]) -> Optional[str]:
+    normalized = str(value).strip() if value is not None else ""
+    if not normalized:
+        return None
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+    return f"sha256:{digest}"
+
+
 def evaluate_runtime_activation(
     *,
     employee_id: Optional[Any] = None,
@@ -133,6 +143,7 @@ def evaluate_runtime_activation(
             enabled=False,
             decision=RUNTIME_DISABLED,
             employee_id_present=employee_id_present,
+            employee_id_hash=_stable_subject_hash(employee_key),
         )
 
     if not employee_ids:
@@ -140,6 +151,7 @@ def evaluate_runtime_activation(
             enabled=False,
             decision=RUNTIME_ALLOWLIST_EMPTY,
             employee_id_present=employee_id_present,
+            employee_id_hash=_stable_subject_hash(employee_key),
         )
 
     if employee_key and employee_key in employee_ids:
@@ -147,13 +159,50 @@ def evaluate_runtime_activation(
             enabled=True,
             decision=RUNTIME_ALLOWED_EMPLOYEE_ID,
             employee_id_present=True,
+            employee_id_hash=_stable_subject_hash(employee_key),
         )
 
     return RuntimeActivation(
         enabled=False,
         decision=RUNTIME_SUBJECT_NOT_ALLOWED,
         employee_id_present=employee_id_present,
+        employee_id_hash=_stable_subject_hash(employee_key),
     )
+
+
+def evaluate_runtime_canary_subjects(
+    *,
+    employee_ids: Iterable[Any],
+) -> Dict[str, Any]:
+    decisions = []
+    runtime_allowed = 0
+    runtime_denied = 0
+    for employee_id in employee_ids:
+        activation = evaluate_runtime_activation(employee_id=employee_id)
+        if activation.enabled:
+            runtime_allowed += 1
+        else:
+            runtime_denied += 1
+        decisions.append(
+            {
+                "decision": activation.decision,
+                "enabled": activation.enabled,
+                "employee_id_present": activation.employee_id_present,
+                "employee_id_hash": activation.employee_id_hash,
+                "handler_invoked": False,
+                "side_effects_allowed": False,
+            }
+        )
+    return {
+        "runtime_allowed": runtime_allowed,
+        "runtime_denied": runtime_denied,
+        "writes_enabled": is_agent_writes_enabled(),
+        "readonly_only": is_agent_runtime_readonly_only(),
+        "general_runtime": False,
+        "write_handlers_invoked": 0,
+        "side_effects_detected": 0,
+        "decisions": decisions,
+    }
 
 
 def evaluate_shadow_activation(

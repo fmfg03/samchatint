@@ -27,6 +27,14 @@ jobs:
             "tests/unit/test_assistant_inference_router.py"
             "tests/unit/test_assistant_action_router_contracts.py"
             "tests/unit/test_assistant_router_error_handling.py"
+            "tests/unit/test_assistant_decision_rubric.py"
+            "tests/unit/test_assistant_hypothesis_engine.py"
+            "tests/unit/test_assistant_proposed_actions.py"
+            "tests/unit/test_assistant_provider_execution_isolation.py"
+            "tests/unit/test_assistant_readonly_quality_metrics.py"
+            "tests/unit/test_assistant_response_strategy.py"
+            "tests/unit/test_assistant_self_critique.py"
+            "tests/unit/test_assistant_situation_model.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -71,7 +79,15 @@ jobs:
             tests/unit/test_assistant_agent_runtime_contract.py \
             tests/unit/test_assistant_inference_router.py \
             tests/unit/test_assistant_action_router_contracts.py \
-            tests/unit/test_assistant_router_error_handling.py
+            tests/unit/test_assistant_router_error_handling.py \
+            tests/unit/test_assistant_decision_rubric.py \
+            tests/unit/test_assistant_hypothesis_engine.py \
+            tests/unit/test_assistant_proposed_actions.py \
+            tests/unit/test_assistant_provider_execution_isolation.py \
+            tests/unit/test_assistant_readonly_quality_metrics.py \
+            tests/unit/test_assistant_response_strategy.py \
+            tests/unit/test_assistant_self_critique.py \
+            tests/unit/test_assistant_situation_model.py
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'
