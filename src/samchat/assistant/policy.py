@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, FrozenSet, Mapping, Optional
 
 from .tool_registry import AssistantToolSpec, WRITE
 
@@ -26,6 +26,100 @@ def normalize_role(role: Optional[str]) -> str:
     if normalized == "super_admin":
         return "superadmin"
     return normalized or "user"
+
+
+READONLY_ROLE_CAPABILITIES: Mapping[str, FrozenSet[str]] = {
+    "empleado": frozenset({"finance.self.read", "assistant.read"}),
+    "user": frozenset({"finance.self.read", "assistant.read"}),
+    "coordinador": frozenset(
+        {"finance.team.read", "finance.self.read", "assistant.read"}
+    ),
+    "finanzas": frozenset(
+        {
+            "finance.ops.read",
+            "finance.alerts.read",
+            "finance.team.read",
+            "finance.self.read",
+            "assistant.read",
+        }
+    ),
+    "admin": frozenset(
+        {
+            "finance.ops.read",
+            "finance.alerts.read",
+            "finance.team.read",
+            "finance.self.read",
+            "database.read",
+            "assistant.read",
+        }
+    ),
+    "superadmin": frozenset(
+        {
+            "finance.ops.read",
+            "finance.alerts.read",
+            "finance.team.read",
+            "finance.self.read",
+            "database.read",
+            "dev.read",
+            "assistant.read",
+        }
+    ),
+}
+
+
+def readonly_capabilities_for_role(role: Optional[str]) -> FrozenSet[str]:
+    return READONLY_ROLE_CAPABILITIES.get(normalize_role(role), frozenset())
+
+
+def evaluate_readonly_capability(
+    *,
+    role: Optional[str],
+    capability: str,
+    writes_enabled: bool = False,
+) -> Dict[str, Any]:
+    normalized_role = normalize_role(role)
+    requested = (capability or "").strip()
+    if not requested:
+        return {
+            "decision": "deny",
+            "reason": "capability_missing",
+            "role": normalized_role,
+            "capability": requested,
+            "writes_enabled": writes_enabled,
+        }
+    if requested.endswith(".write") or ".write." in requested:
+        if writes_enabled:
+            reason = "write_capability_denied"
+        else:
+            reason = "writes_disabled"
+        return {
+            "decision": "deny",
+            "reason": reason,
+            "role": normalized_role,
+            "capability": requested,
+            "writes_enabled": writes_enabled,
+        }
+    capabilities = readonly_capabilities_for_role(normalized_role)
+    if requested not in capabilities:
+        reason = (
+            f"unknown_role:{normalized_role}"
+            if normalized_role not in READONLY_ROLE_CAPABILITIES
+            else f"capability_not_allowed:{requested}"
+        )
+        return {
+            "decision": "deny",
+            "reason": reason,
+            "role": normalized_role,
+            "capability": requested,
+            "writes_enabled": writes_enabled,
+        }
+    return {
+        "decision": "allow",
+        "reason": "readonly_capability_allowed",
+        "role": normalized_role,
+        "capability": requested,
+        "writes_enabled": writes_enabled,
+    }
 
 
 def evaluate_tool_policy(
