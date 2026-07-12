@@ -40,6 +40,10 @@ def build_analyst_trace(
         str(item.get("source_type") or "unknown")
         for item in result.evidence
     ]
+    evidence_labels = [
+        str(item.get("label") or item.get("source_type") or "contexto")
+        for item in result.evidence
+    ]
     evidence_rank_scores = [
         int(item.get("rank_score") or 0)
         for item in result.evidence
@@ -49,14 +53,21 @@ def build_analyst_trace(
         for item in result.evidence
     ]
     answer_contract = result.answer_contract or {}
+    conflict_resolution = intent.conflict_resolution or {}
+    selected_route = str(conflict_resolution.get("selected_route") or "")
+    conflict_reason = str(conflict_resolution.get("reason") or "")
+    answer_contract_status = str(answer_contract.get("status") or "")
     return [
         {
             "analyst_workbench_live_wiring": {
                 "stage": "analyst_workbench",
                 "analyst_intent": intent.analyst_intent,
                 "status": result.status,
+                "selected_route": selected_route,
+                "conflict_reason": conflict_reason,
                 "evidence_count": len(result.evidence),
                 "evidence_types": evidence_types,
+                "evidence_labels": evidence_labels,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
                 "coverage_level": result.coverage_level,
@@ -66,6 +77,7 @@ def build_analyst_trace(
                 "answer_contract_version": str(
                     answer_contract.get("version") or ""
                 ),
+                "answer_contract_status": answer_contract_status,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -80,6 +92,7 @@ def build_analyst_trace(
                 "title": result.title,
                 "evidence_count": len(result.evidence),
                 "evidence_types": evidence_types,
+                "evidence_labels": evidence_labels,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
                 "coverage_level": result.coverage_level,
@@ -89,6 +102,7 @@ def build_analyst_trace(
                 "answer_contract_version": str(
                     answer_contract.get("version") or ""
                 ),
+                "answer_contract_status": answer_contract_status,
                 "exportable": False,
             },
         }

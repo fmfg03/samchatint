@@ -152,12 +152,16 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] is False
     assert trace["evidence_types"][0] == "inline_context"
+    assert trace["evidence_labels"][0] == "contexto inline"
     assert "conversation" in trace["evidence_types"]
     assert trace["evidence_rank_scores"][0] > trace["evidence_rank_scores"][1]
     assert "risk_review_terms" in trace["evidence_rank_reasons"][0]
     assert trace["coverage_level"] in {"medium", "high"}
     assert trace["overclaim_guard_applied"] is False
     assert trace["answer_contract_version"] == "analyst_answer_contract_v1"
+    assert trace["answer_contract_status"] == "success"
+    assert trace["selected_route"] == "analyst"
+    assert trace["conflict_reason"] == "document_context_analysis"
 
 
 @pytest.mark.asyncio
@@ -198,6 +202,10 @@ async def test_document_hybrid_enters_analyst_with_conflict_trace():
     resolution = trace["analyst_intent"]["conflict_resolution"]
     assert resolution["selected_route"] == "analyst"
     assert resolution["reason"] == "document_context_analysis"
+    wiring = trace["analyst_workbench_live_wiring"]
+    assert wiring["selected_route"] == "analyst"
+    assert wiring["conflict_reason"] == "document_context_analysis"
+    assert wiring["answer_contract_status"] == "success"
 
 
 @pytest.mark.asyncio
