@@ -15,7 +15,9 @@ from .analyst_intent import detect_analyst_intent
 from .analyst_response import build_analyst_trace, render_analyst_result
 from .analyst_workbench import (
     AnalystEvidence,
+    build_analyst_evidence_pack,
     extract_analyst_evidence_from_messages,
+    extract_inline_analyst_evidence,
     run_analyst_workbench,
 )
 from .document_confirmation import AsyncActionRouterExecutor
@@ -350,9 +352,14 @@ async def _build_analyst_workbench_response(
     if intent is None or intent.requires_operational_route:
         return None
 
-    evidence = await _latest_analyst_evidence(
+    inline_evidence = extract_inline_analyst_evidence(raw_message, intent)
+    history_evidence = await _latest_analyst_evidence(
         session=session,
         conversation_id=conversation.id,
+    )
+    evidence = build_analyst_evidence_pack(
+        inline_evidence=inline_evidence,
+        history_evidence=history_evidence,
     )
     result = await run_analyst_workbench(intent=intent, evidence=evidence)
     rendered = render_analyst_result(result)
