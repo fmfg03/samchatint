@@ -19,6 +19,10 @@ def test_contract_risk_review_routes_to_analyst_not_finance_report() -> None:
     assert intent is not None
     assert intent.analyst_intent == "risk_review"
     assert intent.requires_operational_route is False
+    assert (
+        intent.conflict_resolution["reason"]
+        in {"document_context_analysis", "analyst_intent_match"}
+    )
 
 
 def test_document_comparison_routes_to_analyst() -> None:
@@ -59,3 +63,62 @@ def test_document_confirmation_command_does_not_route_to_analyst() -> None:
     assert intent is not None
     assert intent.requires_operational_route is True
     assert intent.operational_route_hint == "document_confirmation"
+    assert (
+        intent.conflict_resolution["reason"]
+        == "document_confirmation_command"
+    )
+
+
+def test_report_payment_risks_route_to_operational_request() -> None:
+    intent = detect_analyst_intent("riesgos del reporte de pagos esta semana")
+
+    assert intent is not None
+    assert intent.requires_operational_route is True
+    assert intent.operational_route_hint == "payments.list_pending"
+    assert intent.conflict_resolution["reason"] == "operational_domain"
+
+
+def test_finance_compare_with_conclusions_stays_operational() -> None:
+    intent = detect_analyst_intent(
+        "compara gasto 2026 vs 2025 y dame conclusiones"
+    )
+
+    assert intent is not None
+    assert intent.requires_operational_route is True
+    assert intent.operational_route_hint == "finance.compare"
+    assert intent.conflict_resolution["reason"] == "operational_domain"
+
+
+def test_cfdi_pending_with_risks_stays_operational() -> None:
+    intent = detect_analyst_intent("CFDIs pendientes con riesgos")
+
+    assert intent is not None
+    assert intent.requires_operational_route is True
+    assert intent.operational_route_hint == "cfdi.list_pending"
+
+
+def test_document_summary_for_direction_routes_to_analyst() -> None:
+    intent = detect_analyst_intent("resume este documento para dirección")
+
+    assert intent is not None
+    assert intent.analyst_intent == "summarize"
+    assert intent.requires_operational_route is False
+    assert intent.conflict_resolution["reason"] == "document_context_analysis"
+
+
+def test_sow_proposal_comparison_routes_to_analyst() -> None:
+    intent = detect_analyst_intent("compara este SOW contra esta propuesta")
+
+    assert intent is not None
+    assert intent.analyst_intent == "compare"
+    assert intent.requires_operational_route is False
+    assert intent.conflict_resolution["reason"] == "document_context_analysis"
+
+
+def test_create_contract_summary_is_write_like_not_analyst() -> None:
+    intent = detect_analyst_intent("crea un resumen de este contrato")
+
+    assert intent is not None
+    assert intent.requires_operational_route is True
+    assert intent.operational_route_hint == "write_like_action"
+    assert intent.conflict_resolution["reason"] == "write_like_action"
