@@ -360,6 +360,7 @@ async def _build_analyst_workbench_response(
     evidence = build_analyst_evidence_pack(
         inline_evidence=inline_evidence,
         history_evidence=history_evidence,
+        intent=intent,
     )
     result = await run_analyst_workbench(intent=intent, evidence=evidence)
     rendered = render_analyst_result(result)

@@ -123,6 +123,8 @@ async def test_analyst_uses_latest_document_context_without_provider():
     assert trace["status"] == "success"
     assert trace["provider_called"] is False
     assert trace["evidence_types"] == ["document_intake"]
+    assert trace["evidence_rank_scores"][0] > 0
+    assert trace["evidence_rank_reasons"][0]
 
 
 @pytest.mark.asyncio
@@ -149,6 +151,8 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     assert trace["writes_attempted"] is False
     assert trace["evidence_types"][0] == "inline_context"
     assert "conversation" in trace["evidence_types"]
+    assert trace["evidence_rank_scores"][0] > trace["evidence_rank_scores"][1]
+    assert "risk_review_terms" in trace["evidence_rank_reasons"][0]
 
 
 @pytest.mark.asyncio

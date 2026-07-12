@@ -40,6 +40,14 @@ def build_analyst_trace(
         str(item.get("source_type") or "unknown")
         for item in result.evidence
     ]
+    evidence_rank_scores = [
+        int(item.get("rank_score") or 0)
+        for item in result.evidence
+    ]
+    evidence_rank_reasons = [
+        list(item.get("rank_reasons") or [])
+        for item in result.evidence
+    ]
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -48,6 +56,8 @@ def build_analyst_trace(
                 "status": result.status,
                 "evidence_count": len(result.evidence),
                 "evidence_types": evidence_types,
+                "evidence_rank_scores": evidence_rank_scores,
+                "evidence_rank_reasons": evidence_rank_reasons,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -62,6 +72,8 @@ def build_analyst_trace(
                 "title": result.title,
                 "evidence_count": len(result.evidence),
                 "evidence_types": evidence_types,
+                "evidence_rank_scores": evidence_rank_scores,
+                "evidence_rank_reasons": evidence_rank_reasons,
                 "exportable": False,
             },
         }
