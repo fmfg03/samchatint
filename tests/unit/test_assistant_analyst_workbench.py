@@ -21,6 +21,8 @@ async def test_insufficient_context_needs_context_without_provider():
     assert "subas, pegues o selecciones" in result.answer
     assert result.provider_called is False
     assert result.actions_executed == []
+    assert result.coverage_level == "none"
+    assert result.answer_contract["status"] == "needs_context"
 
 
 @pytest.mark.asyncio
@@ -46,6 +48,9 @@ async def test_analyst_with_mocked_context_returns_structured_answer():
     assert result.next_questions
     assert result.provider_called is False
     assert result.actions_executed == []
+    assert result.coverage_level in {"medium", "high"}
+    assert result.answer_contract["version"] == "analyst_answer_contract_v1"
+    assert result.answer_contract["external_validation_claimed"] is False
 
 
 @pytest.mark.asyncio
@@ -64,6 +69,8 @@ async def test_compare_with_one_context_is_caveated():
     assert result.status == "success"
     assert "Comparación preliminar" in result.answer
     assert any("incompleta" in caveat for caveat in result.caveats)
+    assert result.answer_contract["overclaim_guard_applied"] is True
+    assert any("confirmación humana" in caveat for caveat in result.caveats)
 
 
 def test_extracts_document_intake_evidence_from_message():
@@ -119,6 +126,8 @@ async def test_long_inline_context_is_clipped_and_caveated():
     assert result.status == "success"
     assert result.evidence[0]["summary"].endswith("...")
     assert any("recortada" in caveat for caveat in result.caveats)
+    assert result.coverage_level == "low"
+    assert result.answer_contract["overclaim_guard_applied"] is True
 
 
 def test_evidence_pack_orders_inline_first_dedupes_and_limits():
@@ -256,4 +265,36 @@ async def test_low_relevance_evidence_adds_conservative_caveat():
     result = await run_analyst_workbench(intent=intent, evidence=evidence)
 
     assert result.status == "success"
+    assert result.coverage_level == "low"
     assert any("limitada o indirecta" in caveat for caveat in result.caveats)
+    assert result.answer_contract["overclaim_guard_applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_keeps_answer_contract():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="inline_context",
+                label="contrato.pdf",
+                summary="Contrato con penalizacion y responsable faltante.",
+            )
+        ],
+    )
+
+    async def provider_raises(_intent, _evidence):
+        raise RuntimeError("provider unavailable")
+
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=evidence,
+        provider_allowed=True,
+        provider_fn=provider_raises,
+    )
+
+    assert result.status == "provider_unavailable"
+    assert result.answer_contract["version"] == "analyst_answer_contract_v1"
+    assert result.answer_contract["overclaim_guard_applied"] is True
+    assert result.coverage_level in {"medium", "high"}
