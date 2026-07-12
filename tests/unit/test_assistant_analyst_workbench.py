@@ -6,6 +6,7 @@ from samchat.assistant.analyst_workbench import (
     build_analyst_evidence_pack,
     extract_analyst_evidence_from_messages,
     extract_inline_analyst_evidence,
+    rank_analyst_evidence,
     run_analyst_workbench,
 )
 
@@ -121,6 +122,7 @@ async def test_long_inline_context_is_clipped_and_caveated():
 
 
 def test_evidence_pack_orders_inline_first_dedupes_and_limits():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
     inline = [
         AnalystEvidence(
             source_type="inline_context",
@@ -140,8 +142,118 @@ def test_evidence_pack_orders_inline_first_dedupes_and_limits():
     packed = build_analyst_evidence_pack(
         inline_evidence=inline,
         history_evidence=history,
+        intent=intent,
     )
 
     assert len(packed) == 6
     assert packed[0].source_type == "inline_context"
-    assert packed.count(inline[0]) == 1
+    assert sum(
+        1 for item in packed if item.source_type == "inline_context"
+    ) == 1
+    assert packed[0].rank_score > 0
+    assert packed[0].rank_reasons
+
+
+def test_document_intake_ranks_above_conversation_for_explain():
+    intent = detect_analyst_intent("Explícame esta balanza")
+    evidence = [
+        AnalystEvidence(
+            source_type="conversation",
+            label="contexto de conversación",
+            summary="Conversación amplia con detalles generales del cierre.",
+        ),
+        AnalystEvidence(
+            source_type="document_intake",
+            label="accounting_balance",
+            summary="Balanza mayo 2026 con cuentas y saldos.",
+        ),
+    ]
+
+    ranked = rank_analyst_evidence(intent, evidence)
+
+    assert ranked[0].source_type == "document_intake"
+    assert "direct_document_or_report" in ranked[0].rank_reasons
+
+
+def test_report_result_ranks_above_conversation_for_summary():
+    intent = detect_analyst_intent("Resume conclusiones")
+    evidence = [
+        AnalystEvidence(
+            source_type="conversation",
+            label="contexto de conversación",
+            summary="Mensaje largo de conversación con contexto general.",
+        ),
+        AnalystEvidence(
+            source_type="report_result",
+            label="reporte previo",
+            summary="Comparacion | concepto | monto | variacion relevante.",
+        ),
+    ]
+
+    ranked = rank_analyst_evidence(intent, evidence)
+
+    assert ranked[0].source_type == "report_result"
+
+
+def test_evidence_pack_dedupes_normalized_text():
+    intent = detect_analyst_intent("Resume este texto")
+    evidence = [
+        AnalystEvidence(
+            source_type="conversation",
+            label="Contexto",
+            summary="  MISMO   texto con espacios  ",
+        ),
+        AnalystEvidence(
+            source_type="conversation",
+            label="contexto",
+            summary="mismo texto con espacios",
+        ),
+    ]
+
+    packed = build_analyst_evidence_pack(
+        inline_evidence=[],
+        history_evidence=evidence,
+        intent=intent,
+    )
+
+    assert len(packed) == 1
+
+
+def test_rank_reasons_are_serialized_to_dict():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="inline_context",
+                label="contrato.pdf",
+                summary="Contrato con penalizacion y responsable faltante.",
+            )
+        ],
+    )
+
+    payload = evidence[0].to_dict()
+
+    assert payload["rank_score"] > 0
+    assert "rank_reasons" in payload
+    assert "risk_review_terms" in payload["rank_reasons"]
+
+
+@pytest.mark.asyncio
+async def test_low_relevance_evidence_adds_conservative_caveat():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="conversation",
+                label="contexto de conversación",
+                summary="Tema general sin datos concretos suficientes.",
+            )
+        ],
+    )
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+
+    assert result.status == "success"
+    assert any("limitada o indirecta" in caveat for caveat in result.caveats)
