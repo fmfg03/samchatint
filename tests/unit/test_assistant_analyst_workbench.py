@@ -331,3 +331,72 @@ async def test_provider_failure_keeps_answer_contract():
     assert result.answer_contract["version"] == "analyst_answer_contract_v1"
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.coverage_level in {"medium", "high"}
+
+
+@pytest.mark.asyncio
+async def test_provider_success_applies_overclaim_guard_for_low_coverage():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="conversation",
+                label="contexto de conversación",
+                summary="Tema general sin datos concretos suficientes.",
+            )
+        ],
+    )
+
+    async def provider_answer(_intent, _evidence):
+        return "Respuesta con el contexto disponible: hay riesgo relevante."
+
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=evidence,
+        provider_allowed=True,
+        provider_fn=provider_answer,
+    )
+
+    assert result.status == "success"
+    assert result.provider_called is True
+    assert result.actions_executed == []
+    assert result.coverage_level == "low"
+    assert "preliminar con el contexto disponible" in result.answer
+    assert result.answer_contract["overclaim_guard_applied"] is True
+    assert result.answer_contract["writes_allowed"] is False
+    assert result.answer_contract["external_validation_claimed"] is False
+    assert any("confirmación humana" in caveat for caveat in result.caveats)
+
+
+@pytest.mark.asyncio
+async def test_provider_success_caveats_incomplete_comparison():
+    intent = detect_analyst_intent("Compara estos dos documentos")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="propuesta.pdf",
+                summary="Propuesta con alcance y costo.",
+            )
+        ],
+    )
+
+    async def provider_answer(_intent, _evidence):
+        return "Comparación con el contexto disponible: hay diferencias."
+
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=evidence,
+        provider_allowed=True,
+        provider_fn=provider_answer,
+    )
+
+    assert result.status == "success"
+    assert result.provider_called is True
+    assert result.actions_executed == []
+    assert "preliminar con el contexto disponible" in result.answer
+    assert result.answer_contract["overclaim_guard_applied"] is True
+    assert result.answer_contract["writes_allowed"] is False
+    assert result.answer_contract["external_validation_claimed"] is False
+    assert any("confirmación humana" in caveat for caveat in result.caveats)

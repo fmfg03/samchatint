@@ -587,12 +587,22 @@ async def run_analyst_workbench(
             provider_called = True
             answer = await provider_fn(intent, evidence)
             if answer.strip():
+                caveats = ["Respuesta basada en contexto autorizado."]
+                guarded_answer, caveats, overclaim_guard_applied = (
+                    apply_no_overclaim_guard(
+                        answer=answer.strip(),
+                        caveats=caveats,
+                        intent=intent,
+                        coverage_level=coverage_level,
+                        evidence=evidence,
+                    )
+                )
                 return AnalystWorkbenchResult(
                     status="success",
                     title="Analyst Workbench",
-                    answer=answer.strip(),
+                    answer=guarded_answer,
                     evidence=[item.to_dict() for item in evidence],
-                    caveats=["Respuesta basada en contexto autorizado."],
+                    caveats=caveats,
                     next_questions=[],
                     suggested_routes=[],
                     actions_executed=[],
@@ -601,9 +611,9 @@ async def run_analyst_workbench(
                     answer_contract=build_answer_contract(
                         intent=intent,
                         evidence=evidence,
-                        caveats=["Respuesta basada en contexto autorizado."],
+                        caveats=caveats,
                         coverage_level=coverage_level,
-                        overclaim_guard_applied=False,
+                        overclaim_guard_applied=overclaim_guard_applied,
                     ),
                 )
         except Exception:
