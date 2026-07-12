@@ -1,6 +1,7 @@
 import pytest
 
 from samchat.assistant.analyst_intent import detect_analyst_intent
+from samchat.assistant.analyst_response import build_analyst_trace
 from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
     build_analyst_evidence_pack,
@@ -51,6 +52,38 @@ async def test_analyst_with_mocked_context_returns_structured_answer():
     assert result.coverage_level in {"medium", "high"}
     assert result.answer_contract["version"] == "analyst_answer_contract_v1"
     assert result.answer_contract["external_validation_claimed"] is False
+
+
+@pytest.mark.asyncio
+async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = [
+        AnalystEvidence(
+            source_type="uploaded_file",
+            label="contrato.pdf",
+            summary=(
+                "Contrato con penalizacion, responsable faltante "
+                "y anexos pendientes."
+            ),
+        )
+    ]
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+    trace = build_analyst_trace(intent=intent, result=result)[0]
+    wiring = trace["analyst_workbench_live_wiring"]
+
+    assert wiring["selected_route"] == "analyst"
+    assert wiring["conflict_reason"] == "document_context_analysis"
+    assert wiring["answer_contract_status"] == "success"
+    assert wiring["answer_contract_version"] == "analyst_answer_contract_v1"
+    assert wiring["evidence_labels"] == ["contrato.pdf"]
+    assert wiring["evidence_types"] == ["uploaded_file"]
+    assert wiring["evidence_rank_scores"][0] > 0
+    assert wiring["provider_called"] is False
+    assert wiring["writes_attempted"] is False
+    assert trace["result"]["answer_contract_status"] == "success"
+    assert trace["result"]["evidence_labels"] == ["contrato.pdf"]
+    assert trace["result"]["exportable"] is False
 
 
 @pytest.mark.asyncio
