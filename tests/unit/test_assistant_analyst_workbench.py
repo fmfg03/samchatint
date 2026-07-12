@@ -5,6 +5,7 @@ from samchat.assistant.analyst_response import build_analyst_trace
 from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
     build_analyst_evidence_pack,
+    context_sufficiency_for_evidence,
     extract_analyst_evidence_from_messages,
     extract_inline_analyst_evidence,
     rank_analyst_evidence,
@@ -24,6 +25,7 @@ async def test_insufficient_context_needs_context_without_provider():
     assert result.actions_executed == []
     assert result.coverage_level == "none"
     assert result.answer_contract["status"] == "needs_context"
+    assert result.answer_contract["coverage_reasons"] == ["no_evidence"]
 
 
 @pytest.mark.asyncio
@@ -76,12 +78,14 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert wiring["conflict_reason"] == "document_context_analysis"
     assert wiring["answer_contract_status"] == "success"
     assert wiring["answer_contract_version"] == "analyst_answer_contract_v1"
+    assert wiring["coverage_reasons"] == ["supported_context"]
     assert wiring["evidence_labels"] == ["contrato.pdf"]
     assert wiring["evidence_types"] == ["uploaded_file"]
     assert wiring["evidence_rank_scores"][0] > 0
     assert wiring["provider_called"] is False
     assert wiring["writes_attempted"] is False
     assert trace["result"]["answer_contract_status"] == "success"
+    assert trace["result"]["coverage_reasons"] == ["supported_context"]
     assert trace["result"]["evidence_labels"] == ["contrato.pdf"]
     assert trace["result"]["exportable"] is False
 
@@ -160,6 +164,7 @@ async def test_long_inline_context_is_clipped_and_caveated():
     assert result.evidence[0]["summary"].endswith("...")
     assert any("recortada" in caveat for caveat in result.caveats)
     assert result.coverage_level == "low"
+    assert result.answer_contract["coverage_reasons"] == ["clipped_evidence"]
     assert result.answer_contract["overclaim_guard_applied"] is True
 
 
@@ -299,8 +304,84 @@ async def test_low_relevance_evidence_adds_conservative_caveat():
 
     assert result.status == "success"
     assert result.coverage_level == "low"
+    assert result.answer_contract["coverage_reasons"] == ["low_relevance"]
     assert any("limitada o indirecta" in caveat for caveat in result.caveats)
     assert result.answer_contract["overclaim_guard_applied"] is True
+
+
+def test_context_sufficiency_matrix_covers_core_reasons():
+    risk_intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    compare_intent = detect_analyst_intent("Compara estos dos documentos")
+
+    assert context_sufficiency_for_evidence([]).coverage_reasons == [
+        "no_evidence"
+    ]
+
+    clipped = rank_analyst_evidence(
+        risk_intent,
+        [
+            AnalystEvidence(
+                source_type="inline_context",
+                label="contrato.pdf",
+                summary="Contrato con obligaciones...",
+            )
+        ],
+    )
+    assert context_sufficiency_for_evidence(
+        clipped,
+        risk_intent,
+    ).coverage_reasons == ["clipped_evidence"]
+
+    low = rank_analyst_evidence(
+        risk_intent,
+        [
+            AnalystEvidence(
+                source_type="conversation",
+                label="contexto",
+                summary="Tema general sin datos concretos suficientes.",
+            )
+        ],
+    )
+    assert context_sufficiency_for_evidence(
+        low,
+        risk_intent,
+    ).coverage_reasons == ["low_relevance"]
+
+    incomplete_compare = rank_analyst_evidence(
+        compare_intent,
+        [
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="propuesta.pdf",
+                summary="Propuesta con alcance y costo.",
+            )
+        ],
+    )
+    assert context_sufficiency_for_evidence(
+        incomplete_compare,
+        compare_intent,
+    ).coverage_reasons == ["incomplete_comparison"]
+
+    high = rank_analyst_evidence(
+        risk_intent,
+        [
+            AnalystEvidence(
+                source_type="inline_context",
+                label="contrato.pdf",
+                summary="Contrato con penalizacion y responsable faltante.",
+            ),
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="anexo.pdf",
+                summary="Anexo con obligaciones, fechas y responsables.",
+            ),
+        ],
+    )
+    high_sufficiency = context_sufficiency_for_evidence(high, risk_intent)
+    assert high_sufficiency.coverage_level == "high"
+    assert high_sufficiency.coverage_reasons == [
+        "multi_source_high_relevance"
+    ]
 
 
 @pytest.mark.asyncio

@@ -66,6 +66,12 @@ class AnalystWorkbenchResult:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class ContextSufficiency:
+    coverage_level: str
+    coverage_reasons: List[str]
+
+
 def _clip(text: str, limit: int = 500) -> str:
     compact = re.sub(r"\s+", " ", text or "").strip()
     if len(compact) <= limit:
@@ -89,18 +95,29 @@ def _source_score(source_type: str) -> int:
     return SOURCE_PRIORITY.get(source_type, 10)
 
 
-def coverage_level_for_evidence(evidence: Iterable[AnalystEvidence]) -> str:
+def context_sufficiency_for_evidence(
+    evidence: Iterable[AnalystEvidence],
+    intent: Optional[AnalystIntent] = None,
+) -> ContextSufficiency:
     items = list(evidence)
     if not items:
-        return "none"
+        return ContextSufficiency("none", ["no_evidence"])
     best_score = max(item.rank_score for item in items)
     if any(item.summary.endswith("...") for item in items):
-        return "low"
+        return ContextSufficiency("low", ["clipped_evidence"])
     if best_score < LOW_RELEVANCE_SCORE:
-        return "low"
+        return ContextSufficiency("low", ["low_relevance"])
+    if intent is not None and intent.analyst_intent == "compare" and len(
+        items
+    ) < 2:
+        return ContextSufficiency("low", ["incomplete_comparison"])
     if best_score >= 105 and len(items) >= 2:
-        return "high"
-    return "medium"
+        return ContextSufficiency("high", ["multi_source_high_relevance"])
+    return ContextSufficiency("medium", ["supported_context"])
+
+
+def coverage_level_for_evidence(evidence: Iterable[AnalystEvidence]) -> str:
+    return context_sufficiency_for_evidence(evidence).coverage_level
 
 
 def _has_clipped_evidence(evidence: Iterable[AnalystEvidence]) -> bool:
@@ -114,12 +131,15 @@ def build_answer_contract(
     caveats: Iterable[str],
     coverage_level: str,
     overclaim_guard_applied: bool,
+    coverage_reasons: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
+    reasons = list(coverage_reasons or [])
     return {
         "version": ANSWER_CONTRACT_VERSION,
         "status": "success" if coverage_level != "none" else "needs_context",
         "coverage_level": coverage_level,
+        "coverage_reasons": reasons,
         "analyst_intent": intent.analyst_intent,
         "evidence_count": len(evidence_items),
         "evidence_types": [
@@ -408,6 +428,7 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "version": ANSWER_CONTRACT_VERSION,
             "status": "needs_context",
             "coverage_level": "none",
+            "coverage_reasons": ["no_evidence"],
             "analyst_intent": intent.analyst_intent,
             "evidence_count": 0,
             "evidence_types": [],
@@ -442,6 +463,7 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "version": ANSWER_CONTRACT_VERSION,
             "status": "routed_to_operational",
             "coverage_level": "none",
+            "coverage_reasons": ["operational_route"],
             "analyst_intent": intent.analyst_intent,
             "evidence_count": 0,
             "evidence_types": [],
@@ -579,7 +601,9 @@ async def run_analyst_workbench(
         return _needs_context(intent)
     if all(item.rank_score == 0 for item in evidence):
         evidence = rank_analyst_evidence(intent, evidence)
-    coverage_level = coverage_level_for_evidence(evidence)
+    sufficiency = context_sufficiency_for_evidence(evidence, intent)
+    coverage_level = sufficiency.coverage_level
+    coverage_reasons = sufficiency.coverage_reasons
 
     provider_called = False
     if provider_allowed and provider_fn is not None:
@@ -614,6 +638,7 @@ async def run_analyst_workbench(
                         caveats=caveats,
                         coverage_level=coverage_level,
                         overclaim_guard_applied=overclaim_guard_applied,
+                        coverage_reasons=coverage_reasons,
                     ),
                 )
         except Exception:
@@ -642,6 +667,7 @@ async def run_analyst_workbench(
                     ],
                     coverage_level=coverage_level,
                     overclaim_guard_applied=True,
+                    coverage_reasons=coverage_reasons,
                 ),
             )
 
@@ -670,5 +696,6 @@ async def run_analyst_workbench(
             caveats=caveats,
             coverage_level=coverage_level,
             overclaim_guard_applied=overclaim_guard_applied,
+            coverage_reasons=coverage_reasons,
         ),
     )

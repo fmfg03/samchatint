@@ -57,6 +57,7 @@ def build_analyst_trace(
     selected_route = str(conflict_resolution.get("selected_route") or "")
     conflict_reason = str(conflict_resolution.get("reason") or "")
     answer_contract_status = str(answer_contract.get("status") or "")
+    coverage_reasons = list(answer_contract.get("coverage_reasons") or [])
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -78,6 +79,7 @@ def build_analyst_trace(
                     answer_contract.get("version") or ""
                 ),
                 "answer_contract_status": answer_contract_status,
+                "coverage_reasons": coverage_reasons,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -103,6 +105,7 @@ def build_analyst_trace(
                     answer_contract.get("version") or ""
                 ),
                 "answer_contract_status": answer_contract_status,
+                "coverage_reasons": coverage_reasons,
                 "exportable": False,
             },
         }
