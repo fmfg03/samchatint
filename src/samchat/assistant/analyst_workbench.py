@@ -132,9 +132,11 @@ def build_answer_contract(
     coverage_level: str,
     overclaim_guard_applied: bool,
     coverage_reasons: Optional[Iterable[str]] = None,
+    next_questions: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
     reasons = list(coverage_reasons or [])
+    questions = list(next_questions or [])
     return {
         "version": ANSWER_CONTRACT_VERSION,
         "status": "success" if coverage_level != "none" else "needs_context",
@@ -150,7 +152,94 @@ def build_answer_contract(
         "writes_allowed": False,
         "overclaim_guard_applied": overclaim_guard_applied,
         "caveat_count": len(list(caveats)),
+        "next_question_count": len(questions),
     }
+
+
+def _dedupe_questions(questions: Iterable[str]) -> List[str]:
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for question in questions:
+        compact = re.sub(r"\s+", " ", question or "").strip()
+        if not compact:
+            continue
+        key = compact.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(compact)
+    return deduped
+
+
+def next_questions_for_context(
+    *,
+    intent: AnalystIntent,
+    coverage_level: str,
+    coverage_reasons: Iterable[str],
+    evidence: Iterable[AnalystEvidence],
+) -> List[str]:
+    reasons = set(coverage_reasons)
+    questions: List[str] = []
+    if coverage_level == "none" or "no_evidence" in reasons:
+        questions.extend(
+            [
+                "¿Qué documento, reporte o texto debo usar como base?",
+                (
+                    "¿Quieres que el análisis sea para dirección, "
+                    "operación o cliente?"
+                ),
+            ]
+        )
+        return _dedupe_questions(questions)
+    if coverage_level == "low":
+        questions.append(
+            "¿Puedes compartir la fuente completa o confirmar estos hallazgos?"
+        )
+    if "incomplete_comparison" in reasons:
+        questions.extend(
+            [
+                "¿Cuál es el documento base?",
+                "¿Cuál es el documento contraparte a comparar?",
+            ]
+        )
+    if intent.analyst_intent == "risk_review":
+        questions.extend(
+            [
+                (
+                    "¿Existe anexo, SOW o contrato completo para validar "
+                    "obligaciones?"
+                ),
+                "¿Qué decisión debe tomar dirección con este análisis?",
+            ]
+        )
+    elif (
+        intent.analyst_intent == "compare"
+        and "incomplete_comparison" not in reasons
+    ):
+        questions.extend(
+            [
+                "¿Cuál es el documento base?",
+                "¿Cuál es la versión o propuesta a comparar?",
+            ]
+        )
+    elif intent.analyst_intent == "summarize":
+        questions.append(
+            "¿Quieres enfoque ejecutivo, operativo o para cliente?"
+        )
+    elif intent.analyst_intent == "explain":
+        questions.append("¿Qué parte quieres que explique con más detalle?")
+    elif intent.analyst_intent == "questions":
+        questions.append("¿Quieres que las convierta en correo o minuta?")
+    elif intent.analyst_intent == "next_steps":
+        questions.extend(
+            [
+                "¿Cuál es la fecha objetivo de cierre?",
+                "¿Quién aprueba el siguiente entregable?",
+            ]
+        )
+    if not list(evidence) and coverage_level != "none":
+        questions.append("¿Qué evidencia debo priorizar?")
+    return _dedupe_questions(questions)
 
 
 def apply_no_overclaim_guard(
@@ -402,6 +491,12 @@ def extract_analyst_evidence_from_messages(
 
 def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
     needed = ", ".join(intent.context_requirements or ["contexto"])
+    next_questions = next_questions_for_context(
+        intent=intent,
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+        evidence=[],
+    )
     return AnalystWorkbenchResult(
         status="needs_context",
         title="Necesito contexto para analizar",
@@ -413,13 +508,7 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
         caveats=[
             "Sin contexto no puedo sostener una conclusión sin inventar datos."
         ],
-        next_questions=[
-            "¿Qué documento, reporte o texto debo usar como base?",
-            (
-                "¿Quieres que el análisis sea para dirección, "
-                "operación o cliente?"
-            ),
-        ],
+        next_questions=next_questions,
         suggested_routes=[],
         actions_executed=[],
         provider_called=False,
@@ -437,6 +526,7 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "writes_allowed": False,
             "overclaim_guard_applied": True,
             "caveat_count": 1,
+            "next_question_count": len(next_questions),
         },
     )
 
@@ -472,6 +562,7 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "writes_allowed": False,
             "overclaim_guard_applied": False,
             "caveat_count": 0,
+            "next_question_count": 0,
         },
     )
 
@@ -639,6 +730,7 @@ async def run_analyst_workbench(
                         coverage_level=coverage_level,
                         overclaim_guard_applied=overclaim_guard_applied,
                         coverage_reasons=coverage_reasons,
+                        next_questions=[],
                     ),
                 )
         except Exception:
@@ -668,10 +760,24 @@ async def run_analyst_workbench(
                     coverage_level=coverage_level,
                     overclaim_guard_applied=True,
                     coverage_reasons=coverage_reasons,
+                    next_questions=[
+                        "¿Quieres que responda solo con síntesis "
+                        "determinística "
+                        "del contexto?"
+                    ],
                 ),
             )
 
-    answer, caveats, next_questions = _answer_for_intent(intent, evidence)
+    answer, caveats, _legacy_next_questions = _answer_for_intent(
+        intent,
+        evidence,
+    )
+    next_questions = next_questions_for_context(
+        intent=intent,
+        coverage_level=coverage_level,
+        coverage_reasons=coverage_reasons,
+        evidence=evidence,
+    )
     answer, caveats, overclaim_guard_applied = apply_no_overclaim_guard(
         answer=answer,
         caveats=caveats,
@@ -697,5 +803,6 @@ async def run_analyst_workbench(
             coverage_level=coverage_level,
             overclaim_guard_applied=overclaim_guard_applied,
             coverage_reasons=coverage_reasons,
+            next_questions=next_questions,
         ),
     )
