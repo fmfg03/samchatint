@@ -56,6 +56,10 @@ jobs:
             "tests/unit/test_assistant_request_reports.py"
             "tests/unit/test_assistant_request_router_integration.py"
             "tests/unit/test_assistant_request_export_guard.py"
+            "tests/unit/test_assistant_analyst_intent.py"
+            "tests/unit/test_assistant_analyst_workbench.py"
+            "tests/unit/test_assistant_analyst_routing_integration.py"
+            "tests/unit/test_assistant_analyst_provider_isolation.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -129,7 +133,11 @@ jobs:
             tests/unit/test_assistant_request_intent.py \
             tests/unit/test_assistant_request_reports.py \
             tests/unit/test_assistant_request_router_integration.py \
-            tests/unit/test_assistant_request_export_guard.py
+            tests/unit/test_assistant_request_export_guard.py \
+            tests/unit/test_assistant_analyst_intent.py \
+            tests/unit/test_assistant_analyst_workbench.py \
+            tests/unit/test_assistant_analyst_routing_integration.py \
+            tests/unit/test_assistant_analyst_provider_isolation.py
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'
