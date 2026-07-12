@@ -157,6 +157,10 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     assert trace["evidence_rank_scores"][0] > trace["evidence_rank_scores"][1]
     assert "risk_review_terms" in trace["evidence_rank_reasons"][0]
     assert trace["coverage_level"] in {"medium", "high"}
+    assert trace["coverage_reasons"] in (
+        ["supported_context"],
+        ["multi_source_high_relevance"],
+    )
     assert trace["overclaim_guard_applied"] is False
     assert trace["answer_contract_version"] == "analyst_answer_contract_v1"
     assert trace["answer_contract_status"] == "success"
