@@ -51,3 +51,16 @@ def test_unsupported_ambiguous_request_needs_clarification_contract() -> None:
     assert intent.domain == "unknown"
     assert route.type == "clarification"
     assert route.requires_provider is False
+
+
+def test_contract_risk_review_is_not_executive_request() -> None:
+    intent = detect_request_intent("Qué riesgos ves en este contrato")
+
+    assert intent.domain == "unknown"
+
+
+def test_report_payment_risk_request_stays_operational() -> None:
+    intent = detect_request_intent("riesgos del reporte de pagos esta semana")
+
+    assert intent.domain == "payments"
+    assert intent.intent == "list_pending"

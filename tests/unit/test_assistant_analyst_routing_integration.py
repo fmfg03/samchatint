@@ -186,6 +186,21 @@ async def test_operational_finance_route_wins_with_inline_context_words():
 
 
 @pytest.mark.asyncio
+async def test_document_hybrid_enters_analyst_with_conflict_trace():
+    response = await _run_message(
+        "resume este documento para dirección: "
+        "Contrato con obligaciones, responsables y fechas de entrega.",
+    )
+
+    assert "Analyst Workbench" in response.assistant_message
+    trace = response.tool_trace[0]
+    assert trace.get("analyst_workbench_live_wiring")
+    resolution = trace["analyst_intent"]["conflict_resolution"]
+    assert resolution["selected_route"] == "analyst"
+    assert resolution["reason"] == "document_context_analysis"
+
+
+@pytest.mark.asyncio
 async def test_cfdi_request_route_wins_over_analyst():
     calls = []
 

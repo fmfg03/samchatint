@@ -85,6 +85,23 @@ def _base_slots(text: str) -> Dict[str, Any]:
     }
 
 
+def _has_document_context(text: str) -> bool:
+    return any(
+        token in text
+        for token in (
+            "contrato",
+            "documento",
+            "texto",
+            "sow",
+            "propuesta",
+            "balanza",
+            "contexto",
+            "extracto",
+            "fragmento",
+        )
+    )
+
+
 def _intent(
     *,
     raw_text: str,
@@ -227,14 +244,17 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             missing_fields=missing,
         )
 
-    if any(
-        token in normalized
-        for token in ("direccion", "directivo", "ejecutivo", "atorando")
-    ) or (
-        "riesgos" in normalized
-        and any(
+    if not _has_document_context(normalized) and (
+        any(
             token in normalized
-            for token in ("semana", "operacion", "finanzas", "reporte")
+            for token in ("direccion", "directivo", "ejecutivo", "atorando")
+        )
+        or (
+            "riesgos" in normalized
+            and any(
+                token in normalized
+                for token in ("semana", "operacion", "finanzas", "reporte")
+            )
         )
     ):
         return _intent(

@@ -7,7 +7,42 @@ from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 from .document_conversation import parse_document_confirmation_command
-from .request_intent import detect_request_intent
+from .request_intent import OperationalRequestIntent, detect_request_intent
+
+
+DOCUMENT_CONTEXT_TOKENS = (
+    "contrato",
+    "documento",
+    "texto",
+    "sow",
+    "propuesta",
+    "balanza",
+    "contexto",
+    "extracto",
+    "fragmento",
+)
+
+WRITE_LIKE_TOKENS = (
+    "registra",
+    "vincula",
+    "aprueba",
+    "ejecuta",
+    "crea",
+    "actualiza",
+    "borra",
+    "elimina",
+)
+
+REPORT_OPERATION_TOKENS = (
+    "reporte",
+    "operacion",
+    "operación",
+    "finanzas",
+    "semana",
+    "mes",
+    "direccion",
+    "dirección",
+)
 
 
 @dataclass(frozen=True)
@@ -23,6 +58,17 @@ class AnalystIntent:
     missing_context: List[str]
     safety: Dict[str, Any]
     raw_text: str
+    conflict_resolution: Dict[str, Any]
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class AnalystConflictResolution:
+    selected_route: str
+    reason: str
+    operational_route_hint: Optional[str]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -49,7 +95,13 @@ def _intent(
     requires_provider: bool = False,
     requires_operational_route: bool = False,
     operational_route_hint: Optional[str] = None,
+    conflict_resolution: Optional[AnalystConflictResolution] = None,
 ) -> AnalystIntent:
+    resolution = conflict_resolution or AnalystConflictResolution(
+        selected_route="analyst",
+        reason="analyst_intent_match",
+        operational_route_hint=operational_route_hint,
+    )
     return AnalystIntent(
         request_id=_request_id(raw_text),
         mode="analyst",
@@ -68,6 +120,75 @@ def _intent(
             "fail_closed": True,
         },
         raw_text=raw_text or "",
+        conflict_resolution=resolution.to_dict(),
+    )
+
+
+def _has_document_context(normalized: str) -> bool:
+    return any(token in normalized for token in DOCUMENT_CONTEXT_TOKENS)
+
+
+def _has_write_like_action(normalized: str) -> bool:
+    return any(token in normalized for token in WRITE_LIKE_TOKENS)
+
+
+def _has_report_operation_context(normalized: str) -> bool:
+    return any(token in normalized for token in REPORT_OPERATION_TOKENS)
+
+
+def resolve_analyst_conflict(
+    raw_text: str,
+    operational: OperationalRequestIntent,
+) -> AnalystConflictResolution:
+    normalized = normalize_analyst_text(raw_text)
+    if parse_document_confirmation_command(raw_text) is not None:
+        return AnalystConflictResolution(
+            selected_route="document_confirmation",
+            reason="document_confirmation_command",
+            operational_route_hint="document_confirmation",
+        )
+    if _has_write_like_action(normalized):
+        return AnalystConflictResolution(
+            selected_route="operational",
+            reason="write_like_action",
+            operational_route_hint="write_like_action",
+        )
+    if operational.domain in {"finance", "cfdi", "payments", "tournament"}:
+        return AnalystConflictResolution(
+            selected_route="operational",
+            reason="operational_domain",
+            operational_route_hint=(
+                f"{operational.domain}.{operational.intent}"
+            ),
+        )
+    if operational.domain == "executive":
+        if _has_document_context(normalized):
+            return AnalystConflictResolution(
+                selected_route="analyst",
+                reason="document_context_analysis",
+                operational_route_hint=None,
+            )
+        return AnalystConflictResolution(
+            selected_route="operational",
+            reason="executive_or_report_request",
+            operational_route_hint="executive.summarize",
+        )
+    if _has_document_context(normalized):
+        return AnalystConflictResolution(
+            selected_route="analyst",
+            reason="document_context_analysis",
+            operational_route_hint=None,
+        )
+    if _has_report_operation_context(normalized):
+        return AnalystConflictResolution(
+            selected_route="unknown",
+            reason="no_supported_intent",
+            operational_route_hint=None,
+        )
+    return AnalystConflictResolution(
+        selected_route="analyst",
+        reason="analyst_intent_match",
+        operational_route_hint=None,
     )
 
 
@@ -77,32 +198,35 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
     if not normalized:
         return None
 
-    if parse_document_confirmation_command(raw_text) is not None:
-        return _intent(
-            raw_text=raw_text,
-            analyst_intent="unknown",
-            confidence=0.0,
-            context_requirements=[],
-            requires_operational_route=True,
-            operational_route_hint="document_confirmation",
-        )
-
     operational = detect_request_intent(raw_text)
-    if operational.domain != "unknown":
-        route_hint = f"{operational.domain}.{operational.intent}"
+    conflict = resolve_analyst_conflict(raw_text, operational)
+
+    if conflict.selected_route == "document_confirmation":
         return _intent(
             raw_text=raw_text,
             analyst_intent="unknown",
             confidence=0.0,
             context_requirements=[],
             requires_operational_route=True,
-            operational_route_hint=route_hint,
+            operational_route_hint=conflict.operational_route_hint,
+            conflict_resolution=conflict,
         )
 
-    if any(
-        token in normalized
-        for token in ("registra", "vincula", "aprueba", "ejecuta")
-    ):
+    if conflict.selected_route == "operational":
+        return _intent(
+            raw_text=raw_text,
+            analyst_intent="unknown",
+            confidence=0.0,
+            context_requirements=[],
+            requires_operational_route=True,
+            operational_route_hint=conflict.operational_route_hint,
+            conflict_resolution=conflict,
+        )
+
+    if conflict.selected_route == "unknown":
+        return None
+
+    if _has_write_like_action(normalized):
         return _intent(
             raw_text=raw_text,
             analyst_intent="unknown",
@@ -110,6 +234,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             context_requirements=[],
             requires_operational_route=True,
             operational_route_hint="write_like_action",
+            conflict_resolution=conflict,
         )
 
     if any(
@@ -121,6 +246,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="explain",
             confidence=0.86,
             context_requirements=["uploaded_document"],
+            conflict_resolution=conflict,
         )
 
     if any(
@@ -132,6 +258,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="risk_review",
             confidence=0.86,
             context_requirements=["uploaded_document"],
+            conflict_resolution=conflict,
         )
 
     if any(
@@ -139,7 +266,9 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
         for token in (
             "compara estos",
             "compara esta",
+            "compara este",
             "contra el sow",
+            "contra esta",
             "cambio entre",
             "cambio",
         )
@@ -149,6 +278,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="compare",
             confidence=0.84,
             context_requirements=["uploaded_document"],
+            conflict_resolution=conflict,
         )
 
     if any(
@@ -160,6 +290,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="summarize",
             confidence=0.82,
             context_requirements=["uploaded_document"],
+            conflict_resolution=conflict,
         )
 
     if "preguntas" in normalized and any(
@@ -170,6 +301,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="questions",
             confidence=0.82,
             context_requirements=["conversation"],
+            conflict_resolution=conflict,
         )
 
     if any(
@@ -187,6 +319,7 @@ def detect_analyst_intent(text: str) -> Optional[AnalystIntent]:
             analyst_intent="next_steps",
             confidence=0.82,
             context_requirements=["conversation"],
+            conflict_resolution=conflict,
         )
 
     return None
