@@ -142,7 +142,9 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     )
 
     assert "Riesgos visibles" in response.assistant_message
-    assert "Evidencia usada:" in response.assistant_message
+    assert "Respuesta:" in response.assistant_message
+    assert "Soporte en evidencia:" in response.assistant_message
+    assert "Límites:" in response.assistant_message
     assert "contexto inline" in response.assistant_message
     assert "responsable de aceptación" in response.assistant_message
     trace = response.tool_trace[0]["analyst_workbench_live_wiring"]
@@ -153,6 +155,9 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     assert "conversation" in trace["evidence_types"]
     assert trace["evidence_rank_scores"][0] > trace["evidence_rank_scores"][1]
     assert "risk_review_terms" in trace["evidence_rank_reasons"][0]
+    assert trace["coverage_level"] in {"medium", "high"}
+    assert trace["overclaim_guard_applied"] is False
+    assert trace["answer_contract_version"] == "analyst_answer_contract_v1"
 
 
 @pytest.mark.asyncio

@@ -7,9 +7,9 @@ from .analyst_workbench import AnalystWorkbenchResult
 
 
 def render_analyst_result(result: AnalystWorkbenchResult) -> str:
-    lines = [result.title, "", result.answer]
+    lines = [result.title, "", "Respuesta:", result.answer]
     if result.evidence:
-        lines.extend(["", "Evidencia usada:"])
+        lines.extend(["", "Soporte en evidencia:"])
         for item in result.evidence:
             label = str(
                 item.get("label") or item.get("source_type") or "contexto"
@@ -17,7 +17,7 @@ def render_analyst_result(result: AnalystWorkbenchResult) -> str:
             summary = str(item.get("summary") or "")
             lines.append(f"- {label}: {summary}")
     if result.caveats:
-        lines.extend(["", "Caveats:"])
+        lines.extend(["", "Límites:"])
         for caveat in result.caveats:
             lines.append(f"- {caveat}")
     if result.next_questions:
@@ -48,6 +48,7 @@ def build_analyst_trace(
         list(item.get("rank_reasons") or [])
         for item in result.evidence
     ]
+    answer_contract = result.answer_contract or {}
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -58,6 +59,13 @@ def build_analyst_trace(
                 "evidence_types": evidence_types,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
+                "coverage_level": result.coverage_level,
+                "overclaim_guard_applied": bool(
+                    answer_contract.get("overclaim_guard_applied")
+                ),
+                "answer_contract_version": str(
+                    answer_contract.get("version") or ""
+                ),
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -74,6 +82,13 @@ def build_analyst_trace(
                 "evidence_types": evidence_types,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
+                "coverage_level": result.coverage_level,
+                "overclaim_guard_applied": bool(
+                    answer_contract.get("overclaim_guard_applied")
+                ),
+                "answer_contract_version": str(
+                    answer_contract.get("version") or ""
+                ),
                 "exportable": False,
             },
         }

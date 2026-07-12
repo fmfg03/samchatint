@@ -17,9 +17,11 @@ MAX_ANALYST_EVIDENCE = 6
 MIN_INLINE_CONTEXT_CHARS = 40
 INLINE_CONTEXT_LIMIT = 500
 LOW_RELEVANCE_SCORE = 55
+ANSWER_CONTRACT_VERSION = "analyst_answer_contract_v1"
 
 SOURCE_PRIORITY = {
     "inline_context": 100,
+    "uploaded_file": 85,
     "document_intake": 85,
     "report_result": 70,
     "conversation": 40,
@@ -57,6 +59,8 @@ class AnalystWorkbenchResult:
     suggested_routes: List[str]
     actions_executed: List[str]
     provider_called: bool
+    coverage_level: str
+    answer_contract: Dict[str, Any]
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -83,6 +87,85 @@ def _stable_evidence_key(item: AnalystEvidence) -> str:
 
 def _source_score(source_type: str) -> int:
     return SOURCE_PRIORITY.get(source_type, 10)
+
+
+def coverage_level_for_evidence(evidence: Iterable[AnalystEvidence]) -> str:
+    items = list(evidence)
+    if not items:
+        return "none"
+    best_score = max(item.rank_score for item in items)
+    if any(item.summary.endswith("...") for item in items):
+        return "low"
+    if best_score < LOW_RELEVANCE_SCORE:
+        return "low"
+    if best_score >= 105 and len(items) >= 2:
+        return "high"
+    return "medium"
+
+
+def _has_clipped_evidence(evidence: Iterable[AnalystEvidence]) -> bool:
+    return any(item.summary.endswith("...") for item in evidence)
+
+
+def build_answer_contract(
+    *,
+    intent: AnalystIntent,
+    evidence: Iterable[AnalystEvidence],
+    caveats: Iterable[str],
+    coverage_level: str,
+    overclaim_guard_applied: bool,
+) -> Dict[str, Any]:
+    evidence_items = list(evidence)
+    return {
+        "version": ANSWER_CONTRACT_VERSION,
+        "status": "success" if coverage_level != "none" else "needs_context",
+        "coverage_level": coverage_level,
+        "analyst_intent": intent.analyst_intent,
+        "evidence_count": len(evidence_items),
+        "evidence_types": [
+            item.source_type for item in evidence_items
+        ],
+        "must_cite_evidence": True,
+        "external_validation_claimed": False,
+        "writes_allowed": False,
+        "overclaim_guard_applied": overclaim_guard_applied,
+        "caveat_count": len(list(caveats)),
+    }
+
+
+def apply_no_overclaim_guard(
+    *,
+    answer: str,
+    caveats: List[str],
+    intent: AnalystIntent,
+    coverage_level: str,
+    evidence: List[AnalystEvidence],
+) -> tuple[str, List[str], bool]:
+    guard_applied = False
+    guarded_caveats = list(caveats)
+    guarded_answer = answer
+    if (
+        coverage_level == "low"
+        or _has_clipped_evidence(evidence)
+        or (
+            intent.analyst_intent == "compare"
+            and len(evidence) < 2
+        )
+    ):
+        guard_applied = True
+        if "preliminar" not in guarded_answer.lower():
+            guarded_answer = guarded_answer.replace(
+                "con el contexto disponible",
+                "preliminar con el contexto disponible",
+                1,
+            )
+        for caveat in (
+            "La respuesta requiere confirmación humana antes de usarse "
+            "como conclusión final.",
+        ):
+            if caveat not in guarded_caveats:
+                guarded_caveats.append(caveat)
+    return guarded_answer, guarded_caveats, guard_applied
 
 
 def _contains_any(text: str, tokens: Iterable[str]) -> bool:
@@ -320,6 +403,20 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
         suggested_routes=[],
         actions_executed=[],
         provider_called=False,
+        coverage_level="none",
+        answer_contract={
+            "version": ANSWER_CONTRACT_VERSION,
+            "status": "needs_context",
+            "coverage_level": "none",
+            "analyst_intent": intent.analyst_intent,
+            "evidence_count": 0,
+            "evidence_types": [],
+            "must_cite_evidence": True,
+            "external_validation_claimed": False,
+            "writes_allowed": False,
+            "overclaim_guard_applied": True,
+            "caveat_count": 1,
+        },
     )
 
 
@@ -340,6 +437,20 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
         ],
         actions_executed=[],
         provider_called=False,
+        coverage_level="none",
+        answer_contract={
+            "version": ANSWER_CONTRACT_VERSION,
+            "status": "routed_to_operational",
+            "coverage_level": "none",
+            "analyst_intent": intent.analyst_intent,
+            "evidence_count": 0,
+            "evidence_types": [],
+            "must_cite_evidence": False,
+            "external_validation_claimed": False,
+            "writes_allowed": False,
+            "overclaim_guard_applied": False,
+            "caveat_count": 0,
+        },
     )
 
 
@@ -466,6 +577,9 @@ async def run_analyst_workbench(
     evidence = list(evidence or [])
     if not evidence:
         return _needs_context(intent)
+    if all(item.rank_score == 0 for item in evidence):
+        evidence = rank_analyst_evidence(intent, evidence)
+    coverage_level = coverage_level_for_evidence(evidence)
 
     provider_called = False
     if provider_allowed and provider_fn is not None:
@@ -483,6 +597,14 @@ async def run_analyst_workbench(
                     suggested_routes=[],
                     actions_executed=[],
                     provider_called=True,
+                    coverage_level=coverage_level,
+                    answer_contract=build_answer_contract(
+                        intent=intent,
+                        evidence=evidence,
+                        caveats=["Respuesta basada en contexto autorizado."],
+                        coverage_level=coverage_level,
+                        overclaim_guard_applied=False,
+                    ),
                 )
         except Exception:
             return AnalystWorkbenchResult(
@@ -501,9 +623,26 @@ async def run_analyst_workbench(
                 suggested_routes=[],
                 actions_executed=[],
                 provider_called=provider_called,
+                coverage_level=coverage_level,
+                answer_contract=build_answer_contract(
+                    intent=intent,
+                    evidence=evidence,
+                    caveats=[
+                        "Provider no disponible; no se inventó respuesta."
+                    ],
+                    coverage_level=coverage_level,
+                    overclaim_guard_applied=True,
+                ),
             )
 
     answer, caveats, next_questions = _answer_for_intent(intent, evidence)
+    answer, caveats, overclaim_guard_applied = apply_no_overclaim_guard(
+        answer=answer,
+        caveats=caveats,
+        intent=intent,
+        coverage_level=coverage_level,
+        evidence=evidence,
+    )
     return AnalystWorkbenchResult(
         status="success",
         title="Analyst Workbench",
@@ -514,4 +653,12 @@ async def run_analyst_workbench(
         suggested_routes=[],
         actions_executed=[],
         provider_called=False,
+        coverage_level=coverage_level,
+        answer_contract=build_answer_contract(
+            intent=intent,
+            evidence=evidence,
+            caveats=caveats,
+            coverage_level=coverage_level,
+            overclaim_guard_applied=overclaim_guard_applied,
+        ),
     )
