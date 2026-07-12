@@ -122,12 +122,52 @@ async def test_analyst_uses_latest_document_context_without_provider():
     trace = response.tool_trace[0]["analyst_workbench_live_wiring"]
     assert trace["status"] == "success"
     assert trace["provider_called"] is False
+    assert trace["evidence_types"] == ["document_intake"]
+
+
+@pytest.mark.asyncio
+async def test_analyst_uses_inline_context_before_history_no_provider():
+    response = await _run_message(
+        "Qué riesgos ves en este contrato: "
+        "El contrato no define responsable de aceptación, "
+        "omite fecha límite y deja penalizaciones abiertas.",
+        session=_FakeSession(
+            latest_contents=[
+                "Contexto previo suficientemente largo para ser considerado "
+                "evidencia secundaria de conversación."
+            ]
+        ),
+    )
+
+    assert "Riesgos visibles" in response.assistant_message
+    assert "Evidencia usada:" in response.assistant_message
+    assert "contexto inline" in response.assistant_message
+    assert "responsable de aceptación" in response.assistant_message
+    trace = response.tool_trace[0]["analyst_workbench_live_wiring"]
+    assert trace["status"] == "success"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False
+    assert trace["evidence_types"][0] == "inline_context"
+    assert "conversation" in trace["evidence_types"]
 
 
 @pytest.mark.asyncio
 async def test_operational_finance_route_wins_over_analyst():
     response = await _run_message(
         "Compara gasto 2026 vs 2025 por concepto",
+        finance_rows_provider=_finance_rows,
+    )
+
+    assert "Comparación de gasto por concepto" in response.assistant_message
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+
+
+@pytest.mark.asyncio
+async def test_operational_finance_route_wins_with_inline_context_words():
+    response = await _run_message(
+        "Compara gasto 2026 vs 2025 por concepto: "
+        "quiero riesgos y conclusiones del reporte",
         finance_rows_provider=_finance_rows,
     )
 

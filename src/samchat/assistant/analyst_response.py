@@ -36,6 +36,10 @@ def build_analyst_trace(
     intent: AnalystIntent,
     result: AnalystWorkbenchResult,
 ) -> List[Dict[str, Any]]:
+    evidence_types = [
+        str(item.get("source_type") or "unknown")
+        for item in result.evidence
+    ]
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -43,6 +47,7 @@ def build_analyst_trace(
                 "analyst_intent": intent.analyst_intent,
                 "status": result.status,
                 "evidence_count": len(result.evidence),
+                "evidence_types": evidence_types,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -56,6 +61,7 @@ def build_analyst_trace(
                 "status": result.status,
                 "title": result.title,
                 "evidence_count": len(result.evidence),
+                "evidence_types": evidence_types,
                 "exportable": False,
             },
         }

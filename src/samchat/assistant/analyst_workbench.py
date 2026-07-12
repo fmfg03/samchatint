@@ -13,6 +13,10 @@ AnalystProviderFn = Callable[
     Awaitable[str],
 ]
 
+MAX_ANALYST_EVIDENCE = 6
+MIN_INLINE_CONTEXT_CHARS = 40
+INLINE_CONTEXT_LIMIT = 500
+
 
 @dataclass(frozen=True)
 class AnalystEvidence:
@@ -45,6 +49,67 @@ def _clip(text: str, limit: int = 500) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3].rstrip() + "..."
+
+
+def _inline_context_candidate(text: str) -> str:
+    raw = text or ""
+    for pattern in (
+        r"(?:contexto|texto|documento|contrato|balanza)\s*:\s*(?P<body>.+)$",
+        r"(?:contenido|extracto|fragmento)\s*:\s*(?P<body>.+)$",
+    ):
+        match = re.search(pattern, raw, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return str(match.group("body") or "")
+
+    if "\n\n" in raw:
+        parts = [part.strip() for part in raw.split("\n\n") if part.strip()]
+        if len(parts) > 1:
+            return "\n\n".join(parts[1:])
+
+    if ":" in raw:
+        _prefix, suffix = raw.split(":", 1)
+        return suffix
+    return ""
+
+
+def extract_inline_analyst_evidence(
+    text: str,
+    intent: AnalystIntent,
+) -> List[AnalystEvidence]:
+    if intent.requires_operational_route:
+        return []
+
+    candidate = _inline_context_candidate(text)
+    compact = re.sub(r"\s+", " ", candidate or "").strip()
+    if len(compact) < MIN_INLINE_CONTEXT_CHARS:
+        return []
+
+    return [
+        AnalystEvidence(
+            source_type="inline_context",
+            label="contexto inline",
+            summary=_clip(compact, INLINE_CONTEXT_LIMIT),
+        )
+    ]
+
+
+def build_analyst_evidence_pack(
+    *,
+    inline_evidence: Iterable[AnalystEvidence],
+    history_evidence: Iterable[AnalystEvidence],
+    limit: int = MAX_ANALYST_EVIDENCE,
+) -> List[AnalystEvidence]:
+    packed: List[AnalystEvidence] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in list(inline_evidence) + list(history_evidence):
+        key = (item.source_type, item.label, item.summary)
+        if key in seen:
+            continue
+        seen.add(key)
+        packed.append(item)
+        if len(packed) >= limit:
+            break
+    return packed
 
 
 def _document_intake_evidence(content: str) -> Optional[AnalystEvidence]:
@@ -153,6 +218,9 @@ def _answer_for_intent(
     evidence: List[AnalystEvidence],
 ) -> tuple[str, List[str], List[str]]:
     primary = evidence[0].summary if evidence else ""
+    clipping_caveats = [
+        "Alguna evidencia fue recortada para mantener el analisis acotado."
+    ] if any(item.summary.endswith("...") for item in evidence) else []
     if intent.analyst_intent == "risk_review":
         return (
             "Riesgos visibles con el contexto disponible:\n"
@@ -166,7 +234,7 @@ def _answer_for_intent(
             [
                 "El análisis se limita al contexto disponible; "
                 "no revisé datos vivos adicionales."
-            ],
+            ] + clipping_caveats,
             [
                 (
                     "¿Existe anexo, SOW o contrato completo para validar "
@@ -186,7 +254,7 @@ def _answer_for_intent(
             [
                 "Si solo hay un documento en contexto, "
                 "la comparación queda incompleta."
-            ],
+            ] + clipping_caveats,
             [
                 "¿Cuál es el documento base y cuál es la versión/propuesta "
                 "a comparar?"
@@ -202,7 +270,7 @@ def _answer_for_intent(
             [
                 "Estas preguntas salen del contexto disponible, "
                 "no de datos externos."
-            ],
+            ] + clipping_caveats,
             ["¿Quieres que las convierta en correo o minuta?"],
         )
     if intent.analyst_intent == "next_steps":
@@ -214,7 +282,10 @@ def _answer_for_intent(
             "- Identificar bloqueos que requieren decisión de dirección "
             "o cliente.\n"
             "- Definir el siguiente entregable verificable.",
-            ["No ejecuté acciones; son pasos sugeridos para revisión humana."],
+            [
+                "No ejecuté acciones; son pasos sugeridos para "
+                "revisión humana."
+            ] + clipping_caveats,
             [
                 "¿Cuál es la fecha objetivo de cierre?",
                 "¿Quién aprueba el siguiente entregable?",
@@ -228,7 +299,8 @@ def _answer_for_intent(
             "de ese contexto.\n"
             "- Conviene validar faltantes antes de usarlo como "
             "conclusión ejecutiva.",
-            ["Resumen limitado a la evidencia disponible."],
+            ["Resumen limitado a la evidencia disponible."]
+            + clipping_caveats,
             ["¿Quieres enfoque ejecutivo, operativo o para cliente?"],
         )
     return (
@@ -238,7 +310,7 @@ def _answer_for_intent(
         "contra datos vivos.\n"
         "- Si necesitas una conclusión formal, faltaría confirmar fuente, "
         "fecha y alcance.",
-        ["No revisé datos vivos ni ejecuté acciones."],
+        ["No revisé datos vivos ni ejecuté acciones."] + clipping_caveats,
         ["¿Qué parte quieres que explique con más detalle?"],
     )
 
