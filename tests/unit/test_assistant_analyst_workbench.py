@@ -8,6 +8,7 @@ from samchat.assistant.analyst_workbench import (
     context_sufficiency_for_evidence,
     extract_analyst_evidence_from_messages,
     extract_inline_analyst_evidence,
+    next_questions_for_context,
     rank_analyst_evidence,
     run_analyst_workbench,
 )
@@ -26,6 +27,11 @@ async def test_insufficient_context_needs_context_without_provider():
     assert result.coverage_level == "none"
     assert result.answer_contract["status"] == "needs_context"
     assert result.answer_contract["coverage_reasons"] == ["no_evidence"]
+    assert result.answer_contract["next_question_count"] == 2
+    assert result.next_questions == [
+        "¿Qué documento, reporte o texto debo usar como base?",
+        "¿Quieres que el análisis sea para dirección, operación o cliente?",
+    ]
 
 
 @pytest.mark.asyncio
@@ -79,6 +85,7 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert wiring["answer_contract_status"] == "success"
     assert wiring["answer_contract_version"] == "analyst_answer_contract_v1"
     assert wiring["coverage_reasons"] == ["supported_context"]
+    assert wiring["next_question_count"] == 2
     assert wiring["evidence_labels"] == ["contrato.pdf"]
     assert wiring["evidence_types"] == ["uploaded_file"]
     assert wiring["evidence_rank_scores"][0] > 0
@@ -86,6 +93,7 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert wiring["writes_attempted"] is False
     assert trace["result"]["answer_contract_status"] == "success"
     assert trace["result"]["coverage_reasons"] == ["supported_context"]
+    assert trace["result"]["next_question_count"] == 2
     assert trace["result"]["evidence_labels"] == ["contrato.pdf"]
     assert trace["result"]["exportable"] is False
 
@@ -108,6 +116,12 @@ async def test_compare_with_one_context_is_caveated():
     assert any("incompleta" in caveat for caveat in result.caveats)
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert any("confirmación humana" in caveat for caveat in result.caveats)
+    assert result.answer_contract["next_question_count"] == 3
+    assert result.next_questions == [
+        "¿Puedes compartir la fuente completa o confirmar estos hallazgos?",
+        "¿Cuál es el documento base?",
+        "¿Cuál es el documento contraparte a comparar?",
+    ]
 
 
 def test_extracts_document_intake_evidence_from_message():
@@ -307,6 +321,7 @@ async def test_low_relevance_evidence_adds_conservative_caveat():
     assert result.answer_contract["coverage_reasons"] == ["low_relevance"]
     assert any("limitada o indirecta" in caveat for caveat in result.caveats)
     assert result.answer_contract["overclaim_guard_applied"] is True
+    assert result.answer_contract["next_question_count"] == 3
 
 
 def test_context_sufficiency_matrix_covers_core_reasons():
@@ -384,6 +399,40 @@ def test_context_sufficiency_matrix_covers_core_reasons():
     ]
 
 
+def test_next_questions_contract_dedupes_and_tracks_context_needs():
+    risk_intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    compare_intent = detect_analyst_intent("Compara estos dos documentos")
+
+    no_context = next_questions_for_context(
+        intent=risk_intent,
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+        evidence=[],
+    )
+    assert no_context == [
+        "¿Qué documento, reporte o texto debo usar como base?",
+        "¿Quieres que el análisis sea para dirección, operación o cliente?",
+    ]
+
+    incomplete_compare = next_questions_for_context(
+        intent=compare_intent,
+        coverage_level="low",
+        coverage_reasons=["incomplete_comparison"],
+        evidence=[
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="propuesta.pdf",
+                summary="Propuesta con alcance y costo.",
+            )
+        ],
+    )
+    assert incomplete_compare == [
+        "¿Puedes compartir la fuente completa o confirmar estos hallazgos?",
+        "¿Cuál es el documento base?",
+        "¿Cuál es el documento contraparte a comparar?",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_provider_failure_keeps_answer_contract():
     intent = detect_analyst_intent("Qué riesgos ves en este contrato")
@@ -412,6 +461,7 @@ async def test_provider_failure_keeps_answer_contract():
     assert result.answer_contract["version"] == "analyst_answer_contract_v1"
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.coverage_level in {"medium", "high"}
+    assert result.answer_contract["next_question_count"] == 1
 
 
 @pytest.mark.asyncio
@@ -446,6 +496,7 @@ async def test_provider_success_applies_overclaim_guard_for_low_coverage():
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.answer_contract["writes_allowed"] is False
     assert result.answer_contract["external_validation_claimed"] is False
+    assert result.answer_contract["next_question_count"] == 0
     assert any("confirmación humana" in caveat for caveat in result.caveats)
 
 
@@ -480,4 +531,5 @@ async def test_provider_success_caveats_incomplete_comparison():
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.answer_contract["writes_allowed"] is False
     assert result.answer_contract["external_validation_claimed"] is False
+    assert result.answer_contract["next_question_count"] == 0
     assert any("confirmación humana" in caveat for caveat in result.caveats)
