@@ -184,6 +184,39 @@ def suggested_routes_for_context(
     return _dedupe_routes(routes)
 
 
+def evidence_diagnostics_for_context(
+    *,
+    evidence: Iterable[AnalystEvidence],
+    coverage_level: str,
+    coverage_reasons: Iterable[str],
+) -> List[Dict[str, Any]]:
+    reasons = set(coverage_reasons)
+    diagnostics: List[Dict[str, Any]] = []
+    for item in evidence:
+        rank_reasons = list(item.rank_reasons or [])
+        clipped = item.summary.endswith("...") or (
+            "clipped_summary" in rank_reasons
+        )
+        low_relevance = (
+            item.rank_score < LOW_RELEVANCE_SCORE
+            or (
+                coverage_level == "low"
+                and "low_relevance" in reasons
+            )
+        )
+        diagnostics.append(
+            {
+                "source_type": item.source_type,
+                "label": item.label,
+                "rank_score": item.rank_score,
+                "rank_reasons": rank_reasons,
+                "clipped": clipped,
+                "low_relevance": low_relevance,
+            }
+        )
+    return diagnostics
+
+
 def build_answer_contract(
     *,
     intent: AnalystIntent,
@@ -194,11 +227,13 @@ def build_answer_contract(
     coverage_reasons: Optional[Iterable[str]] = None,
     next_questions: Optional[Iterable[str]] = None,
     suggested_routes: Optional[Iterable[str]] = None,
+    evidence_diagnostics: Optional[Iterable[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
     reasons = list(coverage_reasons or [])
     questions = list(next_questions or [])
     routes = list(suggested_routes or [])
+    diagnostics = list(evidence_diagnostics or [])
     return {
         "version": ANSWER_CONTRACT_VERSION,
         "status": "success" if coverage_level != "none" else "needs_context",
@@ -216,6 +251,8 @@ def build_answer_contract(
         "caveat_count": len(list(caveats)),
         "next_question_count": len(questions),
         "suggested_route_count": len(routes),
+        "evidence_diagnostic_count": len(diagnostics),
+        "evidence_diagnostics": diagnostics,
     }
 
 
@@ -591,6 +628,8 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "caveat_count": 1,
             "next_question_count": len(next_questions),
             "suggested_route_count": 0,
+            "evidence_diagnostic_count": 0,
+            "evidence_diagnostics": [],
         },
     )
 
@@ -632,6 +671,8 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "caveat_count": 0,
             "next_question_count": 0,
             "suggested_route_count": len(suggested_routes),
+            "evidence_diagnostic_count": 0,
+            "evidence_diagnostics": [],
         },
     )
 
@@ -770,6 +811,11 @@ async def run_analyst_workbench(
         coverage_reasons=coverage_reasons,
         evidence=evidence,
     )
+    evidence_diagnostics = evidence_diagnostics_for_context(
+        evidence=evidence,
+        coverage_level=coverage_level,
+        coverage_reasons=coverage_reasons,
+    )
 
     provider_called = False
     if provider_allowed and provider_fn is not None:
@@ -807,6 +853,7 @@ async def run_analyst_workbench(
                         coverage_reasons=coverage_reasons,
                         next_questions=[],
                         suggested_routes=suggested_routes,
+                        evidence_diagnostics=evidence_diagnostics,
                     ),
                 )
         except Exception:
@@ -842,6 +889,7 @@ async def run_analyst_workbench(
                         "del contexto?"
                     ],
                     suggested_routes=suggested_routes,
+                    evidence_diagnostics=evidence_diagnostics,
                 ),
             )
 
@@ -882,5 +930,6 @@ async def run_analyst_workbench(
             coverage_reasons=coverage_reasons,
             next_questions=next_questions,
             suggested_routes=suggested_routes,
+            evidence_diagnostics=evidence_diagnostics,
         ),
     )

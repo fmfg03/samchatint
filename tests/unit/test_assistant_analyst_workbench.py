@@ -6,6 +6,7 @@ from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
     build_analyst_evidence_pack,
     context_sufficiency_for_evidence,
+    evidence_diagnostics_for_context,
     extract_analyst_evidence_from_messages,
     extract_inline_analyst_evidence,
     next_questions_for_context,
@@ -92,12 +93,24 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert wiring["evidence_labels"] == ["contrato.pdf"]
     assert wiring["evidence_types"] == ["uploaded_file"]
     assert wiring["evidence_rank_scores"][0] > 0
+    assert wiring["evidence_diagnostic_count"] == 1
+    assert wiring["evidence_diagnostics"] == [
+        {
+            "source_type": "uploaded_file",
+            "label": "contrato.pdf",
+            "rank_score": wiring["evidence_rank_scores"][0],
+            "rank_reasons": wiring["evidence_rank_reasons"][0],
+            "clipped": False,
+            "low_relevance": False,
+        }
+    ]
     assert wiring["provider_called"] is False
     assert wiring["writes_attempted"] is False
     assert trace["result"]["answer_contract_status"] == "success"
     assert trace["result"]["coverage_reasons"] == ["supported_context"]
     assert trace["result"]["next_question_count"] == 2
     assert trace["result"]["suggested_route_count"] == 0
+    assert trace["result"]["evidence_diagnostic_count"] == 1
     assert trace["result"]["evidence_labels"] == ["contrato.pdf"]
     assert trace["result"]["exportable"] is False
 
@@ -304,6 +317,74 @@ def test_rank_reasons_are_serialized_to_dict():
     assert "risk_review_terms" in payload["rank_reasons"]
 
 
+def test_evidence_diagnostics_contract_tracks_source_score_and_reasons():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = rank_analyst_evidence(
+        intent,
+        [
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="contrato.pdf",
+                summary="Contrato con penalizacion y responsable faltante.",
+            )
+        ],
+    )
+
+    diagnostics = evidence_diagnostics_for_context(
+        evidence=evidence,
+        coverage_level="medium",
+        coverage_reasons=["supported_context"],
+    )
+
+    assert diagnostics == [
+        {
+            "source_type": "uploaded_file",
+            "label": "contrato.pdf",
+            "rank_score": evidence[0].rank_score,
+            "rank_reasons": evidence[0].rank_reasons,
+            "clipped": False,
+            "low_relevance": False,
+        }
+    ]
+
+
+def test_evidence_diagnostics_flags_clipped_and_low_relevance():
+    clipped = [
+        AnalystEvidence(
+            source_type="inline_context",
+            label="contexto inline",
+            summary="Contrato con obligaciones...",
+            rank_score=90,
+            rank_reasons=["source:inline_context", "clipped_summary"],
+        )
+    ]
+    low = [
+        AnalystEvidence(
+            source_type="conversation",
+            label="contexto",
+            summary="Tema general.",
+            rank_score=40,
+            rank_reasons=["source:conversation", "short_summary"],
+        )
+    ]
+
+    clipped_diagnostics = evidence_diagnostics_for_context(
+        evidence=clipped,
+        coverage_level="low",
+        coverage_reasons=["clipped_evidence"],
+    )
+    low_diagnostics = evidence_diagnostics_for_context(
+        evidence=low,
+        coverage_level="low",
+        coverage_reasons=["low_relevance"],
+    )
+
+    assert clipped_diagnostics[0]["clipped"] is True
+    assert clipped_diagnostics[0]["low_relevance"] is False
+    assert low_diagnostics[0]["clipped"] is False
+    assert low_diagnostics[0]["low_relevance"] is True
+
+
 @pytest.mark.asyncio
 async def test_low_relevance_evidence_adds_conservative_caveat():
     intent = detect_analyst_intent("Qué riesgos ves en este contrato")
@@ -323,6 +404,10 @@ async def test_low_relevance_evidence_adds_conservative_caveat():
     assert result.status == "success"
     assert result.coverage_level == "low"
     assert result.answer_contract["coverage_reasons"] == ["low_relevance"]
+    assert result.answer_contract["evidence_diagnostic_count"] == 1
+    assert result.answer_contract["evidence_diagnostics"][0][
+        "low_relevance"
+    ] is True
     assert any("limitada o indirecta" in caveat for caveat in result.caveats)
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.answer_contract["next_question_count"] == 3
