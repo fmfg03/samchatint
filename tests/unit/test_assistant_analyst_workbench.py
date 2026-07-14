@@ -11,6 +11,7 @@ from samchat.assistant.analyst_workbench import (
     next_questions_for_context,
     rank_analyst_evidence,
     run_analyst_workbench,
+    suggested_routes_for_context,
 )
 
 
@@ -28,6 +29,7 @@ async def test_insufficient_context_needs_context_without_provider():
     assert result.answer_contract["status"] == "needs_context"
     assert result.answer_contract["coverage_reasons"] == ["no_evidence"]
     assert result.answer_contract["next_question_count"] == 2
+    assert result.answer_contract["suggested_route_count"] == 0
     assert result.next_questions == [
         "¿Qué documento, reporte o texto debo usar como base?",
         "¿Quieres que el análisis sea para dirección, operación o cliente?",
@@ -86,6 +88,7 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert wiring["answer_contract_version"] == "analyst_answer_contract_v1"
     assert wiring["coverage_reasons"] == ["supported_context"]
     assert wiring["next_question_count"] == 2
+    assert wiring["suggested_route_count"] == 0
     assert wiring["evidence_labels"] == ["contrato.pdf"]
     assert wiring["evidence_types"] == ["uploaded_file"]
     assert wiring["evidence_rank_scores"][0] > 0
@@ -94,6 +97,7 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
     assert trace["result"]["answer_contract_status"] == "success"
     assert trace["result"]["coverage_reasons"] == ["supported_context"]
     assert trace["result"]["next_question_count"] == 2
+    assert trace["result"]["suggested_route_count"] == 0
     assert trace["result"]["evidence_labels"] == ["contrato.pdf"]
     assert trace["result"]["exportable"] is False
 
@@ -431,6 +435,103 @@ def test_next_questions_contract_dedupes_and_tracks_context_needs():
         "¿Cuál es el documento base?",
         "¿Cuál es el documento contraparte a comparar?",
     ]
+
+
+def test_suggested_routes_contract_derives_read_only_routes():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = [
+        AnalystEvidence(
+            source_type="uploaded_file",
+            label="reporte financiero.pdf",
+            summary=(
+                "Factura CFDI pendiente, pago por saldar y presupuesto "
+                "de gastos por confirmar."
+            ),
+        )
+    ]
+
+    routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="medium",
+        coverage_reasons=["supported_context"],
+        evidence=evidence,
+    )
+
+    assert routes == [
+        "cfdi.list_pending",
+        "payments.list_pending",
+        "finance.breakdown",
+    ]
+
+
+def test_suggested_routes_contract_preserves_operational_hint():
+    intent = detect_analyst_intent("Qué CFDIs están pendientes")
+
+    routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="none",
+        coverage_reasons=["operational_route"],
+        evidence=[],
+    )
+
+    assert routes == ["cfdi.list_pending"]
+
+
+def test_suggested_routes_contract_is_empty_without_signal():
+    intent = detect_analyst_intent("Resume este texto")
+
+    routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="medium",
+        coverage_reasons=["supported_context"],
+        evidence=[
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="minuta.pdf",
+                summary="Minuta con acuerdos internos y responsables.",
+            )
+        ],
+    )
+
+    assert routes == []
+
+
+@pytest.mark.asyncio
+async def test_suggested_routes_are_recommendations_not_actions():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = [
+        AnalystEvidence(
+            source_type="uploaded_file",
+            label="riesgos-cfdi.pdf",
+            summary=(
+                "Contrato con factura CFDI pendiente y pagos por saldar."
+            ),
+        )
+    ]
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+
+    assert result.status == "success"
+    assert result.suggested_routes == [
+        "cfdi.list_pending",
+        "payments.list_pending",
+    ]
+    assert result.actions_executed == []
+    assert result.answer_contract["writes_allowed"] is False
+    assert result.answer_contract["suggested_route_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_operational_route_suggestion_still_executes_nothing():
+    intent = detect_analyst_intent("Qué CFDIs están pendientes")
+
+    result = await run_analyst_workbench(intent=intent, evidence=[])
+
+    assert result.status == "routed_to_operational"
+    assert result.suggested_routes == ["cfdi.list_pending"]
+    assert result.actions_executed == []
+    assert result.provider_called is False
+    assert result.answer_contract["suggested_route_count"] == 1
 
 
 @pytest.mark.asyncio

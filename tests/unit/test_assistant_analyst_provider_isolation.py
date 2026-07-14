@@ -138,3 +138,39 @@ async def test_inline_analyst_request_avoids_provider_and_actions():
     assert trace["actions_executed"] == []
     assert trace["writes_attempted"] is False
     assert trace["evidence_types"] == ["inline_context"]
+    assert trace["suggested_route_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_inline_analyst_suggested_route_does_not_execute_action():
+    response = await run_message_turn_with_pending(
+        raw_message=(
+            "Qué riesgos ves en este contrato: "
+            "El presupuesto de gastos no tiene responsable."
+        ),
+        conversation=SimpleNamespace(id="conv-inline-route", updated_at=None),
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key="provider-key-must-not-be-used",
+        latest_pending_run_for_conversation=_pending_none,
+        is_explicit_approval_message=lambda _text: False,
+        is_explicit_rejection_message=lambda _text: False,
+        confirm_pending_run=_provider_must_not_be_called,
+        deterministic_pending_builders=[],
+        build_deterministic_pending_response=_provider_must_not_be_called,
+        assistant_turn=_provider_must_not_be_called,
+        maybe_append_export_prompt=_maybe_append_export_prompt,
+    )
+
+    trace = response.tool_trace[0]["analyst_workbench_live_wiring"]
+    assert trace["status"] == "success"
+    assert trace["provider_called"] is False
+    assert trace["actions_executed"] == []
+    assert trace["writes_attempted"] is False
+    assert trace["suggested_route_count"] == 1

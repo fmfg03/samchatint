@@ -35,6 +35,30 @@ GENERIC_LABELS = {
     "",
 }
 
+ROUTE_SIGNAL_TOKENS = {
+    "cfdi.list_pending": (
+        "cfdi",
+        "cfdis",
+        "factura",
+        "facturas",
+    ),
+    "payments.list_pending": (
+        "pago",
+        "pagos",
+        "reembolso",
+        "reembolsos",
+        "saldar",
+    ),
+    "finance.breakdown": (
+        "presupuesto",
+        "presupuestos",
+        "gasto",
+        "gastos",
+        "finanza",
+        "finanzas",
+    ),
+}
+
 
 @dataclass(frozen=True)
 class AnalystEvidence:
@@ -124,6 +148,42 @@ def _has_clipped_evidence(evidence: Iterable[AnalystEvidence]) -> bool:
     return any(item.summary.endswith("...") for item in evidence)
 
 
+def _dedupe_routes(routes: Iterable[str]) -> List[str]:
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for route in routes:
+        compact = re.sub(r"\s+", " ", route or "").strip()
+        if not compact:
+            continue
+        key = compact.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(compact)
+    return deduped
+
+
+def suggested_routes_for_context(
+    *,
+    intent: AnalystIntent,
+    coverage_level: str,
+    coverage_reasons: Iterable[str],
+    evidence: Iterable[AnalystEvidence],
+) -> List[str]:
+    del coverage_level, coverage_reasons
+    routes: List[str] = []
+    if intent.requires_operational_route:
+        routes.append(intent.operational_route_hint or "request_intelligence")
+
+    evidence_text = " ".join(
+        f"{item.label} {item.summary}" for item in evidence
+    ).lower()
+    for route, tokens in ROUTE_SIGNAL_TOKENS.items():
+        if _contains_any(evidence_text, tokens):
+            routes.append(route)
+    return _dedupe_routes(routes)
+
+
 def build_answer_contract(
     *,
     intent: AnalystIntent,
@@ -133,10 +193,12 @@ def build_answer_contract(
     overclaim_guard_applied: bool,
     coverage_reasons: Optional[Iterable[str]] = None,
     next_questions: Optional[Iterable[str]] = None,
+    suggested_routes: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
     reasons = list(coverage_reasons or [])
     questions = list(next_questions or [])
+    routes = list(suggested_routes or [])
     return {
         "version": ANSWER_CONTRACT_VERSION,
         "status": "success" if coverage_level != "none" else "needs_context",
@@ -153,6 +215,7 @@ def build_answer_contract(
         "overclaim_guard_applied": overclaim_guard_applied,
         "caveat_count": len(list(caveats)),
         "next_question_count": len(questions),
+        "suggested_route_count": len(routes),
     }
 
 
@@ -527,11 +590,18 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "overclaim_guard_applied": True,
             "caveat_count": 1,
             "next_question_count": len(next_questions),
+            "suggested_route_count": 0,
         },
     )
 
 
 def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
+    suggested_routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="none",
+        coverage_reasons=["operational_route"],
+        evidence=[],
+    )
     return AnalystWorkbenchResult(
         status="routed_to_operational",
         title="Ruta operacional detectada",
@@ -543,9 +613,7 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
         evidence=[],
         caveats=[],
         next_questions=[],
-        suggested_routes=[
-            intent.operational_route_hint or "request_intelligence"
-        ],
+        suggested_routes=suggested_routes,
         actions_executed=[],
         provider_called=False,
         coverage_level="none",
@@ -563,6 +631,7 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "overclaim_guard_applied": False,
             "caveat_count": 0,
             "next_question_count": 0,
+            "suggested_route_count": len(suggested_routes),
         },
     )
 
@@ -695,6 +764,12 @@ async def run_analyst_workbench(
     sufficiency = context_sufficiency_for_evidence(evidence, intent)
     coverage_level = sufficiency.coverage_level
     coverage_reasons = sufficiency.coverage_reasons
+    suggested_routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level=coverage_level,
+        coverage_reasons=coverage_reasons,
+        evidence=evidence,
+    )
 
     provider_called = False
     if provider_allowed and provider_fn is not None:
@@ -719,7 +794,7 @@ async def run_analyst_workbench(
                     evidence=[item.to_dict() for item in evidence],
                     caveats=caveats,
                     next_questions=[],
-                    suggested_routes=[],
+                    suggested_routes=suggested_routes,
                     actions_executed=[],
                     provider_called=True,
                     coverage_level=coverage_level,
@@ -731,6 +806,7 @@ async def run_analyst_workbench(
                         overclaim_guard_applied=overclaim_guard_applied,
                         coverage_reasons=coverage_reasons,
                         next_questions=[],
+                        suggested_routes=suggested_routes,
                     ),
                 )
         except Exception:
@@ -747,7 +823,7 @@ async def run_analyst_workbench(
                     "¿Quieres que responda solo con síntesis determinística "
                     "del contexto?"
                 ],
-                suggested_routes=[],
+                suggested_routes=suggested_routes,
                 actions_executed=[],
                 provider_called=provider_called,
                 coverage_level=coverage_level,
@@ -765,6 +841,7 @@ async def run_analyst_workbench(
                         "determinística "
                         "del contexto?"
                     ],
+                    suggested_routes=suggested_routes,
                 ),
             )
 
@@ -792,7 +869,7 @@ async def run_analyst_workbench(
         evidence=[item.to_dict() for item in evidence],
         caveats=caveats,
         next_questions=next_questions,
-        suggested_routes=[],
+        suggested_routes=suggested_routes,
         actions_executed=[],
         provider_called=False,
         coverage_level=coverage_level,
@@ -804,5 +881,6 @@ async def run_analyst_workbench(
             overclaim_guard_applied=overclaim_guard_applied,
             coverage_reasons=coverage_reasons,
             next_questions=next_questions,
+            suggested_routes=suggested_routes,
         ),
     )

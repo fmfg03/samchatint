@@ -59,6 +59,12 @@ def build_analyst_trace(
     answer_contract_status = str(answer_contract.get("status") or "")
     coverage_reasons = list(answer_contract.get("coverage_reasons") or [])
     next_question_count = int(answer_contract.get("next_question_count") or 0)
+    suggested_route_count_value = answer_contract.get("suggested_route_count")
+    suggested_route_count = (
+        len(result.suggested_routes)
+        if suggested_route_count_value is None
+        else int(suggested_route_count_value)
+    )
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -82,6 +88,7 @@ def build_analyst_trace(
                 "answer_contract_status": answer_contract_status,
                 "coverage_reasons": coverage_reasons,
                 "next_question_count": next_question_count,
+                "suggested_route_count": suggested_route_count,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -109,6 +116,7 @@ def build_analyst_trace(
                 "answer_contract_status": answer_contract_status,
                 "coverage_reasons": coverage_reasons,
                 "next_question_count": next_question_count,
+                "suggested_route_count": suggested_route_count,
                 "exportable": False,
             },
         }
