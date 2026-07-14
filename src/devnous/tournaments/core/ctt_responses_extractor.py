@@ -33,9 +33,9 @@ from .ctt_slot_montage import (
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 DEFAULT_CTT_RESPONSES_MODEL = "gpt-5.6-terra"
-CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v1"
-EXPECTED_SLOT_NUMBERS = tuple(range(1, 21))
-PAGE_SIDES = ("front", "back")
+CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v2"
+EXPECTED_FRONT_SLOTS = tuple(range(1, 9))
+EXPECTED_BACK_SLOTS = tuple(range(9, 21))
 
 HEADER_LAYOUT_TO_FIELD = {
     "equipo_nombre": CttFieldName.TEAM_NAME,
@@ -67,6 +67,8 @@ nombres desde fotografias. Separa nombre(s), apellido paterno y materno solo por
 lo escrito. Conserva la fecha tal como se ve y no inventes CURP. Usa null para
 campos vacios o ilegibles. confidence mide la certeza de cada transcripcion y
 candidates enumera alternativas visibles plausibles cuando exista ambiguedad.
+occupied debe ser true cuando la casilla contiene escritura o una fotografia de
+jugador, aunque algun texto sea ilegible; debe ser false solo si esta vacia.
 """.strip()
 
 
@@ -105,11 +107,28 @@ class CttPlayerExtraction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     slot: int = Field(ge=1, le=20)
+    occupied: bool
     given_names: CttRawField
     paternal_surname: CttRawField
     maternal_surname: CttRawField
     birth_date: CttRawField
     curp: CttRawField
+
+    @model_validator(mode="after")
+    def content_implies_occupancy(self) -> "CttPlayerExtraction":
+        fields = (
+            self.given_names,
+            self.paternal_surname,
+            self.maternal_surname,
+            self.birth_date,
+            self.curp,
+        )
+        if any(
+            (field.raw_text and field.raw_text.strip()) or field.candidates
+            for field in fields
+        ):
+            self.occupied = True
+        return self
 
 
 class CttSlotBatchExtraction(BaseModel):
@@ -367,11 +386,11 @@ class CttResponsesExtractor:
             )
         )
 
-    def _slot_drafts(
+    def _batch_pairs(
         self,
         batch: CttSlotBatch,
         extraction: CttSlotBatchExtraction,
-    ) -> List[CttSlotDraft]:
+    ) -> List[Tuple[CttSlotCrop, CttPlayerExtraction]]:
         expected = [slot.slot for slot in batch.slots]
         actual = [player.slot for player in extraction.slots]
         if actual != expected:
@@ -379,50 +398,143 @@ class CttResponsesExtractor:
                 f"slot response mismatch: expected {expected}, received {actual}"
             )
         crops = {slot.slot: slot for slot in batch.slots}
-        drafts: List[CttSlotDraft] = []
-        for player in extraction.slots:
-            crop = crops[player.slot]
-            crop_sha256 = _image_sha256(crop.image)
+        return [(crops[player.slot], player) for player in extraction.slots]
 
-            def observation(
-                raw: CttRawField,
-                field_name: CttFieldName,
-            ) -> CttFieldObservation:
-                return _raw_observation(
-                    raw,
-                    field_name=field_name,
-                    evidence=CttFieldEvidence(
-                        page=crop.page,
-                        slot=crop.slot,
-                        crop_id=f"p{crop.page}:slot-{crop.slot}:{field_name.value}",
-                        crop_sha256=crop_sha256,
-                    ),
-                )
+    @staticmethod
+    def _canonical_crop(
+        crop: CttSlotCrop,
+        *,
+        page: int,
+        slot: int,
+    ) -> CttSlotCrop:
+        return CttSlotCrop(
+            page=page,
+            slot=slot,
+            box=crop.box,
+            image=crop.image,
+            source_page=crop.physical_page,
+            source_slot=crop.physical_slot,
+        )
 
-            drafts.append(
-                CttSlotDraft(
+    def _slot_draft(
+        self,
+        crop: CttSlotCrop,
+        player: CttPlayerExtraction,
+    ) -> CttSlotDraft:
+        crop_sha256 = _image_sha256(crop.image)
+        source_page = crop.physical_page
+        source_slot = crop.physical_slot
+
+        def observation(
+            raw: CttRawField,
+            field_name: CttFieldName,
+        ) -> CttFieldObservation:
+            return _raw_observation(
+                raw,
+                field_name=field_name,
+                evidence=CttFieldEvidence(
                     page=crop.page,
                     slot=crop.slot,
-                    fields=CttPlayerFields(
-                        given_names=observation(
-                            player.given_names, CttFieldName.GIVEN_NAMES
-                        ),
-                        paternal_surname=observation(
-                            player.paternal_surname,
-                            CttFieldName.PATERNAL_SURNAME,
-                        ),
-                        maternal_surname=observation(
-                            player.maternal_surname,
-                            CttFieldName.MATERNAL_SURNAME,
-                        ),
-                        birth_date=observation(
-                            player.birth_date, CttFieldName.BIRTH_DATE
-                        ),
-                        curp=observation(player.curp, CttFieldName.CURP),
+                    source_page=source_page,
+                    source_slot=source_slot,
+                    crop_id=(
+                        f"p{crop.page}:slot-{crop.slot}:source-p{source_page}-"
+                        f"slot-{source_slot}:{field_name.value}"
                     ),
+                    crop_sha256=crop_sha256,
+                ),
+            )
+
+        return CttSlotDraft(
+            page=crop.page,
+            slot=crop.slot,
+            occupied=player.occupied,
+            fields=CttPlayerFields(
+                given_names=observation(player.given_names, CttFieldName.GIVEN_NAMES),
+                paternal_surname=observation(
+                    player.paternal_surname,
+                    CttFieldName.PATERNAL_SURNAME,
+                ),
+                maternal_surname=observation(
+                    player.maternal_surname,
+                    CttFieldName.MATERNAL_SURNAME,
+                ),
+                birth_date=observation(player.birth_date, CttFieldName.BIRTH_DATE),
+                curp=observation(player.curp, CttFieldName.CURP),
+            ),
+        )
+
+    def _canonicalize_slot_pairs(
+        self,
+        pairs: Sequence[Tuple[CttSlotCrop, CttPlayerExtraction]],
+        *,
+        page_count: int,
+    ) -> List[Tuple[CttSlotCrop, CttPlayerExtraction]]:
+        by_source_page: Dict[int, List[Tuple[CttSlotCrop, CttPlayerExtraction]]] = {}
+        for crop, player in pairs:
+            by_source_page.setdefault(crop.page, []).append((crop, player))
+        for source_pairs in by_source_page.values():
+            source_pairs.sort(key=lambda item: item[0].slot)
+
+        front = by_source_page.get(1) or []
+        canonical = [
+            (self._canonical_crop(crop, page=1, slot=crop.slot), player)
+            for crop, player in front
+        ]
+        if page_count == 2:
+            primary_back = by_source_page.get(2) or []
+            occupied_count = sum(1 for _crop, player in primary_back if player.occupied)
+            if occupied_count < 8:
+                raise CttResponsesProtocolError(
+                    "two-page CTT document requires a primary page 2 with at "
+                    f"least eight players; received {occupied_count}"
+                )
+            canonical.extend(
+                (
+                    self._canonical_crop(crop, page=2, slot=crop.slot),
+                    player,
+                )
+                for crop, player in primary_back
+            )
+            return canonical
+
+        back_pages = {page: by_source_page.get(page) or [] for page in (2, 3)}
+        occupied_counts = {
+            page: sum(1 for _crop, player in source_pairs if player.occupied)
+            for page, source_pairs in back_pages.items()
+        }
+        primary_pages = [page for page, count in occupied_counts.items() if count == 12]
+        extension_pages = [
+            page for page, count in occupied_counts.items() if 1 <= count <= 5
+        ]
+        if (
+            len(primary_pages) != 1
+            or len(extension_pages) != 1
+            or primary_pages[0] == extension_pages[0]
+        ):
+            raise CttResponsesProtocolError(
+                "three-page CTT document requires one full page 2 and one "
+                "extension copy containing between one and five players; "
+                f"received occupied counts {occupied_counts}"
+            )
+
+        for crop, player in back_pages[primary_pages[0]]:
+            canonical.append(
+                (self._canonical_crop(crop, page=2, slot=crop.slot), player)
+            )
+
+        extension_pairs = back_pages[extension_pages[0]]
+        occupied = [pair for pair in extension_pairs if pair[1].occupied]
+        empty = [pair for pair in extension_pairs if not pair[1].occupied]
+        selected = occupied + empty[: 5 - len(occupied)]
+        for canonical_slot, (crop, player) in enumerate(selected, start=21):
+            canonical.append(
+                (
+                    self._canonical_crop(crop, page=3, slot=canonical_slot),
+                    player,
                 )
             )
-        return drafts
+        return canonical
 
     async def extract(
         self,
@@ -431,23 +543,23 @@ class CttResponsesExtractor:
         *,
         document_sha256: str,
     ) -> CttResponsesExtractionResult:
-        """Return a fail-closed canonical draft for exactly two template pages."""
-        if len(page_images) != 2:
-            raise ValueError("CTT Responses extraction requires exactly two pages")
+        """Return a fail-closed canonical draft for two or three physical pages."""
+        if len(page_images) not in (2, 3):
+            raise ValueError("CTT Responses extraction requires two or three pages")
         if re.fullmatch(SHA256_PATTERN, document_sha256) is None:
             raise ValueError("document_sha256 must be a lowercase SHA-256 hex digest")
 
         pages_layout = layout.get("pages") or {}
         normalized_pages: List[Image.Image] = []
-        slots: List[CttSlotCrop] = []
+        physical_slots: List[CttSlotCrop] = []
         for index, image in enumerate(page_images):
-            side = PAGE_SIDES[index]
+            side = "front" if index == 0 else "back"
             page_layout = pages_layout.get(side)
             if not isinstance(page_layout, Mapping):
                 raise ValueError(f"CTT layout missing page {side}")
             normalized, _metadata = normalize_ctt_template_image(image)
             normalized_pages.append(normalized)
-            slots.extend(
+            physical_slots.extend(
                 extract_slots_from_normalized_page(
                     normalized,
                     page=index + 1,
@@ -455,11 +567,19 @@ class CttResponsesExtractor:
                 )
             )
 
-        actual_slots = tuple(slot.slot for slot in slots)
-        if actual_slots != EXPECTED_SLOT_NUMBERS:
-            raise ValueError(
-                "CTT layout must materialize slots 1 through 20 in document order"
+        for page_number in range(1, len(page_images) + 1):
+            actual = tuple(
+                slot.slot for slot in physical_slots if slot.page == page_number
             )
+            expected_slots = (
+                EXPECTED_FRONT_SLOTS if page_number == 1 else EXPECTED_BACK_SLOTS
+            )
+            if actual != expected_slots:
+                side = "front" if page_number == 1 else "back"
+                raise ValueError(
+                    f"CTT layout page {side} must materialize printed slots "
+                    f"{expected_slots[0]} through {expected_slots[-1]}"
+                )
 
         header_crops = _header_crops(normalized_pages[0], pages_layout["front"])
         header, header_response_id = await self._parse(
@@ -469,20 +589,29 @@ class CttResponsesExtractor:
             text_format=CttHeaderExtraction,
         )
 
-        slot_drafts: List[CttSlotDraft] = []
+        raw_pairs: List[Tuple[CttSlotCrop, CttPlayerExtraction]] = []
         response_ids = [header_response_id]
-        for batch in build_ctt_slot_batches(slots, max_slots=4):
-            page_number = batch.slots[0].page
-            expected = ", ".join(str(slot.slot) for slot in batch.slots)
+        for batch in build_ctt_slot_batches(physical_slots, max_slots=4):
+            source_page = batch.slots[0].page
+            if any(slot.page != source_page for slot in batch.slots):
+                raise ValueError("CTT slot batch cannot cross physical pages")
+            requested_slots = ", ".join(str(slot.slot) for slot in batch.slots)
             parsed, response_id = await self._parse(
-                prompt=SLOT_PROMPT_TEMPLATE.format(slots=expected),
-                page_image=normalized_pages[page_number - 1],
+                prompt=SLOT_PROMPT_TEMPLATE.format(slots=requested_slots),
+                page_image=normalized_pages[source_page - 1],
                 montage=batch.montage,
                 text_format=CttSlotBatchExtraction,
             )
-            slot_drafts.extend(self._slot_drafts(batch, parsed))
+            raw_pairs.extend(self._batch_pairs(batch, parsed))
             response_ids.append(response_id)
 
+        canonical_pairs = self._canonicalize_slot_pairs(
+            raw_pairs,
+            page_count=len(page_images),
+        )
+        slot_drafts = [
+            self._slot_draft(crop, player) for crop, player in canonical_pairs
+        ]
         draft = CttRegistrationDraft(
             document_sha256=document_sha256,
             team=self._team_draft(header, header_crops),

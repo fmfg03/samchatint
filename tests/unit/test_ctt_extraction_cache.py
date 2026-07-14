@@ -59,6 +59,7 @@ def _observation(
     evidence_hash: str = EVIDENCE_HASH,
 ) -> CttFieldObservation:
     location = "header" if slot is None else f"slot-{slot}"
+    source_slot = None if slot is None else slot if slot <= 20 else slot - 12
     return CttFieldObservation(
         field_name=field_name,
         raw_text=value,
@@ -67,6 +68,8 @@ def _observation(
         evidence=CttFieldEvidence(
             page=page,
             slot=slot,
+            source_page=page,
+            source_slot=source_slot,
             crop_id=f"p{page}:{location}:{field_name.value}",
             crop_sha256=evidence_hash,
         ),
@@ -112,7 +115,7 @@ def _player_fields(
     confidence: float = 0.95,
     evidence_hash: str = EVIDENCE_HASH,
 ) -> CttPlayerFields:
-    page = 1 if slot <= 8 else 2
+    page = 1 if slot <= 8 else 2 if slot <= 20 else 3
     if present and given_names is None:
         given_names = "Alma"
 
@@ -152,13 +155,16 @@ def _draft(
     player_one_name: Optional[str] = "Alma",
     player_one_present: bool = True,
     evidence_hash: str = EVIDENCE_HASH,
+    slot_count: int = 20,
 ) -> CttRegistrationDraft:
     slots = []
-    for slot in range(1, 21):
+    for slot in range(1, slot_count + 1):
         present = slot == 1 and player_one_present
+        if slot_count == 25 and 9 <= slot <= 21:
+            present = True
         slots.append(
             CttSlotDraft(
-                page=1 if slot <= 8 else 2,
+                page=1 if slot <= 8 else 2 if slot <= 20 else 3,
                 slot=slot,
                 fields=_player_fields(
                     slot,
@@ -186,7 +192,7 @@ def _fingerprint(
     model: str = "gpt-5.6-terra",
     attempts: int = 2,
     layout: Optional[Dict[str, Any]] = None,
-    pipeline_version: str = "ctt.responses.v1",
+    pipeline_version: str = "ctt.responses.v2",
 ) -> CttExtractionFingerprint:
     return CttExtractionFingerprint.from_inputs(
         document_sha256=document_hash,
@@ -214,7 +220,7 @@ def test_fingerprint_is_stable_and_covers_policy_inputs() -> None:
     assert first.cache_key() != _fingerprint(model="gpt-4.1").cache_key()
     assert (
         first.cache_key()
-        != _fingerprint(pipeline_version="ctt.responses.v2").cache_key()
+        != _fingerprint(pipeline_version="ctt.responses.v3").cache_key()
     )
     assert first.cache_key() != _fingerprint(attempts=1).cache_key()
     assert first.cache_key() != _fingerprint(layout=_layout(width=0.3)).cache_key()
@@ -236,6 +242,21 @@ def test_reconciliation_is_order_independent_and_conservative() -> None:
     assert forward.team.fields.name.normalized_value == "Deportivo Estrellas"
     assert forward.team.fields.name.confidence == 0.88
     assert forward.slots[0].fields.birth_date.normalized_value == "2004-10-28"
+
+
+def test_reconciliation_preserves_extension_slots_and_source_evidence() -> None:
+    first = _draft(slot_count=25, team_confidence=0.95)
+    second = _draft(slot_count=25, team_confidence=0.88)
+
+    result = reconcile_ctt_drafts([first, second])
+
+    assert len(result.slots) == 25
+    assert result.slots[20].slot == 21
+    assert result.slots[20].page == 3
+    assert result.slots[20].occupied is True
+    evidence = result.slots[20].fields.given_names.evidence
+    assert evidence.source_page == 3
+    assert evidence.source_slot == 9
 
 
 def test_reconciliation_surfaces_text_conflicts() -> None:
@@ -276,6 +297,9 @@ def test_reconciliation_rejects_document_or_evidence_mismatch() -> None:
 
     with pytest.raises(CttReconciliationError, match="at least one"):
         reconcile_ctt_drafts([])
+
+    with pytest.raises(CttReconciliationError, match="slot sets differ"):
+        reconcile_ctt_drafts([_draft(), _draft(slot_count=25)])
 
 
 def test_cache_round_trip_is_content_addressed_and_private(tmp_path: Path) -> None:
