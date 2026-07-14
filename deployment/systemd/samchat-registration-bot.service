@@ -1,0 +1,17 @@
+[Unit]
+Description=SamChat Registration Intake Telegram Bot
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/samchat
+EnvironmentFile=/root/samchat/.env
+Environment=PYTHONPATH=/root/samchat/src
+ExecStart=/root/samchat/.venv/bin/python /root/samchat/scripts/run_registration_intake_bot.py
+Restart=always
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target
