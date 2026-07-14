@@ -141,6 +141,33 @@ class AnalystCaseStore:
             return None
         return rehydrate_analyst_case(record)
 
+    def list_cases(
+        self,
+        *,
+        status: Optional[str] = None,
+        role: Optional[str] = None,
+        user_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[AnalystCase]:
+        query = self.session.query(AnalystCaseRecord).options(
+            selectinload(AnalystCaseRecord.versions)
+        )
+        if status:
+            query = query.filter(AnalystCaseRecord.status == status)
+        if role:
+            query = query.filter(AnalystCaseRecord.role == role)
+        if user_id:
+            query = query.filter(AnalystCaseRecord.user_id == user_id)
+        records = (
+            query.order_by(
+                AnalystCaseRecord.updated_at.desc(),
+                AnalystCaseRecord.case_id.asc(),
+            )
+            .limit(limit)
+            .all()
+        )
+        return [rehydrate_analyst_case(record) for record in records]
+
     def update_case(
         self,
         case_id: str,
