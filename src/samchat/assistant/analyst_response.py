@@ -125,6 +125,22 @@ def build_analyst_trace(
         if evidence_diagnostic_count_value is None
         else int(evidence_diagnostic_count_value)
     )
+    evidence_quality_status = str(
+        answer_contract.get("evidence_quality_status") or ""
+    )
+    safe_to_conclude = bool(answer_contract.get("safe_to_conclude", True))
+    freshness_diagnostics = list(
+        answer_contract.get("freshness_diagnostics") or []
+    )
+    conflict_diagnostics = list(
+        answer_contract.get("conflict_diagnostics") or []
+    )
+    blocking_conflicts = list(
+        answer_contract.get("blocking_conflicts") or []
+    )
+    missing_critical_sources = list(
+        answer_contract.get("missing_critical_sources") or []
+    )
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -140,6 +156,12 @@ def build_analyst_trace(
                 "evidence_rank_reasons": evidence_rank_reasons,
                 "evidence_diagnostics": evidence_diagnostics,
                 "evidence_diagnostic_count": evidence_diagnostic_count,
+                "evidence_quality_status": evidence_quality_status,
+                "safe_to_conclude": safe_to_conclude,
+                "freshness_diagnostics": freshness_diagnostics,
+                "conflict_diagnostics": conflict_diagnostics,
+                "blocking_conflicts": blocking_conflicts,
+                "missing_critical_sources": missing_critical_sources,
                 "coverage_level": result.coverage_level,
                 "overclaim_guard_applied": bool(
                     answer_contract.get("overclaim_guard_applied")
@@ -170,6 +192,12 @@ def build_analyst_trace(
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
                 "evidence_diagnostic_count": evidence_diagnostic_count,
+                "evidence_quality_status": evidence_quality_status,
+                "safe_to_conclude": safe_to_conclude,
+                "freshness_diagnostics": freshness_diagnostics,
+                "conflict_diagnostics": conflict_diagnostics,
+                "blocking_conflicts": blocking_conflicts,
+                "missing_critical_sources": missing_critical_sources,
                 "coverage_level": result.coverage_level,
                 "overclaim_guard_applied": bool(
                     answer_contract.get("overclaim_guard_applied")

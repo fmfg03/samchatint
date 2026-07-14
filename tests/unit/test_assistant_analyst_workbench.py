@@ -160,6 +160,82 @@ async def test_compare_with_one_context_is_caveated():
     ]
 
 
+@pytest.mark.asyncio
+async def test_workbench_contract_blocks_conclusion_on_material_conflict():
+    intent = detect_analyst_intent(
+        "Resume conclusiones del presupuesto contra gasto"
+    )
+    evidence = [
+        AnalystEvidence(
+            source_type="budget",
+            label="Presupuesto obra norte",
+            summary="Presupuesto aprobado para obra norte.",
+            source_id="budget-obra-norte",
+            date="2026-07-10",
+            freshness="current",
+            metadata={"concept": "obra-norte", "amount": "1000.00"},
+        ),
+        AnalystEvidence(
+            source_type="expense",
+            label="Gasto obra norte",
+            summary="Gasto registrado para obra norte.",
+            source_id="expense-obra-norte",
+            date="2026-07-10",
+            freshness="current",
+            metadata={"concept": "obra-norte", "amount": "1250.00"},
+        ),
+    ]
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+
+    assert result.answer_contract["evidence_quality_status"] == "conflicting"
+    assert result.answer_contract["safe_to_conclude"] is False
+    assert result.answer_contract["blocking_conflicts"][0][
+        "diagnostic_type"
+    ] == "amount_conflict"
+    assert result.answer_contract["overclaim_guard_applied"] is True
+    assert any("contradictoria" in caveat for caveat in result.caveats)
+    assert any("fuente debe prevalecer" in q for q in result.next_questions)
+    assert result.provider_called is False
+    assert result.actions_executed == []
+
+
+@pytest.mark.asyncio
+async def test_workbench_contract_reports_missing_critical_source():
+    intent = detect_analyst_intent(
+        "Resume conclusiones del presupuesto contra gasto"
+    )
+    evidence = [
+        AnalystEvidence(
+            source_type="budget",
+            label="Presupuesto obra norte",
+            summary="Presupuesto aprobado para obra norte.",
+            source_id="budget-obra-norte",
+            date="2026-07-10",
+            freshness="current",
+            metadata={"budget_id": "budget-obra-norte"},
+        )
+    ]
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+
+    assert result.answer_contract["evidence_quality_status"] == (
+        "missing_critical_sources"
+    )
+    assert result.answer_contract["safe_to_conclude"] is False
+    assert result.answer_contract["missing_critical_sources"] == [
+        {
+            "source_type": "expense",
+            "label": "registro de gasto",
+            "reason": "intent_signal:expense",
+            "blocks_conclusion": True,
+        }
+    ]
+    assert any("registro de gasto" in q for q in result.next_questions)
+    assert result.provider_called is False
+    assert result.actions_executed == []
+
+
 def test_extracts_document_intake_evidence_from_message():
     message = (
         "DOCUMENT_INTAKE_RESULT JSON:\n"

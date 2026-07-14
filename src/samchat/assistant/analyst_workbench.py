@@ -4,6 +4,10 @@ import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional
 
+from .analyst_evidence_quality import (
+    EvidenceQualityResult,
+    evaluate_evidence_quality,
+)
 from .analyst_intent import AnalystIntent
 from .document_conversation import extract_document_intake_result_from_text
 
@@ -393,13 +397,14 @@ def build_answer_contract(
     next_questions: Optional[Iterable[str]] = None,
     suggested_routes: Optional[Iterable[Dict[str, Any]]] = None,
     evidence_diagnostics: Optional[Iterable[Dict[str, Any]]] = None,
+    evidence_quality: Optional[EvidenceQualityResult] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
     reasons = list(coverage_reasons or [])
     questions = list(next_questions or [])
     routes = list(suggested_routes or [])
     diagnostics = list(evidence_diagnostics or [])
-    return {
+    contract = {
         "version": ANSWER_CONTRACT_VERSION,
         "status": "success" if coverage_level != "none" else "needs_context",
         "coverage_level": coverage_level,
@@ -420,6 +425,29 @@ def build_answer_contract(
         "evidence_diagnostic_count": len(diagnostics),
         "evidence_diagnostics": diagnostics,
     }
+    if evidence_quality is not None:
+        contract.update(
+            {
+                "evidence_quality_status": (
+                    evidence_quality.evidence_quality_status
+                ),
+                "safe_to_conclude": evidence_quality.safe_to_conclude,
+                "freshness_diagnostics": (
+                    evidence_quality.freshness_diagnostics
+                ),
+                "conflict_diagnostics": (
+                    evidence_quality.conflict_diagnostics
+                ),
+                "blocking_conflicts": evidence_quality.blocking_conflicts,
+                "missing_critical_sources": (
+                    evidence_quality.missing_critical_sources
+                ),
+                "evidence_quality_recommended_questions": (
+                    evidence_quality.recommended_next_questions
+                ),
+            }
+        )
+    return contract
 
 
 def _dedupe_questions(questions: Iterable[str]) -> List[str]:
@@ -427,6 +455,21 @@ def _dedupe_questions(questions: Iterable[str]) -> List[str]:
     seen: set[str] = set()
     for question in questions:
         compact = re.sub(r"\s+", " ", question or "").strip()
+        if not compact:
+            continue
+        key = compact.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(compact)
+    return deduped
+
+
+def _dedupe_texts(items: Iterable[str]) -> List[str]:
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for item in items:
+        compact = re.sub(r"\s+", " ", item or "").strip()
         if not compact:
             continue
         key = compact.lower()
@@ -787,6 +830,20 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
         coverage_level="none",
         coverage_reasons=["no_evidence"],
     )
+    evidence_quality = evaluate_evidence_quality(
+        intent=intent,
+        evidence=[],
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+    )
+    caveats = _dedupe_texts(
+        [
+            "Sin contexto no puedo sostener una conclusión sin inventar datos."
+        ] + evidence_quality.caveats
+    )
+    next_questions = _dedupe_questions(
+        next_questions + evidence_quality.recommended_next_questions
+    )
     return AnalystWorkbenchResult(
         status="needs_context",
         title="Necesito contexto para analizar",
@@ -795,9 +852,7 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "antes de responder. No ejecuté acciones ni cambios."
         ),
         evidence=[],
-        caveats=[
-            "Sin contexto no puedo sostener una conclusión sin inventar datos."
-        ],
+        caveats=caveats,
         next_questions=next_questions,
         suggested_routes=suggested_routes,
         actions_executed=[],
@@ -815,12 +870,25 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "external_validation_claimed": False,
             "writes_allowed": False,
             "overclaim_guard_applied": True,
-            "caveat_count": 1,
+            "caveat_count": len(caveats),
             "next_question_count": len(next_questions),
             "suggested_route_count": len(suggested_routes),
             "suggested_routes": suggested_routes,
             "evidence_diagnostic_count": len(evidence_diagnostics),
             "evidence_diagnostics": evidence_diagnostics,
+            "evidence_quality_status": (
+                evidence_quality.evidence_quality_status
+            ),
+            "safe_to_conclude": evidence_quality.safe_to_conclude,
+            "freshness_diagnostics": evidence_quality.freshness_diagnostics,
+            "conflict_diagnostics": evidence_quality.conflict_diagnostics,
+            "blocking_conflicts": evidence_quality.blocking_conflicts,
+            "missing_critical_sources": (
+                evidence_quality.missing_critical_sources
+            ),
+            "evidence_quality_recommended_questions": (
+                evidence_quality.recommended_next_questions
+            ),
         },
     )
 
@@ -1008,6 +1076,12 @@ async def run_analyst_workbench(
         coverage_level=coverage_level,
         coverage_reasons=coverage_reasons,
     )
+    evidence_quality = evaluate_evidence_quality(
+        intent=intent,
+        evidence=evidence,
+        coverage_level=coverage_level,
+        coverage_reasons=coverage_reasons,
+    )
 
     provider_called = False
     if provider_allowed and provider_fn is not None:
@@ -1015,7 +1089,11 @@ async def run_analyst_workbench(
             provider_called = True
             answer = await provider_fn(intent, evidence)
             if answer.strip():
-                caveats = ["Respuesta basada en contexto autorizado."]
+                caveats = _dedupe_texts(
+                    ["Respuesta basada en contexto autorizado."]
+                    + evidence_quality.caveats
+                )
+                next_questions: List[str] = []
                 guarded_answer, caveats, overclaim_guard_applied = (
                     apply_no_overclaim_guard(
                         answer=answer.strip(),
@@ -1025,13 +1103,17 @@ async def run_analyst_workbench(
                         evidence=evidence,
                     )
                 )
+                overclaim_guard_applied = (
+                    overclaim_guard_applied
+                    or not evidence_quality.safe_to_conclude
+                )
                 return AnalystWorkbenchResult(
                     status="success",
                     title="Analyst Workbench",
                     answer=guarded_answer,
                     evidence=[item.to_dict() for item in evidence],
                     caveats=caveats,
-                    next_questions=[],
+                    next_questions=next_questions,
                     suggested_routes=suggested_routes,
                     actions_executed=[],
                     provider_called=True,
@@ -1043,9 +1125,10 @@ async def run_analyst_workbench(
                         coverage_level=coverage_level,
                         overclaim_guard_applied=overclaim_guard_applied,
                         coverage_reasons=coverage_reasons,
-                        next_questions=[],
+                        next_questions=next_questions,
                         suggested_routes=suggested_routes,
                         evidence_diagnostics=evidence_diagnostics,
+                        evidence_quality=evidence_quality,
                     ),
                 )
         except Exception:
@@ -1082,6 +1165,7 @@ async def run_analyst_workbench(
                     ],
                     suggested_routes=suggested_routes,
                     evidence_diagnostics=evidence_diagnostics,
+                    evidence_quality=evidence_quality,
                 ),
             )
 
@@ -1095,12 +1179,19 @@ async def run_analyst_workbench(
         coverage_reasons=coverage_reasons,
         evidence=evidence,
     )
+    next_questions = _dedupe_questions(
+        next_questions + evidence_quality.recommended_next_questions
+    )
+    caveats = _dedupe_texts(caveats + evidence_quality.caveats)
     answer, caveats, overclaim_guard_applied = apply_no_overclaim_guard(
         answer=answer,
         caveats=caveats,
         intent=intent,
         coverage_level=coverage_level,
         evidence=evidence,
+    )
+    overclaim_guard_applied = (
+        overclaim_guard_applied or not evidence_quality.safe_to_conclude
     )
     return AnalystWorkbenchResult(
         status="success",
@@ -1123,5 +1214,6 @@ async def run_analyst_workbench(
             next_questions=next_questions,
             suggested_routes=suggested_routes,
             evidence_diagnostics=evidence_diagnostics,
+            evidence_quality=evidence_quality,
         ),
     )

@@ -137,3 +137,56 @@ def test_trace_preserves_read_only_render_contract_fields():
     assert wiring["actions_executed"] == []
     assert wiring["suggested_routes"][0]["execution_status"] == "not_executed"
     assert wiring["suggested_routes"][0]["writes_enabled"] is False
+
+
+def test_trace_exposes_evidence_quality_fields():
+    intent = detect_analyst_intent("Resume conclusiones del presupuesto")
+    result = _result(
+        caveats=["Hay evidencia contradictoria."],
+        next_questions=["¿Qué fuente debe prevalecer?"],
+        answer_contract={
+            "version": "analyst_answer_contract_v1",
+            "status": "success",
+            "coverage_reasons": ["supported_context"],
+            "next_question_count": 1,
+            "suggested_route_count": 0,
+            "suggested_routes": [],
+            "evidence_diagnostic_count": 0,
+            "evidence_diagnostics": [],
+            "overclaim_guard_applied": True,
+            "writes_allowed": False,
+            "evidence_quality_status": "conflicting",
+            "safe_to_conclude": False,
+            "freshness_diagnostics": [],
+            "conflict_diagnostics": [
+                {
+                    "diagnostic_type": "amount_conflict",
+                    "reason": "same_concept_has_incompatible_amounts",
+                    "blocks_conclusion": True,
+                }
+            ],
+            "blocking_conflicts": [
+                {
+                    "diagnostic_type": "amount_conflict",
+                    "reason": "same_concept_has_incompatible_amounts",
+                    "blocks_conclusion": True,
+                }
+            ],
+            "missing_critical_sources": [],
+        },
+    )
+
+    rendered = render_analyst_result(result)
+    trace = build_analyst_trace(intent=intent, result=result)[0]
+    wiring = trace["analyst_workbench_live_wiring"]
+
+    assert "Límites:" in rendered
+    assert "Siguientes preguntas:" in rendered
+    assert wiring["evidence_quality_status"] == "conflicting"
+    assert wiring["safe_to_conclude"] is False
+    assert wiring["blocking_conflicts"][0]["diagnostic_type"] == (
+        "amount_conflict"
+    )
+    assert trace["result"]["evidence_quality_status"] == "conflicting"
+    assert trace["result"]["safe_to_conclude"] is False
+    assert trace["result"]["exportable"] is False
