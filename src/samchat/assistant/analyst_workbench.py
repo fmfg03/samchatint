@@ -23,6 +23,14 @@ SOURCE_PRIORITY = {
     "inline_context": 100,
     "uploaded_file": 85,
     "document_intake": 85,
+    "cfdi_document": 82,
+    "registered_payment": 80,
+    "expense": 78,
+    "budget": 76,
+    "expense_account": 74,
+    "vendor": 72,
+    "project": 72,
+    "document_evidence": 70,
     "report_result": 70,
     "conversation": 40,
 }
@@ -92,6 +100,15 @@ class AnalystEvidence:
     summary: str
     rank_score: int = 0
     rank_reasons: List[str] = field(default_factory=list)
+    source: str = ""
+    source_id: str = ""
+    date: str = ""
+    relevance: str = ""
+    coverage_level: str = ""
+    freshness: str = ""
+    permissions_applied: List[str] = field(default_factory=list)
+    reference: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

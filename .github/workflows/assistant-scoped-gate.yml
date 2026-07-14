@@ -62,6 +62,7 @@ jobs:
             "tests/unit/test_assistant_analyst_provider_isolation.py"
             "tests/unit/test_assistant_analyst_case.py"
             "tests/unit/test_assistant_analyst_case_store.py"
+            "tests/unit/test_assistant_analyst_evidence_adapters.py"
             "tests/integration/test_assistant_analyst_case_persistence.py"
           )
           missing=0
@@ -143,6 +144,7 @@ jobs:
             tests/unit/test_assistant_analyst_provider_isolation.py \
             tests/unit/test_assistant_analyst_case.py \
             tests/unit/test_assistant_analyst_case_store.py \
+            tests/unit/test_assistant_analyst_evidence_adapters.py \
             tests/integration/test_assistant_analyst_case_persistence.py
 
       - name: Check diff hygiene
