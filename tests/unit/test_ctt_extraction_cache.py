@@ -1,11 +1,14 @@
 import json
 import stat
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from threading import Barrier
 from typing import Any, Dict, List, Optional
 
 import pytest
 from PIL import Image
 
+import devnous.tournaments.core.ctt_extraction_cache as cache_module
 from devnous.tournaments.core.ctt_extraction_cache import (
     PRESENCE_CONFLICT_CONFIDENCE,
     CttCachedResponsesExtractor,
@@ -179,15 +182,18 @@ def _draft(
 
 def _fingerprint(
     *,
+    document_hash: str = DOCUMENT_HASH,
     model: str = "gpt-5.6-terra",
     attempts: int = 2,
     layout: Optional[Dict[str, Any]] = None,
+    pipeline_version: str = "ctt.responses.v1",
 ) -> CttExtractionFingerprint:
     return CttExtractionFingerprint.from_inputs(
-        document_sha256=DOCUMENT_HASH,
+        document_sha256=document_hash,
         model=model,
         layout=layout or _layout(),
         attempts=attempts,
+        pipeline_version=pipeline_version,
     )
 
 
@@ -202,7 +208,14 @@ def test_fingerprint_is_stable_and_covers_policy_inputs() -> None:
 
     first = _fingerprint(layout=first_layout)
     assert first.cache_key() == _fingerprint(layout=second_layout).cache_key()
+    assert (
+        first.cache_key() != _fingerprint(document_hash=OTHER_DOCUMENT_HASH).cache_key()
+    )
     assert first.cache_key() != _fingerprint(model="gpt-4.1").cache_key()
+    assert (
+        first.cache_key()
+        != _fingerprint(pipeline_version="ctt.responses.v2").cache_key()
+    )
     assert first.cache_key() != _fingerprint(attempts=1).cache_key()
     assert first.cache_key() != _fingerprint(layout=_layout(width=0.3)).cache_key()
 
@@ -283,6 +296,73 @@ def test_cache_round_trip_is_content_addressed_and_private(tmp_path: Path) -> No
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE(path.parent.parent.stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "cache").stat().st_mode) == 0o700
+
+
+def _race_cache_saves(
+    cache: CttDraftCache,
+    fingerprint: CttExtractionFingerprint,
+    drafts: List[CttRegistrationDraft],
+    monkeypatch: pytest.MonkeyPatch,
+) -> List[Future]:
+    original_link = cache_module.os.link
+    barrier = Barrier(len(drafts))
+
+    def synchronized_link(source: str, target: str) -> None:
+        barrier.wait(timeout=5)
+        original_link(source, target)
+
+    monkeypatch.setattr(cache_module.os, "link", synchronized_link)
+    with ThreadPoolExecutor(max_workers=len(drafts)) as executor:
+        futures = [executor.submit(cache.save, fingerprint, draft) for draft in drafts]
+    return futures
+
+
+def test_concurrent_same_draft_saves_are_stable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = CttDraftCache(tmp_path / "cache")
+    fingerprint = _fingerprint()
+    draft = _draft()
+
+    futures = _race_cache_saves(
+        cache,
+        fingerprint,
+        [draft, draft],
+        monkeypatch,
+    )
+
+    assert [future.result().canonical_hash() for future in futures] == [
+        draft.canonical_hash(),
+        draft.canonical_hash(),
+    ]
+    loaded = cache.load(fingerprint)
+    assert loaded is not None
+    assert loaded.canonical_hash() == draft.canonical_hash()
+
+
+def test_concurrent_different_drafts_raise_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = CttDraftCache(tmp_path / "cache")
+    fingerprint = _fingerprint()
+    drafts = [_draft(), _draft(team_name="Otro Equipo")]
+
+    futures = _race_cache_saves(cache, fingerprint, drafts, monkeypatch)
+    successes = []
+    collisions = 0
+    for future in futures:
+        try:
+            successes.append(future.result())
+        except CttDraftCacheCollision:
+            collisions += 1
+
+    assert len(successes) == 1
+    assert collisions == 1
+    loaded = cache.load(fingerprint)
+    assert loaded is not None
+    assert loaded.canonical_hash() == successes[0].canonical_hash()
 
 
 def test_canonical_draft_json_round_trip_preserves_hash() -> None:
