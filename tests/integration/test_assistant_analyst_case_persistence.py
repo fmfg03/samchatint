@@ -71,6 +71,28 @@ async def _case():
     )
 
 
+async def _case_with(*, user_id, role, question, created_at):
+    intent = detect_analyst_intent(question)
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=[
+            AnalystEvidence(
+                source_type="document",
+                label=f"{role}.pdf",
+                summary=f"Evidencia para {role}.",
+            )
+        ],
+    )
+    return build_analyst_case(
+        user_id=user_id,
+        role=role,
+        question=question,
+        intent=intent,
+        result=result,
+        created_at=created_at,
+    )
+
+
 @pytest.mark.asyncio
 async def test_case_can_be_saved_recovered_and_rehydrated(session):
     case = await _case()
@@ -212,3 +234,40 @@ def test_sqlalchemy_models_create_only_analyst_tables_in_isolated_db():
         }
     finally:
         engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_list_cases_orders_and_filters_in_isolated_db(session):
+    first = await _case_with(
+        user_id="emp-1",
+        role="finanzas",
+        question="Qué riesgos ves en este contrato",
+        created_at=datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc),
+    )
+    second = await _case_with(
+        user_id="emp-2",
+        role="direccion",
+        question="Resume este documento para dirección",
+        created_at=datetime(2026, 7, 14, 13, 0, tzinfo=timezone.utc),
+    )
+    store = AnalystCaseStore(session)
+    store.create_case(first)
+    store.create_case(second)
+    session.commit()
+
+    listed = store.list_cases()
+    assert [case.case_id for case in listed] == [
+        second.case_id,
+        first.case_id,
+    ]
+
+    assert [case.case_id for case in store.list_cases(role="finanzas")] == [
+        first.case_id
+    ]
+    assert [case.case_id for case in store.list_cases(user_id="emp-2")] == [
+        second.case_id
+    ]
+    assert [
+        case.case_id
+        for case in store.list_cases(status=first.status)
+    ] == [second.case_id, first.case_id]
