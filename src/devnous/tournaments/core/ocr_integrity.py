@@ -14,7 +14,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageOps
 
@@ -278,6 +278,122 @@ def clamp_box(box: Tuple[int, int, int, int], image_size: Tuple[int, int]) -> Tu
     if bottom <= top:
         bottom = min(height, top + 1)
     return left, top, right, bottom
+
+
+def _ctt_target_size_for(image: Image.Image) -> Tuple[int, int]:
+    width, height = image.size
+    return (3300, 2550) if width > height else (2550, 3300)
+
+
+def _dark_content_points(
+    image: Image.Image,
+    *,
+    max_samples: int = 180000,
+) -> List[Tuple[float, float]]:
+    grayscale = ImageOps.exif_transpose(image).convert("L")
+    width, height = grayscale.size
+    step = max(1, int(((width * height) / max(max_samples, 1)) ** 0.5))
+    pixels = grayscale.load()
+    points: List[Tuple[float, float]] = []
+    for y in range(0, height, step):
+        for x in range(0, width, step):
+            if int(pixels[x, y]) < 210:
+                points.append((float(x), float(y)))
+    return points
+
+
+def _expand_quad(
+    quad: List[Tuple[float, float]],
+    *,
+    image_size: Tuple[int, int],
+    expansion: float = 0.035,
+) -> List[Tuple[float, float]]:
+    width, height = image_size
+    center_x = sum(point[0] for point in quad) / 4.0
+    center_y = sum(point[1] for point in quad) / 4.0
+    expanded: List[Tuple[float, float]] = []
+    for x, y in quad:
+        new_x = x + ((x - center_x) * expansion)
+        new_y = y + ((y - center_y) * expansion)
+        expanded.append(
+            (
+                max(0.0, min(float(width - 1), new_x)),
+                max(0.0, min(float(height - 1), new_y)),
+            )
+        )
+    return expanded
+
+
+def _quad_area(quad: List[Tuple[float, float]]) -> float:
+    area = 0.0
+    for index, (x1, y1) in enumerate(quad):
+        x2, y2 = quad[(index + 1) % len(quad)]
+        area += (x1 * y2) - (x2 * y1)
+    return abs(area) / 2.0
+
+
+def _estimate_document_quad(
+    image: Image.Image,
+) -> Optional[List[Tuple[float, float]]]:
+    points = _dark_content_points(image)
+    if len(points) < 200:
+        return None
+
+    top_left = min(points, key=lambda point: point[0] + point[1])
+    top_right = max(points, key=lambda point: point[0] - point[1])
+    bottom_right = max(points, key=lambda point: point[0] + point[1])
+    bottom_left = min(points, key=lambda point: point[0] - point[1])
+    quad = _expand_quad(
+        [top_left, bottom_left, bottom_right, top_right],
+        image_size=image.size,
+    )
+
+    image_area = float(max(image.size[0] * image.size[1], 1))
+    if _quad_area(quad) < image_area * 0.35:
+        return None
+    return quad
+
+
+def normalize_ctt_template_image(
+    image: Image.Image,
+) -> Tuple[Image.Image, Dict[str, object]]:
+    """Normalize a photographed CTT page for fixed template coordinates."""
+    oriented = ImageOps.exif_transpose(image).convert("RGB")
+    if oriented.width > oriented.height:
+        oriented = oriented.rotate(90, expand=True)
+
+    target_size = _ctt_target_size_for(oriented)
+    quad = _estimate_document_quad(oriented)
+    if quad:
+        normalized = oriented.transform(
+            target_size,
+            Image.Transform.QUAD,
+            data=(
+                quad[0][0],
+                quad[0][1],
+                quad[1][0],
+                quad[1][1],
+                quad[2][0],
+                quad[2][1],
+                quad[3][0],
+                quad[3][1],
+            ),
+            resample=Image.Resampling.BICUBIC,
+        )
+        return normalized, {
+            "normalized": True,
+            "method": "quad_content_transform",
+            "source_size": image.size,
+            "target_size": target_size,
+        }
+
+    normalized = oriented.resize(target_size, Image.Resampling.BICUBIC)
+    return normalized, {
+        "normalized": True,
+        "method": "resize_only",
+        "source_size": image.size,
+        "target_size": target_size,
+    }
 
 
 def heuristic_photo_box(
