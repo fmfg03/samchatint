@@ -65,6 +65,17 @@ def build_analyst_trace(
         if suggested_route_count_value is None
         else int(suggested_route_count_value)
     )
+    evidence_diagnostics = list(
+        answer_contract.get("evidence_diagnostics") or []
+    )
+    evidence_diagnostic_count_value = answer_contract.get(
+        "evidence_diagnostic_count"
+    )
+    evidence_diagnostic_count = (
+        len(evidence_diagnostics)
+        if evidence_diagnostic_count_value is None
+        else int(evidence_diagnostic_count_value)
+    )
     return [
         {
             "analyst_workbench_live_wiring": {
@@ -78,6 +89,8 @@ def build_analyst_trace(
                 "evidence_labels": evidence_labels,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
+                "evidence_diagnostics": evidence_diagnostics,
+                "evidence_diagnostic_count": evidence_diagnostic_count,
                 "coverage_level": result.coverage_level,
                 "overclaim_guard_applied": bool(
                     answer_contract.get("overclaim_guard_applied")
@@ -106,6 +119,7 @@ def build_analyst_trace(
                 "evidence_labels": evidence_labels,
                 "evidence_rank_scores": evidence_rank_scores,
                 "evidence_rank_reasons": evidence_rank_reasons,
+                "evidence_diagnostic_count": evidence_diagnostic_count,
                 "coverage_level": result.coverage_level,
                 "overclaim_guard_applied": bool(
                     answer_contract.get("overclaim_guard_applied")

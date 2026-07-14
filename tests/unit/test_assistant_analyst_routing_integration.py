@@ -156,6 +156,12 @@ async def test_analyst_uses_inline_context_before_history_no_provider():
     assert "conversation" in trace["evidence_types"]
     assert trace["evidence_rank_scores"][0] > trace["evidence_rank_scores"][1]
     assert "risk_review_terms" in trace["evidence_rank_reasons"][0]
+    assert trace["evidence_diagnostic_count"] == 2
+    assert trace["evidence_diagnostics"][0]["source_type"] == "inline_context"
+    assert trace["evidence_diagnostics"][0]["rank_score"] == (
+        trace["evidence_rank_scores"][0]
+    )
+    assert trace["evidence_diagnostics"][0]["clipped"] is False
     assert trace["coverage_level"] in {"medium", "high"}
     assert trace["coverage_reasons"] in (
         ["supported_context"],
