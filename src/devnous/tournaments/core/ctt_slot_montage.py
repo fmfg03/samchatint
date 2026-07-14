@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw
 
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 PLAYER_CARD_PREFIX = "jugador_"
-PAGE_SIDES = ("front", "back")
+PAGE_SIDES = ("front", "back", "back")
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,16 @@ class CttSlotCrop:
     slot: int
     box: Tuple[int, int, int, int]
     image: Image.Image
+    source_page: Optional[int] = None
+    source_slot: Optional[int] = None
+
+    @property
+    def physical_page(self) -> int:
+        return self.source_page or self.page
+
+    @property
+    def physical_slot(self) -> int:
+        return self.source_slot or self.slot
 
     @property
     def label(self) -> str:
@@ -127,7 +137,7 @@ def extract_ctt_player_slots(
     page_images: Sequence[Image.Image],
     layout: Mapping[str, Any],
 ) -> List[CttSlotCrop]:
-    """Normalize document pages and return player slots in form order."""
+    """Normalize up to three physical pages and return their printed slots."""
     pages: Mapping[str, Any] = layout.get("pages") or {}
     slots: List[CttSlotCrop] = []
     for page_index, page_image in enumerate(page_images):

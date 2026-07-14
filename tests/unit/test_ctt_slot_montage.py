@@ -132,7 +132,7 @@ def test_invalid_or_empty_card_layout_fails_closed() -> None:
         )
 
 
-def test_top_level_extraction_normalizes_pages_and_ignores_extras() -> None:
+def test_top_level_extraction_normalizes_optional_back_copy() -> None:
     layout = {
         "pages": {
             "front": {"cards": {"jugador_1": {"nombre": _field(0.2, 0.2, 0.2, 0.1)}}},
@@ -143,8 +143,27 @@ def test_top_level_extraction_normalizes_pages_and_ignores_extras() -> None:
 
     slots = extract_ctt_player_slots(pages, layout)
 
-    assert [(slot.page, slot.slot) for slot in slots] == [(1, 1), (2, 9)]
+    assert [(slot.page, slot.slot) for slot in slots] == [
+        (1, 1),
+        (2, 9),
+        (3, 9),
+    ]
     assert all(slot.image.width > 1 for slot in slots)
+
+
+def test_remapped_crop_preserves_physical_coordinates() -> None:
+    source = _slot(9, page=2)
+    remapped = CttSlotCrop(
+        page=3,
+        slot=21,
+        box=source.box,
+        image=source.image,
+        source_page=source.page,
+        source_slot=source.slot,
+    )
+
+    assert remapped.physical_page == 2
+    assert remapped.physical_slot == 9
 
 
 def test_montage_rejects_empty_or_invalid_grid() -> None:

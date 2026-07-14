@@ -31,8 +31,13 @@ def _field(
     slot: Optional[int] = None,
     confidence: float = 0.95,
     candidates: Optional[List[str]] = None,
+    source_page: Optional[int] = None,
+    source_slot: Optional[int] = None,
 ) -> CttFieldObservation:
     scope = "header" if slot is None else f"slot-{slot}"
+    physical_slot = source_slot
+    if slot is not None and physical_slot is None:
+        physical_slot = slot if slot <= 20 else slot - 12
     return CttFieldObservation(
         field_name=field_name,
         raw_text=raw_text,
@@ -41,6 +46,8 @@ def _field(
         evidence=CttFieldEvidence(
             page=page,
             slot=slot,
+            source_page=source_page or page,
+            source_slot=physical_slot,
             crop_id=f"p{page}:{scope}:{field_name.value}",
             crop_sha256="b" * 64,
         ),
@@ -107,7 +114,7 @@ def _team_fields(name: Optional[str] = "Deportivo Estrellas") -> CttTeamFields:
 
 
 def _slot(slot_number: int, *, present: bool = False) -> CttSlotDraft:
-    page = 1 if slot_number <= 8 else 2
+    page = 1 if slot_number <= 8 else 2 if slot_number <= 20 else 3
     empty_value = None if not present else "Alma"
     return CttSlotDraft(
         page=page,
@@ -124,8 +131,12 @@ def _slot(slot_number: int, *, present: bool = False) -> CttSlotDraft:
     )
 
 
-def _complete_slots() -> List[CttSlotDraft]:
-    return [_slot(number, present=number in {1, 9}) for number in range(1, 21)]
+def _complete_slots(count: int = 20) -> List[CttSlotDraft]:
+    if count == 25:
+        present = {1, 21}.union(range(9, 21))
+    else:
+        present = {1, 9}
+    return [_slot(number, present=number in present) for number in range(1, count + 1)]
 
 
 def test_field_normalization_ignores_untrusted_model_value() -> None:
@@ -226,6 +237,27 @@ def test_empty_slot_stays_empty_without_false_review() -> None:
     assert slot.validation_codes == []
 
 
+def test_visually_occupied_slot_without_text_requires_review() -> None:
+    slot = CttSlotDraft(
+        page=3,
+        slot=21,
+        occupied=True,
+        fields=_player_fields(
+            page=3,
+            slot=21,
+            given_names=None,
+            paternal_surname=None,
+            maternal_surname=None,
+            birth_date=None,
+            curp=None,
+        ),
+    )
+
+    assert slot.status == CttSlotStatus.REQUIRES_REVIEW
+    assert slot.occupied is True
+    assert CttValidationCode.SLOT_INCOMPLETE in slot.validation_codes
+
+
 def test_incomplete_present_slot_requires_review() -> None:
     slot = CttSlotDraft(
         page=1,
@@ -265,6 +297,32 @@ def test_page_slot_and_evidence_mismatches_fail_closed() -> None:
             fields=_player_fields(page=1, slot=2),
         )
 
+    remapped = CttFieldEvidence(
+        page=3,
+        slot=21,
+        source_page=2,
+        source_slot=9,
+        crop_id="p3:slot-21:source-p2-slot-9:given_names",
+    )
+    assert remapped.page == 3
+    assert remapped.source_page == 2
+    assert remapped.source_slot == 9
+
+    with pytest.raises(ValidationError, match="source page 1"):
+        CttFieldEvidence(
+            page=1,
+            source_page=2,
+            crop_id="bad:header-source",
+        )
+    with pytest.raises(ValidationError, match="back-page evidence"):
+        CttFieldEvidence(
+            page=3,
+            slot=21,
+            source_page=1,
+            source_slot=1,
+            crop_id="bad:extension-source",
+        )
+
 
 def test_team_name_is_required_and_header_evidence_is_strict() -> None:
     team = CttTeamDraft(fields=_team_fields(name=None))
@@ -297,6 +355,40 @@ def test_draft_sorts_slots_and_has_stable_canonical_hash() -> None:
     assert [slot.slot for slot in first.slots] == list(range(1, 21))
     assert first.canonical_payload() == second.canonical_payload()
     assert first.canonical_hash() == second.canonical_hash()
+
+
+def test_extension_page_requires_full_primary_back_and_one_to_five_players() -> None:
+    team = CttTeamDraft(fields=_team_fields())
+    valid = CttRegistrationDraft(
+        document_sha256=DOCUMENT_HASH,
+        team=team,
+        slots=_complete_slots(25),
+    )
+
+    assert len(valid.slots) == 25
+    assert valid.slots[20].page == 3
+    assert valid.slots[20].occupied is True
+    assert all(slot.occupied for slot in valid.slots[8:20])
+
+    primary_not_full = _complete_slots(25)
+    primary_not_full[8] = _slot(9, present=False)
+    with pytest.raises(ValidationError, match="primary page 2 must be full"):
+        CttRegistrationDraft(
+            document_sha256=DOCUMENT_HASH,
+            team=team,
+            slots=primary_not_full,
+        )
+
+    empty_extension = [
+        _slot(number, present=(number == 1 or 9 <= number <= 20))
+        for number in range(1, 26)
+    ]
+    with pytest.raises(ValidationError, match="at least one player"):
+        CttRegistrationDraft(
+            document_sha256=DOCUMENT_HASH,
+            team=team,
+            slots=empty_extension,
+        )
 
 
 def test_duplicate_slots_are_rejected() -> None:

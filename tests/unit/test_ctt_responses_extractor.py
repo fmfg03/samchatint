@@ -65,6 +65,7 @@ def _header() -> CttHeaderExtraction:
 def _player(slot: int, *, present: bool = False) -> CttPlayerExtraction:
     return CttPlayerExtraction(
         slot=slot,
+        occupied=present,
         given_names=_raw("Alma" if present else None),
         paternal_surname=_raw("Rios" if present else None),
         maternal_surname=_raw("Luna" if present else None),
@@ -79,12 +80,46 @@ def _slot_batches() -> List[CttSlotBatchExtraction]:
         batches.append(
             CttSlotBatchExtraction(
                 slots=[
-                    _player(number, present=number in {1, 9})
+                    _player(
+                        number,
+                        present=(number == 1 or 9 <= number <= 16),
+                    )
                     for number in range(start, start + 4)
                 ]
             )
         )
     return batches
+
+
+def _page_batches(
+    first: int,
+    last: int,
+    *,
+    present: set,
+) -> List[CttSlotBatchExtraction]:
+    batches = []
+    for start in range(first, last + 1, 4):
+        batches.append(
+            CttSlotBatchExtraction(
+                slots=[
+                    _player(number, present=number in present)
+                    for number in range(start, min(start + 4, last + 1))
+                ]
+            )
+        )
+    return batches
+
+
+def _three_page_batches(
+    *,
+    second_back_present: set,
+    third_back_present: set,
+) -> List[CttSlotBatchExtraction]:
+    return (
+        _page_batches(1, 8, present={1})
+        + _page_batches(9, 20, present=second_back_present)
+        + _page_batches(9, 20, present=third_back_present)
+    )
 
 
 def _responses(
@@ -181,7 +216,9 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
     evidence = result.draft.slots[0].fields.given_names.evidence
     assert evidence.page == 1
     assert evidence.slot == 1
-    assert evidence.crop_id == "p1:slot-1:given_names"
+    assert evidence.source_page == 1
+    assert evidence.source_slot == 1
+    assert evidence.crop_id == "p1:slot-1:source-p1-slot-1:given_names"
     assert evidence.crop_sha256 and len(evidence.crop_sha256) == 64
 
     calls = client.responses.calls
@@ -221,6 +258,84 @@ async def test_same_observations_produce_same_canonical_hash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_back_copy_is_classified_by_occupancy_and_remapped() -> None:
+    batches = _three_page_batches(
+        second_back_present={9, 12, 16},
+        third_back_present=set(range(9, 21)),
+    )
+    client = FakeClient(_responses(batches=batches))
+
+    result = await CttResponsesExtractor(client).extract(
+        _pages() + [Image.new("RGB", (300, 420), "white")],
+        _layout(),
+        document_sha256=DOCUMENT_HASH,
+    )
+
+    assert len(result.draft.slots) == 25
+    assert result.response_ids == tuple(f"resp-{number}" for number in range(1, 10))
+    assert all(slot.occupied for slot in result.draft.slots[8:20])
+    assert [slot.occupied for slot in result.draft.slots[20:]] == [
+        True,
+        True,
+        True,
+        False,
+        False,
+    ]
+    primary_evidence = result.draft.slots[8].fields.given_names.evidence
+    extension_evidence = result.draft.slots[20].fields.given_names.evidence
+    assert (primary_evidence.page, primary_evidence.source_page) == (2, 3)
+    assert (primary_evidence.slot, primary_evidence.source_slot) == (9, 9)
+    assert (extension_evidence.page, extension_evidence.source_page) == (3, 2)
+    assert (extension_evidence.slot, extension_evidence.source_slot) == (21, 9)
+    assert [
+        slot.fields.given_names.evidence.source_slot
+        for slot in result.draft.slots[20:23]
+    ] == [9, 12, 16]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("second_present", "third_present"),
+    [
+        (set(range(9, 20)), {9, 10}),
+        (set(range(9, 21)), set(range(9, 15))),
+        (set(range(9, 21)), set()),
+    ],
+)
+async def test_invalid_back_copy_occupancy_fails_closed(
+    second_present: set,
+    third_present: set,
+) -> None:
+    batches = _three_page_batches(
+        second_back_present=second_present,
+        third_back_present=third_present,
+    )
+
+    with pytest.raises(CttResponsesProtocolError, match="requires one full page 2"):
+        await CttResponsesExtractor(FakeClient(_responses(batches=batches))).extract(
+            _pages() + [Image.new("RGB", (300, 420), "white")],
+            _layout(),
+            document_sha256=DOCUMENT_HASH,
+        )
+
+
+@pytest.mark.asyncio
+async def test_short_single_back_page_cannot_masquerade_as_primary() -> None:
+    batches = _page_batches(1, 8, present={1}) + _page_batches(
+        9,
+        20,
+        present={9, 10, 11, 12, 13},
+    )
+
+    with pytest.raises(CttResponsesProtocolError, match="at least eight players"):
+        await CttResponsesExtractor(FakeClient(_responses(batches=batches))).extract(
+            _pages(),
+            _layout(),
+            document_sha256=DOCUMENT_HASH,
+        )
+
+
+@pytest.mark.asyncio
 async def test_slot_mismatch_fails_closed() -> None:
     batches = _slot_batches()
     batches[0] = CttSlotBatchExtraction(slots=[_player(1), _player(2), _player(3)])
@@ -254,12 +369,12 @@ async def test_unparsed_or_unidentified_response_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_layout_must_materialize_all_twenty_slots() -> None:
+async def test_layout_must_materialize_all_printed_slots() -> None:
     layout = _layout()
     del layout["pages"]["back"]["cards"]["jugador_20"]
     client = FakeClient(_responses())
 
-    with pytest.raises(ValueError, match="slots 1 through 20"):
+    with pytest.raises(ValueError, match="printed slots 9 through 20"):
         await CttResponsesExtractor(client).extract(
             _pages(),
             layout,
@@ -271,9 +386,16 @@ async def test_layout_must_materialize_all_twenty_slots() -> None:
 @pytest.mark.asyncio
 async def test_page_count_and_header_layout_are_strict() -> None:
     extractor = CttResponsesExtractor(FakeClient(_responses()))
-    with pytest.raises(ValueError, match="exactly two pages"):
+    with pytest.raises(ValueError, match="two or three pages"):
         await extractor.extract(
             _pages()[:1],
+            _layout(),
+            document_sha256=DOCUMENT_HASH,
+        )
+
+    with pytest.raises(ValueError, match="two or three pages"):
+        await extractor.extract(
+            _pages() + [Image.new("RGB", (300, 420), "white")] * 2,
             _layout(),
             document_sha256=DOCUMENT_HASH,
         )
@@ -308,6 +430,17 @@ def test_raw_schemas_reject_duplicate_slots_and_extra_fields() -> None:
                 "normalized_value": "not accepted",
             }
         )
+
+    player = CttPlayerExtraction(
+        slot=1,
+        occupied=False,
+        given_names=_raw("Alma"),
+        paternal_surname=_raw(None),
+        maternal_surname=_raw(None),
+        birth_date=_raw(None),
+        curp=_raw(None),
+    )
+    assert player.occupied is True
 
 
 def test_constructor_rejects_invalid_configuration() -> None:

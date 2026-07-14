@@ -33,7 +33,7 @@ from .ctt_responses_extractor import (
     CttResponsesExtractor,
 )
 
-CACHE_VERSION = "ctt.draft_cache.v1"
+CACHE_VERSION: Literal["ctt.draft_cache.v1"] = "ctt.draft_cache.v1"
 PRESENCE_CONFLICT_CONFIDENCE = 0.79
 TEAM_FIELD_ATTRIBUTES = (
     "name",
@@ -91,7 +91,7 @@ class CttExtractionFingerprint(BaseModel):
     document_sha256: str = Field(pattern=SHA256_PATTERN)
     model: str = Field(min_length=1, max_length=160)
     cache_version: Literal["ctt.draft_cache.v1"] = CACHE_VERSION
-    schema_version: Literal["ctt.registration_draft.v2"] = SCHEMA_VERSION
+    schema_version: Literal["ctt.registration_draft.v3"] = SCHEMA_VERSION
     pipeline_version: str = Field(min_length=1, max_length=160)
     layout_sha256: str = Field(pattern=SHA256_PATTERN)
     attempts: int = Field(ge=1, le=3)
@@ -357,11 +357,15 @@ def reconcile_ctt_drafts(
     }
     team = CttTeamDraft(fields=CttTeamFields(**team_values))
 
+    slot_numbers = tuple(slot.slot for slot in ordered[0].slots)
+    if any(
+        tuple(slot.slot for slot in draft.slots) != slot_numbers for draft in ordered
+    ):
+        raise CttReconciliationError("draft slot sets differ between attempts")
+
     slots: List[CttSlotDraft] = []
-    for slot_number in range(1, 21):
-        source_slots = [draft.slots[slot_number - 1] for draft in ordered]
-        if any(slot.slot != slot_number for slot in source_slots):
-            raise CttReconciliationError("draft slots are not canonically ordered")
+    for index, slot_number in enumerate(slot_numbers):
+        source_slots = [draft.slots[index] for draft in ordered]
         field_values = {
             attribute: _reconcile_observation(
                 [getattr(slot.fields, attribute) for slot in source_slots]
@@ -372,6 +376,7 @@ def reconcile_ctt_drafts(
             CttSlotDraft(
                 page=source_slots[0].page,
                 slot=slot_number,
+                occupied=any(slot.occupied for slot in source_slots),
                 fields=CttPlayerFields(**field_values),
             )
         )

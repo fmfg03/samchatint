@@ -12,7 +12,7 @@ from typing import List, Literal, Optional, Sequence, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-SCHEMA_VERSION = "ctt.registration_draft.v2"
+SCHEMA_VERSION: Literal["ctt.registration_draft.v3"] = "ctt.registration_draft.v3"
 LOW_CONFIDENCE_THRESHOLD = 0.80
 SHA256_PATTERN = r"^[0-9a-f]{64}$"
 CROP_ID_PATTERN = r"^[A-Za-z0-9._:-]+$"
@@ -116,25 +116,59 @@ def _field_has_content(field: "CttFieldObservation") -> bool:
     )
 
 
+def _page_for_slot(slot: int) -> int:
+    if slot <= 8:
+        return 1
+    if slot <= 20:
+        return 2
+    return 3
+
+
 class CttFieldEvidence(BaseModel):
     """Stable reference to the visual crop supporting one field observation."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    page: int = Field(ge=1, le=2)
-    slot: Optional[int] = Field(default=None, ge=1, le=20)
+    page: int = Field(ge=1, le=3)
+    slot: Optional[int] = Field(default=None, ge=1, le=25)
+    source_page: int = Field(ge=1, le=3)
+    source_slot: Optional[int] = Field(default=None, ge=1, le=20)
     crop_id: str = Field(min_length=1, max_length=160, pattern=CROP_ID_PATTERN)
     crop_sha256: Optional[str] = Field(default=None, pattern=SHA256_PATTERN)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_source_coordinates(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        data.setdefault("source_page", data.get("page"))
+        if data.get("slot") is not None:
+            data.setdefault("source_slot", data.get("slot"))
+        return data
 
     @model_validator(mode="after")
     def validate_page_slot_pair(self) -> "CttFieldEvidence":
         if self.slot is None:
             if self.page != 1:
                 raise ValueError("header evidence must come from page 1")
+            if self.source_page != 1:
+                raise ValueError("header evidence must originate from source page 1")
+            if self.source_slot is not None:
+                raise ValueError("header evidence cannot reference a source slot")
             return self
-        expected_page = 1 if self.slot <= 8 else 2
+        expected_page = _page_for_slot(self.slot)
         if self.page != expected_page:
             raise ValueError(f"slot {self.slot} must use page {expected_page} evidence")
+        if self.source_slot is None:
+            raise ValueError("player evidence requires a source slot")
+        if self.page == 1:
+            if self.source_page != 1 or self.source_slot != self.slot:
+                raise ValueError("page 1 evidence must preserve its physical slot")
+        elif self.source_page not in (2, 3) or not 9 <= self.source_slot <= 20:
+            raise ValueError(
+                "back-page evidence must originate from slots 9 through 20"
+            )
         return self
 
 
@@ -236,16 +270,17 @@ class CttSlotDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    page: int = Field(ge=1, le=2)
-    slot: int = Field(ge=1, le=20)
+    page: int = Field(ge=1, le=3)
+    slot: int = Field(ge=1, le=25)
     fields: CttPlayerFields
+    occupied: bool = False
     status: CttSlotStatus = CttSlotStatus.EMPTY
     requires_review: bool = False
     validation_codes: List[CttValidationCode] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def derive_slot_state(self) -> "CttSlotDraft":
-        expected_page = 1 if self.slot <= 8 else 2
+        expected_page = _page_for_slot(self.slot)
         if self.page != expected_page:
             raise ValueError(f"slot {self.slot} belongs to page {expected_page}")
 
@@ -257,8 +292,10 @@ class CttSlotDraft(BaseModel):
                 raise ValueError("field evidence slot does not match slot number")
 
         has_content = any(_field_has_content(field) for field in observations)
+        if has_content:
+            self.occupied = True
         codes: List[CttValidationCode] = []
-        if not has_content:
+        if not self.occupied:
             self.status = CttSlotStatus.EMPTY
             self.requires_review = False
             self.validation_codes = []
@@ -362,7 +399,7 @@ class CttRegistrationDraft(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["ctt.registration_draft.v2"] = SCHEMA_VERSION
+    schema_version: Literal["ctt.registration_draft.v3"] = SCHEMA_VERSION
     document_sha256: str = Field(pattern=SHA256_PATTERN)
     team: CttTeamDraft
     slots: List[CttSlotDraft]
@@ -373,9 +410,22 @@ class CttRegistrationDraft(BaseModel):
         keys = [(slot.page, slot.slot) for slot in self.slots]
         if len(keys) != len(set(keys)):
             raise ValueError("duplicate page/slot entries are not allowed")
-        if {slot.slot for slot in self.slots} != set(range(1, 21)):
-            raise ValueError("draft must materialize every slot from 1 through 20")
+        slot_numbers = {slot.slot for slot in self.slots}
+        valid_slot_sets = (set(range(1, 21)), set(range(1, 26)))
+        if slot_numbers not in valid_slot_sets:
+            raise ValueError(
+                "draft must materialize every slot from 1 through 20 or 1 through 25"
+            )
         self.slots = sorted(self.slots, key=lambda slot: (slot.page, slot.slot))
+        if len(self.slots) == 25:
+            primary_back = [slot for slot in self.slots if 9 <= slot.slot <= 20]
+            extension = [slot for slot in self.slots if 21 <= slot.slot <= 25]
+            if any(not slot.occupied for slot in primary_back):
+                raise ValueError(
+                    "primary page 2 must be full before an extension page is allowed"
+                )
+            if not any(slot.occupied for slot in extension):
+                raise ValueError("extension page must contain at least one player")
         self.requires_review = bool(
             self.team.requires_review
             or any(slot.requires_review for slot in self.slots)
