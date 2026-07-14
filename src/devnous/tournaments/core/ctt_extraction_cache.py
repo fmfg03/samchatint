@@ -429,6 +429,11 @@ class CttCachedResponsesExtractor:
             model=self.extractor.model,
             layout=layout,
             attempts=self.attempts,
+            pipeline_version=getattr(
+                self.extractor,
+                "pipeline_version",
+                CTT_RESPONSES_PIPELINE_VERSION,
+            ),
         )
         cached = self.cache.load(fingerprint)
         if cached is not None:

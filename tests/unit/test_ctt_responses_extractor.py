@@ -189,7 +189,7 @@ def bypass_geometry_normalization(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         extractor_module,
         "normalize_ctt_template_image",
-        lambda image: (image.convert("RGB"), {"test": True}),
+        lambda image, **_kwargs: (image.convert("RGB"), {"test": True}),
     )
 
 
@@ -445,6 +445,12 @@ def test_raw_schemas_reject_duplicate_slots_and_extra_fields() -> None:
 
 def test_constructor_rejects_invalid_configuration() -> None:
     assert CttResponsesExtractor(FakeClient([])).model == "gpt-5.6-terra"
+    canonical = CttResponsesExtractor(
+        FakeClient([]),
+        input_images_are_canonical=True,
+    )
+    assert canonical.input_images_are_canonical is True
+    assert canonical.pipeline_version.endswith(".canonical_input")
     with pytest.raises(ValueError, match="model cannot be empty"):
         CttResponsesExtractor(FakeClient([]), model=" ")
     with pytest.raises(ValueError, match="must be positive"):

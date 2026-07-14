@@ -70,7 +70,7 @@ class CttCanaryReport(BaseModel):
     document_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     canonical_hash: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     model: Optional[str] = None
-    page_count: int = Field(ge=1, le=3)
+    page_count: int = Field(ge=0)
     slot_count: int = Field(ge=0, le=25)
     occupied_count: int = Field(ge=0, le=25)
     review_count: int = Field(ge=0, le=25)

@@ -25,6 +25,7 @@ def _args(tmp_path, *, pages=2):
         attempts=1,
         minimum_players=16,
         expected_team_name="Deportivo Estrellas",
+        canonical_input=True,
     )
 
 
@@ -37,6 +38,7 @@ def test_parser_defaults_to_shadow() -> None:
 
     assert args.mode == "shadow"
     assert args.minimum_players == 16
+    assert args.canonical_input is False
 
 
 @pytest.mark.asyncio
@@ -60,7 +62,10 @@ async def test_run_prints_sanitized_report_and_returns_acceptance_code(
     monkeypatch.setattr(
         cli.CttResponsesExtractor,
         "from_api_key",
-        lambda *_args, **_kwargs: "responses-extractor",
+        lambda *_args, **kwargs: (
+            "responses-extractor",
+            kwargs["input_images_are_canonical"],
+        ),
     )
     monkeypatch.setattr(cli, "CttDraftCache", lambda path: ("cache", path))
     monkeypatch.setattr(
@@ -80,6 +85,7 @@ async def test_run_prints_sanitized_report_and_returns_acceptance_code(
 
     class FakeRunner:
         def __init__(self, extractor, *, mode, policy):
+            assert extractor[0][1] is True
             assert extractor[2] == 1
             assert mode.value == "shadow"
             assert policy.expected_team_name == "Deportivo Estrellas"

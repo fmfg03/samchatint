@@ -256,6 +256,15 @@ async def test_non_form_images_are_rejected_before_provider_call() -> None:
     assert one_page.report.incidents[0].code == "INVALID_DOCUMENT_IMAGE"
     assert extractor.calls == 0
 
+    four_pages = await CttCanaryRunner(extractor).run(
+        [Image.new("RGB", (24, 32), "white") for _ in range(4)],
+        {},
+        document_sha256=DOCUMENT_HASH,
+    )
+    assert four_pages.report.page_count == 4
+    assert four_pages.report.incidents[0].code == "INVALID_DOCUMENT_IMAGE"
+    assert extractor.calls == 0
+
 
 @pytest.mark.asyncio
 async def test_review_incident_contains_coordinates_and_codes_but_no_pii() -> None:
