@@ -1,0 +1,38 @@
+# CTT registration shadow rollout
+
+The dedicated registration bot remains the source of user-facing responses and
+web-review persistence. The canonical CTT extractor is attached only as a
+background observer and cannot replace the existing result in this rollout.
+
+## Runtime contract
+
+- `CTT_RESPONSES_ROLLOUT=off` disables the observer and is the default.
+- `CTT_RESPONSES_ROLLOUT=shadow` buffers two or three validated pages in memory
+  and runs the canonical canary in the background.
+- `CTT_RESPONSES_ROLLOUT=active` is rejected by this bridge and disables it.
+- `OPENAI_API_KEY` is required only when shadow mode is enabled.
+- `CTT_LAYOUT_PATH` may override `config/layout_ctt_2026.json`.
+- `CTT_SHADOW_MINIMUM_PLAYERS` defaults to 16 and is bounded to 1 through 25.
+
+The observer never receives a database session. Its deterministic replay cache
+is created with private permissions in a temporary directory and deleted after
+each observation. Logs contain only the sanitized canary report; player names,
+dates, raw images, and provider response IDs are excluded.
+
+## Deployment
+
+1. Deploy the merged revision to `/root/samchat` without replacing `.env`,
+   uploaded photos, or other runtime state.
+2. Install `deployment/systemd/samchat-registration-bot.service` in systemd and
+   run `systemctl daemon-reload`.
+3. Start with `CTT_RESPONSES_ROLLOUT=off`, restart the registration service, and
+   verify Telegram intake and web-review creation.
+4. Set `CTT_RESPONSES_ROLLOUT=shadow`, restart only the registration service,
+   and verify sanitized `CTT shadow report` log entries for a bounded cohort.
+5. Do not enable active mode in this release.
+
+## Rollback
+
+Set `CTT_RESPONSES_ROLLOUT=off` and restart
+`samchat-registration-bot.service`. The existing OCR and review flow continues
+unchanged because shadow results are never consumed by the intake bot.

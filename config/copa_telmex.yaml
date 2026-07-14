@@ -1,0 +1,24 @@
+# Copa Telmex - live Telegram bot configuration
+
+tournament_id: copa_telmex
+name: Copa Telmex
+
+modules:
+  finance:
+    enabled: true
+
+  operations:
+    enabled: true
+    ocr_enabled: true
+    ocr_provider: openai
+    telegram_auto_web_review: true
+    telegram_registration_intake_enabled: false
+    telegram_review_max_pages: 3
+
+  marketing:
+    enabled: true
+
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  admin_chat_ids:
+    - 892216787
