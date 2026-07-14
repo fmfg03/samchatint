@@ -66,6 +66,11 @@ def _normalize_text(value: str) -> str:
 
 
 def _normalize_birth_date(value: str) -> Optional[str]:
+    if re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value):
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date().isoformat()
+        except ValueError:
+            return None
     match = re.fullmatch(r"([0-9]{2})/([0-9]{2})/([0-9]{2}|[0-9]{4})", value)
     if not match:
         return None

@@ -33,6 +33,7 @@ from .ctt_slot_montage import (
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 DEFAULT_CTT_RESPONSES_MODEL = "gpt-5.6-terra"
+CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v1"
 EXPECTED_SLOT_NUMBERS = tuple(range(1, 21))
 PAGE_SIDES = ("front", "back")
 
