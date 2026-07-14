@@ -227,14 +227,14 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
     assert all(call["store"] is False for call in calls)
     assert all("temperature" not in call for call in calls)
     assert all(call["metadata"]["schema_version"] for call in calls)
-    for call in calls:
+    for index, call in enumerate(calls):
         content = call["input"][0]["content"]
         assert [part["type"] for part in content] == [
             "input_text",
             "input_image",
             "input_image",
         ]
-        assert content[1]["detail"] == "low"
+        assert content[1]["detail"] == ("high" if index == 0 else "low")
         assert content[2]["detail"] == "high"
         assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
     assert calls[1]["text_format"] is CttSlotBatchExtraction

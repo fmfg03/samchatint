@@ -201,13 +201,16 @@ class CttFieldObservation(BaseModel):
 
         candidate_values: List[str] = []
         for candidate in data.get("candidates") or []:
+            candidate_text = _normalize_text(str(candidate))
             normalized_candidate, candidate_codes = _normalize_field_value(
                 field_name,
-                str(candidate),
+                candidate_text,
             )
             deterministic_codes.extend(candidate_codes)
             if normalized_candidate:
                 candidate_values.append(normalized_candidate)
+            elif candidate_text:
+                candidate_values.append(candidate_text)
         if normalized_value:
             candidate_values.insert(0, normalized_value)
         candidate_values = _unique(candidate_values)

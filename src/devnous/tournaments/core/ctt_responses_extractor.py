@@ -7,7 +7,18 @@ import hashlib
 import io
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Type, TypeVar
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+)
 
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -33,7 +44,7 @@ from .ctt_slot_montage import (
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 DEFAULT_CTT_RESPONSES_MODEL = "gpt-5.6-terra"
-CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v2"
+CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v3"
 EXPECTED_FRONT_SLOTS = tuple(range(1, 9))
 EXPECTED_BACK_SLOTS = tuple(range(9, 21))
 
@@ -302,6 +313,7 @@ class CttResponsesExtractor:
         page_image: Image.Image,
         montage: Image.Image,
         text_format: Type[ParsedModel],
+        page_detail: Literal["low", "high"] = "low",
     ) -> Tuple[ParsedModel, str]:
         response = await self.client.responses.parse(
             model=self.model,
@@ -317,7 +329,7 @@ class CttResponsesExtractor:
                         {
                             "type": "input_image",
                             "image_url": _image_data_url(page_image),
-                            "detail": "low",
+                            "detail": page_detail,
                         },
                         {
                             "type": "input_image",
@@ -587,6 +599,7 @@ class CttResponsesExtractor:
             page_image=normalized_pages[0],
             montage=_build_header_montage(header_crops),
             text_format=CttHeaderExtraction,
+            page_detail="high",
         )
 
         raw_pairs: List[Tuple[CttSlotCrop, CttPlayerExtraction]] = []

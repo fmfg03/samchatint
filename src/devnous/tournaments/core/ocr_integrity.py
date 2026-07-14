@@ -363,6 +363,13 @@ def normalize_ctt_template_image(
         oriented = oriented.rotate(90, expand=True)
 
     target_size = _ctt_target_size_for(oriented)
+    if oriented.size == target_size:
+        return oriented, {
+            "normalized": True,
+            "method": "already_canonical",
+            "source_size": image.size,
+            "target_size": target_size,
+        }
     quad = _estimate_document_quad(oriented)
     if quad:
         normalized = oriented.transform(

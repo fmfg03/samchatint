@@ -180,3 +180,14 @@ def test_normalization_outputs_canonical_portrait_page() -> None:
 
     assert normalized.size == (2550, 3300)
     assert metadata["method"] == "resize_only"
+
+
+def test_normalization_is_idempotent_for_canonical_page() -> None:
+    image = Image.new("RGB", (2550, 3300), "white")
+    image.putpixel((120, 180), (12, 34, 56))
+
+    normalized, metadata = normalize_ctt_template_image(image)
+
+    assert normalized.size == image.size
+    assert normalized.getpixel((120, 180)) == (12, 34, 56)
+    assert metadata["method"] == "already_canonical"
