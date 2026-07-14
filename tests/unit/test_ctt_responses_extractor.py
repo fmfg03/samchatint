@@ -189,7 +189,7 @@ def bypass_geometry_normalization(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         extractor_module,
         "normalize_ctt_template_image",
-        lambda image: (image.convert("RGB"), {"test": True}),
+        lambda image, **_kwargs: (image.convert("RGB"), {"test": True}),
     )
 
 
@@ -227,14 +227,14 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
     assert all(call["store"] is False for call in calls)
     assert all("temperature" not in call for call in calls)
     assert all(call["metadata"]["schema_version"] for call in calls)
-    for call in calls:
+    for index, call in enumerate(calls):
         content = call["input"][0]["content"]
         assert [part["type"] for part in content] == [
             "input_text",
             "input_image",
             "input_image",
         ]
-        assert content[1]["detail"] == "low"
+        assert content[1]["detail"] == ("high" if index == 0 else "low")
         assert content[2]["detail"] == "high"
         assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
     assert calls[1]["text_format"] is CttSlotBatchExtraction
@@ -445,6 +445,12 @@ def test_raw_schemas_reject_duplicate_slots_and_extra_fields() -> None:
 
 def test_constructor_rejects_invalid_configuration() -> None:
     assert CttResponsesExtractor(FakeClient([])).model == "gpt-5.6-terra"
+    canonical = CttResponsesExtractor(
+        FakeClient([]),
+        input_images_are_canonical=True,
+    )
+    assert canonical.input_images_are_canonical is True
+    assert canonical.pipeline_version.endswith(".canonical_input")
     with pytest.raises(ValueError, match="model cannot be empty"):
         CttResponsesExtractor(FakeClient([]), model=" ")
     with pytest.raises(ValueError, match="must be positive"):

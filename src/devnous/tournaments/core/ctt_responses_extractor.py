@@ -7,7 +7,18 @@ import hashlib
 import io
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Type, TypeVar
+from typing import (
+    Any,
+    Dict,
+    List,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+)
 
 from PIL import Image, ImageDraw
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -33,7 +44,7 @@ from .ctt_slot_montage import (
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 DEFAULT_CTT_RESPONSES_MODEL = "gpt-5.6-terra"
-CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v2"
+CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v3"
 EXPECTED_FRONT_SLOTS = tuple(range(1, 9))
 EXPECTED_BACK_SLOTS = tuple(range(9, 21))
 
@@ -267,6 +278,7 @@ class CttResponsesExtractor:
         *,
         model: str = DEFAULT_CTT_RESPONSES_MODEL,
         timeout_seconds: float = 90.0,
+        input_images_are_canonical: bool = False,
     ) -> None:
         if not model.strip():
             raise ValueError("model cannot be empty")
@@ -275,6 +287,10 @@ class CttResponsesExtractor:
         self.client = client
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
+        self.input_images_are_canonical = bool(input_images_are_canonical)
+        self.pipeline_version = CTT_RESPONSES_PIPELINE_VERSION + (
+            ".canonical_input" if self.input_images_are_canonical else ""
+        )
 
     @classmethod
     def from_api_key(
@@ -283,6 +299,7 @@ class CttResponsesExtractor:
         *,
         model: str = DEFAULT_CTT_RESPONSES_MODEL,
         timeout_seconds: float = 90.0,
+        input_images_are_canonical: bool = False,
     ) -> "CttResponsesExtractor":
         """Build an extractor without persisting or logging the credential."""
         if not api_key.strip():
@@ -293,6 +310,7 @@ class CttResponsesExtractor:
             AsyncOpenAI(api_key=api_key),
             model=model,
             timeout_seconds=timeout_seconds,
+            input_images_are_canonical=input_images_are_canonical,
         )
 
     async def _parse(
@@ -302,6 +320,7 @@ class CttResponsesExtractor:
         page_image: Image.Image,
         montage: Image.Image,
         text_format: Type[ParsedModel],
+        page_detail: Literal["low", "high"] = "low",
     ) -> Tuple[ParsedModel, str]:
         response = await self.client.responses.parse(
             model=self.model,
@@ -317,7 +336,7 @@ class CttResponsesExtractor:
                         {
                             "type": "input_image",
                             "image_url": _image_data_url(page_image),
-                            "detail": "low",
+                            "detail": page_detail,
                         },
                         {
                             "type": "input_image",
@@ -557,7 +576,10 @@ class CttResponsesExtractor:
             page_layout = pages_layout.get(side)
             if not isinstance(page_layout, Mapping):
                 raise ValueError(f"CTT layout missing page {side}")
-            normalized, _metadata = normalize_ctt_template_image(image)
+            normalized, _metadata = normalize_ctt_template_image(
+                image,
+                already_canonical=self.input_images_are_canonical,
+            )
             normalized_pages.append(normalized)
             physical_slots.extend(
                 extract_slots_from_normalized_page(
@@ -587,6 +609,7 @@ class CttResponsesExtractor:
             page_image=normalized_pages[0],
             montage=_build_header_montage(header_crops),
             text_format=CttHeaderExtraction,
+            page_detail="high",
         )
 
         raw_pairs: List[Tuple[CttSlotCrop, CttPlayerExtraction]] = []

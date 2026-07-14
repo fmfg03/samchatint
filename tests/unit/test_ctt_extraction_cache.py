@@ -442,8 +442,10 @@ class FakeExtractor:
         results: List[CttResponsesExtractionResult],
         *,
         model: str = "gpt-5.6-terra",
+        pipeline_version: str = "ctt.responses.v3",
     ) -> None:
         self.model = model
+        self.pipeline_version = pipeline_version
         self.results = list(results)
         self.calls = 0
 
@@ -509,6 +511,32 @@ async def test_cached_wrapper_reconciles_once_then_avoids_api_calls(
     assert second.cache_key == first.cache_key
     assert second.draft.canonical_hash() == first.draft.canonical_hash()
     assert extractor.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_wrapper_separates_canonical_input_policy(tmp_path: Path) -> None:
+    cache = CttDraftCache(tmp_path / "cache")
+    raw_extractor = FakeExtractor([_result(_draft(), "resp-raw")])
+    canonical_extractor = FakeExtractor(
+        [_result(_draft(), "resp-canonical")],
+        pipeline_version="ctt.responses.v3.canonical_input",
+    )
+    pages = [Image.new("RGB", (10, 10)), Image.new("RGB", (10, 10))]
+
+    raw = await CttCachedResponsesExtractor(raw_extractor, cache).extract(
+        pages,
+        _layout(),
+        document_sha256=DOCUMENT_HASH,
+    )
+    canonical = await CttCachedResponsesExtractor(canonical_extractor, cache).extract(
+        pages,
+        _layout(),
+        document_sha256=DOCUMENT_HASH,
+    )
+
+    assert raw.cache_key != canonical.cache_key
+    assert raw_extractor.calls == 1
+    assert canonical_extractor.calls == 1
 
 
 @pytest.mark.asyncio

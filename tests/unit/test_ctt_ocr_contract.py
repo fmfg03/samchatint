@@ -179,6 +179,22 @@ def test_low_confidence_and_conflicts_are_derived() -> None:
     assert field.requires_review
 
 
+def test_invalid_candidate_codes_survive_json_round_trip() -> None:
+    field = _field(
+        CttFieldName.BIRTH_DATE,
+        None,
+        slot=1,
+        confidence=0.3,
+        candidates=["31/13/2004"],
+    )
+
+    restored = CttFieldObservation.model_validate_json(field.model_dump_json())
+
+    assert restored.model_dump(mode="json") == field.model_dump(mode="json")
+    assert CttValidationCode.INVALID_DATE_FORMAT in restored.validation_codes
+    assert CttValidationCode.LOW_CONFIDENCE in restored.validation_codes
+
+
 def test_untrusted_derived_state_is_recomputed() -> None:
     field = CttFieldObservation(
         field_name=CttFieldName.GIVEN_NAMES,

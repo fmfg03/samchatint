@@ -356,6 +356,8 @@ def _estimate_document_quad(
 
 def normalize_ctt_template_image(
     image: Image.Image,
+    *,
+    already_canonical: bool = False,
 ) -> Tuple[Image.Image, Dict[str, object]]:
     """Normalize a photographed CTT page for fixed template coordinates."""
     oriented = ImageOps.exif_transpose(image).convert("RGB")
@@ -363,6 +365,17 @@ def normalize_ctt_template_image(
         oriented = oriented.rotate(90, expand=True)
 
     target_size = _ctt_target_size_for(oriented)
+    if already_canonical:
+        if oriented.size != target_size:
+            raise ValueError(
+                "already-canonical CTT page must use the canonical target size"
+            )
+        return oriented, {
+            "normalized": True,
+            "method": "already_canonical",
+            "source_size": image.size,
+            "target_size": target_size,
+        }
     quad = _estimate_document_quad(oriented)
     if quad:
         normalized = oriented.transform(
