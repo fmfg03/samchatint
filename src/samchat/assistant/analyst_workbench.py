@@ -59,6 +59,31 @@ ROUTE_SIGNAL_TOKENS = {
     ),
 }
 
+ROUTE_LABELS = {
+    "cfdi.list_pending": "Revisar CFDI pendientes",
+    "payments.list_pending": "Verificar evidencia de pagos",
+    "finance.breakdown": "Conciliar presupuesto y gastos",
+    "request_intelligence": "Revisar ruta operacional",
+    "write_like_action": "Revisar solicitud de escritura",
+    "document_confirmation": "Revisar confirmación documental",
+    "evidence.collect_context": "Recolectar contexto de análisis",
+}
+
+ROUTE_REQUIRED_CONTEXT = {
+    "cfdi.list_pending": ["CFDI o factura relacionada"],
+    "payments.list_pending": ["Evidencia de pago o reembolso"],
+    "finance.breakdown": ["Presupuesto, gasto o reporte financiero"],
+    "evidence.collect_context": ["Documento, reporte o texto base"],
+}
+
+ROUTE_BLOCKED_CAPABILITIES = [
+    "writes",
+    "provider_calls",
+    "route_execution",
+    "webhooks",
+    "notifications",
+]
+
 
 @dataclass(frozen=True)
 class AnalystEvidence:
@@ -80,7 +105,7 @@ class AnalystWorkbenchResult:
     evidence: List[Dict[str, Any]]
     caveats: List[str]
     next_questions: List[str]
-    suggested_routes: List[str]
+    suggested_routes: List[Dict[str, Any]]
     actions_executed: List[str]
     provider_called: bool
     coverage_level: str
@@ -148,18 +173,46 @@ def _has_clipped_evidence(evidence: Iterable[AnalystEvidence]) -> bool:
     return any(item.summary.endswith("...") for item in evidence)
 
 
-def _dedupe_routes(routes: Iterable[str]) -> List[str]:
-    deduped: List[str] = []
+def _route_contract(
+    route_id: str,
+    *,
+    reason: str,
+    required_context: Optional[Iterable[str]] = None,
+) -> Dict[str, Any]:
+    context = list(
+        required_context
+        if required_context is not None
+        else ROUTE_REQUIRED_CONTEXT.get(route_id, [])
+    )
+    return {
+        "route_id": route_id,
+        "label": ROUTE_LABELS.get(route_id, route_id),
+        "reason": reason,
+        "required_context": context,
+        "blocked_capabilities": list(ROUTE_BLOCKED_CAPABILITIES),
+        "execution_status": "not_executed",
+        "writes_enabled": False,
+    }
+
+
+def _dedupe_route_contracts(
+    routes: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    deduped: List[Dict[str, Any]] = []
     seen: set[str] = set()
     for route in routes:
-        compact = re.sub(r"\s+", " ", route or "").strip()
-        if not compact:
+        route_id = re.sub(
+            r"\s+",
+            " ",
+            str(route.get("route_id") or "").strip(),
+        )
+        if not route_id:
             continue
-        key = compact.lower()
+        key = route_id.lower()
         if key in seen:
             continue
         seen.add(key)
-        deduped.append(compact)
+        deduped.append(dict(route))
     return deduped
 
 
@@ -169,19 +222,80 @@ def suggested_routes_for_context(
     coverage_level: str,
     coverage_reasons: Iterable[str],
     evidence: Iterable[AnalystEvidence],
-) -> List[str]:
-    del coverage_level, coverage_reasons
-    routes: List[str] = []
+) -> List[Dict[str, Any]]:
+    reasons = set(coverage_reasons)
+    routes: List[Dict[str, Any]] = []
     if intent.requires_operational_route:
-        routes.append(intent.operational_route_hint or "request_intelligence")
+        route_id = intent.operational_route_hint or "request_intelligence"
+        routes.append(
+            _route_contract(
+                route_id,
+                reason="operational_route_detected_not_executed",
+            )
+        )
+    if (
+        not intent.requires_operational_route
+        and (coverage_level == "none" or "no_evidence" in reasons)
+    ):
+        routes.append(
+            _route_contract(
+                "evidence.collect_context",
+                reason="insufficient_evidence",
+                required_context=(
+                    intent.context_requirements
+                    or ROUTE_REQUIRED_CONTEXT["evidence.collect_context"]
+                ),
+            )
+        )
 
     evidence_text = " ".join(
         f"{item.label} {item.summary}" for item in evidence
     ).lower()
     for route, tokens in ROUTE_SIGNAL_TOKENS.items():
         if _contains_any(evidence_text, tokens):
-            routes.append(route)
-    return _dedupe_routes(routes)
+            routes.append(
+                _route_contract(
+                    route,
+                    reason=f"evidence_signal:{route}",
+                )
+            )
+    return _dedupe_route_contracts(routes)
+
+
+def _coverage_contribution(
+    *,
+    index: int,
+    item: AnalystEvidence,
+    coverage_level: str,
+    coverage_reasons: Iterable[str],
+) -> str:
+    reasons = set(coverage_reasons)
+    if coverage_level == "none" or "no_evidence" in reasons:
+        return "missing"
+    if item.summary.endswith("...") or "clipped_summary" in item.rank_reasons:
+        return "clipped"
+    if item.rank_score < LOW_RELEVANCE_SCORE or "low_relevance" in reasons:
+        return "limited"
+    if index == 0:
+        return "primary"
+    return "supporting"
+
+
+def _missing_evidence_reason(
+    *,
+    coverage_level: str,
+    coverage_reasons: Iterable[str],
+) -> Optional[str]:
+    reasons = set(coverage_reasons)
+    if "no_evidence" in reasons or coverage_level == "none":
+        return "no_evidence"
+    if "clipped_evidence" in reasons:
+        return "clipped_evidence"
+    if "low_relevance" in reasons:
+        return "low_relevance"
+    if "incomplete_comparison" in reasons:
+        return "incomplete_comparison"
+    return None
 
 
 def evidence_diagnostics_for_context(
@@ -192,7 +306,27 @@ def evidence_diagnostics_for_context(
 ) -> List[Dict[str, Any]]:
     reasons = set(coverage_reasons)
     diagnostics: List[Dict[str, Any]] = []
-    for item in evidence:
+    evidence_items = list(evidence)
+    if not evidence_items:
+        return [
+            {
+                "source_type": "missing_context",
+                "label": "contexto requerido",
+                "rank_score": 0,
+                "rank_reasons": list(reasons or ["no_evidence"]),
+                "coverage_contribution": "missing",
+                "clipped": False,
+                "low_relevance": True,
+                "missing_evidence_reason": _missing_evidence_reason(
+                    coverage_level=coverage_level,
+                    coverage_reasons=reasons,
+                ) or "no_evidence",
+                "trace_safe_summary": (
+                    "No hay evidencia disponible para sostener el análisis."
+                ),
+            }
+        ]
+    for index, item in enumerate(evidence_items):
         rank_reasons = list(item.rank_reasons or [])
         clipped = item.summary.endswith("...") or (
             "clipped_summary" in rank_reasons
@@ -210,8 +344,22 @@ def evidence_diagnostics_for_context(
                 "label": item.label,
                 "rank_score": item.rank_score,
                 "rank_reasons": rank_reasons,
+                "coverage_contribution": _coverage_contribution(
+                    index=index,
+                    item=item,
+                    coverage_level=coverage_level,
+                    coverage_reasons=reasons,
+                ),
                 "clipped": clipped,
                 "low_relevance": low_relevance,
+                "missing_evidence_reason": _missing_evidence_reason(
+                    coverage_level=coverage_level,
+                    coverage_reasons=reasons,
+                ),
+                "trace_safe_summary": (
+                    f"{item.source_type} evidence ranked with score "
+                    f"{item.rank_score}."
+                ),
             }
         )
     return diagnostics
@@ -226,7 +374,7 @@ def build_answer_contract(
     overclaim_guard_applied: bool,
     coverage_reasons: Optional[Iterable[str]] = None,
     next_questions: Optional[Iterable[str]] = None,
-    suggested_routes: Optional[Iterable[str]] = None,
+    suggested_routes: Optional[Iterable[Dict[str, Any]]] = None,
     evidence_diagnostics: Optional[Iterable[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     evidence_items = list(evidence)
@@ -251,6 +399,7 @@ def build_answer_contract(
         "caveat_count": len(list(caveats)),
         "next_question_count": len(questions),
         "suggested_route_count": len(routes),
+        "suggested_routes": routes,
         "evidence_diagnostic_count": len(diagnostics),
         "evidence_diagnostics": diagnostics,
     }
@@ -280,6 +429,17 @@ def next_questions_for_context(
 ) -> List[str]:
     reasons = set(coverage_reasons)
     questions: List[str] = []
+    if intent.requires_operational_route:
+        questions.append(
+            "¿Confirmas que solo debo sugerir la ruta y no ejecutarla?"
+        )
+        return _dedupe_questions(questions)
+    if intent.analyst_intent == "unknown":
+        questions.append(
+            "¿Quieres que analice riesgos, resumen, comparación o próximos "
+            "pasos?"
+        )
+        return _dedupe_questions(questions)
     if coverage_level == "none" or "no_evidence" in reasons:
         questions.extend(
             [
@@ -291,6 +451,8 @@ def next_questions_for_context(
             ]
         )
         return _dedupe_questions(questions)
+    if coverage_level == "high":
+        return []
     if coverage_level == "low":
         questions.append(
             "¿Puedes compartir la fuente completa o confirmar estos hallazgos?"
@@ -597,6 +759,17 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
         coverage_reasons=["no_evidence"],
         evidence=[],
     )
+    suggested_routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+        evidence=[],
+    )
+    evidence_diagnostics = evidence_diagnostics_for_context(
+        evidence=[],
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+    )
     return AnalystWorkbenchResult(
         status="needs_context",
         title="Necesito contexto para analizar",
@@ -609,7 +782,7 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "Sin contexto no puedo sostener una conclusión sin inventar datos."
         ],
         next_questions=next_questions,
-        suggested_routes=[],
+        suggested_routes=suggested_routes,
         actions_executed=[],
         provider_called=False,
         coverage_level="none",
@@ -627,9 +800,10 @@ def _needs_context(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "overclaim_guard_applied": True,
             "caveat_count": 1,
             "next_question_count": len(next_questions),
-            "suggested_route_count": 0,
-            "evidence_diagnostic_count": 0,
-            "evidence_diagnostics": [],
+            "suggested_route_count": len(suggested_routes),
+            "suggested_routes": suggested_routes,
+            "evidence_diagnostic_count": len(evidence_diagnostics),
+            "evidence_diagnostics": evidence_diagnostics,
         },
     )
 
@@ -671,6 +845,7 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
             "caveat_count": 0,
             "next_question_count": 0,
             "suggested_route_count": len(suggested_routes),
+            "suggested_routes": suggested_routes,
             "evidence_diagnostic_count": 0,
             "evidence_diagnostics": [],
         },

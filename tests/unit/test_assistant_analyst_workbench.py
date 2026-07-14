@@ -1,6 +1,9 @@
 import pytest
 
-from samchat.assistant.analyst_intent import detect_analyst_intent
+from samchat.assistant.analyst_intent import (
+    AnalystIntent,
+    detect_analyst_intent,
+)
 from samchat.assistant.analyst_response import build_analyst_trace
 from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
@@ -14,6 +17,10 @@ from samchat.assistant.analyst_workbench import (
     run_analyst_workbench,
     suggested_routes_for_context,
 )
+
+
+def _route_ids(routes):
+    return [route["route_id"] for route in routes]
 
 
 @pytest.mark.asyncio
@@ -30,7 +37,13 @@ async def test_insufficient_context_needs_context_without_provider():
     assert result.answer_contract["status"] == "needs_context"
     assert result.answer_contract["coverage_reasons"] == ["no_evidence"]
     assert result.answer_contract["next_question_count"] == 2
-    assert result.answer_contract["suggested_route_count"] == 0
+    assert result.answer_contract["suggested_route_count"] == 1
+    assert _route_ids(result.suggested_routes) == ["evidence.collect_context"]
+    assert result.suggested_routes[0]["execution_status"] == "not_executed"
+    assert result.suggested_routes[0]["writes_enabled"] is False
+    assert result.answer_contract["evidence_diagnostics"][0][
+        "missing_evidence_reason"
+    ] == "no_evidence"
     assert result.next_questions == [
         "¿Qué documento, reporte o texto debo usar como base?",
         "¿Quieres que el análisis sea para dirección, operación o cliente?",
@@ -100,8 +113,14 @@ async def test_analyst_trace_contract_exposes_routing_and_evidence_labels():
             "label": "contrato.pdf",
             "rank_score": wiring["evidence_rank_scores"][0],
             "rank_reasons": wiring["evidence_rank_reasons"][0],
+            "coverage_contribution": "primary",
             "clipped": False,
             "low_relevance": False,
+            "missing_evidence_reason": None,
+            "trace_safe_summary": (
+                "uploaded_file evidence ranked with score "
+                f"{wiring['evidence_rank_scores'][0]}."
+            ),
         }
     ]
     assert wiring["provider_called"] is False
@@ -342,8 +361,14 @@ def test_evidence_diagnostics_contract_tracks_source_score_and_reasons():
             "label": "contrato.pdf",
             "rank_score": evidence[0].rank_score,
             "rank_reasons": evidence[0].rank_reasons,
+            "coverage_contribution": "primary",
             "clipped": False,
             "low_relevance": False,
+            "missing_evidence_reason": None,
+            "trace_safe_summary": (
+                "uploaded_file evidence ranked with score "
+                f"{evidence[0].rank_score}."
+            ),
         }
     ]
 
@@ -380,9 +405,39 @@ def test_evidence_diagnostics_flags_clipped_and_low_relevance():
     )
 
     assert clipped_diagnostics[0]["clipped"] is True
+    assert clipped_diagnostics[0]["coverage_contribution"] == "clipped"
+    assert clipped_diagnostics[0][
+        "missing_evidence_reason"
+    ] == "clipped_evidence"
     assert clipped_diagnostics[0]["low_relevance"] is False
     assert low_diagnostics[0]["clipped"] is False
     assert low_diagnostics[0]["low_relevance"] is True
+    assert low_diagnostics[0]["coverage_contribution"] == "limited"
+    assert low_diagnostics[0]["missing_evidence_reason"] == "low_relevance"
+
+
+def test_evidence_diagnostics_represent_missing_evidence_safely():
+    diagnostics = evidence_diagnostics_for_context(
+        evidence=[],
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+    )
+
+    assert diagnostics == [
+        {
+            "source_type": "missing_context",
+            "label": "contexto requerido",
+            "rank_score": 0,
+            "rank_reasons": ["no_evidence"],
+            "coverage_contribution": "missing",
+            "clipped": False,
+            "low_relevance": True,
+            "missing_evidence_reason": "no_evidence",
+            "trace_safe_summary": (
+                "No hay evidencia disponible para sostener el análisis."
+            ),
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -411,6 +466,29 @@ async def test_low_relevance_evidence_adds_conservative_caveat():
     assert any("limitada o indirecta" in caveat for caveat in result.caveats)
     assert result.answer_contract["overclaim_guard_applied"] is True
     assert result.answer_contract["next_question_count"] == 3
+
+
+@pytest.mark.asyncio
+async def test_high_coverage_clear_intent_has_no_followup_questions():
+    intent = detect_analyst_intent("Qué riesgos ves en este contrato")
+    evidence = [
+        AnalystEvidence(
+            source_type="inline_context",
+            label="contrato.pdf",
+            summary="Contrato con penalizacion y responsable faltante.",
+        ),
+        AnalystEvidence(
+            source_type="uploaded_file",
+            label="anexo.pdf",
+            summary="Anexo con obligaciones, fechas y responsables.",
+        ),
+    ]
+
+    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+
+    assert result.coverage_level == "high"
+    assert result.next_questions == []
+    assert result.answer_contract["next_question_count"] == 0
 
 
 def test_context_sufficiency_matrix_covers_core_reasons():
@@ -491,6 +569,24 @@ def test_context_sufficiency_matrix_covers_core_reasons():
 def test_next_questions_contract_dedupes_and_tracks_context_needs():
     risk_intent = detect_analyst_intent("Qué riesgos ves en este contrato")
     compare_intent = detect_analyst_intent("Compara estos dos documentos")
+    ambiguous_intent = AnalystIntent(
+        request_id="analyst_unknown",
+        mode="analyst",
+        analyst_intent="unknown",
+        confidence=0.0,
+        requires_operational_route=False,
+        operational_route_hint=None,
+        requires_provider=False,
+        context_requirements=[],
+        missing_context=[],
+        safety={"read_only": True, "writes_allowed": False},
+        raw_text="ayúdame con esto",
+        conflict_resolution={
+            "selected_route": "analyst",
+            "reason": "ambiguous",
+            "operational_route_hint": None,
+        },
+    )
 
     no_context = next_questions_for_context(
         intent=risk_intent,
@@ -521,6 +617,45 @@ def test_next_questions_contract_dedupes_and_tracks_context_needs():
         "¿Cuál es el documento contraparte a comparar?",
     ]
 
+    high_coverage = next_questions_for_context(
+        intent=risk_intent,
+        coverage_level="high",
+        coverage_reasons=["multi_source_high_relevance"],
+        evidence=[
+            AnalystEvidence(
+                source_type="uploaded_file",
+                label="contrato.pdf",
+                summary="Contrato con obligaciones y responsables.",
+            ),
+            AnalystEvidence(
+                source_type="document_intake",
+                label="anexo.pdf",
+                summary="Anexo con fechas y aceptación.",
+            ),
+        ],
+    )
+    assert high_coverage == []
+
+    ambiguous = next_questions_for_context(
+        intent=ambiguous_intent,
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+        evidence=[],
+    )
+    assert ambiguous == [
+        "¿Quieres que analice riesgos, resumen, comparación o próximos pasos?"
+    ]
+
+    write_like = next_questions_for_context(
+        intent=detect_analyst_intent("crea un resumen de este contrato"),
+        coverage_level="none",
+        coverage_reasons=["operational_route"],
+        evidence=[],
+    )
+    assert write_like == [
+        "¿Confirmas que solo debo sugerir la ruta y no ejecutarla?"
+    ]
+
 
 def test_suggested_routes_contract_derives_read_only_routes():
     intent = detect_analyst_intent("Qué riesgos ves en este contrato")
@@ -542,11 +677,15 @@ def test_suggested_routes_contract_derives_read_only_routes():
         evidence=evidence,
     )
 
-    assert routes == [
+    assert _route_ids(routes) == [
         "cfdi.list_pending",
         "payments.list_pending",
         "finance.breakdown",
     ]
+    for route in routes:
+        assert route["execution_status"] == "not_executed"
+        assert route["writes_enabled"] is False
+        assert "route_execution" in route["blocked_capabilities"]
 
 
 def test_suggested_routes_contract_preserves_operational_hint():
@@ -559,7 +698,8 @@ def test_suggested_routes_contract_preserves_operational_hint():
         evidence=[],
     )
 
-    assert routes == ["cfdi.list_pending"]
+    assert _route_ids(routes) == ["cfdi.list_pending"]
+    assert routes[0]["reason"] == "operational_route_detected_not_executed"
 
 
 def test_suggested_routes_contract_is_empty_without_signal():
@@ -581,6 +721,22 @@ def test_suggested_routes_contract_is_empty_without_signal():
     assert routes == []
 
 
+def test_insufficient_evidence_suggests_inert_collection_route():
+    intent = detect_analyst_intent("Explícame esta balanza")
+
+    routes = suggested_routes_for_context(
+        intent=intent,
+        coverage_level="none",
+        coverage_reasons=["no_evidence"],
+        evidence=[],
+    )
+
+    assert _route_ids(routes) == ["evidence.collect_context"]
+    assert routes[0]["required_context"] == ["uploaded_document"]
+    assert routes[0]["execution_status"] == "not_executed"
+    assert routes[0]["writes_enabled"] is False
+
+
 @pytest.mark.asyncio
 async def test_suggested_routes_are_recommendations_not_actions():
     intent = detect_analyst_intent("Qué riesgos ves en este contrato")
@@ -597,13 +753,19 @@ async def test_suggested_routes_are_recommendations_not_actions():
     result = await run_analyst_workbench(intent=intent, evidence=evidence)
 
     assert result.status == "success"
-    assert result.suggested_routes == [
+    assert _route_ids(result.suggested_routes) == [
         "cfdi.list_pending",
         "payments.list_pending",
     ]
+    assert result.suggested_routes[0]["label"] == "Revisar CFDI pendientes"
+    assert result.suggested_routes[0]["execution_status"] == "not_executed"
+    assert result.suggested_routes[0]["writes_enabled"] is False
     assert result.actions_executed == []
     assert result.answer_contract["writes_allowed"] is False
     assert result.answer_contract["suggested_route_count"] == 2
+    assert result.answer_contract["suggested_routes"] == (
+        result.suggested_routes
+    )
 
 
 @pytest.mark.asyncio
@@ -613,7 +775,7 @@ async def test_operational_route_suggestion_still_executes_nothing():
     result = await run_analyst_workbench(intent=intent, evidence=[])
 
     assert result.status == "routed_to_operational"
-    assert result.suggested_routes == ["cfdi.list_pending"]
+    assert _route_ids(result.suggested_routes) == ["cfdi.list_pending"]
     assert result.actions_executed == []
     assert result.provider_called is False
     assert result.answer_contract["suggested_route_count"] == 1

@@ -1,32 +1,78 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from .analyst_intent import AnalystIntent
 from .analyst_workbench import AnalystWorkbenchResult
 
 
+def _compact_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _route_display(route: Any) -> Optional[str]:
+    if isinstance(route, dict):
+        label = _compact_text(route.get("label") or route.get("route_id"))
+        route_id = _compact_text(route.get("route_id"))
+        status = _compact_text(route.get("execution_status"))
+        if not label:
+            return None
+        suffixes = []
+        if route_id and route_id != label:
+            suffixes.append(route_id)
+        if status:
+            suffixes.append(status)
+        return f"{label} ({', '.join(suffixes)})" if suffixes else label
+    text = _compact_text(route)
+    return text or None
+
+
 def render_analyst_result(result: AnalystWorkbenchResult) -> str:
-    lines = [result.title, "", "Respuesta:", result.answer]
-    if result.evidence:
+    title = _compact_text(result.title) or "Analyst Workbench"
+    answer = str(result.answer or "").strip()
+    lines = [title, "", "Respuesta:", answer]
+    evidence_lines = []
+    for item in result.evidence:
+        label = _compact_text(
+            item.get("label") or item.get("source_type") or "contexto"
+        )
+        summary = _compact_text(item.get("summary"))
+        if label and summary:
+            evidence_lines.append(f"- {label}: {summary}")
+        elif summary:
+            evidence_lines.append(f"- {summary}")
+    if evidence_lines:
         lines.extend(["", "Soporte en evidencia:"])
-        for item in result.evidence:
-            label = str(
-                item.get("label") or item.get("source_type") or "contexto"
-            )
-            summary = str(item.get("summary") or "")
-            lines.append(f"- {label}: {summary}")
-    if result.caveats:
+        lines.extend(evidence_lines)
+    caveats = [
+        _compact_text(caveat)
+        for caveat in result.caveats
+        if _compact_text(caveat)
+    ]
+    if caveats:
         lines.extend(["", "Límites:"])
-        for caveat in result.caveats:
+        for caveat in caveats:
             lines.append(f"- {caveat}")
-    if result.next_questions:
+    questions = [
+        _compact_text(question)
+        for question in result.next_questions
+        if _compact_text(question)
+    ]
+    if questions:
         lines.extend(["", "Siguientes preguntas:"])
-        for question in result.next_questions:
+        for question in questions:
             lines.append(f"- {question}")
-    if result.suggested_routes:
+    routes = [
+        route_text
+        for route_text in (
+            _route_display(route) for route in result.suggested_routes
+        )
+        if route_text
+    ]
+    if routes:
         lines.extend(["", "Ruta sugerida:"])
-        for route in result.suggested_routes:
+        for route in routes:
             lines.append(f"- {route}")
     return "\n".join(lines).strip()
 
@@ -65,6 +111,9 @@ def build_analyst_trace(
         if suggested_route_count_value is None
         else int(suggested_route_count_value)
     )
+    suggested_routes = list(
+        answer_contract.get("suggested_routes") or result.suggested_routes
+    )
     evidence_diagnostics = list(
         answer_contract.get("evidence_diagnostics") or []
     )
@@ -102,6 +151,7 @@ def build_analyst_trace(
                 "coverage_reasons": coverage_reasons,
                 "next_question_count": next_question_count,
                 "suggested_route_count": suggested_route_count,
+                "suggested_routes": suggested_routes,
                 "provider_called": result.provider_called,
                 "actions_executed": result.actions_executed,
                 "writes_attempted": False,
@@ -131,6 +181,7 @@ def build_analyst_trace(
                 "coverage_reasons": coverage_reasons,
                 "next_question_count": next_question_count,
                 "suggested_route_count": suggested_route_count,
+                "suggested_routes": suggested_routes,
                 "exportable": False,
             },
         }
