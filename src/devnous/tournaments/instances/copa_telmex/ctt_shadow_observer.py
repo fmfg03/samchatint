@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Set, Tuple
 
@@ -35,7 +36,9 @@ logger = logging.getLogger(__name__)
 
 MAX_SHADOW_PAGES = 3
 MAX_PENDING_CHATS = 50
-MAX_PAGE_BYTES = 20 * 1024 * 1024
+MAX_PAGE_BYTES = 12 * 1024 * 1024
+MAX_TOTAL_BUFFER_BYTES = 128 * 1024 * 1024
+MAX_BUFFER_AGE_SECONDS = 10 * 60
 
 
 class CttRegistrationShadowObserver:
@@ -56,6 +59,7 @@ class CttRegistrationShadowObserver:
         self.model = model.strip() or DEFAULT_CTT_RESPONSES_MODEL
         self.minimum_players = max(1, min(25, int(minimum_players)))
         self._pages_by_chat: Dict[int, list[bytes]] = {}
+        self._touched_at: Dict[int, float] = {}
         self._tasks: Set[asyncio.Task[CttCanaryReport]] = set()
 
         if self.enabled and (not self.api_key or self.layout_path is None):
@@ -110,6 +114,13 @@ class CttRegistrationShadowObserver:
         """Return the bounded number of documents held only in memory."""
         return len(self._pages_by_chat)
 
+    @property
+    def buffered_bytes(self) -> int:
+        """Return the total page bytes currently retained in memory."""
+        return sum(
+            len(payload) for pages in self._pages_by_chat.values() for payload in pages
+        )
+
     async def capture_page(self, chat_id: int, payload: bytes) -> bool:
         """Buffer a validated page and auto-finalize a complete three-page document."""
         if not self.enabled:
@@ -118,6 +129,7 @@ class CttRegistrationShadowObserver:
             logger.warning("CTT shadow page rejected by byte-size boundary")
             return False
 
+        self._purge_stale()
         normalized_chat_id = int(chat_id)
         pages = self._pages_by_chat.get(normalized_chat_id)
         if pages is None:
@@ -129,15 +141,22 @@ class CttRegistrationShadowObserver:
         if len(pages) >= MAX_SHADOW_PAGES:
             logger.warning("CTT shadow page limit reached; page ignored")
             return False
+        if self.buffered_bytes + len(payload) > MAX_TOTAL_BUFFER_BYTES:
+            logger.warning("CTT shadow global byte boundary reached; page ignored")
+            return False
 
         pages.append(bytes(payload))
+        self._touched_at[normalized_chat_id] = time.monotonic()
         if len(pages) == MAX_SHADOW_PAGES:
             await self.finalize(normalized_chat_id)
         return True
 
     async def finalize(self, chat_id: int) -> bool:
         """Detach a two- or three-page buffer and evaluate it in the background."""
-        pages = tuple(self._pages_by_chat.pop(int(chat_id), []))
+        self._purge_stale()
+        normalized_chat_id = int(chat_id)
+        pages = tuple(self._pages_by_chat.pop(normalized_chat_id, []))
+        self._touched_at.pop(normalized_chat_id, None)
         if not self.enabled or len(pages) not in (2, 3):
             return False
 
@@ -148,7 +167,9 @@ class CttRegistrationShadowObserver:
 
     async def discard(self, chat_id: int) -> None:
         """Forget an unfinished document without calling the provider."""
-        self._pages_by_chat.pop(int(chat_id), None)
+        normalized_chat_id = int(chat_id)
+        self._pages_by_chat.pop(normalized_chat_id, None)
+        self._touched_at.pop(normalized_chat_id, None)
 
     async def drain(self) -> None:
         """Wait for currently scheduled observations, primarily for tests and shutdown."""
@@ -159,6 +180,7 @@ class CttRegistrationShadowObserver:
     async def close(self) -> None:
         """Clear buffered pages and cancel any in-flight observations."""
         self._pages_by_chat.clear()
+        self._touched_at.clear()
         tasks = tuple(self._tasks)
         for task in tasks:
             task.cancel()
@@ -173,6 +195,19 @@ class CttRegistrationShadowObserver:
             task.result()
         except Exception:
             logger.exception("CTT shadow observation failed")
+
+    def _purge_stale(self) -> None:
+        cutoff = time.monotonic() - MAX_BUFFER_AGE_SECONDS
+        stale_chat_ids = [
+            chat_id
+            for chat_id, touched_at in self._touched_at.items()
+            if touched_at < cutoff
+        ]
+        for chat_id in stale_chat_ids:
+            self._pages_by_chat.pop(chat_id, None)
+            self._touched_at.pop(chat_id, None)
+        if stale_chat_ids:
+            logger.info("Expired %s stale CTT shadow buffer(s)", len(stale_chat_ids))
 
     async def _execute_and_log(self, payloads: Tuple[bytes, ...]) -> CttCanaryReport:
         report = await self._execute(payloads)

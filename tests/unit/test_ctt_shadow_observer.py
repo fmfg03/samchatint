@@ -50,6 +50,7 @@ async def test_two_pages_finalize_in_background_and_clear_memory(tmp_path) -> No
     assert observer.pending_chat_count == 1
     assert await observer.finalize(99) is True
     assert observer.pending_chat_count == 0
+    assert observer.buffered_bytes == 0
 
     await observer.drain()
 
@@ -169,6 +170,44 @@ async def test_pending_chat_boundary_is_fail_closed(tmp_path) -> None:
     assert observer.pending_chat_count == MAX_PENDING_CHATS
     await observer.close()
     assert observer.pending_chat_count == 0
+
+
+@pytest.mark.asyncio
+async def test_global_byte_boundary_rejects_excess_payload(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setattr(observer_module, "MAX_TOTAL_BUFFER_BYTES", 5)
+    observer = CttRegistrationShadowObserver(
+        enabled=True,
+        api_key="test-key",
+        layout_path=tmp_path / "layout.json",
+    )
+
+    assert await observer.capture_page(1, b"1234") is True
+    assert await observer.capture_page(2, b"12") is False
+    assert observer.buffered_bytes == 4
+
+
+@pytest.mark.asyncio
+async def test_stale_single_page_is_expired_before_next_capture(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    now = 1000.0
+    monkeypatch.setattr(observer_module.time, "monotonic", lambda: now)
+    observer = CttRegistrationShadowObserver(
+        enabled=True,
+        api_key="test-key",
+        layout_path=tmp_path / "layout.json",
+    )
+    await observer.capture_page(1, b"stale")
+
+    now += observer_module.MAX_BUFFER_AGE_SECONDS + 1
+    assert await observer.capture_page(2, b"fresh") is True
+
+    assert observer.pending_chat_count == 1
+    assert observer.buffered_bytes == len(b"fresh")
 
 
 @pytest.mark.asyncio

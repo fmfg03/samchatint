@@ -16,8 +16,9 @@ background observer and cannot replace the existing result in this rollout.
 
 The observer never receives a database session. Its deterministic replay cache
 is created with private permissions in a temporary directory and deleted after
-each observation. Logs contain only the sanitized canary report; player names,
-dates, raw images, and provider response IDs are excluded.
+each observation. In-memory buffers expire after ten minutes and are bounded by
+page, chat, and global byte limits. Logs contain only the sanitized canary
+report; player names, dates, raw images, and provider response IDs are excluded.
 
 ## Deployment
 
