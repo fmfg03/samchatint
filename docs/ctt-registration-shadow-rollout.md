@@ -28,9 +28,12 @@ report; player names, dates, raw images, and provider response IDs are excluded.
    run `systemctl daemon-reload`.
 3. Start with `CTT_RESPONSES_ROLLOUT=off`, restart the registration service, and
    verify Telegram intake and web-review creation.
-4. Set `CTT_RESPONSES_ROLLOUT=shadow`, restart only the registration service,
-   and verify sanitized `CTT shadow report` log entries for a bounded cohort.
-5. Do not enable active mode in this release.
+4. To enable the cohort without editing the secret environment file, install
+   `deployment/systemd/samchat-registration-bot.service.d/ctt-shadow.conf.example`
+   as `/etc/systemd/system/samchat-registration-bot.service.d/ctt-shadow.conf`,
+   reload systemd, and restart only the registration service.
+5. Verify sanitized `CTT shadow report` log entries for a bounded cohort.
+6. Do not enable active mode in this release.
 
 ## Rollback
 
