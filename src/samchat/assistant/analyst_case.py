@@ -35,6 +35,8 @@ class AnalystCaseVersion:
     suggested_routes: List[Dict[str, Any]]
     caveats: List[str]
     answer_contract: Dict[str, Any]
+    version_number: int = 1
+    changed_fields: List[str] = field(default_factory=lambda: ["case_created"])
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -116,7 +118,7 @@ def _status_for_result(result: AnalystWorkbenchResult) -> str:
     return CASE_STATUS_OPEN
 
 
-def _inert_routes(
+def normalize_suggested_routes(
     routes: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     inert: List[Dict[str, Any]] = []
@@ -149,7 +151,7 @@ def build_analyst_case(
         intent=intent,
     )
     status = _status_for_result(result)
-    routes = _inert_routes(list(result.suggested_routes or []))
+    routes = normalize_suggested_routes(list(result.suggested_routes or []))
     timestamp = _utc_iso(created_at)
     version = AnalystCaseVersion(
         version_id=_version_id(case_id=case_id, result=result),

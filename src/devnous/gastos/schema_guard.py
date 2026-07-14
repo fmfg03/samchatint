@@ -55,6 +55,12 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("assistant_messages", "tool_payload"),
     RequiredColumn("assistant_runs", "tool_trace"),
     RequiredColumn("assistant_artifacts", "metadata"),
+    RequiredColumn("analyst_cases", "case_id"),
+    RequiredColumn("analyst_cases", "status"),
+    RequiredColumn("analyst_cases", "suggested_routes"),
+    RequiredColumn("analyst_case_versions", "case_id"),
+    RequiredColumn("analyst_case_versions", "version_number"),
+    RequiredColumn("analyst_case_versions", "changed_fields"),
     RequiredColumn("empleados", "password_hash"),
     RequiredColumn("empleados", "aprobador_id"),
     RequiredColumn("documentos", "beneficiario_empleado_id"),
@@ -144,6 +150,10 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
         "assistant_artifacts", "ix_assistant_artifacts_created_by_empleado_id"
     ),
     RequiredIndex("assistant_artifacts", "ix_assistant_artifacts_artifact_type"),
+    RequiredIndex("analyst_cases", "idx_analyst_cases_user_id"),
+    RequiredIndex("analyst_cases", "idx_analyst_cases_status"),
+    RequiredIndex("analyst_cases", "idx_analyst_cases_updated_at"),
+    RequiredIndex("analyst_case_versions", "idx_analyst_case_versions_case_id"),
     RequiredIndex("empleados", "idx_empleados_aprobador_id"),
     RequiredIndex("documentos", "idx_documentos_beneficiario_empleado_id"),
     RequiredIndex("documentos", "idx_documentos_gasto_generado_id"),
@@ -497,6 +507,101 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
+    ),
+    (
+        "create_analyst_cases_table",
+        """
+        CREATE TABLE IF NOT EXISTS analyst_cases (
+            case_id VARCHAR(80) PRIMARY KEY,
+            user_id VARCHAR(120) NOT NULL,
+            role VARCHAR(80) NOT NULL,
+            question TEXT NOT NULL,
+            analyst_intent JSONB NOT NULL,
+            status VARCHAR(40) NOT NULL,
+            evidence JSONB NOT NULL,
+            current_answer TEXT NOT NULL,
+            next_questions JSONB NOT NULL,
+            suggested_routes JSONB NOT NULL,
+            caveats JSONB NOT NULL,
+            writes_policy JSONB NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_by VARCHAR(120) NULL,
+            closed_at TIMESTAMPTZ NULL,
+            closed_by VARCHAR(120) NULL,
+            CONSTRAINT check_analyst_cases_status
+                CHECK (
+                    status IN (
+                        'open',
+                        'waiting_context',
+                        'analyzed',
+                        'reviewed',
+                        'closed'
+                    )
+                )
+        )
+        """,
+    ),
+    (
+        "create_analyst_case_versions_table",
+        """
+        CREATE TABLE IF NOT EXISTS analyst_case_versions (
+            version_id VARCHAR(96) PRIMARY KEY,
+            case_id VARCHAR(80) NOT NULL
+                REFERENCES analyst_cases(case_id) ON DELETE CASCADE,
+            version_number INTEGER NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            created_by VARCHAR(120) NOT NULL,
+            status VARCHAR(40) NOT NULL,
+            answer TEXT NOT NULL,
+            evidence JSONB NOT NULL,
+            next_questions JSONB NOT NULL,
+            suggested_routes JSONB NOT NULL,
+            caveats JSONB NOT NULL,
+            answer_contract JSONB NOT NULL,
+            changed_fields JSONB NOT NULL,
+            CONSTRAINT ux_analyst_case_versions_case_version
+                UNIQUE (case_id, version_number),
+            CONSTRAINT check_analyst_case_versions_status
+                CHECK (
+                    status IN (
+                        'open',
+                        'waiting_context',
+                        'analyzed',
+                        'reviewed',
+                        'closed'
+                    )
+                )
+        )
+        """,
+    ),
+    (
+        "create_idx_analyst_cases_user_id",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_user_id "
+            "ON analyst_cases(user_id)"
+        ),
+    ),
+    (
+        "create_idx_analyst_cases_status",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_status "
+            "ON analyst_cases(status)"
+        ),
+    ),
+    (
+        "create_idx_analyst_cases_updated_at",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_updated_at "
+            "ON analyst_cases(updated_at)"
+        ),
+    ),
+    (
+        "create_idx_analyst_case_versions_case_id",
+        (
+            "CREATE INDEX IF NOT EXISTS idx_analyst_case_versions_case_id "
+            "ON analyst_case_versions(case_id)"
+        ),
     ),
     (
         "create_access_profiles_table",
