@@ -317,8 +317,10 @@ class RegistrationIntakeBot:
                     image_bytes=page_bytes,
                 )
             )
-        await self._finalize_shadow(chat_id)
-        return responses[-1] if responses else "No pude leer páginas del PDF."
+        if not responses:
+            return "No pude leer páginas del PDF."
+        await self.finish_current_session(chat_id, reason="pdf_complete")
+        return responses[-1]
 
     async def finish_current_session(
         self, chat_id: int, *, reason: str = "manual_finalizar"

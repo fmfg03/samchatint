@@ -425,6 +425,21 @@ class OperationsModule:
         merged["confidence"] = max(float((base or {}).get("confidence") or 0.0), float((incoming or {}).get("confidence") or 0.0))
         return merged if any(merged.get(k) for k in ("name", "phone", "email")) else None
 
+    @staticmethod
+    def _extend_player_page_map(
+        existing: Optional[Dict[str, int]],
+        *,
+        total_players: int,
+        appended_page_index: int,
+    ) -> Dict[str, int]:
+        player_page_map = dict(existing or {})
+        for index in range(1, total_players + 1):
+            player_page_map.setdefault(
+                str(index),
+                1 if index <= 8 else appended_page_index,
+            )
+        return player_page_map
+
     def _build_review_validation_from_payload(self, extraction_payload: Dict[str, Any]) -> Dict[str, Any]:
         issues: List[Dict[str, str]] = []
         players = list(extraction_payload.get("players") or [])
@@ -587,11 +602,12 @@ class OperationsModule:
 
                 layout_regions = dict(draft.layout_regions or {"pages": {}, "player_page_map": {}})
                 pages = dict(layout_regions.get("pages") or {})
-                player_page_map = dict(layout_regions.get("player_page_map") or {})
                 total_players = len(list(merged_payload.get("players") or []))
-                for idx in range(1, total_players + 1):
-                    mapped_page_index = 1 if idx <= 8 else next_page_index
-                    player_page_map[str(idx)] = mapped_page_index
+                player_page_map = self._extend_player_page_map(
+                    layout_regions.get("player_page_map"),
+                    total_players=total_players,
+                    appended_page_index=next_page_index,
+                )
                 pages.setdefault(str(next_page_index), [])
                 layout_regions["pages"] = pages
                 layout_regions["player_page_map"] = player_page_map

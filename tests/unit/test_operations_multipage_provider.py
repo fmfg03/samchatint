@@ -41,3 +41,20 @@ async def test_back_page_passes_selected_provider_to_review_reconciliation() -> 
     assert seen["provider"] == "openai"
     assert seen["review_session_id"] == "session-1"
     assert "Página agregada" in response
+
+
+def test_third_page_preserves_existing_player_page_mappings() -> None:
+    existing = {
+        **{str(index): 1 for index in range(1, 9)},
+        **{str(index): 2 for index in range(9, 17)},
+    }
+
+    merged = OperationsModule._extend_player_page_map(
+        existing,
+        total_players=21,
+        appended_page_index=3,
+    )
+
+    assert all(merged[str(index)] == 1 for index in range(1, 9))
+    assert all(merged[str(index)] == 2 for index in range(9, 17))
+    assert all(merged[str(index)] == 3 for index in range(17, 22))

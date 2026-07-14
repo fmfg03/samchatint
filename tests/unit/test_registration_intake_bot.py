@@ -6,6 +6,9 @@ import pytest
 from PIL import Image
 
 from devnous.tournaments.core.telegram_security import TelegramActor
+from devnous.tournaments.instances.copa_telmex import (
+    registration_bot as registration_module,
+)
 from devnous.tournaments.instances.copa_telmex.registration_bot import (
     RegistrationBotAccessPolicy,
     RegistrationBotEmployee,
@@ -294,6 +297,42 @@ async def test_registration_image_marks_authorized_chat_for_web_review():
     assert response == "ok"
     assert seen_admin_chats == {99}
     assert intake.shadow_observer.calls[0][0:2] == ("capture", 99)
+
+
+@pytest.mark.asyncio
+async def test_registration_pdf_closes_session_after_rendered_pages(
+    monkeypatch,
+) -> None:
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.operations = SimpleNamespace(_telegram_review_max_pages=lambda: 3)
+    processed = []
+    finished = []
+
+    async def fake_process_image(*, chat_id, user_id, image_bytes):
+        processed.append((chat_id, user_id, image_bytes))
+        return f"page-{len(processed)}"
+
+    async def fake_finish(chat_id, *, reason):
+        finished.append((chat_id, reason))
+        return "closed"
+
+    intake.process_registration_image = fake_process_image
+    intake.finish_current_session = fake_finish
+    monkeypatch.setattr(
+        registration_module,
+        "_render_pdf_pages",
+        lambda _payload, *, max_pages: [b"front", b"back"][:max_pages],
+    )
+
+    response = await intake.process_registration_pdf(
+        chat_id=99,
+        user_id=42,
+        pdf_bytes=b"pdf",
+    )
+
+    assert response == "page-2"
+    assert [item[2] for item in processed] == [b"front", b"back"]
+    assert finished == [(99, "pdf_complete")]
 
 
 @pytest.mark.asyncio
