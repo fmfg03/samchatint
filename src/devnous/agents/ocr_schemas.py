@@ -7,7 +7,7 @@ eliminating JSON parsing errors and providing type-safe extraction.
 
 import re
 from enum import Enum
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -432,7 +432,7 @@ class OCRExtractionResult(BaseModel):
         "registration_form", "single_player", "roster", "unknown"
     ] = Field(default="unknown", description="Type of document that was extracted")
 
-    data: Optional[RegistrationFormExtraction | SinglePlayerExtraction] = Field(
+    data: Optional[Union[RegistrationFormExtraction, SinglePlayerExtraction]] = Field(
         None, description="Extracted data based on extraction_type"
     )
 

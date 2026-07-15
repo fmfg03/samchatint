@@ -17,6 +17,7 @@ import logging
 import os
 import sys
 import secrets
+from html import escape
 from pathlib import Path
 from datetime import datetime, date, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
@@ -304,6 +305,19 @@ def _review_error(
     if isinstance(extra, dict):
         detail.update(extra)
     return HTTPException(status_code=status_code, detail=detail)
+
+
+def _ensure_review_session_mutable(review_session: RegistrationReviewSession) -> None:
+    if (
+        str(review_session.status or "").strip().lower() == "committed"
+        or review_session.committed_at is not None
+        or review_session.committed_team_id is not None
+    ):
+        raise _review_error(
+            "session_already_committed",
+            "Esta sesión ya fue capturada y no admite más cambios.",
+            status_code=409,
+        )
 
 
 def _ensure_registration_review_access(
@@ -729,7 +743,7 @@ def _looks_like_asset_path(path: str) -> bool:
 
 def _render_not_found_page(request: Request) -> HTMLResponse:
     home_href = "/"
-    attempted_path = request.url.path or "/"
+    attempted_path = escape(request.url.path or "/", quote=True)
     html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -3008,20 +3022,13 @@ async def list_teams(request: Request):
         async with async_session_maker() as session:
             copa_db = CopaTelmexDB(session)
 
-            # Get all unique chat IDs
-            from sqlalchemy import select, distinct
+            from sqlalchemy import select
             from devnous.copa_telmex.models import Team
 
             result = await session.execute(
-                select(distinct(Team.telegram_chat_id)).where(Team.telegram_chat_id.isnot(None))
+                select(Team).order_by(Team.created_at.desc())
             )
-            chat_ids = result.scalars().all()
-
-            # Get teams for all chats
-            all_teams = []
-            for chat_id in chat_ids:
-                teams = await copa_db.get_teams_by_chat(chat_id)
-                all_teams.extend(teams)
+            all_teams = result.scalars().all()
 
             # Convert to dict for template
             teams_data = []
@@ -3469,6 +3476,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
             raise HTTPException(status_code=404, detail="Review draft not found")
+        _ensure_review_session_mutable(review_session)
 
         base_extraction = _get_review_extraction(review_session.draft)
         edited_extraction = _apply_review_form_edits(form_data, base_extraction)
@@ -3550,6 +3558,7 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
         review_session = result.scalar_one_or_none()
         if not review_session:
             raise HTTPException(status_code=404, detail="Review session not found")
+        _ensure_review_session_mutable(review_session)
         if not review_session.assets:
             raise HTTPException(status_code=400, detail="La sesión no tiene imágenes para reprocesar.")
 
@@ -3608,6 +3617,7 @@ async def append_assets_to_registration_review_session(session_id: str, request:
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
             raise HTTPException(status_code=404, detail="Review session not found")
+        _ensure_review_session_mutable(review_session)
         if len(review_session.assets) >= REVIEW_SESSION_MAX_FILES:
             raise _review_error(
                 "too_many_files",
