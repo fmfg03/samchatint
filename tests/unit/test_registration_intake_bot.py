@@ -66,12 +66,12 @@ class _FakeShadowObserver:
     def __init__(self):
         self.calls = []
 
-    async def capture_page(self, chat_id, payload):
-        self.calls.append(("capture", chat_id, len(payload)))
+    async def capture_page(self, chat_id, payload, *, review_session_id=None):
+        self.calls.append(("capture", chat_id, len(payload), review_session_id))
         return True
 
-    async def finalize(self, chat_id):
-        self.calls.append(("finalize", chat_id))
+    async def finalize(self, chat_id, *, review_session_id=None):
+        self.calls.append(("finalize", chat_id, review_session_id))
         return True
 
     async def discard(self, chat_id):
@@ -300,6 +300,46 @@ async def test_registration_image_marks_authorized_chat_for_web_review():
 
 
 @pytest.mark.asyncio
+async def test_registration_image_passes_existing_session_to_shadow_capture():
+    class FakeOperations:
+        def __init__(self):
+            self.admin_chat_ids = set()
+            self.pending_back_photos = {99: {"review_session_id": "session-1"}}
+
+        async def process_ocr_registration(self, _message):
+            return "ok"
+
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.operations = FakeOperations()
+    intake.active_sessions_by_chat = {}
+    intake.active_session_touched_at = {}
+    intake.reupload_sessions_by_chat = {}
+    intake.shadow_observer = _FakeShadowObserver()
+
+    async def fake_sync(**_kwargs):
+        return None
+
+    async def fake_decorate(**kwargs):
+        return kwargs["response"]
+
+    intake._sync_intake_metadata_after_ocr = fake_sync
+    intake._decorate_response_with_folio = fake_decorate
+
+    await intake.process_registration_image(
+        chat_id=99,
+        user_id=42,
+        image_bytes=_image_bytes(),
+    )
+
+    assert intake.shadow_observer.calls[0] == (
+        "capture",
+        99,
+        len(_image_bytes()),
+        "session-1",
+    )
+
+
+@pytest.mark.asyncio
 async def test_registration_pdf_closes_session_after_rendered_pages(
     monkeypatch,
 ) -> None:
@@ -349,6 +389,27 @@ async def test_registration_reset_discards_shadow_document() -> None:
         == "Listo. Empecemos con el siguiente equipo."
     )
     assert intake.shadow_observer.calls == [("discard", 99)]
+
+
+@pytest.mark.asyncio
+async def test_finish_passes_review_session_to_canonical_handoff() -> None:
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.operations = SimpleNamespace(
+        pending_back_photos={99: {"review_session_id": "session-1"}}
+    )
+    intake.active_sessions_by_chat = {99: "session-1"}
+    intake.active_session_touched_at = {}
+    intake.shadow_observer = _FakeShadowObserver()
+
+    async def fake_set_metadata(**_kwargs):
+        return {"intake_folio": "REG-2026-SESSION1"}
+
+    intake._set_intake_metadata = fake_set_metadata
+
+    response = await intake.finish_current_session(99)
+
+    assert "REG-2026-SESSION1" in response
+    assert intake.shadow_observer.calls == [("finalize", 99, "session-1")]
 
 
 @pytest.mark.asyncio

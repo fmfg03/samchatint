@@ -11,11 +11,12 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Set, Tuple
+from typing import Any, Awaitable, Callable, Dict, Optional, Sequence, Set, Tuple
 
 from PIL import Image
 
 from devnous.tournaments.core.ctt_canary import (
+    CttCanaryExecution,
     CttCanaryMode,
     CttCanaryPolicy,
     CttCanaryReport,
@@ -40,6 +41,10 @@ MAX_PAGE_BYTES = 12 * 1024 * 1024
 MAX_TOTAL_BUFFER_BYTES = 128 * 1024 * 1024
 MAX_BUFFER_AGE_SECONDS = 10 * 60
 
+CanonicalReviewHandler = Callable[
+    [str, CttCanaryExecution, Sequence[bytes], Dict[str, Any]], Awaitable[bool]
+]
+
 
 class CttRegistrationShadowObserver:
     """Buffer one CTT document and evaluate it without affecting intake results."""
@@ -52,12 +57,16 @@ class CttRegistrationShadowObserver:
         layout_path: Optional[Path] = None,
         model: str = DEFAULT_CTT_RESPONSES_MODEL,
         minimum_players: int = 16,
+        handoff_enabled: bool = False,
+        result_handler: Optional[CanonicalReviewHandler] = None,
     ) -> None:
         self.enabled = bool(enabled)
         self.api_key = (api_key or "").strip()
         self.layout_path = Path(layout_path) if layout_path else None
         self.model = model.strip() or DEFAULT_CTT_RESPONSES_MODEL
         self.minimum_players = max(1, min(25, int(minimum_players)))
+        self.handoff_enabled = bool(handoff_enabled)
+        self._result_handler = result_handler
         self._pages_by_chat: Dict[int, list[bytes]] = {}
         self._touched_at: Dict[int, float] = {}
         self._tasks: Set[asyncio.Task[CttCanaryReport]] = set()
@@ -107,7 +116,15 @@ class CttRegistrationShadowObserver:
             layout_path=layout_path,
             model=os.getenv("CTT_RESPONSES_MODEL") or DEFAULT_CTT_RESPONSES_MODEL,
             minimum_players=minimum_players,
+            handoff_enabled=(
+                (os.getenv("CTT_SHADOW_REVIEW_HANDOFF") or "off").strip().lower()
+                in {"1", "true", "on", "yes"}
+            ),
         )
+
+    def bind_result_handler(self, handler: CanonicalReviewHandler) -> None:
+        """Attach the quarantined review sink owned by the intake runtime."""
+        self._result_handler = handler
 
     @property
     def pending_chat_count(self) -> int:
@@ -121,7 +138,13 @@ class CttRegistrationShadowObserver:
             len(payload) for pages in self._pages_by_chat.values() for payload in pages
         )
 
-    async def capture_page(self, chat_id: int, payload: bytes) -> bool:
+    async def capture_page(
+        self,
+        chat_id: int,
+        payload: bytes,
+        *,
+        review_session_id: Optional[str] = None,
+    ) -> bool:
         """Buffer a validated page and auto-finalize a complete three-page document."""
         if not self.enabled:
             return False
@@ -148,10 +171,15 @@ class CttRegistrationShadowObserver:
         pages.append(bytes(payload))
         self._touched_at[normalized_chat_id] = time.monotonic()
         if len(pages) == MAX_SHADOW_PAGES:
-            await self.finalize(normalized_chat_id)
+            await self.finalize(
+                normalized_chat_id,
+                review_session_id=review_session_id,
+            )
         return True
 
-    async def finalize(self, chat_id: int) -> bool:
+    async def finalize(
+        self, chat_id: int, *, review_session_id: Optional[str] = None
+    ) -> bool:
         """Detach a two- or three-page buffer and evaluate it in the background."""
         self._purge_stale()
         normalized_chat_id = int(chat_id)
@@ -160,7 +188,13 @@ class CttRegistrationShadowObserver:
         if not self.enabled or len(pages) not in (2, 3):
             return False
 
-        task = asyncio.create_task(self._execute_and_log(pages), name="ctt-shadow")
+        task = asyncio.create_task(
+            self._execute_and_log(
+                pages,
+                review_session_id=review_session_id,
+            ),
+            name="ctt-shadow",
+        )
         self._tasks.add(task)
         task.add_done_callback(self._consume_task)
         return True
@@ -209,12 +243,37 @@ class CttRegistrationShadowObserver:
         if stale_chat_ids:
             logger.info("Expired %s stale CTT shadow buffer(s)", len(stale_chat_ids))
 
-    async def _execute_and_log(self, payloads: Tuple[bytes, ...]) -> CttCanaryReport:
-        report = await self._execute(payloads)
+    async def _execute_and_log(
+        self,
+        payloads: Tuple[bytes, ...],
+        *,
+        review_session_id: Optional[str],
+    ) -> CttCanaryReport:
+        execution, layout = await self._execute(payloads)
+        report = execution.report
         logger.info("CTT shadow report: %s", report.model_dump_json())
+        if (
+            self.handoff_enabled
+            and self._result_handler is not None
+            and review_session_id
+            and report.accepted
+            and execution.draft is not None
+        ):
+            persisted = await self._result_handler(
+                str(review_session_id),
+                execution,
+                payloads,
+                layout,
+            )
+            logger.info(
+                "CTT canonical review handoff: persisted=%s",
+                bool(persisted),
+            )
         return report
 
-    async def _execute(self, payloads: Sequence[bytes]) -> CttCanaryReport:
+    async def _execute(
+        self, payloads: Sequence[bytes]
+    ) -> Tuple[CttCanaryExecution, Dict[str, Any]]:
         if not self.layout_path:
             raise RuntimeError("CTT shadow layout is unavailable")
         layout = json.loads(self.layout_path.read_text(encoding="utf-8"))
@@ -243,7 +302,7 @@ class CttRegistrationShadowObserver:
                     layout,
                     document_sha256=ctt_document_sha256(payloads),
                 )
-                return execution.report
+                return execution, layout
         finally:
             for image in images:
                 image.close()
