@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block title %}Nueva Precaptura - Copa Telmex{% endblock %}
+
+{% block content %}
+<div style="max-width: 860px; margin: 0 auto;">
+    <div style="margin-bottom: 24px;">
+        <h2 style="margin-bottom: 8px;">📤 Nueva sesión de precaptura</h2>
+        <p style="color: #6c757d;">
+            Sube hasta {{ max_files }} fotos de la cédula. El sistema procesará la primera como fuente OCR
+            y dejará las demás disponibles para revisión visual.
+        </p>
+    </div>
+
+    <form action="/api/registration-review" method="post" enctype="multipart/form-data" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; padding: 24px;">
+        <div style="margin-bottom: 18px;">
+            <label for="files" style="display: block; font-weight: 600; margin-bottom: 8px;">Fotos de la cédula</label>
+            <input id="files" name="files" type="file" accept="image/*" multiple required style="width: 100%;">
+            <small style="color: #64748b;">JPG, PNG o WEBP. Recomendado: frente, reverso y acercamientos útiles.</small>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; margin-bottom: 18px;">
+            <div>
+                <label for="provider" style="display: block; font-weight: 600; margin-bottom: 8px;">Proveedor OCR</label>
+                <select id="provider" name="provider" style="width: 100%;">
+                    <option value="{{ review_provider }}" selected>
+                        {% if review_provider == 'anthropic' %}Claude Vision{% elif review_provider == 'openai' %}OpenAI Vision{% else %}Local actual{% endif %}
+                    </option>
+                </select>
+            </div>
+            <div>
+                <label for="tournament_slug" style="display: block; font-weight: 600; margin-bottom: 8px;">Torneo</label>
+                <select id="tournament_slug" name="tournament_slug" style="width: 100%;">
+                    {% for option in tournament_options %}
+                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <button type="submit" class="btn" style="border: none; cursor: pointer;">Procesar y revisar</button>
+            <a href="/registration-review" class="btn" style="background: #6c757d;">Cancelar</a>
+        </div>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,108 @@
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "templates"
+
+
+def _environment() -> Environment:
+    return Environment(
+        loader=FileSystemLoader(TEMPLATES_DIR),
+        autoescape=select_autoescape(("html",)),
+    )
+
+
+def _request(path: str):
+    return SimpleNamespace(url=SimpleNamespace(path=path))
+
+
+@pytest.mark.parametrize(
+    "template_name",
+    sorted(path.name for path in TEMPLATES_DIR.glob("*.html")),
+)
+def test_versioned_dashboard_templates_compile(template_name: str) -> None:
+    _environment().get_template(template_name)
+
+
+def test_home_exposes_registration_review_inbox() -> None:
+    template = _environment().get_template("home.html")
+    stats = SimpleNamespace(
+        total_teams=1,
+        total_players=16,
+        total_ocr_registrations=1,
+        average_ocr_confidence=0.9,
+        players_needing_review=2,
+        review_rate=12.5,
+    )
+
+    html = template.render(
+        request=_request("/dashboard"),
+        stats=stats,
+        pending_reviews=2,
+    )
+
+    assert 'href="/registration-review"' in html
+    assert "Bandeja de precaptura" in html
+
+
+def test_detail_renders_read_only_canonical_comparison() -> None:
+    template = _environment().get_template("registration_review_detail.html")
+    canonical_review = {
+        "player_count": 1,
+        "review_count": 1,
+        "difference_count": 1,
+        "matches_legacy": False,
+        "team": {
+            "name": "Deportivo Estrellas",
+            "category": "Libre",
+            "gender": "Femenil",
+        },
+        "team_difference_labels": ["nombre"],
+        "players": [
+            {
+                "slot": 1,
+                "name": "María López",
+                "birth_date": "01/01/2000",
+                "confidence_pct": "94%",
+                "source_page": 1,
+                "requires_review": True,
+                "matches_legacy": False,
+                "difference_labels": ["nombre"],
+                "photo_url": (
+                    "/photos/review_sessions/session/canonical_shadow/" "player_01.jpg"
+                ),
+            }
+        ],
+    }
+
+    html = template.render(
+        request=_request("/registration-review/session"),
+        review_session=SimpleNamespace(
+            id="session",
+            status="review",
+            provider="openai",
+            tournament_slug="copa_telmex",
+        ),
+        assets=[],
+        team={},
+        manager={},
+        players=[],
+        notes="",
+        validation={
+            "blockers": [],
+            "issues": [],
+            "ready_to_commit": False,
+        },
+        layout_regions={},
+        overall_confidence="0%",
+        canonical_review=canonical_review,
+        tournament_options=[],
+    )
+
+    assert "Comparación canónica" in html
+    assert "no autoritativa" in html
+    assert "no modifica el borrador editable" in html
+    assert canonical_review["players"][0]["photo_url"] in html
+    assert "Difiere: nombre" in html

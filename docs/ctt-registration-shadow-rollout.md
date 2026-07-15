@@ -58,3 +58,26 @@ Set `CTT_SHADOW_REVIEW_HANDOFF=off` to stop creating comparison bundles, or set
 `CTT_RESPONSES_ROLLOUT=off` to disable the observer entirely, then restart
 `samchat-registration-bot.service`. Existing review drafts and all user-facing
 behavior remain unchanged because shadow results are never promoted.
+
+## Review UI roadmap
+
+The operator experience is split into bounded releases so the canonical OCR can
+be inspected before it is ever allowed to replace the legacy result:
+
+1. **PR8 - observable comparison:** put the production review surface under
+   source control, expose the registration-review inbox from Home, and render
+   the accepted canonical sidecar as a read-only comparison with private photo
+   previews. Legacy fields remain the only editable and committable values.
+2. **PR9 - interface revamp:** replace the current long form with a responsive,
+   difference-first workspace; add clear approve, reject, and modify actions;
+   improve page/player navigation, accessibility, empty states, and mobile
+   behavior.
+3. **PR10 - controlled canonical promotion:** let an authorized operator choose
+   canonical values field by field, preserve the legacy value and evidence in
+   the audit trail, and require an explicit approval before capture.
+4. **PR11 - Home operations surface:** add review counts, blocked/ready status,
+   recency, and direct continuation links to the main dashboard so operators do
+   not need a Telegram URL or a remembered route.
+
+Each release keeps `/photos/review_sessions/...` behind the existing review
+access check and must not expose canonical PII in logs or public static paths.

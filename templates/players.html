@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Jugadores - Copa Telmex{% endblock %}
+
+{% block content %}
+<h2 style="margin-bottom: 30px;">
+    👥 Jugadores
+    {% if filter == 'needs_review' %}
+        <span style="color: #ffc107;">- Pendientes de Revisión</span>
+    {% endif %}
+</h2>
+
+<div style="margin-bottom: 20px; display: flex; gap: 10px;">
+    <a href="/players" class="btn {% if filter == 'all' %}active{% endif %}" style="padding: 8px 16px;">
+        Todos los Jugadores
+    </a>
+    <a href="/players?needs_review=true" class="btn {% if filter == 'needs_review' %}active{% endif %}" style="background: #ffc107; padding: 8px 16px;">
+        ⚠️ Necesitan Revisión
+    </a>
+</div>
+
+{% if players %}
+<table>
+    <thead>
+        <tr>
+            <th>Foto</th>
+            <th>Nombre Completo</th>
+            <th>Equipo</th>
+            <th>Fecha de Nacimiento</th>
+            <th>Confianza OCR</th>
+            <th>Estado</th>
+            <th>Fecha de Registro</th>
+            <th>Acciones</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for player in players %}
+        <tr>
+            <td>
+                {% if player.photo_url %}
+                <img src="{{ player.photo_url }}" alt="Foto de {{ player.full_name }}" style="width: 52px; height: 68px; object-fit: cover; border-radius: 8px; border: 1px solid #cbd5e1;">
+                {% else %}
+                <span style="color: #94a3b8;">Sin foto</span>
+                {% endif %}
+            </td>
+            <td><strong>{{ player.full_name }}</strong></td>
+            <td>
+                <a href="/team/{{ player.team_id }}" style="color: #667eea; text-decoration: none;">
+                    {{ player.team_name }}
+                </a>
+            </td>
+            <td>{{ player.birth_date }}</td>
+            <td>{{ player.ocr_confidence }}</td>
+            <td>
+                {% if player.verified_by_human %}
+                    <span class="badge badge-success">✅ Verificado</span>
+                {% elif player.needs_review %}
+                    <span class="badge badge-warning">⚠️ Necesita Revisión</span>
+                {% else %}
+                    <span class="badge badge-success">✅ Validado</span>
+                {% endif %}
+            </td>
+            <td>{{ player.created_at }}</td>
+            <td>
+                <a href="/team/{{ player.team_id }}" class="btn" style="padding: 5px 12px; font-size: 0.9rem;">
+                    Ver Equipo
+                </a>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div style="padding: 60px; text-align: center; color: #6c757d;">
+    <h3>📭 No hay jugadores
+        {% if filter == 'needs_review' %}
+            pendientes de revisión
+        {% endif %}
+    </h3>
+    <p style="margin-top: 10px;">
+        {% if filter == 'needs_review' %}
+            ¡Excelente! Todos los jugadores han sido validados.
+        {% else %}
+            Los jugadores aparecerán aquí cuando se registren a través del bot de Telegram.
+        {% endif %}
+    </p>
+</div>
+{% endif %}
+{% endblock %}
