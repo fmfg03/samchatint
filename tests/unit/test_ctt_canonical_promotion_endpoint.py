@@ -226,6 +226,28 @@ async def test_endpoint_rejects_stale_hash_without_mutating_draft(monkeypatch) -
 
 
 @pytest.mark.asyncio
+async def test_endpoint_rejects_schema_invalid_canonical_value_without_fallback(
+    monkeypatch,
+) -> None:
+    review_session = _review_session()
+    review_session.draft.ocr_raw["canonical_shadow"]["team"]["name"] = "X"
+    session = _configure_endpoint(monkeypatch, review_session)
+    form_data = _form_data()
+    form_data["canonical_fields"] = ["team.name"]
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dashboard.adopt_canonical_review_fields(
+            str(review_session.id),
+            _PromotionRequest(form_data),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["error"] == "canonical_value_invalid"
+    assert session.commits == 0
+    assert review_session.draft.review_edits is None
+
+
+@pytest.mark.asyncio
 async def test_endpoint_rejects_already_committed_review(monkeypatch) -> None:
     review_session = _review_session(status="committed")
     session = _configure_endpoint(monkeypatch, review_session)

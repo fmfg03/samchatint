@@ -181,6 +181,41 @@ def test_rejects_field_without_verifiable_evidence() -> None:
 
 
 @pytest.mark.parametrize(
+    ("selection", "canonical_section"),
+    [
+        ("team.name", "team"),
+        ("manager.name", "manager"),
+        ("player.1.name", "player"),
+    ],
+)
+def test_rejects_empty_required_canonical_name_without_mutating_draft(
+    selection: str,
+    canonical_section: str,
+) -> None:
+    payload = _raw_payload()
+    sidecar = payload["canonical_shadow"]
+    if canonical_section == "player":
+        sidecar["players"][0]["name"] = "   "
+    else:
+        sidecar[canonical_section]["name"] = None
+
+    legacy = _legacy_extraction()
+    snapshot = copy.deepcopy(legacy)
+    with pytest.raises(CanonicalPromotionError) as exc_info:
+        promote_canonical_fields(
+            payload,
+            legacy,
+            [selection],
+            expected_hash="canonical-123",
+            actor={"user_id": "operator-id", "role": "admin"},
+            promoted_at="2026-07-15T12:00:00Z",
+        )
+
+    assert exc_info.value.code == "canonical_value_required"
+    assert legacy == snapshot
+
+
+@pytest.mark.parametrize(
     "selection",
     [
         "team.__class__",

@@ -3682,7 +3682,16 @@ async def adopt_canonical_review_fields(
                 status_code=409 if exc.code in conflict_codes else 400,
             ) from exc
 
-        promoted_extraction = _normalize_review_extraction(promotion.extraction)
+        try:
+            promoted_extraction = RegistrationFormExtraction.model_validate(
+                promotion.extraction
+            ).model_dump(mode="json")
+        except Exception as exc:
+            raise _review_error(
+                "canonical_value_invalid",
+                "El valor canónico seleccionado no cumple el esquema de captura.",
+                status_code=409,
+            ) from exc
         validation = _build_review_commit_validation(
             promoted_extraction,
             _build_review_validation(

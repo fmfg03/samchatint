@@ -323,6 +323,11 @@ def promote_canonical_fields(
 
         before = target.get(field)
         after = _canonical_scalar(canonical_source.get(field))
+        if field == "name" and after is None:
+            raise CanonicalPromotionError(
+                "canonical_value_required",
+                "El nombre canónico seleccionado está vacío y no se puede aplicar.",
+            )
         if before == after:
             continue
         if not evidence:
