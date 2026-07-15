@@ -57,6 +57,12 @@ from devnous.copa_telmex.models import (
     RegistrationReviewDraft,
     RegistrationReviewSession,
 )
+from devnous.copa_telmex.registration_governance import (
+    RegistrationGovernanceClient,
+    RegistrationGovernanceDenied,
+    build_preauthorization_request,
+    governed_player_row,
+)
 from devnous.copa_telmex.runtime_controls import (
     REGISTRATION_REVIEW_CANONICAL_INTAKE as RUNTIME_REGISTRATION_REVIEW_CANONICAL_INTAKE,
     REVIEW_ASSET_RETENTION_DAYS as RUNTIME_REVIEW_ASSET_RETENTION_DAYS,
@@ -143,6 +149,10 @@ REVIEW_TOURNAMENT_OPTIONS: List[Tuple[str, str]] = [
     ("copa-club-america", "Copa Club America"),
     ("homeless-world-cup", "Homeless World Cup"),
 ]
+
+
+def _review_draft_version(draft: Any) -> int:
+    return int(getattr(draft, "draft_version", 1) or 1)
 
 
 def _split_csv_env(value: Optional[str]) -> List[str]:
@@ -2640,9 +2650,12 @@ async def _upsert_review_draft(
         )
     )
     draft = draft_result.scalar_one_or_none()
-    if draft is None:
+    draft_is_new = draft is None
+    if draft_is_new:
         draft = RegistrationReviewDraft(session_id=review_session.id)
         db_session.add(draft)
+    else:
+        draft.draft_version = _review_draft_version(draft) + 1
 
     existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
     extraction_metadata = _build_review_extraction_metadata(
@@ -3624,6 +3637,9 @@ async def edit_registration_review_session(session_id: str, request: Request):
         review_session.draft.overall_confidence = float(
             edited_extraction.get("overall_confidence") or review_session.draft.overall_confidence or 0.0
         )
+        review_session.draft.draft_version = _review_draft_version(
+            review_session.draft
+        ) + 1
         review_session.status = "ready"
         await session.commit()
         _log_registration_review_event(
@@ -4050,8 +4066,18 @@ async def commit_registration_review_session(session_id: str, request: Request):
         _ensure_review_session_mutable(review_session)
         _ensure_review_session_not_rejected(review_session)
 
+        await session.execute(
+            select(RegistrationReviewDraft)
+            .where(RegistrationReviewDraft.id == review_session.draft.id)
+            .with_for_update()
+        )
+
         form_data = await request.form()
         extraction = _apply_review_form_edits(form_data, _get_review_extraction(review_session.draft))
+        try:
+            submitted_draft_version = int(form_data.get("draft_version") or 0)
+        except (TypeError, ValueError):
+            submitted_draft_version = 0
         approved_at_dt, approved_at_iso = _review_event_timestamp()
         commit_request_id = secrets.token_hex(12)
         review_session.tournament_slug = (form_data.get("tournament_slug") or review_session.tournament_slug or "").strip() or None
@@ -4092,6 +4118,103 @@ async def commit_registration_review_session(session_id: str, request: Request):
             )
             validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
             validation["ready_to_commit"] = False
+
+        copa_db = None
+        photo_artifacts: Dict[int, Dict[str, Any]] = {}
+        if not validation.get("blockers") and tournament_slug:
+            copa_db = CopaTelmexDB(session)
+            layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
+            photo_artifacts = _build_review_photo_artifacts(
+                team_id=review_session.id,
+                players_payload=players_payload,
+                assets=list(review_session.assets or []),
+                layout_regions=layout_regions,
+            )
+            existing_photo_records = await copa_db.get_player_photo_fingerprints_by_tournament(tournament_slug)
+            incident_policy = _build_registration_incident_policy(
+                extraction,
+                photo_artifacts=photo_artifacts,
+                existing_photo_records=existing_photo_records,
+            )
+            validation = _build_review_commit_validation(
+                extraction,
+                _build_review_validation(
+                    extraction,
+                    raw_payload=review_session.draft.ocr_raw if isinstance(review_session.draft.ocr_raw, dict) else None,
+                ),
+                review_session=review_session,
+                incident_policy=incident_policy,
+            )
+            existing_audit["draft_incident_policy"] = copy.deepcopy(draft_incident_policy)
+            existing_audit["commit_incident_policy"] = copy.deepcopy(incident_policy)
+            existing_audit["incident_policy"] = copy.deepcopy(incident_policy)
+            existing_audit["policy_changed_at_commit"] = draft_incident_policy != incident_policy
+            validation = _attach_review_audit(validation, existing_audit)
+
+        if submitted_draft_version != _review_draft_version(review_session.draft):
+            validation.setdefault("blockers", []).append(
+                {
+                    "code": "STALE_GOVERNANCE_DECISION",
+                    "field": "draft_version",
+                    "message": "El draft cambió desde que se abrió. Recarga antes de aprobar.",
+                }
+            )
+            validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
+            validation["ready_to_commit"] = False
+
+        manager_payload = extraction.get("manager") or {}
+        copa_db = copa_db or CopaTelmexDB(session)
+        team_chat_id = review_session.telegram_chat_id if review_session.telegram_chat_id is not None else None
+        team = None
+        reserved_team_id = uuid4()
+        governance_result = None
+        governance_client = None
+        if not validation.get("blockers"):
+            try:
+                team = await copa_db.get_team_by_name(
+                    name=team_name,
+                    category=team_payload.get("category"),
+                    telegram_chat_id=team_chat_id,
+                    tournament_slug=tournament_slug,
+                )
+                if team:
+                    reserved_team_id = team.id
+                governance_client = RegistrationGovernanceClient.from_environment()
+                governance_request = build_preauthorization_request(
+                    tenant_id=os.getenv("SAMCHAT_GOVERNANCE_TENANT_ID", "samchat-prod"),
+                    draft_id=str(review_session.draft.id),
+                    draft_version=_review_draft_version(review_session.draft),
+                    team_id=str(reserved_team_id),
+                    tournament_slug=str(tournament_slug),
+                    original_extraction=(
+                        review_session.draft.extraction
+                        if isinstance(review_session.draft.extraction, dict)
+                        else {}
+                    ),
+                    proposed_extraction=extraction,
+                    assets=list(review_session.assets or []),
+                    layout_regions=(
+                        review_session.draft.layout_regions
+                        if isinstance(review_session.draft.layout_regions, dict)
+                        else {}
+                    ),
+                    incident_policy=(
+                        validation.get("incident_policy")
+                        if isinstance(validation.get("incident_policy"), dict)
+                        else {}
+                    ),
+                )
+                governance_result = await governance_client.preauthorize(governance_request)
+            except RegistrationGovernanceDenied as exc:
+                validation.setdefault("blockers", []).append(
+                    {
+                        "code": exc.reason_code,
+                        "field": "governance",
+                        "message": exc.detail,
+                    }
+                )
+                validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
+                validation["ready_to_commit"] = False
 
         if validation.get("blockers"):
             commit_audit = _build_commit_audit_envelope(
@@ -4135,19 +4258,11 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 },
             )
 
-        manager_payload = extraction.get("manager") or {}
-        copa_db = CopaTelmexDB(session)
-        team_chat_id = review_session.telegram_chat_id if review_session.telegram_chat_id is not None else None
-        team = await copa_db.get_team_by_name(
-            name=team_name,
-            category=team_payload.get("category"),
-            telegram_chat_id=team_chat_id,
-            tournament_slug=tournament_slug,
-        )
         if not team:
             team = await copa_db.create_team(
                 name=team_name,
                 telegram_chat_id=review_session.telegram_chat_id,
+                team_id=reserved_team_id,
                 tournament_slug=tournament_slug,
                 gender=team_payload.get("gender"),
                 category=team_payload.get("category"),
@@ -4183,6 +4298,9 @@ async def commit_registration_review_session(session_id: str, request: Request):
         created_players = 0
         skipped_players = 0
         updated_player_photos = 0
+        provisional_players = []
+        roster_decision = governance_result["roster_decision"]
+        preauthorization_receipt = governance_result["preauthorization_receipt"]
         for idx, player_payload in enumerate(players_payload, 1):
             full_name = (player_payload.get("name") or "").strip()
             first_name = (player_payload.get("first_name") or "").strip()
@@ -4213,13 +4331,9 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 )
             player_photo = photo_artifacts.get(idx) or {}
             if existing:
-                if player_photo and not existing.photo_path:
-                    existing.photo_path = player_photo.get("photo_path")
-                    existing.photo_sha256 = player_photo.get("photo_sha256")
-                    existing.photo_ahash = player_photo.get("photo_ahash")
-                    updated_player_photos += 1
-                if curp and not existing.curp:
-                    existing.curp = curp
+                # REG-003 does not mutate an already active identity through a
+                # create-roster authorization. Existing-player correction needs
+                # its own before/after finality contract.
                 skipped_players += 1
                 continue
 
@@ -4227,7 +4341,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
             if curp_truncated and raw_curp:
                 verification_notes += f" | CURP truncado para persistencia: {raw_curp}"
 
-            await copa_db.create_player(
+            player = await copa_db.create_player(
                 team_id=team.id,
                 first_name=first_name,
                 last_name=last_name,
@@ -4241,8 +4355,44 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 verified_by_human=True,
                 verification_notes=verification_notes,
                 roster_index=idx,
+                governance_state="PENDING_FINALITY",
+                governance_draft_id=str(review_session.draft.id),
+                governance_draft_version=_review_draft_version(review_session.draft),
+                governance_decision_id=str(roster_decision["decision_id"]),
+                roster_draft_binding=str(roster_decision["roster_draft_binding"]),
+                preauthorization_receipt_id=str(preauthorization_receipt["receipt_id"]),
             )
+            provisional_players.append(player)
             created_players += 1
+
+        database_transaction_id = f"samchat-tx-{secrets.token_hex(12)}"
+        for player in provisional_players:
+            provisional_row = governed_player_row(player)
+            try:
+                finality = await governance_client.finalize(
+                    {
+                        "tenant_id": os.getenv("SAMCHAT_GOVERNANCE_TENANT_ID", "samchat-prod"),
+                        "draft_id": str(review_session.draft.id),
+                        "draft_version": _review_draft_version(review_session.draft),
+                        "player_slot": int(player.roster_index or 0),
+                        "player_id": str(player.id),
+                        "roster_draft_binding": str(roster_decision["roster_draft_binding"]),
+                        "preauthorization_receipt_id": str(preauthorization_receipt["receipt_id"]),
+                        "cas_succeeded": True,
+                        "database_transaction_id": database_transaction_id,
+                        "provisional_row": provisional_row,
+                        "post_execution_row": provisional_row,
+                        "blocking_incident_count": 0,
+                    }
+                )
+            except RegistrationGovernanceDenied as exc:
+                raise _review_error(
+                    "governance_finality_denied",
+                    "Zaubern no confirmó la finalidad; no se guardó ningún jugador.",
+                    extra={"reason_code": exc.reason_code},
+                ) from exc
+            player.finality_receipt_id = str(finality["finality_receipt"]["receipt_id"])
+            player.governance_state = "ACTIVE"
 
         commit_audit = _build_commit_audit_envelope(
             review_session=review_session,

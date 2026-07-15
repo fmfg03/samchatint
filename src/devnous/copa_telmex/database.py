@@ -34,6 +34,7 @@ class CopaTelmexDB:
         self,
         name: str,
         telegram_chat_id: int,
+        team_id: Optional[UUID] = None,
         tournament_slug: Optional[str] = None,
         gender: Optional[str] = None,
         category: Optional[str] = None,
@@ -62,7 +63,7 @@ class CopaTelmexDB:
         Returns:
             Created Team object
         """
-        team = Team(
+        team_fields = dict(
             name=name,
             tournament_slug=tournament_slug,
             gender=gender,
@@ -75,6 +76,9 @@ class CopaTelmexDB:
             telegram_user_id=telegram_user_id,
             roster_image_path=roster_image_path
         )
+        if team_id is not None:
+            team_fields["id"] = team_id
+        team = Team(**team_fields)
 
         self.session.add(team)
         await self.session.flush()  # Get the ID without committing
@@ -171,6 +175,12 @@ class CopaTelmexDB:
         verified_by_human: bool = False,
         verification_notes: Optional[str] = None,
         roster_index: Optional[int] = None,
+        governance_state: str = "LEGACY_ACTIVE",
+        governance_draft_id: Optional[str] = None,
+        governance_draft_version: Optional[int] = None,
+        governance_decision_id: Optional[str] = None,
+        roster_draft_binding: Optional[str] = None,
+        preauthorization_receipt_id: Optional[str] = None,
     ) -> Player:
         """
         Create a new player.
@@ -210,6 +220,12 @@ class CopaTelmexDB:
             verified_by_human=verified_by_human,
             verification_notes=verification_notes,
             roster_index=roster_index,
+            governance_state=governance_state,
+            governance_draft_id=governance_draft_id,
+            governance_draft_version=governance_draft_version,
+            governance_decision_id=governance_decision_id,
+            roster_draft_binding=roster_draft_binding,
+            preauthorization_receipt_id=preauthorization_receipt_id,
         )
 
         self.session.add(player)
@@ -253,10 +269,15 @@ class CopaTelmexDB:
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_players_by_team(self, team_id: UUID) -> List[Player]:
-        """Get all players in a team."""
+    async def get_players_by_team(
+        self, team_id: UUID, *, include_provisional: bool = False
+    ) -> List[Player]:
+        """Get operational players; provisional governance rows are excluded."""
+        query = select(Player).where(Player.team_id == team_id)
+        if not include_provisional:
+            query = query.where(Player.governance_state.in_(("ACTIVE", "LEGACY_ACTIVE")))
         result = await self.session.execute(
-            select(Player).where(Player.team_id == team_id).order_by(Player.created_at)
+            query.order_by(Player.created_at)
         )
         return list(result.scalars().all())
 
