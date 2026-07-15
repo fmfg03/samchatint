@@ -35,7 +35,7 @@ else:
     load_dotenv()
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import selectinload
 from devnous.copa_telmex.database import CopaTelmexDB
 from devnous.copa_telmex.models import (
@@ -144,24 +145,21 @@ def _split_csv_env(value: Optional[str]) -> List[str]:
 
 
 def _build_allowed_origins() -> List[str]:
-    app_url = (os.getenv("APP_URL") or "https://sam.chat").rstrip("/")
+    configured_app_url = (os.getenv("APP_URL") or "").strip()
+    app_url = (configured_app_url or "https://sam.chat").rstrip("/")
     parsed = urlparse(app_url)
     hostname = (parsed.hostname or "sam.chat").strip()
-    scheme = parsed.scheme or "https"
 
     origins = {
-        app_url,
-        f"{scheme}://{hostname}",
-        f"http://{hostname}",
+        "https://sam.chat",
         "https://www.sam.chat",
-        "http://www.sam.chat",
-        "http://localhost:3000",
-        "http://localhost:5173",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173",
-        "http://95.216.70.50",
-        "https://95.216.70.50",
     }
+    # APP_URL and ALLOWED_APP_ORIGINS are explicit operator configuration.
+    # Keep the built-in production defaults HTTPS-only; local HTTP development
+    # can still be enabled deliberately through either setting.
+    if configured_app_url or parsed.scheme == "https":
+        origins.add(app_url)
+        origins.add(f"{parsed.scheme or 'https'}://{hostname}")
     origins.update(_split_csv_env(os.getenv("ALLOWED_APP_ORIGINS")))
     return sorted(origin for origin in origins if origin)
 
@@ -1204,15 +1202,32 @@ async def modernize_html_middleware(request: Request, call_next):
     try:
         html = body.decode("utf-8")
     except UnicodeDecodeError:
-        return response
+        return _rebuild_buffered_response(response, body)
 
     themed_html = _inject_modern_theme(html)
     if themed_html == html:
-        return HTMLResponse(content=html, status_code=response.status_code, headers=dict(response.headers))
+        return _rebuild_buffered_response(response, body)
 
-    headers = dict(response.headers)
-    headers.pop("content-length", None)
-    return HTMLResponse(content=themed_html, status_code=response.status_code, headers=headers)
+    return _rebuild_buffered_response(response, themed_html.encode("utf-8"), body_changed=True)
+
+
+def _rebuild_buffered_response(response, body: bytes, *, body_changed: bool = False) -> Response:
+    """Rebuild a drained response without collapsing repeated raw headers."""
+    rebuilt = Response(
+        content=body,
+        status_code=response.status_code,
+        background=response.background,
+    )
+    raw_headers = list(response.raw_headers)
+    if body_changed:
+        raw_headers = [
+            (name, value)
+            for name, value in raw_headers
+            if name.lower() != b"content-length"
+        ]
+        raw_headers.append((b"content-length", str(len(body)).encode("ascii")))
+    rebuilt.raw_headers = raw_headers
+    return rebuilt
 
 allowed_origins = _build_allowed_origins()
 
@@ -1221,9 +1236,22 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "X-Requested-With"],
 )
+
+
+def _raise_dashboard_internal_error(action: str) -> None:
+    """Return a stable error without exposing SQL values or constraint details."""
+    current_error = sys.exc_info()[1]
+    if isinstance(current_error, DBAPIError):
+        logger.error("%s: database operation failed", action)
+    else:
+        logger.exception("%s: unexpected failure", action)
+    raise HTTPException(
+        status_code=500,
+        detail="No se pudo completar la operación. Intenta nuevamente.",
+    ) from None
 
 # Mount static files directory for photos
 photos_dir = Path(__file__).parent / "photos"
@@ -1859,16 +1887,26 @@ def _merge_review_extractions(page_results: List[Dict[str, Any]]) -> Tuple[Dict[
 
     deduped_players: List[Dict[str, Any]] = []
     seen_players: Dict[Tuple[str, str], int] = {}
-    for player in merged_players:
+    retained_source_indices: List[int] = []
+    for original_index, player in enumerate(merged_players, 1):
         key = _player_identity_key(player)
         if key[1] and key in seen_players:
             existing_index = seen_players[key]
             existing_player = deduped_players[existing_index]
             if float(player.get("confidence") or 0.0) > float(existing_player.get("confidence") or 0.0):
                 deduped_players[existing_index] = player
+                retained_source_indices[existing_index] = original_index
             continue
         seen_players[key] = len(deduped_players)
         deduped_players.append(player)
+        retained_source_indices.append(original_index)
+
+    original_page_map = dict(layout_regions.get("player_page_map") or {})
+    layout_regions["player_page_map"] = {
+        str(deduped_index): original_page_map[str(original_index)]
+        for deduped_index, original_index in enumerate(retained_source_indices, 1)
+        if str(original_index) in original_page_map
+    }
 
     merged["players"] = deduped_players
     merged["overall_confidence"] = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
@@ -2997,9 +3035,8 @@ async def home(request: Request):
                     "pending_reviews": len(registrations)
                 }
             )
-    except Exception as e:
-        logger.error(f"Error loading home page: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error loading home page")
 
 
 @app.get("/api/stats", response_class=JSONResponse)
@@ -3051,9 +3088,8 @@ async def list_teams(request: Request):
                     "teams": teams_data
                 }
             )
-    except Exception as e:
-        logger.error(f"Error loading teams: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error loading teams")
 
 
 @app.get("/team/{team_id}", response_class=HTMLResponse)
@@ -3118,9 +3154,8 @@ async def view_team(request: Request, team_id: str):
         raise HTTPException(status_code=400, detail="Invalid team ID")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error loading team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error loading team")
 
 
 @app.get("/players", response_class=HTMLResponse)
@@ -3172,9 +3207,8 @@ async def list_players(request: Request, needs_review: Optional[bool] = None):
                     "filter": "needs_review" if needs_review else "all"
                 }
             )
-    except Exception as e:
-        logger.error(f"Error loading players: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error loading players")
 
 
 @app.get("/registration-review", response_class=HTMLResponse)
@@ -3224,9 +3258,8 @@ async def list_registration_review_sessions(request: Request):
                     "sessions": session_rows,
                 },
             )
-    except Exception as e:
-        logger.error("Error loading review sessions: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error loading review sessions")
 
 
 @app.get("/registration-review/new", response_class=HTMLResponse)
@@ -4012,9 +4045,8 @@ async def edit_team(
         raise HTTPException(status_code=400, detail="Invalid team ID")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error updating team")
 
 
 @app.post("/api/player/{player_id}/edit", response_class=JSONResponse)
@@ -4062,9 +4094,8 @@ async def edit_player(
         raise HTTPException(status_code=400, detail="Invalid player ID or date format")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error updating player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error updating player")
 
 
 @app.post("/api/player/{player_id}/verify", response_class=JSONResponse)
@@ -4096,9 +4127,8 @@ async def verify_player(player_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid player ID")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error verifying player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error verifying player")
 
 
 @app.delete("/api/player/{player_id}", response_class=JSONResponse)
@@ -4128,9 +4158,8 @@ async def delete_player(player_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid player ID")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error deleting player: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error deleting player")
 
 
 @app.delete("/api/team/{team_id}", response_class=JSONResponse)
@@ -4157,9 +4186,8 @@ async def delete_team(team_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid team ID")
     except HTTPException:
         raise
-    except Exception as e:
-        logger.error(f"Error deleting team: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        _raise_dashboard_internal_error("Error deleting team")
 
 
 if __name__ == "__main__":

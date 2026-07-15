@@ -330,7 +330,8 @@
         </p>
     </div>
     <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post">
+        <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
+              onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
             <button type="submit" class="btn" style="border: none; cursor: pointer; background: #0f766e;">Reprocesar</button>
         </form>
     </div>
@@ -665,10 +666,12 @@
 
     thumbLinks.forEach((link) => {
         link.addEventListener('click', (event) => {
+            if (event.ctrlKey || event.metaKey) {
+                return;
+            }
             event.preventDefault();
             playerRows.forEach((row) => row.classList.remove('is-focused'));
             selectPage(link.dataset.pageIndex);
-            window.open(link.href, '_blank', 'noopener');
         });
     });
 

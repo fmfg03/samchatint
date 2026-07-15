@@ -3,10 +3,12 @@ from __future__ import annotations
 import inspect
 import os
 from datetime import datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.responses import StreamingResponse
 
 os.environ.setdefault(
     "SESSION_SECRET_KEY",
@@ -14,6 +16,105 @@ os.environ.setdefault(
 )
 
 import copa_telmex_dashboard as dashboard  # noqa: E402
+
+
+def test_default_cors_origins_are_https_only(monkeypatch) -> None:
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.delenv("ALLOWED_APP_ORIGINS", raising=False)
+
+    origins = dashboard._build_allowed_origins()
+
+    assert origins == ["https://sam.chat", "https://www.sam.chat"]
+
+
+def test_explicit_cors_origin_can_enable_local_development(monkeypatch) -> None:
+    monkeypatch.delenv("APP_URL", raising=False)
+    monkeypatch.setenv("ALLOWED_APP_ORIGINS", "http://localhost:5173")
+
+    assert "http://localhost:5173" in dashboard._build_allowed_origins()
+
+
+@pytest.mark.asyncio
+async def test_html_middleware_preserves_body_and_repeated_cookies() -> None:
+    async def _chunks():
+        yield b"<html><head></head><body>ok</body></html>"
+
+    async def _call_next(_request):
+        response = StreamingResponse(_chunks(), media_type="text/html")
+        response.set_cookie("first", "1")
+        response.set_cookie("second", "2")
+        return response
+
+    response = await dashboard.modernize_html_middleware(None, _call_next)
+    body = response.body.decode("utf-8")
+    cookie_headers = [
+        value
+        for name, value in response.raw_headers
+        if name.lower() == b"set-cookie"
+    ]
+
+    assert "<body>ok</body>" in body
+    assert "samchat-modern-theme" in body
+    assert len(cookie_headers) == 2
+
+
+def test_player_page_map_is_remapped_after_deduplication() -> None:
+    def _page(page_index, players):
+        return {
+            "extraction": {
+                "team": {"name": "Equipo Prueba", "confidence": 0.9},
+                "manager": None,
+                "players": players,
+                "overall_confidence": 0.9,
+                "notes": "",
+            },
+            "raw": {},
+            "asset": {"page_index": page_index, "width": 1000, "height": 1000},
+            "provider": "test",
+        }
+
+    merged, _raw, _provider, layout = dashboard._merge_review_extractions(
+        [
+            _page(
+                1,
+                [
+                    {"name": "Ana", "birth_date": "01/01/2001", "confidence": 0.4},
+                    {"name": "Bea", "birth_date": "02/02/2002", "confidence": 0.8},
+                ],
+            ),
+            _page(
+                2,
+                [
+                    {"name": "Ana", "birth_date": "01/01/2001", "confidence": 0.9},
+                    {"name": "Carla", "birth_date": "03/03/2003", "confidence": 0.7},
+                ],
+            ),
+        ]
+    )
+
+    assert [player["name"] for player in merged["players"]] == ["Ana", "Bea", "Carla"]
+    assert layout["player_page_map"] == {"1": 2, "2": 1, "3": 2}
+
+
+def test_internal_errors_do_not_echo_exception_details() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        try:
+            raise RuntimeError("private database value")
+        except RuntimeError:
+            dashboard._raise_dashboard_internal_error("test operation")
+
+    assert exc_info.value.status_code == 500
+    assert "private database value" not in str(exc_info.value.detail)
+
+
+def test_review_template_guards_reprocess_and_does_not_force_new_tabs() -> None:
+    template = (
+        Path(dashboard.__file__).parent / "templates" / "registration_review_detail.html"
+    ).read_text(encoding="utf-8")
+
+    assert "onsubmit=\"return confirm(" in template
+    assert "if (event.ctrlKey || event.metaKey)" in template
+    assert "window.open(link.href" not in template
 
 
 def test_custom_404_escapes_the_reflected_request_path() -> None:
