@@ -14,6 +14,7 @@ from devnous.tournaments.instances.copa_telmex.registration_bot import (
     RegistrationBotEmployee,
     RegistrationIntakeBot,
     RegistrationIntakeTelegramAdapter,
+    TeamUploadSession,
 )
 
 
@@ -28,6 +29,47 @@ class _FakeRegistrationBot:
     def __init__(self):
         self.calls = []
         self.async_session_maker = None
+        self.team_upload_active = False
+        self.team_upload_page_count = 0
+
+    async def begin_team_upload(self, *, chat_id: int, user_id: int) -> str:
+        self.calls.append(("begin_upload", chat_id, user_id))
+        self.team_upload_active = True
+        self.team_upload_page_count = 0
+        return "envía la primera imagen"
+
+    def has_team_upload_session(self, chat_id: int) -> bool:
+        return self.team_upload_active
+
+    def owns_team_upload_session(self, *, chat_id: int, user_id: int) -> bool:
+        return self.team_upload_active
+
+    def add_team_upload_page(self, *, chat_id: int, user_id: int, image_bytes: bytes):
+        self.calls.append(("add_upload", chat_id, user_id, len(image_bytes)))
+        self.team_upload_page_count += 1
+        return {
+            "accepted": True,
+            "page_count": self.team_upload_page_count,
+            "max_pages": 3,
+        }
+
+    async def expire_team_upload_if_needed(self, chat_id: int) -> bool:
+        return False
+
+    async def process_team_upload(self, *, chat_id: int, user_id: int):
+        self.calls.append(("process_upload", chat_id, user_id))
+        self.team_upload_active = False
+        return {
+            "text": "equipo procesado",
+            "reply_markup": {
+                "inline_keyboard": [[{"text": "Abrir", "url": "https://sam.chat"}]]
+            },
+        }
+
+    async def cancel_team_upload(self, *, chat_id: int, user_id: int) -> str:
+        self.calls.append(("cancel_upload", chat_id, user_id))
+        self.team_upload_active = False
+        return "carga cancelada"
 
     async def process_registration_image(
         self, *, chat_id: int, user_id: int, image_bytes: bytes
@@ -121,6 +163,22 @@ def _photo_update(*, user_id: int = 42, chat_id: int = 99):
     }
 
 
+def _callback_update(
+    data: str,
+    *,
+    user_id: int = 42,
+    chat_id: int = 99,
+):
+    return {
+        "callback_query": {
+            "id": "callback-1",
+            "from": {"id": user_id},
+            "message": {"chat": {"id": chat_id}},
+            "data": data,
+        }
+    }
+
+
 @pytest.mark.asyncio
 async def test_registration_access_allows_operations_department(monkeypatch):
     policy = RegistrationBotAccessPolicy(
@@ -182,6 +240,95 @@ async def test_authorized_photo_creates_web_review_flow():
 
 
 @pytest.mark.asyncio
+async def test_subir_equipo_starts_guided_upload_session():
+    bot = _FakeRegistrationBot()
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(bot, "registration-token", access_policy=policy)
+
+    await adapter.handle_update(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 99},
+                "from": {"id": 42},
+                "text": "/subir_equipo",
+            }
+        }
+    )
+
+    assert bot.calls == [("begin_upload", 99, 42)]
+    assert adapter.sent[-1]["text"] == "envía la primera imagen"
+
+
+@pytest.mark.asyncio
+async def test_guided_upload_buffers_photo_without_running_ocr():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(
+        bot, "registration-token", access_policy=policy, file_bytes=_image_bytes()
+    )
+
+    await adapter.handle_update(_photo_update())
+
+    assert [call[0] for call in bot.calls] == ["add_upload"]
+    assert "Imagen 1 de 3 recibida" in adapter.sent[-1]["text"]
+    buttons = adapter.sent[-1]["reply_markup"]["inline_keyboard"]
+    assert buttons[0][0]["callback_data"] == "team_upload:add"
+    assert buttons[1][0]["callback_data"] == "team_upload:process"
+
+
+@pytest.mark.asyncio
+async def test_third_guided_upload_page_removes_add_button():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    bot.team_upload_page_count = 2
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(
+        bot, "registration-token", access_policy=policy, file_bytes=_image_bytes()
+    )
+
+    await adapter.handle_update(_photo_update())
+
+    assert "Imagen 3 de 3 recibida" in adapter.sent[-1]["text"]
+    callbacks = [
+        button["callback_data"]
+        for row in adapter.sent[-1]["reply_markup"]["inline_keyboard"]
+        for button in row
+    ]
+    assert callbacks == ["team_upload:process", "team_upload:cancel"]
+
+
+@pytest.mark.asyncio
+async def test_guided_upload_process_callback_closes_batch():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    bot.team_upload_page_count = 2
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(bot, "registration-token", access_policy=policy)
+
+    await adapter.handle_update(_callback_update("team_upload:process"))
+
+    assert bot.calls == [("process_upload", 99, 42)]
+    assert adapter.callbacks == [{"id": "callback-1", "text": "Procesando equipo"}]
+    assert adapter.sent[0]["text"] == "Procesando las imágenes del equipo..."
+    assert adapter.sent[-1]["text"] == "equipo procesado"
+
+
+@pytest.mark.asyncio
+async def test_guided_upload_cancel_callback_discards_batch():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(bot, "registration-token", access_policy=policy)
+
+    await adapter.handle_update(_callback_update("team_upload:cancel"))
+
+    assert bot.calls == [("cancel_upload", 99, 42)]
+    assert adapter.sent[-1]["text"] == "carga cancelada"
+
+
+@pytest.mark.asyncio
 async def test_general_platform_command_is_not_available():
     bot = _FakeRegistrationBot()
     policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
@@ -231,6 +378,91 @@ telegram:
     assert bot.marketing is None
     assert bot.operations.ocr_enabled is True
     assert bot.operations._telegram_review_max_pages() == 3
+
+
+def test_team_upload_session_accepts_at_most_three_pages():
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.team_upload_sessions_by_chat = {
+        99: TeamUploadSession(user_id=42),
+    }
+
+    for expected_count in (1, 2, 3):
+        result = intake.add_team_upload_page(
+            chat_id=99,
+            user_id=42,
+            image_bytes=f"page-{expected_count}".encode(),
+        )
+        assert result["accepted"] is True
+        assert result["page_count"] == expected_count
+
+    rejected = intake.add_team_upload_page(
+        chat_id=99,
+        user_id=42,
+        image_bytes=b"page-4",
+    )
+    assert rejected == {
+        "accepted": False,
+        "page_count": 3,
+        "max_pages": 3,
+        "message": "Este equipo ya tiene el máximo de 3 imágenes.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_process_team_upload_runs_pages_in_order_and_closes_session():
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.team_upload_sessions_by_chat = {
+        99: TeamUploadSession(user_id=42, pages=[b"front", b"back"]),
+    }
+    processed = []
+    finished = []
+
+    async def fake_process_image(*, chat_id, user_id, image_bytes):
+        processed.append((chat_id, user_id, image_bytes))
+        if len(processed) == 1:
+            return {
+                "text": "primera página",
+                "reply_markup": {
+                    "inline_keyboard": [
+                        [{"text": "Abrir", "url": "https://sam.chat/review"}]
+                    ]
+                },
+            }
+        return "segunda página"
+
+    async def fake_finish(chat_id, *, reason):
+        finished.append((chat_id, reason))
+        return "Cerré el expediente REG-2026-12345678."
+
+    intake.process_registration_image = fake_process_image
+    intake.finish_current_session = fake_finish
+
+    response = await intake.process_team_upload(chat_id=99, user_id=42)
+
+    assert processed == [(99, 42, b"front"), (99, 42, b"back")]
+    assert finished == [(99, "team_upload_complete")]
+    assert intake.team_upload_sessions_by_chat == {}
+    assert response["text"] == (
+        "Procesé el equipo completo con 2 imágenes.\n"
+        "Cerré el expediente REG-2026-12345678."
+    )
+    assert response["reply_markup"]["inline_keyboard"][0][0]["text"] == "Abrir"
+
+
+@pytest.mark.asyncio
+async def test_team_upload_session_expires_and_discards_pages():
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.team_upload_idle_timeout_seconds = 60
+    intake.team_upload_sessions_by_chat = {
+        99: TeamUploadSession(
+            user_id=42,
+            pages=[b"private-page"],
+            touched_at=datetime.now(timezone.utc).replace(year=2000),
+        ),
+    }
+
+    assert await intake.expire_team_upload_if_needed(99) is True
+    assert intake.team_upload_sessions_by_chat == {}
 
 
 @pytest.mark.asyncio

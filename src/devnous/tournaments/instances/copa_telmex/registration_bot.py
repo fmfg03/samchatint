@@ -13,7 +13,7 @@ import io
 import logging
 import os
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -40,6 +40,7 @@ from .ctt_shadow_observer import CttRegistrationShadowObserver
 logger = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[5]
+TEAM_UPLOAD_MAX_PAGES = 3
 
 
 def _parse_int_set(raw_value: Optional[str]) -> Set[int]:
@@ -95,6 +96,16 @@ class RegistrationBotEmployee:
     nombre: str
     rol: str
     departamento: str
+
+
+@dataclass
+class TeamUploadSession:
+    """Private in-memory collection for one explicit team upload."""
+
+    user_id: int
+    pages: List[bytes] = field(default_factory=list)
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    touched_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class RegistrationBotAccessPolicy:
@@ -243,12 +254,20 @@ class RegistrationIntakeBot:
         self.active_sessions_by_chat: Dict[int, str] = {}
         self.active_session_touched_at: Dict[int, datetime] = {}
         self.reupload_sessions_by_chat: Dict[int, str] = {}
+        self.team_upload_sessions_by_chat: Dict[int, TeamUploadSession] = {}
         configured_timeout = (self.config.get("telegram") or {}).get(
             "session_idle_timeout_seconds"
         )
         self.session_idle_timeout_seconds = _env_int(
             "REGISTRATION_BOT_SESSION_IDLE_TIMEOUT_SECONDS",
             int(configured_timeout or 180),
+        )
+        configured_upload_timeout = (self.config.get("telegram") or {}).get(
+            "team_upload_idle_timeout_seconds"
+        )
+        self.team_upload_idle_timeout_seconds = _env_seconds(
+            "REGISTRATION_BOT_TEAM_UPLOAD_IDLE_TIMEOUT_SECONDS",
+            int(configured_upload_timeout or 900),
         )
 
     def _setup_database(self) -> None:
@@ -338,6 +357,128 @@ class RegistrationIntakeBot:
         await self.finish_current_session(chat_id, reason="pdf_complete")
         return responses[-1]
 
+    async def begin_team_upload(self, *, chat_id: int, user_id: int) -> str:
+        """Start a new explicit 1-3 image collection for one team."""
+        chat_id = int(chat_id)
+        closed_note = ""
+        if self._active_or_pending_session_id(chat_id):
+            closed_note = await self.finish_current_session(
+                chat_id,
+                reason="new_team_upload",
+            )
+        self.reupload_sessions_by_chat.pop(chat_id, None)
+        self.team_upload_sessions_by_chat[chat_id] = TeamUploadSession(
+            user_id=int(user_id)
+        )
+        prefix = f"{closed_note}\n\n" if closed_note else ""
+        return (
+            f"{prefix}Carga por equipo iniciada. Envía la primera imagen como "
+            "foto o archivo de imagen. La guardaré temporalmente y no ejecutaré "
+            "OCR hasta que selecciones 'No, procesar equipo'."
+        )
+
+    def has_team_upload_session(self, chat_id: int) -> bool:
+        return int(chat_id) in getattr(self, "team_upload_sessions_by_chat", {})
+
+    def owns_team_upload_session(self, *, chat_id: int, user_id: int) -> bool:
+        session = getattr(self, "team_upload_sessions_by_chat", {}).get(int(chat_id))
+        return session is not None and session.user_id == int(user_id)
+
+    def add_team_upload_page(
+        self,
+        *,
+        chat_id: int,
+        user_id: int,
+        image_bytes: bytes,
+    ) -> Dict[str, Any]:
+        session = getattr(self, "team_upload_sessions_by_chat", {}).get(int(chat_id))
+        if session is None:
+            return {
+                "accepted": False,
+                "page_count": 0,
+                "max_pages": TEAM_UPLOAD_MAX_PAGES,
+                "message": "No hay una carga por equipo activa. Usa /subir_equipo.",
+            }
+        if session.user_id != int(user_id):
+            return {
+                "accepted": False,
+                "page_count": len(session.pages),
+                "max_pages": TEAM_UPLOAD_MAX_PAGES,
+                "message": "Esta carga pertenece a otro operador del chat.",
+            }
+        if len(session.pages) >= TEAM_UPLOAD_MAX_PAGES:
+            return {
+                "accepted": False,
+                "page_count": len(session.pages),
+                "max_pages": TEAM_UPLOAD_MAX_PAGES,
+                "message": "Este equipo ya tiene el máximo de 3 imágenes.",
+            }
+        session.pages.append(bytes(image_bytes))
+        session.touched_at = datetime.now(timezone.utc)
+        return {
+            "accepted": True,
+            "page_count": len(session.pages),
+            "max_pages": TEAM_UPLOAD_MAX_PAGES,
+        }
+
+    async def expire_team_upload_if_needed(self, chat_id: int) -> bool:
+        sessions = getattr(self, "team_upload_sessions_by_chat", {})
+        session = sessions.get(int(chat_id))
+        if session is None:
+            return False
+        timeout = float(getattr(self, "team_upload_idle_timeout_seconds", 900))
+        age_seconds = (datetime.now(timezone.utc) - session.touched_at).total_seconds()
+        if age_seconds < timeout:
+            return False
+        sessions.pop(int(chat_id), None)
+        return True
+
+    async def cancel_team_upload(self, *, chat_id: int, user_id: int) -> str:
+        sessions = getattr(self, "team_upload_sessions_by_chat", {})
+        session = sessions.get(int(chat_id))
+        if session is None:
+            return "No hay una carga por equipo activa."
+        if session.user_id != int(user_id):
+            return "Esta carga pertenece a otro operador del chat."
+        sessions.pop(int(chat_id), None)
+        return "Carga cancelada. Eliminé las imágenes temporales de este equipo."
+
+    async def process_team_upload(self, *, chat_id: int, user_id: int):
+        """Process a closed upload batch in arrival order and finalize the team."""
+        sessions = getattr(self, "team_upload_sessions_by_chat", {})
+        session = sessions.get(int(chat_id))
+        if session is None:
+            return "No hay una carga por equipo activa. Usa /subir_equipo."
+        if session.user_id != int(user_id):
+            return "Esta carga pertenece a otro operador del chat."
+        if not session.pages:
+            return "Aún no has enviado imágenes para este equipo."
+
+        pages = tuple(session.pages)
+        review_markup = None
+        try:
+            for image_bytes in pages:
+                response = await self.process_registration_image(
+                    chat_id=int(chat_id),
+                    user_id=int(user_id),
+                    image_bytes=image_bytes,
+                )
+                if isinstance(response, dict) and review_markup is None:
+                    review_markup = response.get("reply_markup")
+            closed = await self.finish_current_session(
+                int(chat_id),
+                reason="team_upload_complete",
+            )
+        finally:
+            sessions.pop(int(chat_id), None)
+
+        result: Dict[str, Any] = {
+            "text": (f"Procesé el equipo completo con {len(pages)} imágenes.\n{closed}")
+        }
+        if review_markup:
+            result["reply_markup"] = review_markup
+        return result
+
     async def finish_current_session(
         self, chat_id: int, *, reason: str = "manual_finalizar"
     ) -> str:
@@ -361,6 +502,7 @@ class RegistrationIntakeBot:
 
     async def reset_current_session(self, chat_id: int) -> str:
         await self._discard_shadow(chat_id)
+        getattr(self, "team_upload_sessions_by_chat", {}).pop(int(chat_id), None)
         session_id = self._active_or_pending_session_id(chat_id)
         self.operations.pending_back_photos.pop(chat_id, None)
         self.operations.pending_saves.pop(chat_id, None)
@@ -659,6 +801,7 @@ class RegistrationIntakeBot:
             await observer.discard(chat_id)
 
     async def cleanup(self) -> None:
+        getattr(self, "team_upload_sessions_by_chat", {}).clear()
         observer = getattr(self, "shadow_observer", None)
         if observer is not None:
             await observer.close()
@@ -722,7 +865,69 @@ class RegistrationIntakeTelegramAdapter:
             await self.answer_callback_query(callback_query["id"], "No autorizado")
             return
         chat_id = int(callback_query["message"]["chat"]["id"])
+        user_id = int(callback_query["from"]["id"])
         data = (callback_query.get("data") or "").strip()
+        if data.startswith(
+            "team_upload:"
+        ) and await self.bot.expire_team_upload_if_needed(chat_id):
+            await self.answer_callback_query(callback_query["id"], "Carga expirada")
+            await self.send_message(
+                chat_id,
+                "La carga expiró por inactividad. Usa /subir_equipo para comenzar otra.",
+            )
+            return
+        if (
+            data.startswith("team_upload:")
+            and self.bot.has_team_upload_session(chat_id)
+            and not self.bot.owns_team_upload_session(
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        ):
+            await self.answer_callback_query(
+                callback_query["id"], "Carga de otro operador"
+            )
+            return
+        if data == "team_upload:add":
+            if not self.bot.has_team_upload_session(chat_id):
+                await self.answer_callback_query(callback_query["id"], "Carga expirada")
+                await self.send_message(
+                    chat_id,
+                    "La carga ya no está activa. Usa /subir_equipo para comenzar otra.",
+                )
+                return
+            await self.answer_callback_query(callback_query["id"], "Envía la siguiente")
+            await self.send_message(
+                chat_id, "Envía ahora la siguiente imagen del equipo."
+            )
+            return
+        if data == "team_upload:process":
+            await self.answer_callback_query(callback_query["id"], "Procesando equipo")
+            await self.send_message(chat_id, "Procesando las imágenes del equipo...")
+            try:
+                response = await self.bot.process_team_upload(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                )
+            except Exception as exc:
+                logger.warning("Team upload processing failed: %s", exc, exc_info=True)
+                await self.send_message(
+                    chat_id,
+                    "No pude procesar el lote completo. La carga temporal fue cerrada.",
+                )
+                return
+            await self._send_bot_response(chat_id, response)
+            return
+        if data == "team_upload:cancel":
+            await self.answer_callback_query(callback_query["id"], "Carga cancelada")
+            await self.send_message(
+                chat_id,
+                await self.bot.cancel_team_upload(
+                    chat_id=chat_id,
+                    user_id=user_id,
+                ),
+            )
+            return
         if data == "back_done":
             await self.answer_callback_query(callback_query["id"], "Captura cerrada")
             await self.send_message(
@@ -747,7 +952,8 @@ class RegistrationIntakeTelegramAdapter:
         text_value = (message.get("text") or "").strip()
         if text_value.startswith("/"):
             await self.send_message(
-                chat_id, await self._handle_command(chat_id, text_value)
+                chat_id,
+                await self._handle_command(chat_id, user_id, text_value),
             )
             return
 
@@ -795,7 +1001,12 @@ class RegistrationIntakeTelegramAdapter:
             chat_id, "Envía una foto o PDF de la cédula para iniciar la precaptura."
         )
 
-    async def _handle_command(self, chat_id: int, command: str) -> str:
+    async def _handle_command(
+        self,
+        chat_id: int,
+        user_id: int,
+        command: str,
+    ) -> str:
         parts = command.split()
         normalized = parts[0].lower()
         if normalized in {"/start", "/help"}:
@@ -803,7 +1014,13 @@ class RegistrationIntakeTelegramAdapter:
                 "Bot de registro de equipos.\n\n"
                 "Envía fotos o PDFs de cédulas para crear una precaptura web. "
                 "La revisión y el guardado final se hacen en la plataforma.\n\n"
-                "Comandos: /nuevo, /finalizar, /cancelar, /estado FOLIO, /reponer FOLIO, /help"
+                "Comandos: /subir_equipo, /nuevo, /finalizar, /cancelar, "
+                "/estado FOLIO, /reponer FOLIO, /help"
+            )
+        if normalized == "/subir_equipo":
+            return await self.bot.begin_team_upload(
+                chat_id=chat_id,
+                user_id=user_id,
             )
         if normalized in {"/nuevo", "/cancelar"}:
             return await self.bot.reset_current_session(chat_id)
@@ -822,6 +1039,52 @@ class RegistrationIntakeTelegramAdapter:
     async def _process_media(
         self, *, chat_id: int, user_id: int, file_bytes: bytes, is_pdf: bool
     ) -> None:
+        if await self.bot.expire_team_upload_if_needed(chat_id):
+            await self.send_message(
+                chat_id,
+                "La carga por equipo expiró por inactividad. Usa /subir_equipo "
+                "y vuelve a enviar las imágenes.",
+            )
+            return
+        if self.bot.has_team_upload_session(chat_id):
+            if is_pdf:
+                await self.send_message(
+                    chat_id,
+                    "En el modo /subir_equipo envía cada página como imagen. "
+                    "Usa /cancelar si prefieres procesar el PDF directamente.",
+                )
+                return
+            result = self.bot.add_team_upload_page(
+                chat_id=chat_id,
+                user_id=user_id,
+                image_bytes=file_bytes,
+            )
+            page_count = int(result["page_count"])
+            max_pages = int(result["max_pages"])
+            if not result["accepted"]:
+                await self.send_message(
+                    chat_id,
+                    str(result["message"]),
+                    reply_markup=_team_upload_keyboard(page_count, max_pages),
+                )
+                return
+            if page_count >= max_pages:
+                text_value = (
+                    f"Imagen {page_count} de {max_pages} recibida. Ya alcanzaste "
+                    "el máximo; procesa el equipo o cancela la carga."
+                )
+            else:
+                text_value = (
+                    f"Imagen {page_count} de {max_pages} recibida. "
+                    "¿Este equipo tiene otra imagen?"
+                )
+            await self.send_message(
+                chat_id,
+                text_value,
+                reply_markup=_team_upload_keyboard(page_count, max_pages),
+            )
+            return
+
         await self.send_message(chat_id, "Procesando cédula para precaptura web...")
         try:
             closed_folio = await self.bot.close_idle_session_if_needed(chat_id)
@@ -850,6 +1113,9 @@ class RegistrationIntakeTelegramAdapter:
             )
             await self.send_message(chat_id, f"No pude procesar el archivo: {exc}")
             return
+        await self._send_bot_response(chat_id, response)
+
+    async def _send_bot_response(self, chat_id: int, response: Any) -> None:
         if isinstance(response, dict) and "text" in response:
             await self.send_message(
                 chat_id, response["text"], reply_markup=response.get("reply_markup")
@@ -939,6 +1205,31 @@ class RegistrationIntakeTelegramAdapter:
         await self.poll_updates()
 
 
+def _team_upload_keyboard(page_count: int, max_pages: int) -> Dict[str, Any]:
+    rows = []
+    if page_count < max_pages:
+        rows.append(
+            [
+                {
+                    "text": "Sí, agregar otra imagen",
+                    "callback_data": "team_upload:add",
+                }
+            ]
+        )
+    rows.extend(
+        [
+            [
+                {
+                    "text": "No, procesar equipo",
+                    "callback_data": "team_upload:process",
+                }
+            ],
+            [{"text": "Cancelar", "callback_data": "team_upload:cancel"}],
+        ]
+    )
+    return {"inline_keyboard": rows}
+
+
 def _env_int(key: str, default: int) -> int:
     raw = (os.getenv(key) or "").strip()
     if not raw:
@@ -947,6 +1238,19 @@ def _env_int(key: str, default: int) -> int:
         return max(1024, int(raw))
     except ValueError:
         logger.warning("Invalid integer for %s=%r; using default %s", key, raw, default)
+        return default
+
+
+def _env_seconds(key: str, default: int) -> int:
+    raw = (os.getenv(key) or "").strip()
+    if not raw:
+        return default
+    try:
+        return max(60, int(raw))
+    except ValueError:
+        logger.warning(
+            "Invalid duration for %s=%r; using default %s", key, raw, default
+        )
         return default
 
 
