@@ -112,6 +112,7 @@ def test_marks_equal_normalized_values_as_matching() -> None:
             "category": "libre",
             "gender": "femenil",
         },
+        "manager": {"name": "ana", "email": "ANA@example.test"},
         "players": [
             {
                 "name": "MARÍA LÓPEZ",
@@ -137,6 +138,7 @@ def test_marks_canonical_player_missing_from_legacy_as_roster_difference() -> No
             "category": "Libre",
             "gender": "Femenil",
         },
+        "manager": {"name": "Ana", "email": "ana@example.test"},
         "players": [],
     }
 
@@ -162,6 +164,7 @@ def test_marks_legacy_player_missing_from_canonical_as_roster_difference() -> No
             "category": "Libre",
             "gender": "Femenil",
         },
+        "manager": {"name": "Ana", "email": "ana@example.test"},
         "players": [
             {
                 "name": "María López",
@@ -192,3 +195,36 @@ def test_marks_legacy_player_missing_from_canonical_as_roster_difference() -> No
     assert view["players"][1]["roster_difference_label"] == (
         "Ausente en lectura canónica"
     )
+
+
+def test_exposes_manager_differences_for_field_level_promotion() -> None:
+    legacy = {
+        "team": {
+            "name": "Deportivo Estrellas",
+            "category": "Libre",
+            "gender": "Femenil",
+        },
+        "manager": {"name": "Ana", "email": "legacy@example.test"},
+        "players": [
+            {
+                "name": "María López",
+                "birth_date": "01/01/2000",
+                "curp": "",
+            }
+        ],
+    }
+
+    view = build_canonical_review_view(_sidecar(), legacy)
+
+    assert view is not None
+    assert view["manager_difference_fields"] == ["email"]
+    assert view["manager_differences"] == [
+        {
+            "field": "email",
+            "label": "email",
+            "legacy_value": "legacy@example.test",
+            "canonical_value": "ana@example.test",
+        }
+    ]
+    assert view["manager"]["matches_legacy"] is False
+    assert view["difference_count"] == 1
