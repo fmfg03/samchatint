@@ -34,6 +34,7 @@ from devnous.tournaments.core.telegram_security import (
 )
 from devnous.tournaments.core.tournament_bot import Message, MessageIntent
 
+from .ctt_review_handoff import CttCanonicalReviewSink
 from .ctt_shadow_observer import CttRegistrationShadowObserver
 
 logger = logging.getLogger(__name__)
@@ -226,6 +227,17 @@ class RegistrationIntakeBot:
         self.shadow_observer = (
             shadow_observer or CttRegistrationShadowObserver.from_environment()
         )
+        self.canonical_review_sink = None
+        if self.db_session is not None:
+            self.canonical_review_sink = CttCanonicalReviewSink(
+                session_maker=self.db_session,
+                photos_base_dir=self.operations.photos_base_dir,
+            )
+            bind_result_handler = getattr(
+                self.shadow_observer, "bind_result_handler", None
+            )
+            if callable(bind_result_handler):
+                bind_result_handler(self.canonical_review_sink.persist)
         self.finance = None
         self.marketing = None
         self.active_sessions_by_chat: Dict[int, str] = {}
@@ -279,12 +291,16 @@ class RegistrationIntakeBot:
     async def process_registration_image(
         self, *, chat_id: int, user_id: int, image_bytes: bytes
     ):
-        await self._capture_shadow_page(chat_id, image_bytes)
+        previous_session_id = self._active_or_pending_session_id(chat_id)
+        await self._capture_shadow_page(
+            chat_id,
+            image_bytes,
+            review_session_id=previous_session_id,
+        )
         # OperationsModule gates web-review creation through admin_chat_ids.
         # This bot performs its own access check before calling this method, so
         # an authorized intake chat is allowed to create a review session.
         self.operations.admin_chat_ids.add(int(chat_id))
-        previous_session_id = self._active_or_pending_session_id(chat_id)
         message = Message(
             text="registro_ocr",
             chat_id=chat_id,
@@ -325,8 +341,8 @@ class RegistrationIntakeBot:
     async def finish_current_session(
         self, chat_id: int, *, reason: str = "manual_finalizar"
     ) -> str:
-        await self._finalize_shadow(chat_id)
         session_id = self._active_or_pending_session_id(chat_id)
+        await self._finalize_shadow(chat_id, review_session_id=session_id)
         pending = self.operations.pending_back_photos.pop(chat_id, None)
         self.active_sessions_by_chat.pop(int(chat_id), None)
         self.active_session_touched_at.pop(int(chat_id), None)
@@ -612,15 +628,30 @@ class RegistrationIntakeBot:
     def _review_workspace_url(self, session_id: str) -> str:
         return f"{(os.getenv('APP_URL') or 'https://sam.chat').rstrip('/')}/registration-review/{session_id}"
 
-    async def _capture_shadow_page(self, chat_id: int, image_bytes: bytes) -> None:
+    async def _capture_shadow_page(
+        self,
+        chat_id: int,
+        image_bytes: bytes,
+        *,
+        review_session_id: Optional[str] = None,
+    ) -> None:
         observer = getattr(self, "shadow_observer", None)
         if observer is not None:
-            await observer.capture_page(chat_id, image_bytes)
+            await observer.capture_page(
+                chat_id,
+                image_bytes,
+                review_session_id=review_session_id,
+            )
 
-    async def _finalize_shadow(self, chat_id: int) -> None:
+    async def _finalize_shadow(
+        self, chat_id: int, *, review_session_id: Optional[str] = None
+    ) -> None:
         observer = getattr(self, "shadow_observer", None)
         if observer is not None:
-            await observer.finalize(chat_id)
+            await observer.finalize(
+                chat_id,
+                review_session_id=review_session_id,
+            )
 
     async def _discard_shadow(self, chat_id: int) -> None:
         observer = getattr(self, "shadow_observer", None)

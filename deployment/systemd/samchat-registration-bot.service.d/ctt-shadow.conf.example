@@ -1,2 +1,3 @@
 [Service]
 Environment=CTT_RESPONSES_ROLLOUT=shadow
+Environment=CTT_SHADOW_REVIEW_HANDOFF=on

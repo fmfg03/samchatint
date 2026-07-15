@@ -20,8 +20,14 @@ from devnous.tournaments.instances.copa_telmex.ctt_shadow_observer import (
 
 
 class _FakeReport:
+    accepted = True
+
     def model_dump_json(self) -> str:
         return json.dumps({"accepted": True, "no_database_write": True})
+
+
+def _fake_execution():
+    return SimpleNamespace(report=_FakeReport(), draft=SimpleNamespace())
 
 
 def _jpeg_bytes() -> bytes:
@@ -41,7 +47,7 @@ async def test_two_pages_finalize_in_background_and_clear_memory(tmp_path) -> No
 
     async def fake_execute(payloads):
         seen.append(tuple(payloads))
-        return _FakeReport()
+        return _fake_execution(), {}
 
     observer._execute = fake_execute
 
@@ -69,7 +75,7 @@ async def test_one_page_is_discarded_without_provider_work(tmp_path) -> None:
     async def fake_execute(_payloads):
         nonlocal called
         called = True
-        return _FakeReport()
+        return _fake_execution(), {}
 
     observer._execute = fake_execute
 
@@ -92,7 +98,7 @@ async def test_third_page_auto_finalizes_exact_document(tmp_path) -> None:
 
     async def fake_execute(payloads):
         seen.append(tuple(payloads))
-        return _FakeReport()
+        return _fake_execution(), {}
 
     observer._execute = fake_execute
 
@@ -147,12 +153,14 @@ def test_valid_shadow_environment_enables_bounded_policy(monkeypatch, tmp_path) 
     monkeypatch.setenv("CTT_LAYOUT_PATH", str(layout_path))
     monkeypatch.setenv("CTT_SHADOW_MINIMUM_PLAYERS", "30")
     monkeypatch.setenv("CTT_RESPONSES_MODEL", "test-model")
+    monkeypatch.setenv("CTT_SHADOW_REVIEW_HANDOFF", "on")
 
     observer = CttRegistrationShadowObserver.from_environment()
 
     assert observer.enabled is True
     assert observer.minimum_players == 25
     assert observer.model == "test-model"
+    assert observer.handoff_enabled is True
 
 
 @pytest.mark.asyncio
@@ -262,12 +270,73 @@ async def test_execute_uses_ephemeral_cache_and_closes_provider(
             assert layout == {}
             assert len(document_sha256) == 64
             assert cache_roots[0].is_dir()
-            return SimpleNamespace(report=_FakeReport())
+            return _fake_execution()
 
     monkeypatch.setattr(observer_module, "CttCanaryRunner", FakeRunner)
 
-    report = await observer._execute((_jpeg_bytes(), _jpeg_bytes()))
+    execution, layout = await observer._execute((_jpeg_bytes(), _jpeg_bytes()))
 
-    assert isinstance(report, _FakeReport)
+    assert isinstance(execution.report, _FakeReport)
+    assert layout == {}
     assert extractor.client.closed is True
     assert cache_roots and not cache_roots[0].exists()
+
+
+@pytest.mark.asyncio
+async def test_enabled_handoff_receives_accepted_draft_and_session(tmp_path) -> None:
+    seen = []
+
+    async def persist(session_id, execution, payloads, layout):
+        seen.append((session_id, execution, tuple(payloads), layout))
+        return True
+
+    observer = CttRegistrationShadowObserver(
+        enabled=True,
+        api_key="test-key",
+        layout_path=tmp_path / "layout.json",
+        handoff_enabled=True,
+        result_handler=persist,
+    )
+
+    async def fake_execute(payloads):
+        assert tuple(payloads) == (b"front", b"back")
+        return _fake_execution(), {"pages": {}}
+
+    observer._execute = fake_execute
+    await observer.capture_page(99, b"front")
+    await observer.capture_page(99, b"back")
+    assert await observer.finalize(99, review_session_id="session-1") is True
+    await observer.drain()
+
+    assert len(seen) == 1
+    assert seen[0][0] == "session-1"
+    assert seen[0][2] == (b"front", b"back")
+
+
+@pytest.mark.asyncio
+async def test_handoff_is_not_persisted_without_explicit_flag(tmp_path) -> None:
+    called = False
+
+    async def persist(*_args):
+        nonlocal called
+        called = True
+        return True
+
+    observer = CttRegistrationShadowObserver(
+        enabled=True,
+        api_key="test-key",
+        layout_path=tmp_path / "layout.json",
+        handoff_enabled=False,
+        result_handler=persist,
+    )
+
+    async def fake_execute(_payloads):
+        return _fake_execution(), {}
+
+    observer._execute = fake_execute
+    await observer.capture_page(99, b"front")
+    await observer.capture_page(99, b"back")
+    await observer.finalize(99, review_session_id="session-1")
+    await observer.drain()
+
+    assert called is False
