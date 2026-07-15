@@ -3582,7 +3582,9 @@ async def edit_registration_review_session(session_id: str, request: Request):
 
 
 @app.post("/api/registration-review/{session_id}/reject")
-async def reject_registration_review_session(session_id: str, request: Request):
+async def reject_registration_review_session(
+    session_id: str, request: Request
+) -> RedirectResponse:
     """Reject a review draft without deleting its evidence or audit trail."""
     _ensure_registration_review_access(request)
     actor = _review_session_actor(request)
@@ -3606,6 +3608,7 @@ async def reject_registration_review_session(session_id: str, request: Request):
             select(RegistrationReviewSession)
             .options(selectinload(RegistrationReviewSession.draft))
             .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
@@ -3803,6 +3806,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 selectinload(RegistrationReviewSession.draft),
             )
             .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session:
@@ -3823,6 +3827,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
                     "warnings": [],
                 },
             )
+        _ensure_review_session_mutable(review_session)
         _ensure_review_session_not_rejected(review_session)
 
         form_data = await request.form()

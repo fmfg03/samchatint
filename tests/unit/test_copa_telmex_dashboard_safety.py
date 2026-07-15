@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import inspect
 import os
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from fastapi import HTTPException
@@ -48,9 +48,7 @@ async def test_html_middleware_preserves_body_and_repeated_cookies() -> None:
     response = await dashboard.modernize_html_middleware(None, _call_next)
     body = response.body.decode("utf-8")
     cookie_headers = [
-        value
-        for name, value in response.raw_headers
-        if name.lower() == b"set-cookie"
+        value for name, value in response.raw_headers if name.lower() == b"set-cookie"
     ]
 
     assert "<body>ok</body>" in body
@@ -109,10 +107,12 @@ def test_internal_errors_do_not_echo_exception_details() -> None:
 
 def test_review_template_guards_reprocess_and_does_not_force_new_tabs() -> None:
     template = (
-        Path(dashboard.__file__).parent / "templates" / "registration_review_detail.html"
+        Path(dashboard.__file__).parent
+        / "templates"
+        / "registration_review_detail.html"
     ).read_text(encoding="utf-8")
 
-    assert "onsubmit=\"return confirm(" in template
+    assert 'onsubmit="return confirm(' in template
     assert "if (event.ctrlKey || event.metaKey)" in template
     assert "window.open(link.href" not in template
 
@@ -157,26 +157,131 @@ def test_rejected_review_session_cannot_commit_until_reopened() -> None:
     assert exc_info.value.detail["error"] == "session_rejected"
 
 
-def test_all_review_mutation_endpoints_apply_the_immutability_guard() -> None:
-    endpoints = (
-        dashboard.edit_registration_review_session,
-        dashboard.reject_registration_review_session,
-        dashboard.reprocess_registration_review_session,
-        dashboard.append_assets_to_registration_review_session,
+class _DecisionResult:
+    def __init__(self, review_session) -> None:
+        self.review_session = review_session
+
+    def scalar_one_or_none(self):
+        return self.review_session
+
+
+class _DecisionSession:
+    def __init__(self, review_session) -> None:
+        self.review_session = review_session
+        self.statements = []
+        self.commits = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _DecisionResult(self.review_session)
+
+    async def commit(self) -> None:
+        self.commits += 1
+
+
+class _DecisionRequest:
+    async def form(self):
+        return {"reason": "Documento incompleto"}
+
+
+def _decision_review_session(status: str):
+    committed = status == "committed"
+    return SimpleNamespace(
+        id=UUID("11111111-1111-1111-1111-111111111111"),
+        status=status,
+        committed_at=datetime(2026, 1, 1) if committed else None,
+        committed_team_id="team-id" if committed else None,
+        draft=SimpleNamespace(validation={}, needs_review=False),
+        assets=[],
     )
 
-    for endpoint in endpoints:
-        assert "_ensure_review_session_mutable" in inspect.getsource(endpoint)
+
+def _configure_decision_route(monkeypatch, sessions) -> None:
+    pending_sessions = list(sessions)
+    monkeypatch.setattr(
+        dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        dashboard,
+        "_review_session_actor",
+        lambda _request: {"user_id": "operator-id", "role": "admin"},
+    )
+    monkeypatch.setattr(
+        dashboard, "async_session_maker", lambda: pending_sessions.pop(0)
+    )
+    monkeypatch.setattr(
+        dashboard, "_log_registration_review_event", lambda *_args, **_kwargs: None
+    )
 
 
-def test_reject_route_is_audited_and_commit_rechecks_rejected_status() -> None:
-    reject_source = inspect.getsource(dashboard.reject_registration_review_session)
-    commit_source = inspect.getsource(dashboard.commit_registration_review_session)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("endpoint", "status", "expected_error"),
+    [
+        (
+            dashboard.reject_registration_review_session,
+            "committed",
+            "session_already_committed",
+        ),
+        (
+            dashboard.commit_registration_review_session,
+            "committed",
+            "session_already_committed",
+        ),
+        (dashboard.commit_registration_review_session, "rejected", "session_rejected"),
+    ],
+)
+async def test_decision_routes_lock_before_rejecting_terminal_states(
+    monkeypatch, endpoint, status, expected_error
+) -> None:
+    decision_session = _DecisionSession(_decision_review_session(status))
+    _configure_decision_route(monkeypatch, [decision_session])
 
-    assert 'review_session.status = "rejected"' in reject_source
-    assert 'audit["rejection_events"]' in reject_source
-    assert "_log_registration_review_event" in reject_source
-    assert "_ensure_review_session_not_rejected" in commit_source
+    with pytest.raises(HTTPException) as exc_info:
+        await endpoint(str(decision_session.review_session.id), _DecisionRequest())
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["error"] == expected_error
+    assert decision_session.commits == 0
+    assert decision_session.statements[0]._for_update_arg is not None
+
+
+@pytest.mark.asyncio
+async def test_reject_then_commit_conflict_preserves_single_terminal_decision(
+    monkeypatch,
+) -> None:
+    review_session = _decision_review_session("ready")
+    reject_session = _DecisionSession(review_session)
+    commit_session = _DecisionSession(review_session)
+    _configure_decision_route(monkeypatch, [reject_session, commit_session])
+
+    response = await dashboard.reject_registration_review_session(
+        str(review_session.id), _DecisionRequest()
+    )
+
+    assert response.status_code == 303
+    assert review_session.status == "rejected"
+    assert (
+        review_session.draft.validation["audit"]["rejection_events"][0]["reason"]
+        == "Documento incompleto"
+    )
+    assert reject_session.commits == 1
+    assert reject_session.statements[0]._for_update_arg is not None
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dashboard.commit_registration_review_session(
+            str(review_session.id), _DecisionRequest()
+        )
+
+    assert exc_info.value.detail["error"] == "session_rejected"
+    assert commit_session.commits == 0
+    assert commit_session.statements[0]._for_update_arg is not None
 
 
 @pytest.mark.asyncio

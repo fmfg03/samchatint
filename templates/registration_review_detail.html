@@ -559,7 +559,8 @@
 </style>
 
 {% set session_rejected = review_session.status == 'rejected' %}
-{% set can_commit = validation.ready_to_commit and not session_rejected %}
+{% set session_committed = review_session.status == 'committed' %}
+{% set can_commit = validation.ready_to_commit and not session_rejected and not session_committed %}
 <main class="review-shell">
 <section class="review-hero" aria-labelledby="review-title">
     <div>
@@ -573,8 +574,12 @@
         </div>
     </div>
     <div class="review-actions" aria-label="Decisiones de revisión">
+        {% if session_committed %}
+        <button type="button" class="decision-button" data-action="modify" disabled>Modificar datos</button>
+        {% else %}
         <a href="#editable-draft" class="decision-button" data-action="modify">Modificar datos</a>
-        <button type="button" class="decision-button" data-action="reject" data-open-reject>Rechazar revisión</button>
+        {% endif %}
+        <button type="button" class="decision-button" data-action="reject" data-open-reject {% if session_committed %}disabled{% endif %}>Rechazar revisión</button>
         <button
             type="submit"
             form="review-edit-form"
@@ -582,7 +587,7 @@
             class="decision-button"
             data-action="approve"
             data-commit-button="1"
-            {% if not can_commit %}disabled title="{% if session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
+            {% if not can_commit %}disabled title="{% if session_committed %}La revisión ya fue capturada{% elif session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
         >Aprobar y capturar</button>
     </div>
 </section>
@@ -594,7 +599,7 @@
     <a class="workspace-link" href="#editable-draft">Borrador editable</a>
     <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
           onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
-        <button type="submit" class="workspace-link">Reprocesar</button>
+        <button type="submit" class="workspace-link" {% if session_committed %}disabled{% endif %}>Reprocesar</button>
     </form>
 </nav>
 
@@ -602,6 +607,10 @@
 <div class="rejected-banner" role="alert">
     <strong>Revisión rechazada.</strong> La evidencia se conserva, pero el commit está bloqueado.
     Modifica el borrador o reprocesa las páginas para reabrirla.
+</div>
+{% elif session_committed %}
+<div class="rejected-banner" role="status">
+    <strong>Revisión capturada.</strong> El expediente queda en modo de consulta y no admite más decisiones ni cambios.
 </div>
 {% endif %}
 
@@ -618,9 +627,9 @@
                 Esta vista no modifica el borrador editable ni se usa al capturar el equipo.
             </p>
             <div class="canonical-metrics">
-                <span class="canonical-metric"><strong>{{ canonical_review.player_count }}</strong> jugadores</span>
+                <span class="canonical-metric"><strong>{{ canonical_review.player_count }}</strong> canónicos / <strong>{{ canonical_review.legacy_player_count }}</strong> borrador</span>
                 <span class="canonical-metric"><strong>{{ canonical_review.review_count }}</strong> señales</span>
-                <span class="canonical-metric"><strong>{{ canonical_review.difference_count }}</strong> campos diferentes</span>
+                <span class="canonical-metric"><strong>{{ canonical_review.difference_count }}</strong> diferencias</span>
                 <span class="canonical-metric"><strong>{{ canonical_review.difference_player_count }}</strong> jugadores con diferencias</span>
             </div>
         </div>
@@ -663,6 +672,7 @@
             <div>
                 <strong>J{{ player.slot }} · {{ player.name or 'Nombre vacío' }}</strong>
                 <small>Confianza {{ player.confidence_pct }} · Página {{ player.source_page }}</small>
+                {% if player.roster_difference %}<span class="canonical-difference">{{ player.roster_difference_label }}</span>{% endif %}
                 {% if player.differences %}
                 <div class="comparison-list" style="margin-top: 8px;">
                     {% for difference in player.differences %}
@@ -679,7 +689,7 @@
                 <small style="margin-top: 6px; color: #166534;">Coincide con el borrador actual</small>
                 {% endif %}
                 {% if player.requires_review %}<span class="canonical-difference">Requiere revisión</span>{% endif %}
-                <a href="#player-{{ player.slot }}" class="workspace-link" style="display: inline-flex; margin-top: 8px;">Modificar en borrador</a>
+                {% if not player.missing_from_legacy %}<a href="#player-{{ player.slot }}" class="workspace-link" style="display: inline-flex; margin-top: 8px;">Modificar en borrador</a>{% endif %}
             </div>
         </article>
         {% endfor %}
@@ -711,8 +721,8 @@
         <div style="margin-top: 18px;">
             <form action="/api/registration-review/{{ review_session.id }}/assets" method="post" enctype="multipart/form-data" style="margin-bottom: 18px; padding: 14px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #f8fafc;">
                 <label style="display: block; font-weight: 600; margin-bottom: 8px;">Agregar más fotos a esta sesión</label>
-                <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" multiple required style="width: 100%; margin-bottom: 10px;">
-                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;">Subir y anexar</button>
+                <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" multiple required style="width: 100%; margin-bottom: 10px;" {% if session_committed %}disabled{% endif %}>
+                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed %}disabled{% endif %}>Subir y anexar</button>
             </form>
             <h4 style="margin-bottom: 10px;">Señales de revisión</h4>
             {% if validation.blockers %}
@@ -887,14 +897,14 @@
             {% endfor %}
 
             <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
-                <button type="submit" class="btn" style="border: none; cursor: pointer;">Guardar borrador</button>
+                <button type="submit" class="btn" style="border: none; cursor: pointer;" {% if session_committed %}disabled{% endif %}>Guardar borrador</button>
                 <button
                     type="submit"
                     formaction="/api/registration-review/{{ review_session.id }}/commit"
                     class="btn"
                     style="border: none; {% if can_commit %}cursor: pointer; background: #28a745;{% else %}cursor: not-allowed; background: #94a3b8;{% endif %}"
                     data-commit-button="1"
-                    {% if not can_commit %}disabled title="{% if session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
+                    {% if not can_commit %}disabled title="{% if session_committed %}La revisión ya fue capturada{% elif session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
                 >Aprobar y capturar</button>
                 <a href="/api/registration-review/{{ review_session.id }}" class="btn" style="background: #0f766e;" target="_blank" rel="noopener">Ver JSON</a>
             </div>
@@ -902,6 +912,7 @@
     </section>
 </div>
 
+{% if not session_committed %}
 <dialog id="reject-review-dialog" class="review-dialog" aria-labelledby="reject-dialog-title">
     <div class="review-dialog-body">
         <h3 id="reject-dialog-title" style="margin-top: 0;">Rechazar revisión</h3>
@@ -918,6 +929,7 @@
         </form>
     </div>
 </dialog>
+{% endif %}
 </main>
 {% if assets %}
 <script>

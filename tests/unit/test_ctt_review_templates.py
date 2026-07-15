@@ -51,6 +51,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     template = _environment().get_template("registration_review_detail.html")
     canonical_review = {
         "player_count": 1,
+        "legacy_player_count": 1,
         "review_count": 1,
         "difference_count": 1,
         "difference_player_count": 1,
@@ -77,6 +78,8 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
                 "source_page": 1,
                 "requires_review": True,
                 "matches_legacy": False,
+                "roster_difference": False,
+                "missing_from_legacy": False,
                 "difference_labels": ["nombre"],
                 "differences": [
                     {
@@ -127,6 +130,36 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     assert 'data-action="reject"' in html
     assert "/api/registration-review/session/reject" in html
     assert 'name="canonical_' not in html
+
+
+def test_committed_detail_disables_decisions_and_omits_reject_dialog() -> None:
+    template = _environment().get_template("registration_review_detail.html")
+
+    html = template.render(
+        request=_request("/registration-review/session"),
+        review_session=SimpleNamespace(
+            id="session",
+            status="committed",
+            provider="openai",
+            tournament_slug="copa_telmex",
+        ),
+        assets=[],
+        team={},
+        manager={},
+        players=[],
+        notes="",
+        validation={"blockers": [], "issues": [], "ready_to_commit": True},
+        layout_regions={},
+        overall_confidence="100%",
+        canonical_review=None,
+        tournament_options=[],
+    )
+
+    assert "Revisión capturada." in html
+    assert 'data-action="modify" disabled' in html
+    assert 'data-action="reject" data-open-reject disabled' in html
+    assert "La revisión ya fue capturada" in html
+    assert 'id="reject-review-dialog"' not in html
 
 
 def test_inbox_renders_mobile_cards_and_operational_filters() -> None:
