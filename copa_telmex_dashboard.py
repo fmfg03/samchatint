@@ -318,6 +318,17 @@ def _ensure_review_session_mutable(review_session: RegistrationReviewSession) ->
         )
 
 
+def _ensure_review_session_not_rejected(
+    review_session: RegistrationReviewSession,
+) -> None:
+    if str(review_session.status or "").strip().lower() == "rejected":
+        raise _review_error(
+            "session_rejected",
+            "Esta revisión fue rechazada. Modifica o reprocesa el borrador antes de capturar.",
+            status_code=409,
+        )
+
+
 def _ensure_registration_review_access(
     request: Request,
     *,
@@ -3570,6 +3581,75 @@ async def edit_registration_review_session(session_id: str, request: Request):
     return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
 
 
+@app.post("/api/registration-review/{session_id}/reject")
+async def reject_registration_review_session(session_id: str, request: Request):
+    """Reject a review draft without deleting its evidence or audit trail."""
+    _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
+    if not actor.get("user_id"):
+        raise HTTPException(status_code=401, detail="Sesión inválida para rechazar el draft.")
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
+
+    form_data = await request.form()
+    reason = str(form_data.get("reason") or "").strip()
+    if len(reason) > 500:
+        raise _review_error(
+            "rejection_reason_too_long",
+            "El motivo de rechazo no puede exceder 500 caracteres.",
+        )
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(selectinload(RegistrationReviewSession.draft))
+            .where(RegistrationReviewSession.id == session_uuid)
+        )
+        review_session = result.scalar_one_or_none()
+        if not review_session or not review_session.draft:
+            raise HTTPException(status_code=404, detail="Review draft not found")
+        _ensure_review_session_mutable(review_session)
+
+        _rejected_at, rejected_at_iso = _review_event_timestamp()
+        validation = (
+            dict(review_session.draft.validation)
+            if isinstance(review_session.draft.validation, dict)
+            else {}
+        )
+        audit = _review_audit_state(validation)
+        rejection_event = {
+            "rejected_by": actor.get("user_id"),
+            "rejected_role": actor.get("role"),
+            "rejected_at": rejected_at_iso,
+            "reason": reason or None,
+        }
+        audit["rejection_events"] = list(audit.get("rejection_events") or []) + [
+            rejection_event
+        ]
+        audit["latest_rejection"] = rejection_event
+        validation = _attach_review_audit(validation, audit)
+        validation["ready_to_commit"] = False
+        validation["needs_review"] = True
+
+        review_session.status = "rejected"
+        review_session.draft.validation = validation
+        review_session.draft.needs_review = True
+        await session.commit()
+        _log_registration_review_event(
+            "draft_rejected",
+            session_id=review_session.id,
+            status="rejected",
+            extra={
+                "actor_id": actor.get("user_id"),
+                "reason_provided": bool(reason),
+            },
+        )
+
+    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+
+
 @app.post("/api/registration-review/{session_id}/reprocess")
 async def reprocess_registration_review_session(session_id: str, request: Request):
     """Re-run OCR over the primary image asset."""
@@ -3743,6 +3823,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
                     "warnings": [],
                 },
             )
+        _ensure_review_session_not_rejected(review_session)
 
         form_data = await request.form()
         extraction = _apply_review_form_edits(form_data, _get_review_extraction(review_session.draft))

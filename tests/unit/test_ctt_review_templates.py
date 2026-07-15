@@ -53,6 +53,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
         "player_count": 1,
         "review_count": 1,
         "difference_count": 1,
+        "difference_player_count": 1,
         "matches_legacy": False,
         "team": {
             "name": "Deportivo Estrellas",
@@ -60,6 +61,13 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
             "gender": "Femenil",
         },
         "team_difference_labels": ["nombre"],
+        "team_differences": [
+            {
+                "label": "nombre",
+                "legacy_value": "Deportivo Estellas",
+                "canonical_value": "Deportivo Estrellas",
+            }
+        ],
         "players": [
             {
                 "slot": 1,
@@ -70,6 +78,13 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
                 "requires_review": True,
                 "matches_legacy": False,
                 "difference_labels": ["nombre"],
+                "differences": [
+                    {
+                        "label": "nombre",
+                        "legacy_value": "Maria Lopes",
+                        "canonical_value": "María López",
+                    }
+                ],
                 "photo_url": (
                     "/photos/review_sessions/session/canonical_shadow/" "player_01.jpg"
                 ),
@@ -105,4 +120,39 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     assert "no autoritativa" in html
     assert "no modifica el borrador editable" in html
     assert canonical_review["players"][0]["photo_url"] in html
-    assert "Difiere: nombre" in html
+    assert "Sólo diferencias" in html
+    assert "Borrador actual" in html
+    assert "Deportivo Estellas" in html
+    assert "Lectura canónica" in html
+    assert 'data-action="reject"' in html
+    assert "/api/registration-review/session/reject" in html
+    assert 'name="canonical_' not in html
+
+
+def test_inbox_renders_mobile_cards_and_operational_filters() -> None:
+    template = _environment().get_template("registration_review_list.html")
+
+    html = template.render(
+        request=_request("/registration-review"),
+        sessions=[
+            {
+                "id": "session-12345678",
+                "status": "rejected",
+                "provider": "openai",
+                "source": "telegram",
+                "tournament_slug": "copa_telmex",
+                "started_at": "2026-07-15 10:00",
+                "issue_count": 2,
+                "player_count": 16,
+                "needs_review": True,
+                "committed_team_id": None,
+                "cover_url": None,
+            }
+        ],
+    )
+
+    assert "Bandeja de precaptura" in html
+    assert 'data-inbox-filter="pending"' in html
+    assert 'data-inbox-filter="rejected"' in html
+    assert "Rechazado" in html
+    assert "Continuar revisión" in html

@@ -71,7 +71,24 @@ def test_builds_safe_comparison_view_with_private_preview_url() -> None:
     assert view["review_count"] == 1
     assert view["matches_legacy"] is False
     assert view["team_difference_fields"] == ["name"]
+    assert view["team_differences"] == [
+        {
+            "field": "name",
+            "label": "nombre",
+            "legacy_value": "Deportivo Estellas",
+            "canonical_value": "Deportivo Estrellas",
+        }
+    ]
     assert view["players"][0]["difference_fields"] == ["name"]
+    assert view["players"][0]["legacy"]["name"] == "Maria Lopes"
+    assert view["players"][0]["differences"][0] == {
+        "field": "name",
+        "label": "nombre",
+        "legacy_value": "Maria Lopes",
+        "canonical_value": "María López",
+    }
+    assert view["difference_player_count"] == 1
+    assert view["matching_player_count"] == 0
     assert view["players"][0]["confidence_pct"] == "94%"
     assert view["players"][0]["photo_url"] == (
         "/photos/review_sessions/session/canonical_shadow/player_01.jpg"
@@ -109,3 +126,5 @@ def test_marks_equal_normalized_values_as_matching() -> None:
     assert view is not None
     assert view["matches_legacy"] is True
     assert view["difference_count"] == 0
+    assert view["difference_player_count"] == 0
+    assert view["matching_player_count"] == 1

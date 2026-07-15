@@ -147,15 +147,36 @@ def test_committed_review_sessions_are_immutable(review_session) -> None:
     assert exc_info.value.detail["error"] == "session_already_committed"
 
 
+def test_rejected_review_session_cannot_commit_until_reopened() -> None:
+    review_session = SimpleNamespace(status="rejected")
+
+    with pytest.raises(HTTPException) as exc_info:
+        dashboard._ensure_review_session_not_rejected(review_session)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["error"] == "session_rejected"
+
+
 def test_all_review_mutation_endpoints_apply_the_immutability_guard() -> None:
     endpoints = (
         dashboard.edit_registration_review_session,
+        dashboard.reject_registration_review_session,
         dashboard.reprocess_registration_review_session,
         dashboard.append_assets_to_registration_review_session,
     )
 
     for endpoint in endpoints:
         assert "_ensure_review_session_mutable" in inspect.getsource(endpoint)
+
+
+def test_reject_route_is_audited_and_commit_rechecks_rejected_status() -> None:
+    reject_source = inspect.getsource(dashboard.reject_registration_review_session)
+    commit_source = inspect.getsource(dashboard.commit_registration_review_session)
+
+    assert 'review_session.status = "rejected"' in reject_source
+    assert 'audit["rejection_events"]' in reject_source
+    assert "_log_registration_review_event" in reject_source
+    assert "_ensure_review_session_not_rejected" in commit_source
 
 
 @pytest.mark.asyncio

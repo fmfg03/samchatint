@@ -65,6 +65,22 @@ def _different_fields(
     ]
 
 
+def _difference_rows(
+    canonical: Mapping[str, Any],
+    legacy: Mapping[str, Any],
+    fields: Sequence[str],
+) -> list[Dict[str, str]]:
+    return [
+        {
+            "field": field,
+            "label": FIELD_LABELS.get(field, field),
+            "legacy_value": _text(legacy.get(field)),
+            "canonical_value": _text(canonical.get(field)),
+        }
+        for field in _different_fields(canonical, legacy, fields)
+    ]
+
+
 def _private_preview_url(preview: Mapping[str, Any]) -> Optional[str]:
     relative_path = _text(preview.get("relative_path")).replace("\\", "/")
     if not relative_path:
@@ -107,6 +123,11 @@ def build_canonical_review_view(
         legacy_team,
         ("name", "category", "gender", "league", "municipality", "state"),
     )
+    team_differences = _difference_rows(
+        canonical_team,
+        legacy_team,
+        ("name", "category", "gender", "league", "municipality", "state"),
+    )
 
     legacy_players = legacy.get("players")
     if not isinstance(legacy_players, list):
@@ -124,6 +145,11 @@ def build_canonical_review_view(
             _mapping(legacy_players[slot - 1]) if slot - 1 < len(legacy_players) else {}
         )
         difference_fields = _different_fields(
+            player,
+            legacy_player,
+            ("name", "birth_date", "curp"),
+        )
+        differences = _difference_rows(
             player,
             legacy_player,
             ("name", "birth_date", "curp"),
@@ -148,6 +174,11 @@ def build_canonical_review_view(
                 "photo_url": _private_preview_url(
                     _mapping(player.get("photo_preview"))
                 ),
+                "legacy": {
+                    key: _text(legacy_player.get(key))
+                    for key in ("name", "birth_date", "curp")
+                },
+                "differences": differences,
                 "difference_fields": difference_fields,
                 "difference_labels": [
                     FIELD_LABELS.get(field, field) for field in difference_fields
@@ -173,6 +204,17 @@ def build_canonical_review_view(
                 "state",
             )
         },
+        "legacy_team": {
+            key: _text(legacy_team.get(key))
+            for key in (
+                "name",
+                "category",
+                "gender",
+                "league",
+                "municipality",
+                "state",
+            )
+        },
         "manager": {
             "name": _text(manager.get("name")),
             "email": _text(manager.get("email")),
@@ -181,10 +223,17 @@ def build_canonical_review_view(
         "players": players,
         "player_count": len(players),
         "review_count": _nonnegative_int(report.get("review_count")),
+        "team_differences": team_differences,
         "team_difference_fields": team_difference_fields,
         "team_difference_labels": [
             FIELD_LABELS.get(field, field) for field in team_difference_fields
         ],
         "difference_count": len(team_difference_fields) + player_difference_count,
+        "difference_player_count": sum(
+            1 for player in players if not player["matches_legacy"]
+        ),
+        "matching_player_count": sum(
+            1 for player in players if player["matches_legacy"]
+        ),
         "matches_legacy": not team_difference_fields and not player_difference_count,
     }

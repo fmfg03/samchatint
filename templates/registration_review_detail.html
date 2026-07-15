@@ -4,6 +4,211 @@
 
 {% block content %}
 <style>
+    .review-shell {
+        --review-ink: #0f172a;
+        --review-muted: #64748b;
+        --review-line: #dbe4ee;
+        --review-primary: #1d4ed8;
+        --review-danger: #b91c1c;
+        color: var(--review-ink);
+    }
+    .review-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 20px;
+        align-items: end;
+        margin-bottom: 18px;
+        padding: 22px;
+        border: 1px solid var(--review-line);
+        border-radius: 20px;
+        background: radial-gradient(circle at top right, #dbeafe 0, #f8fafc 42%, #fff 72%);
+    }
+    .review-kicker {
+        margin: 0 0 7px;
+        color: #1d4ed8;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+    .review-title {
+        margin: 0;
+        font-size: clamp(1.45rem, 3vw, 2.1rem);
+        line-height: 1.1;
+    }
+    .review-meta,
+    .review-actions,
+    .workspace-nav,
+    .difference-filters,
+    .player-jumpbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+    .review-meta {
+        margin-top: 12px;
+        color: var(--review-muted);
+        font-size: 0.9rem;
+    }
+    .status-pill,
+    .metric-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 6px 9px;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.88);
+    }
+    .status-pill[data-status="rejected"] {
+        color: #991b1b;
+        border-color: #fca5a5;
+        background: #fef2f2;
+    }
+    .decision-button,
+    .workspace-link,
+    .filter-button,
+    .player-jump {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #fff;
+        color: #334155;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+        text-decoration: none;
+    }
+    .decision-button {
+        padding: 10px 13px;
+    }
+    .decision-button[data-action="approve"] {
+        color: #fff;
+        border-color: #15803d;
+        background: #15803d;
+    }
+    .decision-button[data-action="reject"] {
+        color: var(--review-danger);
+        border-color: #fecaca;
+        background: #fff7f7;
+    }
+    .decision-button:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
+    .workspace-nav {
+        position: sticky;
+        top: 8px;
+        z-index: 8;
+        margin-bottom: 22px;
+        padding: 8px;
+        border: 1px solid var(--review-line);
+        border-radius: 14px;
+        background: rgba(248, 250, 252, 0.94);
+        backdrop-filter: blur(12px);
+    }
+    .workspace-link {
+        padding: 8px 10px;
+        font-size: 0.88rem;
+    }
+    .rejected-banner {
+        margin-bottom: 18px;
+        padding: 14px 16px;
+        border: 1px solid #fca5a5;
+        border-radius: 14px;
+        background: #fef2f2;
+        color: #991b1b;
+    }
+    .difference-board {
+        margin-bottom: 24px;
+        padding: 20px;
+        border: 1px solid #93c5fd;
+        border-radius: 20px;
+        background: linear-gradient(135deg, #eff6ff, #fff 48%, #ecfeff);
+        box-shadow: 0 14px 36px rgba(30, 64, 175, 0.08);
+    }
+    .difference-board-header {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 18px;
+        align-items: start;
+    }
+    .filter-button,
+    .player-jump {
+        padding: 7px 10px;
+        font-size: 0.82rem;
+    }
+    .filter-button[aria-pressed="true"],
+    .player-jump[aria-current="true"] {
+        color: #fff;
+        border-color: #1d4ed8;
+        background: #1d4ed8;
+    }
+    .team-difference-grid,
+    .comparison-list {
+        display: grid;
+        gap: 10px;
+    }
+    .team-difference-grid {
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        margin-top: 16px;
+    }
+    .difference-row {
+        padding: 11px;
+        border: 1px solid #fed7aa;
+        border-radius: 12px;
+        background: #fffaf0;
+    }
+    .difference-label {
+        display: block;
+        margin-bottom: 8px;
+        color: #9a3412;
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+    .comparison-values {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 8px;
+    }
+    .comparison-value {
+        min-width: 0;
+        padding: 8px;
+        border-radius: 9px;
+        background: #fff;
+        color: #334155;
+        overflow-wrap: anywhere;
+    }
+    .comparison-value small {
+        display: block;
+        margin-bottom: 3px;
+        color: #64748b;
+        font-weight: 700;
+    }
+    .difference-empty {
+        margin-top: 16px;
+        padding: 20px;
+        border: 1px dashed #86efac;
+        border-radius: 14px;
+        background: #f0fdf4;
+        color: #166534;
+        text-align: center;
+    }
+    dialog.review-dialog {
+        width: min(520px, calc(100vw - 28px));
+        padding: 0;
+        border: 0;
+        border-radius: 18px;
+        box-shadow: 0 28px 80px rgba(15, 23, 42, 0.28);
+    }
+    dialog.review-dialog::backdrop {
+        background: rgba(15, 23, 42, 0.62);
+    }
+    .review-dialog-body {
+        padding: 22px;
+    }
     .review-layout {
         display: grid;
         grid-template-columns: minmax(300px, 0.95fr) minmax(420px, 1.2fr);
@@ -307,6 +512,10 @@
         font-weight: 700;
     }
     @media (max-width: 980px) {
+        .review-hero,
+        .difference-board-header {
+            grid-template-columns: 1fr;
+        }
         .review-layout {
             grid-template-columns: 1fr;
         }
@@ -317,88 +526,171 @@
             max-width: 148px;
         }
     }
+    @media (max-width: 640px) {
+        .review-hero,
+        .difference-board,
+        .review-card {
+            padding: 14px;
+            border-radius: 14px;
+        }
+        .review-actions,
+        .review-actions .decision-button {
+            width: 100%;
+        }
+        .review-actions .decision-button {
+            justify-content: center;
+            text-align: center;
+        }
+        .workspace-nav {
+            position: static;
+            overflow-x: auto;
+            flex-wrap: nowrap;
+        }
+        .workspace-link {
+            white-space: nowrap;
+        }
+        .comparison-values {
+            grid-template-columns: 1fr;
+        }
+        .canonical-player-grid {
+            grid-template-columns: 1fr;
+        }
+    }
 </style>
 
-<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
+{% set session_rejected = review_session.status == 'rejected' %}
+{% set can_commit = validation.ready_to_commit and not session_rejected %}
+<main class="review-shell">
+<section class="review-hero" aria-labelledby="review-title">
     <div>
-        <a href="/registration-review" style="color: #667eea; text-decoration: none;">← Volver a precaptura</a>
-        <h2 style="margin: 10px 0 6px;">🧾 Revisión {{ review_session.id }}</h2>
-        <p style="color: #6c757d;">
-            Estado: <strong>{{ review_session.status }}</strong> · Proveedor: <strong>{{ review_session.provider }}</strong> ·
-            Torneo: <strong>{{ review_session.tournament_slug or 'Sin definir' }}</strong> ·
-            Confianza global: <strong>{{ overall_confidence }}</strong>
-        </p>
+        <p class="review-kicker">Mesa de calidad · Copa Telmex</p>
+        <h2 id="review-title" class="review-title">Revisión {{ review_session.id }}</h2>
+        <div class="review-meta">
+            <span class="status-pill" data-status="{{ review_session.status }}"><strong>Estado:</strong> {{ review_session.status }}</span>
+            <span class="metric-pill"><strong>Proveedor:</strong> {{ review_session.provider }}</span>
+            <span class="metric-pill"><strong>Torneo:</strong> {{ review_session.tournament_slug or 'Sin definir' }}</span>
+            <span class="metric-pill"><strong>Confianza:</strong> {{ overall_confidence }}</span>
+        </div>
     </div>
-    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-        <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
-              onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
-            <button type="submit" class="btn" style="border: none; cursor: pointer; background: #0f766e;">Reprocesar</button>
-        </form>
+    <div class="review-actions" aria-label="Decisiones de revisión">
+        <a href="#editable-draft" class="decision-button" data-action="modify">Modificar datos</a>
+        <button type="button" class="decision-button" data-action="reject" data-open-reject>Rechazar revisión</button>
+        <button
+            type="submit"
+            form="review-edit-form"
+            formaction="/api/registration-review/{{ review_session.id }}/commit"
+            class="decision-button"
+            data-action="approve"
+            data-commit-button="1"
+            {% if not can_commit %}disabled title="{% if session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
+        >Aprobar y capturar</button>
     </div>
+</section>
+
+<nav class="workspace-nav" aria-label="Secciones de la revisión">
+    <a class="workspace-link" href="/registration-review">← Bandeja</a>
+    {% if canonical_review %}<a class="workspace-link" href="#differences">Diferencias</a>{% endif %}
+    <a class="workspace-link" href="#document-panel">Documento</a>
+    <a class="workspace-link" href="#editable-draft">Borrador editable</a>
+    <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
+          onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
+        <button type="submit" class="workspace-link">Reprocesar</button>
+    </form>
+</nav>
+
+{% if session_rejected %}
+<div class="rejected-banner" role="alert">
+    <strong>Revisión rechazada.</strong> La evidencia se conserva, pero el commit está bloqueado.
+    Modifica el borrador o reprocesa las páginas para reabrirla.
 </div>
+{% endif %}
 
 {% if canonical_review %}
-<section class="canonical-review-card" aria-labelledby="canonical-review-title">
-    <div class="canonical-review-header">
+<section id="differences" class="difference-board" aria-labelledby="canonical-review-title">
+    <div class="difference-board-header">
         <div>
             <div style="display: flex; gap: 9px; align-items: center; flex-wrap: wrap;">
                 <h3 id="canonical-review-title" style="margin: 0;">Comparación canónica</h3>
                 <span class="canonical-badge">Experimental · no autoritativa</span>
             </div>
             <p style="margin: 8px 0 0; color: #475569; max-width: 760px;">
-                Esta lectura usa páginas normalizadas y evidencia por casilla. Es sólo una referencia:
-                no modifica el borrador editable ni se usa al capturar el equipo.
+                Diferencias primero: compara la lectura canónica contra el borrador editable.
+                Esta vista no modifica el borrador editable ni se usa al capturar el equipo.
             </p>
             <div class="canonical-metrics">
                 <span class="canonical-metric"><strong>{{ canonical_review.player_count }}</strong> jugadores</span>
-                <span class="canonical-metric"><strong>{{ canonical_review.review_count }}</strong> señales de revisión</span>
-                <span class="canonical-metric"><strong>{{ canonical_review.difference_count }}</strong> diferencias contra legado</span>
-                {% if canonical_review.matches_legacy %}
-                <span class="canonical-metric" style="color: #166534; border-color: #86efac;">Coincide con el borrador actual</span>
-                {% endif %}
+                <span class="canonical-metric"><strong>{{ canonical_review.review_count }}</strong> señales</span>
+                <span class="canonical-metric"><strong>{{ canonical_review.difference_count }}</strong> campos diferentes</span>
+                <span class="canonical-metric"><strong>{{ canonical_review.difference_player_count }}</strong> jugadores con diferencias</span>
             </div>
         </div>
-    </div>
-
-    <div style="margin-top: 14px; padding: 12px; border-radius: 12px; background: rgba(255,255,255,0.78); border: 1px solid #dbeafe;">
-        <strong>{{ canonical_review.team.name or 'Equipo sin nombre' }}</strong>
-        <span style="color: #64748b;"> · {{ canonical_review.team.category or 'Sin categoría' }} · {{ canonical_review.team.gender or 'Sin rama' }}</span>
-        {% if canonical_review.team_difference_labels %}
-        <span class="canonical-difference">Difiere en {{ canonical_review.team_difference_labels|join(', ') }}</span>
-        {% endif %}
-    </div>
-
-    <details open style="margin-top: 14px;">
-        <summary style="cursor: pointer; font-weight: 700; color: #1e3a8a;">Ver jugadores y fotos canónicas</summary>
-        <div class="canonical-player-grid">
-            {% for player in canonical_review.players %}
-            <article class="canonical-player {% if not player.matches_legacy %}has-difference{% endif %}">
-                {% if player.photo_url %}
-                <img src="{{ player.photo_url }}" alt="Foto canónica del jugador {{ player.slot }}">
-                {% else %}
-                <div class="canonical-photo-empty">Sin preview</div>
-                {% endif %}
-                <div>
-                    <strong>J{{ player.slot }} · {{ player.name or 'Nombre vacío' }}</strong>
-                    <small>Nacimiento: {{ player.birth_date or 'Sin dato' }}</small>
-                    <small>Confianza: {{ player.confidence_pct }} · Página {{ player.source_page }}</small>
-                    {% if player.requires_review %}
-                    <span class="canonical-difference">Requiere revisión</span>
-                    {% endif %}
-                    {% if player.difference_labels %}
-                    <span class="canonical-difference">Difiere: {{ player.difference_labels|join(', ') }}</span>
-                    {% endif %}
-                </div>
-            </article>
-            {% endfor %}
+        <div class="difference-filters" role="group" aria-label="Filtrar comparación canónica">
+            <button type="button" class="filter-button" data-difference-filter="all" aria-pressed="true">Todos</button>
+            <button type="button" class="filter-button" data-difference-filter="differences" aria-pressed="false">Sólo diferencias</button>
+            <button type="button" class="filter-button" data-difference-filter="review" aria-pressed="false">Requieren revisión</button>
         </div>
-    </details>
+    </div>
+
+    {% if canonical_review.team_differences %}
+    <h4 style="margin: 18px 0 0;">Datos del equipo que difieren</h4>
+    <div class="team-difference-grid" data-difference-item data-has-difference="true" data-requires-review="false">
+        {% for difference in canonical_review.team_differences %}
+        <article class="difference-row">
+            <span class="difference-label">{{ difference.label }}</span>
+            <div class="comparison-values">
+                <div class="comparison-value"><small>Borrador actual</small>{{ difference.legacy_value or 'Sin dato' }}</div>
+                <div class="comparison-value"><small>Lectura canónica</small>{{ difference.canonical_value or 'Sin dato' }}</div>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="canonical-player-grid" aria-live="polite">
+        {% for player in canonical_review.players %}
+        <article
+            id="canonical-player-{{ player.slot }}"
+            class="canonical-player {% if not player.matches_legacy %}has-difference{% endif %}"
+            data-difference-item
+            data-has-difference="{{ 'false' if player.matches_legacy else 'true' }}"
+            data-requires-review="{{ 'true' if player.requires_review else 'false' }}"
+        >
+            {% if player.photo_url %}
+            <img src="{{ player.photo_url }}" alt="Foto canónica del jugador {{ player.slot }}">
+            {% else %}
+            <div class="canonical-photo-empty">Sin preview</div>
+            {% endif %}
+            <div>
+                <strong>J{{ player.slot }} · {{ player.name or 'Nombre vacío' }}</strong>
+                <small>Confianza {{ player.confidence_pct }} · Página {{ player.source_page }}</small>
+                {% if player.differences %}
+                <div class="comparison-list" style="margin-top: 8px;">
+                    {% for difference in player.differences %}
+                    <div class="difference-row">
+                        <span class="difference-label">{{ difference.label }}</span>
+                        <div class="comparison-values">
+                            <div class="comparison-value"><small>Borrador</small>{{ difference.legacy_value or 'Sin dato' }}</div>
+                            <div class="comparison-value"><small>Canónico</small>{{ difference.canonical_value or 'Sin dato' }}</div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <small style="margin-top: 6px; color: #166534;">Coincide con el borrador actual</small>
+                {% endif %}
+                {% if player.requires_review %}<span class="canonical-difference">Requiere revisión</span>{% endif %}
+                <a href="#player-{{ player.slot }}" class="workspace-link" style="display: inline-flex; margin-top: 8px;">Modificar en borrador</a>
+            </div>
+        </article>
+        {% endfor %}
+    </div>
+    <div class="difference-empty" data-difference-empty hidden>No hay elementos para este filtro.</div>
 </section>
 {% endif %}
 
 <div class="review-layout">
-    <div class="review-card">
-        <h3 style="margin-bottom: 10px;">Documento</h3>
+    <section id="document-panel" class="review-card" aria-labelledby="document-title">
+        <h3 id="document-title" style="margin-bottom: 10px;">Documento</h3>
         {% if assets %}
         <div class="doc-stage">
             <img id="review-main-image" src="{{ assets[0].image_url }}" alt="Documento principal">
@@ -448,11 +740,13 @@
             <p style="color: #15803d;">No hay alertas duras en el draft actual.</p>
             {% endif %}
         </div>
-    </div>
+    </section>
 
-    <div class="review-card">
+    <section id="editable-draft" class="review-card" aria-labelledby="editable-draft-title">
         <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
-            <h3 style="margin-bottom: 14px;">Datos del equipo</h3>
+            <h3 id="editable-draft-title" style="margin-bottom: 6px;">Borrador editable</h3>
+            <p style="margin: 0 0 16px; color: #64748b;">Estos son los únicos valores que se guardan al capturar.</p>
+            <h4 style="margin-bottom: 14px;">Datos del equipo</h4>
             <div class="field-grid" style="margin-bottom: 16px;">
                 <div>
                     <label>Equipo</label>
@@ -516,8 +810,18 @@
             <h3 style="margin: 20px 0 14px;">Jugadores detectados ({{ players|length }})</h3>
             <input type="hidden" name="player_count" value="{{ players|length }}">
 
+            {% if players %}
+            <nav class="player-jumpbar" aria-label="Navegar jugadores" style="margin-bottom: 14px;">
+                {% for player in players %}
+                <button type="button" class="player-jump" data-player-jump="{{ player.index }}">J{{ player.index }}</button>
+                {% endfor %}
+            </nav>
+            {% else %}
+            <div class="difference-empty">No hay jugadores materializados en el borrador.</div>
+            {% endif %}
+
             {% for player in players %}
-            <div class="player-row {% if player.issues %}has-alerts{% endif %}" data-player-row data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}">
+            <div id="player-{{ player.index }}" class="player-row {% if player.issues %}has-alerts{% endif %}" data-player-row data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" tabindex="-1">
                 <h4>Jugador {{ player.index }}</h4>
                 <div class="player-card-grid">
                     <div class="player-photo-panel">
@@ -588,15 +892,33 @@
                     type="submit"
                     formaction="/api/registration-review/{{ review_session.id }}/commit"
                     class="btn"
-                    style="border: none; {% if validation.ready_to_commit %}cursor: pointer; background: #28a745;{% else %}cursor: not-allowed; background: #94a3b8;{% endif %}"
+                    style="border: none; {% if can_commit %}cursor: pointer; background: #28a745;{% else %}cursor: not-allowed; background: #94a3b8;{% endif %}"
                     data-commit-button="1"
-                    {% if not validation.ready_to_commit %}disabled title="Corrige los bloqueos antes de capturar"{% endif %}
+                    {% if not can_commit %}disabled title="{% if session_rejected %}Modifica o reprocesa la revisión antes de capturar{% else %}Corrige los bloqueos antes de capturar{% endif %}"{% endif %}
                 >Aprobar y capturar</button>
                 <a href="/api/registration-review/{{ review_session.id }}" class="btn" style="background: #0f766e;" target="_blank" rel="noopener">Ver JSON</a>
             </div>
         </form>
-    </div>
+    </section>
 </div>
+
+<dialog id="reject-review-dialog" class="review-dialog" aria-labelledby="reject-dialog-title">
+    <div class="review-dialog-body">
+        <h3 id="reject-dialog-title" style="margin-top: 0;">Rechazar revisión</h3>
+        <p style="color: #64748b;">
+            El expediente y su evidencia se conservarán. No podrá capturarse hasta que se modifique o reprocese.
+        </p>
+        <form action="/api/registration-review/{{ review_session.id }}/reject" method="post">
+            <label for="rejection-reason" style="display: block; margin-bottom: 6px; font-weight: 700;">Motivo opcional</label>
+            <textarea id="rejection-reason" name="reason" rows="4" maxlength="500" style="width: 100%;" placeholder="Ej. falta página 2 o la imagen no permite validar nombres"></textarea>
+            <div class="review-actions" style="margin-top: 16px; justify-content: flex-end;">
+                <button type="button" class="decision-button" data-close-reject>Cancelar</button>
+                <button type="submit" class="decision-button" data-action="reject">Confirmar rechazo</button>
+            </div>
+        </form>
+    </div>
+</dialog>
+</main>
 {% if assets %}
 <script>
     const reviewAssets = {{ assets|tojson }};
@@ -725,4 +1047,52 @@
     selectPage(reviewAssets[0].page_index);
 </script>
 {% endif %}
+<script>
+    const differenceFilters = document.querySelectorAll('[data-difference-filter]');
+    const differenceItems = document.querySelectorAll('[data-difference-item]');
+    const differenceEmpty = document.querySelector('[data-difference-empty]');
+
+    function applyDifferenceFilter(filter) {
+        let visibleCount = 0;
+        differenceItems.forEach((item) => {
+            const isDifference = item.dataset.hasDifference === 'true';
+            const requiresReview = item.dataset.requiresReview === 'true';
+            const visible = filter === 'all'
+                || (filter === 'differences' && isDifference)
+                || (filter === 'review' && requiresReview);
+            item.hidden = !visible;
+            if (visible) visibleCount += 1;
+        });
+        differenceFilters.forEach((button) => {
+            button.setAttribute('aria-pressed', String(button.dataset.differenceFilter === filter));
+        });
+        if (differenceEmpty) differenceEmpty.hidden = visibleCount !== 0;
+    }
+
+    differenceFilters.forEach((button) => {
+        button.addEventListener('click', () => applyDifferenceFilter(button.dataset.differenceFilter));
+    });
+
+    const rejectDialog = document.getElementById('reject-review-dialog');
+    const openRejectButton = document.querySelector('[data-open-reject]');
+    const closeRejectButton = document.querySelector('[data-close-reject]');
+    if (rejectDialog && openRejectButton) {
+        openRejectButton.addEventListener('click', () => rejectDialog.showModal());
+    }
+    if (rejectDialog && closeRejectButton) {
+        closeRejectButton.addEventListener('click', () => rejectDialog.close());
+    }
+
+    const playerJumpButtons = document.querySelectorAll('[data-player-jump]');
+    playerJumpButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const playerRow = document.getElementById(`player-${button.dataset.playerJump}`);
+            if (!playerRow) return;
+            playerJumpButtons.forEach((item) => item.removeAttribute('aria-current'));
+            button.setAttribute('aria-current', 'true');
+            playerRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            playerRow.focus({ preventScroll: true });
+        });
+    });
+</script>
 {% endblock %}
