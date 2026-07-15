@@ -82,6 +82,24 @@ Canonical sidecar refreshes and review mutations acquire the same review-session
 row lock so a refresh, edit, rejection, reprocess, or capture cannot silently
 overwrite a promotion event.
 
+## Home operations surface
+
+PR11 makes the existing internal dashboard a continuation point for the review
+queue. It is read-only and uses the same authorized roles as the review inbox:
+
+- Home counts every non-committed review and separates sessions that are ready
+  to capture, blocked, processing, or rejected;
+- `RegistrationReviewSession.status = "ready"` is not treated as capture-ready
+  by itself; the ready count requires `validation.ready_to_commit = true` and
+  zero blocking issues;
+- the recent queue is ordered by the latest session or draft update and shows a
+  bounded set of direct links back to the existing review workspace;
+- the Home query projects only identifiers, status, counts, timestamps,
+  tournament slug, and the optional intake folio. It does not load or render
+  player values, field corrections, canonical sidecars, or photo paths;
+- the surface introduces no new write endpoint, feature flag, database
+  migration, or authority to capture a team.
+
 ## Rollback
 
 Set `CTT_SHADOW_REVIEW_HANDOFF=off` to stop creating comparison bundles, or set

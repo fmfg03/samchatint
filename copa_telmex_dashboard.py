@@ -115,6 +115,9 @@ from devnous.tournaments.instances.copa_telmex.ctt_canonical_promotion import (
     CanonicalPromotionError,
     promote_canonical_fields,
 )
+from devnous.tournaments.instances.copa_telmex.ctt_home_operations import (
+    build_home_operations_snapshot,
+)
 from devnous.tournaments.instances.copa_telmex.ctt_review_ui import (
     build_canonical_review_view,
 )
@@ -3052,14 +3055,52 @@ async def home(request: Request):
 
             # Get recent registrations
             registrations = await copa_db.get_registrations_needing_review()
+            review_result = await session.execute(
+                select(
+                    RegistrationReviewSession.id.label("id"),
+                    RegistrationReviewSession.status.label("status"),
+                    RegistrationReviewSession.tournament_slug.label(
+                        "tournament_slug"
+                    ),
+                    RegistrationReviewSession.started_at.label("started_at"),
+                    RegistrationReviewSession.updated_at.label("updated_at"),
+                    RegistrationReviewDraft.updated_at.label("draft_updated_at"),
+                    RegistrationReviewDraft.validation["ready_to_commit"]
+                    .as_boolean()
+                    .label("ready_to_commit"),
+                    RegistrationReviewDraft.validation["blocking_issue_count"]
+                    .as_integer()
+                    .label("blocking_issue_count"),
+                    RegistrationReviewDraft.validation["issue_count"]
+                    .as_integer()
+                    .label("issue_count"),
+                    RegistrationReviewDraft.validation["player_count"]
+                    .as_integer()
+                    .label("player_count"),
+                    RegistrationReviewDraft.validation["audit"]["telegram_intake"][
+                        "intake_folio"
+                    ]
+                    .as_string()
+                    .label("intake_folio"),
+                )
+                .outerjoin(
+                    RegistrationReviewDraft,
+                    RegistrationReviewDraft.session_id
+                    == RegistrationReviewSession.id,
+                )
+                .where(RegistrationReviewSession.status != "committed")
+            )
+            review_records = review_result.mappings().all()
+            review_operations = build_home_operations_snapshot(review_records)
 
             return templates.TemplateResponse(
                 "home.html",
                 {
                     "request": request,
                     "stats": stats,
-                    "pending_reviews": len(registrations)
-                }
+                    "pending_reviews": len(registrations),
+                    "review_operations": review_operations,
+                },
             )
     except Exception:
         _raise_dashboard_internal_error("Error loading home page")
