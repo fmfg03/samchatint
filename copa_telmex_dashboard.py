@@ -3668,6 +3668,7 @@ async def adopt_canonical_review_fields(
             )
         except CanonicalPromotionError as exc:
             conflict_codes = {
+                "canonical_document_hash_missing",
                 "canonical_evidence_missing",
                 "canonical_hash_missing",
                 "canonical_no_changes",

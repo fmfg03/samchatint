@@ -138,6 +138,23 @@ def test_rejects_stale_sidecar_hash() -> None:
     assert exc_info.value.code == "canonical_sidecar_changed"
 
 
+def test_rejects_sidecar_without_document_hash() -> None:
+    payload = _raw_payload()
+    payload["canonical_shadow"]["document_sha256"] = "   "
+
+    with pytest.raises(CanonicalPromotionError) as exc_info:
+        promote_canonical_fields(
+            payload,
+            _legacy_extraction(),
+            ["team.name"],
+            expected_hash="canonical-123",
+            actor={"user_id": "operator-id", "role": "admin"},
+            promoted_at="2026-07-15T12:00:00Z",
+        )
+
+    assert exc_info.value.code == "canonical_document_hash_missing"
+
+
 def test_uses_canonical_draft_evidence_for_existing_sidecars() -> None:
     payload = _raw_payload()
     payload["canonical_shadow"]["team"].pop("field_evidence")

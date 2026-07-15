@@ -152,6 +152,12 @@ def _validated_sidecar(
             "canonical_hash_missing",
             "El sidecar canónico no tiene una huella verificable.",
         )
+    document_sha256 = str(sidecar.get("document_sha256") or "").strip()
+    if not document_sha256:
+        raise CanonicalPromotionError(
+            "canonical_document_hash_missing",
+            "El sidecar canónico no conserva la huella del documento.",
+        )
     if not expected_hash or expected_hash != canonical_hash:
         raise CanonicalPromotionError(
             "canonical_sidecar_changed",
