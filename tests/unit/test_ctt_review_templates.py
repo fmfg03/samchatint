@@ -14,7 +14,7 @@ def _environment() -> Environment:
     )
 
 
-def _request(path: str):
+def _request(path: str) -> SimpleNamespace:
     return SimpleNamespace(url=SimpleNamespace(path=path))
 
 
@@ -41,10 +41,38 @@ def test_home_exposes_registration_review_inbox() -> None:
         request=_request("/dashboard"),
         stats=stats,
         pending_reviews=2,
+        review_operations={
+            "pending_count": 3,
+            "ready_count": 1,
+            "blocked_count": 1,
+            "processing_count": 0,
+            "rejected_count": 1,
+            "recent": [
+                {
+                    "reference": "REG-2026-ABC12345",
+                    "tournament_slug": "copa_telmex",
+                    "player_count": 16,
+                    "issue_count": 2,
+                    "updated_at_iso": "2026-07-15T19:55:00+00:00",
+                    "updated_at_display": "15/07/2026 19:55 UTC",
+                    "recency": "Hace 5 min",
+                    "state": "ready",
+                    "state_label": "Lista para capturar",
+                    "review_url": "/registration-review/session-123",
+                    "action_label": "Continuar captura",
+                }
+            ],
+        },
     )
 
     assert 'href="/registration-review"' in html
     assert "Bandeja de precaptura" in html
+    assert "Operación de precaptura" in html
+    assert "Listas para capturar" in html
+    assert "REG-2026-ABC12345" in html
+    assert "Hace 5 min" in html
+    assert 'href="/registration-review/session-123"' in html
+    assert "Continuar captura" in html
 
 
 def test_detail_renders_read_only_canonical_comparison() -> None:
