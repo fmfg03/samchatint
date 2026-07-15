@@ -16,7 +16,10 @@ from uuid import UUID
 from PIL import Image
 from sqlalchemy import select
 
-from devnous.copa_telmex.models import RegistrationReviewDraft
+from devnous.copa_telmex.models import (
+    RegistrationReviewDraft,
+    RegistrationReviewSession,
+)
 from devnous.tournaments.core.ctt_canary import CttCanaryExecution
 from devnous.tournaments.core.ctt_ocr_contract import (
     CttFieldObservation,
@@ -214,6 +217,10 @@ def build_canonical_review_payload(
 
     representative_name = _observation_value(team_fields.representative_name)
     representative_email = _observation_value(team_fields.email)
+    team_field_evidence = {
+        observation.field_name.value: observation.evidence.model_dump(mode="json")
+        for observation in team_fields.observations()
+    }
     return {
         "schema_version": CANONICAL_REVIEW_SCHEMA,
         "accepted": bool(execution.report.accepted),
@@ -229,6 +236,7 @@ def build_canonical_review_payload(
             "municipality": _observation_value(team_fields.municipality),
             "requires_review": bool(draft.team.requires_review),
             "validation_codes": [code.value for code in draft.team.validation_codes],
+            "field_evidence": team_field_evidence,
         },
         "manager": (
             {
@@ -238,6 +246,10 @@ def build_canonical_review_payload(
                     team_fields.representative_name.requires_review
                     or team_fields.email.requires_review
                 ),
+                "field_evidence": {
+                    key: team_field_evidence[key]
+                    for key in ("representative_name", "email")
+                },
             }
             if representative_name or representative_email
             else None
@@ -270,9 +282,15 @@ class CttCanonicalReviewSink:
             return False
 
         async with self.session_maker() as session:
+            session_id = UUID(str(review_session_id))
+            await session.execute(
+                select(RegistrationReviewSession.id)
+                .where(RegistrationReviewSession.id == session_id)
+                .with_for_update()
+            )
             result = await session.execute(
                 select(RegistrationReviewDraft).where(
-                    RegistrationReviewDraft.session_id == UUID(str(review_session_id))
+                    RegistrationReviewDraft.session_id == session_id
                 )
             )
             review_draft = result.scalar_one_or_none()

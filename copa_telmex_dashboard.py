@@ -111,6 +111,10 @@ from devnous.tournaments.core.ocr_integrity import (
     image_has_photo_like_content,
     slugify_filename,
 )
+from devnous.tournaments.instances.copa_telmex.ctt_canonical_promotion import (
+    CanonicalPromotionError,
+    promote_canonical_fields,
+)
 from devnous.tournaments.instances.copa_telmex.ctt_review_ui import (
     build_canonical_review_view,
 )
@@ -273,6 +277,17 @@ MAX_REVIEW_IMAGE_DIMENSION = 8000
 REVIEW_UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
 REVIEW_ALLOWED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".pdf"})
 REVIEW_ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp"})
+
+
+def _canonical_promotion_enabled() -> bool:
+    return str(os.getenv("CTT_CANONICAL_PROMOTION") or "off").strip().lower() in {
+        "1",
+        "true",
+        "on",
+        "yes",
+    }
+
+
 REVIEW_ALLOWED_MIME_TYPES = frozenset(
     {"image/jpeg", "image/png", "image/webp", "application/pdf"}
 )
@@ -3493,6 +3508,7 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "layout_regions": layout_regions,
                 "overall_confidence": f"{float(extraction.get('overall_confidence') or 0.0) * 100:.0f}%",
                 "canonical_review": canonical_review,
+                "canonical_promotion_enabled": _canonical_promotion_enabled(),
                 "tournament_options": _review_tournament_options(review_session.tournament_slug or "copa_telmex"),
             },
         )
@@ -3516,6 +3532,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
             select(RegistrationReviewSession)
             .options(selectinload(RegistrationReviewSession.draft))
             .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
@@ -3575,6 +3592,156 @@ async def edit_registration_review_session(session_id: str, request: Request):
             extra={
                 "actor_id": actor.get("user_id"),
                 "corrections": len(corrections),
+            },
+        )
+
+    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+
+
+@app.post("/api/registration-review/{session_id}/canonical-adopt")
+async def adopt_canonical_review_fields(
+    session_id: str, request: Request
+) -> RedirectResponse:
+    """Adopt explicitly selected sidecar fields into the editable draft."""
+    _ensure_registration_review_access(request)
+    if not _canonical_promotion_enabled():
+        raise _review_error(
+            "canonical_promotion_disabled",
+            "La promoción canónica está deshabilitada en este entorno.",
+            status_code=409,
+        )
+    actor = _review_session_actor(request)
+    if not actor.get("user_id"):
+        raise HTTPException(
+            status_code=401,
+            detail="Sesión inválida para aplicar campos canónicos.",
+        )
+    try:
+        session_uuid = UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
+
+    form_data = await request.form()
+    if str(form_data.get("confirm_canonical_adoption") or "").strip().lower() != "yes":
+        raise _review_error(
+            "canonical_confirmation_required",
+            "Confirma explícitamente la aplicación de los campos seleccionados.",
+        )
+    if hasattr(form_data, "getlist"):
+        selections = list(form_data.getlist("canonical_fields"))
+    else:
+        raw_selections = form_data.get("canonical_fields")
+        selections = (
+            list(raw_selections)
+            if isinstance(raw_selections, (list, tuple))
+            else [raw_selections]
+            if raw_selections
+            else []
+        )
+    expected_hash = str(form_data.get("canonical_hash") or "").strip()
+
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(
+                selectinload(RegistrationReviewSession.assets),
+                selectinload(RegistrationReviewSession.draft),
+            )
+            .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
+        )
+        review_session = result.scalar_one_or_none()
+        if not review_session or not review_session.draft:
+            raise HTTPException(status_code=404, detail="Review draft not found")
+        _ensure_review_session_mutable(review_session)
+
+        base_extraction = _get_review_extraction(review_session.draft)
+        _, promoted_at_iso = _review_event_timestamp()
+        try:
+            promotion = promote_canonical_fields(
+                review_session.draft.ocr_raw,
+                base_extraction,
+                selections,
+                expected_hash=expected_hash,
+                actor=actor,
+                promoted_at=promoted_at_iso,
+            )
+        except CanonicalPromotionError as exc:
+            conflict_codes = {
+                "canonical_evidence_missing",
+                "canonical_hash_missing",
+                "canonical_no_changes",
+                "canonical_player_missing",
+                "canonical_player_slot_missing",
+                "canonical_sidecar_changed",
+                "canonical_sidecar_unavailable",
+            }
+            raise _review_error(
+                exc.code,
+                exc.message,
+                status_code=409 if exc.code in conflict_codes else 400,
+            ) from exc
+
+        promoted_extraction = _normalize_review_extraction(promotion.extraction)
+        validation = _build_review_commit_validation(
+            promoted_extraction,
+            _build_review_validation(
+                promoted_extraction,
+                raw_payload=(
+                    review_session.draft.ocr_raw
+                    if isinstance(review_session.draft.ocr_raw, dict)
+                    else None
+                ),
+            ),
+            review_session=review_session,
+        )
+        audit = _review_audit_state(
+            review_session.draft.validation
+            if isinstance(review_session.draft.validation, dict)
+            else None
+        )
+        field_events = [copy.deepcopy(event) for event in promotion.field_events]
+        audit["field_corrections"] = list(audit.get("field_corrections") or []) + field_events
+        promotion_event = {
+            "canonical_hash": promotion.canonical_hash,
+            "document_sha256": promotion.document_sha256,
+            "promoted_by": {
+                "user_id": actor.get("user_id"),
+                "role": actor.get("role"),
+                "display_name": actor.get("display_name"),
+            },
+            "promoted_at": promoted_at_iso,
+            "field_count": len(field_events),
+            "fields": [event["path"] for event in field_events],
+            "capture_requires_separate_approval": True,
+        }
+        audit["canonical_promotion_events"] = list(
+            audit.get("canonical_promotion_events") or []
+        ) + [promotion_event]
+        audit["latest_canonical_promotion"] = promotion_event
+        audit["extraction_metadata"] = audit.get(
+            "extraction_metadata"
+        ) or _build_review_extraction_metadata(
+            review_session.draft.ocr_raw
+            if isinstance(review_session.draft.ocr_raw, dict)
+            else None,
+            promoted_extraction,
+            review_session=review_session,
+            assets=list(review_session.assets or []),
+        )
+        validation = _attach_review_audit(validation, audit)
+        review_session.draft.review_edits = promoted_extraction
+        review_session.draft.validation = validation
+        review_session.draft.needs_review = bool(validation.get("needs_review"))
+        review_session.status = "ready"
+        await session.commit()
+        _log_registration_review_event(
+            "canonical_fields_promoted",
+            session_id=review_session.id,
+            status="ready",
+            extra={
+                "actor_id": actor.get("user_id"),
+                "field_count": len(field_events),
             },
         )
 
@@ -3670,6 +3837,7 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                 selectinload(RegistrationReviewSession.draft),
             )
             .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session:
@@ -3729,6 +3897,7 @@ async def append_assets_to_registration_review_session(session_id: str, request:
                 selectinload(RegistrationReviewSession.draft),
             )
             .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:

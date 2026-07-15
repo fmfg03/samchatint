@@ -50,6 +50,7 @@ def test_home_exposes_registration_review_inbox() -> None:
 def test_detail_renders_read_only_canonical_comparison() -> None:
     template = _environment().get_template("registration_review_detail.html")
     canonical_review = {
+        "canonical_hash": "canonical-123",
         "player_count": 1,
         "legacy_player_count": 1,
         "review_count": 1,
@@ -62,6 +63,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
             "gender": "Femenil",
         },
         "team_difference_labels": ["nombre"],
+        "manager_differences": [],
         "team_differences": [
             {
                 "label": "nombre",
@@ -116,6 +118,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
         layout_regions={},
         overall_confidence="0%",
         canonical_review=canonical_review,
+        canonical_promotion_enabled=False,
         tournament_options=[],
     )
 
@@ -129,7 +132,88 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     assert "Lectura canónica" in html
     assert 'data-action="reject"' in html
     assert "/api/registration-review/session/reject" in html
-    assert 'name="canonical_' not in html
+    assert 'name="canonical_fields"' not in html
+    assert 'name="canonical_value"' not in html
+
+
+def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
+    template = _environment().get_template("registration_review_detail.html")
+    canonical_review = {
+        "canonical_hash": "canonical-123",
+        "player_count": 0,
+        "legacy_player_count": 0,
+        "review_count": 0,
+        "difference_count": 1,
+        "difference_player_count": 0,
+        "matches_legacy": False,
+        "team_differences": [
+            {
+                "field": "name",
+                "label": "nombre",
+                "legacy_value": "Equipo anterior",
+                "canonical_value": "Equipo canónico",
+            }
+        ],
+        "manager_differences": [
+            {
+                "field": "email",
+                "label": "email",
+                "legacy_value": "anterior@example.test",
+                "canonical_value": "canonico@example.test",
+            }
+        ],
+        "players": [
+            {
+                "slot": 1,
+                "name": "María López",
+                "confidence_pct": "94%",
+                "source_page": 1,
+                "matches_legacy": False,
+                "requires_review": False,
+                "roster_difference": False,
+                "missing_from_legacy": False,
+                "photo_url": None,
+                "differences": [
+                    {
+                        "field": "name",
+                        "label": "nombre",
+                        "legacy_value": "Maria Lopes",
+                        "canonical_value": "María López",
+                    }
+                ],
+            }
+        ],
+    }
+
+    html = template.render(
+        request=_request("/registration-review/session"),
+        review_session=SimpleNamespace(
+            id="session",
+            status="review",
+            provider="openai",
+            tournament_slug="copa_telmex",
+        ),
+        assets=[],
+        team={},
+        manager={},
+        players=[],
+        notes="",
+        validation={"blockers": [], "issues": [], "ready_to_commit": False},
+        layout_regions={},
+        overall_confidence="0%",
+        canonical_review=canonical_review,
+        canonical_promotion_enabled=True,
+        tournament_options=[],
+    )
+
+    assert "/api/registration-review/session/canonical-adopt" in html
+    assert 'name="canonical_hash" value="canonical-123"' in html
+    assert 'name="canonical_fields" value="team.name"' in html
+    assert 'name="canonical_fields" value="manager.email"' in html
+    assert 'name="canonical_fields" value="player.1.name"' in html
+    assert 'name="confirm_canonical_adoption" value="yes" required' in html
+    assert "Esta acción no captura el equipo" in html
+    assert 'name="canonical_value"' not in html
 
 
 def test_committed_detail_disables_decisions_and_omits_reject_dialog() -> None:

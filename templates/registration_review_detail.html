@@ -640,6 +640,8 @@
         </div>
     </div>
 
+    <form action="/api/registration-review/{{ review_session.id }}/canonical-adopt" method="post" id="canonical-adoption-form">
+    <input type="hidden" name="canonical_hash" value="{{ canonical_review.canonical_hash }}">
     {% if canonical_review.team_differences %}
     <h4 style="margin: 18px 0 0;">Datos del equipo que difieren</h4>
     <div class="team-difference-grid" data-difference-item data-has-difference="true" data-requires-review="false">
@@ -650,6 +652,33 @@
                 <div class="comparison-value"><small>Borrador actual</small>{{ difference.legacy_value or 'Sin dato' }}</div>
                 <div class="comparison-value"><small>Lectura canónica</small>{{ difference.canonical_value or 'Sin dato' }}</div>
             </div>
+            {% if canonical_promotion_enabled and not session_committed %}
+            <label class="canonical-difference" style="cursor: pointer;">
+                <input type="checkbox" name="canonical_fields" value="team.{{ difference.field }}">
+                Usar valor canónico
+            </label>
+            {% endif %}
+        </article>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if canonical_review.manager_differences %}
+    <h4 style="margin: 18px 0 0;">Datos del responsable que difieren</h4>
+    <div class="team-difference-grid" data-difference-item data-has-difference="true" data-requires-review="false">
+        {% for difference in canonical_review.manager_differences %}
+        <article class="difference-row">
+            <span class="difference-label">{{ difference.label }}</span>
+            <div class="comparison-values">
+                <div class="comparison-value"><small>Borrador actual</small>{{ difference.legacy_value or 'Sin dato' }}</div>
+                <div class="comparison-value"><small>Lectura canónica</small>{{ difference.canonical_value or 'Sin dato' }}</div>
+            </div>
+            {% if canonical_promotion_enabled and not session_committed %}
+            <label class="canonical-difference" style="cursor: pointer;">
+                <input type="checkbox" name="canonical_fields" value="manager.{{ difference.field }}">
+                Usar valor canónico
+            </label>
+            {% endif %}
         </article>
         {% endfor %}
     </div>
@@ -682,6 +711,12 @@
                             <div class="comparison-value"><small>Borrador</small>{{ difference.legacy_value or 'Sin dato' }}</div>
                             <div class="comparison-value"><small>Canónico</small>{{ difference.canonical_value or 'Sin dato' }}</div>
                         </div>
+                        {% if canonical_promotion_enabled and not session_committed and not player.missing_from_legacy %}
+                        <label class="canonical-difference" style="cursor: pointer;">
+                            <input type="checkbox" name="canonical_fields" value="player.{{ player.slot }}.{{ difference.field }}">
+                            Usar valor canónico
+                        </label>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
@@ -695,6 +730,27 @@
         {% endfor %}
     </div>
     <div class="difference-empty" data-difference-empty hidden>No hay elementos para este filtro.</div>
+    {% if canonical_promotion_enabled %}
+    <div class="review-card" style="margin-top: 18px; border-color: #99f6e4; background: #f0fdfa;">
+        <h4 style="margin: 0 0 8px;">Aplicar selección al borrador</h4>
+        <p style="margin: 0 0 12px; color: #475569;">
+            Los valores se copiarán al borrador con su valor anterior, huella y evidencia en la auditoría.
+            Esta acción no captura el equipo: después deberás usar “Aprobar y capturar”.
+        </p>
+        <label style="display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; font-weight: 700;">
+            <input type="checkbox" name="confirm_canonical_adoption" value="yes" required {% if session_committed %}disabled{% endif %}>
+            Confirmo que revisé los campos seleccionados y deseo aplicarlos al borrador.
+        </label>
+        <button type="submit" class="btn" style="border: none; background: #0f766e;" {% if session_committed %}disabled{% endif %}>
+            Aplicar campos seleccionados
+        </button>
+    </div>
+    {% else %}
+    <p style="margin: 16px 0 0; color: #64748b;">
+        La promoción canónica está deshabilitada; esta comparación permanece en modo de consulta.
+    </p>
+    {% endif %}
+    </form>
 </section>
 {% endif %}
 

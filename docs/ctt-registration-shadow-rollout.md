@@ -12,6 +12,8 @@ background observer and cannot replace the existing result in this rollout.
 - `CTT_RESPONSES_ROLLOUT=active` is rejected by this bridge and disables it.
 - `CTT_SHADOW_REVIEW_HANDOFF=on` stores an accepted canonical draft and its
   normalized photo previews beside the existing web-review draft.
+- `CTT_CANONICAL_PROMOTION=off` keeps field adoption disabled in the web
+  workspace and is the default. Set it to `on` only for an authorized cohort.
 - `OPENAI_API_KEY` is required only when shadow mode is enabled.
 - `CTT_LAYOUT_PATH` may override `config/layout_ctt_2026.json`.
 - `CTT_SHADOW_MINIMUM_PLAYERS` defaults to 16 and is bounded to 1 through 25.
@@ -51,6 +53,34 @@ sink that writes only inside the already existing temporary review session:
    cohort.
 6. Compare the quarantined canonical bundle and previews with the legacy draft.
 7. Do not enable active mode in this release.
+8. Leave `CTT_CANONICAL_PROMOTION=off` until PR10 has been deployed and the
+   authorized operator cohort has been confirmed. Enabling it requires a
+   restart of the web dashboard service, not the registration bot.
+
+## Controlled canonical promotion
+
+PR10 adds a field-level adoption step without making the sidecar authoritative:
+
+- only the existing internal review roles can use the endpoint;
+- the browser submits allowlisted field paths and the canonical hash, never the
+  canonical value itself;
+- the server reloads the accepted, non-authoritative sidecar under a row lock
+  and rejects stale hashes, non-allowlisted paths, or fields without preserved
+  evidence;
+- team, manager, and existing legacy-player fields can be selected; canonical
+  roster rows without a legacy slot require manual review and are not created
+  implicitly;
+- every applied field stores its previous value, canonical value, actor,
+  timestamp, document/canonical hashes, and available extraction evidence in
+  the existing draft audit JSON;
+- adoption only updates the editable draft and reopens a rejected session as
+  `ready`; it never writes `Team`, `Player`, or `OCRRegistration` rows;
+- the operator must explicitly confirm the field selection, then separately use
+  **Aprobar y capturar** before any main-table write can occur.
+
+Canonical sidecar refreshes and review mutations acquire the same review-session
+row lock so a refresh, edit, rejection, reprocess, or capture cannot silently
+overwrite a promotion event.
 
 ## Rollback
 
@@ -58,6 +88,11 @@ Set `CTT_SHADOW_REVIEW_HANDOFF=off` to stop creating comparison bundles, or set
 `CTT_RESPONSES_ROLLOUT=off` to disable the observer entirely, then restart
 `samchat-registration-bot.service`. Existing review drafts and all user-facing
 behavior remain unchanged because shadow results are never promoted.
+
+Set `CTT_CANONICAL_PROMOTION=off` and restart the web dashboard service to remove
+all adoption controls and make the endpoint inert. Previously adopted values
+remain explicit editable-draft changes with their audit events; rollback never
+deletes evidence or rewrites a captured team.
 
 ## Review UI roadmap
 
@@ -74,9 +109,11 @@ be inspected before it is ever allowed to replace the legacy result:
    behavior. Rejection is stored in the existing draft audit JSON and blocks
    commit until the operator modifies or reprocesses the draft. It does not
    delete evidence or promote canonical values.
-3. **PR10 - controlled canonical promotion:** let an authorized operator choose
-   canonical values field by field, preserve the legacy value and evidence in
-   the audit trail, and require an explicit approval before capture.
+3. **PR10 - controlled canonical promotion:** an authorized operator can choose
+   allowlisted canonical values field by field. The server preserves the legacy
+   value and extraction evidence in the audit trail, rejects stale sidecars,
+   and requires a separate explicit approval before capture. Structural roster
+   changes remain manual.
 4. **PR11 - Home operations surface:** add review counts, blocked/ready status,
    recency, and direct continuation links to the main dashboard so operators do
    not need a Telegram URL or a remembered route.

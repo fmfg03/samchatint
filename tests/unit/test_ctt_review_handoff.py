@@ -171,6 +171,7 @@ def test_review_payload_keeps_canonical_result_non_authoritative() -> None:
     assert payload["schema_version"] == "ctt.canonical_review.v1"
     assert payload["authoritative"] is False
     assert payload["team"]["name"] == "Deportivo Estrellas"
+    assert payload["team"]["field_evidence"]["team_name"]["page"] == 1
     assert [player["slot"] for player in payload["players"]] == [1, 2]
     assert payload["players"][0]["name"] == "María Apellido 1"
     assert payload["players"][0]["photo_preview"]["relative_path"].endswith(
@@ -190,6 +191,7 @@ class _FakeSession:
     def __init__(self, review_draft):
         self.review_draft = review_draft
         self.committed = False
+        self.queries = []
 
     async def __aenter__(self):
         return self
@@ -197,7 +199,8 @@ class _FakeSession:
     async def __aexit__(self, *_args):
         return None
 
-    async def execute(self, _query):
+    async def execute(self, query):
+        self.queries.append(query)
         return _ScalarResult(self.review_draft)
 
     async def commit(self):
@@ -255,6 +258,7 @@ async def test_sink_persists_sidecar_without_replacing_legacy_draft(
 
     assert persisted is True
     assert session.committed is True
+    assert session.queries[0]._for_update_arg is not None
     assert review_draft.extraction == {"team": {"name": "Legacy Team"}}
     assert review_draft.review_edits == {"team": {"name": "Operator Edit"}}
     assert review_draft.ocr_raw["provider"] == "legacy"

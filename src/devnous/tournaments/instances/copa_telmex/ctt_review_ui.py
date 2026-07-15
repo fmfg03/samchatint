@@ -128,6 +128,18 @@ def build_canonical_review_view(
         legacy_team,
         ("name", "category", "gender", "league", "municipality", "state"),
     )
+    canonical_manager = _mapping(sidecar.get("manager"))
+    legacy_manager = _mapping(legacy.get("manager"))
+    manager_difference_fields = _different_fields(
+        canonical_manager,
+        legacy_manager,
+        ("name", "email"),
+    )
+    manager_differences = _difference_rows(
+        canonical_manager,
+        legacy_manager,
+        ("name", "email"),
+    )
 
     legacy_players = legacy.get("players")
     if not isinstance(legacy_players, list):
@@ -211,7 +223,6 @@ def build_canonical_review_view(
         )
 
     report = _mapping(sidecar.get("report"))
-    manager = _mapping(sidecar.get("manager"))
     return {
         "schema_version": CANONICAL_REVIEW_SCHEMA,
         "authoritative": False,
@@ -239,9 +250,16 @@ def build_canonical_review_view(
             )
         },
         "manager": {
-            "name": _text(manager.get("name")),
-            "email": _text(manager.get("email")),
-            "requires_review": bool(manager.get("requires_review")),
+            "name": _text(canonical_manager.get("name")),
+            "email": _text(canonical_manager.get("email")),
+            "requires_review": bool(canonical_manager.get("requires_review")),
+            "legacy": {
+                "name": _text(legacy_manager.get("name")),
+                "email": _text(legacy_manager.get("email")),
+            },
+            "differences": manager_differences,
+            "difference_fields": manager_difference_fields,
+            "matches_legacy": not manager_difference_fields,
         },
         "players": players,
         "player_count": len(canonical_slots),
@@ -254,12 +272,22 @@ def build_canonical_review_view(
         "team_difference_labels": [
             FIELD_LABELS.get(field, field) for field in team_difference_fields
         ],
-        "difference_count": len(team_difference_fields) + player_difference_count,
+        "manager_differences": manager_differences,
+        "manager_difference_fields": manager_difference_fields,
+        "difference_count": (
+            len(team_difference_fields)
+            + len(manager_difference_fields)
+            + player_difference_count
+        ),
         "difference_player_count": sum(
             1 for player in players if not player["matches_legacy"]
         ),
         "matching_player_count": sum(
             1 for player in players if player["matches_legacy"]
         ),
-        "matches_legacy": not team_difference_fields and not player_difference_count,
+        "matches_legacy": (
+            not team_difference_fields
+            and not manager_difference_fields
+            and not player_difference_count
+        ),
     }
