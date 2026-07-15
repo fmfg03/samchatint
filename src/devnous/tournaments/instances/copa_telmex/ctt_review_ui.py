@@ -65,6 +65,22 @@ def _different_fields(
     ]
 
 
+def _difference_rows(
+    canonical: Mapping[str, Any],
+    legacy: Mapping[str, Any],
+    fields: Sequence[str],
+) -> list[Dict[str, str]]:
+    return [
+        {
+            "field": field,
+            "label": FIELD_LABELS.get(field, field),
+            "legacy_value": _text(legacy.get(field)),
+            "canonical_value": _text(canonical.get(field)),
+        }
+        for field in _different_fields(canonical, legacy, fields)
+    ]
+
+
 def _private_preview_url(preview: Mapping[str, Any]) -> Optional[str]:
     relative_path = _text(preview.get("relative_path")).replace("\\", "/")
     if not relative_path:
@@ -107,28 +123,52 @@ def build_canonical_review_view(
         legacy_team,
         ("name", "category", "gender", "league", "municipality", "state"),
     )
+    team_differences = _difference_rows(
+        canonical_team,
+        legacy_team,
+        ("name", "category", "gender", "league", "municipality", "state"),
+    )
 
     legacy_players = legacy.get("players")
     if not isinstance(legacy_players, list):
         legacy_players = []
 
-    players: list[Dict[str, Any]] = []
-    player_difference_count = 0
     raw_players = sidecar.get("players")
     if not isinstance(raw_players, list):
         raw_players = []
-    for raw_player in raw_players:
+
+    canonical_players_by_slot: Dict[int, Mapping[str, Any]] = {}
+    for index, raw_player in enumerate(raw_players, 1):
         player = _mapping(raw_player)
-        slot = _positive_int(player.get("slot"), len(players) + 1)
+        slot = _positive_int(player.get("slot"), index)
+        canonical_players_by_slot.setdefault(slot, player)
+
+    canonical_slots = set(canonical_players_by_slot)
+    legacy_slots = set(range(1, len(legacy_players) + 1))
+    roster_difference_slots = canonical_slots.symmetric_difference(legacy_slots)
+    comparison_slots = sorted(canonical_slots | legacy_slots)
+
+    players: list[Dict[str, Any]] = []
+    player_difference_count = 0
+    for slot in comparison_slots:
+        player = canonical_players_by_slot.get(slot, {})
         legacy_player = (
             _mapping(legacy_players[slot - 1]) if slot - 1 < len(legacy_players) else {}
         )
+        missing_from_canonical = slot not in canonical_slots
+        missing_from_legacy = slot not in legacy_slots
+        roster_difference = slot in roster_difference_slots
         difference_fields = _different_fields(
             player,
             legacy_player,
             ("name", "birth_date", "curp"),
         )
-        player_difference_count += len(difference_fields)
+        differences = _difference_rows(
+            player,
+            legacy_player,
+            ("name", "birth_date", "curp"),
+        )
+        player_difference_count += len(difference_fields) + int(roster_difference)
         validation_codes = player.get("validation_codes")
         if not isinstance(validation_codes, list):
             validation_codes = []
@@ -141,18 +181,32 @@ def build_canonical_review_view(
                 "birth_date": _text(player.get("birth_date")),
                 "curp": _text(player.get("curp")),
                 "confidence_pct": _confidence_pct(player.get("confidence")),
-                "requires_review": bool(player.get("requires_review")),
+                "requires_review": bool(player.get("requires_review"))
+                or roster_difference,
                 "validation_codes": [
                     _text(code) for code in validation_codes if _text(code)
                 ],
                 "photo_url": _private_preview_url(
                     _mapping(player.get("photo_preview"))
                 ),
+                "legacy": {
+                    key: _text(legacy_player.get(key))
+                    for key in ("name", "birth_date", "curp")
+                },
+                "differences": differences,
                 "difference_fields": difference_fields,
                 "difference_labels": [
                     FIELD_LABELS.get(field, field) for field in difference_fields
                 ],
-                "matches_legacy": not difference_fields,
+                "roster_difference": roster_difference,
+                "missing_from_canonical": missing_from_canonical,
+                "missing_from_legacy": missing_from_legacy,
+                "roster_difference_label": (
+                    "Ausente en lectura canónica"
+                    if missing_from_canonical
+                    else "Ausente en borrador actual" if missing_from_legacy else ""
+                ),
+                "matches_legacy": not difference_fields and not roster_difference,
             }
         )
 
@@ -173,18 +227,39 @@ def build_canonical_review_view(
                 "state",
             )
         },
+        "legacy_team": {
+            key: _text(legacy_team.get(key))
+            for key in (
+                "name",
+                "category",
+                "gender",
+                "league",
+                "municipality",
+                "state",
+            )
+        },
         "manager": {
             "name": _text(manager.get("name")),
             "email": _text(manager.get("email")),
             "requires_review": bool(manager.get("requires_review")),
         },
         "players": players,
-        "player_count": len(players),
+        "player_count": len(canonical_slots),
+        "legacy_player_count": len(legacy_players),
+        "comparison_player_count": len(players),
+        "roster_difference_count": len(roster_difference_slots),
         "review_count": _nonnegative_int(report.get("review_count")),
+        "team_differences": team_differences,
         "team_difference_fields": team_difference_fields,
         "team_difference_labels": [
             FIELD_LABELS.get(field, field) for field in team_difference_fields
         ],
         "difference_count": len(team_difference_fields) + player_difference_count,
+        "difference_player_count": sum(
+            1 for player in players if not player["matches_legacy"]
+        ),
+        "matching_player_count": sum(
+            1 for player in players if player["matches_legacy"]
+        ),
         "matches_legacy": not team_difference_fields and not player_difference_count,
     }

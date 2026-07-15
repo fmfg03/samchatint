@@ -71,7 +71,9 @@ be inspected before it is ever allowed to replace the legacy result:
 2. **PR9 - interface revamp:** replace the current long form with a responsive,
    difference-first workspace; add clear approve, reject, and modify actions;
    improve page/player navigation, accessibility, empty states, and mobile
-   behavior.
+   behavior. Rejection is stored in the existing draft audit JSON and blocks
+   commit until the operator modifies or reprocesses the draft. It does not
+   delete evidence or promote canonical values.
 3. **PR10 - controlled canonical promotion:** let an authorized operator choose
    canonical values field by field, preserve the legacy value and evidence in
    the audit trail, and require an explicit approval before capture.
@@ -81,3 +83,8 @@ be inspected before it is ever allowed to replace the legacy result:
 
 Each release keeps `/photos/review_sessions/...` behind the existing review
 access check and must not expose canonical PII in logs or public static paths.
+
+PR9 keeps the same authority boundary as PR8: canonical fields are rendered as
+read-only comparison values and are never submitted by either decision form.
+Only the legacy editable draft reaches the existing commit endpoint. Field-level
+canonical adoption remains exclusive to PR10.

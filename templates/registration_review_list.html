@@ -3,70 +3,251 @@
 {% block title %}Precaptura OCR - Copa Telmex{% endblock %}
 
 {% block content %}
-<div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 24px; flex-wrap: wrap;">
+<style>
+    .inbox-hero {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 20px;
+        align-items: end;
+        margin-bottom: 20px;
+        padding: 24px;
+        border: 1px solid #dbe4ee;
+        border-radius: 20px;
+        background: radial-gradient(circle at top right, #dbeafe, #f8fafc 48%, #fff 75%);
+    }
+    .inbox-toolbar {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) auto;
+        gap: 12px;
+        margin-bottom: 18px;
+    }
+    .inbox-search {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid #cbd5e1;
+        border-radius: 12px;
+        padding: 9px 12px;
+    }
+    .inbox-filters {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .inbox-filter {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 8px 11px;
+        background: #fff;
+        color: #334155;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+    }
+    .inbox-filter[aria-pressed="true"] {
+        color: #fff;
+        border-color: #1d4ed8;
+        background: #1d4ed8;
+    }
+    .review-inbox-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 14px;
+    }
+    .review-inbox-card {
+        display: grid;
+        grid-template-columns: 84px minmax(0, 1fr);
+        gap: 14px;
+        padding: 14px;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+    }
+    .review-inbox-card[hidden] {
+        display: none;
+    }
+    .review-cover,
+    .review-cover-empty {
+        width: 84px;
+        height: 104px;
+        border: 1px solid #dbe2ea;
+        border-radius: 12px;
+        background: #f1f5f9;
+    }
+    .review-cover {
+        object-fit: cover;
+    }
+    .review-cover-empty {
+        display: grid;
+        place-items: center;
+        color: #64748b;
+        font-size: 0.78rem;
+        text-align: center;
+    }
+    .review-card-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        align-items: flex-start;
+    }
+    .review-status {
+        display: inline-flex;
+        padding: 4px 7px;
+        border: 1px solid #cbd5e1;
+        border-radius: 999px;
+        background: #f8fafc;
+        color: #475569;
+        font-size: 0.72rem;
+        font-weight: 800;
+        text-transform: uppercase;
+    }
+    .review-status[data-status="committed"] {
+        color: #166534;
+        border-color: #86efac;
+        background: #f0fdf4;
+    }
+    .review-status[data-status="rejected"] {
+        color: #991b1b;
+        border-color: #fca5a5;
+        background: #fef2f2;
+    }
+    .review-card-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 7px;
+        margin: 11px 0;
+    }
+    .review-card-metric {
+        padding: 7px;
+        border-radius: 9px;
+        background: #f8fafc;
+        color: #475569;
+        font-size: 0.8rem;
+    }
+    .review-card-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .inbox-empty {
+        padding: 36px 20px;
+        border: 1px dashed #cbd5e1;
+        border-radius: 16px;
+        background: #f8fafc;
+        color: #64748b;
+        text-align: center;
+    }
+    @media (max-width: 720px) {
+        .inbox-hero,
+        .inbox-toolbar {
+            grid-template-columns: 1fr;
+        }
+        .inbox-hero {
+            padding: 17px;
+        }
+        .review-inbox-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<section class="inbox-hero">
     <div>
-        <h2 style="margin-bottom: 8px;">🧾 Precaptura OCR</h2>
-        <p style="color: #6c757d;">Sesiones temporales para revisar cédulas antes de capturar a la base final.</p>
+        <p style="margin: 0 0 7px; color: #1d4ed8; font-size: 0.78rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;">Mesa de calidad</p>
+        <h2 style="margin: 0 0 8px;">Bandeja de precaptura</h2>
+        <p style="margin: 0; color: #64748b;">Prioriza diferencias, bloqueos y expedientes pendientes antes de capturar.</p>
     </div>
     <a href="/registration-review/new" class="btn">Nueva revisión</a>
-</div>
+</section>
 
 {% if sessions %}
-<table>
-    <thead>
-        <tr>
-            <th>Sesión</th>
-            <th>Estado</th>
-            <th>Proveedor</th>
-            <th>Torneo</th>
-            <th>Jugadores</th>
-            <th>Problemas</th>
-            <th>Inicio</th>
-            <th>Acción</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for item in sessions %}
-        <tr>
-            <td>
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    {% if item.cover_url %}
-                    <img src="{{ item.cover_url }}" alt="preview" style="width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid #ddd;">
-                    {% endif %}
-                    <div>
-                        <strong>{{ item.id[:8] }}</strong><br>
-                        <small>{{ item.source }}</small>
-                    </div>
-                </div>
-            </td>
-            <td>
-                {% if item.status == 'committed' %}
-                <span class="badge badge-success">Capturado</span>
-                {% elif item.needs_review %}
-                <span class="badge badge-warning">{{ item.status }}</span>
-                {% else %}
-                <span class="badge badge-success">{{ item.status }}</span>
-                {% endif %}
-            </td>
-            <td>{{ item.provider }}</td>
-            <td>{{ item.tournament_slug or 'Sin definir' }}</td>
-            <td>{{ item.player_count }}</td>
-            <td>{{ item.issue_count }}</td>
-            <td>{{ item.started_at }}</td>
-            <td>
-                <a href="/registration-review/{{ item.id }}" class="btn">Abrir</a>
-                {% if item.committed_team_id %}
-                <a href="/team/{{ item.committed_team_id }}" class="btn" style="background: #28a745;">Equipo</a>
-                {% endif %}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-{% else %}
-<div style="padding: 32px; border: 1px dashed #cbd5e1; border-radius: 12px; text-align: center; color: #64748b;">
-    <p style="margin-bottom: 12px;">Todavía no hay sesiones de precaptura.</p>
-    <a href="/registration-review/new" class="btn">Subir cédula</a>
+<div class="inbox-toolbar">
+    <label>
+        <span style="display: block; margin-bottom: 5px; font-weight: 700;">Buscar expediente</span>
+        <input type="search" class="inbox-search" data-inbox-search placeholder="ID, torneo, proveedor o estado">
+    </label>
+    <div class="inbox-filters" role="group" aria-label="Filtrar bandeja">
+        <button type="button" class="inbox-filter" data-inbox-filter="all" aria-pressed="true">Todos</button>
+        <button type="button" class="inbox-filter" data-inbox-filter="pending" aria-pressed="false">Pendientes</button>
+        <button type="button" class="inbox-filter" data-inbox-filter="rejected" aria-pressed="false">Rechazados</button>
+        <button type="button" class="inbox-filter" data-inbox-filter="committed" aria-pressed="false">Capturados</button>
+    </div>
 </div>
+
+<section class="review-inbox-grid" aria-live="polite">
+    {% for item in sessions %}
+    <article
+        class="review-inbox-card"
+        data-inbox-item
+        data-status="{{ item.status }}"
+        data-needs-review="{{ 'true' if item.needs_review else 'false' }}"
+        data-search-text="{{ item.id }} {{ item.source }} {{ item.provider }} {{ item.tournament_slug or '' }} {{ item.status }}"
+    >
+        <div>
+            {% if item.cover_url %}
+            <img class="review-cover" src="{{ item.cover_url }}" alt="Primera página del expediente {{ item.id[:8] }}">
+            {% else %}
+            <div class="review-cover-empty">Sin preview</div>
+            {% endif %}
+        </div>
+        <div>
+            <div class="review-card-title">
+                <div><strong>{{ item.id[:8] }}</strong><br><small style="color: #64748b;">{{ item.source }} · {{ item.started_at }}</small></div>
+                <span class="review-status" data-status="{{ item.status }}">{% if item.status == 'committed' %}Capturado{% elif item.status == 'rejected' %}Rechazado{% else %}{{ item.status }}{% endif %}</span>
+            </div>
+            <p style="margin: 9px 0 0; color: #475569;"><strong>{{ item.tournament_slug or 'Torneo sin definir' }}</strong> · {{ item.provider }}</p>
+            <div class="review-card-metrics">
+                <span class="review-card-metric"><strong>{{ item.player_count }}</strong> jugadores</span>
+                <span class="review-card-metric"><strong>{{ item.issue_count }}</strong> problemas</span>
+            </div>
+            <div class="review-card-actions">
+                <a href="/registration-review/{{ item.id }}" class="btn">Continuar revisión</a>
+                {% if item.committed_team_id %}<a href="/team/{{ item.committed_team_id }}" class="btn" style="background: #15803d;">Ver equipo</a>{% endif %}
+            </div>
+        </div>
+    </article>
+    {% endfor %}
+</section>
+<div class="inbox-empty" data-inbox-empty hidden>No hay expedientes que coincidan con este filtro.</div>
+{% else %}
+<div class="inbox-empty">
+    <h3 style="margin-top: 0; color: #334155;">La bandeja está vacía</h3>
+    <p>Todavía no hay cédulas en precaptura.</p>
+    <a href="/registration-review/new" class="btn">Subir primera cédula</a>
+</div>
+{% endif %}
+
+{% if sessions %}
+<script>
+    const inboxItems = document.querySelectorAll('[data-inbox-item]');
+    const inboxFilters = document.querySelectorAll('[data-inbox-filter]');
+    const inboxSearch = document.querySelector('[data-inbox-search]');
+    const inboxEmpty = document.querySelector('[data-inbox-empty]');
+    let activeInboxFilter = 'all';
+
+    function refreshInbox() {
+        const query = (inboxSearch?.value || '').trim().toLocaleLowerCase('es');
+        let visibleCount = 0;
+        inboxItems.forEach((item) => {
+            const status = item.dataset.status;
+            const matchesFilter = activeInboxFilter === 'all'
+                || activeInboxFilter === status
+                || (activeInboxFilter === 'pending' && status !== 'committed' && status !== 'rejected');
+            const matchesSearch = !query || (item.dataset.searchText || '').toLocaleLowerCase('es').includes(query);
+            item.hidden = !(matchesFilter && matchesSearch);
+            if (!item.hidden) visibleCount += 1;
+        });
+        if (inboxEmpty) inboxEmpty.hidden = visibleCount !== 0;
+    }
+
+    inboxFilters.forEach((button) => {
+        button.addEventListener('click', () => {
+            activeInboxFilter = button.dataset.inboxFilter;
+            inboxFilters.forEach((item) => item.setAttribute('aria-pressed', String(item === button)));
+            refreshInbox();
+        });
+    });
+    inboxSearch?.addEventListener('input', refreshInbox);
+</script>
 {% endif %}
 {% endblock %}
