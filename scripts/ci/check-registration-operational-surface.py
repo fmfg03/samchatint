@@ -40,6 +40,7 @@ SESSION_MUTATION = re.compile(r"\bsession\.(?:add|add_all|delete)\s*\(")
 REGS08_SOURCE = Path("src/devnous/tournaments/core/operations_module.py")
 REGS09_SOURCE = REGS08_SOURCE
 REGS10_SOURCE = REGS08_SOURCE
+REGS11_SOURCE = REGS08_SOURCE
 
 
 def is_operational_path(relative_path: str) -> bool:
@@ -235,6 +236,69 @@ def regs10_retirement_reasons(root: Path) -> list[str]:
     return sorted(set(reasons))
 
 
+def regs11_retirement_reasons(root: Path) -> list[str]:
+    """Verify conversational manual-player creation is retired fail-closed."""
+    path = root / REGS11_SOURCE
+    if not path.is_file():
+        return ["REGS11_CANONICAL_SOURCE_MISSING"]
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ["REGS11_CANONICAL_SOURCE_UNREADABLE"]
+
+    operations = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "OperationsModule"
+        ),
+        None,
+    )
+    if operations is None:
+        return ["REGS11_OPERATIONS_MODULE_MISSING"]
+
+    methods = {
+        node.name: node
+        for node in operations.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    all_calls = _method_calls(operations)
+    reasons: list[str] = []
+    retired = {
+        "_create_manual_player",
+        "_continue_player_onboarding",
+        "_parse_manual_player_payload",
+    }
+    if retired.intersection(methods) or retired.intersection(all_calls):
+        reasons.append("REGS11_MANUAL_PLAYER_WRITER_PRESENT")
+    if "pending_player_onboarding" in source:
+        reasons.append("REGS11_PENDING_ONBOARDING_STATE_PRESENT")
+
+    handler = methods.get("_handle_conversational_actions")
+    handler_source = ast.get_source_segment(source, handler) if handler else None
+    required_markers = (
+        "dar de alta",
+        "agregar jugador",
+        "registrar jugador",
+        "REGS11_MANUAL_PLAYER_CREATION_RETIRED",
+    )
+    if handler is None:
+        reasons.append("REGS11_CONVERSATIONAL_INTERCEPTOR_MISSING")
+    elif any(marker not in (handler_source or "") for marker in required_markers):
+        reasons.append("REGS11_MANUAL_PLAYER_FAIL_CLOSED_MISSING")
+    elif {"create_player", "append_players_to_team_v2"}.intersection(
+        _method_calls(handler)
+    ):
+        reasons.append("REGS11_INTERCEPTOR_MUTATION_PRESENT")
+
+    handle = methods.get("handle")
+    if handle is None or "_handle_conversational_actions" not in _method_calls(handle):
+        reasons.append("REGS11_INTERCEPTOR_NOT_ROUTED")
+
+    return sorted(set(reasons))
+
+
 def _git_paths(root: Path) -> Iterable[str]:
     result = subprocess.run(
         [
@@ -290,6 +354,12 @@ def assess(root: Path) -> dict[str, object]:
     if regs10_reasons:
         violations.append(
             {"path": str(REGS10_SOURCE), "reason_codes": regs10_reasons}
+        )
+
+    regs11_reasons = regs11_retirement_reasons(root)
+    if regs11_reasons:
+        violations.append(
+            {"path": str(REGS11_SOURCE), "reason_codes": regs11_reasons}
         )
 
     return {

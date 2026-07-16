@@ -95,6 +95,7 @@ PLAYER_FIELDS_WITH_SAFE_SUPABASE_SYNC = {
 REGS08_GOVERNED_REVIEW_UNAVAILABLE = "REGS08_GOVERNED_REVIEW_UNAVAILABLE"
 REGS09_REVIEW_SESSION_REQUIRED = "REGS09_REVIEW_SESSION_REQUIRED"
 REGS10_LEGACY_SINGLE_PLAYER_RETIRED = "REGS10_LEGACY_SINGLE_PLAYER_RETIRED"
+REGS11_MANUAL_PLAYER_CREATION_RETIRED = "REGS11_MANUAL_PLAYER_CREATION_RETIRED"
 
 
 class OperationsModule:
@@ -141,7 +142,6 @@ class OperationsModule:
         self.validator = None
         self.pending_saves: Dict[int, Dict[str, Any]] = {}
         self.pending_edits: Dict[int, Dict[str, Any]] = {}
-        self.pending_player_onboarding: Dict[int, Dict[str, Any]] = {}
         self.pending_back_photos: Dict[int, Dict[str, Any]] = {}  # chat_id -> {team_id, provider}
         self.photos_base_dir = Path(os.getenv("PHOTOS_DIR", "/root/samchat/photos"))
         self.photo_duplicate_distance = max(
@@ -2331,21 +2331,15 @@ class OperationsModule:
         # Remove trailing punctuation/questions.
         return hint.rstrip("?.!,;: ")
 
-    async def _handle_conversational_actions(self, chat_id: int, user_id: int, text: str) -> Optional[str]:
-        """
-        Handle natural-language write actions.
-        Currently supports: add/register a player manually to an existing team.
-        """
-        t = (text or "").strip()
-        tl = t.lower()
-        if not t:
-            return None
-
-        # Continue an in-progress onboarding flow.
-        if chat_id in self.pending_player_onboarding:
-            return await self._continue_player_onboarding(chat_id=chat_id, user_id=user_id, text=t)
-
-        add_markers = [
+    async def _handle_conversational_actions(
+        self,
+        chat_id: int,
+        user_id: int,
+        text: str,
+    ) -> Optional[str]:
+        """Deny the retired conversational manual-player creation surface."""
+        lowered = (text or "").strip().lower()
+        manual_player_markers = (
             "dar de alta",
             "agregar jugador",
             "añadir jugador",
@@ -2354,260 +2348,14 @@ class OperationsModule:
             "registrar jugador",
             "no viene en la cedula",
             "no viene en la cédula",
-        ]
-        if not any(m in tl for m in add_markers):
-            return None
-
-        if not self.db:
-            return "❌ No hay conexion a BD para dar de alta jugadores."
-
-        try:
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-                teams = await copa_db.get_teams_by_chat(chat_id)
-                if not teams:
-                    return "📭 No encuentro equipos registrados en este chat."
-
-                team_hint = self._extract_team_hint_from_text(t)
-                team = None
-                if team_hint:
-                    for tm in teams:
-                        if team_hint in (tm.name or "").lower():
-                            team = tm
-                            break
-                if not team:
-                    team = teams[0]
-
-                parsed = self._parse_manual_player_payload(t)
-                full_name = parsed.get("full_name")
-                birth_date = self._parse_birth_date(parsed.get("birth_date") or "") if parsed.get("birth_date") else None
-
-                if not full_name or birth_date is None:
-                    self.pending_player_onboarding[chat_id] = {
-                        "team_id": str(team.id),
-                        "team_name": team.name,
-                    }
-                    return (
-                        f"✅ Claro. Vamos a dar de alta un jugador en *{team.name}*.\n\n"
-                        "Enviame en un solo mensaje:\n"
-                        "`Nombre completo, fecha nacimiento DD/MM/YYYY, CURP(opcional), email(opcional)`\n\n"
-                        "Ejemplo:\n"
-                        "`Brian Rodriguez, 23/03/2007, ROLB070323HDFXXX09, brian@mail.com`"
-                    )
-
-                created_msg = await self._create_manual_player(
-                    chat_id=chat_id,
-                    team_id=str(team.id),
-                    full_name=full_name,
-                    birth_date=birth_date,
-                    curp=parsed.get("curp"),
-                    email=parsed.get("email"),
-                )
-                return created_msg
-
-        except Exception as e:
-            logger.error(f"❌ conversational add-player failed: {e}", exc_info=True)
-            return self._generic_retry_error("No pude dar de alta al jugador")
-
-    async def _continue_player_onboarding(self, chat_id: int, user_id: int, text: str) -> str:
-        """Continue manual player onboarding started from conversational action."""
-        state = self.pending_player_onboarding.get(chat_id) or {}
-        team_id = state.get("team_id")
-        team_name = state.get("team_name") or "equipo"
-        if not team_id:
-            self.pending_player_onboarding.pop(chat_id, None)
-            return "⚠️ Se perdio el contexto del equipo. Escribe de nuevo la solicitud."
-
-        parsed = self._parse_manual_player_payload(text)
-        full_name = parsed.get("full_name")
-        birth_date = self._parse_birth_date(parsed.get("birth_date") or "") if parsed.get("birth_date") else None
-        if not full_name or birth_date is None:
-            return (
-                f"⚠️ Aun me falta informacion para *{team_name}*.\n"
-                "Formato esperado: `Nombre completo, DD/MM/YYYY, CURP(opcional), email(opcional)`"
-            )
-
-        self.pending_player_onboarding.pop(chat_id, None)
-        return await self._create_manual_player(
-            chat_id=chat_id,
-            team_id=str(team_id),
-            full_name=full_name,
-            birth_date=birth_date,
-            curp=parsed.get("curp"),
-            email=parsed.get("email"),
         )
-
-    def _parse_manual_player_payload(self, text: str) -> Dict[str, Optional[str]]:
-        """Best-effort parser for manual player create payload from one sentence."""
-        t = (text or "").strip()
-
-        # Split by comma first (most reliable in chat).
-        parts = [p.strip() for p in t.split(",") if p.strip()]
-
-        # Detect date token.
-        date_token = None
-        for p in parts:
-            if re.search(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", p):
-                m = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", p)
-                if m:
-                    date_token = m.group(1).replace("-", "/")
-                    break
-        if not date_token:
-            m = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", t)
-            if m:
-                date_token = m.group(1).replace("-", "/")
-
-        # Detect email + CURP anywhere.
-        email = None
-        m = re.search(r"\b([^\s,;]+@[^\s,;]+\.[^\s,;]+)\b", t, flags=re.IGNORECASE)
-        if m:
-            email = m.group(1).strip()
-
-        curp = None
-        m = re.search(r"\b([A-Za-z]{4}\d{6}[HMhm][A-Za-z]{5}[A-Za-z0-9]\d)\b", t)
-        if m:
-            curp = m.group(1).upper()
-
-        # Name heuristic: text before first detected date token/comma, cleanup intent words.
-        name_candidate = parts[0] if parts else t
-        # Remove common intent preamble.
-        name_candidate = re.sub(
-            r"(?i).*(dar de alta|agregar|añadir|anadir|inscribir|registrar)\s+(a\s+)?(un\s+)?jugador(\s+a[l]?\s+equipo)?\s*",
-            "",
-            name_candidate,
-        ).strip(" :.-")
-        name_candidate = re.sub(r"(?i)^en\s+los\s+", "", name_candidate).strip()
-
-        # If first part still does not look like a name, try explicit "se llama ..."
-        if len(name_candidate.split()) < 2:
-            m = re.search(r"(?i)se llama\s+([A-Za-zÁÉÍÓÚÑáéíóúñ ]{4,100})", t)
-            if m:
-                name_candidate = m.group(1).strip()
-
-        return {
-            "full_name": name_candidate if len(name_candidate.split()) >= 2 else None,
-            "birth_date": date_token,
-            "curp": curp,
-            "email": email,
-        }
-
-    async def _create_manual_player(
-        self,
-        chat_id: int,
-        team_id: str,
-        full_name: str,
-        birth_date: date,
-        curp: Optional[str],
-        email: Optional[str],
-    ) -> str:
-        """Create a player manually with Supabase-first write plus local mirror."""
-        from uuid import UUID
-
-        from devnous.copa_telmex.database import CopaTelmexDB
-
-        async with self.db() as session:
-            copa_db = CopaTelmexDB(session)
-            team_uuid = UUID(team_id)
-            team = await copa_db.get_team_by_id(team_uuid)
-            if not team:
-                return "❌ No encuentro el equipo destino."
-
-            players = await copa_db.get_players_by_team(team_uuid)
-            max_idx = max([p.roster_index or 0 for p in players] or [0])
-
-            parts = full_name.split()
-            first_name = parts[0]
-            last_name = " ".join(parts[1:]) if len(parts) > 1 else "X"
-            tournament_slug_hint = (getattr(team, "tournament_slug", None) or "").strip() or None
-            category_name_hint = (getattr(team, "category", None) or "").strip() or None
-            pending = self.pending_saves.get(chat_id) or {}
-            if not tournament_slug_hint:
-                tournament_slug_hint = (
-                    (pending.get("tournament_selected") or pending.get("tournament_slug") or "").strip() or None
-                )
-            if not category_name_hint:
-                category_name_hint = (
-                    (pending.get("category_selected") or pending.get("category_name") or "").strip() or None
-                )
-
-            supabase_result = None
-            supabase_error: Optional[Exception] = None
-            if tournament_slug_hint and category_name_hint:
-                try:
-                    from samchat.tournaments_v2.adapters import (
-                        append_players_to_team_v2,
-                        infer_tournament_key_from_slug,
-                    )
-
-                    supabase_result = await append_players_to_team_v2(
-                        tournament_key=infer_tournament_key_from_slug(tournament_slug_hint),
-                        tournament_slug=tournament_slug_hint,
-                        category_name=category_name_hint,
-                        team_name=team.name,
-                        players=[
-                            {
-                                "first_name": first_name,
-                                "last_name": last_name,
-                                "birth_date": birth_date.isoformat(),
-                                "curp": (curp or None),
-                                "parent_email": (email or None),
-                            }
-                        ],
-                    )
-                    if int(supabase_result.get("players_created") or 0) == 0 and int(
-                        supabase_result.get("players_skipped") or 0
-                    ) > 0:
-                        return f"⚠️ Ese jugador ya existe en *{team.name}*."
-                except Exception as exc:
-                    supabase_error = exc
-                    logger.warning("Supabase manual player create failed; using local mirror only", exc_info=True)
-
-            # Local mirror / compatibility layer.
-            existing = await copa_db.get_player_by_team_and_identity(
-                team_id=team_uuid,
-                first_name=first_name,
-                last_name=last_name,
-                birth_date=birth_date,
-            )
-            if existing:
-                if supabase_result and int(supabase_result.get("players_created") or 0) > 0:
-                    return (
-                        f"✅ Jugador dado de alta en *{team.name}*.\n"
-                        f"• {existing.roster_index or '?'}. {existing.full_name}\n"
-                        f"• Nacimiento: {birth_date.strftime('%d/%m/%Y')}\n"
-                        "• Supabase: sincronizado\n"
-                        "• BD local: ya existia"
-                    )
-                return f"⚠️ Ese jugador ya existe en *{team.name}* ({existing.full_name})."
-
-            p = await copa_db.create_player(
-                team_id=team_uuid,
-                first_name=first_name,
-                last_name=last_name,
-                birth_date=birth_date,
-                curp=(curp or None),
-                email=(email or None),
-                ocr_confidence=None,
-                needs_review=False,
-                verified_by_human=True,
-                verification_notes="Alta manual via chat",
-                roster_index=max_idx + 1,
-            )
-            await copa_db.commit()
-            lines = [
-                f"✅ Jugador dado de alta en *{team.name}*.\n"
-                f"• {p.roster_index}. {p.full_name}",
-                f"• Nacimiento: {birth_date.strftime('%d/%m/%Y')}",
-            ]
-            if supabase_result and int(supabase_result.get("players_created") or 0) > 0:
-                lines.append("• Supabase: sincronizado")
-            elif supabase_result and int(supabase_result.get("players_skipped") or 0) > 0:
-                lines.append("• Supabase: jugador ya existente")
-            elif tournament_slug_hint and category_name_hint and supabase_error:
-                lines.append("• Supabase: pendiente de sincronizar")
-            return "\n".join(lines)
+        if not any(marker in lowered for marker in manual_player_markers):
+            return None
+        return (
+            f"⛔ {REGS11_MANUAL_PLAYER_CREATION_RETIRED}: el alta manual de "
+            "jugadores por conversación fue retirada. Usa el formulario completo "
+            "y la precaptura gobernada para agregar jugadores."
+        )
 
     async def _apply_freeform_corrections(self, chat_id: int, user_id: int, text: str) -> Optional[str]:
         """
