@@ -272,6 +272,12 @@ class RegistrationReviewSession(Base):
         cascade="all, delete-orphan",
         order_by="RegistrationPageAppendAttempt.created_at",
     )
+    human_field_edit_proposals = relationship(
+        "RegistrationHumanFieldEditProposal",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="RegistrationHumanFieldEditProposal.created_at",
+    )
     committed_team = relationship("Team")
 
     @property
@@ -596,6 +602,252 @@ class RegistrationPageAppendDecision(Base):
 
     attempt = relationship(
         "RegistrationPageAppendAttempt", back_populates="decision"
+    )
+
+
+class RegistrationHumanFieldEditProposal(Base):
+    """Immutable exact successor proposed through human field review."""
+
+    __tablename__ = "copa_telmex_registration_human_field_edit_proposals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    edit_request_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    base_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+        nullable=False,
+        index=True,
+    )
+    base_draft_version = Column(Integer, nullable=False)
+    base_draft_hash = Column(String(71), nullable=False)
+    proposed_successor_draft_id = Column(
+        UUID(as_uuid=True), nullable=False, unique=True
+    )
+    proposed_successor_hash = Column(String(71), nullable=False)
+    operation_id = Column(String(71), nullable=False, unique=True)
+    tournament_slug = Column(String(80), nullable=False)
+    registration_subject_binding = Column(String(80), nullable=False)
+    proposed_values = Column(JSON, nullable=False)
+    resolutions = Column(JSON, nullable=False)
+    field_resolution_set_hash = Column(String(71), nullable=False)
+    required_blocking_diff_ids = Column(JSON, nullable=False)
+    required_blocking_diff_set_hash = Column(String(71), nullable=False)
+    approval_set_hash = Column(String(71), nullable=False)
+    proposer_principal_id = Column(String(120), nullable=False)
+    proposer_role = Column(String(60), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    session = relationship(
+        "RegistrationReviewSession", back_populates="human_field_edit_proposals"
+    )
+    approvals = relationship(
+        "RegistrationHumanFieldApproval",
+        back_populates="proposal",
+        cascade="all, delete-orphan",
+        order_by="RegistrationHumanFieldApproval.field_path",
+    )
+    decision = relationship(
+        "RegistrationHumanFieldEditDecision",
+        back_populates="proposal",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    execution = relationship(
+        "RegistrationHumanFieldEditExecution",
+        back_populates="proposal",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class RegistrationHumanFieldApproval(Base):
+    """Immutable field-bound human attestation; consumption is a separate row."""
+
+    __tablename__ = "copa_telmex_registration_human_field_approvals"
+    __table_args__ = (
+        UniqueConstraint(
+            "proposal_id",
+            "field_path",
+            name="uq_registration_human_approval_proposal_field",
+        ),
+        UniqueConstraint(
+            "nonce", name="uq_registration_human_approval_nonce"
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_edit_proposals.id"),
+        nullable=False,
+        index=True,
+    )
+    nonce = Column(String(120), nullable=False)
+    roster_entry_id = Column(UUID(as_uuid=True), index=True)
+    player_slot = Column(Integer)
+    field_path = Column(String(200), nullable=False)
+    resolution_type = Column(String(60), nullable=False)
+    evidence_class = Column(String(60), nullable=False)
+    previous_value_binding = Column(String(80), nullable=False)
+    previous_normalized_value_binding = Column(String(80), nullable=False)
+    proposed_value_binding = Column(String(80), nullable=False)
+    proposed_normalized_value_binding = Column(String(80), nullable=False)
+    source_page_artifact_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_assets.id"),
+    )
+    source_page_hash = Column(String(71))
+    normalized_page_hash = Column(String(71))
+    coordinate_frame_hash = Column(String(71))
+    crop_coordinates = Column(JSON)
+    crop_hash = Column(String(71))
+    ocr_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_ocr_runs.id"),
+    )
+    reprocess_decision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_ocr_reprocess_decisions.id"),
+    )
+    field_diff_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_ocr_field_diffs.id"),
+    )
+    classification = Column(String(60))
+    approver_principal_id = Column(String(120), nullable=False)
+    approver_role = Column(String(60), nullable=False)
+    role_assignment_id = Column(String(160), nullable=False)
+    authorization_epoch = Column(String(160), nullable=False)
+    authentication_method = Column(String(80), nullable=False)
+    authentication_assurance_level = Column(Integer, nullable=False)
+    auth_context_id = Column(String(160), nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    not_before = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    proposal = relationship(
+        "RegistrationHumanFieldEditProposal", back_populates="approvals"
+    )
+    consumption = relationship(
+        "RegistrationHumanFieldApprovalConsumption",
+        back_populates="approval",
+        uselist=False,
+    )
+
+
+class RegistrationHumanFieldEditDecision(Base):
+    """Receipt-bound deterministic decision for one human edit proposal."""
+
+    __tablename__ = "copa_telmex_registration_human_field_edit_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_edit_proposals.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    decision_id = Column(String(71), nullable=False, unique=True)
+    policy_hash = Column(String(71), nullable=False)
+    decision = Column(String(60), nullable=False)
+    reason_codes = Column(JSON, nullable=False)
+    receipt_id = Column(String(120), nullable=False)
+    receipt_alg = Column(String(30), nullable=False)
+    event_hash = Column(String(71), nullable=False)
+    decision_document = Column(JSON, nullable=False)
+    receipt_document = Column(JSON, nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    proposal = relationship(
+        "RegistrationHumanFieldEditProposal", back_populates="decision"
+    )
+
+
+class RegistrationHumanFieldEditExecution(Base):
+    """Atomic binding between one authorized proposal and its REG-S02 successor."""
+
+    __tablename__ = "copa_telmex_registration_human_field_edit_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_edit_proposals.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    decision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_edit_decisions.id"),
+        nullable=False,
+        unique=True,
+    )
+    successor_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "copa_telmex_registration_review_drafts.id",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    successor_draft_version = Column(Integer, nullable=False)
+    successor_hash = Column(String(71), nullable=False)
+    parent_decision_id = Column(String(71), nullable=False)
+    parent_receipt_id = Column(String(120), nullable=False)
+    executed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    proposal = relationship(
+        "RegistrationHumanFieldEditProposal", back_populates="execution"
+    )
+    consumptions = relationship(
+        "RegistrationHumanFieldApprovalConsumption",
+        back_populates="execution",
+        cascade="all, delete-orphan",
+    )
+
+
+class RegistrationHumanFieldApprovalConsumption(Base):
+    """One-time immutable consumption of an approval by an exact execution."""
+
+    __tablename__ = "copa_telmex_registration_human_field_approval_consumptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    approval_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_approvals.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    execution_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_human_field_edit_executions.id"),
+        nullable=False,
+        index=True,
+    )
+    consumed_by_principal_id = Column(String(120), nullable=False)
+    consumed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    consumed_by_draft_version = Column(Integer, nullable=False)
+    consumed_by_successor_hash = Column(String(71), nullable=False)
+
+    approval = relationship(
+        "RegistrationHumanFieldApproval", back_populates="consumption"
+    )
+    execution = relationship(
+        "RegistrationHumanFieldEditExecution", back_populates="consumptions"
     )
 
 

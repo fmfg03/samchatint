@@ -95,6 +95,146 @@ def build_successor_values(
     return values
 
 
+def build_draft_authorization_payload(
+    review_session: RegistrationReviewSession,
+    current: Optional[RegistrationReviewDraft],
+    *,
+    successor_values: Mapping[str, Any],
+    mutation_type: str,
+    actor_id: Optional[Any],
+    operation_id: str,
+    new_draft_id: UUID,
+    parent_authorization: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    return {
+        "tenant_id": os.getenv("ZAUBERN_TENANT_ID", "samchat-prod"),
+        "session_id": str(review_session.id),
+        "previous_draft_id": str(current.id) if current else None,
+        "previous_draft_version": int(current.draft_version) if current else 0,
+        "previous_content_hash": current.content_hash if current else None,
+        "new_draft_id": str(new_draft_id),
+        "new_draft_version": int(current.draft_version if current else 0) + 1,
+        "new_content_hash": str(successor_values["content_hash"]),
+        "mutation_type": mutation_type,
+        "actor_binding": actor_binding(actor_id),
+        "operation_id": operation_id,
+        "parent_authorization": dict(parent_authorization or {}),
+    }
+
+
+def validate_draft_authorization(
+    authorization: Mapping[str, Any], payload: Mapping[str, Any]
+) -> None:
+    decision = authorization.get("draft_decision") or {}
+    receipt = authorization.get("draft_receipt") or {}
+    if (
+        authorization.get("authorized") is not True
+        or decision.get("decision") != "AUTHORIZE_DRAFT_VERSION"
+        or decision.get("new_draft_id") != payload["new_draft_id"]
+        or decision.get("new_content_hash") != payload["new_content_hash"]
+        or receipt.get("verified") is not True
+        or not decision.get("decision_id")
+        or not receipt.get("receipt_id")
+    ):
+        raise RegistrationGovernanceDenied(
+            "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+            "Zaubern returned an incomplete draft authorization",
+        )
+
+
+async def insert_pre_authorized_draft_version(
+    db_session: AsyncSession,
+    review_session: RegistrationReviewSession,
+    *,
+    expected_draft: Optional[RegistrationReviewDraft],
+    successor_values: Mapping[str, Any],
+    authorization_payload: Mapping[str, Any],
+    authorization: Mapping[str, Any],
+    parent_authorization: Optional[Mapping[str, Any]] = None,
+) -> RegistrationReviewDraft:
+    """Insert an already authorized exact successor after revalidating CAS."""
+    allowed = {
+        "ocr_raw",
+        "extraction",
+        "validation",
+        "review_edits",
+        "layout_regions",
+        "page_manifest_hash",
+        "overall_confidence",
+        "needs_review",
+        "content_hash",
+    }
+    unexpected = set(successor_values) - allowed
+    if unexpected:
+        raise ValueError(
+            f"unsupported pre-authorized draft fields: {sorted(unexpected)}"
+        )
+    validate_draft_authorization(authorization, authorization_payload)
+    await db_session.execute(
+        select(RegistrationReviewSession.id)
+        .where(RegistrationReviewSession.id == review_session.id)
+        .with_for_update()
+    )
+    current = await latest_draft(db_session, review_session.id)
+    if expected_draft is not None and (
+        current is None
+        or current.id != expected_draft.id
+        or current.draft_version != expected_draft.draft_version
+        or current.content_hash != expected_draft.content_hash
+    ):
+        raise DraftVersionConflict(
+            "The draft changed after authorization; approval is stale."
+        )
+    if (
+        authorization_payload.get("previous_draft_id")
+        != (str(current.id) if current else None)
+        or int(authorization_payload.get("previous_draft_version") or 0)
+        != int(current.draft_version if current else 0)
+        or authorization_payload.get("previous_content_hash")
+        != (current.content_hash if current else None)
+        or int(authorization_payload["new_draft_version"])
+        != int(current.draft_version if current else 0) + 1
+        or authorization_payload["new_content_hash"]
+        != successor_values["content_hash"]
+    ):
+        raise DraftVersionConflict(
+            "Pre-authorized successor no longer matches the current draft."
+        )
+    decision = authorization["draft_decision"]
+    receipt = authorization["draft_receipt"]
+    parent_decision = (parent_authorization or {}).get("decision") or {}
+    parent_receipt = (parent_authorization or {}).get("receipt") or {}
+    values = dict(successor_values)
+    values.pop("content_hash", None)
+    successor = RegistrationReviewDraft(
+        id=UUID(str(authorization_payload["new_draft_id"])),
+        session_id=review_session.id,
+        draft_version=int(authorization_payload["new_draft_version"]),
+        predecessor_draft_id=current.id if current else None,
+        predecessor_content_hash=current.content_hash if current else None,
+        content_hash=str(authorization_payload["new_content_hash"]),
+        mutation_type=str(authorization_payload["mutation_type"]),
+        mutation_actor_binding=authorization_payload.get("actor_binding"),
+        mutation_operation_id=str(authorization_payload["operation_id"]),
+        mutation_decision_id=str(decision["decision_id"]),
+        mutation_receipt_id=str(receipt["receipt_id"]),
+        parent_decision_id=(
+            str(parent_decision["decision_id"])
+            if parent_decision.get("decision_id")
+            else None
+        ),
+        parent_receipt_id=(
+            str(parent_receipt["receipt_id"])
+            if parent_receipt.get("receipt_id")
+            else None
+        ),
+        **values,
+    )
+    db_session.add(successor)
+    await db_session.flush()
+    return successor
+
+
 async def latest_draft(
     db_session: AsyncSession, session_id: UUID
 ) -> Optional[RegistrationReviewDraft]:

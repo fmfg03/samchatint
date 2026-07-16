@@ -284,6 +284,13 @@ class RegistrationGovernanceClient:
             self._post, "/v1/page-composition", payload
         )
 
+    async def adjudicate_human_field_edit(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._post, "/v1/human-field-edit", payload
+        )
+
     def _post(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         req = urlrequest.Request(
             self.gate_url + path,

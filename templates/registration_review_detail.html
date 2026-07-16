@@ -819,6 +819,8 @@
     <section id="editable-draft" class="review-card" aria-labelledby="editable-draft-title">
         <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
             <input type="hidden" name="draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else 1 }}">
+            <input type="hidden" name="draft_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+            <input type="hidden" name="edit_request_id" value="{{ edit_request_id }}">
             <h3 id="editable-draft-title" style="margin-bottom: 6px;">Borrador editable</h3>
             <p style="margin: 0 0 16px; color: #64748b;">Estos son los únicos valores que se guardan al capturar.</p>
             <h4 style="margin-bottom: 14px;">Datos del equipo</h4>
@@ -849,11 +851,13 @@
                 </div>
                 <div>
                     <label>Torneo de captura</label>
-                    <select name="tournament_slug" style="width: 100%;">
+                    <input type="hidden" name="tournament_slug" value="{{ review_session.tournament_slug or '' }}">
+                    <select style="width: 100%;" disabled aria-describedby="tournament-edit-help">
                         {% for option in tournament_options %}
                         <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
                         {% endfor %}
                     </select>
+                    <small id="tournament-edit-help" style="color: #64748b;">El torneo se gobierna fuera de la aprobación de campos.</small>
                 </div>
             </div>
 
@@ -940,8 +944,8 @@
                         </div>
                         <div class="player-meta">
                             <label style="display: inline-flex; gap: 8px; align-items: center;">
-                                <input type="checkbox" name="player_{{ loop.index0 }}_needs_review" value="1" {% if player.needs_review %}checked{% endif %} data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="row">
-                                Marcar para revisión
+                                <input type="checkbox" {% if player.needs_review %}checked{% endif %} disabled>
+                                Estado de revisión derivado
                             </label>
                             <span>Confianza OCR: {{ player.confidence_pct }}</span>
                             <span>Página origen: {{ player.source_page }}</span>
@@ -962,7 +966,7 @@
             {% endfor %}
 
             <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
-                <button type="submit" class="btn" style="border: none; cursor: pointer;" {% if session_committed %}disabled{% endif %}>Guardar borrador</button>
+                <button type="submit" class="btn" style="border: none; cursor: pointer;" {% if session_committed %}disabled{% endif %}>Autorizar correcciones</button>
                 <button
                     type="submit"
                     formaction="/api/registration-review/{{ review_session.id }}/commit"
