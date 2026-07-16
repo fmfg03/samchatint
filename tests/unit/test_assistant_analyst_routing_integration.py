@@ -379,6 +379,59 @@ async def test_ambiguous_follow_up_preserves_history_without_live_reads(
 
 
 @pytest.mark.asyncio
+async def test_live_claim_requires_live_item_in_final_pack(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "projects",
+    )
+    history = [
+        (
+            "DOCUMENT_INTAKE_RESULT JSON:\n"
+            '{"detected_document_type":"contract",'
+            f'"summary":"Contrato {index} con obligaciones, responsables, '
+            'fechas, montos, riesgos y evidencia suficiente para análisis.",'
+            '"missing_fields":[]}\n\n'
+            "Archivo procesado."
+        )
+        for index in range(6)
+    ]
+
+    async def live_rows(_context, _sources):
+        return {
+            "projects": [
+                {
+                    "id": "project-live-1",
+                    "label": "Proyecto",
+                    "summary": "Proyecto activo.",
+                    "metadata": {},
+                }
+            ]
+        }
+
+    response = await _run_message(
+        "Explica el torneo Nacional",
+        session=_FakeSession(latest_contents=history),
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="superadmin",
+            permissions={"*"},
+        ),
+    )
+
+    assert "evidencia en vivo autorizada" not in response.assistant_message
+    assert "No revis\u00e9 datos vivos" in response.assistant_message
+    workbench_trace = response.tool_trace[0][
+        "analyst_workbench_live_wiring"
+    ]
+    assert "project" not in workbench_trace["evidence_types"]
+
+
+@pytest.mark.asyncio
 async def test_partial_live_evidence_warning_is_rendered(monkeypatch):
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",

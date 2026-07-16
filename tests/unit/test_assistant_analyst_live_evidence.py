@@ -655,7 +655,9 @@ async def test_requested_expense_concept_is_filtered_before_limit():
     result = await provider(
         _context(
             "gastos:read",
-            question="Explica el gasto Hospedaje Nacional",
+            question=(
+                "Explica el gasto de Hospedaje del proyecto Nacional"
+            ),
         ),
         {"expenses"},
     )
@@ -665,6 +667,7 @@ async def test_requested_expense_concept_is_filtered_before_limit():
     assert "requested_match" in sql
     assert sql.count("lower(cast(expense_reports.concepto") >= 3
     assert sql.count("lower(cast(expense_reports.proyecto") >= 3
+    assert "%proyecto%" not in statement.compile().params.values()
     assert result["expenses"] == []
 
 

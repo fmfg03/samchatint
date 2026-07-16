@@ -1313,6 +1313,7 @@ def _expense_question_match(question: str) -> Optional[Any]:
         token
         for token in _requested_entity_tokens(question, "expenses")
         if not re.fullmatch(r"20\d{2}", token)
+        and token not in {"proyecto", "proyectos", "torneo", "torneos"}
     ]
     if not entity_tokens:
         return None

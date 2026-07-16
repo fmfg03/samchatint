@@ -456,6 +456,18 @@ async def _build_analyst_workbench_response(
         intent=intent,
         rows_provider=live_evidence_rows_provider,
     )
+    live_evidence_signatures = {
+        (
+            item.source_type,
+            item.source,
+            item.source_id,
+            item.reference,
+            item.label,
+            item.summary,
+            item.date,
+        )
+        for item in live_acquisition.collection.evidence
+    }
     evidence = build_analyst_evidence_pack(
         live_evidence=live_acquisition.collection.evidence,
         inline_evidence=inline_evidence,
@@ -465,7 +477,19 @@ async def _build_analyst_workbench_response(
     result = await run_analyst_workbench(
         intent=intent,
         evidence=evidence,
-        live_evidence_used=bool(live_acquisition.collection.evidence),
+        live_evidence_used=any(
+            (
+                item.source_type,
+                item.source,
+                item.source_id,
+                item.reference,
+                item.label,
+                item.summary,
+                item.date,
+            )
+            in live_evidence_signatures
+            for item in evidence
+        ),
     )
     if live_acquisition.collection.caveats:
         result = replace(
