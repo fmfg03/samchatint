@@ -39,6 +39,7 @@ MODEL_IMPORT = re.compile(
 SESSION_MUTATION = re.compile(r"\bsession\.(?:add|add_all|delete)\s*\(")
 REGS08_SOURCE = Path("src/devnous/tournaments/core/operations_module.py")
 REGS09_SOURCE = REGS08_SOURCE
+REGS10_SOURCE = REGS08_SOURCE
 
 
 def is_operational_path(relative_path: str) -> bool:
@@ -167,6 +168,73 @@ def regs09_retirement_reasons(root: Path) -> list[str]:
     return sorted(set(reasons))
 
 
+def regs10_retirement_reasons(root: Path) -> list[str]:
+    """Verify the legacy single-player finalizer is retired fail-closed."""
+    path = root / REGS10_SOURCE
+    if not path.is_file():
+        return ["REGS10_CANONICAL_SOURCE_MISSING"]
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ["REGS10_CANONICAL_SOURCE_UNREADABLE"]
+
+    operations = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "OperationsModule"
+        ),
+        None,
+    )
+    if operations is None:
+        return ["REGS10_OPERATIONS_MODULE_MISSING"]
+
+    methods = {
+        node.name: node
+        for node in operations.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    all_calls = _method_calls(operations)
+    reasons: list[str] = []
+    finalizers = {"_save_to_database", "_send_final_confirmation"}
+    if finalizers.intersection(methods) or finalizers.intersection(all_calls):
+        reasons.append("REGS10_LEGACY_FINALIZER_PRESENT")
+
+    legacy_handlers = {
+        "_legacy_single_player_ocr",
+        "_call_claude_vision",
+        "_request_human_verification",
+    }
+    if legacy_handlers.intersection(methods) or legacy_handlers.intersection(all_calls):
+        reasons.append("REGS10_LEGACY_OCR_HANDLER_PRESENT")
+
+    process = methods.get("process_ocr_registration")
+    process_source = ast.get_source_segment(source, process) if process else None
+    if process is None:
+        reasons.append("REGS10_PROCESS_HANDLER_MISSING")
+    elif (
+        "claude_vision" not in (process_source or "")
+        or "REGS10_LEGACY_SINGLE_PLAYER_RETIRED" not in (process_source or "")
+    ):
+        reasons.append("REGS10_PROVIDER_FAIL_CLOSED_MISSING")
+
+    callback = methods.get("handle_callback_query")
+    callback_source = ast.get_source_segment(source, callback) if callback else None
+    callback_markers = (
+        "confirm_",
+        "use_detected_",
+        "write_manually",
+        "REGS10_LEGACY_SINGLE_PLAYER_RETIRED",
+    )
+    if callback is None:
+        reasons.append("REGS10_CALLBACK_HANDLER_MISSING")
+    elif any(marker not in (callback_source or "") for marker in callback_markers):
+        reasons.append("REGS10_LEGACY_CALLBACK_FAIL_CLOSED_MISSING")
+
+    return sorted(set(reasons))
+
+
 def _git_paths(root: Path) -> Iterable[str]:
     result = subprocess.run(
         [
@@ -216,6 +284,12 @@ def assess(root: Path) -> dict[str, object]:
     if regs09_reasons:
         violations.append(
             {"path": str(REGS09_SOURCE), "reason_codes": regs09_reasons}
+        )
+
+    regs10_reasons = regs10_retirement_reasons(root)
+    if regs10_reasons:
+        violations.append(
+            {"path": str(REGS10_SOURCE), "reason_codes": regs10_reasons}
         )
 
     return {

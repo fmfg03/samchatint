@@ -94,6 +94,7 @@ PLAYER_FIELDS_WITH_SAFE_SUPABASE_SYNC = {
 
 REGS08_GOVERNED_REVIEW_UNAVAILABLE = "REGS08_GOVERNED_REVIEW_UNAVAILABLE"
 REGS09_REVIEW_SESSION_REQUIRED = "REGS09_REVIEW_SESSION_REQUIRED"
+REGS10_LEGACY_SINGLE_PLAYER_RETIRED = "REGS10_LEGACY_SINGLE_PLAYER_RETIRED"
 
 
 class OperationsModule:
@@ -122,7 +123,6 @@ class OperationsModule:
         # OCR configuration
         self.ocr_enabled = self.config.get('ocr_enabled', False)
         # Supported:
-        # - claude_vision: legacy single-player JSON prompt to Anthropic
         # - claude_structured: Anthropic OCRAgent tool_use schema (team + players)
         # - openai_vision: OpenAI-only (team + players)
         # - local_only: local Moondream/TrOCR subprocess only
@@ -139,7 +139,6 @@ class OperationsModule:
         self.claude = None  # legacy client (single player)
         self.ocr_agent = None  # structured Anthropic extractor (team + players)
         self.validator = None
-        self.pending_verifications: Dict[int, Dict[str, Any]] = {}
         self.pending_saves: Dict[int, Dict[str, Any]] = {}
         self.pending_edits: Dict[int, Dict[str, Any]] = {}
         self.pending_player_onboarding: Dict[int, Dict[str, Any]] = {}
@@ -3516,11 +3515,15 @@ Total partidos: {len(self.matches)}
 
             provider = (self.ocr_provider or "").strip().lower()
 
-            # Legacy single-player OCR flow (kept for backwards compatibility).
+            # REG-S10: the legacy single-player finalizer is retired. It cannot
+            # be translated into a governed draft because it lacks the complete
+            # form/evidence contract required by REG-S08.
             if provider == "claude_vision":
-                if not self.claude or not self.validator:
-                    return "❌ OCR (Anthropic) no esta configurado (falta ANTHROPIC_API_KEY)."
-                return await self._legacy_single_player_ocr(chat_id, image_b64)
+                return (
+                    f"⛔ {REGS10_LEGACY_SINGLE_PLAYER_RETIRED}: el registro OCR "
+                    "individual fue retirado y no puede crear equipos o jugadores. "
+                    "Usa la precaptura estructurada del formulario completo."
+                )
 
             if provider in ("claude_structured", "anthropic"):
                 return await self._ocr_single_provider(
@@ -3622,31 +3625,6 @@ Total partidos: {len(self.matches)}
                 f"Revisión: {result}"
             )
         return f"❌ No pude agregar la vuelta a la revisión web.\n{result}"
-
-    async def _legacy_single_player_ocr(self, chat_id: int, image_b64: str):
-        """Legacy flow: extract single player fields with Claude JSON prompt."""
-        logger.info("🤖 Calling Claude Vision API (legacy single-player)...")
-        loop = asyncio.get_event_loop()
-        ocr_result = await loop.run_in_executor(None, self._call_claude_vision, image_b64)
-
-        player_name = ocr_result.get("player_name", "")
-        ocr_confidence = ocr_result.get("confidence", 0.0)
-        logger.info(f"🔍 OCR Result: player_name='{player_name}', confidence={ocr_confidence}")
-
-        if not player_name:
-            return (
-                "⚠️  *No se detecto nombre del jugador*\n\n"
-                "Por favor verifica que:\n"
-                "• El nombre este visible\n"
-                "• La foto tenga buena iluminacion\n"
-                "• El texto sea legible"
-            )
-
-        validation_result = self.validator.validate_full_name(player_name, confidence=ocr_confidence)
-        if validation_result.get("needs_human_review"):
-            return await self._request_human_verification(chat_id, player_name, validation_result, ocr_result)
-
-        return await self._send_final_confirmation(chat_id, ocr_result, validation_result)
 
     async def _ocr_single_provider(
         self,
@@ -4780,153 +4758,6 @@ Total partidos: {len(self.matches)}
         except Exception:
             return "unknown", 0.0, "OpenAI: parse fail"
 
-    def _call_claude_vision(self, image_b64: str) -> Dict[str, Any]:
-        """Call Claude Vision API (blocking operation)"""
-        try:
-            message = self.claude.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=1024,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/jpeg",
-                                    "data": image_b64,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Extrae la siguiente información del formulario de registro:\n\n"
-                                    "1. **Nombre del Jugador (player_name)**: DEBE incluir nombre Y apellido(s)\n"
-                                    "2. **Equipo/Club (team_club)**: Nombre del equipo deportivo\n"
-                                    "3. **Fecha de nacimiento** (dd/mm/yyyy)\n"
-                                    "4. **Categoría** (U10/U12/U14/U16/U18/Open)\n"
-                                    "5. **Nombre del padre/tutor**\n"
-                                    "6. **Teléfono del tutor**\n\n"
-                                    "Si algún campo no es visible, usa 'no visible'.\n\n"
-                                    "Responde SOLO en formato JSON:\n"
-                                    "{\n"
-                                    '  "player_name": "nombre Y apellido",\n'
-                                    '  "birth_date": "dd/mm/yyyy o no visible",\n'
-                                    '  "category": "categoría o no visible",\n'
-                                    '  "parent_name": "nombre o no visible",\n'
-                                    '  "parent_phone": "teléfono o no visible",\n'
-                                    '  "team_club": "equipo o no visible",\n'
-                                    '  "confidence": 0.0-1.0\n'
-                                    "}"
-                                )
-                            }
-                        ],
-                    }
-                ],
-            )
-
-            # Extract text from response
-            response_text = message.content[0].text.strip()
-
-            # Clean JSON
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.startswith('```'):
-                response_text = response_text[3:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            # Extract JSON object
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                json_str = response_text[start_idx:end_idx + 1]
-                result = json.loads(json_str)
-                return result
-
-            return {'player_name': '', 'confidence': 0.0, 'error': 'Could not parse response'}
-
-        except Exception as e:
-            logger.error(f"❌ Claude Vision error: {e}", exc_info=True)
-            return {'player_name': '', 'confidence': 0.0, 'error': 'ocr_processing_failed'}
-
-    async def _request_human_verification(
-        self,
-        chat_id: int,
-        detected_name: str,
-        validation_result: Dict[str, Any],
-        ocr_result: Dict[str, Any]
-    ):
-        """Request human verification with inline keyboard"""
-
-        # Build inline keyboard
-        keyboard = {"inline_keyboard": []}
-
-        # Get suggestions
-        parts = validation_result.get('parts', {})
-        all_suggestions = []
-
-        if isinstance(parts, dict):
-            first_name_suggestions = parts.get('first_name', {}).get('suggestions', [])
-            surname_suggestions = []
-            for surname_result in parts.get('surnames', []):
-                surname_suggestions.extend(surname_result.get('suggestions', []))
-
-            # Reconstruct full name suggestions
-            if first_name_suggestions:
-                name_parts = detected_name.split()
-                for suggestion in first_name_suggestions[:2]:
-                    suggested_full = f"{suggestion} {' '.join(name_parts[1:])}"
-                    all_suggestions.append(suggested_full)
-
-            if surname_suggestions and len(detected_name.split()) > 1:
-                name_parts = detected_name.split()
-                for suggestion in surname_suggestions[:2]:
-                    suggested_full = f"{name_parts[0]} {suggestion}"
-                    all_suggestions.append(suggested_full)
-
-        # Build message
-        message_text = f"❓ *Verificación Necesaria*\n\nDetectado: *{detected_name}*\n\n"
-
-        if all_suggestions:
-            message_text += "💡 ¿Es correcto?\n"
-        else:
-            message_text += "⚠️ Nombre no encontrado\n"
-
-        # Add suggestion buttons
-        for i, suggestion in enumerate(all_suggestions[:2]):
-            keyboard["inline_keyboard"].append([{
-                "text": f"✅ {suggestion}",
-                "callback_data": f"confirm_{i}_{suggestion}"
-            }])
-
-        # Add "use detected" button
-        keyboard["inline_keyboard"].append([{
-            "text": f"👍 {detected_name}",
-            "callback_data": f"use_detected_{detected_name}"
-        }])
-
-        # Add "write manually" button
-        keyboard["inline_keyboard"].append([{
-            "text": "✏️ Corregir",
-            "callback_data": "write_manually"
-        }])
-
-        # Store pending verification
-        self.pending_verifications[chat_id] = {
-            'detected_name': detected_name,
-            'suggestions': all_suggestions,
-            'ocr_result': ocr_result,
-            'validation_result': validation_result
-        }
-
-        return {
-            'text': message_text,
-            'reply_markup': keyboard
-        }
-
     async def handle_callback_query(self, callback_query: Dict[str, Any], telegram_adapter):
         """Handle inline keyboard button press"""
         callback_id = callback_query['id']
@@ -5412,60 +5243,22 @@ Total partidos: {len(self.matches)}
                 await telegram_adapter.send_message(chat_id, f"✅ Categoria seleccionada: *{cat}*")
                 return
 
-            if data.startswith("confirm_"):
-                # User selected a suggestion
-                parts = data.split("_", 2)
-                if len(parts) >= 3:
-                    selected_name = parts[2]
-
-                    await telegram_adapter.answer_callback_query(
-                        callback_id,
-                        f"✅ Confirmado: {selected_name}"
-                    )
-
-                    if chat_id in self.pending_verifications:
-                        ocr_result = self.pending_verifications[chat_id]['ocr_result']
-                        validation_result = self.pending_verifications[chat_id].get('validation_result')
-                        ocr_result['player_name'] = selected_name
-                        ocr_result['human_verified'] = True
-
-                        response = await self._send_final_confirmation(chat_id, ocr_result, validation_result)
-                        await telegram_adapter.send_message(chat_id, response)
-
-                        del self.pending_verifications[chat_id]
-
-            elif data.startswith("use_detected_"):
-                detected_name = data.replace("use_detected_", "")
-
+            if (
+                data.startswith("confirm_")
+                or data.startswith("use_detected_")
+                or data == "write_manually"
+            ):
                 await telegram_adapter.answer_callback_query(
                     callback_id,
-                    f"✅ Usando: {detected_name}"
+                    "Ruta de registro retirada",
                 )
-
-                if chat_id in self.pending_verifications:
-                    ocr_result = self.pending_verifications[chat_id]['ocr_result']
-                    validation_result = self.pending_verifications[chat_id].get('validation_result')
-                    ocr_result['player_name'] = detected_name
-                    ocr_result['human_verified'] = True
-
-                    response = await self._send_final_confirmation(chat_id, ocr_result, validation_result)
-                    await telegram_adapter.send_message(chat_id, response)
-
-                    del self.pending_verifications[chat_id]
-
-            elif data == "write_manually":
-                await telegram_adapter.answer_callback_query(
-                    callback_id,
-                    "✏️ Escribe el nombre correcto"
-                )
-
                 await telegram_adapter.send_message(
                     chat_id,
-                    "✏️ *Escribe el nombre completo del jugador:*\n\nEjemplo: Juan García López\n\n📝 Escríbelo exactamente como debe aparecer."
+                    f"⛔ {REGS10_LEGACY_SINGLE_PLAYER_RETIRED}: este botón "
+                    "pertenece al registro individual retirado. Envía el formulario "
+                    "completo para crear una precaptura gobernada.",
                 )
-
-                if chat_id in self.pending_verifications:
-                    self.pending_verifications[chat_id]['waiting_manual'] = True
+                return
 
         except Exception as e:
             logger.error(f"❌ Callback error: {e}", exc_info=True)
@@ -5473,176 +5266,6 @@ Total partidos: {len(self.matches)}
                 callback_id,
                 "❌ Error interno"
             )
-
-    async def _save_to_database(
-        self,
-        chat_id: int,
-        ocr_result: Dict[str, Any],
-        validation_result: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """Save registration data to database"""
-        if not self.db:
-            logger.warning("⚠️  No database connection")
-            return False
-
-        try:
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            # self.db is expected to be an async_sessionmaker
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-
-                # Extract team info
-                team_name = ocr_result.get('team_club', 'Unknown Team')
-                if team_name == 'no visible':
-                    team_name = 'Unknown Team'
-
-                # Get or create team
-                teams_in_chat = await copa_db.get_teams_by_chat(chat_id)
-                team = None
-                for t in teams_in_chat:
-                    if t.name.lower() == team_name.lower():
-                        team = t
-                        break
-
-                if not team:
-                    logger.info(f"📝 Creating new team: {team_name}")
-                    team = await copa_db.create_team(
-                        name=team_name,
-                        telegram_chat_id=chat_id,
-                        category=ocr_result.get('category') if ocr_result.get('category') != 'no visible' else None
-                    )
-                else:
-                    logger.info(f"✅ Found existing team: {team_name} (ID: {team.id})")
-
-                # Parse player name
-                player_name = ocr_result.get('player_name', '')
-                if not player_name or player_name == 'no visible':
-                    logger.warning("⚠️  No player name to save")
-                    return False
-
-                # Split name
-                name_parts = player_name.split()
-                if len(name_parts) < 2:
-                    first_name = name_parts[0] if name_parts else ''
-                    last_name = ''
-                else:
-                    first_name = name_parts[0]
-                    last_name = ' '.join(name_parts[1:])
-
-                # Parse birth date
-                birth_date = None
-                birth_date_str = ocr_result.get('birth_date')
-                if birth_date_str and birth_date_str != 'no visible':
-                    try:
-                        if '/' in birth_date_str:
-                            parts = birth_date_str.split('/')
-                            if len(parts) == 3:
-                                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-                                if year < 100:
-                                    year = 2000 + year if year < 50 else 1900 + year
-                                birth_date = date(year, month, day)
-                        elif '-' in birth_date_str:
-                            parts = birth_date_str.split('-')
-                            if len(parts) == 3:
-                                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-                                if year < 100:
-                                    year = 2000 + year if year < 50 else 1900 + year
-                                birth_date = date(year, month, day)
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"⚠️  Could not parse birth date: {birth_date_str}: {e}")
-
-                # Create player
-                logger.info(f"📝 Creating player: {player_name}")
-
-                needs_review = validation_result.get('needs_human_review', False) if validation_result else False
-                human_verified = ocr_result.get('human_verified', False)
-                confidence = ocr_result.get('confidence', 0.0)
-
-                player = await copa_db.create_player(
-                    team_id=team.id,
-                    first_name=first_name,
-                    last_name=last_name,
-                    birth_date=birth_date,
-                    ocr_confidence=confidence,
-                    needs_review=needs_review,
-                    verified_by_human=human_verified,
-                    verification_notes='Manually entered' if ocr_result.get('manually_entered') else None
-                )
-
-                # Create OCR registration log
-                logger.info("📝 Creating OCR registration log")
-                registration = await copa_db.create_ocr_registration(
-                    telegram_chat_id=chat_id,
-                    ocr_result=ocr_result,
-                    validation_result=validation_result or {},
-                    team_id=team.id
-                )
-
-                # Commit
-                await copa_db.commit()
-
-                logger.info(
-                    f"✅ Saved to database: Team={team.id}, Player={player.id}, Registration={registration.id}"
-                )
-                return True
-
-        except Exception as e:
-            logger.error(f"❌ Database save error: {e}", exc_info=True)
-            return False
-
-    async def _send_final_confirmation(
-        self,
-        chat_id: int,
-        ocr_result: Dict[str, Any],
-        validation_result: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """Send final confirmation with all extracted data"""
-        # Save to database first
-        db_saved = await self._save_to_database(chat_id, ocr_result, validation_result)
-
-        player_name = ocr_result.get('player_name', 'N/A')
-        confidence = ocr_result.get('confidence', 0.0)
-        human_verified = ocr_result.get('human_verified', False)
-        manually_entered = ocr_result.get('manually_entered', False)
-
-        response = "✅ *Registro Completado*\n\n"
-
-        response += f"👤 *Jugador:* {player_name}\n"
-
-        if manually_entered:
-            response += "✏️ *Verificado manualmente*\n"
-        elif human_verified:
-            response += "👍 *Verificado por humano*\n"
-        else:
-            response += f"📊 *Confianza:* {confidence * 100:.0f}%\n"
-
-        response += "\n"
-
-        # Add other extracted fields
-        other_fields = [
-            ('birth_date', '📅 Fecha de nacimiento'),
-            ('category', '🏆 Categoría'),
-            ('parent_name', '👨‍👩‍👧 Padre/Tutor'),
-            ('parent_phone', '📞 Teléfono del tutor'),
-            ('team_club', '⚽ Equipo/Club')
-        ]
-
-        for field, label in other_fields:
-            value = ocr_result.get(field)
-            if value and value != 'no visible':
-                response += f"{label}: {value}\n"
-
-        response += "\n"
-
-        if db_saved:
-            response += "✨ *Datos guardados en base de datos*\n"
-            response += "📊 Registro ID guardado exitosamente"
-        else:
-            response += "⚠️  *Datos no guardados en BD*\n"
-            response += "Se mostrará confirmación visual solamente"
-
-        return response
 
     # ==================== END OCR FUNCTIONALITY ====================
 
