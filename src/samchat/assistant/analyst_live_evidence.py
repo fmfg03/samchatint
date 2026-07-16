@@ -159,6 +159,8 @@ LIVE_EVIDENCE_ENTITY_TERMINATORS = {
     "registrados",
     "segun",
     "sobre",
+    "versus",
+    "vs",
     "y",
     "o",
 }

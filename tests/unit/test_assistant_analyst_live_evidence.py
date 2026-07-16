@@ -63,6 +63,13 @@ def test_named_evidence_tokens_preserve_diacritics():
         "Explica el proveedor Acme que aparece en el reporte",
         "vendors",
     ) == ["acme"]
+    assert _requested_entity_tokens(
+        "Explica los gastos vs el presupuesto",
+        "expenses",
+    ) == []
+    assert _requested_budget_project_tokens(
+        "Explica el presupuesto versus los gastos",
+    ) == []
 
 
 def _intent():
