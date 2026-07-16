@@ -84,28 +84,35 @@ def _live_evidence_analyst_intent(
         return intent
     route_hint = str(intent.operational_route_hint or "")
     normalized = normalize_analyst_text(raw_message)
-    has_operational_status_term = any(
-        re.search(rf"\b{token}\b", normalized)
-        for token in (
-            "activo",
-            "activos",
-            "abierto",
-            "abiertos",
-            "cerrado",
-            "cerrados",
-            "estado",
-            "estatus",
-            "lista",
-            "listar",
-            "muestra",
-            "mostrar",
-            "pendiente",
-            "pendientes",
+    reference_tokens = re.findall(
+        r"[a-z0-9][a-z0-9._/-]{2,}",
+        normalized,
+    )
+    has_explicit_reference = any(
+        any(separator in token for separator in "-_/")
+        or (
+            any(char.isalpha() for char in token)
+            and any(char.isdigit() for char in token)
         )
+        for token in reference_tokens
+    )
+    has_named_tournament = bool(
+        re.search(
+            r"\b(?:el|este|ese|un)\s+torneo\s+"
+            r"(?!activo\b|actual\b|pendiente\b|que\b|sin\b)",
+            normalized,
+        )
+    )
+    has_explicit_named_target = (
+        route_hint.startswith(("cfdi.", "payments."))
+        and has_explicit_reference
+    ) or (
+        route_hint.startswith("tournament.")
+        and has_named_tournament
     )
     if (
         route_hint.startswith(("cfdi.", "payments.", "tournament."))
-        and not has_operational_status_term
+        and has_explicit_named_target
         and any(
             token in normalized
             for token in ("explicame", "explica", "que implica")

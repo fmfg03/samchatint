@@ -283,27 +283,52 @@ async def test_enabled_live_operational_explanations_reach_analyst(
     assert trace["source_counts"] == {source: 1}
 
 
+@pytest.mark.parametrize(
+    ("question", "source", "permission"),
+    (
+        (
+            "Expl\u00edcame qu\u00e9 pagos est\u00e1n pendientes",
+            "registered_payments",
+            "pagos:read",
+        ),
+        (
+            "Expl\u00edcame qu\u00e9 pagos vencen",
+            "registered_payments",
+            "pagos:read",
+        ),
+        (
+            "Expl\u00edcame los CFDI sin vincular",
+            "cfdi_documents",
+            "cfdi:read",
+        ),
+    ),
+)
 @pytest.mark.asyncio
-async def test_pending_payment_explanation_stays_operational(monkeypatch):
+async def test_status_explanation_stays_operational(
+    monkeypatch,
+    question,
+    source,
+    permission,
+):
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
         "true",
     )
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
-        "registered_payments",
+        source,
     )
 
     async def live_rows(_context, _sources):  # pragma: no cover
         raise AssertionError("pending report must not query paid evidence")
 
     response = await _run_message(
-        "Expl\u00edcame qu\u00e9 pagos est\u00e1n pendientes",
+        question,
         live_evidence_rows_provider=live_rows,
         current_empleado=SimpleNamespace(
             id="emp-1",
             rol="empleado",
-            permissions={"pagos:read"},
+            permissions={permission},
         ),
     )
 
