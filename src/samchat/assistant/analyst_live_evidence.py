@@ -1337,6 +1337,8 @@ def _requested_budget_project_tokens(question: str) -> list[str]:
             continue
         normalized_compact = normalize_analyst_text(compact)
         if normalized_compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
+            if normalized_compact == "para" and not tokens:
+                continue
             break
         if normalized_compact in LIVE_EVIDENCE_BUDGET_MODIFIERS:
             continue

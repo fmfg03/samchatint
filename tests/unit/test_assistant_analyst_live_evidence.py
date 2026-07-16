@@ -56,6 +56,9 @@ def test_named_evidence_tokens_preserve_diacritics():
     assert _requested_budget_project_tokens(
         "Explica el presupuesto 2026 de B\u00e9isbol",
     ) == ["b\u00e9isbol"]
+    assert _requested_budget_project_tokens(
+        "Explica el presupuesto para el proyecto Nacional 2026",
+    ) == ["nacional"]
 
 
 def _intent():

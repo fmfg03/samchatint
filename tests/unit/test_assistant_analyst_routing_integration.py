@@ -284,6 +284,35 @@ async def test_enabled_live_operational_explanations_reach_analyst(
 
 
 @pytest.mark.asyncio
+async def test_pending_payment_explanation_stays_operational(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "registered_payments",
+    )
+
+    async def live_rows(_context, _sources):  # pragma: no cover
+        raise AssertionError("pending report must not query paid evidence")
+
+    response = await _run_message(
+        "Expl\u00edcame qu\u00e9 pagos est\u00e1n pendientes",
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"pagos:read"},
+        ),
+    )
+
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_live_evidence" not in response.tool_trace[0]
+    assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+
+
+@pytest.mark.asyncio
 async def test_ambiguous_follow_up_preserves_history_without_live_reads(
     monkeypatch,
 ):

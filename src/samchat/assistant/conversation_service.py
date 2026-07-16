@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from dataclasses import replace
 from datetime import datetime
@@ -83,8 +84,28 @@ def _live_evidence_analyst_intent(
         return intent
     route_hint = str(intent.operational_route_hint or "")
     normalized = normalize_analyst_text(raw_message)
+    has_operational_status_term = any(
+        re.search(rf"\b{token}\b", normalized)
+        for token in (
+            "activo",
+            "activos",
+            "abierto",
+            "abiertos",
+            "cerrado",
+            "cerrados",
+            "estado",
+            "estatus",
+            "lista",
+            "listar",
+            "muestra",
+            "mostrar",
+            "pendiente",
+            "pendientes",
+        )
+    )
     if (
         route_hint.startswith(("cfdi.", "payments.", "tournament."))
+        and not has_operational_status_term
         and any(
             token in normalized
             for token in ("explicame", "explica", "que implica")
