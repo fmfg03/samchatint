@@ -57,6 +57,10 @@ from devnous.copa_telmex.models import (
     RegistrationReviewDraft,
     RegistrationReviewSession,
 )
+from devnous.copa_telmex.persistence_authority import (
+    PersistenceAuthorityDenied,
+    issue_registration_persistence_capability,
+)
 from devnous.copa_telmex.registration_governance import (
     RegistrationGovernanceClient,
     RegistrationGovernanceDenied,
@@ -4169,6 +4173,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
         reserved_team_id = uuid4()
         governance_result = None
         governance_client = None
+        persistence_capability = None
         if not validation.get("blockers"):
             try:
                 team = await copa_db.get_team_by_name(
@@ -4205,7 +4210,15 @@ async def commit_registration_review_session(session_id: str, request: Request):
                     ),
                 )
                 governance_result = await governance_client.preauthorize(governance_request)
-            except RegistrationGovernanceDenied as exc:
+                persistence_capability = issue_registration_persistence_capability(
+                    governance_result,
+                    tenant_id=str(governance_request["tenant_id"]),
+                    draft_id=str(review_session.draft.id),
+                    draft_version=_review_draft_version(review_session.draft),
+                    team_id=str(reserved_team_id),
+                )
+                copa_db.bind_persistence_authority(persistence_capability)
+            except (RegistrationGovernanceDenied, PersistenceAuthorityDenied) as exc:
                 validation.setdefault("blockers", []).append(
                     {
                         "code": exc.reason_code,
@@ -4385,13 +4398,15 @@ async def commit_registration_review_session(session_id: str, request: Request):
                         "blocking_incident_count": 0,
                     }
                 )
-            except RegistrationGovernanceDenied as exc:
+                player.finality_receipt_id = copa_db.record_player_finality(
+                    player, finality
+                )
+            except (RegistrationGovernanceDenied, PersistenceAuthorityDenied) as exc:
                 raise _review_error(
                     "governance_finality_denied",
                     "Zaubern no confirmó la finalidad; no se guardó ningún jugador.",
                     extra={"reason_code": exc.reason_code},
                 ) from exc
-            player.finality_receipt_id = str(finality["finality_receipt"]["receipt_id"])
             player.governance_state = "ACTIVE"
 
         commit_audit = _build_commit_audit_envelope(

@@ -3,15 +3,104 @@ Database operations for Copa Telmex registration system.
 """
 import logging
 from datetime import datetime, date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
-from sqlalchemy import select, and_, or_, desc
+from sqlalchemy import (
+    and_,
+    desc,
+    event,
+    inspect as sqlalchemy_inspect,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Team, Player, OCRRegistration, ValidationLog
+from .persistence_authority import (
+    PersistenceAuthorityDenied,
+    RegistrationPersistenceCapability,
+)
 
 logger = logging.getLogger(__name__)
+
+_SESSION_GUARD_KEY = "copa_telmex_persistence_authority_guard"
+
+
+class _SessionPersistenceAuthorityGuard:
+    """Guard Team/Player flushes made through a CopaTelmexDB-owned session."""
+
+    def __init__(self, session: AsyncSession):
+        self.token = object()
+        self.capability: Optional[RegistrationPersistenceCapability] = None
+        self.sync_session = getattr(session, "sync_session", None)
+        if self.sync_session is not None:
+            event.listen(self.sync_session, "before_flush", self._before_flush)
+            event.listen(self.sync_session, "after_commit", self._after_transaction)
+            event.listen(self.sync_session, "after_rollback", self._after_transaction)
+
+    def bind(self, capability: RegistrationPersistenceCapability) -> None:
+        if self.capability is not None and self.capability is not capability:
+            raise PersistenceAuthorityDenied(
+                "PERSISTENCE_AUTHORITY_ALREADY_BOUND",
+                "session already has a different persistence capability",
+            )
+        capability.bind(self.token)
+        self.capability = capability
+
+    def require(self) -> RegistrationPersistenceCapability:
+        if self.capability is None:
+            raise PersistenceAuthorityDenied(
+                "PERSISTENCE_AUTHORITY_REQUIRED",
+                "Team and Player mutations require transaction-scoped governance authority",
+            )
+        return self.capability
+
+    @staticmethod
+    def _changed_column_fields(entity: Any) -> Set[str]:
+        state = sqlalchemy_inspect(entity)
+        return {
+            attribute.key
+            for attribute in state.mapper.column_attrs
+            if state.attrs[attribute.key].history.has_changes()
+        }
+
+    def _before_flush(self, session, _flush_context, _instances) -> None:
+        protected = [
+            entity
+            for collection in (session.new, session.dirty, session.deleted)
+            for entity in collection
+            if isinstance(entity, (Team, Player))
+        ]
+        if not protected:
+            return
+        capability = self.require()
+        for entity in session.deleted:
+            if isinstance(entity, (Team, Player)):
+                capability.deny_delete(entity, token=self.token)
+        for entity in session.new:
+            if isinstance(entity, Team):
+                capability.authorize_team_create(entity, token=self.token)
+            elif isinstance(entity, Player):
+                capability.authorize_player_create(entity, token=self.token)
+        for entity in session.dirty:
+            if entity in session.new or entity in session.deleted:
+                continue
+            fields = self._changed_column_fields(entity)
+            if not fields:
+                continue
+            if isinstance(entity, Team):
+                capability.authorize_team_update(entity, fields, token=self.token)
+            elif isinstance(entity, Player):
+                capability.authorize_player_update(entity, fields, token=self.token)
+
+    def _after_transaction(self, _session) -> None:
+        self.invalidate()
+
+    def invalidate(self) -> None:
+        if self.capability is not None:
+            self.capability.invalidate()
+            self.capability = None
 
 
 class CopaTelmexDB:
@@ -25,6 +114,29 @@ class CopaTelmexDB:
             session: SQLAlchemy async session
         """
         self.session = session
+        sync_session = getattr(session, "sync_session", None)
+        if sync_session is not None:
+            guard = sync_session.info.get(_SESSION_GUARD_KEY)
+            if guard is None:
+                guard = _SessionPersistenceAuthorityGuard(session)
+                sync_session.info[_SESSION_GUARD_KEY] = guard
+            self._persistence_guard = guard
+        else:
+            self._persistence_guard = _SessionPersistenceAuthorityGuard(session)
+
+    def bind_persistence_authority(
+        self, capability: RegistrationPersistenceCapability
+    ) -> None:
+        """Bind one preauthorization capability to this database transaction."""
+        self._persistence_guard.bind(capability)
+
+    def record_player_finality(
+        self, player: Player, finality_result: Dict[str, Any]
+    ) -> str:
+        """Bind one post-execution receipt before activating a Player."""
+        return self._persistence_guard.require().record_player_finality(
+            player, finality_result, token=self._persistence_guard.token
+        )
 
     # ============================================================================
     # TEAM OPERATIONS
@@ -80,6 +192,9 @@ class CopaTelmexDB:
             team_fields["id"] = team_id
         team = Team(**team_fields)
 
+        self._persistence_guard.require().authorize_team_create(
+            team, token=self._persistence_guard.token
+        )
         self.session.add(team)
         await self.session.flush()  # Get the ID without committing
 
@@ -141,10 +256,14 @@ class CopaTelmexDB:
 
     async def update_team(self, team_id: UUID, **fields: Any) -> Optional[Team]:
         """Update a team with the provided fields."""
+        authority = self._persistence_guard.require()
         team = await self.get_team_by_id(team_id)
         if not team:
             return None
 
+        authority.authorize_team_update(
+            team, fields.keys(), token=self._persistence_guard.token
+        )
         for key, value in fields.items():
             if not hasattr(team, key):
                 continue
@@ -228,6 +347,9 @@ class CopaTelmexDB:
             preauthorization_receipt_id=preauthorization_receipt_id,
         )
 
+        self._persistence_guard.require().authorize_player_create(
+            player, token=self._persistence_guard.token
+        )
         self.session.add(player)
         await self.session.flush()
 
@@ -283,10 +405,14 @@ class CopaTelmexDB:
 
     async def update_player(self, player_id: UUID, **fields: Any) -> Optional[Player]:
         """Update a player with the provided fields."""
+        authority = self._persistence_guard.require()
         player = await self.session.get(Player, player_id)
         if not player:
             return None
 
+        authority.authorize_player_update(
+            player, fields.keys(), token=self._persistence_guard.token
+        )
         for key, value in fields.items():
             if not hasattr(player, key):
                 continue
@@ -298,9 +424,11 @@ class CopaTelmexDB:
 
     async def delete_player(self, player_id: UUID) -> bool:
         """Delete a player by ID."""
+        authority = self._persistence_guard.require()
         player = await self.session.get(Player, player_id)
         if not player:
             return False
+        authority.deny_delete(player, token=self._persistence_guard.token)
         await self.session.delete(player)
         await self.session.flush()
         logger.info(f"🗑️ Player deleted: {player_id}")
@@ -520,10 +648,16 @@ class CopaTelmexDB:
 
     async def commit(self):
         """Commit the current transaction."""
-        await self.session.commit()
-        logger.info("✅ Database transaction committed")
+        try:
+            await self.session.commit()
+            logger.info("✅ Database transaction committed")
+        finally:
+            self._persistence_guard.invalidate()
 
     async def rollback(self):
         """Rollback the current transaction."""
-        await self.session.rollback()
-        logger.warning("⚠️ Database transaction rolled back")
+        try:
+            await self.session.rollback()
+            logger.warning("⚠️ Database transaction rolled back")
+        finally:
+            self._persistence_guard.invalidate()
