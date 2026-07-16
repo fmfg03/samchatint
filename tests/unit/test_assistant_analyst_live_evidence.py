@@ -938,6 +938,26 @@ async def test_requested_registered_payment_is_prioritized_before_limit():
 
 
 @pytest.mark.asyncio
+async def test_requested_payment_concept_is_filtered_before_limit():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    result = await provider(
+        _context(
+            "pagos:read",
+            question="Explica el pago de Hospedaje",
+        ),
+        {"registered_payments"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "requested_match" in sql
+    assert sql.count("lower(cast(documentos.concepto_pago") >= 3
+    assert result["registered_payments"] == []
+
+
+@pytest.mark.asyncio
 async def test_vendor_entity_is_prioritized_before_limit():
     session = _FakeAsyncSession()
     provider = build_sqlalchemy_live_evidence_rows_provider(session)

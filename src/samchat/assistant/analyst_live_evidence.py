@@ -982,8 +982,8 @@ async def _read_registered_payments(
         owner_column=Documento.empleado_id,
         context=context,
     )
-    if requested_reference_match is not None:
-        stmt = stmt.where(requested_reference_match)
+    if requested_match is not None:
+        stmt = stmt.where(requested_match)
     rows = await _execute_mappings(
         session,
         stmt.order_by(
@@ -993,7 +993,7 @@ async def _read_registered_payments(
             Documento.id.asc(),
         ).limit(context.limit_per_source),
     )
-    if requested_reference_match is not None:
+    if requested_match is not None:
         rows = [item for item in rows if item.get("requested_match") is True]
     return [
         _row(
