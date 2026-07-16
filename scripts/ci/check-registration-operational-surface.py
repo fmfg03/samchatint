@@ -62,7 +62,16 @@ def mutation_reasons(source: str) -> list[str]:
 
 def _git_paths(root: Path) -> Iterable[str]:
     result = subprocess.run(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        [
+            "git",
+            "-c",
+            f"safe.directory={root}",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
         cwd=root,
         check=True,
         capture_output=True,
