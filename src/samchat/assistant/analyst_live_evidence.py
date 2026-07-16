@@ -710,6 +710,8 @@ async def _read_cfdi_documents(
             .exists()
         )
         stmt = stmt.where(or_(owned_cfdi, owned_document))
+    if requested_match is not None:
+        stmt = stmt.where(requested_match)
     rows = await _execute_mappings(
         session,
         stmt.order_by(
@@ -718,6 +720,8 @@ async def _read_cfdi_documents(
             CFDIReport.id.asc(),
         ).limit(context.limit_per_source),
     )
+    if requested_match is not None:
+        rows = [item for item in rows if item.get("requested_match") is True]
     return [
         _row(
             item,
@@ -890,13 +894,15 @@ async def _read_projects(
             case((requested_match, True), else_=False).label("requested_match")
         )
         ordering.append(case((requested_match, 0), else_=1).asc())
+    stmt = select(*selected).where(
+        Tournament.active.is_(True),
+        _project_visibility_condition(context),
+    )
+    if requested_match is not None:
+        stmt = stmt.where(requested_match)
     rows = await _execute_mappings(
         session,
-        select(*selected)
-        .where(
-            Tournament.active.is_(True),
-            _project_visibility_condition(context),
-        )
+        stmt
         .order_by(
             *ordering,
             Tournament.display_order.asc(),
@@ -905,6 +911,8 @@ async def _read_projects(
         )
         .limit(context.limit_per_source),
     )
+    if requested_match is not None:
+        rows = [item for item in rows if item.get("requested_match") is True]
     return [
         _row(
             item,

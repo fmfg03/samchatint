@@ -736,6 +736,27 @@ async def test_cfdi_owner_scope_includes_direct_document_links():
 
 
 @pytest.mark.asyncio
+async def test_requested_cfdi_is_filtered_before_limit():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    result = await provider(
+        _context(
+            "cfdi:read",
+            question="Explica el CFDI UUID-OLD",
+        ),
+        {"cfdi_documents"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "requested_match" in sql
+    assert sql.index("case when") < sql.index("cfdi_reports.fecha desc")
+    assert sql.count("lower(cast(cfdi_reports.cfdi_uuid") >= 3
+    assert result["cfdi_documents"] == []
+
+
+@pytest.mark.asyncio
 async def test_budget_provider_uses_existing_tables_without_schema_writes():
     session = _FakeAsyncSession()
     provider = build_sqlalchemy_live_evidence_rows_provider(session)
@@ -841,6 +862,28 @@ async def test_project_reader_applies_form_department_visibility():
     params = statement.compile().params.values()
     assert "tournaments.form_visibility_areas" in sql
     assert any(value == ["Operaciones"] for value in params)
+
+
+@pytest.mark.asyncio
+async def test_requested_project_is_filtered_before_limit():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    result = await provider(
+        _context(
+            "proyectos:read",
+            role="superadmin",
+            question="Explica el proyecto Inexistente",
+        ),
+        {"projects"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "requested_match" in sql
+    assert sql.index("case when") < sql.index("tournaments.display_order asc")
+    assert sql.count("lower(cast(tournaments.name") >= 3
+    assert result["projects"] == []
 
 
 @pytest.mark.asyncio
