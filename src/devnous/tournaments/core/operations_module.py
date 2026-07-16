@@ -2608,6 +2608,12 @@ class OperationsModule:
         if not any(m in t_lower for m in correction_markers):
             return None
 
+        return (
+            "Las correcciones de equipos ya no se aplican desde Telegram. "
+            "Usa el dashboard: cada cambio requiere motivo, version, decision "
+            "Zaubern y recibo de finalidad."
+        )
+
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
 
@@ -3084,6 +3090,11 @@ class OperationsModule:
         label: str,
     ) -> str:
         """Update the latest team for this chat, for simple corrections."""
+        return (
+            "Esta correccion fue denegada. Usa el dashboard para crear "
+            "un sucesor REG-S07 con evidencia y recibos."
+        )
+
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
 
@@ -3139,6 +3150,11 @@ class OperationsModule:
 
     async def _start_corrections(self, chat_id: int):
         """Show correction menu for the latest team in this chat."""
+        return (
+            "Las correcciones post-captura se realizan en el dashboard. "
+            "Telegram no tiene autoridad REG-S07 para modificar equipos o jugadores."
+        )
+
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
 
@@ -3207,6 +3223,12 @@ class OperationsModule:
 
     async def _apply_pending_edit(self, chat_id: int, user_id: int, new_value: str):
         """Apply the pending edit for this chat using the provided text as the new value."""
+        self.pending_edits.pop(chat_id, None)
+        return (
+            "Esta correccion fue denegada. Usa el dashboard para crear "
+            "un sucesor REG-S07 con evidencia y recibos."
+        )
+
         state = self.pending_edits.get(chat_id) or {}
         entity = state.get("entity")
         field = state.get("field")

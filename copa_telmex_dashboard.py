@@ -72,15 +72,20 @@ from devnous.copa_telmex.human_field_governance import (
 )
 from devnous.copa_telmex.models import (
     Base,
+    Player,
     RegistrationHumanFieldEditProposal,
     RegistrationOcrFieldDiff,
     RegistrationOcrReprocessDecision,
     RegistrationOcrRun,
     RegistrationPageAppendAttempt,
     RegistrationPageAppendDecision,
+    RegistrationPostcommitMutationDecision,
+    RegistrationPostcommitMutationExecution,
+    RegistrationPostcommitMutationProposal,
     RegistrationReviewAsset,
     RegistrationReviewDraft,
     RegistrationReviewSession,
+    Team,
 )
 from devnous.copa_telmex.page_composition_governance import (
     admitted_asset_rows,
@@ -104,6 +109,21 @@ from devnous.copa_telmex.reprocess_governance import (
 from devnous.copa_telmex.persistence_authority import (
     PersistenceAuthorityDenied,
     issue_registration_persistence_capability,
+)
+from devnous.copa_telmex.postcommit_governance import (
+    PLAYER_EDIT_FIELDS,
+    PLAYER_VERIFY_FIELDS,
+    TEAM_EDIT_FIELDS,
+    build_finality_request as build_postcommit_finality_request,
+    build_gate_request as build_postcommit_gate_request,
+    changed_fields as postcommit_changed_fields,
+    decision_row as build_postcommit_decision_row,
+    execution_id_for as postcommit_execution_id_for,
+    execution_row as build_postcommit_execution_row,
+    issue_postcommit_persistence_capability,
+    proposal_id_for as postcommit_proposal_id_for,
+    sha256_binding as postcommit_sha256_binding,
+    source_evidence_binding as postcommit_source_evidence_binding,
 )
 from devnous.copa_telmex.registration_governance import (
     RegistrationGovernanceClient,
@@ -2425,6 +2445,416 @@ async def _refresh_review_actor(
         "authorization_epoch": authorization_epoch,
         "auth_context_id": auth_context_id,
     }
+
+
+def _regs07_error(
+    code: str,
+    message: str,
+    *,
+    status_code: int = 409,
+    extra: Optional[Dict[str, Any]] = None,
+) -> HTTPException:
+    detail: Dict[str, Any] = {
+        "success": False,
+        "error": code,
+        "message": message,
+    }
+    if extra:
+        detail.update(extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _regs07_json_value(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+async def _regs07_database_snapshot(
+    session: AsyncSession, entity: Team | Player
+) -> Dict[str, Any]:
+    if isinstance(entity, Team):
+        statement = text(
+            """
+            SELECT regs07_team_snapshot(team)
+            FROM copa_telmex_teams AS team
+            WHERE team.id = :entity_id
+            """
+        )
+    else:
+        statement = text(
+            """
+            SELECT regs07_player_snapshot(player)
+            FROM copa_telmex_players AS player
+            WHERE player.id = :entity_id
+            """
+        )
+    snapshot = (
+        await session.execute(statement, {"entity_id": entity.id})
+    ).scalar_one()
+    return dict(snapshot)
+
+
+async def _regs07_database_hash(
+    session: AsyncSession, snapshot: Dict[str, Any]
+) -> str:
+    return str(
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT regs07_snapshot_hash(CAST(:snapshot AS jsonb))
+                    """
+                ),
+                {"snapshot": json.dumps(snapshot, ensure_ascii=False)},
+            )
+        ).scalar_one()
+    )
+
+
+def _regs07_actor_matches(
+    proposal: RegistrationPostcommitMutationProposal,
+    actor: Dict[str, Any],
+) -> bool:
+    return (
+        str(proposal.proposer_principal_id) == str(actor.get("user_id") or "")
+        and str(proposal.proposer_role) == str(actor.get("role") or "")
+        and str(proposal.role_assignment_id)
+        == str(actor.get("role_assignment_id") or "")
+        and str(proposal.authorization_epoch)
+        == str(actor.get("authorization_epoch") or "")
+        and str(proposal.auth_context_id)
+        == str(actor.get("auth_context_id") or "")
+    )
+
+
+async def _execute_regs07_mutation(
+    *,
+    request: Request,
+    entity_type: str,
+    entity_id: UUID,
+    mutation_type: str,
+    updates: Dict[str, Any],
+    mutation_reason: str,
+    mutation_request_id: UUID,
+) -> Dict[str, Any]:
+    """Create and atomically project one double-receipt post-commit successor."""
+    actor = _review_session_actor(request)
+    model = Team if entity_type == "TEAM" else Player
+    allowed_fields = (
+        TEAM_EDIT_FIELDS
+        if mutation_type == "EDIT_TEAM"
+        else (
+            PLAYER_EDIT_FIELDS
+            if mutation_type == "EDIT_PLAYER"
+            else PLAYER_VERIFY_FIELDS
+        )
+    )
+    if not updates or set(updates) - set(allowed_fields):
+        raise _regs07_error(
+            "POSTCOMMIT_FIELD_SCOPE_DENIED",
+            "La mutación contiene campos no autorizados.",
+        )
+    mutation_reason = " ".join(str(mutation_reason or "").split())
+    if not 5 <= len(mutation_reason) <= 500:
+        raise _regs07_error(
+            "POSTCOMMIT_REASON_REQUIRED",
+            "Describe el motivo de la modificación (5 a 500 caracteres).",
+            status_code=400,
+        )
+
+    proposal: RegistrationPostcommitMutationProposal
+    decision: Optional[RegistrationPostcommitMutationDecision] = None
+    async with async_session_maker() as session:
+        actor = await _refresh_review_actor(session, actor)
+        result = await session.execute(
+            select(model).where(model.id == entity_id).with_for_update()
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_FOUND",
+                "El equipo o jugador no existe.",
+                status_code=404,
+            )
+        if isinstance(entity, Player) and entity.governance_state not in {
+            "ACTIVE",
+            "LEGACY_ACTIVE",
+        }:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_COMMITTED",
+                "El jugador todavía no es una entidad comprometida.",
+            )
+        base_snapshot = await _regs07_database_snapshot(session, entity)
+        base_snapshot_hash = await _regs07_database_hash(session, base_snapshot)
+        if (
+            int(entity.postcommit_revision or 0) < 1
+            or str(entity.postcommit_snapshot_hash or "")
+            != base_snapshot_hash
+        ):
+            raise _regs07_error(
+                "POSTCOMMIT_BASE_INTEGRITY_FAILED",
+                "La proyección comprometida no coincide con su hash vigente.",
+            )
+        proposed_snapshot = copy.deepcopy(base_snapshot)
+        for field, value in updates.items():
+            proposed_snapshot[field] = _regs07_json_value(value)
+        changes = postcommit_changed_fields(base_snapshot, proposed_snapshot)
+        if not changes:
+            return {
+                "success": True,
+                "message": "La entidad ya tenía exactamente esos valores.",
+                "idempotent": True,
+                "revision": int(entity.postcommit_revision),
+            }
+        proposed_snapshot_hash = await _regs07_database_hash(
+            session, proposed_snapshot
+        )
+        proposal_id = postcommit_proposal_id_for(
+            mutation_request_id, entity_type, entity_id
+        )
+        existing = (
+            await session.execute(
+                select(RegistrationPostcommitMutationProposal).where(
+                    RegistrationPostcommitMutationProposal.mutation_request_id
+                    == mutation_request_id
+                )
+            )
+        ).scalar_one_or_none()
+        team_id = entity.id if isinstance(entity, Team) else entity.team_id
+        if existing is not None:
+            same_request = (
+                existing.id == proposal_id
+                and existing.entity_type == entity_type
+                and existing.entity_id == entity_id
+                and existing.mutation_type == mutation_type
+                and existing.base_snapshot_hash == base_snapshot_hash
+                and existing.proposed_snapshot_hash == proposed_snapshot_hash
+                and existing.field_change_set_hash
+                == postcommit_sha256_binding(changes)
+            )
+            if not same_request:
+                raise _regs07_error(
+                    "POSTCOMMIT_REQUEST_ID_CONFLICT",
+                    "El identificador de solicitud ya está ligado a otra mutación.",
+                )
+            completed = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationExecution).where(
+                        RegistrationPostcommitMutationExecution.proposal_id
+                        == existing.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if completed is not None:
+                return {
+                    "success": True,
+                    "message": "La modificación ya había sido aplicada.",
+                    "idempotent": True,
+                    "revision": existing.proposed_revision,
+                    "receipt_id": completed.finality_receipt_id,
+                }
+            proposal = existing
+            decision = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationDecision).where(
+                        RegistrationPostcommitMutationDecision.proposal_id
+                        == existing.id
+                    )
+                )
+            ).scalar_one_or_none()
+        else:
+            proposal = RegistrationPostcommitMutationProposal(
+                id=proposal_id,
+                mutation_request_id=mutation_request_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                team_id=team_id,
+                mutation_type=mutation_type,
+                base_revision=int(entity.postcommit_revision),
+                proposed_revision=int(entity.postcommit_revision) + 1,
+                base_snapshot=base_snapshot,
+                base_snapshot_hash=base_snapshot_hash,
+                proposed_snapshot=proposed_snapshot,
+                proposed_snapshot_hash=proposed_snapshot_hash,
+                field_changes=changes,
+                field_change_set_hash=postcommit_sha256_binding(changes),
+                mutation_reason=mutation_reason,
+                mutation_reason_binding=postcommit_sha256_binding(
+                    {"domain": "REG-S07", "reason": mutation_reason}
+                ),
+                source_evidence_binding=postcommit_source_evidence_binding(
+                    entity
+                ),
+                proposer_principal_id=actor["user_id"],
+                proposer_role=actor["role"],
+                role_assignment_id=actor["role_assignment_id"],
+                authorization_epoch=actor["authorization_epoch"],
+                authentication_method=actor["authentication_method"],
+                authentication_assurance_level=actor[
+                    "authentication_assurance_level"
+                ],
+                auth_context_id=actor["auth_context_id"],
+            )
+            session.add(proposal)
+            await session.commit()
+
+    client = RegistrationGovernanceClient.from_environment()
+    if decision is None:
+        try:
+            gate_response = await client.adjudicate_postcommit_mutation(
+                build_postcommit_gate_request(proposal)
+            )
+        except RegistrationGovernanceDenied as exc:
+            raise _regs07_error(
+                exc.reason_code,
+                "Zaubern no autorizó la modificación; no se cambió la entidad.",
+                extra={"reason_code": exc.reason_code},
+            ) from exc
+        async with async_session_maker() as session:
+            existing_decision = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationDecision).where(
+                        RegistrationPostcommitMutationDecision.proposal_id
+                        == proposal.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_decision is None:
+                decision = build_postcommit_decision_row(
+                    proposal.id, gate_response
+                )
+                session.add(decision)
+                await session.commit()
+            else:
+                decision = existing_decision
+    if decision is None or decision.decision != "AUTHORIZE_POSTCOMMIT_MUTATION":
+        raise _regs07_error(
+            "POSTCOMMIT_MUTATION_NOT_AUTHORIZED",
+            "La política exige revisión adicional o denegó la modificación.",
+            extra={"reason_codes": list(decision.reason_codes if decision else [])},
+        )
+
+    async with async_session_maker() as session:
+        copa_db = CopaTelmexDB(session)
+        proposal = (
+            await session.execute(
+                select(RegistrationPostcommitMutationProposal).where(
+                    RegistrationPostcommitMutationProposal.id == proposal.id
+                )
+            )
+        ).scalar_one()
+        decision = (
+            await session.execute(
+                select(RegistrationPostcommitMutationDecision).where(
+                    RegistrationPostcommitMutationDecision.proposal_id
+                    == proposal.id
+                )
+            )
+        ).scalar_one()
+        result = await session.execute(
+            select(model).where(model.id == entity_id).with_for_update()
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_FOUND",
+                "La entidad dejó de existir antes de ejecutar la decisión.",
+                status_code=404,
+            )
+        current_actor = await _refresh_review_actor(
+            session, _review_session_actor(request)
+        )
+        if not _regs07_actor_matches(proposal, current_actor):
+            raise _regs07_error(
+                "POSTCOMMIT_ACTOR_AUTHORITY_CHANGED",
+                "La autoridad actual del operador cambió; solicita otra decisión.",
+            )
+        current_snapshot = await _regs07_database_snapshot(session, entity)
+        current_hash = await _regs07_database_hash(session, current_snapshot)
+        cas_succeeded = (
+            int(entity.postcommit_revision or 0) == proposal.base_revision
+            and str(entity.postcommit_snapshot_hash or "")
+            == proposal.base_snapshot_hash
+            and current_hash == proposal.base_snapshot_hash
+            and current_snapshot == dict(proposal.base_snapshot)
+        )
+        if not cas_succeeded:
+            raise _regs07_error(
+                "STALE_POSTCOMMIT_BASE",
+                "La entidad cambió después de la adjudicación; no se aplicó nada.",
+            )
+        database_transaction_id = "postgres-tx:" + str(
+            (await session.execute(text("SELECT txid_current()"))).scalar_one()
+        )
+        for field, value in updates.items():
+            setattr(entity, field, value)
+        entity.postcommit_revision = proposal.proposed_revision
+        entity.postcommit_snapshot_hash = proposal.proposed_snapshot_hash
+        try:
+            finality_response = await client.finalize_postcommit_mutation(
+                build_postcommit_finality_request(
+                    proposal=proposal,
+                    decision=decision,
+                    actual_projection_hash=proposal.proposed_snapshot_hash,
+                    database_transaction_id=database_transaction_id,
+                    cas_succeeded=True,
+                )
+            )
+        except RegistrationGovernanceDenied as exc:
+            await session.rollback()
+            raise _regs07_error(
+                exc.reason_code,
+                "Zaubern no confirmó la proyección; no se guardó ningún cambio.",
+                extra={"reason_code": exc.reason_code},
+            ) from exc
+        execution_id = postcommit_execution_id_for(proposal.id)
+        execution = build_postcommit_execution_row(
+            execution_id=execution_id,
+            proposal_id=proposal.id,
+            decision_id=decision.id,
+            database_transaction_id=database_transaction_id,
+            response=finality_response,
+        )
+        capability = issue_postcommit_persistence_capability(
+            proposal=proposal,
+            decision=decision,
+            finality_response=finality_response,
+            execution_id=execution_id,
+        )
+        copa_db.bind_postcommit_authority(capability)
+        session.add(execution)
+        await session.flush([execution])
+        with session.no_autoflush:
+            await session.execute(
+                text(
+                    """
+                    SELECT set_config(
+                        'samchat.regs07_execution_id',
+                        :execution_id,
+                        true
+                    )
+                    """
+                ),
+                {"execution_id": str(execution_id)},
+            )
+        await session.flush([entity])
+        await session.commit()
+        return {
+            "success": True,
+            "message": (
+                "Equipo actualizado con versión y recibos de gobernanza."
+                if entity_type == "TEAM"
+                else (
+                    "Jugador verificado con versión y recibos de gobernanza."
+                    if mutation_type == "VERIFY_PLAYER"
+                    else "Jugador actualizado con versión y recibos de gobernanza."
+                )
+            ),
+            "revision": proposal.proposed_revision,
+            "decision_receipt_id": decision.receipt_id,
+            "finality_receipt_id": execution.finality_receipt_id,
+        }
 
 
 def _redact_email(value: Optional[str]) -> str:
@@ -5152,6 +5582,29 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 )
                 if team:
                     reserved_team_id = team.id
+                    proposed_team_state = {
+                        "tournament_slug": tournament_slug,
+                        "gender": team_payload.get("gender"),
+                        "category": team_payload.get("category"),
+                        "league": team_payload.get("league"),
+                        "representative_name": manager_payload.get("name"),
+                        "state": team_payload.get("state"),
+                        "municipality": team_payload.get("municipality"),
+                        "contact_phone": manager_payload.get("phone"),
+                        "contact_email": manager_payload.get("email"),
+                    }
+                    conflicting_fields = sorted(
+                        field
+                        for field, proposed_value in proposed_team_state.items()
+                        if proposed_value not in (None, "")
+                        and getattr(team, field, None) != proposed_value
+                    )
+                    if conflicting_fields:
+                        raise PersistenceAuthorityDenied(
+                            "POSTCOMMIT_TEAM_SUCCESSOR_REQUIRED",
+                            "existing committed Team differs in fields: "
+                            + ",".join(conflicting_fields),
+                        )
                 governance_client = RegistrationGovernanceClient.from_environment()
                 governance_request = build_preauthorization_request(
                     tenant_id=os.getenv("SAMCHAT_GOVERNANCE_TENANT_ID", "samchat-prod"),
@@ -5256,24 +5709,15 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 category=team_payload.get("category"),
                 league=team_payload.get("league"),
                 representative_name=manager_payload.get("name"),
+                contact_phone=manager_payload.get("phone"),
+                contact_email=manager_payload.get("email"),
                 state=team_payload.get("state"),
                 municipality=team_payload.get("municipality"),
                 telegram_user_id=review_session.telegram_user_id,
                 roster_image_path=_storage_relative_path(review_session.assets[0].image_path) if review_session.assets else None,
             )
-        else:
-            team.tournament_slug = tournament_slug
-            team.gender = team_payload.get("gender") or team.gender
-            team.category = team_payload.get("category") or team.category
-            team.league = team_payload.get("league") or team.league
-            team.representative_name = manager_payload.get("name") or team.representative_name
-            team.state = team_payload.get("state") or team.state
-            team.municipality = team_payload.get("municipality") or team.municipality
-            if review_session.assets and not team.roster_image_path:
-                team.roster_image_path = _storage_relative_path(review_session.assets[0].image_path)
-
-        team.contact_phone = manager_payload.get("phone") or team.contact_phone
-        team.contact_email = manager_payload.get("email") or team.contact_email
+        # Existing committed Team rows are never edited by REG-S06. Any
+        # differing metadata was blocked above and must go through REG-S07.
 
         layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
         photo_artifacts = _build_review_photo_artifacts(
@@ -5453,49 +5897,39 @@ async def edit_team(
     team_id: str,
     request: Request
 ):
-    """Edit team details"""
+    """Create a governed successor of a committed Team."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-
-        # Get form data
         form_data = await request.form()
-
-        async with async_session_maker() as session:
-            copa_db = CopaTelmexDB(session)
-
-            team = await copa_db.get_team_by_id(UUID(team_id))
-            if not team:
-                raise HTTPException(status_code=404, detail="Team not found")
-
-            # Update team fields
-            if 'name' in form_data:
-                team.name = form_data['name']
-            if 'category' in form_data:
-                team.category = form_data['category']
-            if 'gender' in form_data:
-                team.gender = form_data['gender']
-            if 'league' in form_data:
-                team.league = form_data['league']
-            if 'league_phone' in form_data:
-                team.league_phone = form_data['league_phone']
-            if 'league_address' in form_data:
-                team.league_address = form_data['league_address']
-            if 'representative_name' in form_data:
-                team.representative_name = form_data['representative_name']
-            if 'contact_phone' in form_data:
-                team.contact_phone = form_data['contact_phone']
-            if 'state' in form_data:
-                team.state = form_data['state']
-            if 'municipality' in form_data:
-                team.municipality = form_data['municipality']
-
-            await session.commit()
-
-            return {"success": True, "message": "Equipo actualizado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid team ID")
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        updates = {
+            field: (str(form_data.get(field) or "").strip() or None)
+            for field in TEAM_EDIT_FIELDS
+            if field in form_data
+        }
+        if not updates.get("name"):
+            raise _regs07_error(
+                "POSTCOMMIT_TEAM_NAME_REQUIRED",
+                "El nombre del equipo no puede quedar vacío.",
+                status_code=400,
+            )
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="TEAM",
+            entity_id=UUID(team_id),
+            mutation_type="EDIT_TEAM",
+            updates=updates,
+            mutation_reason=str(form_data.get("mutation_reason") or ""),
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador del equipo o de la solicitud no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -5507,44 +5941,52 @@ async def edit_player(
     player_id: str,
     request: Request
 ):
-    """Edit player details"""
+    """Create a governed successor of a committed Player."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        # Get form data
         form_data = await request.form()
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        first_name = str(form_data.get("first_name") or "").strip()
+        last_name = str(form_data.get("last_name") or "").strip()
+        if not first_name or not last_name:
+            raise _regs07_error(
+                "POSTCOMMIT_PLAYER_NAME_REQUIRED",
+                "Nombre y apellidos no pueden quedar vacíos.",
+                status_code=400,
             )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            # Update player fields
-            if 'first_name' in form_data:
-                player.first_name = form_data['first_name']
-            if 'last_name' in form_data:
-                player.last_name = form_data['last_name']
-            if 'birth_date' in form_data and form_data['birth_date']:
-                from datetime import datetime
-                player.birth_date = datetime.strptime(form_data['birth_date'], '%Y-%m-%d').date()
-            if 'curp' in form_data:
-                player.curp = form_data['curp'] if form_data['curp'] else None
-            if 'email' in form_data:
-                player.email = form_data['email'] if form_data['email'] else None
-
-            await session.commit()
-
-            return {"success": True, "message": "Jugador actualizado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID or date format")
+        raw_birth_date = str(form_data.get("birth_date") or "").strip()
+        updates: Dict[str, Any] = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "birth_date": (
+                datetime.strptime(raw_birth_date, "%Y-%m-%d").date()
+                if raw_birth_date
+                else None
+            ),
+            "curp": (
+                str(form_data.get("curp") or "").strip().upper() or None
+            ),
+            "email": (
+                str(form_data.get("email") or "").strip().lower() or None
+            ),
+        }
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="PLAYER",
+            entity_id=UUID(player_id),
+            mutation_type="EDIT_PLAYER",
+            updates=updates,
+            mutation_reason=str(form_data.get("mutation_reason") or ""),
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador o la fecha de nacimiento no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -5553,31 +5995,36 @@ async def edit_player(
 
 @app.post("/api/player/{player_id}/verify", response_class=JSONResponse)
 async def verify_player(player_id: str, request: Request):
-    """Mark player as verified by human"""
+    """Create a governed human-verification successor."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
-            )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            player.verified_by_human = True
-            player.needs_review = False
-
-            await session.commit()
-
-            return {"success": True, "message": "Jugador verificado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID")
+        form_data = await request.form()
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        reason = str(
+            form_data.get("mutation_reason")
+            or "Verificación humana contra la evidencia registral"
+        )
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="PLAYER",
+            entity_id=UUID(player_id),
+            mutation_type="VERIFY_PLAYER",
+            updates={
+                "verified_by_human": True,
+                "needs_review": False,
+                "verification_notes": reason,
+            },
+            mutation_reason=reason,
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador del jugador o de la solicitud no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -5586,61 +6033,26 @@ async def verify_player(player_id: str, request: Request):
 
 @app.delete("/api/player/{player_id}", response_class=JSONResponse)
 async def delete_player(player_id: str, request: Request):
-    """Delete a player"""
+    """Physical deletion is outside REG-S07 authority."""
     _ensure_team_player_mutation_access(request)
-    try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
-            )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            await session.delete(player)
-            await session.commit()
-
-            return {"success": True, "message": "Jugador eliminado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID")
-    except HTTPException:
-        raise
-    except Exception:
-        _raise_dashboard_internal_error("Error deleting player")
+    raise _regs07_error(
+        "POSTCOMMIT_DELETE_DENIED",
+        "REG-S07 no permite borrar físicamente jugadores comprometidos.",
+        status_code=409,
+        extra={"entity_id": player_id},
+    )
 
 
 @app.delete("/api/team/{team_id}", response_class=JSONResponse)
 async def delete_team(team_id: str, request: Request):
-    """Delete a team and all its players"""
+    """Physical deletion is outside REG-S07 authority."""
     _ensure_team_player_mutation_access(request)
-    try:
-        from uuid import UUID
-
-        async with async_session_maker() as session:
-            copa_db = CopaTelmexDB(session)
-
-            team = await copa_db.get_team_by_id(UUID(team_id))
-            if not team:
-                raise HTTPException(status_code=404, detail="Team not found")
-
-            # Delete team (cascade will delete players)
-            await session.delete(team)
-            await session.commit()
-
-            return {"success": True, "message": "Equipo eliminado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid team ID")
-    except HTTPException:
-        raise
-    except Exception:
-        _raise_dashboard_internal_error("Error deleting team")
+    raise _regs07_error(
+        "POSTCOMMIT_DELETE_DENIED",
+        "REG-S07 no permite borrar físicamente equipos comprometidos.",
+        status_code=409,
+        extra={"entity_id": team_id},
+    )
 
 
 if __name__ == "__main__":

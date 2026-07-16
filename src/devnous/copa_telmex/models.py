@@ -53,6 +53,10 @@ class Team(Base):
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    postcommit_revision = Column(Integer, nullable=False, default=1)
+    postcommit_snapshot_hash = Column(
+        String(71), nullable=False, default=lambda: "sha256:" + ("0" * 64)
+    )
 
     # Telegram tracking
     telegram_chat_id = Column(BigInteger, index=True)
@@ -135,6 +139,10 @@ class Player(Base):
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    postcommit_revision = Column(Integer, nullable=False, default=0)
+    postcommit_snapshot_hash = Column(
+        String(71), nullable=False, default=lambda: "sha256:" + ("0" * 64)
+    )
 
     # Relationships
     team = relationship("Team", back_populates="players")
@@ -849,6 +857,124 @@ class RegistrationHumanFieldApprovalConsumption(Base):
     execution = relationship(
         "RegistrationHumanFieldEditExecution", back_populates="consumptions"
     )
+
+
+class RegistrationPostcommitMutationProposal(Base):
+    """Immutable exact successor proposed for a committed Team or Player."""
+
+    __tablename__ = "copa_telmex_registration_postcommit_mutation_proposals"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    mutation_request_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    entity_type = Column(String(20), nullable=False, index=True)
+    entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    team_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    mutation_type = Column(String(40), nullable=False)
+    base_revision = Column(Integer, nullable=False)
+    proposed_revision = Column(Integer, nullable=False)
+    base_snapshot = Column(JSON, nullable=False)
+    base_snapshot_hash = Column(String(71), nullable=False)
+    proposed_snapshot = Column(JSON, nullable=False)
+    proposed_snapshot_hash = Column(String(71), nullable=False)
+    field_changes = Column(JSON, nullable=False)
+    field_change_set_hash = Column(String(71), nullable=False)
+    mutation_reason = Column(Text, nullable=False)
+    mutation_reason_binding = Column(String(80), nullable=False)
+    source_evidence_binding = Column(String(80), nullable=False)
+    proposer_principal_id = Column(String(120), nullable=False)
+    proposer_role = Column(String(60), nullable=False)
+    role_assignment_id = Column(String(160), nullable=False)
+    authorization_epoch = Column(String(160), nullable=False)
+    authentication_method = Column(String(80), nullable=False)
+    authentication_assurance_level = Column(Integer, nullable=False)
+    auth_context_id = Column(String(160), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RegistrationPostcommitMutationDecision(Base):
+    """Ed25519 receipt-bound preauthorization for one exact successor."""
+
+    __tablename__ = "copa_telmex_registration_postcommit_mutation_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_postcommit_mutation_proposals.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    decision_id = Column(String(71), nullable=False, unique=True)
+    policy_hash = Column(String(71), nullable=False)
+    decision = Column(String(60), nullable=False)
+    reason_codes = Column(JSON, nullable=False)
+    receipt_id = Column(String(120), nullable=False)
+    receipt_alg = Column(String(30), nullable=False)
+    event_hash = Column(String(71), nullable=False)
+    decision_document = Column(JSON, nullable=False)
+    receipt_document = Column(JSON, nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RegistrationPostcommitMutationExecution(Base):
+    """Atomic projection and post-execution attestation for REG-S07."""
+
+    __tablename__ = "copa_telmex_registration_postcommit_mutation_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    proposal_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_postcommit_mutation_proposals.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    decision_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_postcommit_mutation_decisions.id"),
+        nullable=False,
+        unique=True,
+    )
+    database_transaction_id = Column(String(120), nullable=False, unique=True)
+    attestation_id = Column(String(71), nullable=False, unique=True)
+    attestation_hash = Column(String(71), nullable=False)
+    finality_receipt_id = Column(String(120), nullable=False)
+    finality_receipt_alg = Column(String(30), nullable=False)
+    finality_event_document = Column(JSON, nullable=False)
+    finality_receipt_document = Column(JSON, nullable=False)
+    executed_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class RegistrationPostcommitEntityVersion(Base):
+    """Append-only committed-state history for Team and Player projections."""
+
+    __tablename__ = "copa_telmex_registration_postcommit_entity_versions"
+    __table_args__ = (
+        UniqueConstraint(
+            "entity_type",
+            "entity_id",
+            "revision",
+            name="uq_registration_postcommit_entity_revision",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    entity_type = Column(String(20), nullable=False, index=True)
+    entity_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    team_id = Column(UUID(as_uuid=True), nullable=False, index=True)
+    revision = Column(Integer, nullable=False)
+    snapshot = Column(JSON, nullable=False)
+    snapshot_hash = Column(String(71), nullable=False)
+    predecessor_snapshot_hash = Column(String(71))
+    mutation_type = Column(String(40), nullable=False)
+    execution_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_postcommit_mutation_executions.id"),
+        unique=True,
+    )
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
 
 class ValidationLog(Base):

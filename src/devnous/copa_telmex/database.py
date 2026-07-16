@@ -19,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .models import Team, Player, OCRRegistration, ValidationLog
 from .persistence_authority import (
     PersistenceAuthorityDenied,
-    RegistrationPersistenceCapability,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,14 +31,14 @@ class _SessionPersistenceAuthorityGuard:
 
     def __init__(self, session: AsyncSession):
         self.token = object()
-        self.capability: Optional[RegistrationPersistenceCapability] = None
+        self.capability: Optional[Any] = None
         self.sync_session = getattr(session, "sync_session", None)
         if self.sync_session is not None:
             event.listen(self.sync_session, "before_flush", self._before_flush)
             event.listen(self.sync_session, "after_commit", self._after_transaction)
             event.listen(self.sync_session, "after_rollback", self._after_transaction)
 
-    def bind(self, capability: RegistrationPersistenceCapability) -> None:
+    def bind(self, capability: Any) -> None:
         if self.capability is not None and self.capability is not capability:
             raise PersistenceAuthorityDenied(
                 "PERSISTENCE_AUTHORITY_ALREADY_BOUND",
@@ -48,7 +47,7 @@ class _SessionPersistenceAuthorityGuard:
         capability.bind(self.token)
         self.capability = capability
 
-    def require(self) -> RegistrationPersistenceCapability:
+    def require(self) -> Any:
         if self.capability is None:
             raise PersistenceAuthorityDenied(
                 "PERSISTENCE_AUTHORITY_REQUIRED",
@@ -125,9 +124,13 @@ class CopaTelmexDB:
             self._persistence_guard = _SessionPersistenceAuthorityGuard(session)
 
     def bind_persistence_authority(
-        self, capability: RegistrationPersistenceCapability
+        self, capability: Any
     ) -> None:
         """Bind one preauthorization capability to this database transaction."""
+        self._persistence_guard.bind(capability)
+
+    def bind_postcommit_authority(self, capability: Any) -> None:
+        """Bind one REG-S07 double-receipt capability to this transaction."""
         self._persistence_guard.bind(capability)
 
     def record_player_finality(
@@ -152,6 +155,8 @@ class CopaTelmexDB:
         category: Optional[str] = None,
         league: Optional[str] = None,
         representative_name: Optional[str] = None,
+        contact_phone: Optional[str] = None,
+        contact_email: Optional[str] = None,
         state: Optional[str] = None,
         municipality: Optional[str] = None,
         telegram_user_id: Optional[int] = None,
@@ -182,6 +187,8 @@ class CopaTelmexDB:
             category=category,
             league=league,
             representative_name=representative_name,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
             state=state,
             municipality=municipality,
             telegram_chat_id=telegram_chat_id,

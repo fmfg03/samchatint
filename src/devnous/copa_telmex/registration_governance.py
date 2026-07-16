@@ -291,6 +291,20 @@ class RegistrationGovernanceClient:
             self._post, "/v1/human-field-edit", payload
         )
 
+    async def adjudicate_postcommit_mutation(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._post, "/v1/postcommit-mutation", payload
+        )
+
+    async def finalize_postcommit_mutation(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._post, "/v1/postcommit-mutation/finalize", payload
+        )
+
     def _post(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         req = urlrequest.Request(
             self.gate_url + path,

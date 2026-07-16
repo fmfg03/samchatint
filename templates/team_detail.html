@@ -7,7 +7,6 @@
     <a href="/teams" style="color: #667eea; text-decoration: none;">← Volver a Equipos</a>
     <div style="display: flex; gap: 10px;">
         <button onclick="editTeam()" class="btn" style="background: #667eea;">✏️ Editar Equipo</button>
-        <button onclick="deleteTeam()" class="btn" style="background: #dc3545;">🗑️ Eliminar Equipo</button>
     </div>
 </div>
 
@@ -112,7 +111,6 @@
                 {% if player.needs_review %}
                 <button onclick="verifyPlayer('{{ player.id }}')" class="btn-sm" style="background: #28a745; margin-right: 5px;">✓</button>
                 {% endif %}
-                <button onclick="deletePlayer('{{ player.id }}')" class="btn-sm" style="background: #dc3545;">🗑️</button>
             </td>
         </tr>
         {% endfor %}
@@ -175,6 +173,10 @@
                     <input type="text" name="contact_phone" value="{{ team.get('contact_phone', '') }}">
                 </div>
                 <div>
+                    <label>Email Contacto:</label>
+                    <input type="email" name="contact_email" value="{{ team.get('contact_email', '') }}">
+                </div>
+                <div>
                     <label>Estado:</label>
                     <input type="text" name="state" value="{{ team.state }}">
                 </div>
@@ -182,6 +184,12 @@
                     <label>Municipio:</label>
                     <input type="text" name="municipality" value="{{ team.municipality }}">
                 </div>
+            </div>
+            <div style="margin-top: 15px;">
+                <label>Motivo registral:</label>
+                <textarea name="mutation_reason" minlength="5" maxlength="500" required
+                          placeholder="Describe qué evidencia justifica esta corrección"
+                          style="width: 100%; min-height: 72px;"></textarea>
             </div>
             <div style="margin-top: 20px; text-align: right;">
                 <button type="button" onclick="closeModal('editTeamModal')" class="btn" style="background: #6c757d;">Cancelar</button>
@@ -220,6 +228,12 @@
                     <input type="email" id="edit-email" name="email">
                 </div>
             </div>
+            <div style="margin-top: 15px;">
+                <label>Motivo registral:</label>
+                <textarea name="mutation_reason" minlength="5" maxlength="500" required
+                          placeholder="Describe qué evidencia justifica esta corrección"
+                          style="width: 100%; min-height: 72px;"></textarea>
+            </div>
             <div style="margin-top: 20px; text-align: right;">
                 <button type="button" onclick="closeModal('editPlayerModal')" class="btn" style="background: #6c757d;">Cancelar</button>
                 <button type="submit" class="btn" style="background: #28a745;">💾 Guardar</button>
@@ -231,6 +245,13 @@
 <script>
 const teamId = '{{ team.id }}';
 const playersData = {{ players | tojson }};
+
+function apiMessage(data) {
+    if (data && data.message) return data.message;
+    if (data && data.detail && data.detail.message) return data.detail.message;
+    if (data && typeof data.detail === 'string') return data.detail;
+    return 'La operación fue rechazada.';
+}
 
 // Modal functions
 function closeModal(modalId) {
@@ -288,10 +309,19 @@ async function verifyPlayer(playerId) {
     if (!confirm('¿Marcar este jugador como verificado?')) {
         return;
     }
+    const reason = prompt('Motivo registral de la verificación:');
+    if (!reason || reason.trim().length < 5) {
+        alert('Debes indicar un motivo de al menos 5 caracteres.');
+        return;
+    }
 
     try {
+        const formData = new FormData();
+        formData.append('mutation_request_id', crypto.randomUUID());
+        formData.append('mutation_reason', reason.trim());
         const response = await fetch(`/api/player/${playerId}/verify`, {
-            method: 'POST'
+            method: 'POST',
+            body: formData
         });
         const data = await response.json();
 
@@ -299,7 +329,7 @@ async function verifyPlayer(playerId) {
             alert(data.message);
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            alert('Error: ' + apiMessage(data));
         }
     } catch (error) {
         alert('Error al verificar jugador: ' + error);
@@ -333,6 +363,7 @@ document.getElementById('editTeamForm').addEventListener('submit', async (e) => 
     e.preventDefault();
 
     const formData = new FormData(e.target);
+    formData.append('mutation_request_id', crypto.randomUUID());
 
     try {
         const response = await fetch(`/api/team/${teamId}/edit`, {
@@ -345,7 +376,7 @@ document.getElementById('editTeamForm').addEventListener('submit', async (e) => 
             alert(data.message);
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            alert('Error: ' + apiMessage(data));
         }
     } catch (error) {
         alert('Error al actualizar equipo: ' + error);
@@ -357,6 +388,7 @@ document.getElementById('editPlayerForm').addEventListener('submit', async (e) =
 
     const playerId = document.getElementById('edit-player-id').value;
     const formData = new FormData(e.target);
+    formData.append('mutation_request_id', crypto.randomUUID());
 
     try {
         const response = await fetch(`/api/player/${playerId}/edit`, {
@@ -369,7 +401,7 @@ document.getElementById('editPlayerForm').addEventListener('submit', async (e) =
             alert(data.message);
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            alert('Error: ' + apiMessage(data));
         }
     } catch (error) {
         alert('Error al actualizar jugador: ' + error);
