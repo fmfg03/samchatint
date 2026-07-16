@@ -753,6 +753,52 @@ async def test_budget_provider_uses_existing_tables_without_schema_writes():
 
 
 @pytest.mark.asyncio
+async def test_budget_provider_prefers_newest_edition_before_status():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    await provider(
+        _context(
+            "presupuestos:read",
+            question="Explica el presupuesto",
+        ),
+        {"budgets"},
+    )
+
+    sql = str(session.statements[0]).upper()
+    selected_version_order = sql.split(
+        "ORDER BY",
+        maxsplit=1,
+    )[1].split("LIMIT", maxsplit=1)[0]
+    assert selected_version_order.index("EDITION_YEAR DESC") < (
+        selected_version_order.index("CASE STATUS")
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "modifier",
+    ("actual", "anual", "disponible", "general", "global", "total", "vigente"),
+)
+async def test_budget_descriptive_modifier_is_not_a_project_filter(modifier):
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    await provider(
+        _context(
+            "presupuestos:read",
+            question=f"Explica el presupuesto {modifier}",
+        ),
+        {"budgets"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "budget_project_0" not in statement.compile().params
+    assert "where lower(coalesce(l.tournament_name" not in sql
+
+
+@pytest.mark.asyncio
 async def test_budget_provider_filters_requested_edition_year():
     session = _FakeAsyncSession()
     provider = build_sqlalchemy_live_evidence_rows_provider(session)
@@ -876,6 +922,27 @@ async def test_vendor_entity_is_prioritized_before_limit():
     assert not any("detalle" in value or value == "con" for value in params)
     assert sql.count("lower(cast(proveedores_clientes.nombre") >= 3
     assert result["vendors"] == []
+
+
+@pytest.mark.asyncio
+async def test_requested_document_is_filtered_before_limit():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    result = await provider(
+        _context(
+            "documentos:read",
+            question="Explica el documento DOC-OLD",
+        ),
+        {"documents"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "requested_match" in sql
+    assert sql.index("case when") < sql.index("documentos.creado_en desc")
+    assert sql.count("lower(cast(documentos.numero_referencia") >= 3
+    assert result["documents"] == []
 
 
 @pytest.mark.asyncio

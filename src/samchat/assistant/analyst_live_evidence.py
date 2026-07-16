@@ -138,6 +138,22 @@ LIVE_EVIDENCE_ENTITY_TERMINATORS = {
     "y",
     "o",
 }
+LIVE_EVIDENCE_BUDGET_MODIFIERS = {
+    "actual",
+    "actuales",
+    "anual",
+    "anuales",
+    "disponible",
+    "disponibles",
+    "general",
+    "generales",
+    "global",
+    "globales",
+    "total",
+    "totales",
+    "vigente",
+    "vigentes",
+}
 LIVE_EVIDENCE_PERMISSION_ALIASES = {
     "expenses": (
         "gastos:read",
@@ -776,6 +792,7 @@ async def _read_budgets(
             )
             {edition_year_filter}
             ORDER BY
+                edition_year DESC,
                 CASE status
                     WHEN 'frozen' THEN 1
                     WHEN 'approved' THEN 2
@@ -784,7 +801,6 @@ async def _read_budgets(
                     WHEN 'draft' THEN 5
                     ELSE 6
                 END,
-                edition_year DESC,
                 updated_at DESC,
                 id ASC
             LIMIT 1
@@ -1094,6 +1110,8 @@ async def _read_documents(
         owner_column=Documento.empleado_id,
         context=context,
     )
+    if requested_match is not None:
+        stmt = stmt.where(requested_match)
     rows = await _execute_mappings(
         session,
         stmt.order_by(
@@ -1102,6 +1120,8 @@ async def _read_documents(
             Documento.id.asc(),
         ).limit(context.limit_per_source),
     )
+    if requested_match is not None:
+        rows = [item for item in rows if item.get("requested_match") is True]
     return [
         _row(
             item,
@@ -1308,6 +1328,8 @@ def _requested_budget_project_tokens(question: str) -> list[str]:
             continue
         if compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
             break
+        if compact in LIVE_EVIDENCE_BUDGET_MODIFIERS:
+            continue
         if compact in LIVE_EVIDENCE_ENTITY_STOPWORDS or compact in {
             "proyecto",
             "proyectos",
