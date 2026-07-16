@@ -242,3 +242,13 @@ def test_no_retired_human_edit_or_canonical_draft_bypass_remains():
         1,
     )[0]
     assert "append_draft_version(" not in canonical_route
+    assert "async def _refresh_review_actor(" in dashboard
+    assert "SELECT nombre, rol, activo, actualizado_en" in dashboard
+    edit_route = dashboard.split(
+        '@app.post("/api/registration-review/{session_id}/edit")',
+        1,
+    )[1].split(
+        '@app.post("/api/registration-review/{session_id}/canonical-adopt")',
+        1,
+    )[0]
+    assert edit_route.count("_refresh_review_actor(") == 2

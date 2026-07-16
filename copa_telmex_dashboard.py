@@ -2337,10 +2337,92 @@ def _review_session_actor(request: Request) -> Dict[str, Any]:
         "user_id": user_id,
         "role": role,
         "display_name": display_name,
+        "session_auth_epoch": str(
+            session.get("auth_epoch")
+            or session.get("login_at")
+            or session.get("created_at")
+            or "current"
+        ),
         "role_assignment_id": role_assignment_id,
         "authorization_epoch": authorization_epoch,
         "authentication_method": "internal_session",
         "authentication_assurance_level": 1,
+        "auth_context_id": auth_context_id,
+    }
+
+
+async def _refresh_review_actor(
+    db_session: AsyncSession, actor: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Rebind the review actor to the current employee role and active state."""
+    try:
+        employee_id = UUID(str(actor.get("user_id") or ""))
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "APPROVER_BINDING_INVALID",
+            "La identidad del aprobador ya no es válida.",
+            status_code=401,
+        ) from exc
+    result = await db_session.execute(
+        text(
+            """
+            SELECT nombre, rol, activo, actualizado_en
+            FROM empleados
+            WHERE id = :empleado_id
+            """
+        ),
+        {"empleado_id": employee_id},
+    )
+    row = result.mappings().first()
+    if not row or row["activo"] is not True:
+        raise _review_error(
+            "APPROVER_ROLE_NOT_CURRENT",
+            "La cuenta del aprobador no está activa.",
+            status_code=409,
+        )
+    role = str(row["rol"] or "").strip().lower()
+    if role not in {"coordinador", "admin", "superadmin", "super_admin"}:
+        raise _review_error(
+            "APPROVER_ROLE_NOT_ALLOWED",
+            "El rol actual no autoriza correcciones registrales.",
+            status_code=403,
+        )
+    updated_at = row["actualizado_en"]
+    role_epoch = (
+        updated_at.isoformat()
+        if hasattr(updated_at, "isoformat")
+        else str(updated_at or "unknown")
+    )
+    role_assignment_id = human_field_sha256_binding(
+        {
+            "source": "empleados",
+            "user_id": str(employee_id),
+            "role": role,
+            "role_epoch": role_epoch,
+        }
+    )
+    authorization_epoch = human_field_sha256_binding(
+        {
+            "role_assignment_id": role_assignment_id,
+            "role_epoch": role_epoch,
+            "session_auth_epoch": str(actor.get("session_auth_epoch") or ""),
+        }
+    )
+    auth_context_id = human_field_sha256_binding(
+        {
+            "user_id": str(employee_id),
+            "role": role,
+            "authentication_method": actor["authentication_method"],
+            "authorization_epoch": authorization_epoch,
+        }
+    )
+    return {
+        **actor,
+        "user_id": str(employee_id),
+        "role": role,
+        "display_name": str(row["nombre"] or actor.get("display_name") or ""),
+        "role_assignment_id": role_assignment_id,
+        "authorization_epoch": authorization_epoch,
         "auth_context_id": auth_context_id,
     }
 
@@ -3760,6 +3842,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
     review_session_snapshot = None
     existing_gate_response = None
     async with async_session_maker() as session:
+        actor = await _refresh_review_actor(session, actor)
         prior_result = await session.execute(
             select(RegistrationHumanFieldEditProposal)
             .options(
@@ -4052,6 +4135,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
                 .with_for_update()
             )
             review_session = result.scalar_one()
+            current_actor = await _refresh_review_actor(session, actor)
             proposal_result = await session.execute(
                 select(RegistrationHumanFieldEditProposal)
                 .options(
@@ -4084,12 +4168,13 @@ async def edit_registration_review_session(session_id: str, request: Request):
             now = datetime.utcnow()
             for approval in locked_proposal.approvals:
                 if (
-                    approval.approver_principal_id != str(actor["user_id"])
-                    or approval.approver_role != str(actor["role"])
+                    approval.approver_principal_id
+                    != str(current_actor["user_id"])
+                    or approval.approver_role != str(current_actor["role"])
                     or approval.role_assignment_id
-                    != str(actor["role_assignment_id"])
+                    != str(current_actor["role_assignment_id"])
                     or approval.authorization_epoch
-                    != str(actor["authorization_epoch"])
+                    != str(current_actor["authorization_epoch"])
                 ):
                     raise _review_error(
                         "APPROVER_BINDING_INVALID",
@@ -4115,7 +4200,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
                 proposal=locked_proposal,
                 decision=locked_proposal.decision,
                 successor=successor,
-                principal_id=str(actor["user_id"]),
+                principal_id=str(current_actor["user_id"]),
             )
             session.add(execution)
             session.add_all(consumptions)
