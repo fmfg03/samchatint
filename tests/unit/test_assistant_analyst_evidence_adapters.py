@@ -22,7 +22,16 @@ def _query():
         question="Analiza desviaciones de gastos y CFDI",
         user_id="emp-1",
         role="finanzas",
-        permissions=["analyst:evidence:read"],
+        permissions=[
+            "gastos:read",
+            "cuentas_de_gastos:read",
+            "cfdi:read",
+            "presupuestos:read",
+            "proyectos:read",
+            "pagos:read",
+            "proveedores:read",
+            "documentos:read",
+        ],
         reference_date=date(2026, 7, 14),
     )
 
@@ -48,6 +57,24 @@ def test_all_default_adapters_are_read_only():
         assert result.writes_supported is False
         assert result.provider_called is False
         assert result.actions_executed == []
+
+
+def test_adapter_does_not_claim_permission_that_was_not_granted():
+    query = AnalystEvidenceQuery(
+        intent=detect_analyst_intent("Analiza gastos"),
+        question="Analiza gastos",
+        user_id="emp-1",
+        role="empleado",
+        permissions=[],
+        reference_date=date(2026, 7, 14),
+    )
+    result = ExpenseEvidenceAdapter().fetch(
+        query,
+        session={"expenses": [_row("gasto-0", "Gasto", "Resumen")]},
+    )
+
+    assert result.permissions_applied == []
+    assert result.evidence[0].permissions_applied == []
 
 
 def test_expense_adapter_returns_normalized_evidence():
