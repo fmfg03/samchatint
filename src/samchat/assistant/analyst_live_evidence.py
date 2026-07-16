@@ -1319,7 +1319,7 @@ def _requested_budget_edition_year(question: str) -> Optional[int]:
 
 
 def _requested_budget_project_tokens(question: str) -> list[str]:
-    normalized_question = normalize_analyst_text(question)
+    normalized_question = (question or "").strip().lower()
     match = re.search(
         r"\b(?:presupuesto|presupuestos|budget)\b",
         normalized_question,
@@ -1328,22 +1328,28 @@ def _requested_budget_project_tokens(question: str) -> list[str]:
         return []
     tokens: list[str] = []
     for token in re.findall(
-        r"[a-z0-9][a-z0-9._/-]*",
+        r"[^\W_][\w._/-]*",
         normalized_question[match.end():],
+        flags=re.UNICODE,
     ):
         compact = token.strip(".,:;()[]{}")
         if re.fullmatch(r"20\d{2}", compact):
             continue
-        if compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
+        normalized_compact = normalize_analyst_text(compact)
+        if normalized_compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
             break
-        if compact in LIVE_EVIDENCE_BUDGET_MODIFIERS:
+        if normalized_compact in LIVE_EVIDENCE_BUDGET_MODIFIERS:
             continue
-        if compact in LIVE_EVIDENCE_ENTITY_STOPWORDS or compact in {
-            "proyecto",
-            "proyectos",
-            "torneo",
-            "torneos",
-        }:
+        if (
+            normalized_compact in LIVE_EVIDENCE_ENTITY_STOPWORDS
+            or normalized_compact
+            in {
+                "proyecto",
+                "proyectos",
+                "torneo",
+                "torneos",
+            }
+        ):
             continue
         tokens.append(compact)
         if len(tokens) == 4:
@@ -1381,17 +1387,22 @@ def _requested_entity_tokens(question: str, source: str) -> list[str]:
     pattern = LIVE_EVIDENCE_ENTITY_PATTERNS.get(source)
     if pattern is None:
         return []
-    normalized_question = normalize_analyst_text(question)
+    normalized_question = (question or "").strip().lower()
     match = re.search(pattern, normalized_question)
     if match is None:
         return []
     tail = normalized_question[match.end():]
     tokens: list[str] = []
-    for token in re.findall(r"[a-z0-9][a-z0-9._/-]*", tail):
+    for token in re.findall(
+        r"[^\W_][\w._/-]*",
+        tail,
+        flags=re.UNICODE,
+    ):
         compact = token.strip(".,:;()[]{}")
-        if compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
+        normalized_compact = normalize_analyst_text(compact)
+        if normalized_compact in LIVE_EVIDENCE_ENTITY_TERMINATORS:
             break
-        if compact in LIVE_EVIDENCE_ENTITY_STOPWORDS:
+        if normalized_compact in LIVE_EVIDENCE_ENTITY_STOPWORDS:
             continue
         tokens.append(compact)
         if len(tokens) == 4:

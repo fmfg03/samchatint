@@ -84,7 +84,7 @@ def _live_evidence_analyst_intent(
     route_hint = str(intent.operational_route_hint or "")
     normalized = normalize_analyst_text(raw_message)
     if (
-        route_hint.startswith(("cfdi.", "payments."))
+        route_hint.startswith(("cfdi.", "payments.", "tournament."))
         and any(
             token in normalized
             for token in ("explicame", "explica", "que implica")

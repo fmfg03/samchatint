@@ -228,10 +228,15 @@ async def test_analyst_uses_authorized_live_evidence(monkeypatch):
             "registered_payments",
             "pagos:read",
         ),
+        (
+            "Explica el torneo Nacional",
+            "projects",
+            "proyectos:read",
+        ),
     ),
 )
 @pytest.mark.asyncio
-async def test_enabled_live_financial_explanations_reach_analyst(
+async def test_enabled_live_operational_explanations_reach_analyst(
     monkeypatch,
     question,
     source,

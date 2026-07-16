@@ -11,6 +11,8 @@ from samchat.assistant.analyst_intent import detect_analyst_intent
 from samchat.assistant.analyst_live_evidence import (
     LiveEvidenceContext,
     _money,
+    _requested_budget_project_tokens,
+    _requested_entity_tokens,
     _requested_live_evidence_sources,
     _safe_scalar,
     acquire_live_analyst_evidence,
@@ -44,6 +46,16 @@ def _context(
         reference_date=date(2026, 7, 14),
         limit_per_source=3,
     )
+
+
+def test_named_evidence_tokens_preserve_diacritics():
+    assert _requested_entity_tokens(
+        "Explica el proyecto \u00faltimo M\u00e9xico",
+        "projects",
+    ) == ["m\u00e9xico"]
+    assert _requested_budget_project_tokens(
+        "Explica el presupuesto 2026 de B\u00e9isbol",
+    ) == ["b\u00e9isbol"]
 
 
 def _intent():
