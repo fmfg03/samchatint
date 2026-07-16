@@ -260,6 +260,12 @@ class RegistrationReviewSession(Base):
         cascade="all, delete-orphan",
         order_by="RegistrationReviewDraft.draft_version",
     )
+    ocr_runs = relationship(
+        "RegistrationOcrRun",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="RegistrationOcrRun.created_at",
+    )
     committed_team = relationship("Team")
 
     @property
@@ -339,6 +345,8 @@ class RegistrationReviewDraft(Base):
     mutation_operation_id = Column(String(80), nullable=False, unique=True)
     mutation_decision_id = Column(String(71), nullable=False)
     mutation_receipt_id = Column(String(120), nullable=False)
+    parent_decision_id = Column(String(71))
+    parent_receipt_id = Column(String(120))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -346,6 +354,133 @@ class RegistrationReviewDraft(Base):
 
     def __repr__(self):
         return f"<RegistrationReviewDraft(id={self.id}, session_id={self.session_id}, needs_review={self.needs_review})>"
+
+
+class RegistrationOcrRun(Base):
+    """Immutable identity and output for one OCR reprocess execution."""
+
+    __tablename__ = "copa_telmex_registration_ocr_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    base_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+        nullable=False,
+        index=True,
+    )
+    base_draft_version = Column(Integer, nullable=False)
+    base_content_hash = Column(String(71), nullable=False)
+    reprocess_request_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    operation_id = Column(String(71), nullable=False, unique=True)
+    run_fingerprint = Column(String(71), nullable=False)
+    pipeline_version = Column(String(80), nullable=False)
+    provider = Column(String(50), nullable=False)
+    model_identity = Column(JSON, nullable=False)
+    prompt_config_hash = Column(String(71), nullable=False)
+    input_page_bindings = Column(JSON, nullable=False)
+    input_page_set_hash = Column(String(71), nullable=False)
+    geometry_binding_hash = Column(String(71), nullable=False)
+    previous_evidence_set_hash = Column(String(71), nullable=False)
+    new_evidence_set_hash = Column(String(71), nullable=False)
+    proposed_snapshot_hash = Column(String(71), nullable=False)
+    field_diff_set_hash = Column(String(71), nullable=False)
+    field_diff_count = Column(Integer, nullable=False)
+    material_change_count = Column(Integer, nullable=False)
+    proposed_extraction = Column(JSON, nullable=False)
+    proposed_ocr_raw = Column(JSON, nullable=False)
+    proposed_layout_regions = Column(JSON, nullable=False)
+    proposed_validation = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    session = relationship("RegistrationReviewSession", back_populates="ocr_runs")
+    field_diffs = relationship(
+        "RegistrationOcrFieldDiff",
+        back_populates="ocr_run",
+        cascade="all, delete-orphan",
+        order_by="RegistrationOcrFieldDiff.field_path",
+    )
+    decision = relationship(
+        "RegistrationOcrReprocessDecision",
+        back_populates="ocr_run",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+
+class RegistrationOcrFieldDiff(Base):
+    """Immutable field-level comparison between the base draft and an OCR run."""
+
+    __tablename__ = "copa_telmex_registration_ocr_field_diffs"
+    __table_args__ = (
+        UniqueConstraint(
+            "ocr_run_id",
+            "field_path",
+            name="uq_registration_ocr_diff_run_field",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    ocr_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_ocr_runs.id"),
+        nullable=False,
+        index=True,
+    )
+    field_path = Column(String(160), nullable=False)
+    player_slot = Column(Integer)
+    source_page = Column(Integer)
+    classification = Column(String(50), nullable=False)
+    previous_value = Column(JSON)
+    proposed_value = Column(JSON)
+    previous_value_present = Column(Boolean, nullable=False)
+    proposed_value_present = Column(Boolean, nullable=False)
+    previous_value_binding = Column(String(71), nullable=False)
+    proposed_value_binding = Column(String(71), nullable=False)
+    previous_normalized_value_binding = Column(String(71), nullable=False)
+    proposed_normalized_value_binding = Column(String(71), nullable=False)
+    previous_evidence_binding = Column(String(71), nullable=False)
+    new_evidence_binding = Column(String(71), nullable=False)
+    evidence_binding_changed = Column(Boolean, nullable=False, default=False)
+    requires_review = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ocr_run = relationship("RegistrationOcrRun", back_populates="field_diffs")
+
+
+class RegistrationOcrReprocessDecision(Base):
+    """Receipt-bound deterministic adjudication for one immutable OCR run."""
+
+    __tablename__ = "copa_telmex_registration_ocr_reprocess_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    ocr_run_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_ocr_runs.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    successor_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+    )
+    decision_id = Column(String(71), nullable=False, unique=True)
+    policy_hash = Column(String(71), nullable=False)
+    decision = Column(String(50), nullable=False)
+    reason_codes = Column(JSON, nullable=False)
+    receipt_id = Column(String(120), nullable=False)
+    event_hash = Column(String(71), nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    ocr_run = relationship("RegistrationOcrRun", back_populates="decision")
 
 
 class ValidationLog(Base):

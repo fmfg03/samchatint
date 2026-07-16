@@ -23,7 +23,7 @@ from datetime import datetime, date, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
 from urllib.parse import urlparse
 from urllib.parse import quote, unquote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -48,15 +48,28 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import aliased, selectinload
 from devnous.copa_telmex.database import CopaTelmexDB
-from devnous.copa_telmex.draft_versioning import append_draft_version
+from devnous.copa_telmex.draft_versioning import (
+    append_draft_version,
+    build_successor_values,
+)
 from devnous.copa_telmex.models import (
     Base,
+    RegistrationOcrReprocessDecision,
+    RegistrationOcrRun,
     RegistrationReviewAsset,
     RegistrationReviewDraft,
     RegistrationReviewSession,
+)
+from devnous.copa_telmex.reprocess_governance import (
+    build_gate_request as build_reprocess_gate_request,
+    build_ocr_run,
+    decision_row as build_reprocess_decision_row,
+    parent_authorization as reprocess_parent_authorization,
+    public_field_diffs,
+    sha256_binding,
 )
 from devnous.copa_telmex.persistence_authority import (
     PersistenceAuthorityDenied,
@@ -1418,6 +1431,22 @@ copa_telmex_frontend_url = os.getenv("COPA_TELMEX_FRONTEND_URL", f"{public_app_u
 review_uploads_dir = photos_dir / "review_sessions"
 review_uploads_dir.mkdir(parents=True, exist_ok=True)
 ctt_layout_path = Path(__file__).parent / "config" / "layout_ctt_2026.json"
+
+
+def _reprocess_prompt_config_hash() -> str:
+    layout_hash = (
+        "sha256:" + hashlib.sha256(ctt_layout_path.read_bytes()).hexdigest()
+        if ctt_layout_path.is_file()
+        else None
+    )
+    return sha256_binding(
+        {
+            "review_ocr_provider": review_ocr_provider,
+            "layout_hash": layout_hash,
+            "pipeline_contract": "samchat-registration-reprocess-v1",
+            "normalization_policy": "samchat-registration-field-normalization-v1",
+        }
+    )
 _ctt_layout_cache: Optional[Dict[str, Any]] = None
 
 
@@ -2635,23 +2664,21 @@ async def _process_review_assets(assets: List[Dict[str, Any]]) -> Tuple[Dict[str
     return _merge_review_extractions(page_results)
 
 
-async def _upsert_review_draft(
-    db_session: AsyncSession,
+def _prepare_review_draft_values(
     review_session: RegistrationReviewSession,
     extraction: Dict[str, Any],
     raw_payload: Dict[str, Any],
     *,
     layout_regions: Optional[Dict[str, Any]] = None,
     preserve_edits: bool = False,
-    mutation_type: str = "ocr_processed",
-    actor_id: Optional[str] = None,
-) -> RegistrationReviewDraft:
+    base_draft: Optional[RegistrationReviewDraft] = None,
+) -> Dict[str, Any]:
     validation = _build_review_commit_validation(
         extraction,
         _build_review_validation(extraction, raw_payload=raw_payload),
         review_session=review_session,
     )
-    draft = review_session.draft
+    draft = base_draft or review_session.draft
 
     existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
     extraction_metadata = _build_review_extraction_metadata(
@@ -2671,27 +2698,55 @@ async def _upsert_review_draft(
         if preserve_edits and draft and isinstance(draft.review_edits, dict)
         else extraction
     )
+    return {
+        "ocr_raw": raw_payload,
+        "extraction": extraction,
+        "review_edits": review_edits,
+        "validation": validation,
+        "layout_regions": layout_regions
+        or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None),
+        "overall_confidence": float(extraction.get("overall_confidence") or 0.0),
+        "needs_review": bool(validation.get("needs_review")),
+    }
+
+
+async def _upsert_review_draft(
+    db_session: AsyncSession,
+    review_session: RegistrationReviewSession,
+    extraction: Dict[str, Any],
+    raw_payload: Dict[str, Any],
+    *,
+    layout_regions: Optional[Dict[str, Any]] = None,
+    preserve_edits: bool = False,
+    mutation_type: str = "ocr_processed",
+    actor_id: Optional[str] = None,
+) -> RegistrationReviewDraft:
+    values = _prepare_review_draft_values(
+        review_session,
+        extraction,
+        raw_payload,
+        layout_regions=layout_regions,
+        preserve_edits=preserve_edits,
+    )
     successor = await append_draft_version(
         db_session,
         review_session,
         mutation_type=mutation_type,
         actor_id=actor_id,
-        expected_draft=draft,
-        ocr_raw=raw_payload,
-        extraction=extraction,
-        review_edits=review_edits,
-        validation=validation,
-        layout_regions=layout_regions
-        or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None),
-        overall_confidence=float(extraction.get("overall_confidence") or 0.0),
-        needs_review=bool(validation.get("needs_review")),
+        expected_draft=review_session.draft,
+        **values,
     )
 
     detected_provider = None
-    if isinstance(raw_payload, dict):
+    governed_raw_payload = values["ocr_raw"]
+    if isinstance(governed_raw_payload, dict):
         detected_provider = (
-            raw_payload.get("provider")
-            or ((raw_payload.get("backend") or {}).get("provider") if isinstance(raw_payload.get("backend"), dict) else None)
+            governed_raw_payload.get("provider")
+            or (
+                (governed_raw_payload.get("backend") or {}).get("provider")
+                if isinstance(governed_raw_payload.get("backend"), dict)
+                else None
+            )
         )
     review_session.provider = str(detected_provider or review_session.provider or review_ocr_provider or "local")
     review_session.status = "ready"
@@ -3587,6 +3642,7 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "canonical_review": canonical_review,
                 "canonical_promotion_enabled": _canonical_promotion_enabled(),
                 "tournament_options": _review_tournament_options(review_session.tournament_slug or "copa_telmex"),
+                "reprocess_request_id": str(uuid4()),
             },
         )
 
@@ -3932,14 +3988,31 @@ async def reject_registration_review_session(
 
 @app.post("/api/registration-review/{session_id}/reprocess")
 async def reprocess_registration_review_session(session_id: str, request: Request):
-    """Re-run OCR over the primary image asset."""
+    """Record and adjudicate a new OCR run against an explicit immutable base."""
     _ensure_registration_review_access(request)
     actor = _review_session_actor(request)
     try:
         session_uuid = UUID(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
+    form_data = await request.form()
+    try:
+        submitted_base_id = UUID(str(form_data.get("base_draft_id") or ""))
+        submitted_base_version = int(form_data.get("base_draft_version") or 0)
+        reprocess_request_id = UUID(
+            str(form_data.get("reprocess_request_id") or "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "reprocess_base_missing",
+            "La solicitud de reproceso no declara una versión base válida.",
+        ) from exc
+    submitted_base_hash = str(form_data.get("base_content_hash") or "")
+    tenant_id = os.getenv("ZAUBERN_TENANT_ID", "samchat-prod")
+    existing_run_id = None
+    detected_provider = None
 
+    # Preflight rejects already-stale UI requests before paying for another OCR run.
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
@@ -3948,7 +4021,6 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
                 selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session:
@@ -3956,31 +4028,279 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
         _ensure_review_session_mutable(review_session)
         if not review_session.assets:
             raise HTTPException(status_code=400, detail="La sesión no tiene imágenes para reprocesar.")
-
-        review_session.status = "processing"
+        base_draft = review_session.draft
+        if (
+            base_draft is None
+            or base_draft.id != submitted_base_id
+            or int(base_draft.draft_version) != submitted_base_version
+            or base_draft.content_hash != submitted_base_hash
+        ):
+            raise _review_error(
+                "stale_reprocess_base",
+                "El draft avanzó; recarga la revisión antes de reprocesar.",
+                status_code=409,
+            )
+        existing_run_result = await session.execute(
+            select(RegistrationOcrRun)
+            .options(selectinload(RegistrationOcrRun.decision))
+            .where(
+                RegistrationOcrRun.reprocess_request_id
+                == reprocess_request_id
+            )
+        )
+        existing_run = existing_run_result.scalar_one_or_none()
+        if existing_run is not None:
+            if (
+                existing_run.session_id != review_session.id
+                or existing_run.base_draft_id != submitted_base_id
+                or existing_run.base_content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "reprocess_request_id_conflict",
+                    "El identificador de reproceso ya está ligado a otra evidencia.",
+                    status_code=409,
+                )
+            if existing_run.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?reprocess_decision={existing_run.decision.decision}"
+                        "&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            existing_run_id = existing_run.id
         asset_payloads = [
             {
                 "page_index": asset.page_index,
                 "image_path": asset.image_path,
+                "sha256": asset.sha256,
                 "width": asset.width,
                 "height": asset.height,
             }
             for asset in review_session.assets
         ]
-        extraction, raw_payload, detected_provider, layout_regions = await _process_review_assets(asset_payloads)
-        review_session.provider = detected_provider or review_session.provider
-        await _upsert_review_draft(
-            session,
-            review_session,
-            extraction,
-            raw_payload,
-            layout_regions=layout_regions,
-            mutation_type="ocr_reprocessed",
-            actor_id=actor.get("user_id"),
+
+    public_diffs: List[Dict[str, Any]]
+    if existing_run_id is None:
+        extraction, raw_payload, detected_provider, layout_regions = (
+            await _process_review_assets(asset_payloads)
         )
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(RegistrationReviewSession)
+                .options(
+                    selectinload(RegistrationReviewSession.assets),
+                    selectinload(RegistrationReviewSession.drafts),
+                )
+                .where(RegistrationReviewSession.id == session_uuid)
+                .with_for_update()
+            )
+            review_session = result.scalar_one()
+            base_draft = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == submitted_base_id
+                ),
+                None,
+            )
+            if (
+                base_draft is None
+                or int(base_draft.draft_version) != submitted_base_version
+                or base_draft.content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "reprocess_base_changed",
+                    "La versión base ya no coincide con la evidencia declarada.",
+                    status_code=409,
+                )
+            prepared = _prepare_review_draft_values(
+                review_session,
+                extraction,
+                raw_payload,
+                layout_regions=layout_regions,
+                preserve_edits=False,
+                base_draft=base_draft,
+            )
+            proposed_values = build_successor_values(base_draft, **prepared)
+            candidate_run, candidate_diffs, public_diffs = build_ocr_run(
+                tenant_id=tenant_id,
+                session_id=review_session.id,
+                reprocess_request_id=reprocess_request_id,
+                base_draft=base_draft,
+                assets=list(review_session.assets),
+                proposed_values=proposed_values,
+                provider=detected_provider,
+                prompt_config_hash=_reprocess_prompt_config_hash(),
+            )
+            existing_result = await session.execute(
+                select(RegistrationOcrRun)
+                .options(
+                    selectinload(RegistrationOcrRun.field_diffs),
+                    selectinload(RegistrationOcrRun.decision),
+                )
+                .where(
+                    RegistrationOcrRun.reprocess_request_id
+                    == reprocess_request_id
+                )
+            )
+            ocr_run = existing_result.scalar_one_or_none()
+            if ocr_run is None:
+                candidate_operation_id = candidate_run.operation_id
+                session.add(ocr_run := candidate_run)
+                for diff in candidate_diffs:
+                    session.add(diff)
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    # A concurrent retry won the immutable-run insert.
+                    await session.rollback()
+                    concurrent_result = await session.execute(
+                        select(RegistrationOcrRun)
+                        .options(
+                            selectinload(RegistrationOcrRun.field_diffs),
+                            selectinload(RegistrationOcrRun.decision),
+                        )
+                        .where(
+                            RegistrationOcrRun.operation_id
+                            == candidate_operation_id
+                        )
+                    )
+                    ocr_run = concurrent_result.scalar_one()
+                    public_diffs = public_field_diffs(ocr_run.field_diffs)
+            elif ocr_run.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?reprocess_decision={ocr_run.decision.decision}"
+                        "&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            else:
+                public_diffs = public_field_diffs(ocr_run.field_diffs)
+            existing_run_id = ocr_run.id
+
+    async with async_session_maker() as session:
+        session_result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(selectinload(RegistrationReviewSession.drafts))
+            .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
+        )
+        review_session = session_result.scalar_one()
+        current_draft = review_session.draft
+        if current_draft is None:
+            raise _review_error(
+                "reprocess_current_draft_missing",
+                "La sesión no tiene una versión vigente para adjudicar.",
+                status_code=409,
+            )
+        run_result = await session.execute(
+            select(RegistrationOcrRun)
+            .options(
+                selectinload(RegistrationOcrRun.field_diffs),
+                selectinload(RegistrationOcrRun.decision),
+            )
+            .where(RegistrationOcrRun.id == existing_run_id)
+            .with_for_update()
+        )
+        ocr_run = run_result.scalar_one()
+        if ocr_run.decision is not None:
+            return RedirectResponse(
+                url=(
+                    f"/registration-review/{session_id}"
+                    f"?reprocess_decision={ocr_run.decision.decision}"
+                    "&idempotent=1"
+                ),
+                status_code=303,
+            )
+        public_diffs = public_field_diffs(ocr_run.field_diffs)
+        previous_run_result = await session.execute(
+            select(RegistrationOcrRun.id)
+            .join(
+                RegistrationOcrReprocessDecision,
+                RegistrationOcrReprocessDecision.ocr_run_id
+                == RegistrationOcrRun.id,
+            )
+            .where(
+                RegistrationOcrReprocessDecision.successor_draft_id
+                == ocr_run.base_draft_id
+            )
+            .order_by(RegistrationOcrRun.created_at.desc())
+            .limit(1)
+        )
+        previous_ocr_run_id = previous_run_result.scalar_one_or_none()
+        successor_draft_id = uuid4()
+        gate_request = build_reprocess_gate_request(
+            tenant_id=tenant_id,
+            run=ocr_run,
+            current_draft=current_draft,
+            public_diffs=public_diffs,
+            successor_draft_id=successor_draft_id,
+            previous_ocr_run_id=previous_ocr_run_id,
+        )
+        gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_reprocess(
+            gate_request
+        )
+        event = gate_response.get("reprocess_decision") or {}
+        receipt = gate_response.get("reprocess_receipt") or {}
+        if (
+            receipt.get("verified") is not True
+            or not event.get("decision_id")
+            or not receipt.get("receipt_id")
+        ):
+            raise RegistrationGovernanceDenied(
+                "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                "Zaubern returned an incomplete reprocess adjudication",
+            )
+        if gate_response.get("successor_authorized") is True:
+            successor = await append_draft_version(
+                session,
+                review_session,
+                mutation_type="ocr_reprocessed",
+                actor_id=actor.get("user_id"),
+                expected_draft=current_draft,
+                operation_id=ocr_run.operation_id,
+                new_draft_id=successor_draft_id,
+                parent_authorization=reprocess_parent_authorization(gate_response),
+                ocr_raw=ocr_run.proposed_ocr_raw,
+                extraction=ocr_run.proposed_extraction,
+                review_edits=ocr_run.proposed_extraction,
+                validation=ocr_run.proposed_validation,
+                layout_regions=ocr_run.proposed_layout_regions,
+                overall_confidence=float(
+                    (ocr_run.proposed_extraction or {}).get("overall_confidence")
+                    or 0.0
+                ),
+                needs_review=bool(
+                    (ocr_run.proposed_validation or {}).get("needs_review")
+                ),
+            )
+            if successor.content_hash != ocr_run.proposed_snapshot_hash:
+                raise RegistrationGovernanceDenied(
+                    "REPROCESS_SUCCESSOR_HASH_MISMATCH",
+                    "REG-S02 successor does not match the adjudicated snapshot",
+                )
+        decision = build_reprocess_decision_row(
+            run=ocr_run,
+            successor_draft_id=successor_draft_id,
+            response=gate_response,
+        )
+        session.add(decision)
+        review_session.provider = detected_provider or review_session.provider
+        review_session.status = "ready"
+        review_session.error_message = None
         await session.commit()
 
-    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/registration-review/{session_id}"
+            f"?reprocess_decision={decision.decision}"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/api/registration-review/{session_id}/assets")

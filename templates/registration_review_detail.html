@@ -598,8 +598,12 @@
     <a class="workspace-link" href="#document-panel">Documento</a>
     <a class="workspace-link" href="#editable-draft">Borrador editable</a>
     <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
-          onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
-        <button type="submit" class="workspace-link" {% if session_committed %}disabled{% endif %}>Reprocesar</button>
+          onsubmit="return confirm('Esto ejecutará una nueva pasada OCR y comparará sus resultados contra la versión actual. ¿Continuar?');">
+        <input type="hidden" name="base_draft_id" value="{{ review_session.draft.id if review_session.draft is defined else '' }}">
+        <input type="hidden" name="base_draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else '' }}">
+        <input type="hidden" name="base_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+        <input type="hidden" name="reprocess_request_id" value="{{ reprocess_request_id if reprocess_request_id is defined else '' }}">
+        <button type="submit" class="workspace-link" {% if session_committed or review_session.draft is not defined or reprocess_request_id is not defined %}disabled{% endif %}>Reprocesar</button>
     </form>
 </nav>
 

@@ -82,6 +82,16 @@ def _snapshot(draft: Optional[RegistrationReviewDraft]) -> dict[str, Any]:
     }
 
 
+def build_successor_values(
+    draft: Optional[RegistrationReviewDraft], **changes: Any
+) -> dict[str, Any]:
+    values = _snapshot(draft)
+    for key, value in changes.items():
+        values[key] = copy.deepcopy(value)
+    values["content_hash"] = draft_content_hash(values)
+    return values
+
+
 async def latest_draft(
     db_session: AsyncSession, session_id: UUID
 ) -> Optional[RegistrationReviewDraft]:
@@ -105,6 +115,8 @@ async def append_draft_version(
     actor_id: Optional[Any] = None,
     expected_draft: Optional[RegistrationReviewDraft] = None,
     operation_id: Optional[str] = None,
+    new_draft_id: Optional[UUID] = None,
+    parent_authorization: Optional[Mapping[str, Any]] = None,
     governance_client: Optional[RegistrationGovernanceClient] = None,
     **changes: Any,
 ) -> RegistrationReviewDraft:
@@ -140,11 +152,9 @@ async def append_draft_version(
             "The draft changed after it was read; reload before writing."
         )
 
-    values = _snapshot(current)
-    for key, value in changes.items():
-        values[key] = copy.deepcopy(value)
-    content_hash = draft_content_hash(values)
-    new_id = uuid4()
+    values = build_successor_values(current, **changes)
+    content_hash = str(values.pop("content_hash"))
+    new_id = new_draft_id or uuid4()
     new_version = int(current.draft_version if current else 0) + 1
     operation_id = operation_id or secrets.token_hex(20)
     payload = {
@@ -159,6 +169,7 @@ async def append_draft_version(
         "mutation_type": mutation_type,
         "actor_binding": actor_binding(actor_id),
         "operation_id": operation_id,
+        "parent_authorization": dict(parent_authorization or {}),
     }
     client = governance_client or RegistrationGovernanceClient.from_environment()
     authorization = await client.authorize_draft_version(payload)
@@ -178,6 +189,8 @@ async def append_draft_version(
             "Zaubern returned an incomplete draft authorization",
         )
 
+    parent_decision = (parent_authorization or {}).get("decision") or {}
+    parent_receipt = (parent_authorization or {}).get("receipt") or {}
     successor = RegistrationReviewDraft(
         id=new_id,
         session_id=review_session.id,
@@ -190,6 +203,16 @@ async def append_draft_version(
         mutation_operation_id=operation_id,
         mutation_decision_id=str(decision["decision_id"]),
         mutation_receipt_id=str(receipt["receipt_id"]),
+        parent_decision_id=(
+            str(parent_decision["decision_id"])
+            if parent_decision.get("decision_id")
+            else None
+        ),
+        parent_receipt_id=(
+            str(parent_receipt["receipt_id"])
+            if parent_receipt.get("receipt_id")
+            else None
+        ),
         **values,
     )
     db_session.add(successor)
