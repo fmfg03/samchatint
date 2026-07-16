@@ -810,7 +810,7 @@
 
     <section id="editable-draft" class="review-card" aria-labelledby="editable-draft-title">
         <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
-            <input type="hidden" name="draft_version" value="{{ review_session.draft.draft_version }}">
+            <input type="hidden" name="draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else 1 }}">
             <h3 id="editable-draft-title" style="margin-bottom: 6px;">Borrador editable</h3>
             <p style="margin: 0 0 16px; color: #64748b;">Estos son los únicos valores que se guardan al capturar.</p>
             <h4 style="margin-bottom: 14px;">Datos del equipo</h4>
