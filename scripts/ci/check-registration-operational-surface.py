@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -36,6 +37,7 @@ MODEL_IMPORT = re.compile(
     r"import\s+devnous\.copa_telmex\.models)"
 )
 SESSION_MUTATION = re.compile(r"\bsession\.(?:add|add_all|delete)\s*\(")
+REGS08_SOURCE = Path("src/devnous/tournaments/core/operations_module.py")
 
 
 def is_operational_path(relative_path: str) -> bool:
@@ -57,6 +59,63 @@ def mutation_reasons(source: str) -> list[str]:
         reasons.append("DIRECT_SQLALCHEMY_MODEL_MUTATION")
     if MODEL_IMPORT.search(source) and SESSION_MUTATION.search(source):
         reasons.append("DIRECT_ORM_SESSION_MUTATION")
+    return sorted(set(reasons))
+
+
+def _method_calls(node: ast.AST) -> set[str]:
+    return {
+        child.func.attr
+        for child in ast.walk(node)
+        if isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
+    }
+
+
+def regs08_retirement_reasons(root: Path) -> list[str]:
+    """Verify Telegram can only stage a governed review, never finalize rows."""
+    path = root / REGS08_SOURCE
+    if not path.is_file():
+        return ["REGS08_CANONICAL_SOURCE_MISSING"]
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ["REGS08_CANONICAL_SOURCE_UNREADABLE"]
+
+    operations = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "OperationsModule"
+        ),
+        None,
+    )
+    if operations is None:
+        return ["REGS08_OPERATIONS_MODULE_MISSING"]
+
+    methods = {
+        node.name: node
+        for node in operations.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    reasons: list[str] = []
+    all_calls = _method_calls(operations)
+    if (
+        "_save_registration_form_to_database" in methods
+        or "_save_registration_form_to_database" in all_calls
+    ):
+        reasons.append("REGS08_DIRECT_FINALIZER_PRESENT")
+
+    staging = methods.get("_stage_pending_registration_review")
+    if staging is None:
+        reasons.append("REGS08_GOVERNED_STAGING_MISSING")
+    elif "_create_web_review_session_from_pending" not in _method_calls(staging):
+        reasons.append("REGS08_STAGING_NOT_BOUND_TO_REVIEW_DRAFT")
+
+    if "stage_ocr:" not in source:
+        reasons.append("REGS08_PRECAPTURE_CALLBACK_MISSING")
+    if re.search(r'"callback_data"\s*:\s*f?"save_ocr:', source):
+        reasons.append("REGS08_DIRECT_SAVE_CALLBACK_GENERATED")
+
     return sorted(set(reasons))
 
 
@@ -98,6 +157,13 @@ def assess(root: Path) -> dict[str, object]:
         reasons = mutation_reasons(source)
         if reasons:
             violations.append({"path": relative_path, "reason_codes": reasons})
+
+    regs08_reasons = regs08_retirement_reasons(root)
+    if regs08_reasons:
+        violations.append(
+            {"path": str(REGS08_SOURCE), "reason_codes": regs08_reasons}
+        )
+
     return {
         "schema_version": "samchat.registration_operational_surface.v1",
         "valid": not violations,
