@@ -49,8 +49,9 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 from devnous.copa_telmex.database import CopaTelmexDB
+from devnous.copa_telmex.draft_versioning import append_draft_version
 from devnous.copa_telmex.models import (
     Base,
     RegistrationReviewAsset,
@@ -2642,24 +2643,15 @@ async def _upsert_review_draft(
     *,
     layout_regions: Optional[Dict[str, Any]] = None,
     preserve_edits: bool = False,
+    mutation_type: str = "ocr_processed",
+    actor_id: Optional[str] = None,
 ) -> RegistrationReviewDraft:
     validation = _build_review_commit_validation(
         extraction,
         _build_review_validation(extraction, raw_payload=raw_payload),
         review_session=review_session,
     )
-    draft_result = await db_session.execute(
-        select(RegistrationReviewDraft).where(
-            RegistrationReviewDraft.session_id == review_session.id
-        )
-    )
-    draft = draft_result.scalar_one_or_none()
-    draft_is_new = draft is None
-    if draft_is_new:
-        draft = RegistrationReviewDraft(session_id=review_session.id)
-        db_session.add(draft)
-    else:
-        draft.draft_version = _review_draft_version(draft) + 1
+    draft = review_session.draft
 
     existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
     extraction_metadata = _build_review_extraction_metadata(
@@ -2674,14 +2666,26 @@ async def _upsert_review_draft(
     raw_payload = dict(raw_payload or {})
     raw_payload["extraction_metadata"] = extraction_metadata
 
-    draft.ocr_raw = raw_payload
-    draft.extraction = extraction
-    if not preserve_edits or not isinstance(draft.review_edits, dict):
-        draft.review_edits = extraction
-    draft.validation = validation
-    draft.layout_regions = layout_regions or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None)
-    draft.overall_confidence = float(extraction.get("overall_confidence") or 0.0)
-    draft.needs_review = bool(validation.get("needs_review"))
+    review_edits = (
+        draft.review_edits
+        if preserve_edits and draft and isinstance(draft.review_edits, dict)
+        else extraction
+    )
+    successor = await append_draft_version(
+        db_session,
+        review_session,
+        mutation_type=mutation_type,
+        actor_id=actor_id,
+        expected_draft=draft,
+        ocr_raw=raw_payload,
+        extraction=extraction,
+        review_edits=review_edits,
+        validation=validation,
+        layout_regions=layout_regions
+        or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None),
+        overall_confidence=float(extraction.get("overall_confidence") or 0.0),
+        needs_review=bool(validation.get("needs_review")),
+    )
 
     detected_provider = None
     if isinstance(raw_payload, dict):
@@ -2692,7 +2696,7 @@ async def _upsert_review_draft(
     review_session.provider = str(detected_provider or review_session.provider or review_ocr_provider or "local")
     review_session.status = "ready"
     review_session.error_message = None
-    return draft
+    return successor
 
 # Serve tournament frontends with SPA fallback
 copa_america_dist_dir = Path(__file__).parent / "goal-fest-page" / "dist"
@@ -3072,6 +3076,20 @@ async def home(request: Request):
 
             # Get recent registrations
             registrations = await copa_db.get_registrations_needing_review()
+            draft_lookup = aliased(RegistrationReviewDraft)
+            latest_draft_id = (
+                select(draft_lookup.id)
+                .where(
+                    draft_lookup.session_id == RegistrationReviewSession.id
+                )
+                .order_by(
+                    draft_lookup.draft_version.desc(),
+                    draft_lookup.created_at.desc(),
+                )
+                .limit(1)
+                .correlate(RegistrationReviewSession)
+                .scalar_subquery()
+            )
             review_result = await session.execute(
                 select(
                     RegistrationReviewSession.id.label("id"),
@@ -3102,8 +3120,7 @@ async def home(request: Request):
                 )
                 .outerjoin(
                     RegistrationReviewDraft,
-                    RegistrationReviewDraft.session_id
-                    == RegistrationReviewSession.id,
+                    RegistrationReviewDraft.id == latest_draft_id,
                 )
                 .where(RegistrationReviewSession.status != "committed")
             )
@@ -3307,7 +3324,7 @@ async def list_registration_review_sessions(request: Request):
                 select(RegistrationReviewSession)
                 .options(
                     selectinload(RegistrationReviewSession.assets),
-                    selectinload(RegistrationReviewSession.draft),
+                    selectinload(RegistrationReviewSession.drafts),
                 )
                 .order_by(RegistrationReviewSession.started_at.desc())
                 .limit(100)
@@ -3419,6 +3436,8 @@ async def create_registration_review_session(request: Request):
             extraction,
             raw_payload,
             layout_regions=layout_regions,
+            mutation_type="web_upload_created",
+            actor_id=created_by_user_id,
         )
         await session.commit()
 
@@ -3439,7 +3458,7 @@ async def get_registration_review_session_payload(session_id: str, request: Requ
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
         )
@@ -3497,7 +3516,7 @@ async def view_registration_review_session(request: Request, session_id: str):
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
         )
@@ -3588,7 +3607,7 @@ async def edit_registration_review_session(session_id: str, request: Request):
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
-            .options(selectinload(RegistrationReviewSession.draft))
+            .options(selectinload(RegistrationReviewSession.drafts))
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
         )
@@ -3635,15 +3654,21 @@ async def edit_registration_review_session(session_id: str, request: Request):
                 }
             ]
         validation = _attach_review_audit(validation, existing_audit)
-        review_session.draft.review_edits = edited_extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = bool(validation.get("needs_review"))
-        review_session.draft.overall_confidence = float(
-            edited_extraction.get("overall_confidence") or review_session.draft.overall_confidence or 0.0
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="operator_edit",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            review_edits=edited_extraction,
+            validation=validation,
+            needs_review=bool(validation.get("needs_review")),
+            overall_confidence=float(
+                edited_extraction.get("overall_confidence")
+                or review_session.draft.overall_confidence
+                or 0.0
+            ),
         )
-        review_session.draft.draft_version = _review_draft_version(
-            review_session.draft
-        ) + 1
         review_session.status = "ready"
         await session.commit()
         _log_registration_review_event(
@@ -3706,7 +3731,7 @@ async def adopt_canonical_review_fields(
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
@@ -3801,9 +3826,16 @@ async def adopt_canonical_review_fields(
             assets=list(review_session.assets or []),
         )
         validation = _attach_review_audit(validation, audit)
-        review_session.draft.review_edits = promoted_extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = bool(validation.get("needs_review"))
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="canonical_fields_adopted",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            review_edits=promoted_extraction,
+            validation=validation,
+            needs_review=bool(validation.get("needs_review")),
+        )
         review_session.status = "ready"
         await session.commit()
         _log_registration_review_event(
@@ -3844,7 +3876,7 @@ async def reject_registration_review_session(
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
-            .options(selectinload(RegistrationReviewSession.draft))
+            .options(selectinload(RegistrationReviewSession.drafts))
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
         )
@@ -3875,8 +3907,15 @@ async def reject_registration_review_session(
         validation["needs_review"] = True
 
         review_session.status = "rejected"
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = True
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="draft_rejected",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            validation=validation,
+            needs_review=True,
+        )
         await session.commit()
         _log_registration_review_event(
             "draft_rejected",
@@ -3895,6 +3934,7 @@ async def reject_registration_review_session(
 async def reprocess_registration_review_session(session_id: str, request: Request):
     """Re-run OCR over the primary image asset."""
     _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
     try:
         session_uuid = UUID(session_id)
     except ValueError as exc:
@@ -3905,7 +3945,7 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
@@ -3935,6 +3975,8 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
             extraction,
             raw_payload,
             layout_regions=layout_regions,
+            mutation_type="ocr_reprocessed",
+            actor_id=actor.get("user_id"),
         )
         await session.commit()
 
@@ -3945,6 +3987,7 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
 async def append_assets_to_registration_review_session(session_id: str, request: Request):
     """Append extra images to an existing review session and merge them into the current draft."""
     _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
     try:
         session_uuid = UUID(session_id)
     except ValueError as exc:
@@ -3965,7 +4008,7 @@ async def append_assets_to_registration_review_session(session_id: str, request:
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
@@ -4019,6 +4062,8 @@ async def append_assets_to_registration_review_session(session_id: str, request:
             merged_extraction,
             merged_raw,
             layout_regions=merged_layout,
+            mutation_type="web_assets_appended",
+            actor_id=actor.get("user_id"),
         )
         review_session.provider = detected_provider or review_session.provider
         await session.commit()
@@ -4043,7 +4088,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
@@ -4246,9 +4291,16 @@ async def commit_registration_review_session(session_id: str, request: Request):
             audit["latest_commit"] = commit_audit
             audit["commit_events"] = list(audit.get("commit_events") or []) + [commit_audit]
             validation = _attach_review_audit(validation, audit)
-            review_session.draft.review_edits = extraction
-            review_session.draft.validation = validation
-            review_session.draft.needs_review = True
+            await append_draft_version(
+                session,
+                review_session,
+                mutation_type="commit_blocked",
+                actor_id=actor.get("user_id"),
+                expected_draft=review_session.draft,
+                review_edits=extraction,
+                validation=validation,
+                needs_review=True,
+            )
             review_session.status = "ready"
             await session.commit()
             _log_registration_review_event(
@@ -4446,9 +4498,16 @@ async def commit_registration_review_session(session_id: str, request: Request):
         review_session.committed_team_id = team.id
         review_session.approved_at = approved_at_dt
         review_session.committed_at = approved_at_dt
-        review_session.draft.review_edits = extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = False
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="commit_succeeded",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            review_edits=extraction,
+            validation=validation,
+            needs_review=False,
+        )
 
         await copa_db.commit()
         _log_registration_review_event(

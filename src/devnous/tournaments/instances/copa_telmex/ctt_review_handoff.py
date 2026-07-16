@@ -16,6 +16,7 @@ from uuid import UUID
 from PIL import Image
 from sqlalchemy import select
 
+from devnous.copa_telmex.draft_versioning import append_draft_version
 from devnous.copa_telmex.models import (
     RegistrationReviewDraft,
     RegistrationReviewSession,
@@ -283,15 +284,19 @@ class CttCanonicalReviewSink:
 
         async with self.session_maker() as session:
             session_id = UUID(str(review_session_id))
-            await session.execute(
-                select(RegistrationReviewSession.id)
+            session_result = await session.execute(
+                select(RegistrationReviewSession)
                 .where(RegistrationReviewSession.id == session_id)
                 .with_for_update()
             )
+            review_session = session_result.scalar_one_or_none()
+            if review_session is None:
+                return False
             result = await session.execute(
-                select(RegistrationReviewDraft).where(
-                    RegistrationReviewDraft.session_id == session_id
-                )
+                select(RegistrationReviewDraft)
+                .where(RegistrationReviewDraft.session_id == session_id)
+                .order_by(RegistrationReviewDraft.draft_version.desc())
+                .limit(1)
             )
             review_draft = result.scalar_one_or_none()
             if review_draft is None:
@@ -351,7 +356,14 @@ class CttCanonicalReviewSink:
             }
             validation["audit"] = audit
 
-            review_draft.ocr_raw = ocr_raw
-            review_draft.validation = validation
+            await append_draft_version(
+                session,
+                review_session,
+                mutation_type="canonical_shadow_recorded",
+                actor_id="ctt-canary",
+                expected_draft=review_draft,
+                ocr_raw=ocr_raw,
+                validation=validation,
+            )
             await session.commit()
         return True

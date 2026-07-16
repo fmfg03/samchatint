@@ -188,7 +188,8 @@ class _ScalarResult:
 
 
 class _FakeSession:
-    def __init__(self, review_draft):
+    def __init__(self, review_session, review_draft):
+        self.review_session = review_session
         self.review_draft = review_draft
         self.committed = False
         self.queries = []
@@ -201,7 +202,8 @@ class _FakeSession:
 
     async def execute(self, query):
         self.queries.append(query)
-        return _ScalarResult(self.review_draft)
+        value = self.review_session if len(self.queries) == 1 else self.review_draft
+        return _ScalarResult(value)
 
     async def commit(self):
         self.committed = True
@@ -218,7 +220,17 @@ async def test_sink_persists_sidecar_without_replacing_legacy_draft(
         extraction={"team": {"name": "Legacy Team"}},
         review_edits={"team": {"name": "Operator Edit"}},
     )
-    session = _FakeSession(review_draft)
+    review_session = SimpleNamespace(
+        id="11111111-1111-1111-1111-111111111111"
+    )
+    session = _FakeSession(review_session, review_draft)
+    appended = {}
+
+    async def capture_append(_session, _review_session, **values):
+        appended.update(values)
+        return SimpleNamespace(**values)
+
+    monkeypatch.setattr(handoff, "append_draft_version", capture_append)
 
     def session_maker():
         return session
@@ -261,11 +273,14 @@ async def test_sink_persists_sidecar_without_replacing_legacy_draft(
     assert session.queries[0]._for_update_arg is not None
     assert review_draft.extraction == {"team": {"name": "Legacy Team"}}
     assert review_draft.review_edits == {"team": {"name": "Operator Edit"}}
-    assert review_draft.ocr_raw["provider"] == "legacy"
-    canonical = review_draft.ocr_raw["canonical_shadow"]
+    assert review_draft.ocr_raw == {"provider": "legacy"}
+    assert review_draft.validation == {"legacy": True}
+    assert appended["mutation_type"] == "canonical_shadow_recorded"
+    assert appended["expected_draft"] is review_draft
+    canonical = appended["ocr_raw"]["canonical_shadow"]
     assert canonical["authoritative"] is False
     assert canonical["players"][0]["slot"] == 1
-    audit = review_draft.validation["audit"]["canonical_shadow"]
+    audit = appended["validation"]["audit"]["canonical_shadow"]
     assert audit["player_count"] == 1
     assert audit["preview_count"] == 1
     preview = (

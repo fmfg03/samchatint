@@ -24,7 +24,9 @@ import yaml
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import aliased
 
+from devnous.copa_telmex.draft_versioning import append_draft_version
 from devnous.gastos.schema_guard import apply_schema_guard, check_schema_health
 from devnous.tournaments.core.operations_module import OperationsModule
 from devnous.tournaments.core.telegram_security import (
@@ -534,6 +536,8 @@ class RegistrationIntakeBot:
                 select(RegistrationReviewDraft).where(
                     RegistrationReviewDraft.session_id == UUID(str(session_id))
                 )
+                .order_by(RegistrationReviewDraft.draft_version.desc())
+                .limit(1)
             )
             draft = result.scalar_one_or_none()
             validation = (
@@ -566,6 +570,8 @@ class RegistrationIntakeBot:
                 select(RegistrationReviewDraft).where(
                     RegistrationReviewDraft.session_id == UUID(str(session_id))
                 )
+                .order_by(RegistrationReviewDraft.draft_version.desc())
+                .limit(1)
             )
             draft = draft_result.scalar_one_or_none()
             if draft is None:
@@ -581,7 +587,16 @@ class RegistrationIntakeBot:
             metadata["updated_at"] = _utc_now_iso()
             audit["telegram_intake"] = metadata
             validation["audit"] = audit
-            draft.validation = validation
+            if review_session is None:
+                return metadata
+            await append_draft_version(
+                session,
+                review_session,
+                mutation_type="telegram_intake_metadata_updated",
+                actor_id="telegram-intake-bot",
+                expected_draft=draft,
+                validation=validation,
+            )
             if review_session is not None:
                 if metadata.get("telegram_intake_status") == "INTAKE_OPEN":
                     review_session.status = "uploaded"
@@ -604,11 +619,25 @@ class RegistrationIntakeBot:
         if not normalized:
             return None
         async with self.async_session_maker() as session:
+            draft_lookup = aliased(RegistrationReviewDraft)
+            latest_draft_id = (
+                select(draft_lookup.id)
+                .where(
+                    draft_lookup.session_id == RegistrationReviewSession.id
+                )
+                .order_by(
+                    draft_lookup.draft_version.desc(),
+                    draft_lookup.created_at.desc(),
+                )
+                .limit(1)
+                .correlate(RegistrationReviewSession)
+                .scalar_subquery()
+            )
             result = await session.execute(
                 select(RegistrationReviewSession, RegistrationReviewDraft)
                 .join(
                     RegistrationReviewDraft,
-                    RegistrationReviewDraft.session_id == RegistrationReviewSession.id,
+                    RegistrationReviewDraft.id == latest_draft_id,
                 )
                 .where(RegistrationReviewSession.source == "telegram")
                 .order_by(RegistrationReviewSession.started_at.desc())

@@ -204,6 +204,13 @@ def _decision_review_session(status: str):
 
 def _configure_decision_route(monkeypatch, sessions) -> None:
     pending_sessions = list(sessions)
+
+    async def append_version(_db, target_session, **values):
+        predecessor = values.pop("expected_draft")
+        successor = SimpleNamespace(**{**vars(predecessor), **values})
+        target_session.draft = successor
+        return successor
+
     monkeypatch.setattr(
         dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
     )
@@ -215,6 +222,7 @@ def _configure_decision_route(monkeypatch, sessions) -> None:
     monkeypatch.setattr(
         dashboard, "async_session_maker", lambda: pending_sessions.pop(0)
     )
+    monkeypatch.setattr(dashboard, "append_draft_version", append_version)
     monkeypatch.setattr(
         dashboard, "_log_registration_review_event", lambda *_args, **_kwargs: None
     )

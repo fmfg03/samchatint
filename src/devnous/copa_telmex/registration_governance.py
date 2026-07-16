@@ -267,6 +267,11 @@ class RegistrationGovernanceClient:
     async def finalize(self, payload: Mapping[str, Any]) -> Dict[str, Any]:
         return await asyncio.to_thread(self._post, "/v1/finalize", payload)
 
+    async def authorize_draft_version(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._post, "/v1/draft-version", payload)
+
     def _post(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         req = urlrequest.Request(
             self.gate_url + path,

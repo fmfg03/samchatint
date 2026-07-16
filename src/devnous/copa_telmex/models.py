@@ -18,6 +18,7 @@ from sqlalchemy import (
     BigInteger,
     Text,
     Integer,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.declarative import declarative_base
@@ -253,13 +254,18 @@ class RegistrationReviewSession(Base):
         cascade="all, delete-orphan",
         order_by="RegistrationReviewAsset.page_index",
     )
-    draft = relationship(
+    drafts = relationship(
         "RegistrationReviewDraft",
         back_populates="session",
         cascade="all, delete-orphan",
-        uselist=False,
+        order_by="RegistrationReviewDraft.draft_version",
     )
     committed_team = relationship("Team")
+
+    @property
+    def draft(self):
+        """Return the latest immutable draft version loaded for this session."""
+        return self.drafts[-1] if self.drafts else None
 
     def __repr__(self):
         return f"<RegistrationReviewSession(id={self.id}, status={self.status}, provider={self.provider})>"
@@ -292,16 +298,22 @@ class RegistrationReviewAsset(Base):
 
 
 class RegistrationReviewDraft(Base):
-    """Current OCR draft and operator edits for a review session."""
+    """One immutable, append-only OCR draft version."""
 
     __tablename__ = "copa_telmex_registration_review_drafts"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "draft_version",
+            name="uq_registration_review_draft_session_version",
+        ),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     session_id = Column(
         UUID(as_uuid=True),
         ForeignKey("copa_telmex_registration_review_sessions.id"),
         nullable=False,
-        unique=True,
         index=True,
     )
 
@@ -314,10 +326,23 @@ class RegistrationReviewDraft(Base):
     needs_review = Column(Boolean, default=True)
     # Monotonic compare-and-swap token for governance decisions.
     draft_version = Column(Integer, nullable=False, default=1)
+    predecessor_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+        nullable=True,
+        index=True,
+    )
+    predecessor_content_hash = Column(String(71))
+    content_hash = Column(String(71), nullable=False)
+    mutation_type = Column(String(80), nullable=False)
+    mutation_actor_binding = Column(String(71))
+    mutation_operation_id = Column(String(80), nullable=False, unique=True)
+    mutation_decision_id = Column(String(71), nullable=False)
+    mutation_receipt_id = Column(String(120), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
-    session = relationship("RegistrationReviewSession", back_populates="draft")
+    session = relationship("RegistrationReviewSession", back_populates="drafts")
 
     def __repr__(self):
         return f"<RegistrationReviewDraft(id={self.id}, session_id={self.session_id}, needs_review={self.needs_review})>"

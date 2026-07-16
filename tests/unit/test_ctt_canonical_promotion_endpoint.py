@@ -133,6 +133,15 @@ def _review_session(status: str = "review"):
 
 def _configure_endpoint(monkeypatch, review_session):
     session = _PromotionSession(review_session)
+    session.appended_drafts = []
+
+    async def append_version(_db, target_session, **values):
+        predecessor = values.pop("expected_draft")
+        successor = SimpleNamespace(**{**vars(predecessor), **values})
+        session.appended_drafts.append(successor)
+        target_session.draft = successor
+        return successor
+
     monkeypatch.setattr(
         dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
     )
@@ -147,6 +156,7 @@ def _configure_endpoint(monkeypatch, review_session):
         },
     )
     monkeypatch.setattr(dashboard, "async_session_maker", lambda: session)
+    monkeypatch.setattr(dashboard, "append_draft_version", append_version)
     monkeypatch.setattr(
         dashboard, "_log_registration_review_event", lambda *_args, **_kwargs: None
     )
@@ -187,6 +197,7 @@ async def test_endpoint_promotes_server_side_values_and_requires_separate_commit
 
     assert response.status_code == 303
     assert session.commits == 1
+    assert len(session.appended_drafts) == 1
     assert session.statements[0]._for_update_arg is not None
     assert review_session.status == "ready"
     assert review_session.draft.review_edits["team"]["name"] == ("Deportivo Estrellas")

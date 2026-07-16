@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy import select
 
+from devnous.copa_telmex.draft_versioning import append_draft_version
 from devnous.tournaments.core.intelligence_program import (
     EntityFinanceRecord,
     EntityOperationsRecord,
@@ -547,6 +548,8 @@ class OperationsModule:
                 draft_result = await session.execute(
                     select(RegistrationReviewDraft)
                     .where(RegistrationReviewDraft.session_id == review_session.id)
+                    .order_by(RegistrationReviewDraft.draft_version.desc())
+                    .limit(1)
                 )
                 draft = draft_result.scalar_one_or_none()
                 if draft is None:
@@ -612,26 +615,36 @@ class OperationsModule:
                 layout_regions["pages"] = pages
                 layout_regions["player_page_map"] = player_page_map
 
-                draft.extraction = merged_payload
-                draft.review_edits = merged_payload
-                draft.ocr_raw = {
-                    "provider": review_session.provider,
-                    "page_count": next_page_index,
-                    "pages": list((draft.ocr_raw or {}).get("pages") or [])
-                    + [
-                        {
-                            "page_index": next_page_index,
-                            "raw": raw_payload,
-                            "combined_raw": combined_raw_payload,
-                            "player_count": len(incoming_payload.get("players") or []),
-                            "side": "back",
-                        }
-                    ],
-                }
-                draft.layout_regions = layout_regions
-                draft.overall_confidence = float(merged_payload.get("overall_confidence") or 0.0)
-                draft.validation = self._build_review_validation_from_payload(merged_payload)
-                draft.needs_review = bool(draft.validation.get("needs_review"))
+                validation = self._build_review_validation_from_payload(merged_payload)
+                await append_draft_version(
+                    session,
+                    review_session,
+                    mutation_type="telegram_page_appended",
+                    actor_id=review_session.telegram_user_id,
+                    expected_draft=draft,
+                    extraction=merged_payload,
+                    review_edits=merged_payload,
+                    ocr_raw={
+                        "provider": review_session.provider,
+                        "page_count": next_page_index,
+                        "pages": list((draft.ocr_raw or {}).get("pages") or [])
+                        + [
+                            {
+                                "page_index": next_page_index,
+                                "raw": raw_payload,
+                                "combined_raw": combined_raw_payload,
+                                "player_count": len(incoming_payload.get("players") or []),
+                                "side": "back",
+                            }
+                        ],
+                    },
+                    layout_regions=layout_regions,
+                    overall_confidence=float(
+                        merged_payload.get("overall_confidence") or 0.0
+                    ),
+                    validation=validation,
+                    needs_review=bool(validation.get("needs_review")),
+                )
                 review_session.status = "ready"
 
                 await session.commit()
@@ -704,17 +717,22 @@ class OperationsModule:
                     height=int(image.height),
                 )
                 session.add(asset)
-                session.add(
-                    RegistrationReviewDraft(
-                        session_id=review_session.id,
-                        ocr_raw=raw_payload if isinstance(raw_payload, dict) else {"raw": raw_payload},
-                        extraction=extraction_payload,
-                        validation=validation,
-                        review_edits=extraction_payload,
-                        layout_regions=layout_regions,
-                        overall_confidence=float(getattr(extraction, "overall_confidence", 0.0) or 0.0),
-                        needs_review=bool(validation.get("needs_review")),
-                    )
+                await append_draft_version(
+                    session,
+                    review_session,
+                    mutation_type="telegram_upload_created",
+                    actor_id=user_id,
+                    ocr_raw=raw_payload
+                    if isinstance(raw_payload, dict)
+                    else {"raw": raw_payload},
+                    extraction=extraction_payload,
+                    validation=validation,
+                    review_edits=extraction_payload,
+                    layout_regions=layout_regions,
+                    overall_confidence=float(
+                        getattr(extraction, "overall_confidence", 0.0) or 0.0
+                    ),
+                    needs_review=bool(validation.get("needs_review")),
                 )
                 await session.commit()
                 review_session_id = str(review_session.id)
