@@ -781,8 +781,12 @@
         <div style="margin-top: 18px;">
             <form action="/api/registration-review/{{ review_session.id }}/assets" method="post" enctype="multipart/form-data" style="margin-bottom: 18px; padding: 14px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #f8fafc;">
                 <label style="display: block; font-weight: 600; margin-bottom: 8px;">Agregar más fotos a esta sesión</label>
+                <input type="hidden" name="base_draft_id" value="{{ review_session.draft.id if review_session.draft is defined else '' }}">
+                <input type="hidden" name="base_draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else '' }}">
+                <input type="hidden" name="base_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+                <input type="hidden" name="page_append_request_id" value="{{ page_append_request_id if page_append_request_id is defined else '' }}">
                 <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" multiple required style="width: 100%; margin-bottom: 10px;" {% if session_committed %}disabled{% endif %}>
-                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed %}disabled{% endif %}>Subir y anexar</button>
+                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed or page_append_request_id is not defined %}disabled{% endif %}>Subir y anexar</button>
             </form>
             <h4 style="margin-bottom: 10px;">Señales de revisión</h4>
             {% if validation.blockers %}

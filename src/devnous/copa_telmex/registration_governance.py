@@ -277,6 +277,13 @@ class RegistrationGovernanceClient:
     ) -> Dict[str, Any]:
         return await asyncio.to_thread(self._post, "/v1/reprocess", payload)
 
+    async def adjudicate_page_composition(
+        self, payload: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._post, "/v1/page-composition", payload
+        )
+
     def _post(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         req = urlrequest.Request(
             self.gate_url + path,

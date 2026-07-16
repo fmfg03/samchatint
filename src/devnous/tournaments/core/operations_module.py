@@ -21,11 +21,31 @@ from dataclasses import fields
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-from devnous.copa_telmex.draft_versioning import append_draft_version
+from devnous.copa_telmex.draft_versioning import (
+    append_draft_version,
+    build_successor_values,
+)
+from devnous.copa_telmex.page_composition_governance import (
+    admitted_asset_rows,
+    build_gate_request as build_page_composition_gate_request,
+    build_page_append_attempt,
+    decision_row as build_page_composition_decision_row,
+    existing_page_manifest,
+    parent_authorization as page_composition_parent_authorization,
+    proposed_page_manifest,
+    sha256_binding as page_composition_sha256_binding,
+    staged_page_manifest,
+)
+from devnous.copa_telmex.registration_governance import (
+    RegistrationGovernanceClient,
+    RegistrationGovernanceDenied,
+)
 from devnous.tournaments.core.intelligence_program import (
     EntityFinanceRecord,
     EntityOperationsRecord,
@@ -508,9 +528,8 @@ class OperationsModule:
         if not self.db:
             return False, "No hay conexión a BD para actualizar la revisión web."
         try:
-            from uuid import UUID
-
             from devnous.copa_telmex.models import (
+                RegistrationPageAppendAttempt,
                 RegistrationReviewAsset,
                 RegistrationReviewDraft,
                 RegistrationReviewSession,
@@ -528,22 +547,34 @@ class OperationsModule:
                 )
                 assets = list(assets_result.scalars().all())
                 next_page_index = (assets[-1].page_index if assets else 0) + 1
-                review_dir = self.photos_base_dir / "review_sessions" / str(review_session.id)
+                image_hash = compute_sha256_hex(optimized_bytes)
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{image_hash}"
+                    ),
+                )
+                review_dir = (
+                    self.photos_base_dir
+                    / "review_sessions"
+                    / str(review_session.id)
+                    / f"append-{page_append_request_id}"
+                )
                 review_dir.mkdir(parents=True, exist_ok=True)
-                image_path = review_dir / f"telegram-back-{next_page_index:02d}.jpg"
+                image_path = review_dir / f"page-{next_page_index:02d}.jpg"
                 image_path.write_bytes(optimized_bytes)
 
                 image = Image.open(io.BytesIO(optimized_bytes))
-                session.add(
-                    RegistrationReviewAsset(
-                        session_id=review_session.id,
-                        page_index=next_page_index,
-                        image_path=str(image_path),
-                        sha256=compute_sha256_hex(optimized_bytes),
-                        width=int(image.width),
-                        height=int(image.height),
-                    )
-                )
+                stored_assets = [
+                    {
+                        "page_index": next_page_index,
+                        "image_path": str(image_path),
+                        "sha256": image_hash,
+                        "width": int(image.width),
+                        "height": int(image.height),
+                    }
+                ]
 
                 draft_result = await session.execute(
                     select(RegistrationReviewDraft)
@@ -554,6 +585,36 @@ class OperationsModule:
                 draft = draft_result.scalar_one_or_none()
                 if draft is None:
                     return False, "La sesión web no tiene draft para actualizar."
+
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{draft.content_hash}:{image_hash}"
+                    ),
+                )
+                prior_result = await session.execute(
+                    select(RegistrationPageAppendAttempt)
+                    .options(
+                        selectinload(RegistrationPageAppendAttempt.decision)
+                    )
+                    .where(
+                        RegistrationPageAppendAttempt.page_append_request_id
+                        == page_append_request_id
+                    )
+                )
+                prior_attempt = prior_result.scalar_one_or_none()
+                if prior_attempt is not None and prior_attempt.decision is not None:
+                    accepted = (
+                        prior_attempt.decision.decision
+                        == "ACCEPT_NON_CONFLICTING_PAGE_APPEND"
+                    )
+                    return (
+                        accepted,
+                        self._review_workspace_url(review_session_id)
+                        if accepted
+                        else "La composición de páginas requiere revisión web.",
+                    )
 
                 base_extraction = dict(draft.review_edits or draft.extraction or {})
                 base_players = list(base_extraction.get("players") or [])
@@ -616,38 +677,173 @@ class OperationsModule:
                 layout_regions["player_page_map"] = player_page_map
 
                 validation = self._build_review_validation_from_payload(merged_payload)
-                await append_draft_version(
-                    session,
-                    review_session,
-                    mutation_type="telegram_page_appended",
-                    actor_id=review_session.telegram_user_id,
-                    expected_draft=draft,
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{draft.content_hash}:{image_hash}"
+                    ),
+                )
+                proposed_raw = {
+                    "provider": review_session.provider,
+                    "page_count": next_page_index,
+                    "pages": list((draft.ocr_raw or {}).get("pages") or [])
+                    + [
+                        {
+                            "page_index": next_page_index,
+                            "raw": raw_payload,
+                            "combined_raw": combined_raw_payload,
+                            "player_count": len(
+                                incoming_payload.get("players") or []
+                            ),
+                            "side": "back",
+                        }
+                    ],
+                }
+                current_manifest = existing_page_manifest(
+                    session_id=review_session.id,
+                    base_draft=draft,
+                    assets=assets,
+                )
+                (
+                    append_ocr_run_id,
+                    operation_id,
+                    staged_assets,
+                    appended_manifest,
+                ) = staged_page_manifest(
+                    session_id=review_session.id,
+                    base_draft=draft,
+                    page_append_request_id=page_append_request_id,
+                    stored_assets=stored_assets,
+                )
+                composed_manifest = proposed_page_manifest(
+                    current_manifest, appended_manifest
+                )
+                proposed_values = build_successor_values(
+                    draft,
                     extraction=merged_payload,
                     review_edits=merged_payload,
-                    ocr_raw={
-                        "provider": review_session.provider,
-                        "page_count": next_page_index,
-                        "pages": list((draft.ocr_raw or {}).get("pages") or [])
-                        + [
-                            {
-                                "page_index": next_page_index,
-                                "raw": raw_payload,
-                                "combined_raw": combined_raw_payload,
-                                "player_count": len(incoming_payload.get("players") or []),
-                                "side": "back",
-                            }
-                        ],
-                    },
+                    ocr_raw=proposed_raw,
                     layout_regions=layout_regions,
+                    page_manifest_hash=page_composition_sha256_binding(
+                        composed_manifest
+                    ),
                     overall_confidence=float(
                         merged_payload.get("overall_confidence") or 0.0
                     ),
                     validation=validation,
                     needs_review=bool(validation.get("needs_review")),
                 )
+                incoming_layout = {
+                    "pages": {str(next_page_index): []},
+                    "player_page_map": {
+                        str(slot): next_page_index
+                        for slot in range(
+                            1, len(incoming_payload.get("players") or []) + 1
+                        )
+                    },
+                }
+                attempt = build_page_append_attempt(
+                    session_id=review_session.id,
+                    page_append_request_id=page_append_request_id,
+                    base_draft=draft,
+                    provider=provider,
+                    prompt_config_hash=page_composition_sha256_binding(
+                        {
+                            "provider": provider,
+                            "pipeline": "telegram-back-page-v1",
+                        }
+                    ),
+                    append_ocr_run_id=append_ocr_run_id,
+                    operation_id=operation_id,
+                    existing_manifest=current_manifest,
+                    appended_manifest=appended_manifest,
+                    staged_assets=staged_assets,
+                    incoming_extraction=incoming_payload,
+                    incoming_ocr_raw=raw_payload or {},
+                    incoming_layout_regions=incoming_layout,
+                    proposed_values=proposed_values,
+                )
+                successor_draft_id = uuid4()
+                gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_page_composition(
+                    build_page_composition_gate_request(
+                        tenant_id=os.getenv("ZAUBERN_TENANT_ID", "samchat-prod"),
+                        tournament_slug=review_session.tournament_slug,
+                        attempt=attempt,
+                        current_draft=draft,
+                        base_extraction=base_extraction,
+                        successor_draft_id=successor_draft_id,
+                    )
+                )
+                event = gate_response.get("page_composition_decision") or {}
+                receipt = gate_response.get("page_composition_receipt") or {}
+                if (
+                    receipt.get("verified") is not True
+                    or not event.get("decision_id")
+                    or not receipt.get("receipt_id")
+                ):
+                    raise RegistrationGovernanceDenied(
+                        "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                        "Zaubern returned an incomplete page composition adjudication",
+                    )
+                session.add(attempt)
+                if gate_response.get("successor_authorized") is True:
+                    successor = await append_draft_version(
+                        session,
+                        review_session,
+                        mutation_type="pages_appended",
+                        actor_id=review_session.telegram_user_id,
+                        expected_draft=draft,
+                        operation_id=attempt.operation_id,
+                        new_draft_id=successor_draft_id,
+                        parent_authorization=page_composition_parent_authorization(
+                            gate_response
+                        ),
+                        extraction=attempt.proposed_extraction,
+                        review_edits=attempt.proposed_extraction,
+                        ocr_raw=attempt.proposed_ocr_raw,
+                        layout_regions=attempt.proposed_layout_regions,
+                        page_manifest_hash=attempt.proposed_page_manifest_hash,
+                        overall_confidence=float(
+                            (attempt.proposed_extraction or {}).get(
+                                "overall_confidence"
+                            )
+                            or 0.0
+                        ),
+                        validation=attempt.proposed_validation,
+                        needs_review=bool(
+                            (attempt.proposed_validation or {}).get(
+                                "needs_review"
+                            )
+                        ),
+                    )
+                    if successor.content_hash != attempt.proposed_snapshot_hash:
+                        raise RegistrationGovernanceDenied(
+                            "PAGE_COMPOSITION_SUCCESSOR_HASH_MISMATCH",
+                            "REG-S02 successor does not match the adjudicated composition",
+                        )
+                    for asset in admitted_asset_rows(
+                        attempt=attempt,
+                        successor_draft_id=successor_draft_id,
+                        response=gate_response,
+                    ):
+                        session.add(asset)
+                session.add(
+                    build_page_composition_decision_row(
+                        attempt=attempt,
+                        successor_draft_id=successor_draft_id,
+                        response=gate_response,
+                    )
+                )
                 review_session.status = "ready"
 
                 await session.commit()
+
+                if gate_response.get("successor_authorized") is not True:
+                    return (
+                        False,
+                        "La composición de páginas requiere revisión web.",
+                    )
 
             return True, self._review_workspace_url(review_session_id)
         except Exception as exc:
@@ -717,7 +913,7 @@ class OperationsModule:
                     height=int(image.height),
                 )
                 session.add(asset)
-                await append_draft_version(
+                initial_draft = await append_draft_version(
                     session,
                     review_session,
                     mutation_type="telegram_upload_created",
@@ -733,6 +929,19 @@ class OperationsModule:
                         getattr(extraction, "overall_confidence", 0.0) or 0.0
                     ),
                     needs_review=bool(validation.get("needs_review")),
+                )
+                asset.admitted_draft_id = initial_draft.id
+                asset.source_base_draft_id = initial_draft.id
+                asset.source_base_content_hash = initial_draft.content_hash
+                asset.source_ocr_run_ref = f"initial:{initial_draft.id}"
+                asset.admission_operation_id = (
+                    initial_draft.mutation_operation_id
+                )
+                asset.admission_decision_id = (
+                    initial_draft.mutation_decision_id
+                )
+                asset.admission_receipt_id = (
+                    initial_draft.mutation_receipt_id
                 )
                 await session.commit()
                 review_session_id = str(review_session.id)

@@ -266,6 +266,12 @@ class RegistrationReviewSession(Base):
         cascade="all, delete-orphan",
         order_by="RegistrationOcrRun.created_at",
     )
+    page_append_attempts = relationship(
+        "RegistrationPageAppendAttempt",
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="RegistrationPageAppendAttempt.created_at",
+    )
     committed_team = relationship("Team")
 
     @property
@@ -295,6 +301,22 @@ class RegistrationReviewAsset(Base):
     sha256 = Column(String(64), index=True)
     width = Column(Integer)
     height = Column(Integer)
+    page_append_attempt_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_page_append_attempts.id"),
+        index=True,
+    )
+    admitted_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+        index=True,
+    )
+    source_base_draft_id = Column(UUID(as_uuid=True))
+    source_base_content_hash = Column(String(71))
+    source_ocr_run_ref = Column(String(120))
+    admission_operation_id = Column(String(120))
+    admission_decision_id = Column(String(71))
+    admission_receipt_id = Column(String(120))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     session = relationship("RegistrationReviewSession", back_populates="assets")
@@ -347,6 +369,7 @@ class RegistrationReviewDraft(Base):
     mutation_receipt_id = Column(String(120), nullable=False)
     parent_decision_id = Column(String(71))
     parent_receipt_id = Column(String(120))
+    page_manifest_hash = Column(String(71))
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -481,6 +504,99 @@ class RegistrationOcrReprocessDecision(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     ocr_run = relationship("RegistrationOcrRun", back_populates="decision")
+
+
+class RegistrationPageAppendAttempt(Base):
+    """Immutable proposed composition of existing and newly uploaded pages."""
+
+    __tablename__ = "copa_telmex_registration_page_append_attempts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_sessions.id"),
+        nullable=False,
+        index=True,
+    )
+    page_append_request_id = Column(
+        UUID(as_uuid=True), nullable=False, unique=True
+    )
+    base_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+        nullable=False,
+        index=True,
+    )
+    base_draft_version = Column(Integer, nullable=False)
+    base_content_hash = Column(String(71), nullable=False)
+    declared_base_page_manifest_hash = Column(String(71))
+    operation_id = Column(String(71), nullable=False, unique=True)
+    append_ocr_run_id = Column(UUID(as_uuid=True), nullable=False, unique=True)
+    pipeline_version = Column(String(80), nullable=False)
+    provider = Column(String(50), nullable=False)
+    model_identity = Column(JSON, nullable=False)
+    prompt_config_hash = Column(String(71), nullable=False)
+    existing_page_manifest = Column(JSON, nullable=False)
+    existing_page_manifest_hash = Column(String(71), nullable=False)
+    appended_page_manifest = Column(JSON, nullable=False)
+    appended_page_manifest_hash = Column(String(71), nullable=False)
+    proposed_page_manifest = Column(JSON, nullable=False)
+    proposed_page_manifest_hash = Column(String(71), nullable=False)
+    proposed_snapshot_hash = Column(String(71), nullable=False)
+    base_player_set_hash = Column(String(71), nullable=False)
+    incoming_player_set_hash = Column(String(71), nullable=False)
+    proposed_player_set_hash = Column(String(71), nullable=False)
+    incoming_extraction = Column(JSON, nullable=False)
+    incoming_ocr_raw = Column(JSON, nullable=False)
+    incoming_layout_regions = Column(JSON, nullable=False)
+    proposed_extraction = Column(JSON, nullable=False)
+    proposed_ocr_raw = Column(JSON, nullable=False)
+    proposed_layout_regions = Column(JSON, nullable=False)
+    proposed_validation = Column(JSON, nullable=False)
+    staged_assets = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    session = relationship(
+        "RegistrationReviewSession", back_populates="page_append_attempts"
+    )
+    decision = relationship(
+        "RegistrationPageAppendDecision",
+        back_populates="attempt",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+
+class RegistrationPageAppendDecision(Base):
+    """Receipt-bound decision for one immutable page composition attempt."""
+
+    __tablename__ = "copa_telmex_registration_page_append_decisions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    page_append_attempt_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_page_append_attempts.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    successor_draft_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("copa_telmex_registration_review_drafts.id"),
+    )
+    decision_id = Column(String(71), nullable=False, unique=True)
+    policy_hash = Column(String(71), nullable=False)
+    decision = Column(String(60), nullable=False)
+    reason_codes = Column(JSON, nullable=False)
+    receipt_id = Column(String(120), nullable=False)
+    event_hash = Column(String(71), nullable=False)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    attempt = relationship(
+        "RegistrationPageAppendAttempt", back_populates="decision"
+    )
 
 
 class ValidationLog(Base):

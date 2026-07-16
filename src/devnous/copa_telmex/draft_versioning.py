@@ -54,6 +54,7 @@ def draft_content_hash(values: Mapping[str, Any]) -> str:
             "validation": values.get("validation"),
             "review_edits": values.get("review_edits"),
             "layout_regions": values.get("layout_regions"),
+            "page_manifest_hash": values.get("page_manifest_hash"),
             "overall_confidence": float(values.get("overall_confidence") or 0.0),
             "needs_review": bool(values.get("needs_review")),
         }
@@ -68,6 +69,7 @@ def _snapshot(draft: Optional[RegistrationReviewDraft]) -> dict[str, Any]:
             "validation": None,
             "review_edits": None,
             "layout_regions": None,
+            "page_manifest_hash": None,
             "overall_confidence": 0.0,
             "needs_review": True,
         }
@@ -77,6 +79,7 @@ def _snapshot(draft: Optional[RegistrationReviewDraft]) -> dict[str, Any]:
         "validation": copy.deepcopy(draft.validation),
         "review_edits": copy.deepcopy(draft.review_edits),
         "layout_regions": copy.deepcopy(draft.layout_regions),
+        "page_manifest_hash": draft.page_manifest_hash,
         "overall_confidence": float(draft.overall_confidence or 0.0),
         "needs_review": bool(draft.needs_review),
     }
@@ -127,6 +130,7 @@ async def append_draft_version(
         "validation",
         "review_edits",
         "layout_regions",
+        "page_manifest_hash",
         "overall_confidence",
         "needs_review",
     }

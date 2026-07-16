@@ -59,9 +59,22 @@ from devnous.copa_telmex.models import (
     Base,
     RegistrationOcrReprocessDecision,
     RegistrationOcrRun,
+    RegistrationPageAppendAttempt,
+    RegistrationPageAppendDecision,
     RegistrationReviewAsset,
     RegistrationReviewDraft,
     RegistrationReviewSession,
+)
+from devnous.copa_telmex.page_composition_governance import (
+    admitted_asset_rows,
+    build_gate_request as build_page_composition_gate_request,
+    build_page_append_attempt,
+    decision_row as build_page_composition_decision_row,
+    existing_page_manifest,
+    parent_authorization as page_composition_parent_authorization,
+    proposed_page_manifest,
+    sha256_binding as page_composition_sha256_binding,
+    staged_page_manifest,
 )
 from devnous.copa_telmex.reprocess_governance import (
     build_gate_request as build_reprocess_gate_request,
@@ -2565,8 +2578,16 @@ def _apply_review_form_edits(form_data: Any, base_extraction: Dict[str, Any]) ->
     return _normalize_review_extraction(extraction)
 
 
-async def _store_review_uploads(session_id: UUID, uploads: List[Any], *, start_index: int = 1) -> List[Dict[str, Any]]:
+async def _store_review_uploads(
+    session_id: UUID,
+    uploads: List[Any],
+    *,
+    start_index: int = 1,
+    storage_namespace: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     session_dir = review_uploads_dir / str(session_id)
+    if storage_namespace:
+        session_dir = session_dir / storage_namespace
     session_dir.mkdir(parents=True, exist_ok=True)
     stored_assets: List[Dict[str, Any]] = []
 
@@ -3470,22 +3491,23 @@ async def create_registration_review_session(request: Request):
         if not stored_assets:
             raise HTTPException(status_code=400, detail="No pude guardar las imágenes de la sesión.")
 
+        initial_assets = []
         for asset_payload in stored_assets:
-            session.add(
-                RegistrationReviewAsset(
-                    session_id=review_session.id,
-                    page_index=asset_payload["page_index"],
-                    image_path=asset_payload["image_path"],
-                    sha256=asset_payload["sha256"],
-                    width=asset_payload["width"],
-                    height=asset_payload["height"],
-                )
+            asset = RegistrationReviewAsset(
+                session_id=review_session.id,
+                page_index=asset_payload["page_index"],
+                image_path=asset_payload["image_path"],
+                sha256=asset_payload["sha256"],
+                width=asset_payload["width"],
+                height=asset_payload["height"],
             )
+            session.add(asset)
+            initial_assets.append(asset)
 
         review_session.status = "processing"
         extraction, raw_payload, detected_provider, layout_regions = await _process_review_assets(stored_assets)
         review_session.provider = detected_provider or review_session.provider
-        await _upsert_review_draft(
+        initial_draft = await _upsert_review_draft(
             session,
             review_session,
             extraction,
@@ -3494,6 +3516,14 @@ async def create_registration_review_session(request: Request):
             mutation_type="web_upload_created",
             actor_id=created_by_user_id,
         )
+        for asset in initial_assets:
+            asset.admitted_draft_id = initial_draft.id
+            asset.source_base_draft_id = initial_draft.id
+            asset.source_base_content_hash = initial_draft.content_hash
+            asset.source_ocr_run_ref = f"initial:{initial_draft.id}"
+            asset.admission_operation_id = initial_draft.mutation_operation_id
+            asset.admission_decision_id = initial_draft.mutation_decision_id
+            asset.admission_receipt_id = initial_draft.mutation_receipt_id
         await session.commit()
 
     return RedirectResponse(url=f"/registration-review/{review_session.id}", status_code=303)
@@ -3643,6 +3673,7 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "canonical_promotion_enabled": _canonical_promotion_enabled(),
                 "tournament_options": _review_tournament_options(review_session.tournament_slug or "copa_telmex"),
                 "reprocess_request_id": str(uuid4()),
+                "page_append_request_id": str(uuid4()),
             },
         )
 
@@ -4305,7 +4336,7 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
 
 @app.post("/api/registration-review/{session_id}/assets")
 async def append_assets_to_registration_review_session(session_id: str, request: Request):
-    """Append extra images to an existing review session and merge them into the current draft."""
+    """Adjudicate one immutable page manifest before admitting assets or a successor."""
     _ensure_registration_review_access(request)
     actor = _review_session_actor(request)
     try:
@@ -4314,6 +4345,18 @@ async def append_assets_to_registration_review_session(session_id: str, request:
         raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
 
     form_data = await request.form()
+    try:
+        submitted_base_id = UUID(str(form_data.get("base_draft_id") or ""))
+        submitted_base_version = int(form_data.get("base_draft_version") or 0)
+        page_append_request_id = UUID(
+            str(form_data.get("page_append_request_id") or "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "page_append_base_missing",
+            "La solicitud de anexado no declara una versión base válida.",
+        ) from exc
+    submitted_base_hash = str(form_data.get("base_content_hash") or "")
     uploads = [upload for upload in form_data.getlist("files") if getattr(upload, "filename", None)]
     if not uploads:
         raise _review_error("missing_files", "Sube al menos una imagen nueva.")
@@ -4323,6 +4366,9 @@ async def append_assets_to_registration_review_session(session_id: str, request:
             f"Solo se permiten hasta {REVIEW_SESSION_MAX_FILES} imágenes por operación.",
         )
 
+    existing_attempt_id = None
+    asset_payloads: List[Dict[str, Any]] = []
+    next_index = 1
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
@@ -4331,7 +4377,6 @@ async def append_assets_to_registration_review_session(session_id: str, request:
                 selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
@@ -4342,53 +4387,308 @@ async def append_assets_to_registration_review_session(session_id: str, request:
                 "too_many_files",
                 f"Solo se permiten hasta {REVIEW_SESSION_MAX_FILES} páginas por revisión.",
             )
+        base_draft = review_session.draft
+        if (
+            base_draft.id != submitted_base_id
+            or int(base_draft.draft_version) != submitted_base_version
+            or base_draft.content_hash != submitted_base_hash
+        ):
+            raise _review_error(
+                "stale_page_append_base",
+                "El draft avanzó; recarga la revisión antes de anexar páginas.",
+                status_code=409,
+            )
+        attempt_result = await session.execute(
+            select(RegistrationPageAppendAttempt)
+            .options(selectinload(RegistrationPageAppendAttempt.decision))
+            .where(
+                RegistrationPageAppendAttempt.page_append_request_id
+                == page_append_request_id
+            )
+        )
+        existing_attempt = attempt_result.scalar_one_or_none()
+        if existing_attempt is not None:
+            if (
+                existing_attempt.session_id != review_session.id
+                or existing_attempt.base_draft_id != submitted_base_id
+                or existing_attempt.base_content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "page_append_request_id_conflict",
+                    "El identificador de anexado ya está ligado a otra evidencia.",
+                    status_code=409,
+                )
+            if existing_attempt.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?page_composition_decision="
+                        f"{existing_attempt.decision.decision}&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            existing_attempt_id = existing_attempt.id
+        next_index = (
+            max((asset.page_index for asset in review_session.assets), default=0)
+            or 0
+        ) + 1
+        asset_payloads = [
+            {
+                "page_index": asset.page_index,
+                "image_path": asset.image_path,
+                "sha256": asset.sha256,
+                "width": asset.width,
+                "height": asset.height,
+            }
+            for asset in review_session.assets
+        ]
 
-        next_index = (max((asset.page_index for asset in review_session.assets), default=0) or 0) + 1
-        stored_assets = await _store_review_uploads(review_session.id, uploads, start_index=next_index)
+    detected_provider = None
+    if existing_attempt_id is None:
+        stored_assets = await _store_review_uploads(
+            session_uuid,
+            uploads,
+            start_index=next_index,
+            storage_namespace=f"append-{page_append_request_id}",
+        )
         if not stored_assets:
-            raise HTTPException(status_code=400, detail="No pude guardar las nuevas imágenes.")
-
-        for asset_payload in stored_assets:
-            session.add(
-                RegistrationReviewAsset(
-                    session_id=review_session.id,
-                    page_index=asset_payload["page_index"],
-                    image_path=asset_payload["image_path"],
-                    sha256=asset_payload["sha256"],
-                    width=asset_payload["width"],
-                    height=asset_payload["height"],
+            raise HTTPException(
+                status_code=400, detail="No pude guardar las nuevas imágenes."
+            )
+        incoming_extraction, incoming_raw, detected_provider, incoming_layout = await _process_review_assets(stored_assets)
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(RegistrationReviewSession)
+                .options(
+                    selectinload(RegistrationReviewSession.assets),
+                    selectinload(RegistrationReviewSession.drafts),
+                )
+                .where(RegistrationReviewSession.id == session_uuid)
+                .with_for_update()
+            )
+            review_session = result.scalar_one()
+            base_draft = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == submitted_base_id
+                ),
+                None,
+            )
+            if (
+                base_draft is None
+                or int(base_draft.draft_version) != submitted_base_version
+                or base_draft.content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "page_append_base_changed",
+                    "La versión base cambió mientras se procesaban las páginas.",
+                    status_code=409,
+                )
+            base_extraction = _get_review_extraction(base_draft)
+            existing_layout = (
+                base_draft.layout_regions
+                if isinstance(base_draft.layout_regions, dict)
+                else {}
+            )
+            merged_extraction, merged_raw, merged_layout = (
+                _append_review_pages_to_extraction(
+                    base_extraction,
+                    incoming_extraction=incoming_extraction,
+                    incoming_raw={
+                        "provider": detected_provider,
+                        "page_count": len(review_session.assets)
+                        + len(stored_assets),
+                        "pages": list((base_draft.ocr_raw or {}).get("pages") or [])
+                        + list((incoming_raw or {}).get("pages") or []),
+                    },
+                    incoming_layout=incoming_layout,
+                    existing_layout=existing_layout,
                 )
             )
+            current_manifest = existing_page_manifest(
+                session_id=review_session.id,
+                base_draft=base_draft,
+                assets=list(review_session.assets),
+            )
+            (
+                append_ocr_run_id,
+                operation_id,
+                staged_assets,
+                appended_manifest,
+            ) = staged_page_manifest(
+                session_id=review_session.id,
+                base_draft=base_draft,
+                page_append_request_id=page_append_request_id,
+                stored_assets=stored_assets,
+            )
+            composed_manifest = proposed_page_manifest(
+                current_manifest, appended_manifest
+            )
+            prepared = _prepare_review_draft_values(
+                review_session,
+                merged_extraction,
+                merged_raw,
+                layout_regions=merged_layout,
+                preserve_edits=False,
+                base_draft=base_draft,
+            )
+            proposed_values = build_successor_values(
+                base_draft,
+                **prepared,
+                page_manifest_hash=page_composition_sha256_binding(
+                    composed_manifest
+                ),
+            )
+            candidate_attempt = build_page_append_attempt(
+                session_id=review_session.id,
+                page_append_request_id=page_append_request_id,
+                base_draft=base_draft,
+                provider=detected_provider,
+                prompt_config_hash=_reprocess_prompt_config_hash(),
+                append_ocr_run_id=append_ocr_run_id,
+                operation_id=operation_id,
+                existing_manifest=current_manifest,
+                appended_manifest=appended_manifest,
+                staged_assets=staged_assets,
+                incoming_extraction=incoming_extraction,
+                incoming_ocr_raw=incoming_raw or {},
+                incoming_layout_regions=incoming_layout or {},
+                proposed_values=proposed_values,
+            )
+            session.add(candidate_attempt)
+            try:
+                await session.commit()
+                existing_attempt_id = candidate_attempt.id
+            except IntegrityError:
+                await session.rollback()
+                concurrent = await session.execute(
+                    select(RegistrationPageAppendAttempt).where(
+                        RegistrationPageAppendAttempt.page_append_request_id
+                        == page_append_request_id
+                    )
+                )
+                existing_attempt_id = concurrent.scalar_one().id
 
-        review_session.status = "processing"
-        incoming_extraction, incoming_raw, detected_provider, incoming_layout = await _process_review_assets(stored_assets)
-        base_extraction = _get_review_extraction(review_session.draft)
-        existing_layout = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
-        merged_extraction, merged_raw, merged_layout = _append_review_pages_to_extraction(
-            base_extraction,
-            incoming_extraction=incoming_extraction,
-            incoming_raw={
-                "provider": detected_provider,
-                "page_count": len(stored_assets),
-                "pages": list((review_session.draft.ocr_raw or {}).get("pages") or []) + list((incoming_raw or {}).get("pages") or []),
-            },
-            incoming_layout=incoming_layout,
-            existing_layout=existing_layout,
+    tenant_id = os.getenv("ZAUBERN_TENANT_ID", "samchat-prod")
+    async with async_session_maker() as session:
+        session_result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(selectinload(RegistrationReviewSession.drafts))
+            .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
-
-        await _upsert_review_draft(
-            session,
-            review_session,
-            merged_extraction,
-            merged_raw,
-            layout_regions=merged_layout,
-            mutation_type="web_assets_appended",
-            actor_id=actor.get("user_id"),
+        review_session = session_result.scalar_one()
+        current_draft = review_session.draft
+        attempt_result = await session.execute(
+            select(RegistrationPageAppendAttempt)
+            .options(selectinload(RegistrationPageAppendAttempt.decision))
+            .where(RegistrationPageAppendAttempt.id == existing_attempt_id)
+            .with_for_update()
         )
+        attempt = attempt_result.scalar_one()
+        if attempt.decision is not None:
+            return RedirectResponse(
+                url=(
+                    f"/registration-review/{session_id}"
+                    f"?page_composition_decision={attempt.decision.decision}"
+                    "&idempotent=1"
+                ),
+                status_code=303,
+            )
+        base_draft = next(
+            (
+                draft
+                for draft in review_session.drafts
+                if draft.id == attempt.base_draft_id
+            ),
+            None,
+        )
+        if base_draft is None or current_draft is None:
+            raise _review_error(
+                "page_composition_base_missing",
+                "No existe la versión base para adjudicar la composición.",
+                status_code=409,
+            )
+        successor_draft_id = uuid4()
+        gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_page_composition(
+            build_page_composition_gate_request(
+                tenant_id=tenant_id,
+                tournament_slug=review_session.tournament_slug,
+                attempt=attempt,
+                current_draft=current_draft,
+                base_extraction=_get_review_extraction(base_draft),
+                successor_draft_id=successor_draft_id,
+            )
+        )
+        event = gate_response.get("page_composition_decision") or {}
+        receipt = gate_response.get("page_composition_receipt") or {}
+        if (
+            receipt.get("verified") is not True
+            or not event.get("decision_id")
+            or not receipt.get("receipt_id")
+        ):
+            raise RegistrationGovernanceDenied(
+                "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                "Zaubern returned an incomplete page composition adjudication",
+            )
+        if gate_response.get("successor_authorized") is True:
+            successor = await append_draft_version(
+                session,
+                review_session,
+                mutation_type="pages_appended",
+                actor_id=actor.get("user_id"),
+                expected_draft=current_draft,
+                operation_id=attempt.operation_id,
+                new_draft_id=successor_draft_id,
+                parent_authorization=page_composition_parent_authorization(
+                    gate_response
+                ),
+                ocr_raw=attempt.proposed_ocr_raw,
+                extraction=attempt.proposed_extraction,
+                review_edits=attempt.proposed_extraction,
+                validation=attempt.proposed_validation,
+                layout_regions=attempt.proposed_layout_regions,
+                page_manifest_hash=attempt.proposed_page_manifest_hash,
+                overall_confidence=float(
+                    (attempt.proposed_extraction or {}).get(
+                        "overall_confidence"
+                    )
+                    or 0.0
+                ),
+                needs_review=bool(
+                    (attempt.proposed_validation or {}).get("needs_review")
+                ),
+            )
+            if successor.content_hash != attempt.proposed_snapshot_hash:
+                raise RegistrationGovernanceDenied(
+                    "PAGE_COMPOSITION_SUCCESSOR_HASH_MISMATCH",
+                    "REG-S02 successor does not match the adjudicated composition",
+                )
+            for asset in admitted_asset_rows(
+                attempt=attempt,
+                successor_draft_id=successor_draft_id,
+                response=gate_response,
+            ):
+                session.add(asset)
+        decision = build_page_composition_decision_row(
+            attempt=attempt,
+            successor_draft_id=successor_draft_id,
+            response=gate_response,
+        )
+        session.add(decision)
         review_session.provider = detected_provider or review_session.provider
+        review_session.status = "ready"
+        review_session.error_message = None
         await session.commit()
 
-    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/registration-review/{session_id}"
+            f"?page_composition_decision={decision.decision}"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/api/registration-review/{session_id}/commit")
