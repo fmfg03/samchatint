@@ -78,6 +78,7 @@ LIVE_EVIDENCE_QUERY_TOKENS = {
     ),
 }
 LIVE_EVIDENCE_ENTITY_PATTERNS = {
+    "expenses": r"\b(?:gastos?|vi(?:a|\u00e1)ticos?)\b",
     "expense_accounts": r"\bcuentas? de gastos?\b",
     "cfdi_documents": r"\b(?:cfdi|cfdis|factura|facturas)\b",
     "projects": r"\b(?:proyecto|proyectos|torneo|torneos)\b",
@@ -1283,9 +1284,24 @@ def _expense_question_match(question: str) -> Optional[Any]:
                 func.lower(ExpenseReport.referencia_base).in_(reference_values),
             )
         )
-    if not conditions:
+    if conditions:
+        return or_(*conditions)
+    entity_tokens = [
+        token
+        for token in _requested_entity_tokens(question, "expenses")
+        if not re.fullmatch(r"20\d{2}", token)
+    ]
+    if not entity_tokens:
         return None
-    return or_(*conditions)
+    return and_(
+        *(
+            or_(
+                func.lower(cast(ExpenseReport.concepto, String)).contains(token),
+                func.lower(cast(ExpenseReport.proyecto, String)).contains(token),
+            )
+            for token in entity_tokens
+        )
+    )
 
 
 def _requested_payment_reference_match(question: str) -> Optional[Any]:
@@ -1305,6 +1321,7 @@ def _requested_payment_reference_match(question: str) -> Optional[Any]:
             or_(
                 func.lower(cast(Documento.id, String)).contains(token),
                 func.lower(Documento.numero_referencia).contains(token),
+                func.lower(Documento.referencia_pago).contains(token),
             )
             for token in reference_tokens
         )
@@ -1326,10 +1343,15 @@ def _requested_budget_project_tokens(question: str) -> list[str]:
     )
     if match is None:
         return []
+    tail = re.split(
+        r"[,;]",
+        normalized_question[match.end():],
+        maxsplit=1,
+    )[0]
     tokens: list[str] = []
     for token in re.findall(
         r"[^\W_][\w._/-]*",
-        normalized_question[match.end():],
+        tail,
         flags=re.UNICODE,
     ):
         compact = token.strip(".,:;()[]{}")
@@ -1393,7 +1415,11 @@ def _requested_entity_tokens(question: str, source: str) -> list[str]:
     match = re.search(pattern, normalized_question)
     if match is None:
         return []
-    tail = normalized_question[match.end():]
+    tail = re.split(
+        r"[,;]",
+        normalized_question[match.end():],
+        maxsplit=1,
+    )[0]
     tokens: list[str] = []
     for token in re.findall(
         r"[^\W_][\w._/-]*",

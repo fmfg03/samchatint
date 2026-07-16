@@ -644,6 +644,27 @@ async def test_requested_expense_reference_is_prioritized_before_limit():
 
 
 @pytest.mark.asyncio
+async def test_requested_expense_concept_is_filtered_before_limit():
+    session = _FakeAsyncSession()
+    provider = build_sqlalchemy_live_evidence_rows_provider(session)
+
+    result = await provider(
+        _context(
+            "gastos:read",
+            question="Explica el gasto Hospedaje Nacional",
+        ),
+        {"expenses"},
+    )
+
+    statement = session.statements[0]
+    sql = str(statement).lower()
+    assert "requested_match" in sql
+    assert sql.count("lower(cast(expense_reports.concepto") >= 3
+    assert sql.count("lower(cast(expense_reports.proyecto") >= 3
+    assert result["expenses"] == []
+
+
+@pytest.mark.asyncio
 async def test_requested_expense_year_filters_before_limit():
     session = _FakeAsyncSession()
     provider = build_sqlalchemy_live_evidence_rows_provider(session)
@@ -949,6 +970,7 @@ async def test_requested_registered_payment_is_prioritized_before_limit():
     }
     assert any("ref-old" in value for value in params)
     assert sql.count("lower(documentos.numero_referencia)") >= 3
+    assert sql.count("lower(documentos.referencia_pago)") >= 3
     assert result["registered_payments"] == []
 
 
