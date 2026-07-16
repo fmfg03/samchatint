@@ -337,6 +337,59 @@ async def test_status_explanation_stays_operational(
     assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
 
 
+@pytest.mark.parametrize(
+    ("configured_sources", "live_rows"),
+    (
+        (
+            "projects",
+            None,
+        ),
+        (
+            "registered_payments",
+            "empty",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_live_explanation_falls_back_when_evidence_unavailable(
+    monkeypatch,
+    configured_sources,
+    live_rows,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        configured_sources,
+    )
+    calls = []
+
+    async def provider(_context, sources):
+        calls.append(sources)
+        return {"registered_payments": []}
+
+    response = await _run_message(
+        "Explica el pago REF-1",
+        live_evidence_rows_provider=(
+            provider if live_rows == "empty" else None
+        ),
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"pagos:read"},
+        ),
+    )
+
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+    if live_rows == "empty":
+        assert calls == [{"registered_payments"}]
+    else:
+        assert calls == []
+
+
 @pytest.mark.asyncio
 async def test_ambiguous_follow_up_preserves_history_without_live_reads(
     monkeypatch,

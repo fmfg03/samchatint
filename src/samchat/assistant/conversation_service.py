@@ -393,8 +393,6 @@ async def _build_request_intelligence_response(
     action_executor: Optional[ReadOnlyActionExecutor] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
 ) -> Optional[Any]:
-    if _live_evidence_analyst_intent(raw_message) is not None:
-        return None
     intent = detect_request_intent(raw_message)
     if intent.domain == "unknown":
         return None
@@ -429,6 +427,7 @@ async def _build_analyst_workbench_response(
     live_evidence_rows_provider: Optional[
         LiveEvidenceRowsProvider
     ] = None,
+    require_live_evidence: bool = False,
 ) -> Optional[Any]:
     intent = (
         _live_evidence_analyst_intent(raw_message)
@@ -456,6 +455,8 @@ async def _build_analyst_workbench_response(
         intent=intent,
         rows_provider=live_evidence_rows_provider,
     )
+    if require_live_evidence and not live_acquisition.collection.evidence:
+        return None
     live_evidence_signatures = {
         (
             item.source_type,
@@ -555,6 +556,19 @@ async def run_conversation_turn(
     )
     if document_response is not None:
         return document_response
+
+    if _live_evidence_analyst_intent(raw_message) is not None:
+        analyst_response = await _build_analyst_workbench_response(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            live_evidence_rows_provider=live_evidence_rows_provider,
+            require_live_evidence=True,
+        )
+        if analyst_response is not None:
+            return analyst_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
@@ -702,6 +716,19 @@ async def run_message_turn_with_pending(
     )
     if document_response is not None:
         return document_response
+
+    if _live_evidence_analyst_intent(raw_message) is not None:
+        analyst_response = await _build_analyst_workbench_response(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            live_evidence_rows_provider=live_evidence_rows_provider,
+            require_live_evidence=True,
+        )
+        if analyst_response is not None:
+            return analyst_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
