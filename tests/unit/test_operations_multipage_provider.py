@@ -32,7 +32,6 @@ async def test_back_page_passes_selected_provider_to_review_reconciliation() -> 
     response = await operations._process_back_photo(
         chat_id=99,
         user_id=42,
-        team_id=None,
         optimized_bytes=b"image",
         image_b64="aW1hZ2U=",
         provider="openai",

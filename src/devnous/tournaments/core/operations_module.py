@@ -93,6 +93,7 @@ PLAYER_FIELDS_WITH_SAFE_SUPABASE_SYNC = {
 }
 
 REGS08_GOVERNED_REVIEW_UNAVAILABLE = "REGS08_GOVERNED_REVIEW_UNAVAILABLE"
+REGS09_REVIEW_SESSION_REQUIRED = "REGS09_REVIEW_SESSION_REQUIRED"
 
 
 class OperationsModule:
@@ -3504,12 +3505,10 @@ Total partidos: {len(self.matches)}
             # If we just saved the front side, treat the next photo as the back side.
             if chat_id in self.pending_back_photos:
                 pending = self.pending_back_photos[chat_id]
-                team_id = pending.get("team_id")
                 provider = (pending.get("provider") or "anthropic").strip().lower()
                 return await self._process_back_photo(
                     chat_id=chat_id,
                     user_id=message.user_id,
-                    team_id=team_id,
                     optimized_bytes=optimized_bytes,
                     image_b64=image_b64,
                     provider=provider,
@@ -3574,70 +3573,55 @@ Total partidos: {len(self.matches)}
         self,
         chat_id: int,
         user_id: int,
-        team_id: Optional[str],
         optimized_bytes: bytes,
         image_b64: str,
         provider: str,
     ):
-        """Process back-side photo and append players to an existing team."""
-        if not team_id:
-            pending = self.pending_back_photos.get(chat_id) or {}
-            review_session_id = pending.get("review_session_id")
-            if not review_session_id:
-                self.pending_back_photos.pop(chat_id, None)
-                return "⚠️ No tengo referencia del equipo para la vuelta. Escribe `corregir` o vuelve a registrar."
+        """Append a back page only to its governed precapture review session."""
+        pending = self.pending_back_photos.get(chat_id) or {}
+        review_session_id = pending.get("review_session_id")
+        if not review_session_id:
+            self.pending_back_photos.pop(chat_id, None)
+            return (
+                f"⛔ {REGS09_REVIEW_SESSION_REQUIRED}: la página adicional no está "
+                "ligada a una sesión de precaptura vigente. No se ejecutó OCR ni se "
+                "agregó ningún jugador; vuelve a iniciar la precaptura del equipo."
+            )
 
         extraction, raw = await self._extract_registration_form(provider, optimized_bytes, image_b64)
         if extraction is None:
             return f"❌ OCR fallo en la vuelta con {provider}."
 
-        pending = self.pending_back_photos.get(chat_id) or {}
-        review_session_id = pending.get("review_session_id")
-        if review_session_id:
-            ok, result = await self._append_back_photo_to_review_session(
-                review_session_id=str(review_session_id),
-                optimized_bytes=optimized_bytes,
-                extraction=extraction,
-                raw_payload=raw,
-                provider=provider,
-            )
-            if ok:
-                page_count = int(pending.get("page_count") or 1) + 1
-                max_pages = int(pending.get("max_pages") or self._telegram_review_max_pages())
-                if page_count >= max_pages:
-                    self.pending_back_photos.pop(chat_id, None)
-                    next_step = (
-                        f"Ya tengo {page_count} página(s), cierro este equipo para revisión. "
-                        "La siguiente foto iniciará otra precaptura."
-                    )
-                else:
-                    pending["page_count"] = page_count
-                    pending["max_pages"] = max_pages
-                    self.pending_back_photos[chat_id] = pending
-                    next_step = (
-                        f"Esta sesión lleva {page_count} página(s). "
-                        "Puedes enviar otra página del mismo equipo o presionar 'No hay más páginas'."
-                    )
-                return (
-                    "✅ *Página agregada a la revisión web*\n\n"
-                    f"{next_step}\n\n"
-                    f"Revisión: {result}"
-                )
-            return f"❌ No pude agregar la vuelta a la revisión web.\n{result}"
-
-        ok, msg = await self._append_players_to_team(
-            chat_id=chat_id,
-            user_id=user_id,
-            team_id=team_id,
+        ok, result = await self._append_back_photo_to_review_session(
+            review_session_id=str(review_session_id),
+            optimized_bytes=optimized_bytes,
             extraction=extraction,
-            provider=provider,
             raw_payload=raw,
-            source_image=Image.open(io.BytesIO(optimized_bytes)),
+            provider=provider,
         )
         if ok:
-            self.pending_back_photos.pop(chat_id, None)
-            return f"✅ *Vuelta procesada*\n\n{msg}\n\nEscribe `corregir` si quieres ajustar algo."
-        return f"❌ Error guardando vuelta.\n{msg}"
+            page_count = int(pending.get("page_count") or 1) + 1
+            max_pages = int(pending.get("max_pages") or self._telegram_review_max_pages())
+            if page_count >= max_pages:
+                self.pending_back_photos.pop(chat_id, None)
+                next_step = (
+                    f"Ya tengo {page_count} página(s), cierro este equipo para revisión. "
+                    "La siguiente foto iniciará otra precaptura."
+                )
+            else:
+                pending["page_count"] = page_count
+                pending["max_pages"] = max_pages
+                self.pending_back_photos[chat_id] = pending
+                next_step = (
+                    f"Esta sesión lleva {page_count} página(s). "
+                    "Puedes enviar otra página del mismo equipo o presionar 'No hay más páginas'."
+                )
+            return (
+                "✅ *Página agregada a la revisión web*\n\n"
+                f"{next_step}\n\n"
+                f"Revisión: {result}"
+            )
+        return f"❌ No pude agregar la vuelta a la revisión web.\n{result}"
 
     async def _legacy_single_player_ocr(self, chat_id: int, image_b64: str):
         """Legacy flow: extract single player fields with Claude JSON prompt."""
@@ -5489,168 +5473,6 @@ Total partidos: {len(self.matches)}
                 callback_id,
                 "❌ Error interno"
             )
-
-    async def _append_players_to_team(
-        self,
-        chat_id: int,
-        user_id: Optional[int],
-        team_id: str,
-        extraction,
-        provider: str,
-        raw_payload: Optional[Dict[str, Any]],
-        source_image: Optional[Image.Image] = None,
-    ):
-        """Append players from an extraction to an existing team."""
-        if not self.db:
-            return False, "No hay conexion a BD (db_session no configurado)."
-
-        try:
-            from uuid import UUID
-
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-                team_uuid = UUID(team_id)
-                team = await copa_db.get_team_by_id(team_uuid)
-                if not team:
-                    return False, "Equipo no encontrado."
-
-                existing_players = await copa_db.get_players_by_team(team_uuid)
-                max_idx = max([p.roster_index or 0 for p in existing_players] or [0])
-                integrity = self._prepare_extraction_integrity(
-                    team_id=team_uuid,
-                    extraction=extraction,
-                    image=source_image,
-                    side="back",
-                    existing_players=existing_players,
-                )
-                integrity_notes = integrity["integrity_notes"]
-                photo_artifacts = integrity["photo_artifacts"]
-
-                created_players = 0
-                skipped_players = 0
-                review_players = 0
-
-                for offset, p in enumerate(extraction.players or [], 1):
-                    full_name = (getattr(p, "name", None) or "").strip()
-                    if not full_name:
-                        continue
-
-                    first_name = (getattr(p, "first_name", None) or "").strip()
-                    last_name = " ".join(
-                        x
-                        for x in [
-                            (getattr(p, "paternal_surname", None) or "").strip(),
-                            (getattr(p, "maternal_surname", None) or "").strip(),
-                        ]
-                        if x
-                    ).strip()
-                    if not first_name or not last_name:
-                        parts = full_name.split()
-                        if parts:
-                            first_name = first_name or parts[0]
-                            last_name = last_name or (" ".join(parts[1:]) if len(parts) > 1 else "")
-
-                    birth_date = None
-                    bd = getattr(p, "birth_date", None)
-                    if bd:
-                        birth_date = self._parse_birth_date(bd)
-
-                    curp = (getattr(p, "curp", None) or "").strip() or None
-                    existing = None
-                    if curp:
-                        existing = await copa_db.get_player_by_curp(curp)
-                    if not existing:
-                        existing = await copa_db.get_player_by_team_and_identity(
-                            team_id=team_uuid,
-                            first_name=first_name,
-                            last_name=last_name,
-                            birth_date=birth_date,
-                        )
-                    if existing:
-                        skipped_players += 1
-                        continue
-
-                    idx = offset
-                    review_reasons = list(integrity_notes.get(idx) or [])
-                    photo_artifact = photo_artifacts.get(idx) or {}
-                    needs_review = bool(getattr(p, "needs_review", False) or review_reasons)
-                    if needs_review:
-                        review_players += 1
-
-                    await copa_db.create_player(
-                        team_id=team_uuid,
-                        first_name=first_name,
-                        last_name=last_name,
-                        birth_date=birth_date,
-                        curp=curp,
-                        photo_path=photo_artifact.get("photo_path"),
-                        photo_sha256=photo_artifact.get("photo_sha256"),
-                        photo_ahash=photo_artifact.get("photo_ahash"),
-                        ocr_confidence=getattr(p, "confidence", None),
-                        needs_review=needs_review,
-                        verified_by_human=False,
-                        verification_notes=describe_integrity_reasons(review_reasons) if review_reasons else None,
-                        roster_index=max_idx + offset,
-                    )
-                    created_players += 1
-
-                regs = await copa_db.get_registrations_by_chat(chat_id, limit=10)
-                reg_id = None
-                for r in regs:
-                    if r.team_id and r.team_id == team_uuid:
-                        reg_id = r.id
-                        break
-
-                await copa_db.create_ocr_registration(
-                    telegram_chat_id=chat_id,
-                    telegram_user_id=user_id,
-                    team_id=team_uuid,
-                    ocr_result={
-                        "provider": provider,
-                        "extraction": extraction.model_dump(),
-                        "raw": raw_payload,
-                        "side": "back",
-                    },
-                    validation_result={
-                        "provider": provider,
-                        "side": "back",
-                        "overall_confidence": float(getattr(extraction, "overall_confidence", 0.0) or 0.0),
-                    },
-                )
-
-                if reg_id:
-                    await copa_db.mark_registration_reviewed(reg_id, "corrected", team_id=team_uuid)
-
-                await copa_db.commit()
-
-            sync_note = ""
-            tournament_slug = (getattr(team, "tournament_slug", None) or "").strip()
-            category_name = (getattr(team, "category", None) or "").strip()
-            if tournament_slug and category_name:
-                ok_sync, msg_sync = await self._sync_ocr_to_supabase(
-                    chat_id=chat_id,
-                    tournament_slug=tournament_slug,
-                    category_name=category_name,
-                    extraction=extraction,
-                    side="back",
-                )
-                sync_note = f"\n\n{'✅' if ok_sync else '⚠️'} {msg_sync}"
-
-            return (
-                True,
-                f"Equipo: {team.name}\n"
-                f"Jugadores agregados: {created_players}\n"
-                f"Duplicados/ya existentes: {skipped_players}\n"
-                f"Jugadores en revision: {review_players}\n"
-                f"Nombres sospechosos: {integrity['flagged_name_count']}\n"
-                f"Fotos sospechosas/repetidas: {integrity['flagged_photo_count']}"
-                f"{sync_note}",
-            )
-        except Exception as e:
-            logger.error(f"❌ append_players_to_team failed: {e}", exc_info=True)
-            return False, self._generic_db_error()
 
     async def _save_to_database(
         self,

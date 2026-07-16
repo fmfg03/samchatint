@@ -38,6 +38,7 @@ MODEL_IMPORT = re.compile(
 )
 SESSION_MUTATION = re.compile(r"\bsession\.(?:add|add_all|delete)\s*\(")
 REGS08_SOURCE = Path("src/devnous/tournaments/core/operations_module.py")
+REGS09_SOURCE = REGS08_SOURCE
 
 
 def is_operational_path(relative_path: str) -> bool:
@@ -119,6 +120,53 @@ def regs08_retirement_reasons(root: Path) -> list[str]:
     return sorted(set(reasons))
 
 
+def regs09_retirement_reasons(root: Path) -> list[str]:
+    """Verify back pages can only enter the governed REG-S04 append route."""
+    path = root / REGS09_SOURCE
+    if not path.is_file():
+        return ["REGS09_CANONICAL_SOURCE_MISSING"]
+    try:
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return ["REGS09_CANONICAL_SOURCE_UNREADABLE"]
+
+    operations = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "OperationsModule"
+        ),
+        None,
+    )
+    if operations is None:
+        return ["REGS09_OPERATIONS_MODULE_MISSING"]
+
+    methods = {
+        node.name: node
+        for node in operations.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    reasons: list[str] = []
+    all_calls = _method_calls(operations)
+    if (
+        "_append_players_to_team" in methods
+        or "_append_players_to_team" in all_calls
+    ):
+        reasons.append("REGS09_DIRECT_BACKPAGE_FINALIZER_PRESENT")
+
+    back_page = methods.get("_process_back_photo")
+    if back_page is None:
+        reasons.append("REGS09_BACKPAGE_HANDLER_MISSING")
+    elif "_append_back_photo_to_review_session" not in _method_calls(back_page):
+        reasons.append("REGS09_REGS04_APPEND_ROUTE_MISSING")
+
+    if "REGS09_REVIEW_SESSION_REQUIRED" not in source:
+        reasons.append("REGS09_REVIEW_SESSION_FAIL_CLOSED_MISSING")
+
+    return sorted(set(reasons))
+
+
 def _git_paths(root: Path) -> Iterable[str]:
     result = subprocess.run(
         [
@@ -162,6 +210,12 @@ def assess(root: Path) -> dict[str, object]:
     if regs08_reasons:
         violations.append(
             {"path": str(REGS08_SOURCE), "reason_codes": regs08_reasons}
+        )
+
+    regs09_reasons = regs09_retirement_reasons(root)
+    if regs09_reasons:
+        violations.append(
+            {"path": str(REGS09_SOURCE), "reason_codes": regs09_reasons}
         )
 
     return {
