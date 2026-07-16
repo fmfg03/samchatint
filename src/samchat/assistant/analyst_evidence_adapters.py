@@ -302,10 +302,24 @@ def _permissions_applied(
     granted: Iterable[str],
     required: str,
 ) -> List[str]:
-    values = sorted({str(item) for item in granted if item})
-    if required not in values:
-        values.append(required)
-    return values
+    required_normalized = required.strip().lower()
+    values = sorted(
+        {
+            str(item).strip().lower()
+            for item in granted
+            if str(item).strip()
+        }
+    )
+    if required_normalized in values:
+        return [required_normalized]
+    if "*" in values:
+        return ["*"]
+    parts = required_normalized.split(".")
+    for index in range(len(parts), 0, -1):
+        wildcard = ".".join(parts[:index]) + ".*"
+        if wildcard in values:
+            return [wildcard]
+    return []
 
 
 def _date_text(row: Mapping[str, Any]) -> str:
@@ -350,10 +364,38 @@ def _parse_date(value: str) -> Optional[date]:
 def _safe_metadata(row: Mapping[str, Any]) -> Dict[str, Any]:
     metadata = row.get("metadata")
     if isinstance(metadata, Mapping):
+        allowed = {
+            "active",
+            "amount",
+            "budget_amount",
+            "budget_id",
+            "cfdi_uuid",
+            "concept",
+            "concepto",
+            "currency",
+            "document_type",
+            "edition_year",
+            "expense_id",
+            "invoice_date",
+            "paid_amount",
+            "payment_date",
+            "payment_id",
+            "project",
+            "reference_amount",
+            "reference_number",
+            "requested_match",
+            "region",
+            "status",
+            "subtotal",
+            "total",
+            "vendor_type",
+            "variance_amount",
+            "version_name",
+        }
         return {
             str(key): value
             for key, value in metadata.items()
-            if isinstance(key, str)
+            if isinstance(key, str) and key in allowed
         }
     return {}
 

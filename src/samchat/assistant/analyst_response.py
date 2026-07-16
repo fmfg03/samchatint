@@ -7,6 +7,64 @@ from .analyst_intent import AnalystIntent
 from .analyst_workbench import AnalystWorkbenchResult
 
 
+LIVE_EVIDENCE_SOURCE_TYPES = {
+    "budget",
+    "cfdi_document",
+    "document_evidence",
+    "expense",
+    "expense_account",
+    "project",
+    "registered_payment",
+    "vendor",
+}
+
+
+def _contains_live_source(value: Any) -> bool:
+    if isinstance(value, dict):
+        source_type = str(value.get("source_type") or "")
+        if source_type in LIVE_EVIDENCE_SOURCE_TYPES:
+            return True
+        return any(_contains_live_source(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_live_source(item) for item in value)
+    return False
+
+
+def _safe_trace_diagnostic(value: Any) -> Any:
+    if not isinstance(value, dict) or not _contains_live_source(value):
+        return value
+    source_types: set[str] = set()
+
+    def collect(item: Any) -> None:
+        if isinstance(item, dict):
+            source_type = str(item.get("source_type") or "")
+            if source_type in LIVE_EVIDENCE_SOURCE_TYPES:
+                source_types.add(source_type)
+            for nested in item.values():
+                collect(nested)
+        elif isinstance(item, list):
+            for nested in item:
+                collect(nested)
+
+    collect(value)
+    safe = {
+        key: value[key]
+        for key in (
+            "diagnostic_type",
+            "severity",
+            "reason",
+            "blocks_conclusion",
+            "rank_score",
+            "rank_reasons",
+            "coverage_contribution",
+            "clipped",
+        )
+        if key in value
+    }
+    safe["source_types"] = sorted(source_types)
+    return safe
+
+
 def _compact_text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
@@ -86,10 +144,15 @@ def build_analyst_trace(
         str(item.get("source_type") or "unknown")
         for item in result.evidence
     ]
-    evidence_labels = [
-        str(item.get("label") or item.get("source_type") or "contexto")
-        for item in result.evidence
-    ]
+    evidence_labels = []
+    for item in result.evidence:
+        source_type = str(item.get("source_type") or "unknown")
+        if source_type in LIVE_EVIDENCE_SOURCE_TYPES:
+            evidence_labels.append(source_type)
+        else:
+            evidence_labels.append(
+                str(item.get("label") or source_type or "contexto")
+            )
     evidence_rank_scores = [
         int(item.get("rank_score") or 0)
         for item in result.evidence
@@ -114,9 +177,12 @@ def build_analyst_trace(
     suggested_routes = list(
         answer_contract.get("suggested_routes") or result.suggested_routes
     )
-    evidence_diagnostics = list(
-        answer_contract.get("evidence_diagnostics") or []
-    )
+    evidence_diagnostics = [
+        _safe_trace_diagnostic(item)
+        for item in (
+            answer_contract.get("evidence_diagnostics") or []
+        )
+    ]
     evidence_diagnostic_count_value = answer_contract.get(
         "evidence_diagnostic_count"
     )
@@ -129,18 +195,30 @@ def build_analyst_trace(
         answer_contract.get("evidence_quality_status") or ""
     )
     safe_to_conclude = bool(answer_contract.get("safe_to_conclude", True))
-    freshness_diagnostics = list(
-        answer_contract.get("freshness_diagnostics") or []
-    )
-    conflict_diagnostics = list(
-        answer_contract.get("conflict_diagnostics") or []
-    )
-    blocking_conflicts = list(
-        answer_contract.get("blocking_conflicts") or []
-    )
-    missing_critical_sources = list(
-        answer_contract.get("missing_critical_sources") or []
-    )
+    freshness_diagnostics = [
+        _safe_trace_diagnostic(item)
+        for item in (
+            answer_contract.get("freshness_diagnostics") or []
+        )
+    ]
+    conflict_diagnostics = [
+        _safe_trace_diagnostic(item)
+        for item in (
+            answer_contract.get("conflict_diagnostics") or []
+        )
+    ]
+    blocking_conflicts = [
+        _safe_trace_diagnostic(item)
+        for item in (
+            answer_contract.get("blocking_conflicts") or []
+        )
+    ]
+    missing_critical_sources = [
+        _safe_trace_diagnostic(item)
+        for item in (
+            answer_contract.get("missing_critical_sources") or []
+        )
+    ]
     return [
         {
             "analyst_workbench_live_wiring": {

@@ -672,6 +672,9 @@ def rank_analyst_evidence(
         if item.summary.endswith("..."):
             score -= 10
             reasons.append("clipped_summary")
+        if bool(item.metadata.get("requested_match")):
+            score += 200
+            reasons.append("requested_identifier_match")
         ranked.append(
             (
                 replace(
@@ -738,6 +741,7 @@ def extract_inline_analyst_evidence(
 
 def build_analyst_evidence_pack(
     *,
+    live_evidence: Iterable[AnalystEvidence] = (),
     inline_evidence: Iterable[AnalystEvidence],
     history_evidence: Iterable[AnalystEvidence],
     intent: Optional[AnalystIntent] = None,
@@ -745,7 +749,11 @@ def build_analyst_evidence_pack(
 ) -> List[AnalystEvidence]:
     packed: List[AnalystEvidence] = []
     seen: set[str] = set()
-    for item in list(inline_evidence) + list(history_evidence):
+    for item in (
+        list(live_evidence)
+        + list(inline_evidence)
+        + list(history_evidence)
+    ):
         key = _stable_evidence_key(item)
         if key in seen:
             continue
@@ -940,6 +948,8 @@ def _routed_to_operational(intent: AnalystIntent) -> AnalystWorkbenchResult:
 def _answer_for_intent(
     intent: AnalystIntent,
     evidence: List[AnalystEvidence],
+    *,
+    live_evidence_used: bool = False,
 ) -> tuple[str, List[str], List[str]]:
     primary = evidence[0].summary if evidence else ""
     clipping_caveats = [
@@ -960,10 +970,17 @@ def _answer_for_intent(
             "límite o criterio de aceptación.\n"
             "- Riesgo financiero si los montos no están reconciliados contra "
             "CFDI, pago o presupuesto.",
-            [
-                "El análisis se limita al contexto disponible; "
-                "no revisé datos vivos adicionales."
-            ] + clipping_caveats + relevance_caveats,
+            (
+                [
+                    "El análisis usa evidencia en vivo autorizada en modo "
+                    "lectura, pero requiere validación humana."
+                ]
+                if live_evidence_used
+                else [
+                    "El análisis se limita al contexto disponible; "
+                    "no revisé datos vivos adicionales."
+                ]
+            ) + clipping_caveats + relevance_caveats,
             [
                 (
                     "¿Existe anexo, SOW o contrato completo para validar "
@@ -1033,16 +1050,28 @@ def _answer_for_intent(
             + relevance_caveats,
             ["¿Quieres enfoque ejecutivo, operativo o para cliente?"],
         )
+    live_scope = (
+        "- Lo anterior incluye evidencia en vivo autorizada en modo lectura; "
+        "no sustituye una validación formal.\n"
+        if live_evidence_used
+        else (
+            "- Lo anterior describe la evidencia disponible, no una "
+            "validación contra datos vivos.\n"
+        )
+    )
+    caveat = (
+        "Revisé evidencia en vivo autorizada en modo lectura; "
+        "no ejecuté acciones."
+        if live_evidence_used
+        else "No revisé datos vivos ni ejecuté acciones."
+    )
     return (
         "Explicación con el contexto disponible:\n"
         f"- {primary}\n"
-        "- Lo anterior describe la evidencia disponible, no una validación "
-        "contra datos vivos.\n"
+        f"{live_scope}"
         "- Si necesitas una conclusión formal, faltaría confirmar fuente, "
         "fecha y alcance.",
-        ["No revisé datos vivos ni ejecuté acciones."]
-        + clipping_caveats
-        + relevance_caveats,
+        [caveat, *clipping_caveats, *relevance_caveats],
         ["¿Qué parte quieres que explique con más detalle?"],
     )
 
@@ -1051,6 +1080,7 @@ async def run_analyst_workbench(
     *,
     intent: AnalystIntent,
     evidence: Optional[List[AnalystEvidence]] = None,
+    live_evidence_used: bool = False,
     provider_allowed: bool = False,
     provider_fn: Optional[AnalystProviderFn] = None,
 ) -> AnalystWorkbenchResult:
@@ -1172,6 +1202,7 @@ async def run_analyst_workbench(
     answer, caveats, _legacy_next_questions = _answer_for_intent(
         intent,
         evidence,
+        live_evidence_used=live_evidence_used,
     )
     next_questions = next_questions_for_context(
         intent=intent,

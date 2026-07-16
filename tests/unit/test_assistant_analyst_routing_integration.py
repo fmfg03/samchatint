@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import samchat.assistant.router as assistant_router
 from samchat.assistant.conversation_service import (
     run_message_turn_with_pending,
 )
@@ -61,12 +62,19 @@ async def _run_message(
     *,
     session=None,
     finance_rows_provider=None,
+    live_evidence_rows_provider=None,
+    current_empleado=None,
     executor=None,
 ):
     return await run_message_turn_with_pending(
         raw_message=raw_message,
         conversation=SimpleNamespace(id="conv-analyst", updated_at=None),
-        current_empleado=SimpleNamespace(id="emp-1"),
+        current_empleado=current_empleado
+        or SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions=set(),
+        ),
         session=session or _FakeSession(),
         request=None,
         tournament_key=None,
@@ -85,11 +93,16 @@ async def _run_message(
         maybe_append_export_prompt=_maybe_append_export_prompt,
         document_action_router_executor=executor,
         finance_rows_provider=finance_rows_provider,
+        live_evidence_rows_provider=live_evidence_rows_provider,
     )
 
 
 @pytest.mark.asyncio
-async def test_analyst_needs_context_no_provider():
+async def test_analyst_needs_context_no_provider(monkeypatch):
+    monkeypatch.delenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        raising=False,
+    )
     response = await _run_message("Explícame esta balanza")
 
     assert "Necesito contexto para analizar" in response.assistant_message
@@ -98,6 +111,25 @@ async def test_analyst_needs_context_no_provider():
     assert trace["status"] == "needs_context"
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] is False
+    assert "analyst_live_evidence" not in response.tool_trace[0]
+
+
+def test_disabled_live_evidence_does_not_initialize_database(monkeypatch):
+    monkeypatch.delenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        raising=False,
+    )
+
+    def fail_if_called():  # pragma: no cover
+        raise AssertionError("database session maker must remain dormant")
+
+    monkeypatch.setattr(
+        assistant_router,
+        "get_expenses_session_maker",
+        fail_if_called,
+    )
+
+    assert assistant_router._configured_live_evidence_rows_provider() is None
 
 
 @pytest.mark.asyncio
@@ -125,6 +157,379 @@ async def test_analyst_uses_latest_document_context_without_provider():
     assert trace["evidence_types"] == ["document_intake"]
     assert trace["evidence_rank_scores"][0] > 0
     assert trace["evidence_rank_reasons"][0]
+
+
+@pytest.mark.asyncio
+async def test_analyst_uses_authorized_live_evidence(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "expenses,budgets",
+    )
+    calls = []
+
+    async def live_rows(_context, sources):
+        calls.append(sources)
+        return {
+            "expenses": [
+                {
+                    "id": "gasto-live-1",
+                    "label": "Hospedaje Nacional",
+                    "summary": (
+                        "Gasto de hospedaje del proyecto nacional por "
+                        "2,500 MXN."
+                    ),
+                    "date": "2026-07-10",
+                    "metadata": {
+                        "amount": 2500,
+                        "currency": "MXN",
+                    },
+                }
+            ]
+        }
+
+    response = await _run_message(
+        "Explícame el gasto de este caso",
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"gastos:read"},
+        ),
+    )
+
+    assert calls == [{"expenses"}]
+    assert "Hospedaje Nacional" in response.assistant_message
+    assert "evidencia en vivo autorizada" in response.assistant_message
+    assert "No revisé datos vivos" not in response.assistant_message
+    trace = response.tool_trace[0]["analyst_live_evidence"]
+    assert trace["enabled"] is True
+    assert trace["allowed_sources"] == ["expenses"]
+    assert trace["denied_sources"] == []
+    assert trace["source_counts"] == {"expenses": 1}
+    assert trace["evidence_count"] == 1
+    workbench_trace = response.tool_trace[0][
+        "analyst_workbench_live_wiring"
+    ]
+    assert workbench_trace["evidence_labels"] == ["expense"]
+    assert "Hospedaje Nacional" not in str(response.tool_trace)
+    assert "gasto-live-1" not in str(response.tool_trace)
+
+
+@pytest.mark.parametrize(
+    ("question", "source", "permission"),
+    (
+        ("Explica el CFDI UUID-OLD", "cfdi_documents", "cfdi:read"),
+        (
+            "Explica el pago REF-OLD",
+            "registered_payments",
+            "pagos:read",
+        ),
+        (
+            "Explica el torneo Nacional",
+            "projects",
+            "proyectos:read",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_enabled_live_operational_explanations_reach_analyst(
+    monkeypatch,
+    question,
+    source,
+    permission,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        source,
+    )
+    calls = []
+
+    async def live_rows(_context, sources):
+        calls.append(sources)
+        return {
+            source: [
+                {
+                    "id": "live-finance-1",
+                    "label": "Evidencia financiera solicitada",
+                    "summary": "Registro financiero autorizado.",
+                    "date": "2026-07-10",
+                    "metadata": {},
+                }
+            ]
+        }
+
+    response = await _run_message(
+        question,
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={permission},
+        ),
+    )
+
+    assert calls == [{source}]
+    assert "Evidencia financiera solicitada" in response.assistant_message
+    trace = response.tool_trace[0]["analyst_live_evidence"]
+    assert trace["attempted_sources"] == [source]
+    assert trace["source_counts"] == {source: 1}
+
+
+@pytest.mark.parametrize(
+    ("question", "source", "permission"),
+    (
+        (
+            "Expl\u00edcame qu\u00e9 pagos est\u00e1n pendientes",
+            "registered_payments",
+            "pagos:read",
+        ),
+        (
+            "Expl\u00edcame qu\u00e9 pagos vencen",
+            "registered_payments",
+            "pagos:read",
+        ),
+        (
+            "Expl\u00edcame los CFDI sin vincular",
+            "cfdi_documents",
+            "cfdi:read",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_status_explanation_stays_operational(
+    monkeypatch,
+    question,
+    source,
+    permission,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        source,
+    )
+
+    async def live_rows(_context, _sources):  # pragma: no cover
+        raise AssertionError("pending report must not query paid evidence")
+
+    response = await _run_message(
+        question,
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={permission},
+        ),
+    )
+
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_live_evidence" not in response.tool_trace[0]
+    assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+
+
+@pytest.mark.parametrize(
+    ("configured_sources", "live_rows"),
+    (
+        (
+            "projects",
+            None,
+        ),
+        (
+            "registered_payments",
+            "empty",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_live_explanation_falls_back_when_evidence_unavailable(
+    monkeypatch,
+    configured_sources,
+    live_rows,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        configured_sources,
+    )
+    calls = []
+
+    async def provider(_context, sources):
+        calls.append(sources)
+        return {"registered_payments": []}
+
+    response = await _run_message(
+        "Explica el pago REF-1",
+        live_evidence_rows_provider=(
+            provider if live_rows == "empty" else None
+        ),
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"pagos:read"},
+        ),
+    )
+
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_workbench_live_wiring" not in response.tool_trace[0]
+    if live_rows == "empty":
+        assert calls == [{"registered_payments"}]
+    else:
+        assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_follow_up_preserves_history_without_live_reads(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "expenses,cfdi_documents,budgets,registered_payments,documents",
+    )
+
+    async def live_rows(_context, _sources):  # pragma: no cover
+        raise AssertionError("ambiguous follow-up must not query live sources")
+
+    response = await _run_message(
+        "¿Qué implica?",
+        session=_FakeSession(
+            latest_contents=[
+                "El contrato previo mantiene una penalización abierta y "
+                "no define al responsable de aceptación."
+            ]
+        ),
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="superadmin",
+            permissions={"*"},
+        ),
+    )
+
+    live_trace = response.tool_trace[0]["analyst_live_evidence"]
+    assert live_trace["attempted_sources"] == []
+    assert live_trace["provider_called"] is False
+    workbench_trace = response.tool_trace[0][
+        "analyst_workbench_live_wiring"
+    ]
+    assert workbench_trace["evidence_types"] == ["conversation"]
+
+
+@pytest.mark.asyncio
+async def test_live_claim_requires_live_item_in_final_pack(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "projects",
+    )
+    history = [
+        (
+            "DOCUMENT_INTAKE_RESULT JSON:\n"
+            '{"detected_document_type":"contract",'
+            f'"summary":"Contrato {index} con obligaciones, responsables, '
+            'fechas, montos, riesgos y evidencia suficiente para análisis.",'
+            '"missing_fields":[]}\n\n'
+            "Archivo procesado."
+        )
+        for index in range(6)
+    ]
+
+    async def live_rows(_context, _sources):
+        return {
+            "projects": [
+                {
+                    "id": "project-live-1",
+                    "label": "Proyecto",
+                    "summary": "Proyecto activo.",
+                    "metadata": {},
+                }
+            ]
+        }
+
+    response = await _run_message(
+        "Explica el torneo Nacional",
+        session=_FakeSession(latest_contents=history),
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="superadmin",
+            permissions={"*"},
+        ),
+    )
+
+    assert "evidencia en vivo autorizada" not in response.assistant_message
+    assert "No revis\u00e9 datos vivos" in response.assistant_message
+    workbench_trace = response.tool_trace[0][
+        "analyst_workbench_live_wiring"
+    ]
+    assert "project" not in workbench_trace["evidence_types"]
+
+
+@pytest.mark.asyncio
+async def test_partial_live_evidence_warning_is_rendered(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "expenses,documents",
+    )
+
+    async def live_rows(_context, sources):
+        source = next(iter(sources))
+        if source == "documents":
+            raise RuntimeError("document source unavailable")
+        return {
+            "expenses": [
+                {
+                    "id": "gasto-live-2",
+                    "label": "Transporte Nacional",
+                    "summary": (
+                        "Gasto de transporte del proyecto nacional por "
+                        "1,200 MXN."
+                    ),
+                    "date": "2026-07-10",
+                    "metadata": {
+                        "amount": 1200,
+                        "currency": "MXN",
+                    },
+                }
+            ]
+        }
+
+    response = await _run_message(
+        "Explícame el gasto y el documento financiero de este caso",
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"gastos:read", "documentos:read"},
+        ),
+    )
+
+    assert "evidencia en vivo es parcial" in response.assistant_message
+    trace = response.tool_trace[0]["analyst_live_evidence"]
+    assert trace["failed_sources"] == ["documents"]
 
 
 @pytest.mark.asyncio
