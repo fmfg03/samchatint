@@ -23,9 +23,12 @@ from .queries import (
 )
 
 __all__ = [
+    "SupabaseAuthorityDenied",
+    "SupabaseReplicationCapability",
     "append_players_to_team_v2",
     "create_media_asset_v2",
     "infer_tournament_key_from_slug",
+    "issue_supabase_replication_capability",
     "register_team_from_roster_v2",
     "resolve_category_for_tournament",
     "resolve_primary_tournament",
@@ -43,3 +46,8 @@ __all__ = [
     "tournament_ops_query_v2",
     "tournament_soul_snapshot_v2",
 ]
+from devnous.copa_telmex.supabase_authority import (
+    SupabaseAuthorityDenied,
+    SupabaseReplicationCapability,
+    issue_supabase_replication_capability,
+)

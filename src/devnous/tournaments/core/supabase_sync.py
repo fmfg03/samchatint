@@ -17,6 +17,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 
+from devnous.copa_telmex.supabase_authority import (
+    SupabaseWritePermit,
+    require_supabase_write_permit,
+)
+
 
 @dataclass(frozen=True)
 class SupabaseConfig:
@@ -31,8 +36,15 @@ class SupabaseSyncError(RuntimeError):
 
 
 class SupabaseAdminClient:
-    def __init__(self, cfg: SupabaseConfig, cache_dir: str = "data"):
+    def __init__(
+        self,
+        cfg: SupabaseConfig,
+        cache_dir: str = "data",
+        *,
+        write_permit: Optional[SupabaseWritePermit] = None,
+    ):
         self.cfg = cfg
+        self._write_permit = write_permit
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._import_user_cache = self._cache_dir / "supabase_import_user.json"
@@ -61,6 +73,8 @@ class SupabaseAdminClient:
         headers: Optional[Dict[str, str]] = None,
         json_body: Any = None,
     ) -> Any:
+        if method.upper() not in {"GET", "HEAD"}:
+            require_supabase_write_permit(self._write_permit)
         hdrs = dict(self._headers())
         if headers:
             hdrs.update(headers)
@@ -75,7 +89,9 @@ class SupabaseAdminClient:
             ) as resp:
                 text = await resp.text()
                 if resp.status >= 400:
-                    raise SupabaseSyncError(f"{method} {url} -> {resp.status}: {text[:500]}")
+                    raise SupabaseSyncError(
+                        f"{method} {url} -> {resp.status}: {text[:500]}"
+                    )
                 if not text:
                     return None
                 try:
@@ -109,7 +125,9 @@ class SupabaseAdminClient:
             if admins:
                 uid = str(admins[0].get("user_id") or "").strip()
                 if uid:
-                    self._import_user_cache.write_text(json.dumps({"id": uid}, indent=2), encoding="utf-8")
+                    self._import_user_cache.write_text(
+                        json.dumps({"id": uid}, indent=2), encoding="utf-8"
+                    )
                     return uid
         except Exception:
             pass
@@ -122,10 +140,14 @@ class SupabaseAdminClient:
             "user_metadata": {"full_name": "Telegram Import"},
         }
         try:
-            created = await self._request("POST", self._auth_admin_url("users"), json_body=body)
+            created = await self._request(
+                "POST", self._auth_admin_url("users"), json_body=body
+            )
             uid = str((created or {}).get("user", {}).get("id") or "")
             if uid:
-                self._import_user_cache.write_text(json.dumps({"id": uid}, indent=2), encoding="utf-8")
+                self._import_user_cache.write_text(
+                    json.dumps({"id": uid}, indent=2), encoding="utf-8"
+                )
                 return uid
         except SupabaseSyncError:
             # Likely already exists. Fall back to list users and match by email.
@@ -142,13 +164,17 @@ class SupabaseAdminClient:
                 if (u.get("email") or "").lower() == self.cfg.import_user_email.lower():
                     uid = str(u.get("id") or "")
                     if uid:
-                        self._import_user_cache.write_text(json.dumps({"id": uid}, indent=2), encoding="utf-8")
+                        self._import_user_cache.write_text(
+                            json.dumps({"id": uid}, indent=2), encoding="utf-8"
+                        )
                         return uid
             if not (users or {}).get("users"):
                 break
             page += 1
 
-        raise SupabaseSyncError("Could not ensure telegram import user in Supabase auth")
+        raise SupabaseSyncError(
+            "Could not ensure telegram import user in Supabase auth"
+        )
 
     async def get_tournament_id_by_slug(self, slug: str) -> str:
         rows = await self._request(
@@ -245,7 +271,9 @@ class SupabaseAdminClient:
             json_body=payload,
         )
         if not rows:
-            raise SupabaseSyncError("Supabase registrations upsert returned empty response")
+            raise SupabaseSyncError(
+                "Supabase registrations upsert returned empty response"
+            )
         return rows[0]
 
     async def get_player_by_curp(self, curp: str) -> Optional[Dict[str, Any]]:
