@@ -125,6 +125,13 @@ def _case_with_scope(case: AnalystCase, scope: str) -> AnalystCase:
     return replace(case, case_id=case_id, versions=versions)
 
 
+def _terminal_lineage_id(case: AnalystCase) -> str:
+    for version in case.versions:
+        if str(version.status) in TERMINAL_ANALYST_CASE_STATUSES:
+            return str(version.version_id)
+    return str(case.case_id)
+
+
 def _result_for_case(
     case: AnalystCase,
     *,
@@ -172,17 +179,24 @@ async def persist_analyst_case(
             outcome="skipped",
         )
 
-    base_case = build_analyst_case(
-        user_id=user_id,
-        role=role,
-        question=question,
-        intent=intent,
-        result=result,
-    )
-    scope = _analysis_scope(
-        conversation_id=conversation_id,
-        result=result,
-    )
+    try:
+        base_case = build_analyst_case(
+            user_id=user_id,
+            role=role,
+            question=question,
+            intent=intent,
+            result=result,
+        )
+        scope = _analysis_scope(
+            conversation_id=conversation_id,
+            result=result,
+        )
+    except Exception as exc:
+        _log_persistence_failure(exc)
+        return AnalystCasePersistenceResult(
+            enabled=True,
+            outcome="failed",
+        )
 
     for _depth in range(MAX_CASE_SUCCESSOR_DEPTH):
         case = _case_with_scope(base_case, scope)
@@ -194,7 +208,7 @@ async def persist_analyst_case(
                         case,
                     )
                 )
-        except IntegrityError:
+        except IntegrityError as integrity_error:
             try:
                 stored = await session.run_sync(
                     lambda sync_session: _get_case(
@@ -203,29 +217,20 @@ async def persist_analyst_case(
                     )
                 )
             except Exception as exc:
-                _log_persistence_failure(
-                    exc,
-                    case_id=case.case_id,
-                    conversation_id=conversation_id,
-                    user_id=user_id,
-                )
+                _log_persistence_failure(exc)
                 return AnalystCasePersistenceResult(
                     enabled=True,
                     outcome="failed",
                 )
             if stored is None:
+                _log_persistence_failure(integrity_error)
                 return AnalystCasePersistenceResult(
                     enabled=True,
                     outcome="failed",
                 )
             created = False
         except Exception as exc:
-            _log_persistence_failure(
-                exc,
-                case_id=case.case_id,
-                conversation_id=conversation_id,
-                user_id=user_id,
-            )
+            _log_persistence_failure(exc)
             return AnalystCasePersistenceResult(
                 enabled=True,
                 outcome="failed",
@@ -236,18 +241,10 @@ async def persist_analyst_case(
         if stored.status not in TERMINAL_ANALYST_CASE_STATUSES:
             return _result_for_case(stored, outcome="reused")
 
-        terminal_version = (
-            stored.versions[-1].version_id
-            if stored.versions
-            else stored.case_id
-        )
-        scope = f"{scope}|after:{terminal_version}"
+        scope = f"{scope}|after:{_terminal_lineage_id(stored)}"
 
     _log_persistence_failure(
-        RuntimeError("Analyst case successor depth exceeded"),
-        case_id=base_case.case_id,
-        conversation_id=conversation_id,
-        user_id=user_id,
+        RuntimeError("Analyst case successor depth exceeded")
     )
     return AnalystCasePersistenceResult(
         enabled=True,
@@ -257,17 +254,10 @@ async def persist_analyst_case(
 
 def _log_persistence_failure(
     exc: Exception,
-    *,
-    case_id: str,
-    conversation_id: str,
-    user_id: str,
 ) -> None:
     logger.warning(
         "Analyst case persistence failed",
         extra={
-            "case_id": case_id,
-            "conversation_id": str(conversation_id),
-            "user_id": user_id,
             "error_type": type(exc).__name__,
         },
     )

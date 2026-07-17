@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Any, Dict, List
 
 import pytest
 
@@ -102,9 +103,15 @@ async def _run_message(
 
 
 @pytest.mark.asyncio
-async def test_analyst_needs_context_no_provider(monkeypatch):
+async def test_analyst_needs_context_no_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(
         "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        raising=False,
+    )
+    monkeypatch.delenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         raising=False,
     )
     response = await _run_message("Explícame esta balanza")
@@ -120,10 +127,12 @@ async def test_analyst_needs_context_no_provider(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_analyst_result_is_sent_to_case_persistence(monkeypatch):
-    captured = []
+async def test_analyst_result_is_sent_to_case_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: List[Dict[str, Any]] = []
 
-    async def persist_case(**kwargs):
+    async def persist_case(**kwargs: Any) -> AnalystCasePersistenceResult:
         captured.append(kwargs)
         return AnalystCasePersistenceResult(
             enabled=True,
@@ -162,8 +171,12 @@ async def test_analyst_result_is_sent_to_case_persistence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_operational_route_never_calls_case_persistence(monkeypatch):
-    async def persist_case(**_kwargs):  # pragma: no cover
+async def test_operational_route_never_calls_case_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def persist_case(
+        **_kwargs: Any,
+    ) -> AnalystCasePersistenceResult:  # pragma: no cover
         raise AssertionError("operational route must not persist a case")
 
     monkeypatch.setattr(
@@ -182,9 +195,11 @@ async def test_operational_route_never_calls_case_persistence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_case_persistence_failure_does_not_break_the_response(
-    monkeypatch,
-):
-    async def persist_case(**_kwargs):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def persist_case(
+        **_kwargs: Any,
+    ) -> AnalystCasePersistenceResult:
         return AnalystCasePersistenceResult(
             enabled=True,
             outcome="failed",

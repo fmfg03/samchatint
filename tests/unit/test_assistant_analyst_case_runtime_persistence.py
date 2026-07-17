@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any, Callable, Iterator, Tuple
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from devnous.copa_telmex.models import Base
-from samchat.assistant.analyst_case import CASE_STATUS_CLOSED
+import samchat.assistant.analyst_case_persistence as case_persistence
+from samchat.assistant.analyst_case import (
+    CASE_STATUS_CLOSED,
+    CASE_STATUS_REVIEWED,
+)
 from samchat.assistant.analyst_case_models import (
     AnalystCaseRecord,
     AnalystCaseVersionRecord,
@@ -16,23 +23,32 @@ from samchat.assistant.analyst_case_persistence import (
     analyst_case_persistence_enabled,
     persist_analyst_case,
 )
-from samchat.assistant.analyst_intent import detect_analyst_intent
+from samchat.assistant.analyst_intent import (
+    AnalystIntent,
+    detect_analyst_intent,
+)
 from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
+    AnalystWorkbenchResult,
     run_analyst_workbench,
 )
 
 
 class _AsyncNestedTransaction:
-    def __init__(self, sync_session):
+    def __init__(self, sync_session: Session) -> None:
         self.sync_session = sync_session
-        self.transaction = None
+        self.transaction: Any = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
         self.transaction = self.sync_session.begin_nested()
         return self.transaction
 
-    async def __aexit__(self, exc_type, _exc, _traceback):
+    async def __aexit__(
+        self,
+        exc_type: Any,
+        _exc: Any,
+        _traceback: Any,
+    ) -> bool:
         if exc_type is None:
             self.transaction.commit()
         else:
@@ -41,28 +57,39 @@ class _AsyncNestedTransaction:
 
 
 class _AsyncSessionAdapter:
-    def __init__(self, sync_session):
+    def __init__(self, sync_session: Session) -> None:
         self.sync_session = sync_session
 
-    def begin_nested(self):
+    def begin_nested(self) -> _AsyncNestedTransaction:
         return _AsyncNestedTransaction(self.sync_session)
 
-    async def run_sync(self, operation):
+    async def run_sync(
+        self,
+        operation: Callable[[Session], Any],
+    ) -> Any:
         return operation(self.sync_session)
 
 
 class _FailingAsyncSession(_AsyncSessionAdapter):
-    async def run_sync(self, _operation):
+    async def run_sync(
+        self,
+        operation: Callable[[Session], Any],
+    ) -> Any:
+        operation(self.sync_session)
+        self.sync_session.flush()
         raise RuntimeError("database detail must not enter the trace")
 
 
 class _DormantSession:
-    def __getattr__(self, name):  # pragma: no cover - assertion helper
+    def __getattr__(
+        self,
+        name: str,
+    ) -> Any:  # pragma: no cover - assertion helper
         raise AssertionError(f"disabled persistence touched session.{name}")
 
 
 @pytest.fixture()
-def sync_session():
+def sync_session() -> Iterator[Session]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(
         engine,
@@ -80,7 +107,11 @@ def sync_session():
         engine.dispose()
 
 
-async def _intent_and_result(*, question, with_evidence=True):
+async def _intent_and_result(
+    *,
+    question: str,
+    with_evidence: bool = True,
+) -> Tuple[AnalystIntent, AnalystWorkbenchResult]:
     intent = detect_analyst_intent(question)
     assert intent is not None
     evidence = []
@@ -103,8 +134,8 @@ async def _intent_and_result(*, question, with_evidence=True):
 
 
 def test_case_persistence_flag_defaults_and_invalid_values_fail_closed(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         raising=False,
@@ -125,7 +156,9 @@ def test_case_persistence_flag_defaults_and_invalid_values_fail_closed(
 
 
 @pytest.mark.asyncio
-async def test_disabled_persistence_does_not_touch_the_session(monkeypatch):
+async def test_disabled_persistence_does_not_touch_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         raising=False,
@@ -148,10 +181,43 @@ async def test_disabled_persistence_does_not_touch_the_session(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_case_construction_failure_is_fail_soft(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+
+    def fail_build(**_kwargs: Any) -> Any:
+        raise ValueError("case contents must not enter the response")
+
+    monkeypatch.setattr(
+        case_persistence,
+        "build_analyst_case",
+        fail_build,
+    )
+    persisted = await persist_analyst_case(
+        session=_DormantSession(),
+        conversation_id="conv-1",
+        current_empleado=SimpleNamespace(id="emp-1", rol="finanzas"),
+        question=intent.raw_text,
+        intent=intent,
+        result=result,
+    )
+
+    assert persisted.outcome == "failed"
+    assert "case contents" not in str(persisted.trace())
+
+
+@pytest.mark.asyncio
 async def test_creates_then_reuses_one_complete_case(
-    monkeypatch,
-    sync_session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -221,11 +287,11 @@ async def test_creates_then_reuses_one_complete_case(
     ),
 )
 async def test_context_limited_results_are_persisted_for_resume(
-    monkeypatch,
-    sync_session,
-    result_status,
-    expected_status,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+    result_status: str,
+    expected_status: str,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -251,9 +317,9 @@ async def test_context_limited_results_are_persisted_for_resume(
 
 @pytest.mark.asyncio
 async def test_identical_analysis_in_another_conversation_creates_new_case(
-    monkeypatch,
-    sync_session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -288,9 +354,9 @@ async def test_identical_analysis_in_another_conversation_creates_new_case(
 
 @pytest.mark.asyncio
 async def test_changed_analysis_in_same_conversation_creates_new_case(
-    monkeypatch,
-    sync_session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -318,10 +384,10 @@ async def test_changed_analysis_in_same_conversation_creates_new_case(
 
 
 @pytest.mark.asyncio
-async def test_closed_case_gets_stable_successor_instead_of_stale_reuse(
-    monkeypatch,
-    sync_session,
-):
+async def test_terminal_transition_keeps_successor_identity_stable(
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -340,11 +406,16 @@ async def test_closed_case_gets_stable_successor_instead_of_stale_reuse(
     first = await persist_analyst_case(**kwargs)
     AnalystCaseStore(sync_session).update_case(
         first.case_id,
-        status=CASE_STATUS_CLOSED,
-        closed_by="emp-1",
+        status=CASE_STATUS_REVIEWED,
+        updated_by="emp-1",
     )
 
     successor = await persist_analyst_case(**kwargs)
+    AnalystCaseStore(sync_session).update_case(
+        first.case_id,
+        status=CASE_STATUS_CLOSED,
+        closed_by="emp-1",
+    )
     retry = await persist_analyst_case(**kwargs)
 
     assert successor.outcome == "created"
@@ -359,9 +430,9 @@ async def test_closed_case_gets_stable_successor_instead_of_stale_reuse(
 
 @pytest.mark.asyncio
 async def test_missing_owner_or_non_analyst_result_is_skipped(
-    monkeypatch,
-    sync_session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -397,9 +468,9 @@ async def test_missing_owner_or_non_analyst_result_is_skipped(
 
 @pytest.mark.asyncio
 async def test_failure_rolls_back_savepoint_and_returns_redacted_trace(
-    monkeypatch,
-    sync_session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    sync_session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
@@ -422,4 +493,10 @@ async def test_failure_rolls_back_savepoint_and_returns_redacted_trace(
     assert "database detail" not in str(persisted.trace())
     assert persisted.trace()["operational_writes"] is False
     assert persisted.trace()["actions_executed"] == []
+    assert sync_session.scalar(
+        select(func.count()).select_from(AnalystCaseRecord)
+    ) == 0
+    assert sync_session.scalar(
+        select(func.count()).select_from(AnalystCaseVersionRecord)
+    ) == 0
     assert sync_session.scalar(select(text("1"))) == 1

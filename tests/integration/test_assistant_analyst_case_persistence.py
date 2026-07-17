@@ -2,10 +2,11 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Callable, Iterator
 
 import pytest
 from sqlalchemy import create_engine, inspect
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from devnous.copa_telmex.models import Base
 from samchat.assistant.analyst_case import (
@@ -33,15 +34,20 @@ CREATED_AT = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
 
 
 class _AsyncNestedTransaction:
-    def __init__(self, session):
+    def __init__(self, session: Session) -> None:
         self.session = session
-        self.transaction = None
+        self.transaction: Any = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Any:
         self.transaction = self.session.begin_nested()
         return self.transaction
 
-    async def __aexit__(self, exc_type, _exc, _traceback):
+    async def __aexit__(
+        self,
+        exc_type: Any,
+        _exc: Any,
+        _traceback: Any,
+    ) -> bool:
         if exc_type is None:
             self.transaction.commit()
         else:
@@ -50,18 +56,21 @@ class _AsyncNestedTransaction:
 
 
 class _AsyncSessionAdapter:
-    def __init__(self, session):
+    def __init__(self, session: Session) -> None:
         self.session = session
 
-    def begin_nested(self):
+    def begin_nested(self) -> _AsyncNestedTransaction:
         return _AsyncNestedTransaction(self.session)
 
-    async def run_sync(self, operation):
+    async def run_sync(
+        self,
+        operation: Callable[[Session], Any],
+    ) -> Any:
         return operation(self.session)
 
 
 @pytest.fixture()
-def session():
+def session() -> Iterator[Session]:
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(
         engine,
@@ -145,9 +154,9 @@ async def test_case_can_be_saved_recovered_and_rehydrated(session):
 
 @pytest.mark.asyncio
 async def test_runtime_persistence_is_idempotent_with_the_real_store(
-    monkeypatch,
-    session,
-):
+    monkeypatch: pytest.MonkeyPatch,
+    session: Session,
+) -> None:
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
