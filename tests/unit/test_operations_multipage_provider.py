@@ -1,3 +1,4 @@
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -57,3 +58,32 @@ def test_third_page_preserves_existing_player_page_mappings() -> None:
     assert all(merged[str(index)] == 1 for index in range(1, 9))
     assert all(merged[str(index)] == 2 for index in range(9, 17))
     assert all(merged[str(index)] == 3 for index in range(17, 22))
+
+
+def test_page_append_is_base_plus_incoming_without_multipage_reauthoring() -> None:
+    operations = OperationsModule.__new__(OperationsModule)
+    base_players = [
+        {"name": "Base Uno", "curp": "BASE0001"},
+        {"name": "Base Dos", "curp": "BASE0002"},
+    ]
+    base = {
+        "team": {"name": "Academicos", "confidence": 0.8},
+        "manager": None,
+        "players": base_players,
+        "overall_confidence": 0.8,
+    }
+    incoming = {
+        "team": {"name": "Otro Equipo", "confidence": 0.99},
+        "manager": None,
+        "players": [{"name": "Nueva Tres", "curp": "NEW0003"}],
+        "overall_confidence": 0.99,
+    }
+
+    proposed = operations._compose_review_page_append(base, incoming)
+
+    assert proposed["team"]["name"] == "Academicos"
+    assert proposed["players"][:2] == base_players
+    assert proposed["players"][2:] == incoming["players"]
+    assert "_call_openai_vision_multi" not in inspect.getsource(
+        OperationsModule._append_back_photo_to_review_session
+    )

@@ -184,144 +184,10 @@ def test_canonical_promotion_flag_is_off_by_default(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_endpoint_promotes_server_side_values_and_requires_separate_commit(
-    monkeypatch,
-) -> None:
-    review_session = _review_session(status="rejected")
-    session = _configure_endpoint(monkeypatch, review_session)
-
-    response = await dashboard.adopt_canonical_review_fields(
-        str(review_session.id),
-        _PromotionRequest(_form_data()),
-    )
-
-    assert response.status_code == 303
-    assert session.commits == 1
-    assert len(session.appended_drafts) == 1
-    assert session.statements[0]._for_update_arg is not None
-    assert review_session.status == "ready"
-    assert review_session.draft.review_edits["team"]["name"] == ("Deportivo Estrellas")
-    assert review_session.draft.review_edits["players"][0]["name"] == "María López"
-    audit = review_session.draft.validation["audit"]
-    assert audit["existing"] is True
-    assert [event["before"] for event in audit["field_corrections"]] == [
-        "Deportivo Estellas",
-        "Maria Lopes",
-    ]
-    assert [event["after"] for event in audit["field_corrections"]] == [
-        "Deportivo Estrellas",
-        "María López",
-    ]
-    promotion = audit["latest_canonical_promotion"]
-    assert promotion["field_count"] == 2
-    assert promotion["capture_requires_separate_approval"] is True
-    assert review_session.committed_at is None
-    assert review_session.committed_team_id is None
-
-
-@pytest.mark.asyncio
-async def test_endpoint_rejects_stale_hash_without_mutating_draft(monkeypatch) -> None:
-    review_session = _review_session()
-    session = _configure_endpoint(monkeypatch, review_session)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await dashboard.adopt_canonical_review_fields(
-            str(review_session.id),
-            _PromotionRequest(_form_data(canonical_hash="stale")),
-        )
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail["error"] == "canonical_sidecar_changed"
-    assert session.commits == 0
-    assert review_session.draft.review_edits is None
-
-
-@pytest.mark.asyncio
-async def test_endpoint_rejects_missing_document_hash_as_conflict(monkeypatch) -> None:
-    review_session = _review_session()
-    review_session.draft.ocr_raw["canonical_shadow"]["document_sha256"] = None
-    session = _configure_endpoint(monkeypatch, review_session)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await dashboard.adopt_canonical_review_fields(
-            str(review_session.id),
-            _PromotionRequest(_form_data()),
-        )
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail["error"] == "canonical_document_hash_missing"
-    assert session.commits == 0
-    assert review_session.draft.review_edits is None
-
-
-@pytest.mark.asyncio
-async def test_endpoint_rejects_schema_invalid_canonical_value_without_fallback(
-    monkeypatch,
-) -> None:
-    review_session = _review_session()
-    review_session.draft.ocr_raw["canonical_shadow"]["team"]["name"] = "X"
-    session = _configure_endpoint(monkeypatch, review_session)
-    form_data = _form_data()
-    form_data["canonical_fields"] = ["team.name"]
-
-    with pytest.raises(HTTPException) as exc_info:
-        await dashboard.adopt_canonical_review_fields(
-            str(review_session.id),
-            _PromotionRequest(form_data),
-        )
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail["error"] == "canonical_value_invalid"
-    assert session.commits == 0
-    assert review_session.draft.review_edits is None
-
-
-@pytest.mark.asyncio
-async def test_endpoint_rejects_already_committed_review(monkeypatch) -> None:
-    review_session = _review_session(status="committed")
-    session = _configure_endpoint(monkeypatch, review_session)
-
-    with pytest.raises(HTTPException) as exc_info:
-        await dashboard.adopt_canonical_review_fields(
-            str(review_session.id),
-            _PromotionRequest(_form_data()),
-        )
-
-    assert exc_info.value.status_code == 409
-    assert exc_info.value.detail["error"] == "session_already_committed"
-    assert session.commits == 0
-
-
-@pytest.mark.asyncio
-async def test_endpoint_requires_explicit_confirmation(monkeypatch) -> None:
+async def test_retired_endpoint_cannot_bypass_reg_s05(monkeypatch) -> None:
     monkeypatch.setattr(
         dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
     )
-    monkeypatch.setattr(dashboard, "_canonical_promotion_enabled", lambda: True)
-    monkeypatch.setattr(
-        dashboard,
-        "_review_session_actor",
-        lambda _request: {"user_id": "operator-id", "role": "admin"},
-    )
-    form_data = _form_data()
-    form_data.pop("confirm_canonical_adoption")
-
-    with pytest.raises(HTTPException) as exc_info:
-        await dashboard.adopt_canonical_review_fields(
-            "11111111-1111-1111-1111-111111111111",
-            _PromotionRequest(form_data),
-        )
-
-    assert exc_info.value.status_code == 400
-    assert exc_info.value.detail["error"] == "canonical_confirmation_required"
-
-
-@pytest.mark.asyncio
-async def test_endpoint_is_inert_when_feature_flag_is_off(monkeypatch) -> None:
-    monkeypatch.setattr(
-        dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
-    )
-    monkeypatch.setattr(dashboard, "_canonical_promotion_enabled", lambda: False)
 
     with pytest.raises(HTTPException) as exc_info:
         await dashboard.adopt_canonical_review_fields(
@@ -330,4 +196,6 @@ async def test_endpoint_is_inert_when_feature_flag_is_off(monkeypatch) -> None:
         )
 
     assert exc_info.value.status_code == 409
-    assert exc_info.value.detail["error"] == "canonical_promotion_disabled"
+    assert exc_info.value.detail["error"] == (
+        "canonical_promotion_requires_regs05_field_resolution"
+    )

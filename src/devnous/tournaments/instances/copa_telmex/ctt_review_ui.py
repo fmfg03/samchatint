@@ -81,6 +81,45 @@ def _difference_rows(
     ]
 
 
+def _diff_value(diff: Any, key: str, default: Any = None) -> Any:
+    return diff.get(key, default) if isinstance(diff, Mapping) else getattr(diff, key, default)
+
+
+def _diff_index(field_diffs: Optional[Sequence[Any]]) -> Dict[str, Dict[str, Any]]:
+    indexed: Dict[str, Dict[str, Any]] = {}
+    for diff in field_diffs or ():
+        field_path = _text(_diff_value(diff, "field_path"))
+        if not field_path:
+            continue
+        indexed[field_path] = {
+            "diff_id": _text(_diff_value(diff, "id")),
+            "classification": _text(_diff_value(diff, "classification")),
+            "requires_review": bool(_diff_value(diff, "requires_review")),
+            "source_page": _positive_int(_diff_value(diff, "source_page"), 1),
+        }
+    return indexed
+
+
+def _bind_resolution_metadata(
+    rows: Sequence[Mapping[str, Any]],
+    path_prefix: str,
+    indexed_diffs: Mapping[str, Mapping[str, Any]],
+) -> list[Dict[str, Any]]:
+    bound = []
+    for row in rows:
+        item = dict(row)
+        field_path = f"{path_prefix}.{item['field']}"
+        item.update(indexed_diffs.get(field_path) or {})
+        item["field_path"] = field_path
+        if path_prefix.startswith("players."):
+            slot = _positive_int(path_prefix.split(".", 1)[1], 1)
+            item["input_name"] = f"player_{slot - 1}_{item['field']}"
+        else:
+            item["input_name"] = field_path.replace(".", "_")
+        bound.append(item)
+    return bound
+
+
 def _private_preview_url(preview: Mapping[str, Any]) -> Optional[str]:
     relative_path = _text(preview.get("relative_path")).replace("\\", "/")
     if not relative_path:
@@ -100,6 +139,8 @@ def _private_preview_url(preview: Mapping[str, Any]) -> Optional[str]:
 def build_canonical_review_view(
     raw_payload: Any,
     legacy_extraction: Any = None,
+    field_diffs: Optional[Sequence[Any]] = None,
+    decision: Any = None,
 ) -> Optional[Dict[str, Any]]:
     """Return a defensive presentation model for an accepted shadow sidecar.
 
@@ -107,7 +148,9 @@ def build_canonical_review_view(
     paths inside the private canonical-shadow directory of a review session.
     """
 
-    sidecar = _mapping(_mapping(raw_payload).get("canonical_shadow"))
+    raw = _mapping(raw_payload)
+    source = "canonical_run" if raw.get("canonical_run") else "canonical_shadow"
+    sidecar = _mapping(raw.get(source))
     if (
         sidecar.get("schema_version") != CANONICAL_REVIEW_SCHEMA
         or sidecar.get("accepted") is not True
@@ -116,6 +159,7 @@ def build_canonical_review_view(
         return None
 
     legacy = _mapping(legacy_extraction)
+    indexed_diffs = _diff_index(field_diffs)
     canonical_team = _mapping(sidecar.get("team"))
     legacy_team = _mapping(legacy.get("team"))
     team_difference_fields = _different_fields(
@@ -128,6 +172,10 @@ def build_canonical_review_view(
         legacy_team,
         ("name", "category", "gender", "league", "municipality", "state"),
     )
+    if field_diffs is not None:
+        team_differences = _bind_resolution_metadata(
+            team_differences, "team", indexed_diffs
+        )
     canonical_manager = _mapping(sidecar.get("manager"))
     legacy_manager = _mapping(legacy.get("manager"))
     manager_difference_fields = _different_fields(
@@ -140,6 +188,10 @@ def build_canonical_review_view(
         legacy_manager,
         ("name", "email"),
     )
+    if field_diffs is not None:
+        manager_differences = _bind_resolution_metadata(
+            manager_differences, "manager", indexed_diffs
+        )
 
     legacy_players = legacy.get("players")
     if not isinstance(legacy_players, list):
@@ -180,6 +232,10 @@ def build_canonical_review_view(
             legacy_player,
             ("name", "birth_date", "curp"),
         )
+        if field_diffs is not None:
+            differences = _bind_resolution_metadata(
+                differences, f"players.{slot}", indexed_diffs
+            )
         player_difference_count += len(difference_fields) + int(roster_difference)
         validation_codes = player.get("validation_codes")
         if not isinstance(validation_codes, list):
@@ -223,9 +279,23 @@ def build_canonical_review_view(
         )
 
     report = _mapping(sidecar.get("report"))
+    decision_document = (
+        _mapping(getattr(decision, "decision_document", None))
+        or _mapping(decision)
+    )
     return {
         "schema_version": CANONICAL_REVIEW_SCHEMA,
         "authoritative": False,
+        "source": source,
+        "governed": source == "canonical_run",
+        "decision": _text(
+            getattr(decision, "decision", None)
+            or decision_document.get("decision")
+        ),
+        "decision_id": _text(
+            getattr(decision, "decision_id", None)
+            or decision_document.get("decision_id")
+        ),
         "canonical_hash": _text(sidecar.get("canonical_hash")),
         "team": {
             key: _text(canonical_team.get(key))

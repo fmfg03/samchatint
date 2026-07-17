@@ -183,8 +183,10 @@ from devnous.tournaments.core.ocr_integrity import (
     compute_sha256_hex,
     crop_player_photo,
     image_has_photo_like_content,
+    normalize_ctt_template_image,
     slugify_filename,
 )
+from devnous.tournaments.core.ctt_slot_montage import player_photo_box
 from devnous.tournaments.instances.copa_telmex.ctt_canonical_promotion import (
     CanonicalPromotionError,
     promote_canonical_fields,
@@ -830,6 +832,29 @@ def _build_review_commit_validation(
     enriched["ready_to_commit"] = len(blockers) == 0
     enriched["capture_warning_count"] = len(warnings)
     enriched["capture_warning_messages"] = [item["message"] for item in warnings]
+    return enriched
+
+
+def _attach_unresolved_reprocess_blocker(
+    validation: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Block capture until REG-S05 resolves the current draft's REG-S03 decision."""
+    enriched = dict(validation or {})
+    blockers = list(enriched.get("blockers") or [])
+    blockers.append(
+        {
+            "code": "UNRESOLVED_OCR_REPROCESS",
+            "field": "draft.ocr_reprocess",
+            "message": (
+                "La lectura canónica contradice el draft vigente. "
+                "Resuelve las diferencias mediante REG-S05 antes de capturar."
+            ),
+        }
+    )
+    blockers = _dedupe_review_items(blockers)
+    enriched["blockers"] = blockers
+    enriched["blocking_issue_count"] = len(blockers)
+    enriched["ready_to_commit"] = False
     return enriched
 
 
@@ -2112,7 +2137,9 @@ def _load_review_asset_images(assets: List[RegistrationReviewAsset]) -> Dict[int
     loaded: Dict[int, Image.Image] = {}
     for asset in assets:
         try:
-            loaded[int(asset.page_index)] = Image.open(asset.image_path).convert("RGB")
+            with Image.open(asset.image_path) as source:
+                normalized, _metadata = normalize_ctt_template_image(source)
+            loaded[int(asset.page_index)] = normalized.convert("RGB")
         except Exception:
             logger.warning("Could not load review asset image %s", asset.image_path, exc_info=True)
     return loaded
@@ -2129,55 +2156,73 @@ def _estimate_ctt_photo_region(
         return None
 
     page_side = "front" if int(page_index) <= 1 else "back"
-    cards = (layout.get("pages") or {}).get(page_side, {}).get("cards") or {}
-    player_cards = [(name, fields) for name, fields in cards.items() if str(name).startswith("jugador_")]
-    if page_player_index < 1 or page_player_index > len(player_cards):
+    page_layout = (layout.get("pages") or {}).get(page_side) or {}
+    source_slot = int(page_player_index)
+    if page_side == "back":
+        source_slot += 8
+    try:
+        left, top, right, bottom = player_photo_box(
+            page_layout,
+            source_slot,
+            image_size,
+        )
+    except ValueError:
         return None
-
-    _, fields = player_cards[page_player_index - 1]
-    anchors = [fields.get("nombre"), fields.get("apellidos"), fields.get("nacimiento"), fields.get("curp")]
-    anchors = [item for item in anchors if isinstance(item, dict)]
-    if not anchors:
-        return None
-
-    left_anchor = min(float(item.get("x") or 0.0) for item in anchors)
-    top_anchor = min(float(item.get("y") or 0.0) for item in anchors)
-    bottom_anchor = max(float(item.get("y") or 0.0) + float(item.get("h") or 0.0) for item in anchors)
-
-    left = max(0.01, left_anchor - 0.20)
-    right = max(left + 0.12, left_anchor - 0.012)
-    top = max(0.01, top_anchor - 0.005)
-    bottom = min(0.99, bottom_anchor + 0.005)
-
-    image_width, image_height = image_size
-    x = int(round(left * image_width))
-    y = int(round(top * image_height))
-    width = int(round((right - left) * image_width))
-    height = int(round((bottom - top) * image_height))
+    width = right - left
+    height = bottom - top
     if width < 40 or height < 40:
         return None
-    return {"x": x, "y": y, "width": width, "height": height, "confidence": 0.45}
+    return {
+        "x": left,
+        "y": top,
+        "width": width,
+        "height": height,
+        "confidence": 1.0,
+        "source_slot": source_slot,
+    }
 
 
 def _resolve_review_photo_region(
     *,
     player_payload: Dict[str, Any],
+    player_index: int,
     page_index: int,
     page_player_index: int,
     image_size: Tuple[int, int],
+    layout_regions: Dict[str, Any],
 ) -> Tuple[Optional[Dict[str, Any]], str]:
-    photo_region = player_payload.get("photo_region") if isinstance(player_payload, dict) else None
-    if isinstance(photo_region, dict):
-        return photo_region, "detected"
-
+    binding = dict(
+        ((layout_regions or {}).get("photo_bindings") or {}).get(
+            str(player_index)
+        )
+        or {}
+    )
+    if binding and int(binding.get("source_page") or 0) == int(page_index):
+        explicit = {
+            key: int(binding.get(key) or 0)
+            for key in ("x", "y", "width", "height")
+        }
+        if (
+            explicit["width"] >= 40
+            and explicit["height"] >= 40
+            and explicit["x"] >= 0
+            and explicit["y"] >= 0
+            and explicit["x"] + explicit["width"] <= image_size[0]
+            and explicit["y"] + explicit["height"] <= image_size[1]
+        ):
+            return {
+                **explicit,
+                "confidence": 1.0,
+                "source_slot": int(binding.get("source_slot") or player_index),
+            }, "ctt_explicit_binding"
     estimated = _estimate_ctt_photo_region(
         page_index=page_index,
         page_player_index=page_player_index,
         image_size=image_size,
     )
     if estimated:
-        return estimated, "ctt_estimated"
-    return None, "heuristic"
+        return estimated, "ctt_explicit"
+    return None, "unavailable"
 
 
 def _build_review_photo_artifacts(
@@ -2203,10 +2248,14 @@ def _build_review_photo_artifacts(
         try:
             photo_region, _photo_mode = _resolve_review_photo_region(
                 player_payload=player_payload,
+                player_index=idx,
                 page_index=page_index,
                 page_player_index=page_player_counters[page_index],
                 image_size=source_image.size,
+                layout_regions=layout_regions,
             )
+            if photo_region is None:
+                continue
             crop = crop_player_photo(
                 image=source_image,
                 photo_region=photo_region,
@@ -2259,10 +2308,14 @@ def _build_review_player_photo_previews(
         try:
             photo_region, photo_mode = _resolve_review_photo_region(
                 player_payload=player_payload,
+                player_index=idx,
                 page_index=page_index,
                 page_player_index=page_player_counters[page_index],
                 image_size=source_image.size,
+                layout_regions=layout_regions,
             )
+            if photo_region is None:
+                continue
             crop = crop_player_photo(
                 image=source_image,
                 photo_region=photo_region,
@@ -4167,9 +4220,41 @@ async def view_registration_review_session(request: Request, session_id: str):
 
         draft = review_session.draft
         extraction = _get_review_extraction(draft)
+        canonical_run = None
+        if draft is not None:
+            canonical_run_result = await session.execute(
+                select(RegistrationOcrRun)
+                .join(RegistrationOcrRun.decision)
+                .options(
+                    selectinload(RegistrationOcrRun.field_diffs),
+                    selectinload(RegistrationOcrRun.decision),
+                )
+                .where(
+                    RegistrationOcrRun.base_draft_id == draft.id,
+                    RegistrationOcrReprocessDecision.successor_draft_id.is_(
+                        None
+                    ),
+                    RegistrationOcrReprocessDecision.decision.in_(
+                        (
+                            "REQUIRE_FIELD_REVIEW",
+                            "REQUIRE_ROSTER_REVIEW",
+                            "DENY_REPROCESS_SUCCESSOR",
+                        )
+                    ),
+                )
+                .order_by(RegistrationOcrRun.created_at.desc())
+                .limit(1)
+            )
+            canonical_run = canonical_run_result.scalar_one_or_none()
         canonical_review = build_canonical_review_view(
-            draft.ocr_raw if draft else None,
+            (
+                canonical_run.proposed_ocr_raw
+                if canonical_run is not None
+                else draft.ocr_raw if draft else None
+            ),
             extraction,
+            canonical_run.field_diffs if canonical_run is not None else None,
+            canonical_run.decision if canonical_run is not None else None,
         )
         validation = (
             draft.validation
@@ -4181,6 +4266,8 @@ async def view_registration_review_session(request: Request, session_id: str):
             validation,
             review_session=review_session,
         )
+        if canonical_run is not None:
+            validation = _attach_unresolved_reprocess_blocker(validation)
         layout_regions = draft.layout_regions if draft and isinstance(draft.layout_regions, dict) else {"pages": {}, "player_page_map": {}}
         player_page_map = layout_regions.get("player_page_map") if isinstance(layout_regions, dict) else {}
         player_rows_map = {
@@ -5501,6 +5588,31 @@ async def commit_registration_review_session(session_id: str, request: Request):
             review_session=review_session,
         )
         validation = _attach_review_audit(validation, existing_audit)
+        unresolved_reprocess_result = await session.execute(
+            select(RegistrationOcrReprocessDecision.id)
+            .join(
+                RegistrationOcrRun,
+                RegistrationOcrReprocessDecision.ocr_run_id
+                == RegistrationOcrRun.id,
+            )
+            .where(
+                RegistrationOcrRun.base_draft_id
+                == review_session.draft.id,
+                RegistrationOcrReprocessDecision.successor_draft_id.is_(
+                    None
+                ),
+                RegistrationOcrReprocessDecision.decision.in_(
+                    (
+                        "REQUIRE_FIELD_REVIEW",
+                        "REQUIRE_ROSTER_REVIEW",
+                        "DENY_REPROCESS_SUCCESSOR",
+                    )
+                ),
+            )
+            .limit(1)
+        )
+        if unresolved_reprocess_result.scalar_one_or_none() is not None:
+            validation = _attach_unresolved_reprocess_blocker(validation)
         team_payload = extraction.get("team") or {}
         team_name = (team_payload.get("name") or "").strip()
         players_payload = [

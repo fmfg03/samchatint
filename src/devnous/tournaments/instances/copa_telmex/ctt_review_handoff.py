@@ -1,25 +1,37 @@
-"""Persist a quarantined canonical CTT review bundle beside the legacy draft.
-
-The handoff never replaces the operator-facing extraction or writes Team/Player
-rows.  It stores the canonical draft and normalized photo previews under the
-existing temporary review session so both pipelines can be compared safely.
-"""
+"""Adjudicate canonical CTT extraction as an immutable REG-S03 OCR run."""
 
 from __future__ import annotations
 
 import io
 import os
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from PIL import Image
 from sqlalchemy import select
 
-from devnous.copa_telmex.draft_versioning import append_draft_version
+from devnous.copa_telmex.draft_versioning import (
+    append_draft_version,
+    build_successor_values,
+)
 from devnous.copa_telmex.models import (
+    RegistrationOcrRun,
+    RegistrationReviewAsset,
     RegistrationReviewDraft,
     RegistrationReviewSession,
+)
+from devnous.copa_telmex.registration_governance import (
+    RegistrationGovernanceClient,
+    RegistrationGovernanceDenied,
+)
+from devnous.copa_telmex.reprocess_governance import (
+    build_gate_request as build_reprocess_gate_request,
+    build_ocr_run,
+    decision_row as build_reprocess_decision_row,
+    parent_authorization as reprocess_parent_authorization,
+    sha256_binding,
 )
 from devnous.tournaments.core.ctt_canary import CttCanaryExecution
 from devnous.tournaments.core.ctt_ocr_contract import (
@@ -27,12 +39,19 @@ from devnous.tournaments.core.ctt_ocr_contract import (
     CttRegistrationDraft,
     CttSlotDraft,
 )
+from devnous.tournaments.core.ctt_responses_extractor import (
+    CTT_RESPONSES_PIPELINE_VERSION,
+)
+from devnous.tournaments.core.ctt_slot_montage import player_photo_box
 from devnous.tournaments.core.ocr_integrity import (
     clamp_box,
     normalize_ctt_template_image,
 )
 
 CANONICAL_REVIEW_SCHEMA = "ctt.canonical_review.v1"
+CANONICAL_COORDINATE_FRAME = "normalized-template-pixels"
+CANONICAL_TRANSFORM_CONTRACT = "ctt-normalize-template-v1"
+CANONICAL_PAGE_SIZE = (2550, 3300)
 
 
 def _observation_value(observation: CttFieldObservation) -> Optional[str]:
@@ -79,6 +98,170 @@ def _slot_validation_codes(slot: CttSlotDraft) -> list[str]:
             for code in observation.validation_codes
         }
     )
+
+
+def _slot_has_identity(slot: CttSlotDraft) -> bool:
+    return any(
+        _observation_value(observation)
+        for observation in slot.fields.observations()
+    )
+
+
+def _field_union_box(
+    fields: Mapping[str, Mapping[str, Any]],
+    keys: Sequence[str],
+) -> Optional[dict[str, int]]:
+    boxes = [
+        _normalized_field_box(fields[key], CANONICAL_PAGE_SIZE)
+        for key in keys
+        if isinstance(fields.get(key), Mapping)
+    ]
+    if not boxes:
+        return None
+    return {
+        "x": min(box[0] for box in boxes),
+        "y": min(box[1] for box in boxes),
+        "width": max(box[2] for box in boxes) - min(box[0] for box in boxes),
+        "height": max(box[3] for box in boxes) - min(box[1] for box in boxes),
+    }
+
+
+def build_canonical_layout(
+    layout: Mapping[str, Any], draft: CttRegistrationDraft
+) -> Dict[str, Any]:
+    """Bind every canonical player field and photo to normalized evidence."""
+    pages: Dict[str, list[dict[str, Any]]] = {}
+    page_map: Dict[str, int] = {}
+    photo_bindings: Dict[str, Dict[str, Any]] = {}
+    layout_pages = layout.get("pages") or {}
+    for slot in draft.slots:
+        source_page, source_slot = _slot_source(slot)
+        side = "front" if source_page == 1 else "back"
+        page_layout = layout_pages.get(side) or {}
+        fields = (page_layout.get("cards") or {}).get(
+            f"jugador_{source_slot}"
+        ) or {}
+        page_map[str(slot.slot)] = source_page
+        for field_key, keys in (
+            ("name", ("nombre", "apellidos")),
+            ("birth_date", ("nacimiento",)),
+            ("curp", ("curp",)),
+        ):
+            box = _field_union_box(fields, keys)
+            if box is not None:
+                pages.setdefault(str(source_page), []).append(
+                    {
+                        "player_index": int(slot.slot),
+                        "field_key": field_key,
+                        **box,
+                    }
+                )
+        try:
+            photo_box = player_photo_box(
+                page_layout, source_slot, CANONICAL_PAGE_SIZE
+            )
+        except ValueError:
+            continue
+        photo_bindings[str(slot.slot)] = {
+            "source_page": source_page,
+            "source_slot": source_slot,
+            "x": photo_box[0],
+            "y": photo_box[1],
+            "width": photo_box[2] - photo_box[0],
+            "height": photo_box[3] - photo_box[1],
+        }
+    return {
+        "coordinate_frame": CANONICAL_COORDINATE_FRAME,
+        "transformation_contract": CANONICAL_TRANSFORM_CONTRACT,
+        "normalized_page_size": {
+            "width": CANONICAL_PAGE_SIZE[0],
+            "height": CANONICAL_PAGE_SIZE[1],
+        },
+        "pages": pages,
+        "player_page_map": page_map,
+        "photo_bindings": photo_bindings,
+    }
+
+
+def build_canonical_proposed_extraction(
+    base_draft: RegistrationReviewDraft,
+    canonical_draft: CttRegistrationDraft,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Adapt canonical slots without adding a player from occupancy alone."""
+    extraction = deepcopy(
+        base_draft.review_edits or base_draft.extraction or {}
+    )
+    team = dict(extraction.get("team") or {})
+    manager = dict(extraction.get("manager") or {})
+    players = [dict(player or {}) for player in extraction.get("players") or []]
+    team_fields = canonical_draft.team.fields
+    team.update(
+        {
+            "name": _observation_value(team_fields.name),
+            "category": _observation_value(team_fields.category),
+            "gender": _observation_value(team_fields.gender),
+            "league": _observation_value(team_fields.league),
+            "state": _observation_value(team_fields.state),
+            "municipality": _observation_value(team_fields.municipality),
+        }
+    )
+    manager.update(
+        {
+            "name": _observation_value(team_fields.representative_name),
+            "email": _observation_value(team_fields.email),
+        }
+    )
+
+    by_slot = {int(slot.slot): slot for slot in canonical_draft.slots}
+    occupied_identity_slots: list[int] = []
+    occupied_without_identity: list[int] = []
+    excluded_identity_slots: list[int] = []
+    confidences: list[float] = []
+    for slot_number, slot in sorted(by_slot.items()):
+        has_identity = _slot_has_identity(slot)
+        if slot.occupied and not has_identity:
+            occupied_without_identity.append(slot_number)
+        if has_identity:
+            occupied_identity_slots.append(slot_number)
+        if slot_number > len(players):
+            if has_identity:
+                excluded_identity_slots.append(slot_number)
+            continue
+        player = players[slot_number - 1]
+        player.update(
+            {
+                "name": _slot_name(slot) or None,
+                "birth_date": _observation_value(slot.fields.birth_date),
+                "curp": _observation_value(slot.fields.curp),
+                "confidence": _slot_confidence(slot),
+                "needs_review": bool(slot.requires_review),
+            }
+        )
+        if has_identity:
+            confidences.append(_slot_confidence(slot))
+
+    overall_confidence = (
+        round(sum(confidences) / len(confidences), 4) if confidences else 0.0
+    )
+    extraction.update(
+        {
+            "team": team,
+            "manager": manager,
+            "players": players,
+            "overall_confidence": overall_confidence,
+        }
+    )
+    occupancy = {
+        "base_player_count": len(players),
+        "occupied_identity_slots": occupied_identity_slots,
+        "occupied_without_identity": occupied_without_identity,
+        "excluded_identity_slots": excluded_identity_slots,
+        "auto_materialized_slots": [],
+        "requires_review": bool(
+            occupied_without_identity or excluded_identity_slots
+        ),
+    }
+    return extraction, occupancy
 
 
 def _normalized_field_box(
@@ -142,21 +325,14 @@ def build_canonical_photo_crops(
                 continue
             side = "front" if source_page == 1 else "back"
             page_layout = pages.get(side) or {}
-            card_fields = (page_layout.get("cards") or {}).get(f"jugador_{source_slot}")
-            if not isinstance(card_fields, Mapping):
+            try:
+                box = player_photo_box(
+                    page_layout,
+                    source_slot,
+                    source_image.size,
+                )
+            except ValueError:
                 continue
-            photo_extension_ratio = float(
-                (page_layout.get("slot_crop") or {}).get("photo_extension_ratio", 0.17)
-            )
-            vertical_offset_ratio = float(
-                (page_layout.get("slot_crop") or {}).get("vertical_offset_ratio", 0.0)
-            )
-            box = canonical_photo_box(
-                card_fields,
-                source_image.size,
-                photo_extension_ratio=photo_extension_ratio,
-                vertical_offset_ratio=vertical_offset_ratio,
-            )
             crops[int(slot.slot)] = (
                 source_image.crop(box),
                 {
@@ -262,7 +438,7 @@ def build_canonical_review_payload(
 
 
 class CttCanonicalReviewSink:
-    """Store a private comparison bundle without changing the legacy draft."""
+    """Persist and adjudicate one canonical run against an explicit base draft."""
 
     def __init__(self, *, session_maker: Any, photos_base_dir: Path) -> None:
         self.session_maker = session_maker
@@ -302,6 +478,26 @@ class CttCanonicalReviewSink:
             if review_draft is None:
                 return False
 
+            request_id = uuid5(
+                NAMESPACE_URL,
+                "|".join(
+                    (
+                        str(session_id),
+                        str(review_draft.id),
+                        str(review_draft.content_hash),
+                        execution.draft.canonical_hash(),
+                        CTT_RESPONSES_PIPELINE_VERSION,
+                    )
+                ),
+            )
+            existing_result = await session.execute(
+                select(RegistrationOcrRun).where(
+                    RegistrationOcrRun.reprocess_request_id == request_id
+                )
+            )
+            if existing_result.scalar_one_or_none() is not None:
+                return True
+
             preview_dir = (
                 self.photos_base_dir
                 / "review_sessions"
@@ -340,30 +536,156 @@ class CttCanonicalReviewSink:
             canonical_payload = build_canonical_review_payload(
                 execution, preview_metadata
             )
-            ocr_raw = dict(review_draft.ocr_raw or {})
-            ocr_raw["canonical_shadow"] = canonical_payload
+            model = execution.report.model or "unreported"
+            ocr_raw = {
+                "pages": [
+                    {
+                        "page_index": page_number,
+                        "raw": {
+                            "provider": "openai",
+                            "model": model,
+                            "model_version": "unreported",
+                            "pipeline_version": CTT_RESPONSES_PIPELINE_VERSION,
+                        },
+                    }
+                    for page_number in range(1, len(page_payloads) + 1)
+                ],
+                "canonical_run": canonical_payload,
+            }
+
+            extraction, occupancy = build_canonical_proposed_extraction(
+                review_draft, execution.draft
+            )
+            canonical_layout = build_canonical_layout(layout, execution.draft)
 
             validation = dict(review_draft.validation or {})
             audit = dict(validation.get("audit") or {})
-            audit["canonical_shadow"] = {
+            audit["canonical_run"] = {
                 "schema_version": CANONICAL_REVIEW_SCHEMA,
                 "accepted": True,
-                "authoritative": False,
+                "authoritative_after_reg_s03": True,
                 "canonical_hash": execution.draft.canonical_hash(),
                 "player_count": len(canonical_payload["players"]),
                 "review_count": int(execution.report.review_count),
                 "preview_count": len(preview_metadata),
+                "occupancy": occupancy,
             }
             validation["audit"] = audit
+            validation["canonical_occupancy"] = occupancy
+            validation["needs_review"] = bool(
+                execution.draft.requires_review or occupancy["requires_review"]
+            )
 
-            await append_draft_version(
-                session,
-                review_session,
-                mutation_type="canonical_shadow_recorded",
-                actor_id="ctt-canary",
-                expected_draft=review_draft,
+            proposed_values = build_successor_values(
+                review_draft,
                 ocr_raw=ocr_raw,
+                extraction=extraction,
+                review_edits=extraction,
                 validation=validation,
+                layout_regions=canonical_layout,
+                overall_confidence=float(
+                    extraction.get("overall_confidence") or 0.0
+                ),
+                needs_review=bool(validation["needs_review"]),
+            )
+            assets_result = await session.execute(
+                select(RegistrationReviewAsset)
+                .where(RegistrationReviewAsset.session_id == session_id)
+                .order_by(RegistrationReviewAsset.page_index)
+            )
+            assets = list(assets_result.scalars().all())
+            run, field_rows, public_diffs = build_ocr_run(
+                tenant_id=os.getenv("ZAUBERN_TENANT_ID", "samchat-prod"),
+                session_id=session_id,
+                reprocess_request_id=request_id,
+                base_draft=review_draft,
+                assets=assets,
+                proposed_values=proposed_values,
+                provider="openai",
+                prompt_config_hash=sha256_binding(
+                    {
+                        "pipeline_version": CTT_RESPONSES_PIPELINE_VERSION,
+                        "model": model,
+                        "layout_template": layout.get("template"),
+                        "layout_hash": sha256_binding(layout),
+                    }
+                ),
+            )
+            successor_draft_id = uuid5(request_id, "successor")
+            client = RegistrationGovernanceClient.from_environment()
+            gate_response = await client.adjudicate_reprocess(
+                build_reprocess_gate_request(
+                    tenant_id=os.getenv("ZAUBERN_TENANT_ID", "samchat-prod"),
+                    run=run,
+                    current_draft=review_draft,
+                    public_diffs=public_diffs,
+                    successor_draft_id=successor_draft_id,
+                )
+            )
+            event = gate_response.get("reprocess_decision") or {}
+            receipt = gate_response.get("reprocess_receipt") or {}
+            if (
+                receipt.get("verified") is not True
+                or event.get("decision")
+                not in {
+                    "ACCEPT_NON_CONFLICTING_REPROCESS",
+                    "REQUIRE_FIELD_REVIEW",
+                    "REQUIRE_ROSTER_REVIEW",
+                    "DENY_REPROCESS_SUCCESSOR",
+                }
+                or not event.get("decision_id")
+                or not receipt.get("receipt_id")
+            ):
+                raise RegistrationGovernanceDenied(
+                    "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                    "Zaubern returned an incomplete reprocess adjudication",
+                )
+
+            session.add(run)
+            for field_row in field_rows:
+                session.add(field_row)
+
+            if gate_response.get("successor_authorized") is True:
+                successor = await append_draft_version(
+                    session,
+                    review_session,
+                    mutation_type="ocr_reprocessed",
+                    actor_id="ctt-canary",
+                    expected_draft=review_draft,
+                    operation_id=run.operation_id,
+                    new_draft_id=successor_draft_id,
+                    parent_authorization=reprocess_parent_authorization(
+                        gate_response
+                    ),
+                    governance_client=client,
+                    ocr_raw=run.proposed_ocr_raw,
+                    extraction=run.proposed_extraction,
+                    review_edits=run.proposed_extraction,
+                    validation=run.proposed_validation,
+                    layout_regions=run.proposed_layout_regions,
+                    overall_confidence=float(
+                        run.proposed_extraction.get("overall_confidence") or 0.0
+                    ),
+                    needs_review=bool(
+                        run.proposed_validation.get("needs_review")
+                    ),
+                )
+                if successor.content_hash != run.proposed_snapshot_hash:
+                    raise RegistrationGovernanceDenied(
+                        "REPROCESS_SUCCESSOR_HASH_MISMATCH",
+                        "REG-S02 successor does not match the adjudicated run",
+                    )
+            session.add(
+                build_reprocess_decision_row(
+                    run=run,
+                    successor_draft_id=successor_draft_id,
+                    response=gate_response,
+                )
+            )
+            review_session.status = (
+                "ready"
+                if gate_response.get("successor_authorized") is True
+                else "review"
             )
             await session.commit()
         return True

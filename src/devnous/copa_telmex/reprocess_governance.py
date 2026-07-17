@@ -393,8 +393,13 @@ def build_ocr_run(
     input_page_set_hash = sha256_binding(page_bindings)
     geometry_binding_hash = sha256_binding(
         {
-            "coordinate_frame": "source-image-pixels",
-            "transformation_contract": "page-native-no-hidden-transform-v1",
+            "coordinate_frame": layout.get(
+                "coordinate_frame", "source-image-pixels"
+            ),
+            "transformation_contract": layout.get(
+                "transformation_contract",
+                "page-native-no-hidden-transform-v1",
+            ),
             "layout": layout,
         }
     )

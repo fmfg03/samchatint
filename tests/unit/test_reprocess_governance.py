@@ -5,6 +5,7 @@ from devnous.copa_telmex.models import RegistrationReviewDraft
 from devnous.copa_telmex.reprocess_governance import (
     build_field_diffs,
     build_ocr_run,
+    sha256_binding,
 )
 
 
@@ -169,3 +170,38 @@ def test_academicos_preserves_both_candidates_and_has_stable_run_identity():
     )
     assert separate_run.run_fingerprint == first_run.run_fingerprint
     assert separate_run.operation_id != first_run.operation_id
+
+
+def test_geometry_binding_declares_the_canonical_coordinate_contract():
+    draft = base_draft(["Nombre anterior"])
+    canonical_layout = {
+        "coordinate_frame": "normalized-template-pixels",
+        "transformation_contract": "ctt-normalize-template-v1",
+        "player_page_map": {"1": 1},
+        "pages": {"1": []},
+    }
+    proposed = build_successor_values(
+        draft,
+        extraction=extraction(["Nombre nuevo"]),
+        review_edits=extraction(["Nombre nuevo"]),
+        layout_regions=canonical_layout,
+    )
+
+    run, _, _ = build_ocr_run(
+        tenant_id="samchat-prod",
+        session_id=draft.session_id,
+        reprocess_request_id=uuid4(),
+        base_draft=draft,
+        assets=assets(),
+        proposed_values=proposed,
+        provider="openai",
+        prompt_config_hash="sha256:" + "b" * 64,
+    )
+
+    assert run.geometry_binding_hash == sha256_binding(
+        {
+            "coordinate_frame": "normalized-template-pixels",
+            "transformation_contract": "ctt-normalize-template-v1",
+            "layout": canonical_layout,
+        }
+    )

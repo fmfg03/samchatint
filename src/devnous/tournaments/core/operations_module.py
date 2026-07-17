@@ -448,6 +448,30 @@ class OperationsModule:
         merged["confidence"] = max(float((base or {}).get("confidence") or 0.0), float((incoming or {}).get("confidence") or 0.0))
         return merged if any(merged.get(k) for k in ("name", "phone", "email")) else None
 
+    def _compose_review_page_append(
+        self,
+        base_extraction: Dict[str, Any],
+        incoming_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Compose one append-only page without re-authoring the base roster."""
+        merged_payload = dict(base_extraction)
+        merged_payload["team"] = self._merge_review_team_fields(
+            base_extraction.get("team") or {},
+            incoming_payload.get("team") or {},
+        )
+        merged_payload["manager"] = self._merge_review_manager_fields(
+            base_extraction.get("manager"),
+            incoming_payload.get("manager"),
+        )
+        merged_payload["players"] = list(
+            base_extraction.get("players") or []
+        ) + list(incoming_payload.get("players") or [])
+        merged_payload["overall_confidence"] = max(
+            float(base_extraction.get("overall_confidence") or 0.0),
+            float(incoming_payload.get("overall_confidence") or 0.0),
+        )
+        return merged_payload
+
     @staticmethod
     def _extend_player_page_map(
         existing: Optional[Dict[str, int]],
@@ -619,52 +643,11 @@ class OperationsModule:
                     )
 
                 base_extraction = dict(draft.review_edits or draft.extraction or {})
-                base_players = list(base_extraction.get("players") or [])
                 incoming_payload = extraction.model_dump(mode="json")
-                merged_payload = None
-                combined_raw_payload = None
-                if self.openai_key and provider == "openai":
-                    try:
-                        image_b64_values: List[str] = []
-                        for asset in assets:
-                            existing_bytes = Path(asset.image_path).read_bytes()
-                            image_b64_values.append(base64.b64encode(existing_bytes).decode("utf-8"))
-                        image_b64_values.append(base64.b64encode(optimized_bytes).decode("utf-8"))
-                        from devnous.agents.ocr_schemas import (
-                            RegistrationFormExtraction,
-                        )
-
-                        combined_raw_payload = self._normalize_openai_registration_payload(
-                            await self._call_openai_vision_multi(image_b64_values)
-                        )
-                        combined_extraction = RegistrationFormExtraction.model_validate(combined_raw_payload)
-                        merged_payload = combined_extraction.model_dump(mode="json")
-                        logger.info(
-                            "✅ Multi-page OpenAI registration extraction completed: players=%s confidence=%s",
-                            len(merged_payload.get("players") or []),
-                            merged_payload.get("overall_confidence"),
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Multi-page OpenAI extraction failed; falling back to page merge",
-                            exc_info=True,
-                        )
-
-                if merged_payload is None:
-                    merged_payload = dict(base_extraction)
-                    merged_payload["team"] = self._merge_review_team_fields(
-                        base_extraction.get("team") or {},
-                        incoming_payload.get("team") or {},
-                    )
-                    merged_payload["manager"] = self._merge_review_manager_fields(
-                        base_extraction.get("manager"),
-                        incoming_payload.get("manager"),
-                    )
-                    merged_payload["players"] = base_players + list(incoming_payload.get("players") or [])
-                    merged_payload["overall_confidence"] = max(
-                        float(base_extraction.get("overall_confidence") or 0.0),
-                        float(incoming_payload.get("overall_confidence") or 0.0),
-                    )
+                merged_payload = self._compose_review_page_append(
+                    base_extraction,
+                    incoming_payload,
+                )
 
                 layout_regions = dict(draft.layout_regions or {"pages": {}, "player_page_map": {}})
                 pages = dict(layout_regions.get("pages") or {})
@@ -694,7 +677,6 @@ class OperationsModule:
                         {
                             "page_index": next_page_index,
                             "raw": raw_payload,
-                            "combined_raw": combined_raw_payload,
                             "player_count": len(
                                 incoming_payload.get("players") or []
                             ),
