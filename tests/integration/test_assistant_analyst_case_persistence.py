@@ -1,6 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine, inspect
@@ -16,6 +17,7 @@ from samchat.assistant.analyst_case_models import (
     AnalystCaseRecord,
     AnalystCaseVersionRecord,
 )
+from samchat.assistant.analyst_case_persistence import persist_analyst_case
 from samchat.assistant.analyst_case_store import (
     AnalystCaseStore,
     AnalystCaseStoreError,
@@ -28,6 +30,34 @@ from samchat.assistant.analyst_workbench import (
 
 
 CREATED_AT = datetime(2026, 7, 14, 12, 0, tzinfo=timezone.utc)
+
+
+class _AsyncNestedTransaction:
+    def __init__(self, session):
+        self.session = session
+        self.transaction = None
+
+    async def __aenter__(self):
+        self.transaction = self.session.begin_nested()
+        return self.transaction
+
+    async def __aexit__(self, exc_type, _exc, _traceback):
+        if exc_type is None:
+            self.transaction.commit()
+        else:
+            self.transaction.rollback()
+        return False
+
+
+class _AsyncSessionAdapter:
+    def __init__(self, session):
+        self.session = session
+
+    def begin_nested(self):
+        return _AsyncNestedTransaction(self.session)
+
+    async def run_sync(self, operation):
+        return operation(self.session)
 
 
 @pytest.fixture()
@@ -111,6 +141,56 @@ async def test_case_can_be_saved_recovered_and_rehydrated(session):
     )
     assert recovered.suggested_routes[0]["execution_status"] == "not_executed"
     assert recovered.suggested_routes[0]["writes_enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_runtime_persistence_is_idempotent_with_the_real_store(
+    monkeypatch,
+    session,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    question = "Que riesgos ves en este contrato"
+    intent = detect_analyst_intent(question)
+    assert intent is not None
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=[
+            AnalystEvidence(
+                source_type="document",
+                label="contrato.pdf",
+                summary=(
+                    "Contrato con obligaciones, responsables, fechas y "
+                    "riesgos suficientes para el analisis."
+                ),
+            )
+        ],
+    )
+    runtime_session = _AsyncSessionAdapter(session)
+    kwargs = {
+        "session": runtime_session,
+        "conversation_id": "conv-integration",
+        "current_empleado": SimpleNamespace(
+            id="emp-integration",
+            rol="finanzas",
+        ),
+        "question": question,
+        "intent": intent,
+        "result": result,
+    }
+
+    created = await persist_analyst_case(**kwargs)
+    reused = await persist_analyst_case(**kwargs)
+    session.commit()
+
+    assert created.outcome == "created"
+    assert reused.outcome == "reused"
+    stored = AnalystCaseStore(session).get_case(created.case_id)
+    assert stored.user_id == "emp-integration"
+    assert stored.role == "finanzas"
+    assert len(stored.versions) == 1
 
 
 @pytest.mark.asyncio

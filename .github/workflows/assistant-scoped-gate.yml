@@ -62,6 +62,7 @@ jobs:
             "tests/unit/test_assistant_analyst_provider_isolation.py"
             "tests/unit/test_assistant_analyst_case.py"
             "tests/unit/test_assistant_analyst_case_store.py"
+            "tests/unit/test_assistant_analyst_case_runtime_persistence.py"
             "tests/unit/test_assistant_analyst_evidence_adapters.py"
             "tests/unit/test_assistant_analyst_live_evidence.py"
             "tests/unit/test_assistant_analyst_evidence_quality.py"
@@ -147,6 +148,7 @@ jobs:
             tests/unit/test_assistant_analyst_provider_isolation.py \
             tests/unit/test_assistant_analyst_case.py \
             tests/unit/test_assistant_analyst_case_store.py \
+            tests/unit/test_assistant_analyst_case_runtime_persistence.py \
             tests/unit/test_assistant_analyst_evidence_adapters.py \
             tests/unit/test_assistant_analyst_live_evidence.py \
             tests/unit/test_assistant_analyst_evidence_quality.py \

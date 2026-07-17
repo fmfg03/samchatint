@@ -13,6 +13,7 @@ from sqlalchemy import select
 from devnous.gastos.models import AssistantMessage
 
 from .action_router import supported_actions
+from .analyst_case_persistence import persist_analyst_case
 from .analyst_intent import (
     AnalystIntent,
     detect_analyst_intent,
@@ -505,6 +506,18 @@ async def _build_analyst_workbench_response(
     tool_trace = build_analyst_trace(intent=intent, result=result)
     if live_acquisition.enabled:
         tool_trace[0]["analyst_live_evidence"] = live_acquisition.trace()
+    case_persistence = await persist_analyst_case(
+        session=session,
+        conversation_id=str(conversation.id),
+        current_empleado=current_empleado,
+        question=raw_message,
+        intent=intent,
+        result=result,
+    )
+    if case_persistence.enabled:
+        tool_trace[0]["analyst_case_persistence"] = (
+            case_persistence.trace()
+        )
     rendered = maybe_append_export_prompt(rendered, tool_trace)
     await _persist_document_conversation_messages(
         raw_message=raw_message,

@@ -2,7 +2,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import samchat.assistant.conversation_service as conversation_service
 import samchat.assistant.router as assistant_router
+from samchat.assistant.analyst_case_persistence import (
+    AnalystCasePersistenceResult,
+)
 from samchat.assistant.conversation_service import (
     run_message_turn_with_pending,
 )
@@ -112,6 +116,98 @@ async def test_analyst_needs_context_no_provider(monkeypatch):
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] is False
     assert "analyst_live_evidence" not in response.tool_trace[0]
+    assert "analyst_case_persistence" not in response.tool_trace[0]
+
+
+@pytest.mark.asyncio
+async def test_analyst_result_is_sent_to_case_persistence(monkeypatch):
+    captured = []
+
+    async def persist_case(**kwargs):
+        captured.append(kwargs)
+        return AnalystCasePersistenceResult(
+            enabled=True,
+            outcome="created",
+            case_id="analyst_case_opaque",
+            status="analyzed",
+            version_number=1,
+        )
+
+    monkeypatch.setattr(
+        conversation_service,
+        "persist_analyst_case",
+        persist_case,
+    )
+    response = await _run_message(
+        "Qué riesgos ves en este contrato: "
+        "El contrato omite responsable y fecha de entrega."
+    )
+
+    assert len(captured) == 1
+    assert captured[0]["conversation_id"] == "conv-analyst"
+    assert captured[0]["current_empleado"].id == "emp-1"
+    assert captured[0]["intent"].analyst_intent == "risk_review"
+    assert captured[0]["result"].status == "success"
+    trace = response.tool_trace[0]["analyst_case_persistence"]
+    assert trace == {
+        "enabled": True,
+        "outcome": "created",
+        "case_id": "analyst_case_opaque",
+        "status": "analyzed",
+        "version_number": 1,
+        "product_case_write": True,
+        "operational_writes": False,
+        "actions_executed": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_operational_route_never_calls_case_persistence(monkeypatch):
+    async def persist_case(**_kwargs):  # pragma: no cover
+        raise AssertionError("operational route must not persist a case")
+
+    monkeypatch.setattr(
+        conversation_service,
+        "persist_analyst_case",
+        persist_case,
+    )
+    response = await _run_message(
+        "Compara gasto 2026 vs 2025 por concepto",
+        finance_rows_provider=_finance_rows,
+    )
+
+    assert response.tool_trace[0].get("request_intelligence_live_wiring")
+    assert "analyst_case_persistence" not in response.tool_trace[0]
+
+
+@pytest.mark.asyncio
+async def test_case_persistence_failure_does_not_break_the_response(
+    monkeypatch,
+):
+    async def persist_case(**_kwargs):
+        return AnalystCasePersistenceResult(
+            enabled=True,
+            outcome="failed",
+        )
+
+    monkeypatch.setattr(
+        conversation_service,
+        "persist_analyst_case",
+        persist_case,
+    )
+    session = _FakeSession()
+    response = await _run_message(
+        "Que riesgos ves en este contrato: "
+        "El contrato omite responsable y fecha de entrega.",
+        session=session,
+    )
+
+    assert "Riesgos visibles" in response.assistant_message
+    assert session.commits == 1
+    trace = response.tool_trace[0]["analyst_case_persistence"]
+    assert trace["outcome"] == "failed"
+    assert "case_id" in trace
+    assert trace["case_id"] is None
 
 
 def test_disabled_live_evidence_does_not_initialize_database(monkeypatch):
