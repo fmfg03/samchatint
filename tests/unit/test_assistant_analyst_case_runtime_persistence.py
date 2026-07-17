@@ -6,10 +6,12 @@ from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from devnous.copa_telmex.models import Base
+from samchat.assistant.analyst_case import CASE_STATUS_CLOSED
 from samchat.assistant.analyst_case_models import (
     AnalystCaseRecord,
     AnalystCaseVersionRecord,
 )
+from samchat.assistant.analyst_case_store import AnalystCaseStore
 from samchat.assistant.analyst_case_persistence import (
     analyst_case_persistence_enabled,
     persist_analyst_case,
@@ -245,6 +247,114 @@ async def test_context_limited_results_are_persisted_for_resume(
 
     assert persisted.outcome == "created"
     assert persisted.status == expected_status
+
+
+@pytest.mark.asyncio
+async def test_identical_analysis_in_another_conversation_creates_new_case(
+    monkeypatch,
+    sync_session,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+    shared = {
+        "session": _AsyncSessionAdapter(sync_session),
+        "current_empleado": SimpleNamespace(id="emp-1", rol="finanzas"),
+        "question": intent.raw_text,
+        "intent": intent,
+        "result": result,
+    }
+
+    first = await persist_analyst_case(
+        conversation_id="conv-1",
+        **shared,
+    )
+    second = await persist_analyst_case(
+        conversation_id="conv-2",
+        **shared,
+    )
+
+    assert first.outcome == "created"
+    assert second.outcome == "created"
+    assert second.case_id != first.case_id
+    assert sync_session.scalar(
+        select(func.count()).select_from(AnalystCaseRecord)
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_changed_analysis_in_same_conversation_creates_new_case(
+    monkeypatch,
+    sync_session,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+    shared = {
+        "session": _AsyncSessionAdapter(sync_session),
+        "conversation_id": "conv-1",
+        "current_empleado": SimpleNamespace(id="emp-1", rol="finanzas"),
+        "question": intent.raw_text,
+        "intent": intent,
+    }
+
+    first = await persist_analyst_case(result=result, **shared)
+    changed = await persist_analyst_case(
+        result=replace(result, answer=f"{result.answer} Nueva evidencia."),
+        **shared,
+    )
+
+    assert first.outcome == "created"
+    assert changed.outcome == "created"
+    assert changed.case_id != first.case_id
+
+
+@pytest.mark.asyncio
+async def test_closed_case_gets_stable_successor_instead_of_stale_reuse(
+    monkeypatch,
+    sync_session,
+):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+    kwargs = {
+        "session": _AsyncSessionAdapter(sync_session),
+        "conversation_id": "conv-1",
+        "current_empleado": SimpleNamespace(id="emp-1", rol="finanzas"),
+        "question": intent.raw_text,
+        "intent": intent,
+        "result": result,
+    }
+    first = await persist_analyst_case(**kwargs)
+    AnalystCaseStore(sync_session).update_case(
+        first.case_id,
+        status=CASE_STATUS_CLOSED,
+        closed_by="emp-1",
+    )
+
+    successor = await persist_analyst_case(**kwargs)
+    retry = await persist_analyst_case(**kwargs)
+
+    assert successor.outcome == "created"
+    assert successor.case_id != first.case_id
+    assert successor.status == "analyzed"
+    assert retry.outcome == "reused"
+    assert retry.case_id == successor.case_id
+    assert sync_session.scalar(
+        select(func.count()).select_from(AnalystCaseRecord)
+    ) == 2
 
 
 @pytest.mark.asyncio

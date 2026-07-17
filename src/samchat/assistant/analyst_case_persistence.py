@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
-from dataclasses import asdict, dataclass
+import uuid
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .analyst_case import AnalystCase, build_analyst_case
-from .analyst_case_store import AnalystCaseStore
+from .analyst_case import (
+    CASE_STATUS_CLOSED,
+    CASE_STATUS_REVIEWED,
+    AnalystCase,
+    build_analyst_case,
+)
+from .analyst_case_store import AnalystCaseStore, version_id_for
 from .analyst_intent import AnalystIntent
 from .analyst_workbench import AnalystWorkbenchResult
 
@@ -21,6 +29,10 @@ logger = logging.getLogger(__name__)
 PERSISTABLE_ANALYST_STATUSES = frozenset(
     {"success", "needs_context", "provider_unavailable"}
 )
+TERMINAL_ANALYST_CASE_STATUSES = frozenset(
+    {CASE_STATUS_REVIEWED, CASE_STATUS_CLOSED}
+)
+MAX_CASE_SUCCESSOR_DEPTH = 16
 
 
 @dataclass(frozen=True)
@@ -72,6 +84,47 @@ def _get_case(session: Session, case_id: str) -> Optional[AnalystCase]:
     return AnalystCaseStore(session).get_case(case_id)
 
 
+def _analysis_scope(
+    *,
+    conversation_id: str,
+    result: AnalystWorkbenchResult,
+) -> str:
+    payload = {
+        "conversation_id": str(conversation_id),
+        "status": result.status,
+        "answer": result.answer,
+        "evidence": result.evidence,
+        "next_questions": result.next_questions,
+        "suggested_routes": result.suggested_routes,
+        "caveats": result.caveats,
+        "answer_contract": result.answer_contract,
+    }
+    canonical = json.dumps(
+        payload,
+        default=str,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _case_with_scope(case: AnalystCase, scope: str) -> AnalystCase:
+    raw = f"{case.case_id}|{scope}"
+    case_id = f"analyst_case_{uuid.uuid5(uuid.NAMESPACE_URL, raw).hex}"
+    versions = [
+        replace(
+            version,
+            version_id=version_id_for(
+                case_id,
+                version.version_number,
+            ),
+        )
+        for version in case.versions
+    ]
+    return replace(case, case_id=case_id, versions=versions)
+
+
 def _result_for_case(
     case: AnalystCase,
     *,
@@ -119,33 +172,53 @@ async def persist_analyst_case(
             outcome="skipped",
         )
 
-    case = build_analyst_case(
+    base_case = build_analyst_case(
         user_id=user_id,
         role=role,
         question=question,
         intent=intent,
         result=result,
     )
-    try:
-        async with session.begin_nested():
-            stored, created = await session.run_sync(
-                lambda sync_session: _get_or_create_case(
-                    sync_session,
-                    case,
-                )
-            )
-        return _result_for_case(
-            stored,
-            outcome="created" if created else "reused",
-        )
-    except IntegrityError:
+    scope = _analysis_scope(
+        conversation_id=conversation_id,
+        result=result,
+    )
+
+    for _depth in range(MAX_CASE_SUCCESSOR_DEPTH):
+        case = _case_with_scope(base_case, scope)
         try:
-            existing = await session.run_sync(
-                lambda sync_session: _get_case(
-                    sync_session,
-                    case.case_id,
+            async with session.begin_nested():
+                stored, created = await session.run_sync(
+                    lambda sync_session: _get_or_create_case(
+                        sync_session,
+                        case,
+                    )
                 )
-            )
+        except IntegrityError:
+            try:
+                stored = await session.run_sync(
+                    lambda sync_session: _get_case(
+                        sync_session,
+                        case.case_id,
+                    )
+                )
+            except Exception as exc:
+                _log_persistence_failure(
+                    exc,
+                    case_id=case.case_id,
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                )
+                return AnalystCasePersistenceResult(
+                    enabled=True,
+                    outcome="failed",
+                )
+            if stored is None:
+                return AnalystCasePersistenceResult(
+                    enabled=True,
+                    outcome="failed",
+                )
+            created = False
         except Exception as exc:
             _log_persistence_failure(
                 exc,
@@ -157,23 +230,29 @@ async def persist_analyst_case(
                 enabled=True,
                 outcome="failed",
             )
-        if existing is not None:
-            return _result_for_case(existing, outcome="reused")
-        return AnalystCasePersistenceResult(
-            enabled=True,
-            outcome="failed",
+
+        if created:
+            return _result_for_case(stored, outcome="created")
+        if stored.status not in TERMINAL_ANALYST_CASE_STATUSES:
+            return _result_for_case(stored, outcome="reused")
+
+        terminal_version = (
+            stored.versions[-1].version_id
+            if stored.versions
+            else stored.case_id
         )
-    except Exception as exc:
-        _log_persistence_failure(
-            exc,
-            case_id=case.case_id,
-            conversation_id=conversation_id,
-            user_id=user_id,
-        )
-        return AnalystCasePersistenceResult(
-            enabled=True,
-            outcome="failed",
-        )
+        scope = f"{scope}|after:{terminal_version}"
+
+    _log_persistence_failure(
+        RuntimeError("Analyst case successor depth exceeded"),
+        case_id=base_case.case_id,
+        conversation_id=conversation_id,
+        user_id=user_id,
+    )
+    return AnalystCasePersistenceResult(
+        enabled=True,
+        outcome="failed",
+    )
 
 
 def _log_persistence_failure(
