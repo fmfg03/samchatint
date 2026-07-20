@@ -259,7 +259,7 @@ class RegistrationReviewSession(Base):
     assets = relationship(
         "RegistrationReviewAsset",
         back_populates="session",
-        cascade="all, delete-orphan",
+        passive_deletes="all",
         order_by="RegistrationReviewAsset.page_index",
     )
     drafts = relationship(

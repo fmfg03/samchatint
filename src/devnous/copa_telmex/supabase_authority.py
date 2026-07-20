@@ -58,7 +58,10 @@ def _date_text(value: Any) -> str:
             return datetime.strptime(raw, fmt).date().isoformat()
         except ValueError:
             continue
-    return "2012-01-01"
+    raise SupabaseAuthorityDenied(
+        "SUPABASE_REPLICATION_SCOPE_MISMATCH",
+        f"unparseable birth date: {raw!r}",
+    )
 
 
 def normalize_replica_roster(

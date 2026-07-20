@@ -304,10 +304,15 @@ def build_resolution_set(
     actor: Mapping[str, Any],
     issued_at: datetime,
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    base_fields = _flatten(base_extraction)
-    proposed_fields = _flatten(proposed_extraction)
+    normalized_base = ensure_roster_entry_ids(base_extraction, session_id)
+    normalized_proposed = ensure_roster_entry_ids(
+        proposed_extraction,
+        session_id,
+    )
+    base_fields = _flatten(normalized_base)
+    proposed_fields = _flatten(normalized_proposed)
     blocking_by_path = {
-        _s03_path_to_field_path(str(diff.field_path), base_extraction): diff
+        _s03_path_to_field_path(str(diff.field_path), normalized_base): diff
         for diff in blocking_diffs
     }
     paths = sorted(

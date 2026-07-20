@@ -1,3 +1,4 @@
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,9 +14,11 @@ from devnous.copa_telmex.persistence_authority import (
     semantic_event_hash,
 )
 from devnous.copa_telmex.postcommit_governance import (
+    canonical_bytes,
     changed_fields,
     issue_postcommit_persistence_capability,
     player_snapshot,
+    sha256_binding,
     team_snapshot,
 )
 
@@ -123,6 +126,31 @@ def test_snapshots_bind_committed_identity_and_evidence_without_timestamps():
     assert "photo_data" not in player_state
     assert "updated_at" not in team_state
     assert "updated_at" not in player_state
+
+
+def test_python_and_sql_snapshot_hashes_share_one_canonical_contract():
+    snapshot = {
+        "nested": {"z": [1, 2], "aa": True},
+        "id": "00000000-0000-4000-8000-000000000001",
+        "entity_type": "PLAYER",
+    }
+
+    assert canonical_bytes(snapshot).decode("utf-8") == (
+        '{"entity_type":"PLAYER",'
+        '"id":"00000000-0000-4000-8000-000000000001",'
+        '"nested":{"aa":true,"z":[1,2]}}'
+    )
+    assert sha256_binding(snapshot).startswith("sha256:")
+
+    migration = (
+        Path(__file__).resolve().parents[2]
+        / "database"
+        / "migrations"
+        / "20260716_regs07_postcommit_authority.sql"
+    ).read_text(encoding="utf-8")
+    assert "CREATE OR REPLACE FUNCTION regs07_canonical_jsonb" in migration
+    assert "convert_to(regs07_canonical_jsonb(snapshot), 'UTF8')" in migration
+    assert "convert_to(snapshot::text, 'UTF8')" not in migration
 
 
 def test_changed_fields_preserves_previous_and_proposed_values():

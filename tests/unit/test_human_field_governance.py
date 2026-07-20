@@ -139,6 +139,44 @@ def test_resolution_set_binds_player_evidence_and_all_blocking_s03_diffs():
     assert resolution["field_diff_id"] == str(diff_id)
 
 
+def test_resolution_set_normalizes_legacy_players_before_flattening():
+    session_id = UUID("11111111-1111-4111-8111-111111111111")
+    base = {
+        "team": {"name": "Academicos"},
+        "players": [
+            {
+                "name": "Nombre anterior",
+                "birth_date": "2001-01-01",
+                "curp": "ABCD010101HDFXXX01",
+            }
+        ],
+    }
+    proposed = {
+        **base,
+        "players": [{**base["players"][0], "name": "Nombre corregido"}],
+    }
+
+    resolutions, required = build_resolution_set(
+        tenant_id="samchat-prod",
+        session_id=session_id,
+        proposal_id=proposal_id_for(session_id, uuid4()),
+        base_extraction=base,
+        proposed_extraction=proposed,
+        assets=[],
+        layout_regions={},
+        blocking_diffs=[],
+        actor=actor(),
+        issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc),
+    )
+
+    expected_id = ensure_roster_entry_ids(base, session_id)["players"][0][
+        "roster_entry_id"
+    ]
+    assert required == []
+    assert len(resolutions) == 1
+    assert resolutions[0]["field_path"] == f"players.{expected_id}.name"
+
+
 def test_proposal_gate_request_and_approval_rows_are_exact_and_hmac_bound(
     monkeypatch,
 ):

@@ -87,13 +87,57 @@ AS $$
     )
 $$;
 
+CREATE OR REPLACE FUNCTION regs07_canonical_jsonb(value jsonb)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+DECLARE
+    rendered text;
+BEGIN
+    CASE jsonb_typeof(value)
+        WHEN 'object' THEN
+            SELECT '{' || COALESCE(
+                string_agg(
+                    to_jsonb(entry.key)::text || ':' ||
+                        regs07_canonical_jsonb(entry.value),
+                    ',' ORDER BY convert_to(entry.key, 'UTF8')
+                ),
+                ''
+            ) || '}'
+            INTO rendered
+            FROM jsonb_each(value) AS entry;
+            RETURN rendered;
+        WHEN 'array' THEN
+            SELECT '[' || COALESCE(
+                string_agg(
+                    regs07_canonical_jsonb(item.value),
+                    ',' ORDER BY item.ordinality
+                ),
+                ''
+            ) || ']'
+            INTO rendered
+            FROM jsonb_array_elements(value)
+                WITH ORDINALITY AS item(value, ordinality);
+            RETURN rendered;
+        ELSE
+            RETURN value::text;
+    END CASE;
+END
+$$;
+
 CREATE OR REPLACE FUNCTION regs07_snapshot_hash(snapshot jsonb)
 RETURNS varchar(71)
 LANGUAGE sql
 IMMUTABLE
 AS $$
     SELECT 'sha256:' || encode(
-        digest(convert_to(snapshot::text, 'UTF8'), 'sha256'),
+        digest(
+            convert_to(regs07_canonical_jsonb(snapshot), 'UTF8'),
+            'sha256'
+        ),
         'hex'
     )
 $$;

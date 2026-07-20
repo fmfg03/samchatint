@@ -262,6 +262,16 @@ def test_invalid_or_incomplete_finality_cannot_issue_replication_authority():
     assert exc.value.reason_code == "SUPABASE_REPLICATION_AUTHORITY_INVALID"
 
 
+def test_unparseable_birth_date_fails_before_replica_hashing():
+    players = [dict(PLAYERS[0], birth_date="fecha inventada")]
+
+    with pytest.raises(SupabaseAuthorityDenied) as exc:
+        replica_roster_hash(players)
+
+    assert exc.value.reason_code == "SUPABASE_REPLICATION_SCOPE_MISMATCH"
+    assert "unparseable birth date" in exc.value.detail
+
+
 def test_low_level_rest_client_blocks_direct_governed_table_write():
     client = SupabaseRestClient(
         SimpleNamespace(
