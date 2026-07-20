@@ -11,12 +11,12 @@ from samchat.assistant.bi_scope import (
     bi_scope_terms,
     text_matches_bi_scope,
 )
+from samchat.assistant.receipt_workflow_draft import ReceiptDraftAdvance
 from samchat.assistant.router import (
     AssistantAlertsRequest,
     AssistantExecutiveDashboardRequest,
     MessageCreateRequest,
 )
-from samchat.assistant.receipt_workflow_draft import ReceiptDraftAdvance
 
 
 @pytest.mark.parametrize("scope", ASSISTANT_BI_SCOPES)

@@ -261,9 +261,9 @@ async def advance_receipt_draft(
         if len(scope_candidates) == 1:
             selected_tournament = scope_candidates[0]
 
-    if selected_tournament is not None and str(
-        draft.get("tournament_id") or ""
-    ) != str(selected_tournament.id):
+    if selected_tournament is not None and str(draft.get("tournament_id") or "") != str(
+        selected_tournament.id
+    ):
         draft["tournament_id"] = str(selected_tournament.id)
         draft["tournament_name"] = selected_tournament.name
         changed = True
