@@ -152,7 +152,7 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
 
     assert "Comparación canónica" in html
     assert "no autoritativa" in html
-    assert "no modifica el borrador editable" in html
+    assert "Esta lectura histórica no modifica el borrador" in html
     assert canonical_review["players"][0]["photo_url"] in html
     assert "Sólo diferencias" in html
     assert "Borrador actual" in html
@@ -164,10 +164,12 @@ def test_detail_renders_read_only_canonical_comparison() -> None:
     assert 'name="canonical_value"' not in html
 
 
-def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
+def test_detail_routes_governed_conflicts_through_regs05_controls() -> None:
     template = _environment().get_template("registration_review_detail.html")
     canonical_review = {
         "canonical_hash": "canonical-123",
+        "governed": True,
+        "decision_id": "sha256:" + "d" * 64,
         "player_count": 0,
         "legacy_player_count": 0,
         "review_count": 0,
@@ -180,6 +182,9 @@ def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
                 "label": "nombre",
                 "legacy_value": "Equipo anterior",
                 "canonical_value": "Equipo canónico",
+                "input_name": "team_name",
+                "classification": "MATERIAL_CHANGE",
+                "field_path": "team.name",
             }
         ],
         "manager_differences": [
@@ -188,6 +193,9 @@ def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
                 "label": "email",
                 "legacy_value": "anterior@example.test",
                 "canonical_value": "canonico@example.test",
+                "input_name": "manager_email",
+                "classification": "MATERIAL_CHANGE",
+                "field_path": "manager.email",
             }
         ],
         "players": [
@@ -207,6 +215,9 @@ def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
                         "label": "nombre",
                         "legacy_value": "Maria Lopes",
                         "canonical_value": "María López",
+                        "input_name": "player_0_name",
+                        "classification": "MATERIAL_CHANGE",
+                        "field_path": "players.1.name",
                     }
                 ],
             }
@@ -234,13 +245,17 @@ def test_detail_requires_explicit_confirmation_for_canonical_adoption() -> None:
         tournament_options=[],
     )
 
-    assert "/api/registration-review/session/canonical-adopt" in html
-    assert 'name="canonical_hash" value="canonical-123"' in html
-    assert 'name="canonical_fields" value="team.name"' in html
-    assert 'name="canonical_fields" value="manager.email"' in html
-    assert 'name="canonical_fields" value="player.1.name"' in html
-    assert 'name="confirm_canonical_adoption" value="yes" required' in html
-    assert "Esta acción no captura el equipo" in html
+    assert "/api/registration-review/session/canonical-adopt" not in html
+    assert "REG-S03 · pendiente REG-S05" in html
+    assert "Aceptar candidato" in html
+    assert "Conservar actual" in html
+    assert "Corregir manualmente" in html
+    assert "Vaciar campo" in html
+    assert 'data-regs05-target="team_name"' in html
+    assert 'data-regs05-target="manager_email"' in html
+    assert 'data-regs05-target="player_0_name"' in html
+    assert "Guardar correcciones" in html
+    assert 'name="canonical_fields"' not in html
     assert 'name="canonical_value"' not in html
 
 

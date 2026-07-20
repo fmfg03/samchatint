@@ -23,7 +23,7 @@ from datetime import datetime, date, timezone
 from typing import List, Optional, Dict, Any, Tuple, Iterable
 from urllib.parse import urlparse
 from urllib.parse import quote, unquote
-from uuid import UUID
+from uuid import UUID, uuid4
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -48,14 +48,88 @@ sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import select, text
-from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.orm import aliased, selectinload
 from devnous.copa_telmex.database import CopaTelmexDB
+from devnous.copa_telmex.draft_versioning import (
+    append_draft_version,
+    build_draft_authorization_payload,
+    build_successor_values,
+    insert_pre_authorized_draft_version,
+    latest_draft,
+)
+from devnous.copa_telmex.human_field_governance import (
+    approval_rows as build_human_approval_rows,
+    build_gate_request as build_human_field_edit_gate_request,
+    build_proposal as build_human_field_edit_proposal,
+    build_resolution_set,
+    decision_row as build_human_field_edit_decision_row,
+    ensure_roster_entry_ids,
+    execution_rows as build_human_field_execution_rows,
+    parent_authorization as human_field_edit_parent_authorization,
+    proposal_id_for,
+    sha256_binding as human_field_sha256_binding,
+)
 from devnous.copa_telmex.models import (
     Base,
+    Player,
+    RegistrationHumanFieldEditProposal,
+    RegistrationOcrFieldDiff,
+    RegistrationOcrReprocessDecision,
+    RegistrationOcrRun,
+    RegistrationPageAppendAttempt,
+    RegistrationPageAppendDecision,
+    RegistrationPostcommitMutationDecision,
+    RegistrationPostcommitMutationExecution,
+    RegistrationPostcommitMutationProposal,
     RegistrationReviewAsset,
     RegistrationReviewDraft,
     RegistrationReviewSession,
+    Team,
+)
+from devnous.copa_telmex.page_composition_governance import (
+    admitted_asset_rows,
+    build_gate_request as build_page_composition_gate_request,
+    build_page_append_attempt,
+    decision_row as build_page_composition_decision_row,
+    existing_page_manifest,
+    parent_authorization as page_composition_parent_authorization,
+    proposed_page_manifest,
+    sha256_binding as page_composition_sha256_binding,
+    staged_page_manifest,
+)
+from devnous.copa_telmex.reprocess_governance import (
+    build_gate_request as build_reprocess_gate_request,
+    build_ocr_run,
+    decision_row as build_reprocess_decision_row,
+    parent_authorization as reprocess_parent_authorization,
+    public_field_diffs,
+    sha256_binding,
+)
+from devnous.copa_telmex.persistence_authority import (
+    PersistenceAuthorityDenied,
+    issue_registration_persistence_capability,
+)
+from devnous.copa_telmex.postcommit_governance import (
+    PLAYER_EDIT_FIELDS,
+    PLAYER_VERIFY_FIELDS,
+    TEAM_EDIT_FIELDS,
+    build_finality_request as build_postcommit_finality_request,
+    build_gate_request as build_postcommit_gate_request,
+    changed_fields as postcommit_changed_fields,
+    decision_row as build_postcommit_decision_row,
+    execution_id_for as postcommit_execution_id_for,
+    execution_row as build_postcommit_execution_row,
+    issue_postcommit_persistence_capability,
+    proposal_id_for as postcommit_proposal_id_for,
+    sha256_binding as postcommit_sha256_binding,
+    source_evidence_binding as postcommit_source_evidence_binding,
+)
+from devnous.copa_telmex.registration_governance import (
+    RegistrationGovernanceClient,
+    RegistrationGovernanceDenied,
+    build_preauthorization_request,
+    governed_player_row,
 )
 from devnous.copa_telmex.runtime_controls import (
     REGISTRATION_REVIEW_CANONICAL_INTAKE as RUNTIME_REGISTRATION_REVIEW_CANONICAL_INTAKE,
@@ -108,9 +182,13 @@ from devnous.tournaments.core.ocr_integrity import (
     average_hash_hex,
     compute_sha256_hex,
     crop_player_photo,
+    hamming_distance_hex,
+    hashes_look_duplicate,
     image_has_photo_like_content,
+    normalize_ctt_template_image,
     slugify_filename,
 )
+from devnous.tournaments.core.ctt_slot_montage import player_photo_box
 from devnous.tournaments.instances.copa_telmex.ctt_canonical_promotion import (
     CanonicalPromotionError,
     promote_canonical_fields,
@@ -143,6 +221,14 @@ REVIEW_TOURNAMENT_OPTIONS: List[Tuple[str, str]] = [
     ("copa-club-america", "Copa Club America"),
     ("homeless-world-cup", "Homeless World Cup"),
 ]
+
+MINIMUM_ELIGIBLE_PLAYERS = 16
+REGISTRATION_INCIDENTS_SCHEMA_VERSION = "registration_incidents.v1"
+PHOTO_DUPLICATE_MAX_HASH_DISTANCE = 4
+
+
+def _review_draft_version(draft: Any) -> int:
+    return int(getattr(draft, "draft_version", 1) or 1)
 
 
 def _split_csv_env(value: Optional[str]) -> List[str]:
@@ -595,13 +681,346 @@ def _player_has_usable_signal(player: Dict[str, Any]) -> bool:
     )
 
 
+def _draft_player_ref(player_index: int) -> str:
+    return f"draft-player-{player_index:02d}"
+
+
+def _new_registration_incident(
+    *,
+    player_ref: str,
+    incident_type: str,
+    blocks_player_eligibility: bool,
+    message: str,
+    evidence: Optional[Dict[str, Any]] = None,
+    requires_operations_review: bool = True,
+) -> Dict[str, Any]:
+    normalized_evidence = evidence or {}
+    incident_binding = json.dumps(
+        {
+            "player_ref": player_ref,
+            "incident_type": incident_type,
+            "blocks_player_eligibility": bool(blocks_player_eligibility),
+            "evidence": normalized_evidence,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return {
+        "incident_id": "reg-incident-" + hashlib.sha256(incident_binding).hexdigest(),
+        "player_ref": player_ref,
+        "incident_type": incident_type,
+        "blocks_player_eligibility": bool(blocks_player_eligibility),
+        "blocks_team_registration": False,
+        "requires_operations_review": bool(requires_operations_review),
+        "message": message,
+        "evidence": normalized_evidence,
+        "status": "OPEN",
+    }
+
+
+def _append_player_incident(
+    incidents_by_player: Dict[int, List[Dict[str, Any]]],
+    player_index: int,
+    *,
+    incident_type: str,
+    blocks_player_eligibility: bool,
+    message: str,
+    evidence: Optional[Dict[str, Any]] = None,
+    requires_operations_review: bool = True,
+) -> None:
+    incidents_by_player.setdefault(player_index, []).append(
+        _new_registration_incident(
+            player_ref=_draft_player_ref(player_index),
+            incident_type=incident_type,
+            blocks_player_eligibility=blocks_player_eligibility,
+            message=message,
+            evidence=evidence,
+            requires_operations_review=requires_operations_review,
+        )
+    )
+
+
+def _photo_duplicate_incident_type(
+    left: Dict[str, Any],
+    right: Dict[str, Any],
+) -> Optional[Tuple[str, Optional[int]]]:
+    left_sha = left.get("photo_sha256")
+    right_sha = right.get("photo_sha256")
+    if left_sha and right_sha and left_sha == right_sha:
+        return "PHOTO_EXACT_DUPLICATE", 0
+    distance = hamming_distance_hex(
+        left.get("photo_ahash"),
+        right.get("photo_ahash"),
+    )
+    if distance <= PHOTO_DUPLICATE_MAX_HASH_DISTANCE:
+        return "PHOTO_PERCEPTUAL_DUPLICATE", distance
+    return None
+
+
+def _build_photo_duplicate_incidents(
+    *,
+    players_payload: List[Dict[str, Any]],
+    photo_artifacts: Optional[Dict[int, Dict[str, Any]]] = None,
+    existing_photo_records: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[int, List[Dict[str, Any]]]:
+    incidents_by_player: Dict[int, List[Dict[str, Any]]] = {}
+    artifacts = photo_artifacts or {}
+    indexes = sorted(idx for idx in artifacts if artifacts.get(idx))
+
+    for pos, left_idx in enumerate(indexes):
+        left = artifacts.get(left_idx) or {}
+        for right_idx in indexes[pos + 1 :]:
+            right = artifacts.get(right_idx) or {}
+            match = _photo_duplicate_incident_type(left, right)
+            if not match:
+                continue
+            incident_type, distance = match
+            left_name = (
+                players_payload[left_idx - 1].get("name")
+                if left_idx - 1 < len(players_payload)
+                else None
+            ) or ""
+            right_name = (
+                players_payload[right_idx - 1].get("name")
+                if right_idx - 1 < len(players_payload)
+                else None
+            ) or ""
+            _append_player_incident(
+                incidents_by_player,
+                left_idx,
+                incident_type=incident_type,
+                blocks_player_eligibility=True,
+                message="La fotografia coincide con otro jugador del draft actual.",
+                evidence={
+                    "matching_player_ref": _draft_player_ref(right_idx),
+                    "matching_player_name": right_name,
+                    "hash_distance": distance,
+                    "scope": "current_draft",
+                },
+            )
+            _append_player_incident(
+                incidents_by_player,
+                right_idx,
+                incident_type=incident_type,
+                blocks_player_eligibility=True,
+                message="La fotografia coincide con otro jugador del draft actual.",
+                evidence={
+                    "matching_player_ref": _draft_player_ref(left_idx),
+                    "matching_player_name": left_name,
+                    "hash_distance": distance,
+                    "scope": "current_draft",
+                },
+            )
+
+    for idx in indexes:
+        artifact = artifacts.get(idx) or {}
+        for existing in existing_photo_records or []:
+            if not hashes_look_duplicate(
+                sha256_left=artifact.get("photo_sha256"),
+                sha256_right=existing.get("photo_sha256"),
+                ahash_left=artifact.get("photo_ahash"),
+                ahash_right=existing.get("photo_ahash"),
+                max_distance=PHOTO_DUPLICATE_MAX_HASH_DISTANCE,
+            ):
+                continue
+            match = _photo_duplicate_incident_type(artifact, existing)
+            if not match:
+                continue
+            incident_type, distance = match
+            _append_player_incident(
+                incidents_by_player,
+                idx,
+                incident_type=incident_type,
+                blocks_player_eligibility=True,
+                message="La fotografia coincide con otro jugador del torneo.",
+                evidence={
+                    "matching_player_ref": existing.get("player_ref"),
+                    "matching_player_name": existing.get("player_name"),
+                    "matching_team_ref": existing.get("team_ref"),
+                    "matching_team_name": existing.get("team_name"),
+                    "hash_distance": distance,
+                    "scope": "tournament_slug",
+                    "tournament_slug": existing.get("tournament_slug"),
+                },
+            )
+            break
+
+    return incidents_by_player
+
+
+def _merge_player_incidents(
+    *incident_maps: Dict[int, List[Dict[str, Any]]],
+) -> Dict[int, List[Dict[str, Any]]]:
+    merged: Dict[int, List[Dict[str, Any]]] = {}
+    for incident_map in incident_maps:
+        for idx, incidents in (incident_map or {}).items():
+            merged.setdefault(idx, []).extend(list(incidents or []))
+    return merged
+
+
+def _build_registration_incident_policy(
+    extraction: Dict[str, Any],
+    *,
+    minimum_roster: int = MINIMUM_ELIGIBLE_PLAYERS,
+    photo_artifacts: Optional[Dict[int, Dict[str, Any]]] = None,
+    existing_photo_records: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    players = [
+        player
+        for player in list(extraction.get("players") or [])
+        if _player_has_usable_signal(player)
+    ]
+    base_incidents: Dict[int, List[Dict[str, Any]]] = {}
+
+    for idx, player in enumerate(players, 1):
+        name = (player.get("name") or "").strip()
+        birth_date = (player.get("birth_date") or "").strip()
+        raw_curp = (player.get("curp") or "").strip().upper()
+        curp, curp_truncated = _normalize_curp_for_storage(raw_curp)
+        confidence = float(player.get("confidence") or 0.0)
+        needs_review = bool(player.get("needs_review"))
+
+        if not name:
+            _append_player_incident(
+                base_incidents,
+                idx,
+                incident_type="PLAYER_MISSING_NAME",
+                blocks_player_eligibility=True,
+                message=f"El jugador {idx} no tiene nombre usable.",
+                evidence={"field": "name"},
+            )
+        if (
+            not birth_date
+            or _birth_date_has_two_digit_year(birth_date)
+            or _parse_birth_date(birth_date) is None
+        ):
+            _append_player_incident(
+                base_incidents,
+                idx,
+                incident_type="PLAYER_INVALID_BIRTHDATE",
+                blocks_player_eligibility=True,
+                message=(
+                    f"El jugador {idx} tiene una fecha de nacimiento "
+                    "invalida o ambigua."
+                ),
+                evidence={"field": "birth_date", "observed_value": birth_date},
+            )
+        if raw_curp and (curp_truncated or len(curp or "") != 18):
+            _append_player_incident(
+                base_incidents,
+                idx,
+                incident_type="CURP_TRUNCATED_OR_INVALID_SEVERE",
+                blocks_player_eligibility=True,
+                message=f"El CURP del jugador {idx} esta truncado o no es confiable.",
+                evidence={"field": "curp", "observed_value": raw_curp},
+            )
+        if confidence < 0.7 or needs_review:
+            _append_player_incident(
+                base_incidents,
+                idx,
+                incident_type="LOW_CONFIDENCE_FIELD",
+                blocks_player_eligibility=False,
+                message=f"El jugador {idx} requiere revision por baja confianza OCR.",
+                evidence={"confidence": confidence, "needs_review": needs_review},
+            )
+
+    incidents_by_player = _merge_player_incidents(
+        base_incidents,
+        _build_photo_duplicate_incidents(
+            players_payload=players,
+            photo_artifacts=photo_artifacts,
+            existing_photo_records=existing_photo_records,
+        ),
+    )
+
+    cleared_players = 0
+    pending_nonblocking_players = 0
+    pending_blocking_players = 0
+    player_results: List[Dict[str, Any]] = []
+    for idx, player in enumerate(players, 1):
+        incidents = list(incidents_by_player.get(idx) or [])
+        blocks_player = any(
+            bool(item.get("blocks_player_eligibility")) for item in incidents
+        )
+        if not incidents:
+            status = "CLEARED"
+            counts_toward_minimum = True
+            cleared_players += 1
+        else:
+            status = "INCIDENT_PENDING"
+            counts_toward_minimum = not blocks_player
+            if blocks_player:
+                pending_blocking_players += 1
+            else:
+                pending_nonblocking_players += 1
+
+        player_results.append(
+            {
+                "player_ref": _draft_player_ref(idx),
+                "player_index": idx,
+                "name": (player.get("name") or "").strip(),
+                "birth_date": (player.get("birth_date") or "").strip(),
+                "eligibility_status": status,
+                "counts_toward_minimum": counts_toward_minimum,
+                "incidents": incidents,
+            }
+        )
+
+    eligible_players = cleared_players + pending_nonblocking_players
+    incident_count = sum(
+        len(item.get("incidents") or []) for item in player_results
+    )
+    if eligible_players < minimum_roster:
+        team_decision = "PENDING_MINIMUM_ROSTER"
+    elif incident_count:
+        team_decision = "REGISTERED_WITH_INCIDENTS"
+    else:
+        team_decision = "REGISTERED"
+
+    return {
+        "schema_version": REGISTRATION_INCIDENTS_SCHEMA_VERSION,
+        "minimum_roster": minimum_roster,
+        "team_decision": team_decision,
+        "summary": {
+            "total_players": len(players),
+            "cleared_players": cleared_players,
+            "pending_nonblocking_players": pending_nonblocking_players,
+            "pending_blocking_players": pending_blocking_players,
+            "rejected_players": 0,
+            "eligible_players": eligible_players,
+            "incident_count": incident_count,
+        },
+        "player_results": player_results,
+    }
+
+
+def _players_blocked_by_incident_policy(
+    incident_policy: Optional[Dict[str, Any]],
+) -> set:
+    blocked = set()
+    if not isinstance(incident_policy, dict):
+        return blocked
+    for player_result in incident_policy.get("player_results") or []:
+        if not isinstance(player_result, dict):
+            continue
+        if player_result.get("eligibility_status") == "REJECTED" or not bool(
+            player_result.get("counts_toward_minimum")
+        ):
+            blocked.add(int(player_result.get("player_index") or 0))
+    blocked.discard(0)
+    return blocked
+
+
 def _build_review_commit_validation(
     extraction: Dict[str, Any],
     validation: Optional[Dict[str, Any]],
     *,
     review_session: Optional[RegistrationReviewSession] = None,
+    incident_policy: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     enriched = dict(validation or {})
+    incident_policy = incident_policy or _build_registration_incident_policy(extraction)
     blockers: List[Dict[str, Any]] = []
     warnings: List[Dict[str, Any]] = []
 
@@ -617,39 +1036,20 @@ def _build_review_commit_validation(
             }
         )
 
-    valid_players = 0
     for idx, player in enumerate(players):
         player_number = idx + 1
         field_prefix = f"players[{idx}]"
         if not _player_has_usable_signal(player):
             continue
 
-        name = (player.get("name") or "").strip()
-        birth_date = (player.get("birth_date") or "").strip()
         raw_curp = (player.get("curp") or "").strip().upper()
         curp, curp_truncated = _normalize_curp_for_storage(raw_curp)
         confidence = float(player.get("confidence") or 0.0)
         needs_review = bool(player.get("needs_review"))
 
-        if not name:
-            blockers.append(
-                {
-                    "code": "PLAYER_MISSING_NAME",
-                    "field": f"{field_prefix}.name",
-                    "message": f"El jugador {player_number} no tiene nombre usable.",
-                }
-            )
-        if not birth_date or _birth_date_has_two_digit_year(birth_date) or _parse_birth_date(birth_date) is None:
-            blockers.append(
-                {
-                    "code": "PLAYER_INVALID_BIRTHDATE",
-                    "field": f"{field_prefix}.birth_date",
-                    "message": f"El jugador {player_number} tiene una fecha de nacimiento inválida o ambigua.",
-                }
-            )
         if raw_curp:
             if curp_truncated or len(curp or "") != 18:
-                blockers.append(
+                warnings.append(
                     {
                         "code": "CURP_TRUNCATED_OR_INVALID_SEVERE",
                         "field": f"{field_prefix}.curp",
@@ -673,18 +1073,6 @@ def _build_review_commit_validation(
                     "message": f"El jugador {player_number} requiere revisión por baja confianza OCR.",
                 }
             )
-
-        if name and birth_date and not _birth_date_has_two_digit_year(birth_date) and _parse_birth_date(birth_date) is not None:
-            valid_players += 1
-
-    if valid_players == 0:
-        blockers.append(
-            {
-                "code": "NO_VALID_PLAYERS",
-                "field": "players",
-                "message": "No hay jugadores válidos listos para captura.",
-            }
-        )
 
     manager = extraction.get("manager") or {}
     if not (manager.get("email") or "").strip():
@@ -734,17 +1122,23 @@ def _build_review_commit_validation(
                 }
             )
 
-    if bool(enriched.get("needs_review")):
+    if incident_policy.get("team_decision") == "PENDING_MINIMUM_ROSTER":
+        summary = incident_policy.get("summary") or {}
         blockers.append(
             {
-                "code": "REVIEW_NOT_READY",
-                "field": "draft.validation",
-                "message": "Todavía hay señales de revisión pendientes antes de capturar.",
+                "code": "PENDING_MINIMUM_ROSTER",
+                "field": "players",
+                "message": (
+                    f"El equipo tiene {int(summary.get('eligible_players') or 0)} "
+                    "jugador(es) habilitados; se requieren "
+                    f"{int(incident_policy.get('minimum_roster') or MINIMUM_ELIGIBLE_PLAYERS)}."
+                ),
             }
         )
 
     blockers = _dedupe_review_items(blockers)
     warnings = _dedupe_review_items(warnings)
+    enriched["incident_policy"] = incident_policy
     enriched["blockers"] = blockers
     enriched["warnings"] = warnings
     enriched["blocking_issue_count"] = len(blockers)
@@ -752,6 +1146,29 @@ def _build_review_commit_validation(
     enriched["ready_to_commit"] = len(blockers) == 0
     enriched["capture_warning_count"] = len(warnings)
     enriched["capture_warning_messages"] = [item["message"] for item in warnings]
+    return enriched
+
+
+def _attach_unresolved_reprocess_blocker(
+    validation: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Block capture until REG-S05 resolves the current draft's REG-S03 decision."""
+    enriched = dict(validation or {})
+    blockers = list(enriched.get("blockers") or [])
+    blockers.append(
+        {
+            "code": "UNRESOLVED_OCR_REPROCESS",
+            "field": "draft.ocr_reprocess",
+            "message": (
+                "La lectura canónica contradice el draft vigente. "
+                "Resuelve las diferencias mediante REG-S05 antes de capturar."
+            ),
+        }
+    )
+    blockers = _dedupe_review_items(blockers)
+    enriched["blockers"] = blockers
+    enriched["blocking_issue_count"] = len(blockers)
+    enriched["ready_to_commit"] = False
     return enriched
 
 
@@ -1403,6 +1820,22 @@ copa_telmex_frontend_url = os.getenv("COPA_TELMEX_FRONTEND_URL", f"{public_app_u
 review_uploads_dir = photos_dir / "review_sessions"
 review_uploads_dir.mkdir(parents=True, exist_ok=True)
 ctt_layout_path = Path(__file__).parent / "config" / "layout_ctt_2026.json"
+
+
+def _reprocess_prompt_config_hash() -> str:
+    layout_hash = (
+        "sha256:" + hashlib.sha256(ctt_layout_path.read_bytes()).hexdigest()
+        if ctt_layout_path.is_file()
+        else None
+    )
+    return sha256_binding(
+        {
+            "review_ocr_provider": review_ocr_provider,
+            "layout_hash": layout_hash,
+            "pipeline_contract": "samchat-registration-reprocess-v1",
+            "normalization_policy": "samchat-registration-field-normalization-v1",
+        }
+    )
 _ctt_layout_cache: Optional[Dict[str, Any]] = None
 
 
@@ -2018,7 +2451,9 @@ def _load_review_asset_images(assets: List[RegistrationReviewAsset]) -> Dict[int
     loaded: Dict[int, Image.Image] = {}
     for asset in assets:
         try:
-            loaded[int(asset.page_index)] = Image.open(asset.image_path).convert("RGB")
+            with Image.open(asset.image_path) as source:
+                normalized, _metadata = normalize_ctt_template_image(source)
+            loaded[int(asset.page_index)] = normalized.convert("RGB")
         except Exception:
             logger.warning("Could not load review asset image %s", asset.image_path, exc_info=True)
     return loaded
@@ -2035,55 +2470,73 @@ def _estimate_ctt_photo_region(
         return None
 
     page_side = "front" if int(page_index) <= 1 else "back"
-    cards = (layout.get("pages") or {}).get(page_side, {}).get("cards") or {}
-    player_cards = [(name, fields) for name, fields in cards.items() if str(name).startswith("jugador_")]
-    if page_player_index < 1 or page_player_index > len(player_cards):
+    page_layout = (layout.get("pages") or {}).get(page_side) or {}
+    source_slot = int(page_player_index)
+    if page_side == "back":
+        source_slot += 8
+    try:
+        left, top, right, bottom = player_photo_box(
+            page_layout,
+            source_slot,
+            image_size,
+        )
+    except ValueError:
         return None
-
-    _, fields = player_cards[page_player_index - 1]
-    anchors = [fields.get("nombre"), fields.get("apellidos"), fields.get("nacimiento"), fields.get("curp")]
-    anchors = [item for item in anchors if isinstance(item, dict)]
-    if not anchors:
-        return None
-
-    left_anchor = min(float(item.get("x") or 0.0) for item in anchors)
-    top_anchor = min(float(item.get("y") or 0.0) for item in anchors)
-    bottom_anchor = max(float(item.get("y") or 0.0) + float(item.get("h") or 0.0) for item in anchors)
-
-    left = max(0.01, left_anchor - 0.20)
-    right = max(left + 0.12, left_anchor - 0.012)
-    top = max(0.01, top_anchor - 0.005)
-    bottom = min(0.99, bottom_anchor + 0.005)
-
-    image_width, image_height = image_size
-    x = int(round(left * image_width))
-    y = int(round(top * image_height))
-    width = int(round((right - left) * image_width))
-    height = int(round((bottom - top) * image_height))
+    width = right - left
+    height = bottom - top
     if width < 40 or height < 40:
         return None
-    return {"x": x, "y": y, "width": width, "height": height, "confidence": 0.45}
+    return {
+        "x": left,
+        "y": top,
+        "width": width,
+        "height": height,
+        "confidence": 1.0,
+        "source_slot": source_slot,
+    }
 
 
 def _resolve_review_photo_region(
     *,
     player_payload: Dict[str, Any],
+    player_index: int,
     page_index: int,
     page_player_index: int,
     image_size: Tuple[int, int],
+    layout_regions: Dict[str, Any],
 ) -> Tuple[Optional[Dict[str, Any]], str]:
-    photo_region = player_payload.get("photo_region") if isinstance(player_payload, dict) else None
-    if isinstance(photo_region, dict):
-        return photo_region, "detected"
-
+    binding = dict(
+        ((layout_regions or {}).get("photo_bindings") or {}).get(
+            str(player_index)
+        )
+        or {}
+    )
+    if binding and int(binding.get("source_page") or 0) == int(page_index):
+        explicit = {
+            key: int(binding.get(key) or 0)
+            for key in ("x", "y", "width", "height")
+        }
+        if (
+            explicit["width"] >= 40
+            and explicit["height"] >= 40
+            and explicit["x"] >= 0
+            and explicit["y"] >= 0
+            and explicit["x"] + explicit["width"] <= image_size[0]
+            and explicit["y"] + explicit["height"] <= image_size[1]
+        ):
+            return {
+                **explicit,
+                "confidence": 1.0,
+                "source_slot": int(binding.get("source_slot") or player_index),
+            }, "ctt_explicit_binding"
     estimated = _estimate_ctt_photo_region(
         page_index=page_index,
         page_player_index=page_player_index,
         image_size=image_size,
     )
     if estimated:
-        return estimated, "ctt_estimated"
-    return None, "heuristic"
+        return estimated, "ctt_explicit"
+    return None, "unavailable"
 
 
 def _build_review_photo_artifacts(
@@ -2109,10 +2562,14 @@ def _build_review_photo_artifacts(
         try:
             photo_region, _photo_mode = _resolve_review_photo_region(
                 player_payload=player_payload,
+                player_index=idx,
                 page_index=page_index,
                 page_player_index=page_player_counters[page_index],
                 image_size=source_image.size,
+                layout_regions=layout_regions,
             )
+            if photo_region is None:
+                continue
             crop = crop_player_photo(
                 image=source_image,
                 photo_region=photo_region,
@@ -2165,10 +2622,14 @@ def _build_review_player_photo_previews(
         try:
             photo_region, photo_mode = _resolve_review_photo_region(
                 player_payload=player_payload,
+                player_index=idx,
                 page_index=page_index,
                 page_player_index=page_player_counters[page_index],
                 image_size=source_image.size,
+                layout_regions=layout_regions,
             )
+            if photo_region is None:
+                continue
             crop = crop_player_photo(
                 image=source_image,
                 photo_region=photo_region,
@@ -2225,7 +2686,7 @@ def _review_event_timestamp() -> tuple[datetime, str]:
     return now, now.replace(microsecond=0).isoformat() + "Z"
 
 
-def _review_session_actor(request: Request) -> Dict[str, Optional[str]]:
+def _review_session_actor(request: Request) -> Dict[str, Any]:
     try:
         session = request.session or {}
     except Exception:
@@ -2233,11 +2694,534 @@ def _review_session_actor(request: Request) -> Dict[str, Optional[str]]:
     user_id = str(session.get("empleado_id") or "").strip() or None
     role = str(session.get("rol") or "").strip().lower() or None
     display_name = str(session.get("nombre") or "").strip() or None
+    role_assignment_id = human_field_sha256_binding(
+        {
+            "source": "samchat_internal_session",
+            "user_id": user_id,
+            "role": role,
+        }
+    )
+    authorization_epoch = human_field_sha256_binding(
+        {
+            "role_assignment_id": role_assignment_id,
+            "session_auth_epoch": str(
+                session.get("auth_epoch")
+                or session.get("login_at")
+                or session.get("created_at")
+                or "current"
+            ),
+        }
+    )
+    auth_context_id = human_field_sha256_binding(
+        {
+            "user_id": user_id,
+            "role": role,
+            "authentication_method": "internal_session",
+            "authorization_epoch": authorization_epoch,
+        }
+    )
     return {
         "user_id": user_id,
         "role": role,
         "display_name": display_name,
+        "session_auth_epoch": str(
+            session.get("auth_epoch")
+            or session.get("login_at")
+            or session.get("created_at")
+            or "current"
+        ),
+        "role_assignment_id": role_assignment_id,
+        "authorization_epoch": authorization_epoch,
+        "authentication_method": "internal_session",
+        "authentication_assurance_level": 1,
+        "auth_context_id": auth_context_id,
     }
+
+
+async def _refresh_review_actor(
+    db_session: AsyncSession, actor: Dict[str, Any]
+) -> Dict[str, Any]:
+    """Rebind the review actor to the current employee role and active state."""
+    try:
+        employee_id = UUID(str(actor.get("user_id") or ""))
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "APPROVER_BINDING_INVALID",
+            "La identidad del aprobador ya no es válida.",
+            status_code=401,
+        ) from exc
+    result = await db_session.execute(
+        text(
+            """
+            SELECT nombre, rol, activo, actualizado_en
+            FROM empleados
+            WHERE id = :empleado_id
+            """
+        ),
+        {"empleado_id": employee_id},
+    )
+    row = result.mappings().first()
+    if not row or row["activo"] is not True:
+        raise _review_error(
+            "APPROVER_ROLE_NOT_CURRENT",
+            "La cuenta del aprobador no está activa.",
+            status_code=409,
+        )
+    role = str(row["rol"] or "").strip().lower()
+    if role not in {"coordinador", "admin", "superadmin", "super_admin"}:
+        raise _review_error(
+            "APPROVER_ROLE_NOT_ALLOWED",
+            "El rol actual no autoriza correcciones registrales.",
+            status_code=403,
+        )
+    updated_at = row["actualizado_en"]
+    role_epoch = (
+        updated_at.isoformat()
+        if hasattr(updated_at, "isoformat")
+        else str(updated_at or "unknown")
+    )
+    role_assignment_id = human_field_sha256_binding(
+        {
+            "source": "empleados",
+            "user_id": str(employee_id),
+            "role": role,
+            "role_epoch": role_epoch,
+        }
+    )
+    authorization_epoch = human_field_sha256_binding(
+        {
+            "role_assignment_id": role_assignment_id,
+            "role_epoch": role_epoch,
+            "session_auth_epoch": str(actor.get("session_auth_epoch") or ""),
+        }
+    )
+    auth_context_id = human_field_sha256_binding(
+        {
+            "user_id": str(employee_id),
+            "role": role,
+            "authentication_method": actor["authentication_method"],
+            "authorization_epoch": authorization_epoch,
+        }
+    )
+    return {
+        **actor,
+        "user_id": str(employee_id),
+        "role": role,
+        "display_name": str(row["nombre"] or actor.get("display_name") or ""),
+        "role_assignment_id": role_assignment_id,
+        "authorization_epoch": authorization_epoch,
+        "auth_context_id": auth_context_id,
+    }
+
+
+def _regs07_error(
+    code: str,
+    message: str,
+    *,
+    status_code: int = 409,
+    extra: Optional[Dict[str, Any]] = None,
+) -> HTTPException:
+    detail: Dict[str, Any] = {
+        "success": False,
+        "error": code,
+        "message": message,
+    }
+    if extra:
+        detail.update(extra)
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _regs07_json_value(value: Any) -> Any:
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    return value
+
+
+async def _regs07_database_snapshot(
+    session: AsyncSession, entity: Team | Player
+) -> Dict[str, Any]:
+    if isinstance(entity, Team):
+        statement = text(
+            """
+            SELECT regs07_team_snapshot(team)
+            FROM copa_telmex_teams AS team
+            WHERE team.id = :entity_id
+            """
+        )
+    else:
+        statement = text(
+            """
+            SELECT regs07_player_snapshot(player)
+            FROM copa_telmex_players AS player
+            WHERE player.id = :entity_id
+            """
+        )
+    snapshot = (
+        await session.execute(statement, {"entity_id": entity.id})
+    ).scalar_one()
+    return dict(snapshot)
+
+
+async def _regs07_database_hash(
+    session: AsyncSession, snapshot: Dict[str, Any]
+) -> str:
+    return str(
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT regs07_snapshot_hash(CAST(:snapshot AS jsonb))
+                    """
+                ),
+                {"snapshot": json.dumps(snapshot, ensure_ascii=False)},
+            )
+        ).scalar_one()
+    )
+
+
+def _regs07_actor_matches(
+    proposal: RegistrationPostcommitMutationProposal,
+    actor: Dict[str, Any],
+) -> bool:
+    return (
+        str(proposal.proposer_principal_id) == str(actor.get("user_id") or "")
+        and str(proposal.proposer_role) == str(actor.get("role") or "")
+        and str(proposal.role_assignment_id)
+        == str(actor.get("role_assignment_id") or "")
+        and str(proposal.authorization_epoch)
+        == str(actor.get("authorization_epoch") or "")
+        and str(proposal.auth_context_id)
+        == str(actor.get("auth_context_id") or "")
+    )
+
+
+async def _execute_regs07_mutation(
+    *,
+    request: Request,
+    entity_type: str,
+    entity_id: UUID,
+    mutation_type: str,
+    updates: Dict[str, Any],
+    mutation_reason: str,
+    mutation_request_id: UUID,
+) -> Dict[str, Any]:
+    """Create and atomically project one double-receipt post-commit successor."""
+    actor = _review_session_actor(request)
+    model = Team if entity_type == "TEAM" else Player
+    allowed_fields = (
+        TEAM_EDIT_FIELDS
+        if mutation_type == "EDIT_TEAM"
+        else (
+            PLAYER_EDIT_FIELDS
+            if mutation_type == "EDIT_PLAYER"
+            else PLAYER_VERIFY_FIELDS
+        )
+    )
+    if not updates or set(updates) - set(allowed_fields):
+        raise _regs07_error(
+            "POSTCOMMIT_FIELD_SCOPE_DENIED",
+            "La mutación contiene campos no autorizados.",
+        )
+    mutation_reason = " ".join(str(mutation_reason or "").split())
+    if not 5 <= len(mutation_reason) <= 500:
+        raise _regs07_error(
+            "POSTCOMMIT_REASON_REQUIRED",
+            "Describe el motivo de la modificación (5 a 500 caracteres).",
+            status_code=400,
+        )
+
+    proposal: RegistrationPostcommitMutationProposal
+    decision: Optional[RegistrationPostcommitMutationDecision] = None
+    async with async_session_maker() as session:
+        actor = await _refresh_review_actor(session, actor)
+        result = await session.execute(
+            select(model).where(model.id == entity_id).with_for_update()
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_FOUND",
+                "El equipo o jugador no existe.",
+                status_code=404,
+            )
+        if isinstance(entity, Player) and entity.governance_state not in {
+            "ACTIVE",
+            "LEGACY_ACTIVE",
+        }:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_COMMITTED",
+                "El jugador todavía no es una entidad comprometida.",
+            )
+        base_snapshot = await _regs07_database_snapshot(session, entity)
+        base_snapshot_hash = await _regs07_database_hash(session, base_snapshot)
+        if (
+            int(entity.postcommit_revision or 0) < 1
+            or str(entity.postcommit_snapshot_hash or "")
+            != base_snapshot_hash
+        ):
+            raise _regs07_error(
+                "POSTCOMMIT_BASE_INTEGRITY_FAILED",
+                "La proyección comprometida no coincide con su hash vigente.",
+            )
+        proposed_snapshot = copy.deepcopy(base_snapshot)
+        for field, value in updates.items():
+            proposed_snapshot[field] = _regs07_json_value(value)
+        changes = postcommit_changed_fields(base_snapshot, proposed_snapshot)
+        if not changes:
+            return {
+                "success": True,
+                "message": "La entidad ya tenía exactamente esos valores.",
+                "idempotent": True,
+                "revision": int(entity.postcommit_revision),
+            }
+        proposed_snapshot_hash = await _regs07_database_hash(
+            session, proposed_snapshot
+        )
+        proposal_id = postcommit_proposal_id_for(
+            mutation_request_id, entity_type, entity_id
+        )
+        existing = (
+            await session.execute(
+                select(RegistrationPostcommitMutationProposal).where(
+                    RegistrationPostcommitMutationProposal.mutation_request_id
+                    == mutation_request_id
+                )
+            )
+        ).scalar_one_or_none()
+        team_id = entity.id if isinstance(entity, Team) else entity.team_id
+        if existing is not None:
+            same_request = (
+                existing.id == proposal_id
+                and existing.entity_type == entity_type
+                and existing.entity_id == entity_id
+                and existing.mutation_type == mutation_type
+                and existing.base_snapshot_hash == base_snapshot_hash
+                and existing.proposed_snapshot_hash == proposed_snapshot_hash
+                and existing.field_change_set_hash
+                == postcommit_sha256_binding(changes)
+            )
+            if not same_request:
+                raise _regs07_error(
+                    "POSTCOMMIT_REQUEST_ID_CONFLICT",
+                    "El identificador de solicitud ya está ligado a otra mutación.",
+                )
+            completed = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationExecution).where(
+                        RegistrationPostcommitMutationExecution.proposal_id
+                        == existing.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if completed is not None:
+                return {
+                    "success": True,
+                    "message": "La modificación ya había sido aplicada.",
+                    "idempotent": True,
+                    "revision": existing.proposed_revision,
+                    "receipt_id": completed.finality_receipt_id,
+                }
+            proposal = existing
+            decision = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationDecision).where(
+                        RegistrationPostcommitMutationDecision.proposal_id
+                        == existing.id
+                    )
+                )
+            ).scalar_one_or_none()
+        else:
+            proposal = RegistrationPostcommitMutationProposal(
+                id=proposal_id,
+                mutation_request_id=mutation_request_id,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                team_id=team_id,
+                mutation_type=mutation_type,
+                base_revision=int(entity.postcommit_revision),
+                proposed_revision=int(entity.postcommit_revision) + 1,
+                base_snapshot=base_snapshot,
+                base_snapshot_hash=base_snapshot_hash,
+                proposed_snapshot=proposed_snapshot,
+                proposed_snapshot_hash=proposed_snapshot_hash,
+                field_changes=changes,
+                field_change_set_hash=postcommit_sha256_binding(changes),
+                mutation_reason=mutation_reason,
+                mutation_reason_binding=postcommit_sha256_binding(
+                    {"domain": "REG-S07", "reason": mutation_reason}
+                ),
+                source_evidence_binding=postcommit_source_evidence_binding(
+                    entity
+                ),
+                proposer_principal_id=actor["user_id"],
+                proposer_role=actor["role"],
+                role_assignment_id=actor["role_assignment_id"],
+                authorization_epoch=actor["authorization_epoch"],
+                authentication_method=actor["authentication_method"],
+                authentication_assurance_level=actor[
+                    "authentication_assurance_level"
+                ],
+                auth_context_id=actor["auth_context_id"],
+            )
+            session.add(proposal)
+            await session.commit()
+
+    client = RegistrationGovernanceClient.from_environment()
+    if decision is None:
+        try:
+            gate_response = await client.adjudicate_postcommit_mutation(
+                build_postcommit_gate_request(proposal)
+            )
+        except RegistrationGovernanceDenied as exc:
+            raise _regs07_error(
+                exc.reason_code,
+                "Zaubern no autorizó la modificación; no se cambió la entidad.",
+                extra={"reason_code": exc.reason_code},
+            ) from exc
+        async with async_session_maker() as session:
+            existing_decision = (
+                await session.execute(
+                    select(RegistrationPostcommitMutationDecision).where(
+                        RegistrationPostcommitMutationDecision.proposal_id
+                        == proposal.id
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_decision is None:
+                decision = build_postcommit_decision_row(
+                    proposal.id, gate_response
+                )
+                session.add(decision)
+                await session.commit()
+            else:
+                decision = existing_decision
+    if decision is None or decision.decision != "AUTHORIZE_POSTCOMMIT_MUTATION":
+        raise _regs07_error(
+            "POSTCOMMIT_MUTATION_NOT_AUTHORIZED",
+            "La política exige revisión adicional o denegó la modificación.",
+            extra={"reason_codes": list(decision.reason_codes if decision else [])},
+        )
+
+    async with async_session_maker() as session:
+        copa_db = CopaTelmexDB(session)
+        proposal = (
+            await session.execute(
+                select(RegistrationPostcommitMutationProposal).where(
+                    RegistrationPostcommitMutationProposal.id == proposal.id
+                )
+            )
+        ).scalar_one()
+        decision = (
+            await session.execute(
+                select(RegistrationPostcommitMutationDecision).where(
+                    RegistrationPostcommitMutationDecision.proposal_id
+                    == proposal.id
+                )
+            )
+        ).scalar_one()
+        result = await session.execute(
+            select(model).where(model.id == entity_id).with_for_update()
+        )
+        entity = result.scalar_one_or_none()
+        if entity is None:
+            raise _regs07_error(
+                "POSTCOMMIT_ENTITY_NOT_FOUND",
+                "La entidad dejó de existir antes de ejecutar la decisión.",
+                status_code=404,
+            )
+        current_actor = await _refresh_review_actor(
+            session, _review_session_actor(request)
+        )
+        if not _regs07_actor_matches(proposal, current_actor):
+            raise _regs07_error(
+                "POSTCOMMIT_ACTOR_AUTHORITY_CHANGED",
+                "La autoridad actual del operador cambió; solicita otra decisión.",
+            )
+        current_snapshot = await _regs07_database_snapshot(session, entity)
+        current_hash = await _regs07_database_hash(session, current_snapshot)
+        cas_succeeded = (
+            int(entity.postcommit_revision or 0) == proposal.base_revision
+            and str(entity.postcommit_snapshot_hash or "")
+            == proposal.base_snapshot_hash
+            and current_hash == proposal.base_snapshot_hash
+            and current_snapshot == dict(proposal.base_snapshot)
+        )
+        if not cas_succeeded:
+            raise _regs07_error(
+                "STALE_POSTCOMMIT_BASE",
+                "La entidad cambió después de la adjudicación; no se aplicó nada.",
+            )
+        database_transaction_id = "postgres-tx:" + str(
+            (await session.execute(text("SELECT txid_current()"))).scalar_one()
+        )
+        for field, value in updates.items():
+            setattr(entity, field, value)
+        entity.postcommit_revision = proposal.proposed_revision
+        entity.postcommit_snapshot_hash = proposal.proposed_snapshot_hash
+        try:
+            finality_response = await client.finalize_postcommit_mutation(
+                build_postcommit_finality_request(
+                    proposal=proposal,
+                    decision=decision,
+                    actual_projection_hash=proposal.proposed_snapshot_hash,
+                    database_transaction_id=database_transaction_id,
+                    cas_succeeded=True,
+                )
+            )
+        except RegistrationGovernanceDenied as exc:
+            await session.rollback()
+            raise _regs07_error(
+                exc.reason_code,
+                "Zaubern no confirmó la proyección; no se guardó ningún cambio.",
+                extra={"reason_code": exc.reason_code},
+            ) from exc
+        execution_id = postcommit_execution_id_for(proposal.id)
+        execution = build_postcommit_execution_row(
+            execution_id=execution_id,
+            proposal_id=proposal.id,
+            decision_id=decision.id,
+            database_transaction_id=database_transaction_id,
+            response=finality_response,
+        )
+        capability = issue_postcommit_persistence_capability(
+            proposal=proposal,
+            decision=decision,
+            finality_response=finality_response,
+            execution_id=execution_id,
+        )
+        copa_db.bind_postcommit_authority(capability)
+        session.add(execution)
+        await session.flush([execution])
+        with session.no_autoflush:
+            await session.execute(
+                text(
+                    """
+                    SELECT set_config(
+                        'samchat.regs07_execution_id',
+                        :execution_id,
+                        true
+                    )
+                    """
+                ),
+                {"execution_id": str(execution_id)},
+            )
+        await session.flush([entity])
+        await session.commit()
+        return {
+            "success": True,
+            "message": (
+                "Equipo actualizado con versión y recibos de gobernanza."
+                if entity_type == "TEAM"
+                else (
+                    "Jugador verificado con versión y recibos de gobernanza."
+                    if mutation_type == "VERIFY_PLAYER"
+                    else "Jugador actualizado con versión y recibos de gobernanza."
+                )
+            ),
+            "revision": proposal.proposed_revision,
+            "decision_receipt_id": decision.receipt_id,
+            "finality_receipt_id": execution.finality_receipt_id,
+        }
 
 
 def _redact_email(value: Optional[str]) -> str:
@@ -2509,20 +3493,24 @@ def _apply_review_form_edits(form_data: Any, base_extraction: Dict[str, Any]) ->
             existing["birth_date"] = (form_data.get(birth_date_key) or "").strip() or None
         if curp_key in form_data:
             existing["curp"] = (form_data.get(curp_key) or "").strip().upper() or None
-        if needs_review_key in form_data or row_keys_present:
-            existing["needs_review"] = str(form_data.get(needs_review_key) or "").lower() in {
-                "1",
-                "true",
-                "on",
-                "yes",
-            }
+        # REG-S05: review/eligibility state is derived, never human-editable.
+        if "needs_review" not in existing:
+            existing["needs_review"] = False
         updated_players.append(existing)
     extraction["players"] = updated_players
     return _normalize_review_extraction(extraction)
 
 
-async def _store_review_uploads(session_id: UUID, uploads: List[Any], *, start_index: int = 1) -> List[Dict[str, Any]]:
+async def _store_review_uploads(
+    session_id: UUID,
+    uploads: List[Any],
+    *,
+    start_index: int = 1,
+    storage_namespace: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     session_dir = review_uploads_dir / str(session_id)
+    if storage_namespace:
+        session_dir = session_dir / storage_namespace
     session_dir.mkdir(parents=True, exist_ok=True)
     stored_assets: List[Dict[str, Any]] = []
 
@@ -2620,29 +3608,21 @@ async def _process_review_assets(assets: List[Dict[str, Any]]) -> Tuple[Dict[str
     return _merge_review_extractions(page_results)
 
 
-async def _upsert_review_draft(
-    db_session: AsyncSession,
+def _prepare_review_draft_values(
     review_session: RegistrationReviewSession,
     extraction: Dict[str, Any],
     raw_payload: Dict[str, Any],
     *,
     layout_regions: Optional[Dict[str, Any]] = None,
     preserve_edits: bool = False,
-) -> RegistrationReviewDraft:
+    base_draft: Optional[RegistrationReviewDraft] = None,
+) -> Dict[str, Any]:
     validation = _build_review_commit_validation(
         extraction,
         _build_review_validation(extraction, raw_payload=raw_payload),
         review_session=review_session,
     )
-    draft_result = await db_session.execute(
-        select(RegistrationReviewDraft).where(
-            RegistrationReviewDraft.session_id == review_session.id
-        )
-    )
-    draft = draft_result.scalar_one_or_none()
-    if draft is None:
-        draft = RegistrationReviewDraft(session_id=review_session.id)
-        db_session.add(draft)
+    draft = base_draft or review_session.draft
 
     existing_audit = _review_audit_state(draft.validation if isinstance(draft.validation, dict) else None)
     extraction_metadata = _build_review_extraction_metadata(
@@ -2657,25 +3637,65 @@ async def _upsert_review_draft(
     raw_payload = dict(raw_payload or {})
     raw_payload["extraction_metadata"] = extraction_metadata
 
-    draft.ocr_raw = raw_payload
-    draft.extraction = extraction
-    if not preserve_edits or not isinstance(draft.review_edits, dict):
-        draft.review_edits = extraction
-    draft.validation = validation
-    draft.layout_regions = layout_regions or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None)
-    draft.overall_confidence = float(extraction.get("overall_confidence") or 0.0)
-    draft.needs_review = bool(validation.get("needs_review"))
+    review_edits = (
+        draft.review_edits
+        if preserve_edits and draft and isinstance(draft.review_edits, dict)
+        else extraction
+    )
+    return {
+        "ocr_raw": raw_payload,
+        "extraction": extraction,
+        "review_edits": review_edits,
+        "validation": validation,
+        "layout_regions": layout_regions
+        or (raw_payload.get("layout") if isinstance(raw_payload, dict) else None),
+        "overall_confidence": float(extraction.get("overall_confidence") or 0.0),
+        "needs_review": bool(validation.get("needs_review")),
+    }
+
+
+async def _upsert_review_draft(
+    db_session: AsyncSession,
+    review_session: RegistrationReviewSession,
+    extraction: Dict[str, Any],
+    raw_payload: Dict[str, Any],
+    *,
+    layout_regions: Optional[Dict[str, Any]] = None,
+    preserve_edits: bool = False,
+    mutation_type: str = "ocr_processed",
+    actor_id: Optional[str] = None,
+) -> RegistrationReviewDraft:
+    values = _prepare_review_draft_values(
+        review_session,
+        extraction,
+        raw_payload,
+        layout_regions=layout_regions,
+        preserve_edits=preserve_edits,
+    )
+    successor = await append_draft_version(
+        db_session,
+        review_session,
+        mutation_type=mutation_type,
+        actor_id=actor_id,
+        expected_draft=review_session.draft,
+        **values,
+    )
 
     detected_provider = None
-    if isinstance(raw_payload, dict):
+    governed_raw_payload = values["ocr_raw"]
+    if isinstance(governed_raw_payload, dict):
         detected_provider = (
-            raw_payload.get("provider")
-            or ((raw_payload.get("backend") or {}).get("provider") if isinstance(raw_payload.get("backend"), dict) else None)
+            governed_raw_payload.get("provider")
+            or (
+                (governed_raw_payload.get("backend") or {}).get("provider")
+                if isinstance(governed_raw_payload.get("backend"), dict)
+                else None
+            )
         )
     review_session.provider = str(detected_provider or review_session.provider or review_ocr_provider or "local")
     review_session.status = "ready"
     review_session.error_message = None
-    return draft
+    return successor
 
 # Serve tournament frontends with SPA fallback
 copa_america_dist_dir = Path(__file__).parent / "goal-fest-page" / "dist"
@@ -3055,6 +4075,20 @@ async def home(request: Request):
 
             # Get recent registrations
             registrations = await copa_db.get_registrations_needing_review()
+            draft_lookup = aliased(RegistrationReviewDraft)
+            latest_draft_id = (
+                select(draft_lookup.id)
+                .where(
+                    draft_lookup.session_id == RegistrationReviewSession.id
+                )
+                .order_by(
+                    draft_lookup.draft_version.desc(),
+                    draft_lookup.created_at.desc(),
+                )
+                .limit(1)
+                .correlate(RegistrationReviewSession)
+                .scalar_subquery()
+            )
             review_result = await session.execute(
                 select(
                     RegistrationReviewSession.id.label("id"),
@@ -3085,8 +4119,7 @@ async def home(request: Request):
                 )
                 .outerjoin(
                     RegistrationReviewDraft,
-                    RegistrationReviewDraft.session_id
-                    == RegistrationReviewSession.id,
+                    RegistrationReviewDraft.id == latest_draft_id,
                 )
                 .where(RegistrationReviewSession.status != "committed")
             )
@@ -3290,7 +4323,7 @@ async def list_registration_review_sessions(request: Request):
                 select(RegistrationReviewSession)
                 .options(
                     selectinload(RegistrationReviewSession.assets),
-                    selectinload(RegistrationReviewSession.draft),
+                    selectinload(RegistrationReviewSession.drafts),
                 )
                 .order_by(RegistrationReviewSession.started_at.desc())
                 .limit(100)
@@ -3381,28 +4414,39 @@ async def create_registration_review_session(request: Request):
         if not stored_assets:
             raise HTTPException(status_code=400, detail="No pude guardar las imágenes de la sesión.")
 
+        initial_assets = []
         for asset_payload in stored_assets:
-            session.add(
-                RegistrationReviewAsset(
-                    session_id=review_session.id,
-                    page_index=asset_payload["page_index"],
-                    image_path=asset_payload["image_path"],
-                    sha256=asset_payload["sha256"],
-                    width=asset_payload["width"],
-                    height=asset_payload["height"],
-                )
+            asset = RegistrationReviewAsset(
+                session_id=review_session.id,
+                page_index=asset_payload["page_index"],
+                image_path=asset_payload["image_path"],
+                sha256=asset_payload["sha256"],
+                width=asset_payload["width"],
+                height=asset_payload["height"],
             )
+            session.add(asset)
+            initial_assets.append(asset)
 
         review_session.status = "processing"
         extraction, raw_payload, detected_provider, layout_regions = await _process_review_assets(stored_assets)
         review_session.provider = detected_provider or review_session.provider
-        await _upsert_review_draft(
+        initial_draft = await _upsert_review_draft(
             session,
             review_session,
             extraction,
             raw_payload,
             layout_regions=layout_regions,
+            mutation_type="web_upload_created",
+            actor_id=created_by_user_id,
         )
+        for asset in initial_assets:
+            asset.admitted_draft_id = initial_draft.id
+            asset.source_base_draft_id = initial_draft.id
+            asset.source_base_content_hash = initial_draft.content_hash
+            asset.source_ocr_run_ref = f"initial:{initial_draft.id}"
+            asset.admission_operation_id = initial_draft.mutation_operation_id
+            asset.admission_decision_id = initial_draft.mutation_decision_id
+            asset.admission_receipt_id = initial_draft.mutation_receipt_id
         await session.commit()
 
     return RedirectResponse(url=f"/registration-review/{review_session.id}", status_code=303)
@@ -3422,7 +4466,7 @@ async def get_registration_review_session_payload(session_id: str, request: Requ
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
         )
@@ -3480,7 +4524,7 @@ async def view_registration_review_session(request: Request, session_id: str):
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
         )
@@ -3490,9 +4534,41 @@ async def view_registration_review_session(request: Request, session_id: str):
 
         draft = review_session.draft
         extraction = _get_review_extraction(draft)
+        canonical_run = None
+        if draft is not None:
+            canonical_run_result = await session.execute(
+                select(RegistrationOcrRun)
+                .join(RegistrationOcrRun.decision)
+                .options(
+                    selectinload(RegistrationOcrRun.field_diffs),
+                    selectinload(RegistrationOcrRun.decision),
+                )
+                .where(
+                    RegistrationOcrRun.base_draft_id == draft.id,
+                    RegistrationOcrReprocessDecision.successor_draft_id.is_(
+                        None
+                    ),
+                    RegistrationOcrReprocessDecision.decision.in_(
+                        (
+                            "REQUIRE_FIELD_REVIEW",
+                            "REQUIRE_ROSTER_REVIEW",
+                            "DENY_REPROCESS_SUCCESSOR",
+                        )
+                    ),
+                )
+                .order_by(RegistrationOcrRun.created_at.desc())
+                .limit(1)
+            )
+            canonical_run = canonical_run_result.scalar_one_or_none()
         canonical_review = build_canonical_review_view(
-            draft.ocr_raw if draft else None,
+            (
+                canonical_run.proposed_ocr_raw
+                if canonical_run is not None
+                else draft.ocr_raw if draft else None
+            ),
             extraction,
+            canonical_run.field_diffs if canonical_run is not None else None,
+            canonical_run.decision if canonical_run is not None else None,
         )
         validation = (
             draft.validation
@@ -3504,6 +4580,8 @@ async def view_registration_review_session(request: Request, session_id: str):
             validation,
             review_session=review_session,
         )
+        if canonical_run is not None:
+            validation = _attach_unresolved_reprocess_blocker(validation)
         layout_regions = draft.layout_regions if draft and isinstance(draft.layout_regions, dict) else {"pages": {}, "player_page_map": {}}
         player_page_map = layout_regions.get("player_page_map") if isinstance(layout_regions, dict) else {}
         player_rows_map = {
@@ -3551,13 +4629,16 @@ async def view_registration_review_session(request: Request, session_id: str):
                 "canonical_review": canonical_review,
                 "canonical_promotion_enabled": _canonical_promotion_enabled(),
                 "tournament_options": _review_tournament_options(review_session.tournament_slug or "copa_telmex"),
+                "reprocess_request_id": str(uuid4()),
+                "page_append_request_id": str(uuid4()),
+                "edit_request_id": str(uuid4()),
             },
         )
 
 
 @app.post("/api/registration-review/{session_id}/edit")
 async def edit_registration_review_session(session_id: str, request: Request):
-    """Persist operator edits into the draft."""
+    """Adjudicate and atomically consume exact human field approvals."""
     _ensure_registration_review_access(request)
     actor = _review_session_actor(request)
     if not actor.get("user_id"):
@@ -3568,73 +4649,412 @@ async def edit_registration_review_session(session_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
 
     form_data = await request.form()
+    try:
+        edit_request_id = UUID(str(form_data.get("edit_request_id") or ""))
+    except ValueError as exc:
+        raise _review_error(
+            "human_edit_request_id_invalid",
+            "Recarga la revisión antes de autorizar correcciones.",
+            status_code=409,
+        ) from exc
+    try:
+        submitted_version = int(form_data.get("draft_version") or 0)
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "human_edit_base_version_invalid",
+            "Recarga la revisión antes de autorizar correcciones.",
+            status_code=409,
+        ) from exc
+    submitted_hash = str(form_data.get("draft_content_hash") or "").strip()
+    tenant_id = os.getenv("ZAUBERN_TENANT_ID", "samchat-prod")
+
+    proposal = None
+    base_draft = None
+    review_session_snapshot = None
+    existing_gate_response = None
     async with async_session_maker() as session:
+        actor = await _refresh_review_actor(session, actor)
+        prior_result = await session.execute(
+            select(RegistrationHumanFieldEditProposal)
+            .options(
+                selectinload(RegistrationHumanFieldEditProposal.approvals),
+                selectinload(RegistrationHumanFieldEditProposal.decision),
+                selectinload(RegistrationHumanFieldEditProposal.execution),
+            )
+            .where(
+                RegistrationHumanFieldEditProposal.edit_request_id
+                == edit_request_id
+            )
+        )
+        proposal = prior_result.scalar_one_or_none()
         result = await session.execute(
             select(RegistrationReviewSession)
-            .options(selectinload(RegistrationReviewSession.draft))
+            .options(
+                selectinload(RegistrationReviewSession.assets),
+                selectinload(RegistrationReviewSession.drafts),
+            )
             .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
             raise HTTPException(status_code=404, detail="Review draft not found")
         _ensure_review_session_mutable(review_session)
-
-        base_extraction = _get_review_extraction(review_session.draft)
-        edited_extraction = _apply_review_form_edits(form_data, base_extraction)
-        _, changed_at_iso = _review_event_timestamp()
-        corrections = _build_field_corrections(
-            base_extraction,
-            edited_extraction,
-            actor=actor,
-            changed_at=changed_at_iso,
-        )
-        existing_audit = _review_audit_state(
-            review_session.draft.validation if isinstance(review_session.draft.validation, dict) else None
-        )
-        review_session.tournament_slug = (form_data.get("tournament_slug") or "").strip() or None
-        validation = _build_review_commit_validation(
-            edited_extraction,
-            _build_review_validation(
-                edited_extraction,
-                raw_payload=review_session.draft.ocr_raw if isinstance(review_session.draft.ocr_raw, dict) else None,
-            ),
-            review_session=review_session,
-        )
-        existing_audit["extraction_metadata"] = existing_audit.get("extraction_metadata") or _build_review_extraction_metadata(
-            review_session.draft.ocr_raw if isinstance(review_session.draft.ocr_raw, dict) else None,
-            edited_extraction,
-            review_session=review_session,
-            assets=list(review_session.assets or []),
-        )
-        if corrections:
-            existing_audit["field_corrections"] = list(existing_audit.get("field_corrections") or []) + corrections
-            existing_audit["edit_events"] = list(existing_audit.get("edit_events") or []) + [
-                {
-                    "changed_by": actor.get("user_id"),
-                    "changed_role": actor.get("role"),
-                    "changed_at": changed_at_iso,
-                    "field_corrections_count": len(corrections),
+        if proposal is not None:
+            if proposal.session_id != review_session.id:
+                raise _review_error(
+                    "human_edit_request_scope_mismatch",
+                    "La autorización pertenece a otro expediente.",
+                    status_code=409,
+                )
+            if proposal.execution is not None:
+                return RedirectResponse(
+                    url=f"/registration-review/{session_id}", status_code=303
+                )
+            base_draft = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == proposal.base_draft_id
+                ),
+                None,
+            )
+            if base_draft is None:
+                raise _review_error(
+                    "human_edit_base_missing",
+                    "No existe el draft base de esta autorización.",
+                    status_code=409,
+                )
+            if proposal.decision is not None:
+                existing_gate_response = {
+                    "successor_authorized": (
+                        proposal.decision.decision
+                        == "AUTHORIZE_FIELD_EDIT_SUCCESSOR"
+                    ),
+                    "human_field_edit_decision": dict(
+                        proposal.decision.decision_document
+                    ),
+                    "human_field_edit_receipt": dict(
+                        proposal.decision.receipt_document
+                    ),
                 }
-            ]
-        validation = _attach_review_audit(validation, existing_audit)
-        review_session.draft.review_edits = edited_extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = bool(validation.get("needs_review"))
-        review_session.draft.overall_confidence = float(
-            edited_extraction.get("overall_confidence") or review_session.draft.overall_confidence or 0.0
+        else:
+            base_draft = review_session.draft
+            if (
+                submitted_version != int(base_draft.draft_version)
+                or submitted_hash != base_draft.content_hash
+            ):
+                raise _review_error(
+                    "STALE_HUMAN_APPROVAL",
+                    "El draft cambió. Recarga antes de autorizar correcciones.",
+                    status_code=409,
+                )
+            submitted_tournament = str(
+                form_data.get("tournament_slug") or ""
+            ).strip()
+            if submitted_tournament != str(
+                review_session.tournament_slug or ""
+            ).strip():
+                raise _review_error(
+                    "FIELD_PATH_NOT_EDITABLE",
+                    "El torneo no puede cambiarse mediante una aprobación de campos.",
+                    status_code=409,
+                )
+            base_extraction = ensure_roster_entry_ids(
+                _get_review_extraction(base_draft), review_session.id
+            )
+            edited_extraction = ensure_roster_entry_ids(
+                _apply_review_form_edits(form_data, base_extraction),
+                review_session.id,
+            )
+            _, changed_at_iso = _review_event_timestamp()
+            corrections = _build_field_corrections(
+                base_extraction,
+                edited_extraction,
+                actor=actor,
+                changed_at=changed_at_iso,
+            )
+            existing_audit = _review_audit_state(
+                base_draft.validation
+                if isinstance(base_draft.validation, dict)
+                else None
+            )
+            validation = _build_review_commit_validation(
+                edited_extraction,
+                _build_review_validation(
+                    edited_extraction,
+                    raw_payload=(
+                        base_draft.ocr_raw
+                        if isinstance(base_draft.ocr_raw, dict)
+                        else None
+                    ),
+                ),
+                review_session=review_session,
+            )
+            existing_audit["extraction_metadata"] = (
+                existing_audit.get("extraction_metadata")
+                or _build_review_extraction_metadata(
+                    (
+                        base_draft.ocr_raw
+                        if isinstance(base_draft.ocr_raw, dict)
+                        else None
+                    ),
+                    edited_extraction,
+                    review_session=review_session,
+                    assets=list(review_session.assets or []),
+                )
+            )
+            if corrections:
+                existing_audit["field_corrections"] = list(
+                    existing_audit.get("field_corrections") or []
+                ) + corrections
+                existing_audit["edit_events"] = list(
+                    existing_audit.get("edit_events") or []
+                ) + [
+                    {
+                        "changed_by": actor.get("user_id"),
+                        "changed_role": actor.get("role"),
+                        "changed_at": changed_at_iso,
+                        "field_corrections_count": len(corrections),
+                        "authority": "REG-S05",
+                    }
+                ]
+            validation = _attach_review_audit(validation, existing_audit)
+            proposed_values = build_successor_values(
+                base_draft,
+                review_edits=edited_extraction,
+                validation=validation,
+                needs_review=bool(validation.get("needs_review")),
+                overall_confidence=float(
+                    edited_extraction.get("overall_confidence")
+                    or base_draft.overall_confidence
+                    or 0.0
+                ),
+            )
+            blocking_result = await session.execute(
+                select(RegistrationOcrFieldDiff)
+                .join(RegistrationOcrFieldDiff.ocr_run)
+                .join(RegistrationOcrRun.decision)
+                .options(
+                    selectinload(
+                        RegistrationOcrFieldDiff.ocr_run
+                    ).selectinload(RegistrationOcrRun.decision)
+                )
+                .where(
+                    RegistrationOcrRun.base_draft_id == base_draft.id,
+                    RegistrationOcrFieldDiff.requires_review.is_(True),
+                    RegistrationOcrReprocessDecision.successor_draft_id.is_(
+                        None
+                    ),
+                    RegistrationOcrReprocessDecision.decision.in_(
+                        ("REQUIRE_FIELD_REVIEW", "REQUIRE_ROSTER_REVIEW")
+                    ),
+                )
+                .order_by(RegistrationOcrFieldDiff.field_path)
+            )
+            blocking_diffs = list(blocking_result.scalars().all())
+            proposal_uuid = proposal_id_for(
+                review_session.id, edit_request_id
+            )
+            issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+            resolutions, required_diff_ids = build_resolution_set(
+                tenant_id=tenant_id,
+                session_id=review_session.id,
+                proposal_id=proposal_uuid,
+                base_extraction=base_extraction,
+                proposed_extraction=edited_extraction,
+                assets=list(review_session.assets or []),
+                layout_regions=(
+                    base_draft.layout_regions
+                    if isinstance(base_draft.layout_regions, dict)
+                    else {}
+                ),
+                blocking_diffs=blocking_diffs,
+                actor=actor,
+                issued_at=issued_at,
+            )
+            if not resolutions:
+                return RedirectResponse(
+                    url=f"/registration-review/{session_id}", status_code=303
+                )
+            successor_id = uuid4()
+            proposal = build_human_field_edit_proposal(
+                tenant_id=tenant_id,
+                session_id=review_session.id,
+                edit_request_id=edit_request_id,
+                base_draft=base_draft,
+                tournament_slug=str(review_session.tournament_slug or ""),
+                proposed_successor_draft_id=successor_id,
+                proposed_values=proposed_values,
+                resolutions=resolutions,
+                required_blocking_diff_ids=required_diff_ids,
+                actor=actor,
+            )
+            session.add(proposal)
+            session.add_all(build_human_approval_rows(proposal))
+            await session.commit()
+        review_session_snapshot = review_session
+
+    governance_client = RegistrationGovernanceClient.from_environment()
+    if existing_gate_response is not None:
+        gate_response = existing_gate_response
+    else:
+        async with async_session_maker() as session:
+            current_draft = await latest_draft(session, session_uuid)
+            if current_draft is None:
+                raise _review_error(
+                    "STALE_HUMAN_APPROVAL",
+                    "El draft base ya no está disponible.",
+                    status_code=409,
+                )
+        gate_response = await governance_client.adjudicate_human_field_edit(
+            build_human_field_edit_gate_request(
+                tenant_id=tenant_id,
+                proposal=proposal,
+                current_draft=current_draft,
+                consuming_principal_id=str(actor["user_id"]),
+            )
         )
-        review_session.status = "ready"
-        await session.commit()
-        _log_registration_review_event(
-            "draft_edited",
-            session_id=review_session.id,
-            status="ok",
-            extra={
-                "actor_id": actor.get("user_id"),
-                "corrections": len(corrections),
-            },
+        async with async_session_maker() as session:
+            locked_result = await session.execute(
+                select(RegistrationHumanFieldEditProposal)
+                .options(
+                    selectinload(RegistrationHumanFieldEditProposal.decision)
+                )
+                .where(RegistrationHumanFieldEditProposal.id == proposal.id)
+                .with_for_update()
+            )
+            locked_proposal = locked_result.scalar_one()
+            if locked_proposal.decision is None:
+                session.add(
+                    build_human_field_edit_decision_row(
+                        locked_proposal, gate_response
+                    )
+                )
+                await session.commit()
+
+    decision_document = gate_response["human_field_edit_decision"]
+    if gate_response.get("successor_authorized") is not True:
+        raise _review_error(
+            str((decision_document.get("reason_codes") or ["DENY_FIELD_EDIT"])[0]),
+            "Zaubern no autorizó la corrección propuesta.",
+            status_code=409,
+            extra={"reason_codes": decision_document.get("reason_codes") or []},
         )
+
+    parent_authorization = human_field_edit_parent_authorization(gate_response)
+    successor_values = dict(proposal.proposed_values)
+    draft_authorization_payload = build_draft_authorization_payload(
+        review_session_snapshot,
+        base_draft,
+        successor_values=successor_values,
+        mutation_type="human_field_edit",
+        actor_id=actor.get("user_id"),
+        operation_id=proposal.operation_id,
+        new_draft_id=proposal.proposed_successor_draft_id,
+        parent_authorization=parent_authorization,
+    )
+    draft_authorization = await governance_client.authorize_draft_version(
+        draft_authorization_payload
+    )
+
+    try:
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(RegistrationReviewSession)
+                .options(selectinload(RegistrationReviewSession.drafts))
+                .where(RegistrationReviewSession.id == session_uuid)
+                .with_for_update()
+            )
+            review_session = result.scalar_one()
+            current_actor = await _refresh_review_actor(session, actor)
+            proposal_result = await session.execute(
+                select(RegistrationHumanFieldEditProposal)
+                .options(
+                    selectinload(RegistrationHumanFieldEditProposal.approvals),
+                    selectinload(RegistrationHumanFieldEditProposal.decision),
+                    selectinload(RegistrationHumanFieldEditProposal.execution),
+                )
+                .where(RegistrationHumanFieldEditProposal.id == proposal.id)
+                .with_for_update()
+            )
+            locked_proposal = proposal_result.scalar_one()
+            if locked_proposal.execution is not None:
+                return RedirectResponse(
+                    url=f"/registration-review/{session_id}", status_code=303
+                )
+            locked_base = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == locked_proposal.base_draft_id
+                ),
+                None,
+            )
+            if locked_base is None:
+                raise _review_error(
+                    "STALE_HUMAN_APPROVAL",
+                    "El draft base ya no está disponible.",
+                    status_code=409,
+                )
+            now = datetime.utcnow()
+            for approval in locked_proposal.approvals:
+                if (
+                    approval.approver_principal_id
+                    != str(current_actor["user_id"])
+                    or approval.approver_role != str(current_actor["role"])
+                    or approval.role_assignment_id
+                    != str(current_actor["role_assignment_id"])
+                    or approval.authorization_epoch
+                    != str(current_actor["authorization_epoch"])
+                ):
+                    raise _review_error(
+                        "APPROVER_BINDING_INVALID",
+                        "La identidad o rol del aprobador cambió.",
+                        status_code=409,
+                    )
+                if now < approval.not_before or now >= approval.expires_at:
+                    raise _review_error(
+                        "HUMAN_APPROVAL_EXPIRED",
+                        "La aprobación expiró. Recarga y revisa nuevamente.",
+                        status_code=409,
+                    )
+            successor = await insert_pre_authorized_draft_version(
+                session,
+                review_session,
+                expected_draft=locked_base,
+                successor_values=dict(locked_proposal.proposed_values),
+                authorization_payload=draft_authorization_payload,
+                authorization=draft_authorization,
+                parent_authorization=parent_authorization,
+            )
+            execution, consumptions = build_human_field_execution_rows(
+                proposal=locked_proposal,
+                decision=locked_proposal.decision,
+                successor=successor,
+                principal_id=str(current_actor["user_id"]),
+            )
+            session.add(execution)
+            session.add_all(consumptions)
+            review_session.status = "ready"
+            await session.commit()
+    except IntegrityError as exc:
+        raise _review_error(
+            "HUMAN_APPROVAL_ALREADY_CONSUMED",
+            "La aprobación ya fue consumida por otro sucesor.",
+            status_code=409,
+        ) from exc
+
+    _log_registration_review_event(
+        "draft_edited",
+        session_id=session_uuid,
+        status="ok",
+        extra={
+            "actor_id": actor.get("user_id"),
+            "authority": "REG-S05",
+            "proposal_id": str(proposal.id),
+            "approvals": len(proposal.resolutions),
+        },
+    )
 
     return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
 
@@ -3643,160 +5063,13 @@ async def edit_registration_review_session(session_id: str, request: Request):
 async def adopt_canonical_review_fields(
     session_id: str, request: Request
 ) -> RedirectResponse:
-    """Adopt explicitly selected sidecar fields into the editable draft."""
+    """Reject the retired canonical-adoption bypass."""
     _ensure_registration_review_access(request)
-    if not _canonical_promotion_enabled():
-        raise _review_error(
-            "canonical_promotion_disabled",
-            "La promoción canónica está deshabilitada en este entorno.",
-            status_code=409,
-        )
-    actor = _review_session_actor(request)
-    if not actor.get("user_id"):
-        raise HTTPException(
-            status_code=401,
-            detail="Sesión inválida para aplicar campos canónicos.",
-        )
-    try:
-        session_uuid = UUID(session_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
-
-    form_data = await request.form()
-    if str(form_data.get("confirm_canonical_adoption") or "").strip().lower() != "yes":
-        raise _review_error(
-            "canonical_confirmation_required",
-            "Confirma explícitamente la aplicación de los campos seleccionados.",
-        )
-    if hasattr(form_data, "getlist"):
-        selections = list(form_data.getlist("canonical_fields"))
-    else:
-        raw_selections = form_data.get("canonical_fields")
-        selections = (
-            list(raw_selections)
-            if isinstance(raw_selections, (list, tuple))
-            else [raw_selections]
-            if raw_selections
-            else []
-        )
-    expected_hash = str(form_data.get("canonical_hash") or "").strip()
-
-    async with async_session_maker() as session:
-        result = await session.execute(
-            select(RegistrationReviewSession)
-            .options(
-                selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
-            )
-            .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
-        )
-        review_session = result.scalar_one_or_none()
-        if not review_session or not review_session.draft:
-            raise HTTPException(status_code=404, detail="Review draft not found")
-        _ensure_review_session_mutable(review_session)
-
-        base_extraction = _get_review_extraction(review_session.draft)
-        _, promoted_at_iso = _review_event_timestamp()
-        try:
-            promotion = promote_canonical_fields(
-                review_session.draft.ocr_raw,
-                base_extraction,
-                selections,
-                expected_hash=expected_hash,
-                actor=actor,
-                promoted_at=promoted_at_iso,
-            )
-        except CanonicalPromotionError as exc:
-            conflict_codes = {
-                "canonical_document_hash_missing",
-                "canonical_evidence_missing",
-                "canonical_hash_missing",
-                "canonical_no_changes",
-                "canonical_player_missing",
-                "canonical_player_slot_missing",
-                "canonical_sidecar_changed",
-                "canonical_sidecar_unavailable",
-            }
-            raise _review_error(
-                exc.code,
-                exc.message,
-                status_code=409 if exc.code in conflict_codes else 400,
-            ) from exc
-
-        try:
-            promoted_extraction = RegistrationFormExtraction.model_validate(
-                promotion.extraction
-            ).model_dump(mode="json")
-        except Exception as exc:
-            raise _review_error(
-                "canonical_value_invalid",
-                "El valor canónico seleccionado no cumple el esquema de captura.",
-                status_code=409,
-            ) from exc
-        validation = _build_review_commit_validation(
-            promoted_extraction,
-            _build_review_validation(
-                promoted_extraction,
-                raw_payload=(
-                    review_session.draft.ocr_raw
-                    if isinstance(review_session.draft.ocr_raw, dict)
-                    else None
-                ),
-            ),
-            review_session=review_session,
-        )
-        audit = _review_audit_state(
-            review_session.draft.validation
-            if isinstance(review_session.draft.validation, dict)
-            else None
-        )
-        field_events = [copy.deepcopy(event) for event in promotion.field_events]
-        audit["field_corrections"] = list(audit.get("field_corrections") or []) + field_events
-        promotion_event = {
-            "canonical_hash": promotion.canonical_hash,
-            "document_sha256": promotion.document_sha256,
-            "promoted_by": {
-                "user_id": actor.get("user_id"),
-                "role": actor.get("role"),
-                "display_name": actor.get("display_name"),
-            },
-            "promoted_at": promoted_at_iso,
-            "field_count": len(field_events),
-            "fields": [event["path"] for event in field_events],
-            "capture_requires_separate_approval": True,
-        }
-        audit["canonical_promotion_events"] = list(
-            audit.get("canonical_promotion_events") or []
-        ) + [promotion_event]
-        audit["latest_canonical_promotion"] = promotion_event
-        audit["extraction_metadata"] = audit.get(
-            "extraction_metadata"
-        ) or _build_review_extraction_metadata(
-            review_session.draft.ocr_raw
-            if isinstance(review_session.draft.ocr_raw, dict)
-            else None,
-            promoted_extraction,
-            review_session=review_session,
-            assets=list(review_session.assets or []),
-        )
-        validation = _attach_review_audit(validation, audit)
-        review_session.draft.review_edits = promoted_extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = bool(validation.get("needs_review"))
-        review_session.status = "ready"
-        await session.commit()
-        _log_registration_review_event(
-            "canonical_fields_promoted",
-            session_id=review_session.id,
-            status="ready",
-            extra={
-                "actor_id": actor.get("user_id"),
-                "field_count": len(field_events),
-            },
-        )
-
-    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+    raise _review_error(
+        "canonical_promotion_requires_regs05_field_resolution",
+        "La adopción canónica debe convertirse primero en resoluciones REG-S05 exactas.",
+        status_code=409,
+    )
 
 
 @app.post("/api/registration-review/{session_id}/reject")
@@ -3824,7 +5097,7 @@ async def reject_registration_review_session(
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
-            .options(selectinload(RegistrationReviewSession.draft))
+            .options(selectinload(RegistrationReviewSession.drafts))
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
         )
@@ -3855,8 +5128,15 @@ async def reject_registration_review_session(
         validation["needs_review"] = True
 
         review_session.status = "rejected"
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = True
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="draft_rejected",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            validation=validation,
+            needs_review=True,
+        )
         await session.commit()
         _log_registration_review_event(
             "draft_rejected",
@@ -3873,22 +5153,39 @@ async def reject_registration_review_session(
 
 @app.post("/api/registration-review/{session_id}/reprocess")
 async def reprocess_registration_review_session(session_id: str, request: Request):
-    """Re-run OCR over the primary image asset."""
+    """Record and adjudicate a new OCR run against an explicit immutable base."""
     _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
     try:
         session_uuid = UUID(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
+    form_data = await request.form()
+    try:
+        submitted_base_id = UUID(str(form_data.get("base_draft_id") or ""))
+        submitted_base_version = int(form_data.get("base_draft_version") or 0)
+        reprocess_request_id = UUID(
+            str(form_data.get("reprocess_request_id") or "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "reprocess_base_missing",
+            "La solicitud de reproceso no declara una versión base válida.",
+        ) from exc
+    submitted_base_hash = str(form_data.get("base_content_hash") or "")
+    tenant_id = os.getenv("ZAUBERN_TENANT_ID", "samchat-prod")
+    existing_run_id = None
+    detected_provider = None
 
+    # Preflight rejects already-stale UI requests before paying for another OCR run.
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session:
@@ -3896,41 +5193,304 @@ async def reprocess_registration_review_session(session_id: str, request: Reques
         _ensure_review_session_mutable(review_session)
         if not review_session.assets:
             raise HTTPException(status_code=400, detail="La sesión no tiene imágenes para reprocesar.")
-
-        review_session.status = "processing"
+        base_draft = review_session.draft
+        if (
+            base_draft is None
+            or base_draft.id != submitted_base_id
+            or int(base_draft.draft_version) != submitted_base_version
+            or base_draft.content_hash != submitted_base_hash
+        ):
+            raise _review_error(
+                "stale_reprocess_base",
+                "El draft avanzó; recarga la revisión antes de reprocesar.",
+                status_code=409,
+            )
+        existing_run_result = await session.execute(
+            select(RegistrationOcrRun)
+            .options(selectinload(RegistrationOcrRun.decision))
+            .where(
+                RegistrationOcrRun.reprocess_request_id
+                == reprocess_request_id
+            )
+        )
+        existing_run = existing_run_result.scalar_one_or_none()
+        if existing_run is not None:
+            if (
+                existing_run.session_id != review_session.id
+                or existing_run.base_draft_id != submitted_base_id
+                or existing_run.base_content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "reprocess_request_id_conflict",
+                    "El identificador de reproceso ya está ligado a otra evidencia.",
+                    status_code=409,
+                )
+            if existing_run.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?reprocess_decision={existing_run.decision.decision}"
+                        "&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            existing_run_id = existing_run.id
         asset_payloads = [
             {
                 "page_index": asset.page_index,
                 "image_path": asset.image_path,
+                "sha256": asset.sha256,
                 "width": asset.width,
                 "height": asset.height,
             }
             for asset in review_session.assets
         ]
-        extraction, raw_payload, detected_provider, layout_regions = await _process_review_assets(asset_payloads)
-        review_session.provider = detected_provider or review_session.provider
-        await _upsert_review_draft(
-            session,
-            review_session,
-            extraction,
-            raw_payload,
-            layout_regions=layout_regions,
+
+    public_diffs: List[Dict[str, Any]]
+    if existing_run_id is None:
+        extraction, raw_payload, detected_provider, layout_regions = (
+            await _process_review_assets(asset_payloads)
         )
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(RegistrationReviewSession)
+                .options(
+                    selectinload(RegistrationReviewSession.assets),
+                    selectinload(RegistrationReviewSession.drafts),
+                )
+                .where(RegistrationReviewSession.id == session_uuid)
+                .with_for_update()
+            )
+            review_session = result.scalar_one()
+            base_draft = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == submitted_base_id
+                ),
+                None,
+            )
+            if (
+                base_draft is None
+                or int(base_draft.draft_version) != submitted_base_version
+                or base_draft.content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "reprocess_base_changed",
+                    "La versión base ya no coincide con la evidencia declarada.",
+                    status_code=409,
+                )
+            prepared = _prepare_review_draft_values(
+                review_session,
+                extraction,
+                raw_payload,
+                layout_regions=layout_regions,
+                preserve_edits=False,
+                base_draft=base_draft,
+            )
+            proposed_values = build_successor_values(base_draft, **prepared)
+            candidate_run, candidate_diffs, public_diffs = build_ocr_run(
+                tenant_id=tenant_id,
+                session_id=review_session.id,
+                reprocess_request_id=reprocess_request_id,
+                base_draft=base_draft,
+                assets=list(review_session.assets),
+                proposed_values=proposed_values,
+                provider=detected_provider,
+                prompt_config_hash=_reprocess_prompt_config_hash(),
+            )
+            existing_result = await session.execute(
+                select(RegistrationOcrRun)
+                .options(
+                    selectinload(RegistrationOcrRun.field_diffs),
+                    selectinload(RegistrationOcrRun.decision),
+                )
+                .where(
+                    RegistrationOcrRun.reprocess_request_id
+                    == reprocess_request_id
+                )
+            )
+            ocr_run = existing_result.scalar_one_or_none()
+            if ocr_run is None:
+                candidate_operation_id = candidate_run.operation_id
+                session.add(ocr_run := candidate_run)
+                for diff in candidate_diffs:
+                    session.add(diff)
+                try:
+                    await session.commit()
+                except IntegrityError:
+                    # A concurrent retry won the immutable-run insert.
+                    await session.rollback()
+                    concurrent_result = await session.execute(
+                        select(RegistrationOcrRun)
+                        .options(
+                            selectinload(RegistrationOcrRun.field_diffs),
+                            selectinload(RegistrationOcrRun.decision),
+                        )
+                        .where(
+                            RegistrationOcrRun.operation_id
+                            == candidate_operation_id
+                        )
+                    )
+                    ocr_run = concurrent_result.scalar_one()
+                    public_diffs = public_field_diffs(ocr_run.field_diffs)
+            elif ocr_run.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?reprocess_decision={ocr_run.decision.decision}"
+                        "&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            else:
+                public_diffs = public_field_diffs(ocr_run.field_diffs)
+            existing_run_id = ocr_run.id
+
+    async with async_session_maker() as session:
+        session_result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(selectinload(RegistrationReviewSession.drafts))
+            .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
+        )
+        review_session = session_result.scalar_one()
+        current_draft = review_session.draft
+        if current_draft is None:
+            raise _review_error(
+                "reprocess_current_draft_missing",
+                "La sesión no tiene una versión vigente para adjudicar.",
+                status_code=409,
+            )
+        run_result = await session.execute(
+            select(RegistrationOcrRun)
+            .options(
+                selectinload(RegistrationOcrRun.field_diffs),
+                selectinload(RegistrationOcrRun.decision),
+            )
+            .where(RegistrationOcrRun.id == existing_run_id)
+            .with_for_update()
+        )
+        ocr_run = run_result.scalar_one()
+        if ocr_run.decision is not None:
+            return RedirectResponse(
+                url=(
+                    f"/registration-review/{session_id}"
+                    f"?reprocess_decision={ocr_run.decision.decision}"
+                    "&idempotent=1"
+                ),
+                status_code=303,
+            )
+        public_diffs = public_field_diffs(ocr_run.field_diffs)
+        previous_run_result = await session.execute(
+            select(RegistrationOcrRun.id)
+            .join(
+                RegistrationOcrReprocessDecision,
+                RegistrationOcrReprocessDecision.ocr_run_id
+                == RegistrationOcrRun.id,
+            )
+            .where(
+                RegistrationOcrReprocessDecision.successor_draft_id
+                == ocr_run.base_draft_id
+            )
+            .order_by(RegistrationOcrRun.created_at.desc())
+            .limit(1)
+        )
+        previous_ocr_run_id = previous_run_result.scalar_one_or_none()
+        successor_draft_id = uuid4()
+        gate_request = build_reprocess_gate_request(
+            tenant_id=tenant_id,
+            run=ocr_run,
+            current_draft=current_draft,
+            public_diffs=public_diffs,
+            successor_draft_id=successor_draft_id,
+            previous_ocr_run_id=previous_ocr_run_id,
+        )
+        gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_reprocess(
+            gate_request
+        )
+        event = gate_response.get("reprocess_decision") or {}
+        receipt = gate_response.get("reprocess_receipt") or {}
+        if (
+            receipt.get("verified") is not True
+            or not event.get("decision_id")
+            or not receipt.get("receipt_id")
+        ):
+            raise RegistrationGovernanceDenied(
+                "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                "Zaubern returned an incomplete reprocess adjudication",
+            )
+        if gate_response.get("successor_authorized") is True:
+            successor = await append_draft_version(
+                session,
+                review_session,
+                mutation_type="ocr_reprocessed",
+                actor_id=actor.get("user_id"),
+                expected_draft=current_draft,
+                operation_id=ocr_run.operation_id,
+                new_draft_id=successor_draft_id,
+                parent_authorization=reprocess_parent_authorization(gate_response),
+                ocr_raw=ocr_run.proposed_ocr_raw,
+                extraction=ocr_run.proposed_extraction,
+                review_edits=ocr_run.proposed_extraction,
+                validation=ocr_run.proposed_validation,
+                layout_regions=ocr_run.proposed_layout_regions,
+                overall_confidence=float(
+                    (ocr_run.proposed_extraction or {}).get("overall_confidence")
+                    or 0.0
+                ),
+                needs_review=bool(
+                    (ocr_run.proposed_validation or {}).get("needs_review")
+                ),
+            )
+            if successor.content_hash != ocr_run.proposed_snapshot_hash:
+                raise RegistrationGovernanceDenied(
+                    "REPROCESS_SUCCESSOR_HASH_MISMATCH",
+                    "REG-S02 successor does not match the adjudicated snapshot",
+                )
+        decision = build_reprocess_decision_row(
+            run=ocr_run,
+            successor_draft_id=successor_draft_id,
+            response=gate_response,
+        )
+        session.add(decision)
+        review_session.provider = detected_provider or review_session.provider
+        review_session.status = "ready"
+        review_session.error_message = None
         await session.commit()
 
-    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/registration-review/{session_id}"
+            f"?reprocess_decision={decision.decision}"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/api/registration-review/{session_id}/assets")
 async def append_assets_to_registration_review_session(session_id: str, request: Request):
-    """Append extra images to an existing review session and merge them into the current draft."""
+    """Adjudicate one immutable page manifest before admitting assets or a successor."""
     _ensure_registration_review_access(request)
+    actor = _review_session_actor(request)
     try:
         session_uuid = UUID(session_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="Invalid review session ID") from exc
 
     form_data = await request.form()
+    try:
+        submitted_base_id = UUID(str(form_data.get("base_draft_id") or ""))
+        submitted_base_version = int(form_data.get("base_draft_version") or 0)
+        page_append_request_id = UUID(
+            str(form_data.get("page_append_request_id") or "")
+        )
+    except (TypeError, ValueError) as exc:
+        raise _review_error(
+            "page_append_base_missing",
+            "La solicitud de anexado no declara una versión base válida.",
+        ) from exc
+    submitted_base_hash = str(form_data.get("base_content_hash") or "")
     uploads = [upload for upload in form_data.getlist("files") if getattr(upload, "filename", None)]
     if not uploads:
         raise _review_error("missing_files", "Sube al menos una imagen nueva.")
@@ -3940,15 +5500,17 @@ async def append_assets_to_registration_review_session(session_id: str, request:
             f"Solo se permiten hasta {REVIEW_SESSION_MAX_FILES} imágenes por operación.",
         )
 
+    existing_attempt_id = None
+    asset_payloads: List[Dict[str, Any]] = []
+    next_index = 1
     async with async_session_maker() as session:
         result = await session.execute(
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
-            .with_for_update()
         )
         review_session = result.scalar_one_or_none()
         if not review_session or not review_session.draft:
@@ -3959,51 +5521,308 @@ async def append_assets_to_registration_review_session(session_id: str, request:
                 "too_many_files",
                 f"Solo se permiten hasta {REVIEW_SESSION_MAX_FILES} páginas por revisión.",
             )
+        base_draft = review_session.draft
+        if (
+            base_draft.id != submitted_base_id
+            or int(base_draft.draft_version) != submitted_base_version
+            or base_draft.content_hash != submitted_base_hash
+        ):
+            raise _review_error(
+                "stale_page_append_base",
+                "El draft avanzó; recarga la revisión antes de anexar páginas.",
+                status_code=409,
+            )
+        attempt_result = await session.execute(
+            select(RegistrationPageAppendAttempt)
+            .options(selectinload(RegistrationPageAppendAttempt.decision))
+            .where(
+                RegistrationPageAppendAttempt.page_append_request_id
+                == page_append_request_id
+            )
+        )
+        existing_attempt = attempt_result.scalar_one_or_none()
+        if existing_attempt is not None:
+            if (
+                existing_attempt.session_id != review_session.id
+                or existing_attempt.base_draft_id != submitted_base_id
+                or existing_attempt.base_content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "page_append_request_id_conflict",
+                    "El identificador de anexado ya está ligado a otra evidencia.",
+                    status_code=409,
+                )
+            if existing_attempt.decision is not None:
+                return RedirectResponse(
+                    url=(
+                        f"/registration-review/{session_id}"
+                        f"?page_composition_decision="
+                        f"{existing_attempt.decision.decision}&idempotent=1"
+                    ),
+                    status_code=303,
+                )
+            existing_attempt_id = existing_attempt.id
+        next_index = (
+            max((asset.page_index for asset in review_session.assets), default=0)
+            or 0
+        ) + 1
+        asset_payloads = [
+            {
+                "page_index": asset.page_index,
+                "image_path": asset.image_path,
+                "sha256": asset.sha256,
+                "width": asset.width,
+                "height": asset.height,
+            }
+            for asset in review_session.assets
+        ]
 
-        next_index = (max((asset.page_index for asset in review_session.assets), default=0) or 0) + 1
-        stored_assets = await _store_review_uploads(review_session.id, uploads, start_index=next_index)
+    detected_provider = None
+    if existing_attempt_id is None:
+        stored_assets = await _store_review_uploads(
+            session_uuid,
+            uploads,
+            start_index=next_index,
+            storage_namespace=f"append-{page_append_request_id}",
+        )
         if not stored_assets:
-            raise HTTPException(status_code=400, detail="No pude guardar las nuevas imágenes.")
-
-        for asset_payload in stored_assets:
-            session.add(
-                RegistrationReviewAsset(
-                    session_id=review_session.id,
-                    page_index=asset_payload["page_index"],
-                    image_path=asset_payload["image_path"],
-                    sha256=asset_payload["sha256"],
-                    width=asset_payload["width"],
-                    height=asset_payload["height"],
+            raise HTTPException(
+                status_code=400, detail="No pude guardar las nuevas imágenes."
+            )
+        incoming_extraction, incoming_raw, detected_provider, incoming_layout = await _process_review_assets(stored_assets)
+        async with async_session_maker() as session:
+            result = await session.execute(
+                select(RegistrationReviewSession)
+                .options(
+                    selectinload(RegistrationReviewSession.assets),
+                    selectinload(RegistrationReviewSession.drafts),
+                )
+                .where(RegistrationReviewSession.id == session_uuid)
+                .with_for_update()
+            )
+            review_session = result.scalar_one()
+            base_draft = next(
+                (
+                    draft
+                    for draft in review_session.drafts
+                    if draft.id == submitted_base_id
+                ),
+                None,
+            )
+            if (
+                base_draft is None
+                or int(base_draft.draft_version) != submitted_base_version
+                or base_draft.content_hash != submitted_base_hash
+            ):
+                raise _review_error(
+                    "page_append_base_changed",
+                    "La versión base cambió mientras se procesaban las páginas.",
+                    status_code=409,
+                )
+            base_extraction = _get_review_extraction(base_draft)
+            existing_layout = (
+                base_draft.layout_regions
+                if isinstance(base_draft.layout_regions, dict)
+                else {}
+            )
+            merged_extraction, merged_raw, merged_layout = (
+                _append_review_pages_to_extraction(
+                    base_extraction,
+                    incoming_extraction=incoming_extraction,
+                    incoming_raw={
+                        "provider": detected_provider,
+                        "page_count": len(review_session.assets)
+                        + len(stored_assets),
+                        "pages": list((base_draft.ocr_raw or {}).get("pages") or [])
+                        + list((incoming_raw or {}).get("pages") or []),
+                    },
+                    incoming_layout=incoming_layout,
+                    existing_layout=existing_layout,
                 )
             )
+            current_manifest = existing_page_manifest(
+                session_id=review_session.id,
+                base_draft=base_draft,
+                assets=list(review_session.assets),
+            )
+            (
+                append_ocr_run_id,
+                operation_id,
+                staged_assets,
+                appended_manifest,
+            ) = staged_page_manifest(
+                session_id=review_session.id,
+                base_draft=base_draft,
+                page_append_request_id=page_append_request_id,
+                stored_assets=stored_assets,
+            )
+            composed_manifest = proposed_page_manifest(
+                current_manifest, appended_manifest
+            )
+            prepared = _prepare_review_draft_values(
+                review_session,
+                merged_extraction,
+                merged_raw,
+                layout_regions=merged_layout,
+                preserve_edits=False,
+                base_draft=base_draft,
+            )
+            proposed_values = build_successor_values(
+                base_draft,
+                **prepared,
+                page_manifest_hash=page_composition_sha256_binding(
+                    composed_manifest
+                ),
+            )
+            candidate_attempt = build_page_append_attempt(
+                session_id=review_session.id,
+                page_append_request_id=page_append_request_id,
+                base_draft=base_draft,
+                provider=detected_provider,
+                prompt_config_hash=_reprocess_prompt_config_hash(),
+                append_ocr_run_id=append_ocr_run_id,
+                operation_id=operation_id,
+                existing_manifest=current_manifest,
+                appended_manifest=appended_manifest,
+                staged_assets=staged_assets,
+                incoming_extraction=incoming_extraction,
+                incoming_ocr_raw=incoming_raw or {},
+                incoming_layout_regions=incoming_layout or {},
+                proposed_values=proposed_values,
+            )
+            session.add(candidate_attempt)
+            try:
+                await session.commit()
+                existing_attempt_id = candidate_attempt.id
+            except IntegrityError:
+                await session.rollback()
+                concurrent = await session.execute(
+                    select(RegistrationPageAppendAttempt).where(
+                        RegistrationPageAppendAttempt.page_append_request_id
+                        == page_append_request_id
+                    )
+                )
+                existing_attempt_id = concurrent.scalar_one().id
 
-        review_session.status = "processing"
-        incoming_extraction, incoming_raw, detected_provider, incoming_layout = await _process_review_assets(stored_assets)
-        base_extraction = _get_review_extraction(review_session.draft)
-        existing_layout = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
-        merged_extraction, merged_raw, merged_layout = _append_review_pages_to_extraction(
-            base_extraction,
-            incoming_extraction=incoming_extraction,
-            incoming_raw={
-                "provider": detected_provider,
-                "page_count": len(stored_assets),
-                "pages": list((review_session.draft.ocr_raw or {}).get("pages") or []) + list((incoming_raw or {}).get("pages") or []),
-            },
-            incoming_layout=incoming_layout,
-            existing_layout=existing_layout,
+    tenant_id = os.getenv("ZAUBERN_TENANT_ID", "samchat-prod")
+    async with async_session_maker() as session:
+        session_result = await session.execute(
+            select(RegistrationReviewSession)
+            .options(selectinload(RegistrationReviewSession.drafts))
+            .where(RegistrationReviewSession.id == session_uuid)
+            .with_for_update()
         )
-
-        await _upsert_review_draft(
-            session,
-            review_session,
-            merged_extraction,
-            merged_raw,
-            layout_regions=merged_layout,
+        review_session = session_result.scalar_one()
+        current_draft = review_session.draft
+        attempt_result = await session.execute(
+            select(RegistrationPageAppendAttempt)
+            .options(selectinload(RegistrationPageAppendAttempt.decision))
+            .where(RegistrationPageAppendAttempt.id == existing_attempt_id)
+            .with_for_update()
         )
+        attempt = attempt_result.scalar_one()
+        if attempt.decision is not None:
+            return RedirectResponse(
+                url=(
+                    f"/registration-review/{session_id}"
+                    f"?page_composition_decision={attempt.decision.decision}"
+                    "&idempotent=1"
+                ),
+                status_code=303,
+            )
+        base_draft = next(
+            (
+                draft
+                for draft in review_session.drafts
+                if draft.id == attempt.base_draft_id
+            ),
+            None,
+        )
+        if base_draft is None or current_draft is None:
+            raise _review_error(
+                "page_composition_base_missing",
+                "No existe la versión base para adjudicar la composición.",
+                status_code=409,
+            )
+        successor_draft_id = uuid4()
+        gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_page_composition(
+            build_page_composition_gate_request(
+                tenant_id=tenant_id,
+                tournament_slug=review_session.tournament_slug,
+                attempt=attempt,
+                current_draft=current_draft,
+                base_extraction=_get_review_extraction(base_draft),
+                successor_draft_id=successor_draft_id,
+            )
+        )
+        event = gate_response.get("page_composition_decision") or {}
+        receipt = gate_response.get("page_composition_receipt") or {}
+        if (
+            receipt.get("verified") is not True
+            or not event.get("decision_id")
+            or not receipt.get("receipt_id")
+        ):
+            raise RegistrationGovernanceDenied(
+                "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                "Zaubern returned an incomplete page composition adjudication",
+            )
+        if gate_response.get("successor_authorized") is True:
+            successor = await append_draft_version(
+                session,
+                review_session,
+                mutation_type="pages_appended",
+                actor_id=actor.get("user_id"),
+                expected_draft=current_draft,
+                operation_id=attempt.operation_id,
+                new_draft_id=successor_draft_id,
+                parent_authorization=page_composition_parent_authorization(
+                    gate_response
+                ),
+                ocr_raw=attempt.proposed_ocr_raw,
+                extraction=attempt.proposed_extraction,
+                review_edits=attempt.proposed_extraction,
+                validation=attempt.proposed_validation,
+                layout_regions=attempt.proposed_layout_regions,
+                page_manifest_hash=attempt.proposed_page_manifest_hash,
+                overall_confidence=float(
+                    (attempt.proposed_extraction or {}).get(
+                        "overall_confidence"
+                    )
+                    or 0.0
+                ),
+                needs_review=bool(
+                    (attempt.proposed_validation or {}).get("needs_review")
+                ),
+            )
+            if successor.content_hash != attempt.proposed_snapshot_hash:
+                raise RegistrationGovernanceDenied(
+                    "PAGE_COMPOSITION_SUCCESSOR_HASH_MISMATCH",
+                    "REG-S02 successor does not match the adjudicated composition",
+                )
+            for asset in admitted_asset_rows(
+                attempt=attempt,
+                successor_draft_id=successor_draft_id,
+                response=gate_response,
+            ):
+                session.add(asset)
+        decision = build_page_composition_decision_row(
+            attempt=attempt,
+            successor_draft_id=successor_draft_id,
+            response=gate_response,
+        )
+        session.add(decision)
         review_session.provider = detected_provider or review_session.provider
+        review_session.status = "ready"
+        review_session.error_message = None
         await session.commit()
 
-    return RedirectResponse(url=f"/registration-review/{session_id}", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/registration-review/{session_id}"
+            f"?page_composition_decision={decision.decision}"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/api/registration-review/{session_id}/commit")
@@ -4023,7 +5842,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
             select(RegistrationReviewSession)
             .options(
                 selectinload(RegistrationReviewSession.assets),
-                selectinload(RegistrationReviewSession.draft),
+                selectinload(RegistrationReviewSession.drafts),
             )
             .where(RegistrationReviewSession.id == session_uuid)
             .with_for_update()
@@ -4050,13 +5869,32 @@ async def commit_registration_review_session(session_id: str, request: Request):
         _ensure_review_session_mutable(review_session)
         _ensure_review_session_not_rejected(review_session)
 
+        await session.execute(
+            select(RegistrationReviewDraft)
+            .where(RegistrationReviewDraft.id == review_session.draft.id)
+            .with_for_update()
+        )
+
         form_data = await request.form()
         extraction = _apply_review_form_edits(form_data, _get_review_extraction(review_session.draft))
+        try:
+            submitted_draft_version = int(form_data.get("draft_version") or 0)
+        except (TypeError, ValueError):
+            submitted_draft_version = 0
         approved_at_dt, approved_at_iso = _review_event_timestamp()
         commit_request_id = secrets.token_hex(12)
         review_session.tournament_slug = (form_data.get("tournament_slug") or review_session.tournament_slug or "").strip() or None
         existing_audit = _review_audit_state(
             review_session.draft.validation if isinstance(review_session.draft.validation, dict) else None
+        )
+        draft_incident_policy = copy.deepcopy(
+            existing_audit.get("incident_policy")
+            or (
+                review_session.draft.validation.get("incident_policy")
+                if isinstance(review_session.draft.validation, dict)
+                else {}
+            )
+            or {}
         )
         existing_audit["extraction_metadata"] = existing_audit.get("extraction_metadata") or _build_review_extraction_metadata(
             review_session.draft.ocr_raw if isinstance(review_session.draft.ocr_raw, dict) else None,
@@ -4072,13 +5910,54 @@ async def commit_registration_review_session(session_id: str, request: Request):
             ),
             review_session=review_session,
         )
+        if not draft_incident_policy:
+            draft_incident_policy = copy.deepcopy(
+                validation.get("incident_policy") or {}
+            )
+        existing_audit["draft_incident_policy"] = copy.deepcopy(
+            draft_incident_policy
+        )
+        existing_audit["commit_incident_policy"] = copy.deepcopy(
+            validation.get("incident_policy") or {}
+        )
+        existing_audit["incident_policy"] = copy.deepcopy(
+            validation.get("incident_policy") or {}
+        )
+        existing_audit["policy_changed_at_commit"] = draft_incident_policy != (
+            validation.get("incident_policy") or {}
+        )
         validation = _attach_review_audit(validation, existing_audit)
+        unresolved_reprocess_result = await session.execute(
+            select(RegistrationOcrReprocessDecision.id)
+            .join(
+                RegistrationOcrRun,
+                RegistrationOcrReprocessDecision.ocr_run_id
+                == RegistrationOcrRun.id,
+            )
+            .where(
+                RegistrationOcrRun.base_draft_id
+                == review_session.draft.id,
+                RegistrationOcrReprocessDecision.successor_draft_id.is_(
+                    None
+                ),
+                RegistrationOcrReprocessDecision.decision.in_(
+                    (
+                        "REQUIRE_FIELD_REVIEW",
+                        "REQUIRE_ROSTER_REVIEW",
+                        "DENY_REPROCESS_SUCCESSOR",
+                    )
+                ),
+            )
+            .limit(1)
+        )
+        if unresolved_reprocess_result.scalar_one_or_none() is not None:
+            validation = _attach_unresolved_reprocess_blocker(validation)
         team_payload = extraction.get("team") or {}
         team_name = (team_payload.get("name") or "").strip()
         players_payload = [
             player
             for player in (extraction.get("players") or [])
-            if _player_has_usable_signal(player) and (player.get("name") or "").strip()
+            if _player_has_usable_signal(player)
         ]
         tournament_slug = (review_session.tournament_slug or "").strip() or None
 
@@ -4092,6 +5971,135 @@ async def commit_registration_review_session(session_id: str, request: Request):
             )
             validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
             validation["ready_to_commit"] = False
+
+        copa_db = None
+        photo_artifacts: Dict[int, Dict[str, Any]] = {}
+        if not validation.get("blockers") and tournament_slug:
+            copa_db = CopaTelmexDB(session)
+            layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
+            photo_artifacts = _build_review_photo_artifacts(
+                team_id=review_session.id,
+                players_payload=players_payload,
+                assets=list(review_session.assets or []),
+                layout_regions=layout_regions,
+            )
+            existing_photo_records = await copa_db.get_player_photo_fingerprints_by_tournament(tournament_slug)
+            incident_policy = _build_registration_incident_policy(
+                extraction,
+                photo_artifacts=photo_artifacts,
+                existing_photo_records=existing_photo_records,
+            )
+            validation = _build_review_commit_validation(
+                extraction,
+                _build_review_validation(
+                    extraction,
+                    raw_payload=review_session.draft.ocr_raw if isinstance(review_session.draft.ocr_raw, dict) else None,
+                ),
+                review_session=review_session,
+                incident_policy=incident_policy,
+            )
+            existing_audit["draft_incident_policy"] = copy.deepcopy(draft_incident_policy)
+            existing_audit["commit_incident_policy"] = copy.deepcopy(incident_policy)
+            existing_audit["incident_policy"] = copy.deepcopy(incident_policy)
+            existing_audit["policy_changed_at_commit"] = draft_incident_policy != incident_policy
+            validation = _attach_review_audit(validation, existing_audit)
+
+        if submitted_draft_version != _review_draft_version(review_session.draft):
+            validation.setdefault("blockers", []).append(
+                {
+                    "code": "STALE_GOVERNANCE_DECISION",
+                    "field": "draft_version",
+                    "message": "El draft cambió desde que se abrió. Recarga antes de aprobar.",
+                }
+            )
+            validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
+            validation["ready_to_commit"] = False
+
+        manager_payload = extraction.get("manager") or {}
+        copa_db = copa_db or CopaTelmexDB(session)
+        team_chat_id = review_session.telegram_chat_id if review_session.telegram_chat_id is not None else None
+        team = None
+        reserved_team_id = uuid4()
+        governance_result = None
+        governance_client = None
+        persistence_capability = None
+        if not validation.get("blockers"):
+            try:
+                team = await copa_db.get_team_by_name(
+                    name=team_name,
+                    category=team_payload.get("category"),
+                    telegram_chat_id=team_chat_id,
+                    tournament_slug=tournament_slug,
+                )
+                if team:
+                    reserved_team_id = team.id
+                    proposed_team_state = {
+                        "tournament_slug": tournament_slug,
+                        "gender": team_payload.get("gender"),
+                        "category": team_payload.get("category"),
+                        "league": team_payload.get("league"),
+                        "representative_name": manager_payload.get("name"),
+                        "state": team_payload.get("state"),
+                        "municipality": team_payload.get("municipality"),
+                        "contact_phone": manager_payload.get("phone"),
+                        "contact_email": manager_payload.get("email"),
+                    }
+                    conflicting_fields = sorted(
+                        field
+                        for field, proposed_value in proposed_team_state.items()
+                        if proposed_value not in (None, "")
+                        and getattr(team, field, None) != proposed_value
+                    )
+                    if conflicting_fields:
+                        raise PersistenceAuthorityDenied(
+                            "POSTCOMMIT_TEAM_SUCCESSOR_REQUIRED",
+                            "existing committed Team differs in fields: "
+                            + ",".join(conflicting_fields),
+                        )
+                governance_client = RegistrationGovernanceClient.from_environment()
+                governance_request = build_preauthorization_request(
+                    tenant_id=os.getenv("SAMCHAT_GOVERNANCE_TENANT_ID", "samchat-prod"),
+                    draft_id=str(review_session.draft.id),
+                    draft_version=_review_draft_version(review_session.draft),
+                    team_id=str(reserved_team_id),
+                    tournament_slug=str(tournament_slug),
+                    original_extraction=(
+                        review_session.draft.extraction
+                        if isinstance(review_session.draft.extraction, dict)
+                        else {}
+                    ),
+                    proposed_extraction=extraction,
+                    assets=list(review_session.assets or []),
+                    layout_regions=(
+                        review_session.draft.layout_regions
+                        if isinstance(review_session.draft.layout_regions, dict)
+                        else {}
+                    ),
+                    incident_policy=(
+                        validation.get("incident_policy")
+                        if isinstance(validation.get("incident_policy"), dict)
+                        else {}
+                    ),
+                )
+                governance_result = await governance_client.preauthorize(governance_request)
+                persistence_capability = issue_registration_persistence_capability(
+                    governance_result,
+                    tenant_id=str(governance_request["tenant_id"]),
+                    draft_id=str(review_session.draft.id),
+                    draft_version=_review_draft_version(review_session.draft),
+                    team_id=str(reserved_team_id),
+                )
+                copa_db.bind_persistence_authority(persistence_capability)
+            except (RegistrationGovernanceDenied, PersistenceAuthorityDenied) as exc:
+                validation.setdefault("blockers", []).append(
+                    {
+                        "code": exc.reason_code,
+                        "field": "governance",
+                        "message": exc.detail,
+                    }
+                )
+                validation["blockers"] = _dedupe_review_items(validation.get("blockers") or [])
+                validation["ready_to_commit"] = False
 
         if validation.get("blockers"):
             commit_audit = _build_commit_audit_envelope(
@@ -4110,9 +6118,16 @@ async def commit_registration_review_session(session_id: str, request: Request):
             audit["latest_commit"] = commit_audit
             audit["commit_events"] = list(audit.get("commit_events") or []) + [commit_audit]
             validation = _attach_review_audit(validation, audit)
-            review_session.draft.review_edits = extraction
-            review_session.draft.validation = validation
-            review_session.draft.needs_review = True
+            await append_draft_version(
+                session,
+                review_session,
+                mutation_type="commit_blocked",
+                actor_id=actor.get("user_id"),
+                expected_draft=review_session.draft,
+                review_edits=extraction,
+                validation=validation,
+                needs_review=True,
+            )
             review_session.status = "ready"
             await session.commit()
             _log_registration_review_event(
@@ -4135,42 +6150,25 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 },
             )
 
-        manager_payload = extraction.get("manager") or {}
-        copa_db = CopaTelmexDB(session)
-        team_chat_id = review_session.telegram_chat_id if review_session.telegram_chat_id is not None else None
-        team = await copa_db.get_team_by_name(
-            name=team_name,
-            category=team_payload.get("category"),
-            telegram_chat_id=team_chat_id,
-            tournament_slug=tournament_slug,
-        )
         if not team:
             team = await copa_db.create_team(
                 name=team_name,
                 telegram_chat_id=review_session.telegram_chat_id,
+                team_id=reserved_team_id,
                 tournament_slug=tournament_slug,
                 gender=team_payload.get("gender"),
                 category=team_payload.get("category"),
                 league=team_payload.get("league"),
                 representative_name=manager_payload.get("name"),
+                contact_phone=manager_payload.get("phone"),
+                contact_email=manager_payload.get("email"),
                 state=team_payload.get("state"),
                 municipality=team_payload.get("municipality"),
                 telegram_user_id=review_session.telegram_user_id,
                 roster_image_path=_storage_relative_path(review_session.assets[0].image_path) if review_session.assets else None,
             )
-        else:
-            team.tournament_slug = tournament_slug
-            team.gender = team_payload.get("gender") or team.gender
-            team.category = team_payload.get("category") or team.category
-            team.league = team_payload.get("league") or team.league
-            team.representative_name = manager_payload.get("name") or team.representative_name
-            team.state = team_payload.get("state") or team.state
-            team.municipality = team_payload.get("municipality") or team.municipality
-            if review_session.assets and not team.roster_image_path:
-                team.roster_image_path = _storage_relative_path(review_session.assets[0].image_path)
-
-        team.contact_phone = manager_payload.get("phone") or team.contact_phone
-        team.contact_email = manager_payload.get("email") or team.contact_email
+        # Existing committed Team rows are never edited by REG-S06. Any
+        # differing metadata was blocked above and must go through REG-S07.
 
         layout_regions = review_session.draft.layout_regions if isinstance(review_session.draft.layout_regions, dict) else {}
         photo_artifacts = _build_review_photo_artifacts(
@@ -4183,8 +6181,25 @@ async def commit_registration_review_session(session_id: str, request: Request):
         created_players = 0
         skipped_players = 0
         updated_player_photos = 0
+        provisional_players = []
+        roster_decision = governance_result["roster_decision"]
+        preauthorization_receipt = governance_result["preauthorization_receipt"]
+        incident_policy = (
+            validation.get("incident_policy")
+            if isinstance(validation.get("incident_policy"), dict)
+            else {}
+        )
+        blocked_player_indexes = _players_blocked_by_incident_policy(
+            incident_policy
+        )
         for idx, player_payload in enumerate(players_payload, 1):
+            if idx in blocked_player_indexes:
+                skipped_players += 1
+                continue
             full_name = (player_payload.get("name") or "").strip()
+            if not full_name:
+                skipped_players += 1
+                continue
             first_name = (player_payload.get("first_name") or "").strip()
             last_name = " ".join(
                 part
@@ -4200,7 +6215,20 @@ async def commit_registration_review_session(session_id: str, request: Request):
             birth_date = _parse_birth_date(player_payload.get("birth_date"))
             raw_curp = (player_payload.get("curp") or "").strip().upper() or None
             curp, curp_truncated = _normalize_curp_for_storage(raw_curp)
-            player_needs_review = bool(player_payload.get("needs_review")) or curp_truncated or bool(raw_curp and curp and len(curp) != 18)
+            player_result = next(
+                (
+                    item
+                    for item in (incident_policy.get("player_results") or [])
+                    if int(item.get("player_index") or 0) == idx
+                ),
+                {},
+            )
+            player_needs_review = (
+                bool(player_payload.get("needs_review"))
+                or bool(player_result.get("incidents"))
+                or curp_truncated
+                or bool(raw_curp and curp and len(curp) != 18)
+            )
             existing = None
             if curp:
                 existing = await copa_db.get_player_by_curp(curp)
@@ -4213,13 +6241,9 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 )
             player_photo = photo_artifacts.get(idx) or {}
             if existing:
-                if player_photo and not existing.photo_path:
-                    existing.photo_path = player_photo.get("photo_path")
-                    existing.photo_sha256 = player_photo.get("photo_sha256")
-                    existing.photo_ahash = player_photo.get("photo_ahash")
-                    updated_player_photos += 1
-                if curp and not existing.curp:
-                    existing.curp = curp
+                # REG-003 does not mutate an already active identity through a
+                # create-roster authorization. Existing-player correction needs
+                # its own before/after finality contract.
                 skipped_players += 1
                 continue
 
@@ -4227,7 +6251,7 @@ async def commit_registration_review_session(session_id: str, request: Request):
             if curp_truncated and raw_curp:
                 verification_notes += f" | CURP truncado para persistencia: {raw_curp}"
 
-            await copa_db.create_player(
+            player = await copa_db.create_player(
                 team_id=team.id,
                 first_name=first_name,
                 last_name=last_name,
@@ -4241,8 +6265,46 @@ async def commit_registration_review_session(session_id: str, request: Request):
                 verified_by_human=True,
                 verification_notes=verification_notes,
                 roster_index=idx,
+                governance_state="PENDING_FINALITY",
+                governance_draft_id=str(review_session.draft.id),
+                governance_draft_version=_review_draft_version(review_session.draft),
+                governance_decision_id=str(roster_decision["decision_id"]),
+                roster_draft_binding=str(roster_decision["roster_draft_binding"]),
+                preauthorization_receipt_id=str(preauthorization_receipt["receipt_id"]),
             )
+            provisional_players.append(player)
             created_players += 1
+
+        database_transaction_id = f"samchat-tx-{secrets.token_hex(12)}"
+        for player in provisional_players:
+            provisional_row = governed_player_row(player)
+            try:
+                finality = await governance_client.finalize(
+                    {
+                        "tenant_id": os.getenv("SAMCHAT_GOVERNANCE_TENANT_ID", "samchat-prod"),
+                        "draft_id": str(review_session.draft.id),
+                        "draft_version": _review_draft_version(review_session.draft),
+                        "player_slot": int(player.roster_index or 0),
+                        "player_id": str(player.id),
+                        "roster_draft_binding": str(roster_decision["roster_draft_binding"]),
+                        "preauthorization_receipt_id": str(preauthorization_receipt["receipt_id"]),
+                        "cas_succeeded": True,
+                        "database_transaction_id": database_transaction_id,
+                        "provisional_row": provisional_row,
+                        "post_execution_row": provisional_row,
+                        "blocking_incident_count": 0,
+                    }
+                )
+                player.finality_receipt_id = copa_db.record_player_finality(
+                    player, finality
+                )
+            except (RegistrationGovernanceDenied, PersistenceAuthorityDenied) as exc:
+                raise _review_error(
+                    "governance_finality_denied",
+                    "Zaubern no confirmó la finalidad; no se guardó ningún jugador.",
+                    extra={"reason_code": exc.reason_code},
+                ) from exc
+            player.governance_state = "ACTIVE"
 
         commit_audit = _build_commit_audit_envelope(
             review_session=review_session,
@@ -4281,9 +6343,16 @@ async def commit_registration_review_session(session_id: str, request: Request):
         review_session.committed_team_id = team.id
         review_session.approved_at = approved_at_dt
         review_session.committed_at = approved_at_dt
-        review_session.draft.review_edits = extraction
-        review_session.draft.validation = validation
-        review_session.draft.needs_review = False
+        await append_draft_version(
+            session,
+            review_session,
+            mutation_type="commit_succeeded",
+            actor_id=actor.get("user_id"),
+            expected_draft=review_session.draft,
+            review_edits=extraction,
+            validation=validation,
+            needs_review=False,
+        )
 
         await copa_db.commit()
         _log_registration_review_event(
@@ -4306,49 +6375,39 @@ async def edit_team(
     team_id: str,
     request: Request
 ):
-    """Edit team details"""
+    """Create a governed successor of a committed Team."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-
-        # Get form data
         form_data = await request.form()
-
-        async with async_session_maker() as session:
-            copa_db = CopaTelmexDB(session)
-
-            team = await copa_db.get_team_by_id(UUID(team_id))
-            if not team:
-                raise HTTPException(status_code=404, detail="Team not found")
-
-            # Update team fields
-            if 'name' in form_data:
-                team.name = form_data['name']
-            if 'category' in form_data:
-                team.category = form_data['category']
-            if 'gender' in form_data:
-                team.gender = form_data['gender']
-            if 'league' in form_data:
-                team.league = form_data['league']
-            if 'league_phone' in form_data:
-                team.league_phone = form_data['league_phone']
-            if 'league_address' in form_data:
-                team.league_address = form_data['league_address']
-            if 'representative_name' in form_data:
-                team.representative_name = form_data['representative_name']
-            if 'contact_phone' in form_data:
-                team.contact_phone = form_data['contact_phone']
-            if 'state' in form_data:
-                team.state = form_data['state']
-            if 'municipality' in form_data:
-                team.municipality = form_data['municipality']
-
-            await session.commit()
-
-            return {"success": True, "message": "Equipo actualizado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid team ID")
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        updates = {
+            field: (str(form_data.get(field) or "").strip() or None)
+            for field in TEAM_EDIT_FIELDS
+            if field in form_data
+        }
+        if not updates.get("name"):
+            raise _regs07_error(
+                "POSTCOMMIT_TEAM_NAME_REQUIRED",
+                "El nombre del equipo no puede quedar vacío.",
+                status_code=400,
+            )
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="TEAM",
+            entity_id=UUID(team_id),
+            mutation_type="EDIT_TEAM",
+            updates=updates,
+            mutation_reason=str(form_data.get("mutation_reason") or ""),
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador del equipo o de la solicitud no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -4360,44 +6419,52 @@ async def edit_player(
     player_id: str,
     request: Request
 ):
-    """Edit player details"""
+    """Create a governed successor of a committed Player."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        # Get form data
         form_data = await request.form()
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        first_name = str(form_data.get("first_name") or "").strip()
+        last_name = str(form_data.get("last_name") or "").strip()
+        if not first_name or not last_name:
+            raise _regs07_error(
+                "POSTCOMMIT_PLAYER_NAME_REQUIRED",
+                "Nombre y apellidos no pueden quedar vacíos.",
+                status_code=400,
             )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            # Update player fields
-            if 'first_name' in form_data:
-                player.first_name = form_data['first_name']
-            if 'last_name' in form_data:
-                player.last_name = form_data['last_name']
-            if 'birth_date' in form_data and form_data['birth_date']:
-                from datetime import datetime
-                player.birth_date = datetime.strptime(form_data['birth_date'], '%Y-%m-%d').date()
-            if 'curp' in form_data:
-                player.curp = form_data['curp'] if form_data['curp'] else None
-            if 'email' in form_data:
-                player.email = form_data['email'] if form_data['email'] else None
-
-            await session.commit()
-
-            return {"success": True, "message": "Jugador actualizado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID or date format")
+        raw_birth_date = str(form_data.get("birth_date") or "").strip()
+        updates: Dict[str, Any] = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "birth_date": (
+                datetime.strptime(raw_birth_date, "%Y-%m-%d").date()
+                if raw_birth_date
+                else None
+            ),
+            "curp": (
+                str(form_data.get("curp") or "").strip().upper() or None
+            ),
+            "email": (
+                str(form_data.get("email") or "").strip().lower() or None
+            ),
+        }
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="PLAYER",
+            entity_id=UUID(player_id),
+            mutation_type="EDIT_PLAYER",
+            updates=updates,
+            mutation_reason=str(form_data.get("mutation_reason") or ""),
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador o la fecha de nacimiento no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -4406,31 +6473,36 @@ async def edit_player(
 
 @app.post("/api/player/{player_id}/verify", response_class=JSONResponse)
 async def verify_player(player_id: str, request: Request):
-    """Mark player as verified by human"""
+    """Create a governed human-verification successor."""
     _ensure_team_player_mutation_access(request)
     try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
-            )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            player.verified_by_human = True
-            player.needs_review = False
-
-            await session.commit()
-
-            return {"success": True, "message": "Jugador verificado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID")
+        form_data = await request.form()
+        mutation_request_id = UUID(
+            str(form_data.get("mutation_request_id") or "")
+        )
+        reason = str(
+            form_data.get("mutation_reason")
+            or "Verificación humana contra la evidencia registral"
+        )
+        return await _execute_regs07_mutation(
+            request=request,
+            entity_type="PLAYER",
+            entity_id=UUID(player_id),
+            mutation_type="VERIFY_PLAYER",
+            updates={
+                "verified_by_human": True,
+                "needs_review": False,
+                "verification_notes": reason,
+            },
+            mutation_reason=reason,
+            mutation_request_id=mutation_request_id,
+        )
+    except ValueError as exc:
+        raise _regs07_error(
+            "POSTCOMMIT_REQUEST_INVALID",
+            "El identificador del jugador o de la solicitud no es válido.",
+            status_code=400,
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -4439,61 +6511,26 @@ async def verify_player(player_id: str, request: Request):
 
 @app.delete("/api/player/{player_id}", response_class=JSONResponse)
 async def delete_player(player_id: str, request: Request):
-    """Delete a player"""
+    """Physical deletion is outside REG-S07 authority."""
     _ensure_team_player_mutation_access(request)
-    try:
-        from uuid import UUID
-        from devnous.copa_telmex.models import Player
-        from sqlalchemy import select
-
-        async with async_session_maker() as session:
-            result = await session.execute(
-                select(Player).where(Player.id == UUID(player_id))
-            )
-            player = result.scalar_one_or_none()
-
-            if not player:
-                raise HTTPException(status_code=404, detail="Player not found")
-
-            await session.delete(player)
-            await session.commit()
-
-            return {"success": True, "message": "Jugador eliminado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid player ID")
-    except HTTPException:
-        raise
-    except Exception:
-        _raise_dashboard_internal_error("Error deleting player")
+    raise _regs07_error(
+        "POSTCOMMIT_DELETE_DENIED",
+        "REG-S07 no permite borrar físicamente jugadores comprometidos.",
+        status_code=409,
+        extra={"entity_id": player_id},
+    )
 
 
 @app.delete("/api/team/{team_id}", response_class=JSONResponse)
 async def delete_team(team_id: str, request: Request):
-    """Delete a team and all its players"""
+    """Physical deletion is outside REG-S07 authority."""
     _ensure_team_player_mutation_access(request)
-    try:
-        from uuid import UUID
-
-        async with async_session_maker() as session:
-            copa_db = CopaTelmexDB(session)
-
-            team = await copa_db.get_team_by_id(UUID(team_id))
-            if not team:
-                raise HTTPException(status_code=404, detail="Team not found")
-
-            # Delete team (cascade will delete players)
-            await session.delete(team)
-            await session.commit()
-
-            return {"success": True, "message": "Equipo eliminado correctamente"}
-
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid team ID")
-    except HTTPException:
-        raise
-    except Exception:
-        _raise_dashboard_internal_error("Error deleting team")
+    raise _regs07_error(
+        "POSTCOMMIT_DELETE_DENIED",
+        "REG-S07 no permite borrar físicamente equipos comprometidos.",
+        status_code=409,
+        extra={"entity_id": team_id},
+    )
 
 
 if __name__ == "__main__":

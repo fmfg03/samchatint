@@ -23,7 +23,7 @@ from .analyst_live_evidence import (
     LiveEvidenceContext,
     LiveEvidenceRowsProvider,
     acquire_live_analyst_evidence,
-    live_evidence_enabled,
+    live_evidence_enabled_for_employee,
     live_evidence_limit_per_source,
 )
 from .analyst_response import build_analyst_trace, render_analyst_result
@@ -75,8 +75,11 @@ def _document_writes_enabled() -> bool:
 
 def _live_evidence_analyst_intent(
     raw_message: str,
+    current_empleado: Any,
 ) -> Optional[AnalystIntent]:
-    if not live_evidence_enabled():
+    if not live_evidence_enabled_for_employee(
+        getattr(current_empleado, "id", None)
+    ):
         return None
     intent = detect_analyst_intent(raw_message)
     if intent is None:
@@ -431,7 +434,7 @@ async def _build_analyst_workbench_response(
     require_live_evidence: bool = False,
 ) -> Optional[Any]:
     intent = (
-        _live_evidence_analyst_intent(raw_message)
+        _live_evidence_analyst_intent(raw_message, current_empleado)
         or detect_analyst_intent(raw_message)
     )
     if intent is None or intent.requires_operational_route:
@@ -570,7 +573,7 @@ async def run_conversation_turn(
     if document_response is not None:
         return document_response
 
-    if _live_evidence_analyst_intent(raw_message) is not None:
+    if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
             raw_message=raw_message,
             conversation=conversation,
@@ -730,7 +733,7 @@ async def run_message_turn_with_pending(
     if document_response is not None:
         return document_response
 
-    if _live_evidence_analyst_intent(raw_message) is not None:
+    if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
             raw_message=raw_message,
             conversation=conversation,

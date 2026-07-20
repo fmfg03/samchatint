@@ -102,6 +102,19 @@ def player_card_box(
     )
 
 
+def player_photo_box(
+    page_layout: Mapping[str, Any],
+    slot: int,
+    image_size: Tuple[int, int],
+) -> Tuple[int, int, int, int]:
+    """Return the explicit template photo rectangle for one printed slot."""
+    configured = page_layout.get("photo_boxes") or {}
+    photo = configured.get(f"jugador_{int(slot)}")
+    if not isinstance(photo, Mapping):
+        raise ValueError(f"CTT layout missing explicit photo box for jugador_{slot}")
+    return _field_box(photo, image_size)
+
+
 def extract_slots_from_normalized_page(
     image: Image.Image,
     *,

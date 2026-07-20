@@ -11,6 +11,7 @@ from devnous.tournaments.core.ctt_slot_montage import (
     extract_ctt_player_slots,
     extract_slots_from_normalized_page,
     player_card_box,
+    player_photo_box,
 )
 from devnous.tournaments.core.ocr_integrity import normalize_ctt_template_image
 
@@ -29,6 +30,32 @@ def _slot(slot: int, page: int = 1) -> CttSlotCrop:
         box=(0, 0, image.width, image.height),
         image=image,
     )
+
+
+def test_explicit_photo_box_excludes_adjacent_row_pixels() -> None:
+    page = Image.new("RGB", (1000, 1000), "white")
+    for y in range(100, 200):
+        for x in range(100, 300):
+            page.putpixel((x, y), (255, 0, 0))
+    for y in range(200, 300):
+        for x in range(100, 300):
+            page.putpixel((x, y), (0, 0, 255))
+    layout = {
+        "photo_boxes": {
+            "jugador_1": _field(0.1, 0.1, 0.2, 0.1),
+        }
+    }
+
+    box = player_photo_box(layout, 1, page.size)
+    crop = page.crop(box)
+
+    assert box == (100, 100, 300, 200)
+    assert set(crop.getdata()) == {(255, 0, 0)}
+
+
+def test_explicit_photo_box_fails_closed_when_slot_is_unconfigured() -> None:
+    with pytest.raises(ValueError, match="missing explicit photo box"):
+        player_photo_box({"photo_boxes": {}}, 9, (2550, 3300))
 
 
 def test_player_card_box_includes_photo_context_left_of_fields() -> None:

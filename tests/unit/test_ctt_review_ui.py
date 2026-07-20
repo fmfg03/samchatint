@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from devnous.tournaments.instances.copa_telmex.ctt_review_ui import (
     build_canonical_review_view,
 )
@@ -228,3 +230,34 @@ def test_exposes_manager_differences_for_field_level_promotion() -> None:
     ]
     assert view["manager"]["matches_legacy"] is False
     assert view["difference_count"] == 1
+
+
+def test_governed_run_exposes_reg_s05_binding_and_zero_based_form_target() -> None:
+    payload = _sidecar()
+    payload["canonical_run"] = payload.pop("canonical_shadow")
+    legacy = {
+        "team": {"name": "Deportivo Estrellas", "category": "Libre", "gender": "Femenil"},
+        "manager": {"name": "Ana", "email": "ana@example.test"},
+        "players": [{"name": "Nombre anterior", "birth_date": "01/01/2000", "curp": ""}],
+    }
+    diff = SimpleNamespace(
+        id="diff-1",
+        field_path="players.1.name",
+        classification="MATERIAL_CHANGE",
+        requires_review=True,
+        source_page=1,
+    )
+    decision = SimpleNamespace(
+        decision="REQUIRE_FIELD_REVIEW",
+        decision_id="sha256:" + "d" * 64,
+    )
+
+    view = build_canonical_review_view(payload, legacy, [diff], decision)
+
+    assert view is not None
+    assert view["governed"] is True
+    assert view["decision"] == "REQUIRE_FIELD_REVIEW"
+    name_diff = view["players"][0]["differences"][0]
+    assert name_diff["diff_id"] == "diff-1"
+    assert name_diff["classification"] == "MATERIAL_CHANGE"
+    assert name_diff["input_name"] == "player_0_name"

@@ -14,6 +14,14 @@ from samchat.assistant.conversation_service import (
 from samchat.assistant.router import _maybe_append_export_prompt
 
 
+@pytest.fixture(autouse=True)
+def _default_live_evidence_allowlist(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        "emp-1",
+    )
+
+
 class _FakeScalars:
     def __init__(self, rows):
         self._rows = rows
@@ -328,6 +336,37 @@ async def test_analyst_uses_authorized_live_evidence(monkeypatch):
     assert workbench_trace["evidence_labels"] == ["expense"]
     assert "Hospedaje Nacional" not in str(response.tool_trace)
     assert "gasto-live-1" not in str(response.tool_trace)
+
+
+@pytest.mark.asyncio
+async def test_unlisted_employee_keeps_live_evidence_dormant(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        "emp-allowed",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
+        "expenses",
+    )
+
+    async def live_rows(_context, _sources):  # pragma: no cover
+        raise AssertionError("unlisted employee cannot query live evidence")
+
+    response = await _run_message(
+        "Explícame el gasto de este caso",
+        live_evidence_rows_provider=live_rows,
+        current_empleado=SimpleNamespace(
+            id="emp-1",
+            rol="empleado",
+            permissions={"gastos:read"},
+        ),
+    )
+
+    assert "analyst_live_evidence" not in response.tool_trace[0]
 
 
 @pytest.mark.parametrize(

@@ -7,6 +7,11 @@ from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
 
+from devnous.copa_telmex.supabase_authority import (
+    SupabaseWritePermit,
+    require_supabase_write_permit,
+)
+
 from .config import TournamentsV2Config
 
 
@@ -15,13 +20,23 @@ class TournamentsV2Error(RuntimeError):
 
 
 class SupabaseRestClient:
-    def __init__(self, config: TournamentsV2Config):
+    _GOVERNED_TABLES = frozenset({"teams", "registrations", "team_managers", "players"})
+
+    def __init__(
+        self,
+        config: TournamentsV2Config,
+        *,
+        write_permit: Optional[SupabaseWritePermit] = None,
+    ):
         self.config = config
+        self._write_permit = write_permit
 
     def _api_key(self) -> str:
         return self.config.service_role_key or self.config.anon_key
 
-    def _headers(self, *, include_json: bool = True, prefer_return: bool = False) -> Dict[str, str]:
+    def _headers(
+        self, *, include_json: bool = True, prefer_return: bool = False
+    ) -> Dict[str, str]:
         api_key = self._api_key()
         if not self.config.supabase_url:
             raise TournamentsV2Error("SUPABASE_URL is not configured")
@@ -46,12 +61,16 @@ class SupabaseRestClient:
         payload: Optional[Any] = None,
         extra_headers: Optional[Dict[str, str]] = None,
     ) -> Any:
+        table = path.lstrip("/").split("/", 1)[0]
+        if method.upper() not in {"GET", "HEAD"} and table in self._GOVERNED_TABLES:
+            require_supabase_write_permit(self._write_permit)
         base = self.config.supabase_url.rstrip("/")
         qs = f"?{urllib_parse.urlencode(query)}" if query else ""
         url = f"{base}/rest/v1/{path.lstrip('/')}{qs}"
         data = None
         headers = self._headers(
-            include_json=payload is not None or method.upper() in {"POST", "PATCH", "PUT"},
+            include_json=payload is not None
+            or method.upper() in {"POST", "PATCH", "PUT"},
             prefer_return=method.upper() in {"POST", "PATCH", "PUT"},
         )
         if extra_headers:
@@ -65,14 +84,18 @@ class SupabaseRestClient:
             method=method.upper(),
         )
         try:
-            with urllib_request.urlopen(req, timeout=self.config.request_timeout_sec) as res:
+            with urllib_request.urlopen(
+                req, timeout=self.config.request_timeout_sec
+            ) as res:
                 body = res.read().decode("utf-8", errors="replace")
                 if not body:
                     return []
                 return json.loads(body)
         except urllib_error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise TournamentsV2Error(f"Supabase REST error ({exc.code}): {detail}") from exc
+            raise TournamentsV2Error(
+                f"Supabase REST error ({exc.code}): {detail}"
+            ) from exc
         except urllib_error.URLError as exc:
             raise TournamentsV2Error(f"Supabase REST unreachable: {exc}") from exc
         except json.JSONDecodeError as exc:

@@ -21,10 +21,31 @@ from dataclasses import fields
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
+from devnous.copa_telmex.draft_versioning import (
+    append_draft_version,
+    build_successor_values,
+)
+from devnous.copa_telmex.page_composition_governance import (
+    admitted_asset_rows,
+    build_gate_request as build_page_composition_gate_request,
+    build_page_append_attempt,
+    decision_row as build_page_composition_decision_row,
+    existing_page_manifest,
+    parent_authorization as page_composition_parent_authorization,
+    proposed_page_manifest,
+    sha256_binding as page_composition_sha256_binding,
+    staged_page_manifest,
+)
+from devnous.copa_telmex.registration_governance import (
+    RegistrationGovernanceClient,
+    RegistrationGovernanceDenied,
+)
 from devnous.tournaments.core.intelligence_program import (
     EntityFinanceRecord,
     EntityOperationsRecord,
@@ -71,6 +92,11 @@ PLAYER_FIELDS_WITH_SAFE_SUPABASE_SYNC = {
     "email",
 }
 
+REGS08_GOVERNED_REVIEW_UNAVAILABLE = "REGS08_GOVERNED_REVIEW_UNAVAILABLE"
+REGS09_REVIEW_SESSION_REQUIRED = "REGS09_REVIEW_SESSION_REQUIRED"
+REGS10_LEGACY_SINGLE_PLAYER_RETIRED = "REGS10_LEGACY_SINGLE_PLAYER_RETIRED"
+REGS11_MANUAL_PLAYER_CREATION_RETIRED = "REGS11_MANUAL_PLAYER_CREATION_RETIRED"
+
 
 class OperationsModule:
     """Operations management for tournaments"""
@@ -98,7 +124,6 @@ class OperationsModule:
         # OCR configuration
         self.ocr_enabled = self.config.get('ocr_enabled', False)
         # Supported:
-        # - claude_vision: legacy single-player JSON prompt to Anthropic
         # - claude_structured: Anthropic OCRAgent tool_use schema (team + players)
         # - openai_vision: OpenAI-only (team + players)
         # - local_only: local Moondream/TrOCR subprocess only
@@ -115,10 +140,8 @@ class OperationsModule:
         self.claude = None  # legacy client (single player)
         self.ocr_agent = None  # structured Anthropic extractor (team + players)
         self.validator = None
-        self.pending_verifications: Dict[int, Dict[str, Any]] = {}
         self.pending_saves: Dict[int, Dict[str, Any]] = {}
         self.pending_edits: Dict[int, Dict[str, Any]] = {}
-        self.pending_player_onboarding: Dict[int, Dict[str, Any]] = {}
         self.pending_back_photos: Dict[int, Dict[str, Any]] = {}  # chat_id -> {team_id, provider}
         self.photos_base_dir = Path(os.getenv("PHOTOS_DIR", "/root/samchat/photos"))
         self.photo_duplicate_distance = max(
@@ -425,6 +448,30 @@ class OperationsModule:
         merged["confidence"] = max(float((base or {}).get("confidence") or 0.0), float((incoming or {}).get("confidence") or 0.0))
         return merged if any(merged.get(k) for k in ("name", "phone", "email")) else None
 
+    def _compose_review_page_append(
+        self,
+        base_extraction: Dict[str, Any],
+        incoming_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Compose one append-only page without re-authoring the base roster."""
+        merged_payload = dict(base_extraction)
+        merged_payload["team"] = self._merge_review_team_fields(
+            base_extraction.get("team") or {},
+            incoming_payload.get("team") or {},
+        )
+        merged_payload["manager"] = self._merge_review_manager_fields(
+            base_extraction.get("manager"),
+            incoming_payload.get("manager"),
+        )
+        merged_payload["players"] = list(
+            base_extraction.get("players") or []
+        ) + list(incoming_payload.get("players") or [])
+        merged_payload["overall_confidence"] = max(
+            float(base_extraction.get("overall_confidence") or 0.0),
+            float(incoming_payload.get("overall_confidence") or 0.0),
+        )
+        return merged_payload
+
     @staticmethod
     def _extend_player_page_map(
         existing: Optional[Dict[str, int]],
@@ -507,9 +554,8 @@ class OperationsModule:
         if not self.db:
             return False, "No hay conexión a BD para actualizar la revisión web."
         try:
-            from uuid import UUID
-
             from devnous.copa_telmex.models import (
+                RegistrationPageAppendAttempt,
                 RegistrationReviewAsset,
                 RegistrationReviewDraft,
                 RegistrationReviewSession,
@@ -527,78 +573,81 @@ class OperationsModule:
                 )
                 assets = list(assets_result.scalars().all())
                 next_page_index = (assets[-1].page_index if assets else 0) + 1
-                review_dir = self.photos_base_dir / "review_sessions" / str(review_session.id)
+                image_hash = compute_sha256_hex(optimized_bytes)
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{image_hash}"
+                    ),
+                )
+                review_dir = (
+                    self.photos_base_dir
+                    / "review_sessions"
+                    / str(review_session.id)
+                    / f"append-{page_append_request_id}"
+                )
                 review_dir.mkdir(parents=True, exist_ok=True)
-                image_path = review_dir / f"telegram-back-{next_page_index:02d}.jpg"
+                image_path = review_dir / f"page-{next_page_index:02d}.jpg"
                 image_path.write_bytes(optimized_bytes)
 
                 image = Image.open(io.BytesIO(optimized_bytes))
-                session.add(
-                    RegistrationReviewAsset(
-                        session_id=review_session.id,
-                        page_index=next_page_index,
-                        image_path=str(image_path),
-                        sha256=compute_sha256_hex(optimized_bytes),
-                        width=int(image.width),
-                        height=int(image.height),
-                    )
-                )
+                stored_assets = [
+                    {
+                        "page_index": next_page_index,
+                        "image_path": str(image_path),
+                        "sha256": image_hash,
+                        "width": int(image.width),
+                        "height": int(image.height),
+                    }
+                ]
 
                 draft_result = await session.execute(
                     select(RegistrationReviewDraft)
                     .where(RegistrationReviewDraft.session_id == review_session.id)
+                    .order_by(RegistrationReviewDraft.draft_version.desc())
+                    .limit(1)
                 )
                 draft = draft_result.scalar_one_or_none()
                 if draft is None:
                     return False, "La sesión web no tiene draft para actualizar."
 
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{draft.content_hash}:{image_hash}"
+                    ),
+                )
+                prior_result = await session.execute(
+                    select(RegistrationPageAppendAttempt)
+                    .options(
+                        selectinload(RegistrationPageAppendAttempt.decision)
+                    )
+                    .where(
+                        RegistrationPageAppendAttempt.page_append_request_id
+                        == page_append_request_id
+                    )
+                )
+                prior_attempt = prior_result.scalar_one_or_none()
+                if prior_attempt is not None and prior_attempt.decision is not None:
+                    accepted = (
+                        prior_attempt.decision.decision
+                        == "ACCEPT_NON_CONFLICTING_PAGE_APPEND"
+                    )
+                    return (
+                        accepted,
+                        self._review_workspace_url(review_session_id)
+                        if accepted
+                        else "La composición de páginas requiere revisión web.",
+                    )
+
                 base_extraction = dict(draft.review_edits or draft.extraction or {})
-                base_players = list(base_extraction.get("players") or [])
                 incoming_payload = extraction.model_dump(mode="json")
-                merged_payload = None
-                combined_raw_payload = None
-                if self.openai_key and provider == "openai":
-                    try:
-                        image_b64_values: List[str] = []
-                        for asset in assets:
-                            existing_bytes = Path(asset.image_path).read_bytes()
-                            image_b64_values.append(base64.b64encode(existing_bytes).decode("utf-8"))
-                        image_b64_values.append(base64.b64encode(optimized_bytes).decode("utf-8"))
-                        from devnous.agents.ocr_schemas import (
-                            RegistrationFormExtraction,
-                        )
-
-                        combined_raw_payload = self._normalize_openai_registration_payload(
-                            await self._call_openai_vision_multi(image_b64_values)
-                        )
-                        combined_extraction = RegistrationFormExtraction.model_validate(combined_raw_payload)
-                        merged_payload = combined_extraction.model_dump(mode="json")
-                        logger.info(
-                            "✅ Multi-page OpenAI registration extraction completed: players=%s confidence=%s",
-                            len(merged_payload.get("players") or []),
-                            merged_payload.get("overall_confidence"),
-                        )
-                    except Exception:
-                        logger.warning(
-                            "Multi-page OpenAI extraction failed; falling back to page merge",
-                            exc_info=True,
-                        )
-
-                if merged_payload is None:
-                    merged_payload = dict(base_extraction)
-                    merged_payload["team"] = self._merge_review_team_fields(
-                        base_extraction.get("team") or {},
-                        incoming_payload.get("team") or {},
-                    )
-                    merged_payload["manager"] = self._merge_review_manager_fields(
-                        base_extraction.get("manager"),
-                        incoming_payload.get("manager"),
-                    )
-                    merged_payload["players"] = base_players + list(incoming_payload.get("players") or [])
-                    merged_payload["overall_confidence"] = max(
-                        float(base_extraction.get("overall_confidence") or 0.0),
-                        float(incoming_payload.get("overall_confidence") or 0.0),
-                    )
+                merged_payload = self._compose_review_page_append(
+                    base_extraction,
+                    incoming_payload,
+                )
 
                 layout_regions = dict(draft.layout_regions or {"pages": {}, "player_page_map": {}})
                 pages = dict(layout_regions.get("pages") or {})
@@ -612,9 +661,15 @@ class OperationsModule:
                 layout_regions["pages"] = pages
                 layout_regions["player_page_map"] = player_page_map
 
-                draft.extraction = merged_payload
-                draft.review_edits = merged_payload
-                draft.ocr_raw = {
+                validation = self._build_review_validation_from_payload(merged_payload)
+                page_append_request_id = uuid5(
+                    NAMESPACE_URL,
+                    (
+                        f"samchat:page-append:{review_session.id}:"
+                        f"{draft.content_hash}:{image_hash}"
+                    ),
+                )
+                proposed_raw = {
                     "provider": review_session.provider,
                     "page_count": next_page_index,
                     "pages": list((draft.ocr_raw or {}).get("pages") or [])
@@ -622,19 +677,157 @@ class OperationsModule:
                         {
                             "page_index": next_page_index,
                             "raw": raw_payload,
-                            "combined_raw": combined_raw_payload,
-                            "player_count": len(incoming_payload.get("players") or []),
+                            "player_count": len(
+                                incoming_payload.get("players") or []
+                            ),
                             "side": "back",
                         }
                     ],
                 }
-                draft.layout_regions = layout_regions
-                draft.overall_confidence = float(merged_payload.get("overall_confidence") or 0.0)
-                draft.validation = self._build_review_validation_from_payload(merged_payload)
-                draft.needs_review = bool(draft.validation.get("needs_review"))
+                current_manifest = existing_page_manifest(
+                    session_id=review_session.id,
+                    base_draft=draft,
+                    assets=assets,
+                )
+                (
+                    append_ocr_run_id,
+                    operation_id,
+                    staged_assets,
+                    appended_manifest,
+                ) = staged_page_manifest(
+                    session_id=review_session.id,
+                    base_draft=draft,
+                    page_append_request_id=page_append_request_id,
+                    stored_assets=stored_assets,
+                )
+                composed_manifest = proposed_page_manifest(
+                    current_manifest, appended_manifest
+                )
+                proposed_values = build_successor_values(
+                    draft,
+                    extraction=merged_payload,
+                    review_edits=merged_payload,
+                    ocr_raw=proposed_raw,
+                    layout_regions=layout_regions,
+                    page_manifest_hash=page_composition_sha256_binding(
+                        composed_manifest
+                    ),
+                    overall_confidence=float(
+                        merged_payload.get("overall_confidence") or 0.0
+                    ),
+                    validation=validation,
+                    needs_review=bool(validation.get("needs_review")),
+                )
+                incoming_layout = {
+                    "pages": {str(next_page_index): []},
+                    "player_page_map": {
+                        str(slot): next_page_index
+                        for slot in range(
+                            1, len(incoming_payload.get("players") or []) + 1
+                        )
+                    },
+                }
+                attempt = build_page_append_attempt(
+                    session_id=review_session.id,
+                    page_append_request_id=page_append_request_id,
+                    base_draft=draft,
+                    provider=provider,
+                    prompt_config_hash=page_composition_sha256_binding(
+                        {
+                            "provider": provider,
+                            "pipeline": "telegram-back-page-v1",
+                        }
+                    ),
+                    append_ocr_run_id=append_ocr_run_id,
+                    operation_id=operation_id,
+                    existing_manifest=current_manifest,
+                    appended_manifest=appended_manifest,
+                    staged_assets=staged_assets,
+                    incoming_extraction=incoming_payload,
+                    incoming_ocr_raw=raw_payload or {},
+                    incoming_layout_regions=incoming_layout,
+                    proposed_values=proposed_values,
+                )
+                successor_draft_id = uuid4()
+                gate_response = await RegistrationGovernanceClient.from_environment().adjudicate_page_composition(
+                    build_page_composition_gate_request(
+                        tenant_id=os.getenv("ZAUBERN_TENANT_ID", "samchat-prod"),
+                        tournament_slug=review_session.tournament_slug,
+                        attempt=attempt,
+                        current_draft=draft,
+                        base_extraction=base_extraction,
+                        successor_draft_id=successor_draft_id,
+                    )
+                )
+                event = gate_response.get("page_composition_decision") or {}
+                receipt = gate_response.get("page_composition_receipt") or {}
+                if (
+                    receipt.get("verified") is not True
+                    or not event.get("decision_id")
+                    or not receipt.get("receipt_id")
+                ):
+                    raise RegistrationGovernanceDenied(
+                        "EVIDENCE_WRITE_FAILED_FAIL_CLOSED",
+                        "Zaubern returned an incomplete page composition adjudication",
+                    )
+                session.add(attempt)
+                if gate_response.get("successor_authorized") is True:
+                    successor = await append_draft_version(
+                        session,
+                        review_session,
+                        mutation_type="pages_appended",
+                        actor_id=review_session.telegram_user_id,
+                        expected_draft=draft,
+                        operation_id=attempt.operation_id,
+                        new_draft_id=successor_draft_id,
+                        parent_authorization=page_composition_parent_authorization(
+                            gate_response
+                        ),
+                        extraction=attempt.proposed_extraction,
+                        review_edits=attempt.proposed_extraction,
+                        ocr_raw=attempt.proposed_ocr_raw,
+                        layout_regions=attempt.proposed_layout_regions,
+                        page_manifest_hash=attempt.proposed_page_manifest_hash,
+                        overall_confidence=float(
+                            (attempt.proposed_extraction or {}).get(
+                                "overall_confidence"
+                            )
+                            or 0.0
+                        ),
+                        validation=attempt.proposed_validation,
+                        needs_review=bool(
+                            (attempt.proposed_validation or {}).get(
+                                "needs_review"
+                            )
+                        ),
+                    )
+                    if successor.content_hash != attempt.proposed_snapshot_hash:
+                        raise RegistrationGovernanceDenied(
+                            "PAGE_COMPOSITION_SUCCESSOR_HASH_MISMATCH",
+                            "REG-S02 successor does not match the adjudicated composition",
+                        )
+                    for asset in admitted_asset_rows(
+                        attempt=attempt,
+                        successor_draft_id=successor_draft_id,
+                        response=gate_response,
+                    ):
+                        session.add(asset)
+                session.add(
+                    build_page_composition_decision_row(
+                        attempt=attempt,
+                        successor_draft_id=successor_draft_id,
+                        response=gate_response,
+                    )
+                )
                 review_session.status = "ready"
 
                 await session.commit()
+
+                if gate_response.get("successor_authorized") is not True:
+                    return (
+                        False,
+                        "La composición de páginas requiere revisión web.",
+                    )
 
             return True, self._review_workspace_url(review_session_id)
         except Exception as exc:
@@ -704,17 +897,35 @@ class OperationsModule:
                     height=int(image.height),
                 )
                 session.add(asset)
-                session.add(
-                    RegistrationReviewDraft(
-                        session_id=review_session.id,
-                        ocr_raw=raw_payload if isinstance(raw_payload, dict) else {"raw": raw_payload},
-                        extraction=extraction_payload,
-                        validation=validation,
-                        review_edits=extraction_payload,
-                        layout_regions=layout_regions,
-                        overall_confidence=float(getattr(extraction, "overall_confidence", 0.0) or 0.0),
-                        needs_review=bool(validation.get("needs_review")),
-                    )
+                initial_draft = await append_draft_version(
+                    session,
+                    review_session,
+                    mutation_type="telegram_upload_created",
+                    actor_id=user_id,
+                    ocr_raw=raw_payload
+                    if isinstance(raw_payload, dict)
+                    else {"raw": raw_payload},
+                    extraction=extraction_payload,
+                    validation=validation,
+                    review_edits=extraction_payload,
+                    layout_regions=layout_regions,
+                    overall_confidence=float(
+                        getattr(extraction, "overall_confidence", 0.0) or 0.0
+                    ),
+                    needs_review=bool(validation.get("needs_review")),
+                )
+                asset.admitted_draft_id = initial_draft.id
+                asset.source_base_draft_id = initial_draft.id
+                asset.source_base_content_hash = initial_draft.content_hash
+                asset.source_ocr_run_ref = f"initial:{initial_draft.id}"
+                asset.admission_operation_id = (
+                    initial_draft.mutation_operation_id
+                )
+                asset.admission_decision_id = (
+                    initial_draft.mutation_decision_id
+                )
+                asset.admission_receipt_id = (
+                    initial_draft.mutation_receipt_id
                 )
                 await session.commit()
                 review_session_id = str(review_session.id)
@@ -756,6 +967,30 @@ class OperationsModule:
             category_selected=pending.get("category_selected"),
             expect_back_photo=expect_back_photo,
         )
+
+    async def _stage_pending_registration_review(
+        self,
+        chat_id: int,
+        provider: str,
+    ) -> Tuple[bool, str]:
+        """Route a legacy Telegram confirmation into governed precapture only."""
+        if not self._web_review_enabled():
+            return (
+                False,
+                f"{REGS08_GOVERNED_REVIEW_UNAVAILABLE}: "
+                "la precaptura gobernada no está disponible; no se creó ningún equipo o jugador.",
+            )
+        ok, result = await self._create_web_review_session_from_pending(
+            chat_id,
+            provider,
+            expect_back_photo=True,
+        )
+        if not ok:
+            return (
+                False,
+                f"{REGS08_GOVERNED_REVIEW_UNAVAILABLE}: {result}",
+            )
+        return True, result
 
     def _team_storage_key(self, team_id: Any) -> str:
         return str(team_id)
@@ -974,21 +1209,28 @@ class OperationsModule:
 
                         extraction = RegistrationFormExtraction.model_validate(extraction_dict)
                         extraction.team.category = cat
-                        ok, msg = await self._save_registration_form_to_database(
-                            chat_id=chat_id,
-                            user_id=message.user_id,
-                            extraction=extraction,
-                            provider=provider,
-                            raw_payload=pending_save.get(provider),
+                        ok, msg = await self._stage_pending_registration_review(
+                            chat_id,
+                            provider,
                         )
                         if ok:
                             self.pending_saves.pop(chat_id, None)
-                            return f"✅ Categoria confirmada: *{cat}*.\n✅ Guardado en BD ({provider}).\n{msg}"
-                        return f"✅ Categoria confirmada: *{cat}*.\n❌ Error guardando en BD ({provider}).\n{msg}"
+                            return (
+                                f"✅ Categoría confirmada: *{cat}*.\n"
+                                f"✅ Precaptura gobernada creada ({provider}).\n{msg}\n"
+                                "Revísala en la plataforma antes del commit final."
+                            )
+                        return f"✅ Categoría confirmada: *{cat}*.\n⛔ No se creó la precaptura.\n{msg}"
                     except Exception as e:
-                        logger.error(f"manual category finalize save failed: {e}", exc_info=True)
-                        return f"✅ Categoria confirmada: *{cat}*.\n⚠️ No pude finalizar guardado automatico. Presiona Guardar nuevamente."
-            return f"✅ Categoria guardada para este registro: *{cat}*.\nAhora presiona nuevamente el boton de guardar (Anthropic/OpenAI)."
+                        logger.error(f"manual category review staging failed: {e}", exc_info=True)
+                        return (
+                            f"✅ Categoría confirmada: *{cat}*.\n"
+                            "⛔ No pude crear la precaptura gobernada; no se escribió estado final."
+                        )
+            return (
+                f"✅ Categoría guardada para este registro: *{cat}*.\n"
+                "Ahora solicita nuevamente crear la precaptura."
+            )
 
         # If we're waiting for a manual edit value, consume the next text message.
         if chat_id in self.pending_edits and not message.photo:
@@ -2071,21 +2313,15 @@ class OperationsModule:
         # Remove trailing punctuation/questions.
         return hint.rstrip("?.!,;: ")
 
-    async def _handle_conversational_actions(self, chat_id: int, user_id: int, text: str) -> Optional[str]:
-        """
-        Handle natural-language write actions.
-        Currently supports: add/register a player manually to an existing team.
-        """
-        t = (text or "").strip()
-        tl = t.lower()
-        if not t:
-            return None
-
-        # Continue an in-progress onboarding flow.
-        if chat_id in self.pending_player_onboarding:
-            return await self._continue_player_onboarding(chat_id=chat_id, user_id=user_id, text=t)
-
-        add_markers = [
+    async def _handle_conversational_actions(
+        self,
+        chat_id: int,
+        user_id: int,
+        text: str,
+    ) -> Optional[str]:
+        """Deny the retired conversational manual-player creation surface."""
+        lowered = (text or "").strip().lower()
+        manual_player_markers = (
             "dar de alta",
             "agregar jugador",
             "añadir jugador",
@@ -2094,260 +2330,14 @@ class OperationsModule:
             "registrar jugador",
             "no viene en la cedula",
             "no viene en la cédula",
-        ]
-        if not any(m in tl for m in add_markers):
-            return None
-
-        if not self.db:
-            return "❌ No hay conexion a BD para dar de alta jugadores."
-
-        try:
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-                teams = await copa_db.get_teams_by_chat(chat_id)
-                if not teams:
-                    return "📭 No encuentro equipos registrados en este chat."
-
-                team_hint = self._extract_team_hint_from_text(t)
-                team = None
-                if team_hint:
-                    for tm in teams:
-                        if team_hint in (tm.name or "").lower():
-                            team = tm
-                            break
-                if not team:
-                    team = teams[0]
-
-                parsed = self._parse_manual_player_payload(t)
-                full_name = parsed.get("full_name")
-                birth_date = self._parse_birth_date(parsed.get("birth_date") or "") if parsed.get("birth_date") else None
-
-                if not full_name or birth_date is None:
-                    self.pending_player_onboarding[chat_id] = {
-                        "team_id": str(team.id),
-                        "team_name": team.name,
-                    }
-                    return (
-                        f"✅ Claro. Vamos a dar de alta un jugador en *{team.name}*.\n\n"
-                        "Enviame en un solo mensaje:\n"
-                        "`Nombre completo, fecha nacimiento DD/MM/YYYY, CURP(opcional), email(opcional)`\n\n"
-                        "Ejemplo:\n"
-                        "`Brian Rodriguez, 23/03/2007, ROLB070323HDFXXX09, brian@mail.com`"
-                    )
-
-                created_msg = await self._create_manual_player(
-                    chat_id=chat_id,
-                    team_id=str(team.id),
-                    full_name=full_name,
-                    birth_date=birth_date,
-                    curp=parsed.get("curp"),
-                    email=parsed.get("email"),
-                )
-                return created_msg
-
-        except Exception as e:
-            logger.error(f"❌ conversational add-player failed: {e}", exc_info=True)
-            return self._generic_retry_error("No pude dar de alta al jugador")
-
-    async def _continue_player_onboarding(self, chat_id: int, user_id: int, text: str) -> str:
-        """Continue manual player onboarding started from conversational action."""
-        state = self.pending_player_onboarding.get(chat_id) or {}
-        team_id = state.get("team_id")
-        team_name = state.get("team_name") or "equipo"
-        if not team_id:
-            self.pending_player_onboarding.pop(chat_id, None)
-            return "⚠️ Se perdio el contexto del equipo. Escribe de nuevo la solicitud."
-
-        parsed = self._parse_manual_player_payload(text)
-        full_name = parsed.get("full_name")
-        birth_date = self._parse_birth_date(parsed.get("birth_date") or "") if parsed.get("birth_date") else None
-        if not full_name or birth_date is None:
-            return (
-                f"⚠️ Aun me falta informacion para *{team_name}*.\n"
-                "Formato esperado: `Nombre completo, DD/MM/YYYY, CURP(opcional), email(opcional)`"
-            )
-
-        self.pending_player_onboarding.pop(chat_id, None)
-        return await self._create_manual_player(
-            chat_id=chat_id,
-            team_id=str(team_id),
-            full_name=full_name,
-            birth_date=birth_date,
-            curp=parsed.get("curp"),
-            email=parsed.get("email"),
         )
-
-    def _parse_manual_player_payload(self, text: str) -> Dict[str, Optional[str]]:
-        """Best-effort parser for manual player create payload from one sentence."""
-        t = (text or "").strip()
-
-        # Split by comma first (most reliable in chat).
-        parts = [p.strip() for p in t.split(",") if p.strip()]
-
-        # Detect date token.
-        date_token = None
-        for p in parts:
-            if re.search(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", p):
-                m = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", p)
-                if m:
-                    date_token = m.group(1).replace("-", "/")
-                    break
-        if not date_token:
-            m = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", t)
-            if m:
-                date_token = m.group(1).replace("-", "/")
-
-        # Detect email + CURP anywhere.
-        email = None
-        m = re.search(r"\b([^\s,;]+@[^\s,;]+\.[^\s,;]+)\b", t, flags=re.IGNORECASE)
-        if m:
-            email = m.group(1).strip()
-
-        curp = None
-        m = re.search(r"\b([A-Za-z]{4}\d{6}[HMhm][A-Za-z]{5}[A-Za-z0-9]\d)\b", t)
-        if m:
-            curp = m.group(1).upper()
-
-        # Name heuristic: text before first detected date token/comma, cleanup intent words.
-        name_candidate = parts[0] if parts else t
-        # Remove common intent preamble.
-        name_candidate = re.sub(
-            r"(?i).*(dar de alta|agregar|añadir|anadir|inscribir|registrar)\s+(a\s+)?(un\s+)?jugador(\s+a[l]?\s+equipo)?\s*",
-            "",
-            name_candidate,
-        ).strip(" :.-")
-        name_candidate = re.sub(r"(?i)^en\s+los\s+", "", name_candidate).strip()
-
-        # If first part still does not look like a name, try explicit "se llama ..."
-        if len(name_candidate.split()) < 2:
-            m = re.search(r"(?i)se llama\s+([A-Za-zÁÉÍÓÚÑáéíóúñ ]{4,100})", t)
-            if m:
-                name_candidate = m.group(1).strip()
-
-        return {
-            "full_name": name_candidate if len(name_candidate.split()) >= 2 else None,
-            "birth_date": date_token,
-            "curp": curp,
-            "email": email,
-        }
-
-    async def _create_manual_player(
-        self,
-        chat_id: int,
-        team_id: str,
-        full_name: str,
-        birth_date: date,
-        curp: Optional[str],
-        email: Optional[str],
-    ) -> str:
-        """Create a player manually with Supabase-first write plus local mirror."""
-        from uuid import UUID
-
-        from devnous.copa_telmex.database import CopaTelmexDB
-
-        async with self.db() as session:
-            copa_db = CopaTelmexDB(session)
-            team_uuid = UUID(team_id)
-            team = await copa_db.get_team_by_id(team_uuid)
-            if not team:
-                return "❌ No encuentro el equipo destino."
-
-            players = await copa_db.get_players_by_team(team_uuid)
-            max_idx = max([p.roster_index or 0 for p in players] or [0])
-
-            parts = full_name.split()
-            first_name = parts[0]
-            last_name = " ".join(parts[1:]) if len(parts) > 1 else "X"
-            tournament_slug_hint = (getattr(team, "tournament_slug", None) or "").strip() or None
-            category_name_hint = (getattr(team, "category", None) or "").strip() or None
-            pending = self.pending_saves.get(chat_id) or {}
-            if not tournament_slug_hint:
-                tournament_slug_hint = (
-                    (pending.get("tournament_selected") or pending.get("tournament_slug") or "").strip() or None
-                )
-            if not category_name_hint:
-                category_name_hint = (
-                    (pending.get("category_selected") or pending.get("category_name") or "").strip() or None
-                )
-
-            supabase_result = None
-            supabase_error: Optional[Exception] = None
-            if tournament_slug_hint and category_name_hint:
-                try:
-                    from samchat.tournaments_v2.adapters import (
-                        append_players_to_team_v2,
-                        infer_tournament_key_from_slug,
-                    )
-
-                    supabase_result = await append_players_to_team_v2(
-                        tournament_key=infer_tournament_key_from_slug(tournament_slug_hint),
-                        tournament_slug=tournament_slug_hint,
-                        category_name=category_name_hint,
-                        team_name=team.name,
-                        players=[
-                            {
-                                "first_name": first_name,
-                                "last_name": last_name,
-                                "birth_date": birth_date.isoformat(),
-                                "curp": (curp or None),
-                                "parent_email": (email or None),
-                            }
-                        ],
-                    )
-                    if int(supabase_result.get("players_created") or 0) == 0 and int(
-                        supabase_result.get("players_skipped") or 0
-                    ) > 0:
-                        return f"⚠️ Ese jugador ya existe en *{team.name}*."
-                except Exception as exc:
-                    supabase_error = exc
-                    logger.warning("Supabase manual player create failed; using local mirror only", exc_info=True)
-
-            # Local mirror / compatibility layer.
-            existing = await copa_db.get_player_by_team_and_identity(
-                team_id=team_uuid,
-                first_name=first_name,
-                last_name=last_name,
-                birth_date=birth_date,
-            )
-            if existing:
-                if supabase_result and int(supabase_result.get("players_created") or 0) > 0:
-                    return (
-                        f"✅ Jugador dado de alta en *{team.name}*.\n"
-                        f"• {existing.roster_index or '?'}. {existing.full_name}\n"
-                        f"• Nacimiento: {birth_date.strftime('%d/%m/%Y')}\n"
-                        "• Supabase: sincronizado\n"
-                        "• BD local: ya existia"
-                    )
-                return f"⚠️ Ese jugador ya existe en *{team.name}* ({existing.full_name})."
-
-            p = await copa_db.create_player(
-                team_id=team_uuid,
-                first_name=first_name,
-                last_name=last_name,
-                birth_date=birth_date,
-                curp=(curp or None),
-                email=(email or None),
-                ocr_confidence=None,
-                needs_review=False,
-                verified_by_human=True,
-                verification_notes="Alta manual via chat",
-                roster_index=max_idx + 1,
-            )
-            await copa_db.commit()
-            lines = [
-                f"✅ Jugador dado de alta en *{team.name}*.\n"
-                f"• {p.roster_index}. {p.full_name}",
-                f"• Nacimiento: {birth_date.strftime('%d/%m/%Y')}",
-            ]
-            if supabase_result and int(supabase_result.get("players_created") or 0) > 0:
-                lines.append("• Supabase: sincronizado")
-            elif supabase_result and int(supabase_result.get("players_skipped") or 0) > 0:
-                lines.append("• Supabase: jugador ya existente")
-            elif tournament_slug_hint and category_name_hint and supabase_error:
-                lines.append("• Supabase: pendiente de sincronizar")
-            return "\n".join(lines)
+        if not any(marker in lowered for marker in manual_player_markers):
+            return None
+        return (
+            f"⛔ {REGS11_MANUAL_PLAYER_CREATION_RETIRED}: el alta manual de "
+            "jugadores por conversación fue retirada. Usa el formulario completo "
+            "y la precaptura gobernada para agregar jugadores."
+        )
 
     async def _apply_freeform_corrections(self, chat_id: int, user_id: int, text: str) -> Optional[str]:
         """
@@ -2380,6 +2370,12 @@ class OperationsModule:
         ]
         if not any(m in t_lower for m in correction_markers):
             return None
+
+        return (
+            "Las correcciones de equipos ya no se aplican desde Telegram. "
+            "Usa el dashboard: cada cambio requiere motivo, version, decision "
+            "Zaubern y recibo de finalidad."
+        )
 
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
@@ -2857,6 +2853,11 @@ class OperationsModule:
         label: str,
     ) -> str:
         """Update the latest team for this chat, for simple corrections."""
+        return (
+            "Esta correccion fue denegada. Usa el dashboard para crear "
+            "un sucesor REG-S07 con evidencia y recibos."
+        )
+
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
 
@@ -2912,6 +2913,11 @@ class OperationsModule:
 
     async def _start_corrections(self, chat_id: int):
         """Show correction menu for the latest team in this chat."""
+        return (
+            "Las correcciones post-captura se realizan en el dashboard. "
+            "Telegram no tiene autoridad REG-S07 para modificar equipos o jugadores."
+        )
+
         if not self.db:
             return "❌ No hay conexion a BD para corregir datos."
 
@@ -2980,6 +2986,12 @@ class OperationsModule:
 
     async def _apply_pending_edit(self, chat_id: int, user_id: int, new_value: str):
         """Apply the pending edit for this chat using the provided text as the new value."""
+        self.pending_edits.pop(chat_id, None)
+        return (
+            "Esta correccion fue denegada. Usa el dashboard para crear "
+            "un sucesor REG-S07 con evidencia y recibos."
+        )
+
         state = self.pending_edits.get(chat_id) or {}
         entity = state.get("entity")
         field = state.get("field")
@@ -3222,12 +3234,10 @@ Total partidos: {len(self.matches)}
             # If we just saved the front side, treat the next photo as the back side.
             if chat_id in self.pending_back_photos:
                 pending = self.pending_back_photos[chat_id]
-                team_id = pending.get("team_id")
                 provider = (pending.get("provider") or "anthropic").strip().lower()
                 return await self._process_back_photo(
                     chat_id=chat_id,
                     user_id=message.user_id,
-                    team_id=team_id,
                     optimized_bytes=optimized_bytes,
                     image_b64=image_b64,
                     provider=provider,
@@ -3235,11 +3245,15 @@ Total partidos: {len(self.matches)}
 
             provider = (self.ocr_provider or "").strip().lower()
 
-            # Legacy single-player OCR flow (kept for backwards compatibility).
+            # REG-S10: the legacy single-player finalizer is retired. It cannot
+            # be translated into a governed draft because it lacks the complete
+            # form/evidence contract required by REG-S08.
             if provider == "claude_vision":
-                if not self.claude or not self.validator:
-                    return "❌ OCR (Anthropic) no esta configurado (falta ANTHROPIC_API_KEY)."
-                return await self._legacy_single_player_ocr(chat_id, image_b64)
+                return (
+                    f"⛔ {REGS10_LEGACY_SINGLE_PLAYER_RETIRED}: el registro OCR "
+                    "individual fue retirado y no puede crear equipos o jugadores. "
+                    "Usa la precaptura estructurada del formulario completo."
+                )
 
             if provider in ("claude_structured", "anthropic"):
                 return await self._ocr_single_provider(
@@ -3292,95 +3306,55 @@ Total partidos: {len(self.matches)}
         self,
         chat_id: int,
         user_id: int,
-        team_id: Optional[str],
         optimized_bytes: bytes,
         image_b64: str,
         provider: str,
     ):
-        """Process back-side photo and append players to an existing team."""
-        if not team_id:
-            pending = self.pending_back_photos.get(chat_id) or {}
-            review_session_id = pending.get("review_session_id")
-            if not review_session_id:
-                self.pending_back_photos.pop(chat_id, None)
-                return "⚠️ No tengo referencia del equipo para la vuelta. Escribe `corregir` o vuelve a registrar."
+        """Append a back page only to its governed precapture review session."""
+        pending = self.pending_back_photos.get(chat_id) or {}
+        review_session_id = pending.get("review_session_id")
+        if not review_session_id:
+            self.pending_back_photos.pop(chat_id, None)
+            return (
+                f"⛔ {REGS09_REVIEW_SESSION_REQUIRED}: la página adicional no está "
+                "ligada a una sesión de precaptura vigente. No se ejecutó OCR ni se "
+                "agregó ningún jugador; vuelve a iniciar la precaptura del equipo."
+            )
 
         extraction, raw = await self._extract_registration_form(provider, optimized_bytes, image_b64)
         if extraction is None:
             return f"❌ OCR fallo en la vuelta con {provider}."
 
-        pending = self.pending_back_photos.get(chat_id) or {}
-        review_session_id = pending.get("review_session_id")
-        if review_session_id:
-            ok, result = await self._append_back_photo_to_review_session(
-                review_session_id=str(review_session_id),
-                optimized_bytes=optimized_bytes,
-                extraction=extraction,
-                raw_payload=raw,
-                provider=provider,
-            )
-            if ok:
-                page_count = int(pending.get("page_count") or 1) + 1
-                max_pages = int(pending.get("max_pages") or self._telegram_review_max_pages())
-                if page_count >= max_pages:
-                    self.pending_back_photos.pop(chat_id, None)
-                    next_step = (
-                        f"Ya tengo {page_count} página(s), cierro este equipo para revisión. "
-                        "La siguiente foto iniciará otra precaptura."
-                    )
-                else:
-                    pending["page_count"] = page_count
-                    pending["max_pages"] = max_pages
-                    self.pending_back_photos[chat_id] = pending
-                    next_step = (
-                        f"Esta sesión lleva {page_count} página(s). "
-                        "Puedes enviar otra página del mismo equipo o presionar 'No hay más páginas'."
-                    )
-                return (
-                    "✅ *Página agregada a la revisión web*\n\n"
-                    f"{next_step}\n\n"
-                    f"Revisión: {result}"
-                )
-            return f"❌ No pude agregar la vuelta a la revisión web.\n{result}"
-
-        ok, msg = await self._append_players_to_team(
-            chat_id=chat_id,
-            user_id=user_id,
-            team_id=team_id,
+        ok, result = await self._append_back_photo_to_review_session(
+            review_session_id=str(review_session_id),
+            optimized_bytes=optimized_bytes,
             extraction=extraction,
-            provider=provider,
             raw_payload=raw,
-            source_image=Image.open(io.BytesIO(optimized_bytes)),
+            provider=provider,
         )
         if ok:
-            self.pending_back_photos.pop(chat_id, None)
-            return f"✅ *Vuelta procesada*\n\n{msg}\n\nEscribe `corregir` si quieres ajustar algo."
-        return f"❌ Error guardando vuelta.\n{msg}"
-
-    async def _legacy_single_player_ocr(self, chat_id: int, image_b64: str):
-        """Legacy flow: extract single player fields with Claude JSON prompt."""
-        logger.info("🤖 Calling Claude Vision API (legacy single-player)...")
-        loop = asyncio.get_event_loop()
-        ocr_result = await loop.run_in_executor(None, self._call_claude_vision, image_b64)
-
-        player_name = ocr_result.get("player_name", "")
-        ocr_confidence = ocr_result.get("confidence", 0.0)
-        logger.info(f"🔍 OCR Result: player_name='{player_name}', confidence={ocr_confidence}")
-
-        if not player_name:
+            page_count = int(pending.get("page_count") or 1) + 1
+            max_pages = int(pending.get("max_pages") or self._telegram_review_max_pages())
+            if page_count >= max_pages:
+                self.pending_back_photos.pop(chat_id, None)
+                next_step = (
+                    f"Ya tengo {page_count} página(s), cierro este equipo para revisión. "
+                    "La siguiente foto iniciará otra precaptura."
+                )
+            else:
+                pending["page_count"] = page_count
+                pending["max_pages"] = max_pages
+                self.pending_back_photos[chat_id] = pending
+                next_step = (
+                    f"Esta sesión lleva {page_count} página(s). "
+                    "Puedes enviar otra página del mismo equipo o presionar 'No hay más páginas'."
+                )
             return (
-                "⚠️  *No se detecto nombre del jugador*\n\n"
-                "Por favor verifica que:\n"
-                "• El nombre este visible\n"
-                "• La foto tenga buena iluminacion\n"
-                "• El texto sea legible"
+                "✅ *Página agregada a la revisión web*\n\n"
+                f"{next_step}\n\n"
+                f"Revisión: {result}"
             )
-
-        validation_result = self.validator.validate_full_name(player_name, confidence=ocr_confidence)
-        if validation_result.get("needs_human_review"):
-            return await self._request_human_verification(chat_id, player_name, validation_result, ocr_result)
-
-        return await self._send_final_confirmation(chat_id, ocr_result, validation_result)
+        return f"❌ No pude agregar la vuelta a la revisión web.\n{result}"
 
     async def _ocr_single_provider(
         self,
@@ -3418,7 +3392,7 @@ Total partidos: {len(self.matches)}
             category_reason=category_reason,
         )
         if chat_id not in self.admin_chat_ids:
-            return summary + "\n\n⚠️ Este chat no tiene permisos para guardar en BD."
+            return summary + "\n\n⚠️ Este chat no tiene permisos para crear una precaptura."
 
         if self._telegram_auto_web_review_enabled():
             ok, result = await self._create_web_review_session(
@@ -3475,16 +3449,18 @@ Total partidos: {len(self.matches)}
 
         keyboard = {
             "inline_keyboard": [
-                [{"text": f"💾 Guardar ({provider})", "callback_data": f"save_ocr:{provider}"}],
-                *(
-                    [[{"text": f"🧾 Revisar en web ({provider})", "callback_data": f"web_review:{provider}"}]]
-                    if self._web_review_enabled()
-                    else []
-                ),
-                [{"text": "❌ Cancelar", "callback_data": "save_ocr:cancel"}],
+                [{"text": f"🧾 Crear precaptura ({provider})", "callback_data": f"stage_ocr:{provider}"}],
+                [{"text": "❌ Cancelar", "callback_data": "stage_ocr:cancel"}],
             ]
         }
-        return {"text": summary + "\n\n¿Guardar en BD?", "reply_markup": keyboard}
+        return {
+            "text": (
+                summary
+                + "\n\nLa finalización directa por Telegram está retirada. "
+                "Crea una precaptura y aprueba el commit en la plataforma."
+            ),
+            "reply_markup": keyboard,
+        }
 
     async def _ocr_local_first(
         self,
@@ -3654,7 +3630,7 @@ Total partidos: {len(self.matches)}
             return text
 
         if chat_id not in self.admin_chat_ids:
-            return text + "\n\n⚠️ Este chat no tiene permisos para guardar en BD."
+            return text + "\n\n⚠️ Este chat no tiene permisos para crear una precaptura."
 
         if self._telegram_auto_web_review_enabled():
             auto_provider = "openai" if openai_extraction is not None else "anthropic"
@@ -3712,22 +3688,27 @@ Total partidos: {len(self.matches)}
 
         keyboard = {
             "inline_keyboard": [
-                [{"text": "💾 Guardar Anthropic", "callback_data": "save_ocr:anthropic"}],
                 *(
-                    [[{"text": "🧾 Revisar en web Anthropic", "callback_data": "web_review:anthropic"}]]
-                    if self._web_review_enabled() and anthropic_extraction is not None
+                    [[{"text": "🧾 Crear precaptura Anthropic", "callback_data": "stage_ocr:anthropic"}]]
+                    if anthropic_extraction is not None
                     else []
                 ),
-                [{"text": "💾 Guardar OpenAI", "callback_data": "save_ocr:openai"}],
                 *(
-                    [[{"text": "🧾 Revisar en web OpenAI", "callback_data": "web_review:openai"}]]
-                    if self._web_review_enabled() and openai_extraction is not None
+                    [[{"text": "🧾 Crear precaptura OpenAI", "callback_data": "stage_ocr:openai"}]]
+                    if openai_extraction is not None
                     else []
                 ),
-                [{"text": "❌ Cancelar", "callback_data": "save_ocr:cancel"}],
+                [{"text": "❌ Cancelar", "callback_data": "stage_ocr:cancel"}],
             ]
         }
-        return {"text": text + "\n\n¿Cual guardamos en BD?", "reply_markup": keyboard}
+        return {
+            "text": (
+                text
+                + "\n\nElige qué resultado enviar a precaptura. "
+                "Telegram no puede crear el equipo o los jugadores finales."
+            ),
+            "reply_markup": keyboard,
+        }
 
     async def _extract_registration_form(
         self,
@@ -4507,153 +4488,6 @@ Total partidos: {len(self.matches)}
         except Exception:
             return "unknown", 0.0, "OpenAI: parse fail"
 
-    def _call_claude_vision(self, image_b64: str) -> Dict[str, Any]:
-        """Call Claude Vision API (blocking operation)"""
-        try:
-            message = self.claude.messages.create(
-                model="claude-sonnet-4-5-20250929",
-                max_tokens=1024,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": "image/jpeg",
-                                    "data": image_b64,
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": (
-                                    "Extrae la siguiente información del formulario de registro:\n\n"
-                                    "1. **Nombre del Jugador (player_name)**: DEBE incluir nombre Y apellido(s)\n"
-                                    "2. **Equipo/Club (team_club)**: Nombre del equipo deportivo\n"
-                                    "3. **Fecha de nacimiento** (dd/mm/yyyy)\n"
-                                    "4. **Categoría** (U10/U12/U14/U16/U18/Open)\n"
-                                    "5. **Nombre del padre/tutor**\n"
-                                    "6. **Teléfono del tutor**\n\n"
-                                    "Si algún campo no es visible, usa 'no visible'.\n\n"
-                                    "Responde SOLO en formato JSON:\n"
-                                    "{\n"
-                                    '  "player_name": "nombre Y apellido",\n'
-                                    '  "birth_date": "dd/mm/yyyy o no visible",\n'
-                                    '  "category": "categoría o no visible",\n'
-                                    '  "parent_name": "nombre o no visible",\n'
-                                    '  "parent_phone": "teléfono o no visible",\n'
-                                    '  "team_club": "equipo o no visible",\n'
-                                    '  "confidence": 0.0-1.0\n'
-                                    "}"
-                                )
-                            }
-                        ],
-                    }
-                ],
-            )
-
-            # Extract text from response
-            response_text = message.content[0].text.strip()
-
-            # Clean JSON
-            if response_text.startswith('```json'):
-                response_text = response_text[7:]
-            if response_text.startswith('```'):
-                response_text = response_text[3:]
-            if response_text.endswith('```'):
-                response_text = response_text[:-3]
-            response_text = response_text.strip()
-
-            # Extract JSON object
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                json_str = response_text[start_idx:end_idx + 1]
-                result = json.loads(json_str)
-                return result
-
-            return {'player_name': '', 'confidence': 0.0, 'error': 'Could not parse response'}
-
-        except Exception as e:
-            logger.error(f"❌ Claude Vision error: {e}", exc_info=True)
-            return {'player_name': '', 'confidence': 0.0, 'error': 'ocr_processing_failed'}
-
-    async def _request_human_verification(
-        self,
-        chat_id: int,
-        detected_name: str,
-        validation_result: Dict[str, Any],
-        ocr_result: Dict[str, Any]
-    ):
-        """Request human verification with inline keyboard"""
-
-        # Build inline keyboard
-        keyboard = {"inline_keyboard": []}
-
-        # Get suggestions
-        parts = validation_result.get('parts', {})
-        all_suggestions = []
-
-        if isinstance(parts, dict):
-            first_name_suggestions = parts.get('first_name', {}).get('suggestions', [])
-            surname_suggestions = []
-            for surname_result in parts.get('surnames', []):
-                surname_suggestions.extend(surname_result.get('suggestions', []))
-
-            # Reconstruct full name suggestions
-            if first_name_suggestions:
-                name_parts = detected_name.split()
-                for suggestion in first_name_suggestions[:2]:
-                    suggested_full = f"{suggestion} {' '.join(name_parts[1:])}"
-                    all_suggestions.append(suggested_full)
-
-            if surname_suggestions and len(detected_name.split()) > 1:
-                name_parts = detected_name.split()
-                for suggestion in surname_suggestions[:2]:
-                    suggested_full = f"{name_parts[0]} {suggestion}"
-                    all_suggestions.append(suggested_full)
-
-        # Build message
-        message_text = f"❓ *Verificación Necesaria*\n\nDetectado: *{detected_name}*\n\n"
-
-        if all_suggestions:
-            message_text += "💡 ¿Es correcto?\n"
-        else:
-            message_text += "⚠️ Nombre no encontrado\n"
-
-        # Add suggestion buttons
-        for i, suggestion in enumerate(all_suggestions[:2]):
-            keyboard["inline_keyboard"].append([{
-                "text": f"✅ {suggestion}",
-                "callback_data": f"confirm_{i}_{suggestion}"
-            }])
-
-        # Add "use detected" button
-        keyboard["inline_keyboard"].append([{
-            "text": f"👍 {detected_name}",
-            "callback_data": f"use_detected_{detected_name}"
-        }])
-
-        # Add "write manually" button
-        keyboard["inline_keyboard"].append([{
-            "text": "✏️ Corregir",
-            "callback_data": "write_manually"
-        }])
-
-        # Store pending verification
-        self.pending_verifications[chat_id] = {
-            'detected_name': detected_name,
-            'suggestions': all_suggestions,
-            'ocr_result': ocr_result,
-            'validation_result': validation_result
-        }
-
-        return {
-            'text': message_text,
-            'reply_markup': keyboard
-        }
-
     async def handle_callback_query(self, callback_query: Dict[str, Any], telegram_adapter):
         """Handle inline keyboard button press"""
         callback_id = callback_query['id']
@@ -4826,7 +4660,7 @@ Total partidos: {len(self.matches)}
                 await telegram_adapter.send_message(chat_id, f"✏️ Escribe el nuevo valor para *{field}* del jugador:")
                 return
 
-            if data.startswith("save_ocr:"):
+            if data.startswith(("stage_ocr:", "save_ocr:")):
                 action = data.split(":", 1)[1].strip().lower()
 
                 if action == "cancel":
@@ -4837,7 +4671,7 @@ Total partidos: {len(self.matches)}
 
                 if chat_id not in self.admin_chat_ids:
                     await telegram_adapter.answer_callback_query(callback_id, "Sin permisos")
-                    await telegram_adapter.send_message(chat_id, "⚠️ Este chat no tiene permisos para guardar en BD.")
+                    await telegram_adapter.send_message(chat_id, "⚠️ Este chat no tiene permisos para crear una precaptura.")
                     return
 
                 pending = self.pending_saves.get(chat_id)
@@ -4868,7 +4702,7 @@ Total partidos: {len(self.matches)}
                             ),
                             [{"text": "⚾ Liga Telmex Telcel 2026", "callback_data": "set_tournament:liga-telmex-2026"}],
                             [{"text": "⚾ Infantil Béisbol 2026", "callback_data": "set_tournament:liga-telmex-2026"}],
-                            [{"text": "❌ Cancelar", "callback_data": "save_ocr:cancel"}],
+                            [{"text": "❌ Cancelar", "callback_data": "stage_ocr:cancel"}],
                         ]
                     }
                     await telegram_adapter.answer_callback_query(callback_id, "OK")
@@ -4895,7 +4729,7 @@ Total partidos: {len(self.matches)}
                             continue
                         opts.append([{"text": c, "callback_data": f"set_category:{c}"}])
                     opts.append([{"text": "✏️ Escribir categoria", "callback_data": "set_category_manual"}])
-                    opts.append([{"text": "❌ Cancelar", "callback_data": "save_ocr:cancel"}])
+                    opts.append([{"text": "❌ Cancelar", "callback_data": "stage_ocr:cancel"}])
                     kb = {"inline_keyboard": opts[:12]}  # keep keyboard size bounded
                     await telegram_adapter.answer_callback_query(callback_id, "OK")
                     await telegram_adapter.send_message(
@@ -4918,17 +4752,18 @@ Total partidos: {len(self.matches)}
                 final_category = (pending.get("category_selected") or pending.get("category_guess") or getattr(extraction.team, "category", None))
                 if final_category:
                     extraction.team.category = str(final_category)
-                await telegram_adapter.answer_callback_query(callback_id, "Guardando...")
-                ok, msg = await self._save_registration_form_to_database(
-                    chat_id=chat_id,
-                    user_id=pending.get("user_id"),
-                    extraction=extraction,
-                    provider=action,
-                    raw_payload=pending.get(action),
+                await telegram_adapter.answer_callback_query(callback_id, "Creando precaptura...")
+                ok, msg = await self._stage_pending_registration_review(
+                    chat_id,
+                    action,
                 )
                 if ok:
                     self.pending_saves.pop(chat_id, None)
-                    await telegram_adapter.send_message(chat_id, f"✅ Guardado en BD ({action}).\n{msg}")
+                    await telegram_adapter.send_message(
+                        chat_id,
+                        f"✅ Precaptura gobernada creada ({action}).\n{msg}\n"
+                        "Revísala en la plataforma antes del commit final.",
+                    )
                     # Provide an explicit "no back side" option.
                     if chat_id in self.pending_back_photos:
                         kb = {
@@ -4944,7 +4779,7 @@ Total partidos: {len(self.matches)}
                             reply_markup=kb,
                         )
                 else:
-                    await telegram_adapter.send_message(chat_id, f"❌ Error guardando en BD ({action}).\n{msg}")
+                    await telegram_adapter.send_message(chat_id, f"⛔ No se creó estado final ni precaptura.\n{msg}")
                 return
 
             if data.startswith("web_review:"):
@@ -5022,7 +4857,7 @@ Total partidos: {len(self.matches)}
                             continue
                         opts.append([{"text": c, "callback_data": f"set_category:{c}"}])
                     opts.append([{"text": "✏️ Escribir categoria", "callback_data": "set_category_manual"}])
-                    opts.append([{"text": "❌ Cancelar", "callback_data": "save_ocr:cancel"}])
+                    opts.append([{"text": "❌ Cancelar", "callback_data": "stage_ocr:cancel"}])
                     kb = {"inline_keyboard": opts[:12]}
                     await telegram_adapter.send_message(
                         chat_id,
@@ -5044,16 +4879,17 @@ Total partidos: {len(self.matches)}
                         final_cat = (pending.get("category_selected") or pending.get("category_guess") or getattr(extraction.team, "category", None))
                         if final_cat:
                             extraction.team.category = str(final_cat)
-                        ok, msg = await self._save_registration_form_to_database(
-                            chat_id=chat_id,
-                            user_id=pending.get("user_id"),
-                            extraction=extraction,
-                            provider=provider,
-                            raw_payload=pending.get(provider),
+                        ok, msg = await self._stage_pending_registration_review(
+                            chat_id,
+                            provider,
                         )
                         if ok:
                             self.pending_saves.pop(chat_id, None)
-                            await telegram_adapter.send_message(chat_id, f"✅ Guardado en BD ({provider}).\n{msg}")
+                            await telegram_adapter.send_message(
+                                chat_id,
+                                f"✅ Precaptura gobernada creada ({provider}).\n{msg}\n"
+                                "Revísala en la plataforma antes del commit final.",
+                            )
                             if chat_id in self.pending_back_photos:
                                 kb = {
                                     "inline_keyboard": [
@@ -5068,7 +4904,10 @@ Total partidos: {len(self.matches)}
                                     reply_markup=kb,
                                 )
                         else:
-                            await telegram_adapter.send_message(chat_id, f"❌ Error guardando en BD ({provider}).\n{msg}")
+                            await telegram_adapter.send_message(
+                                chat_id,
+                                f"⛔ No se creó estado final ni precaptura.\n{msg}",
+                            )
                         return
 
                 await telegram_adapter.send_message(chat_id, f"✅ Torneo seleccionado: *{slug}*")
@@ -5100,16 +4939,17 @@ Total partidos: {len(self.matches)}
 
                     extraction = RegistrationFormExtraction.model_validate(extraction_dict)
                     extraction.team.category = cat
-                    ok, msg = await self._save_registration_form_to_database(
-                        chat_id=chat_id,
-                        user_id=pending.get("user_id"),
-                        extraction=extraction,
-                        provider=provider,
-                        raw_payload=pending.get(provider),
+                    ok, msg = await self._stage_pending_registration_review(
+                        chat_id,
+                        provider,
                     )
                     if ok:
                         self.pending_saves.pop(chat_id, None)
-                        await telegram_adapter.send_message(chat_id, f"✅ Guardado en BD ({provider}).\n{msg}")
+                        await telegram_adapter.send_message(
+                            chat_id,
+                            f"✅ Precaptura gobernada creada ({provider}).\n{msg}\n"
+                            "Revísala en la plataforma antes del commit final.",
+                        )
                         if chat_id in self.pending_back_photos:
                             kb = {
                                 "inline_keyboard": [
@@ -5124,66 +4964,31 @@ Total partidos: {len(self.matches)}
                                 reply_markup=kb,
                             )
                     else:
-                        await telegram_adapter.send_message(chat_id, f"❌ Error guardando en BD ({provider}).\n{msg}")
+                        await telegram_adapter.send_message(
+                            chat_id,
+                            f"⛔ No se creó estado final ni precaptura.\n{msg}",
+                        )
                     return
 
                 await telegram_adapter.send_message(chat_id, f"✅ Categoria seleccionada: *{cat}*")
                 return
 
-            if data.startswith("confirm_"):
-                # User selected a suggestion
-                parts = data.split("_", 2)
-                if len(parts) >= 3:
-                    selected_name = parts[2]
-
-                    await telegram_adapter.answer_callback_query(
-                        callback_id,
-                        f"✅ Confirmado: {selected_name}"
-                    )
-
-                    if chat_id in self.pending_verifications:
-                        ocr_result = self.pending_verifications[chat_id]['ocr_result']
-                        validation_result = self.pending_verifications[chat_id].get('validation_result')
-                        ocr_result['player_name'] = selected_name
-                        ocr_result['human_verified'] = True
-
-                        response = await self._send_final_confirmation(chat_id, ocr_result, validation_result)
-                        await telegram_adapter.send_message(chat_id, response)
-
-                        del self.pending_verifications[chat_id]
-
-            elif data.startswith("use_detected_"):
-                detected_name = data.replace("use_detected_", "")
-
+            if (
+                data.startswith("confirm_")
+                or data.startswith("use_detected_")
+                or data == "write_manually"
+            ):
                 await telegram_adapter.answer_callback_query(
                     callback_id,
-                    f"✅ Usando: {detected_name}"
+                    "Ruta de registro retirada",
                 )
-
-                if chat_id in self.pending_verifications:
-                    ocr_result = self.pending_verifications[chat_id]['ocr_result']
-                    validation_result = self.pending_verifications[chat_id].get('validation_result')
-                    ocr_result['player_name'] = detected_name
-                    ocr_result['human_verified'] = True
-
-                    response = await self._send_final_confirmation(chat_id, ocr_result, validation_result)
-                    await telegram_adapter.send_message(chat_id, response)
-
-                    del self.pending_verifications[chat_id]
-
-            elif data == "write_manually":
-                await telegram_adapter.answer_callback_query(
-                    callback_id,
-                    "✏️ Escribe el nombre correcto"
-                )
-
                 await telegram_adapter.send_message(
                     chat_id,
-                    "✏️ *Escribe el nombre completo del jugador:*\n\nEjemplo: Juan García López\n\n📝 Escríbelo exactamente como debe aparecer."
+                    f"⛔ {REGS10_LEGACY_SINGLE_PLAYER_RETIRED}: este botón "
+                    "pertenece al registro individual retirado. Envía el formulario "
+                    "completo para crear una precaptura gobernada.",
                 )
-
-                if chat_id in self.pending_verifications:
-                    self.pending_verifications[chat_id]['waiting_manual'] = True
+                return
 
         except Exception as e:
             logger.error(f"❌ Callback error: {e}", exc_info=True)
@@ -5191,537 +4996,6 @@ Total partidos: {len(self.matches)}
                 callback_id,
                 "❌ Error interno"
             )
-
-    async def _save_registration_form_to_database(
-        self,
-        chat_id: int,
-        user_id: Optional[int],
-        extraction,
-        provider: str,
-        raw_payload: Optional[Dict[str, Any]],
-    ):
-        """Persist team + players from a structured OCR extraction."""
-        if not self.db:
-            return False, "No hay conexion a BD (db_session no configurado)."
-
-        try:
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            header_ok, header_error = self._validate_required_team_header(extraction)
-            if not header_ok:
-                return False, header_error
-
-            # self.db is expected to be an async_sessionmaker
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-
-                team_name = (extraction.team.name or "").strip() or "Unknown Team"
-                pending = self.pending_saves.get(chat_id) or {}
-                tournament_slug = (pending.get("tournament_slug") or "").strip() or None
-                source_image = self._load_pending_image(chat_id)
-                team = await copa_db.get_team_by_name(
-                    name=team_name,
-                    category=getattr(extraction.team, "category", None),
-                    telegram_chat_id=chat_id,
-                    tournament_slug=tournament_slug,
-                )
-                if not team:
-                    team = await copa_db.create_team(
-                        name=team_name,
-                        telegram_chat_id=chat_id,
-                        tournament_slug=tournament_slug,
-                        gender=getattr(extraction.team, "gender", None),
-                        category=getattr(extraction.team, "category", None),
-                        league=getattr(extraction.team, "league", None),
-                        representative_name=getattr(getattr(extraction, "manager", None), "name", None),
-                        state=getattr(extraction.team, "state", None),
-                        municipality=getattr(extraction.team, "municipality", None),
-                        telegram_user_id=user_id,
-                    )
-                elif tournament_slug and not getattr(team, "tournament_slug", None):
-                    # Backfill tournament association if team existed before the new column.
-                    await copa_db.update_team(team.id, tournament_slug=tournament_slug)
-
-                if source_image and not getattr(team, "roster_image_path", None):
-                    team.roster_image_path = self._save_roster_image(
-                        team_id=team.id,
-                        image=source_image,
-                        side="front",
-                    )
-
-                existing_players = await copa_db.get_players_by_team(team.id)
-                integrity = self._prepare_extraction_integrity(
-                    team_id=team.id,
-                    extraction=extraction,
-                    image=source_image,
-                    side="front",
-                    existing_players=existing_players,
-                )
-                integrity_notes = integrity["integrity_notes"]
-                photo_artifacts = integrity["photo_artifacts"]
-
-                created_players = 0
-                skipped_players = 0
-                review_players = 0
-
-                for idx, p in enumerate(extraction.players or [], 1):
-                    full_name = (getattr(p, "name", None) or "").strip()
-                    if not full_name:
-                        continue
-
-                    first_name = (getattr(p, "first_name", None) or "").strip()
-                    last_name = " ".join(
-                        x
-                        for x in [
-                            (getattr(p, "paternal_surname", None) or "").strip(),
-                            (getattr(p, "maternal_surname", None) or "").strip(),
-                        ]
-                        if x
-                    ).strip()
-
-                    if not first_name or not last_name:
-                        parts = full_name.split()
-                        if parts:
-                            first_name = first_name or parts[0]
-                            last_name = last_name or (" ".join(parts[1:]) if len(parts) > 1 else "")
-
-                    birth_date = None
-                    bd = getattr(p, "birth_date", None)
-                    if bd:
-                        try:
-                            dd, mm, yy = bd.split("/")
-                            birth_date = date(int(yy), int(mm), int(dd))
-                        except Exception:
-                            birth_date = None
-
-                    curp = (getattr(p, "curp", None) or "").strip() or None
-                    existing = None
-                    if curp:
-                        existing = await copa_db.get_player_by_curp(curp)
-                    if not existing:
-                        existing = await copa_db.get_player_by_team_and_identity(
-                            team_id=team.id,
-                            first_name=first_name,
-                            last_name=last_name,
-                            birth_date=birth_date,
-                        )
-                    if existing:
-                        skipped_players += 1
-                        continue
-
-                    review_reasons = list(integrity_notes.get(idx) or [])
-                    photo_artifact = photo_artifacts.get(idx) or {}
-                    needs_review = bool(getattr(p, "needs_review", False) or review_reasons)
-                    if needs_review:
-                        review_players += 1
-
-                    await copa_db.create_player(
-                        team_id=team.id,
-                        first_name=first_name,
-                        last_name=last_name,
-                        birth_date=birth_date,
-                        curp=curp,
-                        photo_path=photo_artifact.get("photo_path"),
-                        photo_sha256=photo_artifact.get("photo_sha256"),
-                        photo_ahash=photo_artifact.get("photo_ahash"),
-                        ocr_confidence=getattr(p, "confidence", None),
-                        needs_review=needs_review,
-                        verified_by_human=False,
-                        verification_notes=describe_integrity_reasons(review_reasons) if review_reasons else None,
-                        roster_index=idx,
-                    )
-                    created_players += 1
-
-                validation_result = {
-                    "provider": provider,
-                    "overall_confidence": float(getattr(extraction, "overall_confidence", 0.0) or 0.0),
-                    "needs_human_review": any(
-                        bool(getattr(p, "needs_review", False)) for p in (extraction.players or [])
-                    ),
-                    "players_needing_review": sum(
-                        1 for p in (extraction.players or []) if bool(getattr(p, "needs_review", False))
-                    ),
-                    "flagged_name_count": integrity["flagged_name_count"],
-                    "flagged_photo_count": integrity["flagged_photo_count"],
-                    "photo_saved_count": integrity["photo_stats"]["photo_saved_count"],
-                }
-
-                await copa_db.create_ocr_registration(
-                    telegram_chat_id=chat_id,
-                    telegram_user_id=user_id,
-                    team_id=team.id,
-                    ocr_result={
-                        "provider": provider,
-                        "extraction": extraction.model_dump(),
-                        "raw": raw_payload,
-                    },
-                    validation_result=validation_result,
-                )
-
-                await copa_db.commit()
-
-                # After saving the front, ask for the back side.
-                self.pending_back_photos[chat_id] = {"team_id": str(team.id), "provider": provider}
-
-                sync_note = ""
-                if tournament_slug and getattr(extraction.team, "category", None):
-                    ok_sync, msg_sync = await self._sync_ocr_to_supabase(
-                        chat_id=chat_id,
-                        tournament_slug=tournament_slug,
-                        category_name=str(getattr(extraction.team, "category")),
-                        extraction=extraction,
-                        side="front",
-                    )
-                    sync_note = f"\n\n{'✅' if ok_sync else '⚠️'} {msg_sync}"
-
-                return (
-                    True,
-                    f"Equipo: {team.name}\n"
-                    f"Jugadores creados: {created_players}\n"
-                    f"Jugadores ya existentes: {skipped_players}\n\n"
-                    f"Jugadores en revision: {review_players}\n"
-                    f"Nombres sospechosos: {integrity['flagged_name_count']}\n"
-                    f"Fotos sospechosas/repetidas: {integrity['flagged_photo_count']}\n\n"
-                    "📸 Ahora envia la foto de la *vuelta* (reverso) de la cedula para agregar mas jugadores.\n"
-                    "Si no hay vuelta, presiona 'No hay vuelta'."
-                    f"{sync_note}",
-                )
-
-        except Exception as e:
-            logger.error(f"❌ save_registration_form_to_database failed: {e}", exc_info=True)
-            return False, self._generic_db_error()
-
-    async def _append_players_to_team(
-        self,
-        chat_id: int,
-        user_id: Optional[int],
-        team_id: str,
-        extraction,
-        provider: str,
-        raw_payload: Optional[Dict[str, Any]],
-        source_image: Optional[Image.Image] = None,
-    ):
-        """Append players from an extraction to an existing team."""
-        if not self.db:
-            return False, "No hay conexion a BD (db_session no configurado)."
-
-        try:
-            from uuid import UUID
-
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-                team_uuid = UUID(team_id)
-                team = await copa_db.get_team_by_id(team_uuid)
-                if not team:
-                    return False, "Equipo no encontrado."
-
-                existing_players = await copa_db.get_players_by_team(team_uuid)
-                max_idx = max([p.roster_index or 0 for p in existing_players] or [0])
-                integrity = self._prepare_extraction_integrity(
-                    team_id=team_uuid,
-                    extraction=extraction,
-                    image=source_image,
-                    side="back",
-                    existing_players=existing_players,
-                )
-                integrity_notes = integrity["integrity_notes"]
-                photo_artifacts = integrity["photo_artifacts"]
-
-                created_players = 0
-                skipped_players = 0
-                review_players = 0
-
-                for offset, p in enumerate(extraction.players or [], 1):
-                    full_name = (getattr(p, "name", None) or "").strip()
-                    if not full_name:
-                        continue
-
-                    first_name = (getattr(p, "first_name", None) or "").strip()
-                    last_name = " ".join(
-                        x
-                        for x in [
-                            (getattr(p, "paternal_surname", None) or "").strip(),
-                            (getattr(p, "maternal_surname", None) or "").strip(),
-                        ]
-                        if x
-                    ).strip()
-                    if not first_name or not last_name:
-                        parts = full_name.split()
-                        if parts:
-                            first_name = first_name or parts[0]
-                            last_name = last_name or (" ".join(parts[1:]) if len(parts) > 1 else "")
-
-                    birth_date = None
-                    bd = getattr(p, "birth_date", None)
-                    if bd:
-                        birth_date = self._parse_birth_date(bd)
-
-                    curp = (getattr(p, "curp", None) or "").strip() or None
-                    existing = None
-                    if curp:
-                        existing = await copa_db.get_player_by_curp(curp)
-                    if not existing:
-                        existing = await copa_db.get_player_by_team_and_identity(
-                            team_id=team_uuid,
-                            first_name=first_name,
-                            last_name=last_name,
-                            birth_date=birth_date,
-                        )
-                    if existing:
-                        skipped_players += 1
-                        continue
-
-                    idx = offset
-                    review_reasons = list(integrity_notes.get(idx) or [])
-                    photo_artifact = photo_artifacts.get(idx) or {}
-                    needs_review = bool(getattr(p, "needs_review", False) or review_reasons)
-                    if needs_review:
-                        review_players += 1
-
-                    await copa_db.create_player(
-                        team_id=team_uuid,
-                        first_name=first_name,
-                        last_name=last_name,
-                        birth_date=birth_date,
-                        curp=curp,
-                        photo_path=photo_artifact.get("photo_path"),
-                        photo_sha256=photo_artifact.get("photo_sha256"),
-                        photo_ahash=photo_artifact.get("photo_ahash"),
-                        ocr_confidence=getattr(p, "confidence", None),
-                        needs_review=needs_review,
-                        verified_by_human=False,
-                        verification_notes=describe_integrity_reasons(review_reasons) if review_reasons else None,
-                        roster_index=max_idx + offset,
-                    )
-                    created_players += 1
-
-                regs = await copa_db.get_registrations_by_chat(chat_id, limit=10)
-                reg_id = None
-                for r in regs:
-                    if r.team_id and r.team_id == team_uuid:
-                        reg_id = r.id
-                        break
-
-                await copa_db.create_ocr_registration(
-                    telegram_chat_id=chat_id,
-                    telegram_user_id=user_id,
-                    team_id=team_uuid,
-                    ocr_result={
-                        "provider": provider,
-                        "extraction": extraction.model_dump(),
-                        "raw": raw_payload,
-                        "side": "back",
-                    },
-                    validation_result={
-                        "provider": provider,
-                        "side": "back",
-                        "overall_confidence": float(getattr(extraction, "overall_confidence", 0.0) or 0.0),
-                    },
-                )
-
-                if reg_id:
-                    await copa_db.mark_registration_reviewed(reg_id, "corrected", team_id=team_uuid)
-
-                await copa_db.commit()
-
-            sync_note = ""
-            tournament_slug = (getattr(team, "tournament_slug", None) or "").strip()
-            category_name = (getattr(team, "category", None) or "").strip()
-            if tournament_slug and category_name:
-                ok_sync, msg_sync = await self._sync_ocr_to_supabase(
-                    chat_id=chat_id,
-                    tournament_slug=tournament_slug,
-                    category_name=category_name,
-                    extraction=extraction,
-                    side="back",
-                )
-                sync_note = f"\n\n{'✅' if ok_sync else '⚠️'} {msg_sync}"
-
-            return (
-                True,
-                f"Equipo: {team.name}\n"
-                f"Jugadores agregados: {created_players}\n"
-                f"Duplicados/ya existentes: {skipped_players}\n"
-                f"Jugadores en revision: {review_players}\n"
-                f"Nombres sospechosos: {integrity['flagged_name_count']}\n"
-                f"Fotos sospechosas/repetidas: {integrity['flagged_photo_count']}"
-                f"{sync_note}",
-            )
-        except Exception as e:
-            logger.error(f"❌ append_players_to_team failed: {e}", exc_info=True)
-            return False, self._generic_db_error()
-
-    async def _save_to_database(
-        self,
-        chat_id: int,
-        ocr_result: Dict[str, Any],
-        validation_result: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """Save registration data to database"""
-        if not self.db:
-            logger.warning("⚠️  No database connection")
-            return False
-
-        try:
-            from devnous.copa_telmex.database import CopaTelmexDB
-
-            # self.db is expected to be an async_sessionmaker
-            async with self.db() as session:
-                copa_db = CopaTelmexDB(session)
-
-                # Extract team info
-                team_name = ocr_result.get('team_club', 'Unknown Team')
-                if team_name == 'no visible':
-                    team_name = 'Unknown Team'
-
-                # Get or create team
-                teams_in_chat = await copa_db.get_teams_by_chat(chat_id)
-                team = None
-                for t in teams_in_chat:
-                    if t.name.lower() == team_name.lower():
-                        team = t
-                        break
-
-                if not team:
-                    logger.info(f"📝 Creating new team: {team_name}")
-                    team = await copa_db.create_team(
-                        name=team_name,
-                        telegram_chat_id=chat_id,
-                        category=ocr_result.get('category') if ocr_result.get('category') != 'no visible' else None
-                    )
-                else:
-                    logger.info(f"✅ Found existing team: {team_name} (ID: {team.id})")
-
-                # Parse player name
-                player_name = ocr_result.get('player_name', '')
-                if not player_name or player_name == 'no visible':
-                    logger.warning("⚠️  No player name to save")
-                    return False
-
-                # Split name
-                name_parts = player_name.split()
-                if len(name_parts) < 2:
-                    first_name = name_parts[0] if name_parts else ''
-                    last_name = ''
-                else:
-                    first_name = name_parts[0]
-                    last_name = ' '.join(name_parts[1:])
-
-                # Parse birth date
-                birth_date = None
-                birth_date_str = ocr_result.get('birth_date')
-                if birth_date_str and birth_date_str != 'no visible':
-                    try:
-                        if '/' in birth_date_str:
-                            parts = birth_date_str.split('/')
-                            if len(parts) == 3:
-                                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-                                if year < 100:
-                                    year = 2000 + year if year < 50 else 1900 + year
-                                birth_date = date(year, month, day)
-                        elif '-' in birth_date_str:
-                            parts = birth_date_str.split('-')
-                            if len(parts) == 3:
-                                day, month, year = int(parts[0]), int(parts[1]), int(parts[2])
-                                if year < 100:
-                                    year = 2000 + year if year < 50 else 1900 + year
-                                birth_date = date(year, month, day)
-                    except (ValueError, IndexError) as e:
-                        logger.warning(f"⚠️  Could not parse birth date: {birth_date_str}: {e}")
-
-                # Create player
-                logger.info(f"📝 Creating player: {player_name}")
-
-                needs_review = validation_result.get('needs_human_review', False) if validation_result else False
-                human_verified = ocr_result.get('human_verified', False)
-                confidence = ocr_result.get('confidence', 0.0)
-
-                player = await copa_db.create_player(
-                    team_id=team.id,
-                    first_name=first_name,
-                    last_name=last_name,
-                    birth_date=birth_date,
-                    ocr_confidence=confidence,
-                    needs_review=needs_review,
-                    verified_by_human=human_verified,
-                    verification_notes='Manually entered' if ocr_result.get('manually_entered') else None
-                )
-
-                # Create OCR registration log
-                logger.info("📝 Creating OCR registration log")
-                registration = await copa_db.create_ocr_registration(
-                    telegram_chat_id=chat_id,
-                    ocr_result=ocr_result,
-                    validation_result=validation_result or {},
-                    team_id=team.id
-                )
-
-                # Commit
-                await copa_db.commit()
-
-                logger.info(
-                    f"✅ Saved to database: Team={team.id}, Player={player.id}, Registration={registration.id}"
-                )
-                return True
-
-        except Exception as e:
-            logger.error(f"❌ Database save error: {e}", exc_info=True)
-            return False
-
-    async def _send_final_confirmation(
-        self,
-        chat_id: int,
-        ocr_result: Dict[str, Any],
-        validation_result: Optional[Dict[str, Any]] = None
-    ) -> str:
-        """Send final confirmation with all extracted data"""
-        # Save to database first
-        db_saved = await self._save_to_database(chat_id, ocr_result, validation_result)
-
-        player_name = ocr_result.get('player_name', 'N/A')
-        confidence = ocr_result.get('confidence', 0.0)
-        human_verified = ocr_result.get('human_verified', False)
-        manually_entered = ocr_result.get('manually_entered', False)
-
-        response = "✅ *Registro Completado*\n\n"
-
-        response += f"👤 *Jugador:* {player_name}\n"
-
-        if manually_entered:
-            response += "✏️ *Verificado manualmente*\n"
-        elif human_verified:
-            response += "👍 *Verificado por humano*\n"
-        else:
-            response += f"📊 *Confianza:* {confidence * 100:.0f}%\n"
-
-        response += "\n"
-
-        # Add other extracted fields
-        other_fields = [
-            ('birth_date', '📅 Fecha de nacimiento'),
-            ('category', '🏆 Categoría'),
-            ('parent_name', '👨‍👩‍👧 Padre/Tutor'),
-            ('parent_phone', '📞 Teléfono del tutor'),
-            ('team_club', '⚽ Equipo/Club')
-        ]
-
-        for field, label in other_fields:
-            value = ocr_result.get(field)
-            if value and value != 'no visible':
-                response += f"{label}: {value}\n"
-
-        response += "\n"
-
-        if db_saved:
-            response += "✨ *Datos guardados en base de datos*\n"
-            response += "📊 Registro ID guardado exitosamente"
-        else:
-            response += "⚠️  *Datos no guardados en BD*\n"
-            response += "Se mostrará confirmación visual solamente"
-
-        return response
 
     # ==================== END OCR FUNCTIONALITY ====================
 

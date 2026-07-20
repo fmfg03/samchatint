@@ -598,8 +598,12 @@
     <a class="workspace-link" href="#document-panel">Documento</a>
     <a class="workspace-link" href="#editable-draft">Borrador editable</a>
     <form action="/api/registration-review/{{ review_session.id }}/reprocess" method="post"
-          onsubmit="return confirm('Esto reemplazará los datos actuales del borrador. ¿Continuar?');">
-        <button type="submit" class="workspace-link" {% if session_committed %}disabled{% endif %}>Reprocesar</button>
+          onsubmit="return confirm('Esto ejecutará una nueva pasada OCR y comparará sus resultados contra la versión actual. ¿Continuar?');">
+        <input type="hidden" name="base_draft_id" value="{{ review_session.draft.id if review_session.draft is defined else '' }}">
+        <input type="hidden" name="base_draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else '' }}">
+        <input type="hidden" name="base_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+        <input type="hidden" name="reprocess_request_id" value="{{ reprocess_request_id if reprocess_request_id is defined else '' }}">
+        <button type="submit" class="workspace-link" {% if session_committed or review_session.draft is not defined or reprocess_request_id is not defined %}disabled{% endif %}>Reprocesar</button>
     </form>
 </nav>
 
@@ -620,11 +624,15 @@
         <div>
             <div style="display: flex; gap: 9px; align-items: center; flex-wrap: wrap;">
                 <h3 id="canonical-review-title" style="margin: 0;">Comparación canónica</h3>
-                <span class="canonical-badge">Experimental · no autoritativa</span>
+                {% if canonical_review.governed %}
+                <span class="canonical-badge">REG-S03 · pendiente REG-S05</span>
+                {% else %}
+                <span class="canonical-badge">Histórica · no autoritativa</span>
+                {% endif %}
             </div>
             <p style="margin: 8px 0 0; color: #475569; max-width: 760px;">
-                Diferencias primero: compara la lectura canónica contra el borrador editable.
-                Esta vista no modifica el borrador editable ni se usa al capturar el equipo.
+                Compara el valor vigente con el candidato canónico y su evidencia por página, casilla y foto.
+                {% if canonical_review.governed %}La decisión REG-S03 bloqueó el reemplazo automático; toda resolución se consume por REG-S05.{% else %}Esta lectura histórica no modifica el borrador.{% endif %}
             </p>
             <div class="canonical-metrics">
                 <span class="canonical-metric"><strong>{{ canonical_review.player_count }}</strong> canónicos / <strong>{{ canonical_review.legacy_player_count }}</strong> borrador</span>
@@ -640,8 +648,7 @@
         </div>
     </div>
 
-    <form action="/api/registration-review/{{ review_session.id }}/canonical-adopt" method="post" id="canonical-adoption-form">
-    <input type="hidden" name="canonical_hash" value="{{ canonical_review.canonical_hash }}">
+    <div id="canonical-resolution-board" data-decision-id="{{ canonical_review.decision_id }}">
     {% if canonical_review.team_differences %}
     <h4 style="margin: 18px 0 0;">Datos del equipo que difieren</h4>
     <div class="team-difference-grid" data-difference-item data-has-difference="true" data-requires-review="false">
@@ -652,11 +659,14 @@
                 <div class="comparison-value"><small>Borrador actual</small>{{ difference.legacy_value or 'Sin dato' }}</div>
                 <div class="comparison-value"><small>Lectura canónica</small>{{ difference.canonical_value or 'Sin dato' }}</div>
             </div>
-            {% if canonical_promotion_enabled and not session_committed %}
-            <label class="canonical-difference" style="cursor: pointer;">
-                <input type="checkbox" name="canonical_fields" value="team.{{ difference.field }}">
-                Usar valor canónico
-            </label>
+            {% if canonical_review.governed and not session_committed %}
+            <div class="difference-filters" aria-label="Resolución REG-S05 para {{ difference.label }}">
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.legacy_value }}">Conservar actual</button>
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.canonical_value }}">Aceptar candidato</button>
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="">Vaciar campo</button>
+                <button type="button" class="filter-button" data-regs05-edit="{{ difference.input_name }}">Corregir manualmente</button>
+            </div>
+            <small>{{ difference.classification }} · {{ difference.field_path }}</small>
             {% endif %}
         </article>
         {% endfor %}
@@ -673,11 +683,13 @@
                 <div class="comparison-value"><small>Borrador actual</small>{{ difference.legacy_value or 'Sin dato' }}</div>
                 <div class="comparison-value"><small>Lectura canónica</small>{{ difference.canonical_value or 'Sin dato' }}</div>
             </div>
-            {% if canonical_promotion_enabled and not session_committed %}
-            <label class="canonical-difference" style="cursor: pointer;">
-                <input type="checkbox" name="canonical_fields" value="manager.{{ difference.field }}">
-                Usar valor canónico
-            </label>
+            {% if canonical_review.governed and not session_committed %}
+            <div class="difference-filters" aria-label="Resolución REG-S05 para {{ difference.label }}">
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.legacy_value }}">Conservar actual</button>
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.canonical_value }}">Aceptar candidato</button>
+                <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="">Vaciar campo</button>
+                <button type="button" class="filter-button" data-regs05-edit="{{ difference.input_name }}">Corregir manualmente</button>
+            </div>
             {% endif %}
         </article>
         {% endfor %}
@@ -711,11 +723,14 @@
                             <div class="comparison-value"><small>Borrador</small>{{ difference.legacy_value or 'Sin dato' }}</div>
                             <div class="comparison-value"><small>Canónico</small>{{ difference.canonical_value or 'Sin dato' }}</div>
                         </div>
-                        {% if canonical_promotion_enabled and not session_committed and not player.missing_from_legacy %}
-                        <label class="canonical-difference" style="cursor: pointer;">
-                            <input type="checkbox" name="canonical_fields" value="player.{{ player.slot }}.{{ difference.field }}">
-                            Usar valor canónico
-                        </label>
+                        {% if canonical_review.governed and not session_committed and not player.missing_from_legacy %}
+                        <div class="difference-filters" aria-label="Resolución REG-S05 para J{{ player.slot }} {{ difference.label }}">
+                            <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.legacy_value }}">Conservar actual</button>
+                            <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="{{ difference.canonical_value }}">Aceptar candidato</button>
+                            <button type="button" class="filter-button" data-regs05-target="{{ difference.input_name }}" data-regs05-value="">Vaciar campo</button>
+                            <button type="button" class="filter-button" data-regs05-edit="{{ difference.input_name }}">Corregir manualmente</button>
+                        </div>
+                        <small>{{ difference.classification }} · {{ difference.field_path }}</small>
                         {% endif %}
                     </div>
                     {% endfor %}
@@ -730,27 +745,12 @@
         {% endfor %}
     </div>
     <div class="difference-empty" data-difference-empty hidden>No hay elementos para este filtro.</div>
-    {% if canonical_promotion_enabled %}
-    <div class="review-card" style="margin-top: 18px; border-color: #99f6e4; background: #f0fdfa;">
-        <h4 style="margin: 0 0 8px;">Aplicar selección al borrador</h4>
-        <p style="margin: 0 0 12px; color: #475569;">
-            Los valores se copiarán al borrador con su valor anterior, huella y evidencia en la auditoría.
-            Esta acción no captura el equipo: después deberás usar “Aprobar y capturar”.
-        </p>
-        <label style="display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; font-weight: 700;">
-            <input type="checkbox" name="confirm_canonical_adoption" value="yes" required {% if session_committed %}disabled{% endif %}>
-            Confirmo que revisé los campos seleccionados y deseo aplicarlos al borrador.
-        </label>
-        <button type="submit" class="btn" style="border: none; background: #0f766e;" {% if session_committed %}disabled{% endif %}>
-            Aplicar campos seleccionados
-        </button>
-    </div>
-    {% else %}
-    <p style="margin: 16px 0 0; color: #64748b;">
-        La promoción canónica está deshabilitada; esta comparación permanece en modo de consulta.
+    {% if canonical_review.governed and not session_committed %}
+    <p style="margin: 16px 0 0; color: #475569;">
+        Selecciona una opción por diferencia. El valor se prepara en el formulario principal; “Guardar correcciones” enviará el conjunto completo a REG-S05 con CAS sobre este draft.
     </p>
     {% endif %}
-    </form>
+    </div>
 </section>
 {% endif %}
 
@@ -777,8 +777,12 @@
         <div style="margin-top: 18px;">
             <form action="/api/registration-review/{{ review_session.id }}/assets" method="post" enctype="multipart/form-data" style="margin-bottom: 18px; padding: 14px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #f8fafc;">
                 <label style="display: block; font-weight: 600; margin-bottom: 8px;">Agregar más fotos a esta sesión</label>
+                <input type="hidden" name="base_draft_id" value="{{ review_session.draft.id if review_session.draft is defined else '' }}">
+                <input type="hidden" name="base_draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else '' }}">
+                <input type="hidden" name="base_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+                <input type="hidden" name="page_append_request_id" value="{{ page_append_request_id if page_append_request_id is defined else '' }}">
                 <input type="file" name="files" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf" multiple required style="width: 100%; margin-bottom: 10px;" {% if session_committed %}disabled{% endif %}>
-                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed %}disabled{% endif %}>Subir y anexar</button>
+                <button type="submit" class="btn" style="border: none; cursor: pointer; background: #1d4ed8;" {% if session_committed or page_append_request_id is not defined %}disabled{% endif %}>Subir y anexar</button>
             </form>
             <h4 style="margin-bottom: 10px;">Señales de revisión</h4>
             {% if validation.blockers %}
@@ -810,6 +814,9 @@
 
     <section id="editable-draft" class="review-card" aria-labelledby="editable-draft-title">
         <form id="review-edit-form" action="/api/registration-review/{{ review_session.id }}/edit" method="post">
+            <input type="hidden" name="draft_version" value="{{ review_session.draft.draft_version if review_session.draft is defined else 1 }}">
+            <input type="hidden" name="draft_content_hash" value="{{ review_session.draft.content_hash if review_session.draft is defined else '' }}">
+            <input type="hidden" name="edit_request_id" value="{{ edit_request_id }}">
             <h3 id="editable-draft-title" style="margin-bottom: 6px;">Borrador editable</h3>
             <p style="margin: 0 0 16px; color: #64748b;">Estos son los únicos valores que se guardan al capturar.</p>
             <h4 style="margin-bottom: 14px;">Datos del equipo</h4>
@@ -840,11 +847,13 @@
                 </div>
                 <div>
                     <label>Torneo de captura</label>
-                    <select name="tournament_slug" style="width: 100%;">
+                    <input type="hidden" name="tournament_slug" value="{{ review_session.tournament_slug or '' }}">
+                    <select style="width: 100%;" disabled aria-describedby="tournament-edit-help">
                         {% for option in tournament_options %}
                         <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
                         {% endfor %}
                     </select>
+                    <small id="tournament-edit-help" style="color: #64748b;">El torneo se gobierna fuera de la aprobación de campos.</small>
                 </div>
             </div>
 
@@ -902,10 +911,8 @@
                         </div>
                         {% if player.photo_preview_url %}
                         <small style="color: #64748b;">
-                            {% if player.photo_preview_mode == 'ctt_estimated' %}
-                            Foto estimada con el layout fijo de la cédula. Se guarda al capturar.
-                            {% elif player.photo_preview_mode == 'heuristic' %}
-                            Foto estimada por geometría general de la cédula. Se guarda al capturar.
+                            {% if player.photo_preview_mode in ['ctt_explicit', 'ctt_explicit_binding'] %}
+                            Foto recortada con la caja explícita de su casilla. Se guarda al capturar.
                             {% else %}
                             Foto detectada por OCR. Se guarda al capturar.
                             {% endif %}
@@ -931,8 +938,8 @@
                         </div>
                         <div class="player-meta">
                             <label style="display: inline-flex; gap: 8px; align-items: center;">
-                                <input type="checkbox" name="player_{{ loop.index0 }}_needs_review" value="1" {% if player.needs_review %}checked{% endif %} data-player-input data-player-index="{{ player.index }}" data-source-page="{{ player.source_page }}" data-field-key="row">
-                                Marcar para revisión
+                                <input type="checkbox" {% if player.needs_review %}checked{% endif %} disabled>
+                                Estado de revisión derivado
                             </label>
                             <span>Confianza OCR: {{ player.confidence_pct }}</span>
                             <span>Página origen: {{ player.source_page }}</span>
@@ -953,7 +960,7 @@
             {% endfor %}
 
             <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 20px;">
-                <button type="submit" class="btn" style="border: none; cursor: pointer;" {% if session_committed %}disabled{% endif %}>Guardar borrador</button>
+                <button type="submit" class="btn" style="border: none; cursor: pointer;" {% if session_committed %}disabled{% endif %}>Autorizar correcciones</button>
                 <button
                     type="submit"
                     formaction="/api/registration-review/{{ review_session.id }}/commit"
@@ -998,6 +1005,32 @@
     const playerRows = document.querySelectorAll('[data-player-row]');
     const playerInputs = document.querySelectorAll('[data-player-input]');
     const reviewEditForm = document.getElementById('review-edit-form');
+    const regs05ValueButtons = document.querySelectorAll('[data-regs05-target]');
+    const regs05EditButtons = document.querySelectorAll('[data-regs05-edit]');
+
+    regs05ValueButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            if (!reviewEditForm) return;
+            const input = reviewEditForm.querySelector(`[name="${button.dataset.regs05Target}"]`);
+            if (!input) return;
+            input.value = button.dataset.regs05Value || '';
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            button.parentElement.querySelectorAll('[data-regs05-target]').forEach((item) => {
+                item.setAttribute('aria-pressed', item === button ? 'true' : 'false');
+            });
+            input.focus({ preventScroll: true });
+        });
+    });
+
+    regs05EditButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            if (!reviewEditForm) return;
+            const input = reviewEditForm.querySelector(`[name="${button.dataset.regs05Edit}"]`);
+            if (!input) return;
+            input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            input.focus({ preventScroll: true });
+        });
+    });
 
     function renderOverlays(pageIndex, activePlayerIndex = null, activeFieldKey = null) {
         if (!overlayRoot) return;

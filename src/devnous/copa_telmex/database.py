@@ -3,15 +3,103 @@ Database operations for Copa Telmex registration system.
 """
 import logging
 from datetime import datetime, date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 from uuid import UUID
 
-from sqlalchemy import select, and_, or_, desc
+from sqlalchemy import (
+    and_,
+    desc,
+    event,
+    inspect as sqlalchemy_inspect,
+    or_,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import Team, Player, OCRRegistration, ValidationLog
+from .persistence_authority import (
+    PersistenceAuthorityDenied,
+)
 
 logger = logging.getLogger(__name__)
+
+_SESSION_GUARD_KEY = "copa_telmex_persistence_authority_guard"
+
+
+class _SessionPersistenceAuthorityGuard:
+    """Guard Team/Player flushes made through a CopaTelmexDB-owned session."""
+
+    def __init__(self, session: AsyncSession):
+        self.token = object()
+        self.capability: Optional[Any] = None
+        self.sync_session = getattr(session, "sync_session", None)
+        if self.sync_session is not None:
+            event.listen(self.sync_session, "before_flush", self._before_flush)
+            event.listen(self.sync_session, "after_commit", self._after_transaction)
+            event.listen(self.sync_session, "after_rollback", self._after_transaction)
+
+    def bind(self, capability: Any) -> None:
+        if self.capability is not None and self.capability is not capability:
+            raise PersistenceAuthorityDenied(
+                "PERSISTENCE_AUTHORITY_ALREADY_BOUND",
+                "session already has a different persistence capability",
+            )
+        capability.bind(self.token)
+        self.capability = capability
+
+    def require(self) -> Any:
+        if self.capability is None:
+            raise PersistenceAuthorityDenied(
+                "PERSISTENCE_AUTHORITY_REQUIRED",
+                "Team and Player mutations require transaction-scoped governance authority",
+            )
+        return self.capability
+
+    @staticmethod
+    def _changed_column_fields(entity: Any) -> Set[str]:
+        state = sqlalchemy_inspect(entity)
+        return {
+            attribute.key
+            for attribute in state.mapper.column_attrs
+            if state.attrs[attribute.key].history.has_changes()
+        }
+
+    def _before_flush(self, session, _flush_context, _instances) -> None:
+        protected = [
+            entity
+            for collection in (session.new, session.dirty, session.deleted)
+            for entity in collection
+            if isinstance(entity, (Team, Player))
+        ]
+        if not protected:
+            return
+        capability = self.require()
+        for entity in session.deleted:
+            if isinstance(entity, (Team, Player)):
+                capability.deny_delete(entity, token=self.token)
+        for entity in session.new:
+            if isinstance(entity, Team):
+                capability.authorize_team_create(entity, token=self.token)
+            elif isinstance(entity, Player):
+                capability.authorize_player_create(entity, token=self.token)
+        for entity in session.dirty:
+            if entity in session.new or entity in session.deleted:
+                continue
+            fields = self._changed_column_fields(entity)
+            if not fields:
+                continue
+            if isinstance(entity, Team):
+                capability.authorize_team_update(entity, fields, token=self.token)
+            elif isinstance(entity, Player):
+                capability.authorize_player_update(entity, fields, token=self.token)
+
+    def _after_transaction(self, _session) -> None:
+        self.invalidate()
+
+    def invalidate(self) -> None:
+        if self.capability is not None:
+            self.capability.invalidate()
+            self.capability = None
 
 
 class CopaTelmexDB:
@@ -25,6 +113,33 @@ class CopaTelmexDB:
             session: SQLAlchemy async session
         """
         self.session = session
+        sync_session = getattr(session, "sync_session", None)
+        if sync_session is not None:
+            guard = sync_session.info.get(_SESSION_GUARD_KEY)
+            if guard is None:
+                guard = _SessionPersistenceAuthorityGuard(session)
+                sync_session.info[_SESSION_GUARD_KEY] = guard
+            self._persistence_guard = guard
+        else:
+            self._persistence_guard = _SessionPersistenceAuthorityGuard(session)
+
+    def bind_persistence_authority(
+        self, capability: Any
+    ) -> None:
+        """Bind one preauthorization capability to this database transaction."""
+        self._persistence_guard.bind(capability)
+
+    def bind_postcommit_authority(self, capability: Any) -> None:
+        """Bind one REG-S07 double-receipt capability to this transaction."""
+        self._persistence_guard.bind(capability)
+
+    def record_player_finality(
+        self, player: Player, finality_result: Dict[str, Any]
+    ) -> str:
+        """Bind one post-execution receipt before activating a Player."""
+        return self._persistence_guard.require().record_player_finality(
+            player, finality_result, token=self._persistence_guard.token
+        )
 
     # ============================================================================
     # TEAM OPERATIONS
@@ -34,11 +149,14 @@ class CopaTelmexDB:
         self,
         name: str,
         telegram_chat_id: int,
+        team_id: Optional[UUID] = None,
         tournament_slug: Optional[str] = None,
         gender: Optional[str] = None,
         category: Optional[str] = None,
         league: Optional[str] = None,
         representative_name: Optional[str] = None,
+        contact_phone: Optional[str] = None,
+        contact_email: Optional[str] = None,
         state: Optional[str] = None,
         municipality: Optional[str] = None,
         telegram_user_id: Optional[int] = None,
@@ -62,20 +180,28 @@ class CopaTelmexDB:
         Returns:
             Created Team object
         """
-        team = Team(
+        team_fields = dict(
             name=name,
             tournament_slug=tournament_slug,
             gender=gender,
             category=category,
             league=league,
             representative_name=representative_name,
+            contact_phone=contact_phone,
+            contact_email=contact_email,
             state=state,
             municipality=municipality,
             telegram_chat_id=telegram_chat_id,
             telegram_user_id=telegram_user_id,
             roster_image_path=roster_image_path
         )
+        if team_id is not None:
+            team_fields["id"] = team_id
+        team = Team(**team_fields)
 
+        self._persistence_guard.require().authorize_team_create(
+            team, token=self._persistence_guard.token
+        )
         self.session.add(team)
         await self.session.flush()  # Get the ID without committing
 
@@ -137,10 +263,14 @@ class CopaTelmexDB:
 
     async def update_team(self, team_id: UUID, **fields: Any) -> Optional[Team]:
         """Update a team with the provided fields."""
+        authority = self._persistence_guard.require()
         team = await self.get_team_by_id(team_id)
         if not team:
             return None
 
+        authority.authorize_team_update(
+            team, fields.keys(), token=self._persistence_guard.token
+        )
         for key, value in fields.items():
             if not hasattr(team, key):
                 continue
@@ -171,6 +301,12 @@ class CopaTelmexDB:
         verified_by_human: bool = False,
         verification_notes: Optional[str] = None,
         roster_index: Optional[int] = None,
+        governance_state: str = "LEGACY_ACTIVE",
+        governance_draft_id: Optional[str] = None,
+        governance_draft_version: Optional[int] = None,
+        governance_decision_id: Optional[str] = None,
+        roster_draft_binding: Optional[str] = None,
+        preauthorization_receipt_id: Optional[str] = None,
     ) -> Player:
         """
         Create a new player.
@@ -210,8 +346,17 @@ class CopaTelmexDB:
             verified_by_human=verified_by_human,
             verification_notes=verification_notes,
             roster_index=roster_index,
+            governance_state=governance_state,
+            governance_draft_id=governance_draft_id,
+            governance_draft_version=governance_draft_version,
+            governance_decision_id=governance_decision_id,
+            roster_draft_binding=roster_draft_binding,
+            preauthorization_receipt_id=preauthorization_receipt_id,
         )
 
+        self._persistence_guard.require().authorize_player_create(
+            player, token=self._persistence_guard.token
+        )
         self.session.add(player)
         await self.session.flush()
 
@@ -253,19 +398,64 @@ class CopaTelmexDB:
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_players_by_team(self, team_id: UUID) -> List[Player]:
-        """Get all players in a team."""
+    async def get_players_by_team(
+        self, team_id: UUID, *, include_provisional: bool = False
+    ) -> List[Player]:
+        """Get operational players; provisional governance rows are excluded."""
+        query = select(Player).where(Player.team_id == team_id)
+        if not include_provisional:
+            query = query.where(Player.governance_state.in_(("ACTIVE", "LEGACY_ACTIVE")))
         result = await self.session.execute(
-            select(Player).where(Player.team_id == team_id).order_by(Player.created_at)
+            query.order_by(Player.created_at)
         )
         return list(result.scalars().all())
 
+    async def get_player_photo_fingerprints_by_tournament(
+        self,
+        tournament_slug: str,
+    ) -> List[Dict[str, Any]]:
+        """Return committed player photo fingerprints for one tournament."""
+        slug = (tournament_slug or "").strip()
+        if not slug:
+            return []
+
+        result = await self.session.execute(
+            select(Player, Team)
+            .join(Team, Player.team_id == Team.id)
+            .where(
+                Team.tournament_slug == slug,
+                Player.governance_state.in_(("ACTIVE", "LEGACY_ACTIVE")),
+            )
+        )
+        records: List[Dict[str, Any]] = []
+        for player, team in result.all():
+            if not player.photo_sha256 and not player.photo_ahash:
+                continue
+            records.append(
+                {
+                    "player_ref": f"player-{player.id}",
+                    "player_id": str(player.id),
+                    "player_name": player.full_name,
+                    "team_ref": f"team-{team.id}",
+                    "team_id": str(team.id),
+                    "team_name": team.name,
+                    "tournament_slug": team.tournament_slug,
+                    "photo_sha256": player.photo_sha256,
+                    "photo_ahash": player.photo_ahash,
+                }
+            )
+        return records
+
     async def update_player(self, player_id: UUID, **fields: Any) -> Optional[Player]:
         """Update a player with the provided fields."""
+        authority = self._persistence_guard.require()
         player = await self.session.get(Player, player_id)
         if not player:
             return None
 
+        authority.authorize_player_update(
+            player, fields.keys(), token=self._persistence_guard.token
+        )
         for key, value in fields.items():
             if not hasattr(player, key):
                 continue
@@ -277,9 +467,11 @@ class CopaTelmexDB:
 
     async def delete_player(self, player_id: UUID) -> bool:
         """Delete a player by ID."""
+        authority = self._persistence_guard.require()
         player = await self.session.get(Player, player_id)
         if not player:
             return False
+        authority.deny_delete(player, token=self._persistence_guard.token)
         await self.session.delete(player)
         await self.session.flush()
         logger.info(f"🗑️ Player deleted: {player_id}")
@@ -499,10 +691,16 @@ class CopaTelmexDB:
 
     async def commit(self):
         """Commit the current transaction."""
-        await self.session.commit()
-        logger.info("✅ Database transaction committed")
+        try:
+            await self.session.commit()
+            logger.info("✅ Database transaction committed")
+        finally:
+            self._persistence_guard.invalidate()
 
     async def rollback(self):
         """Rollback the current transaction."""
-        await self.session.rollback()
-        logger.warning("⚠️ Database transaction rolled back")
+        try:
+            await self.session.rollback()
+            logger.warning("⚠️ Database transaction rolled back")
+        finally:
+            self._persistence_guard.invalidate()

@@ -18,7 +18,9 @@ from samchat.assistant.analyst_live_evidence import (
     acquire_live_analyst_evidence,
     build_isolated_sqlalchemy_live_evidence_rows_provider,
     build_sqlalchemy_live_evidence_rows_provider,
+    configured_live_evidence_employee_ids,
     configured_live_evidence_sources,
+    live_evidence_enabled_for_employee,
 )
 from samchat.assistant.analyst_workbench import (
     AnalystEvidence,
@@ -26,6 +28,14 @@ from samchat.assistant.analyst_workbench import (
     rank_analyst_evidence,
     run_analyst_workbench,
 )
+
+
+@pytest.fixture(autouse=True)
+def _default_live_evidence_allowlist(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        "emp-1",
+    )
 
 
 def _context(
@@ -121,6 +131,65 @@ async def test_flag_off_is_exact_noop(monkeypatch):
     assert result.enabled is False
     assert result.collection.evidence == []
     assert result.collection.provider_called is False
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_enabled_with_empty_allowlist_fails_closed(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        " , ",
+    )
+    calls = []
+
+    async def provider(_context, sources):
+        calls.append(sources)
+        return {"expenses": [_live_row()]}
+
+    result = await acquire_live_analyst_evidence(
+        context=_context("gastos:read"),
+        intent=_intent(),
+        rows_provider=provider,
+    )
+
+    assert configured_live_evidence_employee_ids() == frozenset()
+    assert live_evidence_enabled_for_employee("emp-1") is False
+    assert result.enabled is False
+    assert result.collection.evidence == []
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_unlisted_employee_cannot_acquire_live_evidence(monkeypatch):
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        "emp-2, EMP-3, emp-2",
+    )
+    calls = []
+
+    async def provider(_context, sources):
+        calls.append(sources)
+        return {"expenses": [_live_row()]}
+
+    result = await acquire_live_analyst_evidence(
+        context=_context("gastos:read"),
+        intent=_intent(),
+        rows_provider=provider,
+    )
+
+    assert configured_live_evidence_employee_ids() == frozenset({"emp-2", "emp-3"})
+    assert live_evidence_enabled_for_employee("EMP-2") is True
+    assert live_evidence_enabled_for_employee("emp-1") is False
+    assert live_evidence_enabled_for_employee(None) is False
+    assert result.enabled is False
     assert calls == []
 
 

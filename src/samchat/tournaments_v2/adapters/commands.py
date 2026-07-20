@@ -4,6 +4,12 @@ from datetime import date, datetime, time, timedelta
 import re
 from typing import Any, Dict, List, Optional
 
+from devnous.copa_telmex.supabase_authority import (
+    SupabaseAuthorityDenied,
+    SupabaseReplicationCapability,
+    SupabaseWritePermit,
+    normalize_replica_roster,
+)
 from devnous.tournaments.core.supabase_sync import (
     SupabaseAdminClient,
     SupabaseConfig,
@@ -482,6 +488,8 @@ async def register_team_from_roster_v2(
     municipality: Optional[str] = None,
     players: Optional[List[Dict[str, Any]]] = None,
     dry_run: bool = False,
+    source_team_id: Optional[str] = None,
+    replication_authority: Optional[SupabaseReplicationCapability] = None,
 ) -> Dict[str, Any]:
     config = load_tournaments_v2_config()
     if not config.writes_enabled:
@@ -494,7 +502,30 @@ async def register_team_from_roster_v2(
     if not roster:
         raise ValueError("players is required and must contain at least one player")
 
-    client = SupabaseRestClient(config)
+    write_permit: Optional[SupabaseWritePermit] = None
+    if not dry_run:
+        if replication_authority is None:
+            raise SupabaseAuthorityDenied(
+                "SUPABASE_REPLICATION_AUTHORITY_REQUIRED",
+                "Supabase is a replica; a post-finality Zaubern capability is required",
+            )
+        write_permit = replication_authority.consume(
+            operation="register_team",
+            tournament_key=tournament_key,
+            tournament_slug=tournament_slug,
+            tournament_name=tournament_name,
+            category_id=category_id,
+            category_name=category_name,
+            target_team_id=None,
+            source_team_id=_safe_str(source_team_id),
+            team_name=team_name_value,
+            players=roster,
+        )
+    replication_receipt_id = (
+        write_permit.replication_receipt_id if write_permit else None
+    )
+
+    client = SupabaseRestClient(config, write_permit=write_permit)
     tournament = await resolve_primary_tournament(
         client,
         tournament_key=tournament_key,
@@ -518,8 +549,15 @@ async def register_team_from_roster_v2(
             service_role_key=config.service_role_key,
         ),
         cache_dir="data",
+        write_permit=write_permit,
     )
-    import_user_id = _safe_str(user_id) or await admin.ensure_import_user()
+    import_user_id = _safe_str(user_id)
+    if not import_user_id:
+        import_user_id = (
+            "00000000-0000-0000-0000-000000000000"
+            if dry_run
+            else await admin.ensure_import_user()
+        )
 
     representative_phone_value = (
         _safe_str(representative_phone or phone_number) or "5500000000"
@@ -554,21 +592,24 @@ async def register_team_from_roster_v2(
         "team_id": None,
         "category_id": category_id_value,
         "payment_status": _safe_str(payment_status) or "pending",
-        "notes": _safe_str(notes) or None,
+        "notes": (
+            (f"{_safe_str(notes)}\n" if _safe_str(notes) else "")
+            + (
+                "Zaubern governed replica; "
+                f"source_team_id={_safe_str(source_team_id)}; "
+                f"replication_receipt_id={replication_receipt_id}"
+                if replication_receipt_id
+                else ""
+            )
+        )
+        or None,
     }
 
     player_payloads: List[Dict[str, Any]] = []
-    for idx, raw in enumerate(roster, start=1):
-        if not isinstance(raw, dict):
-            continue
-        first_name = (
-            _safe_str(_pick_value(raw, ["first_name", "nombre", "nombres", "name"]))
-            or "Jugador"
-        )
-        last_name = (
-            _safe_str(_pick_value(raw, ["last_name", "apellido", "apellidos"]))
-            or f"#{idx}"
-        )
+    normalized_roster = normalize_replica_roster(roster)
+    for idx, (raw, normalized) in enumerate(zip(roster, normalized_roster), start=1):
+        first_name = normalized["first_name"]
+        last_name = normalized["last_name"]
         parent_name = (
             _safe_str(
                 _pick_value(
@@ -590,14 +631,7 @@ async def register_team_from_roster_v2(
             _safe_str(_pick_value(raw, ["parent_phone", "telefono", "celular"]))
             or representative_phone_value
         )
-        birth_date = (
-            _safe_str(
-                _pick_value(
-                    raw, ["birth_date", "fecha_nacimiento", "nacimiento", "fecha"]
-                )
-            )
-            or "2012-01-01"
-        )
+        birth_date = normalized["birth_date"]
         player_payloads.append(
             {
                 "registration_id": None,
@@ -607,15 +641,9 @@ async def register_team_from_roster_v2(
                 "parent_name": parent_name,
                 "parent_email": parent_email,
                 "parent_phone": parent_phone,
-                "curp": _safe_str(_pick_value(raw, ["curp"])) or None,
-                "paternal_surname": _safe_str(
-                    _pick_value(raw, ["paternal_surname", "apellido_paterno"])
-                )
-                or None,
-                "maternal_surname": _safe_str(
-                    _pick_value(raw, ["maternal_surname", "apellido_materno"])
-                )
-                or None,
+                "curp": normalized["curp"],
+                "paternal_surname": normalized["paternal_surname"],
+                "maternal_surname": normalized["maternal_surname"],
                 "jersey_number": _pick_value(raw, ["jersey_number", "numero", "dorsal"])
                 or idx,
                 "position": _safe_str(_pick_value(raw, ["position", "posicion"]))
@@ -705,20 +733,40 @@ async def register_team_from_roster_v2(
         )
 
     registration_id = _safe_str(registration.get("id"))
+    existing_players = await client.fetch_all_rows(
+        table="players",
+        select_expr="id,curp,first_name,last_name,birth_date,registration_id",
+        filters={"registration_id": f"eq.{registration_id}"},
+        order="created_at.asc",
+    )
+    existing_curps = {
+        _safe_str(row.get("curp")).upper()
+        for row in existing_players
+        if _safe_str(row.get("curp"))
+    }
+    existing_identities = {
+        _player_identity_key(
+            first_name=row.get("first_name"),
+            last_name=row.get("last_name"),
+            birth_date=row.get("birth_date"),
+        )
+        for row in existing_players
+    }
     created_payloads: List[Dict[str, Any]] = []
     skipped = 0
     for player_payload in player_payloads:
-        curp = _safe_str(player_payload.get("curp"))
+        curp = _safe_str(player_payload.get("curp")).upper()
+        identity = _player_identity_key(
+            first_name=player_payload.get("first_name"),
+            last_name=player_payload.get("last_name"),
+            birth_date=player_payload.get("birth_date"),
+        )
+        if (curp and curp in existing_curps) or identity in existing_identities:
+            skipped += 1
+            continue
         if curp:
-            existing = await client.select_rows(
-                table="players",
-                select_expr="id,curp",
-                filters={"curp": f"eq.{curp}"},
-                limit=1,
-            )
-            if existing:
-                skipped += 1
-                continue
+            existing_curps.add(curp)
+        existing_identities.add(identity)
         row = dict(player_payload)
         row["registration_id"] = registration_id
         created_payloads.append(row)
@@ -772,6 +820,8 @@ async def append_players_to_team_v2(
     representative_phone: Optional[str] = None,
     players: Optional[List[Dict[str, Any]]] = None,
     dry_run: bool = False,
+    source_team_id: Optional[str] = None,
+    replication_authority: Optional[SupabaseReplicationCapability] = None,
 ) -> Dict[str, Any]:
     config = load_tournaments_v2_config()
     if not config.writes_enabled:
@@ -781,7 +831,30 @@ async def append_players_to_team_v2(
     if not roster:
         raise ValueError("players is required and must contain at least one player")
 
-    client = SupabaseRestClient(config)
+    write_permit: Optional[SupabaseWritePermit] = None
+    if not dry_run:
+        if replication_authority is None:
+            raise SupabaseAuthorityDenied(
+                "SUPABASE_REPLICATION_AUTHORITY_REQUIRED",
+                "Supabase is a replica; a post-finality Zaubern capability is required",
+            )
+        write_permit = replication_authority.consume(
+            operation="append_players",
+            tournament_key=tournament_key,
+            tournament_slug=tournament_slug,
+            tournament_name=tournament_name,
+            category_id=category_id,
+            category_name=category_name,
+            target_team_id=team_id,
+            source_team_id=_safe_str(source_team_id),
+            team_name=_safe_str(team_name),
+            players=roster,
+        )
+    replication_receipt_id = (
+        write_permit.replication_receipt_id if write_permit else None
+    )
+
+    client = SupabaseRestClient(config, write_permit=write_permit)
     tournament = await resolve_primary_tournament(
         client,
         tournament_key=tournament_key,
@@ -807,13 +880,36 @@ async def append_players_to_team_v2(
     )
     team_id_value = _safe_str(team.get("id"))
 
+    normalized_roster = normalize_replica_roster(roster)
+    if dry_run:
+        return {
+            "created": False,
+            "dry_run": True,
+            "source": "supabase_tournaments_v2",
+            "tournament": {
+                "id": tournament_id,
+                "name": tournament.get("name"),
+                "slug": tournament.get("slug"),
+            },
+            "category": {"id": category_id_value, "name": category_name_value},
+            "team": {"id": team_id_value, "team_name": team.get("team_name")},
+            "registration": {"id": None},
+            "players_count": len(normalized_roster),
+            "players_preview": normalized_roster[:5],
+            "players_skipped": 0,
+        }
+
     registrations = await client.insert_rows(
         table="registrations",
         payload={
             "team_id": team_id_value,
             "category_id": category_id_value,
             "payment_status": "pending",
-            "notes": "Actualizado via Telegram OCR (back side)",
+            "notes": (
+                "Zaubern governed replica; "
+                f"source_team_id={_safe_str(source_team_id)}; "
+                f"replication_receipt_id={replication_receipt_id}"
+            ),
         },
         on_conflict="team_id,category_id",
         merge_duplicates=True,
@@ -852,29 +948,13 @@ async def append_players_to_team_v2(
 
     player_payloads: List[Dict[str, Any]] = []
     skipped = 0
-    for idx, raw in enumerate(roster, start=1):
-        if not isinstance(raw, dict):
-            continue
-        first_name = (
-            _safe_str(_pick_value(raw, ["first_name", "nombre", "nombres", "name"]))
-            or "Jugador"
-        )
-        last_name = _safe_str(_pick_value(raw, ["last_name", "apellido", "apellidos"]))
-        paternal = _safe_str(_pick_value(raw, ["paternal_surname", "apellido_paterno"]))
-        maternal = _safe_str(_pick_value(raw, ["maternal_surname", "apellido_materno"]))
-        if not last_name and (paternal or maternal):
-            last_name = (paternal or maternal).strip()
-        if not last_name:
-            last_name = f"#{idx}"
-        birth_date = (
-            _parse_date_text(
-                _pick_value(
-                    raw, ["birth_date", "fecha_nacimiento", "nacimiento", "fecha"]
-                )
-            )
-            or "2012-01-01"
-        )
-        curp = _safe_str(_pick_value(raw, ["curp"])).upper() or None
+    for idx, (raw, normalized) in enumerate(zip(roster, normalized_roster), start=1):
+        first_name = normalized["first_name"]
+        last_name = normalized["last_name"]
+        paternal = normalized["paternal_surname"] or ""
+        maternal = normalized["maternal_surname"] or ""
+        birth_date = normalized["birth_date"]
+        curp = normalized["curp"]
         identity = _player_identity_key(
             first_name=first_name,
             last_name=last_name,
@@ -932,24 +1012,6 @@ async def append_players_to_team_v2(
                 "documents_verified": False,
             }
         )
-
-    if dry_run:
-        return {
-            "created": False,
-            "dry_run": True,
-            "source": "supabase_tournaments_v2",
-            "tournament": {
-                "id": tournament_id,
-                "name": tournament.get("name"),
-                "slug": tournament.get("slug"),
-            },
-            "category": {"id": category_id_value, "name": category_name_value},
-            "team": {"id": team_id_value, "team_name": team.get("team_name")},
-            "registration": {"id": registration_id},
-            "players_count": len(player_payloads),
-            "players_preview": player_payloads[:5],
-            "players_skipped": skipped,
-        }
 
     inserted_players: List[Dict[str, Any]] = []
     if player_payloads:

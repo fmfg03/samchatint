@@ -286,6 +286,26 @@ def live_evidence_enabled() -> bool:
     return _env_bool("ASSISTANT_ANALYST_LIVE_EVIDENCE_ENABLED", False)
 
 
+def configured_live_evidence_employee_ids() -> frozenset[str]:
+    raw = os.getenv(
+        "ASSISTANT_ANALYST_LIVE_EVIDENCE_EMPLOYEE_IDS",
+        "",
+    )
+    return frozenset(
+        value.strip().casefold() for value in raw.split(",") if value.strip()
+    )
+
+
+def live_evidence_enabled_for_employee(employee_id: Any) -> bool:
+    """Fail closed unless the feature and exact employee ID are configured."""
+    if not live_evidence_enabled():
+        return False
+    normalized_employee_id = str(employee_id or "").strip().casefold()
+    if not normalized_employee_id:
+        return False
+    return normalized_employee_id in configured_live_evidence_employee_ids()
+
+
 def configured_live_evidence_sources() -> list[str]:
     raw = os.getenv(
         "ASSISTANT_ANALYST_LIVE_EVIDENCE_SOURCES",
@@ -330,7 +350,7 @@ async def acquire_live_analyst_evidence(
     rows_provider: Optional[LiveEvidenceRowsProvider],
 ) -> LiveEvidenceAcquisition:
     empty = _empty_collection()
-    if not live_evidence_enabled():
+    if not live_evidence_enabled_for_employee(context.employee_id):
         return LiveEvidenceAcquisition(collection=empty, enabled=False)
 
     requested_sources = _requested_live_evidence_sources(context.question)

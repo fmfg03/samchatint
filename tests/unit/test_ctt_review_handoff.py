@@ -7,6 +7,9 @@ from typing import Optional
 import pytest
 from PIL import Image
 
+from devnous.copa_telmex.draft_versioning import build_successor_values
+from devnous.copa_telmex.models import RegistrationReviewDraft
+from devnous.copa_telmex.registration_governance import RegistrationGovernanceDenied
 from devnous.tournaments.core.ctt_ocr_contract import (
     CttFieldEvidence,
     CttFieldName,
@@ -20,6 +23,7 @@ from devnous.tournaments.core.ctt_ocr_contract import (
 from devnous.tournaments.instances.copa_telmex import ctt_review_handoff as handoff
 from devnous.tournaments.instances.copa_telmex.ctt_review_handoff import (
     CttCanonicalReviewSink,
+    build_canonical_proposed_extraction,
     build_canonical_review_payload,
     canonical_photo_box,
 )
@@ -117,6 +121,7 @@ class _Report:
     accepted = True
     use_canonical_result = False
     review_count = 1
+    model = "gpt-test"
 
     def model_dump(self, *, mode):
         assert mode == "json"
@@ -186,12 +191,19 @@ class _ScalarResult:
     def scalar_one_or_none(self):
         return self.value
 
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self.value or [])
+
 
 class _FakeSession:
-    def __init__(self, review_draft):
-        self.review_draft = review_draft
+    def __init__(self, values):
+        self.values = list(values)
         self.committed = False
         self.queries = []
+        self.added = []
 
     async def __aenter__(self):
         return self
@@ -201,24 +213,121 @@ class _FakeSession:
 
     async def execute(self, query):
         self.queries.append(query)
-        return _ScalarResult(self.review_draft)
+        return _ScalarResult(self.values.pop(0))
+
+    def add(self, value):
+        self.added.append(value)
 
     async def commit(self):
         self.committed = True
 
 
+def _base_draft(session_id):
+    extraction = {
+        "team": {"name": "Legacy Team"},
+        "manager": {},
+        "players": [
+            {
+                "name": "Nombre anterior",
+                "birth_date": None,
+                "curp": None,
+                "roster_entry_id": "stable-1",
+            }
+        ],
+    }
+    values = build_successor_values(
+        None,
+        ocr_raw={"pages": []},
+        extraction=extraction,
+        review_edits=extraction,
+        validation={},
+        layout_regions={"pages": {}, "player_page_map": {"1": 1}},
+        overall_confidence=0.5,
+        needs_review=True,
+    )
+    return RegistrationReviewDraft(
+        id="22222222-2222-2222-2222-222222222222",
+        session_id=session_id,
+        draft_version=1,
+        content_hash=values.pop("content_hash"),
+        mutation_type="ocr_initial",
+        mutation_operation_id="initial",
+        mutation_decision_id="sha256:" + "b" * 64,
+        mutation_receipt_id="receipt-initial",
+        **values,
+    )
+
+
+def test_occupancy_never_auto_materializes_a_player() -> None:
+    session_id = "11111111-1111-1111-1111-111111111111"
+    base = _base_draft(session_id)
+    canonical = _draft(occupied_count=2)
+
+    extraction, occupancy = build_canonical_proposed_extraction(base, canonical)
+
+    assert len(extraction["players"]) == 1
+    assert extraction["players"][0]["roster_entry_id"] == "stable-1"
+    assert occupancy["excluded_identity_slots"] == [2]
+    assert occupancy["auto_materialized_slots"] == []
+    assert occupancy["requires_review"] is True
+
+
 @pytest.mark.asyncio
-async def test_sink_persists_sidecar_without_replacing_legacy_draft(
+async def test_sink_persists_reg_s03_run_without_successor_on_conflict(
     monkeypatch,
     tmp_path,
 ) -> None:
-    review_draft = SimpleNamespace(
-        ocr_raw={"provider": "legacy"},
-        validation={"legacy": True},
-        extraction={"team": {"name": "Legacy Team"}},
-        review_edits={"team": {"name": "Operator Edit"}},
+    session_id = "11111111-1111-1111-1111-111111111111"
+    review_draft = _base_draft(session_id)
+    review_session = SimpleNamespace(
+        id=session_id,
+        status="processing",
     )
-    session = _FakeSession(review_draft)
+    assets = [
+        {
+            "page_index": 1,
+            "sha256": "1" * 64,
+            "width": 2550,
+            "height": 3300,
+        },
+        {
+            "page_index": 2,
+            "sha256": "2" * 64,
+            "width": 2550,
+            "height": 3300,
+        },
+    ]
+    session = _FakeSession([review_session, review_draft, None, assets])
+
+    async def reject_unexpected_append(*_args, **_kwargs):
+        raise AssertionError("a conflicted REG-S03 run cannot create a successor")
+
+    monkeypatch.setattr(handoff, "append_draft_version", reject_unexpected_append)
+
+    class _Governance:
+        async def adjudicate_reprocess(self, _payload):
+            return {
+                "successor_authorized": False,
+                "reprocess_decision": {
+                    "decision": "REQUIRE_FIELD_REVIEW",
+                    "decision_id": "sha256:" + "d" * 64,
+                    "policy_hash": "sha256:" + "e" * 64,
+                    "reason_codes": ["MATERIAL_FIELD_CONFLICT"],
+                    "issued_at": "2026-07-16T00:00:00Z",
+                    "expires_at": "2026-07-16T00:05:00Z",
+                },
+                "reprocess_receipt": {
+                    "verified": True,
+                    "receipt_id": "receipt-reprocess",
+                    "event_hash": "sha256:" + "f" * 64,
+                },
+            }
+
+    monkeypatch.setattr(
+        handoff.RegistrationGovernanceClient,
+        "from_environment",
+        lambda: _Governance(),
+    )
 
     def session_maker():
         return session
@@ -247,29 +356,74 @@ async def test_sink_persists_sidecar_without_replacing_legacy_draft(
         session_maker=session_maker,
         photos_base_dir=tmp_path,
     )
-    session_id = "11111111-1111-1111-1111-111111111111"
-
     persisted = await sink.persist(
         session_id,
         _execution(occupied_count=1),
         [b"front", b"back"],
-        {},
+        {"pages": {}},
     )
 
     assert persisted is True
     assert session.committed is True
     assert session.queries[0]._for_update_arg is not None
-    assert review_draft.extraction == {"team": {"name": "Legacy Team"}}
-    assert review_draft.review_edits == {"team": {"name": "Operator Edit"}}
-    assert review_draft.ocr_raw["provider"] == "legacy"
-    canonical = review_draft.ocr_raw["canonical_shadow"]
-    assert canonical["authoritative"] is False
-    assert canonical["players"][0]["slot"] == 1
-    audit = review_draft.validation["audit"]["canonical_shadow"]
-    assert audit["player_count"] == 1
-    assert audit["preview_count"] == 1
+    assert review_draft.extraction["team"]["name"] == "Legacy Team"
+    assert review_session.status == "review"
+    run = next(item for item in session.added if hasattr(item, "run_fingerprint"))
+    assert run.base_draft_id == review_draft.id
+    assert run.proposed_extraction["players"][0]["name"] == "María Apellido 1"
+    assert run.proposed_validation["canonical_occupancy"]["auto_materialized_slots"] == []
+    assert run.prompt_config_hash == handoff.sha256_binding(
+        {
+            "pipeline_version": handoff.CTT_RESPONSES_PIPELINE_VERSION,
+            "model": "gpt-test",
+            "layout_template": None,
+            "layout_hash": handoff.sha256_binding({"pages": {}}),
+        }
+    )
     preview = (
         tmp_path / "review_sessions" / session_id / "canonical_shadow" / "player_01.jpg"
     )
     assert preview.is_file()
     assert os.stat(preview).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_sink_fails_closed_when_evidence_bus_does_not_verify(
+    monkeypatch, tmp_path
+) -> None:
+    session_id = "11111111-1111-1111-1111-111111111111"
+    review_draft = _base_draft(session_id)
+    review_session = SimpleNamespace(id=session_id, status="processing")
+    session = _FakeSession([review_session, review_draft, None, []])
+
+    class _Governance:
+        async def adjudicate_reprocess(self, _payload):
+            return {
+                "successor_authorized": False,
+                "reprocess_decision": {
+                    "decision": "REQUIRE_FIELD_REVIEW",
+                    "decision_id": "sha256:" + "d" * 64,
+                },
+                "reprocess_receipt": {"verified": False},
+            }
+
+    monkeypatch.setattr(
+        handoff.RegistrationGovernanceClient,
+        "from_environment",
+        lambda: _Governance(),
+    )
+    monkeypatch.setattr(handoff, "build_canonical_photo_crops", lambda *_args: {})
+    sink = CttCanonicalReviewSink(
+        session_maker=lambda: session,
+        photos_base_dir=tmp_path,
+    )
+
+    with pytest.raises(RegistrationGovernanceDenied):
+        await sink.persist(
+            session_id,
+            _execution(occupied_count=1),
+            [b"front", b"back"],
+            {"pages": {}},
+        )
+
+    assert session.committed is False

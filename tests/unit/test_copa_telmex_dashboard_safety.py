@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import inspect
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,52 @@ os.environ.setdefault(
 )
 
 import copa_telmex_dashboard as dashboard  # noqa: E402
+
+
+def test_unresolved_reg_s03_decision_is_a_commit_blocker() -> None:
+    validation = dashboard._attach_unresolved_reprocess_blocker(
+        {"blockers": [], "ready_to_commit": True}
+    )
+
+    assert validation["ready_to_commit"] is False
+    assert validation["blockers"][0]["code"] == "UNRESOLVED_OCR_REPROCESS"
+    commit_source = inspect.getsource(
+        dashboard.commit_registration_review_session
+    )
+    assert "RegistrationOcrReprocessDecision" in commit_source
+    assert "_attach_unresolved_reprocess_blocker" in commit_source
+
+
+def test_review_photo_uses_the_player_slot_binding_before_page_order() -> None:
+    region, mode = dashboard._resolve_review_photo_region(
+        player_payload={},
+        player_index=3,
+        page_index=2,
+        page_player_index=1,
+        image_size=(2550, 3300),
+        layout_regions={
+            "photo_bindings": {
+                "3": {
+                    "source_page": 2,
+                    "source_slot": 12,
+                    "x": 1200,
+                    "y": 800,
+                    "width": 400,
+                    "height": 320,
+                }
+            }
+        },
+    )
+
+    assert mode == "ctt_explicit_binding"
+    assert region == {
+        "x": 1200,
+        "y": 800,
+        "width": 400,
+        "height": 320,
+        "confidence": 1.0,
+        "source_slot": 12,
+    }
 
 
 def test_default_cors_origins_are_https_only(monkeypatch) -> None:
@@ -204,6 +251,13 @@ def _decision_review_session(status: str):
 
 def _configure_decision_route(monkeypatch, sessions) -> None:
     pending_sessions = list(sessions)
+
+    async def append_version(_db, target_session, **values):
+        predecessor = values.pop("expected_draft")
+        successor = SimpleNamespace(**{**vars(predecessor), **values})
+        target_session.draft = successor
+        return successor
+
     monkeypatch.setattr(
         dashboard, "_ensure_registration_review_access", lambda *_args, **_kwargs: None
     )
@@ -215,6 +269,7 @@ def _configure_decision_route(monkeypatch, sessions) -> None:
     monkeypatch.setattr(
         dashboard, "async_session_maker", lambda: pending_sessions.pop(0)
     )
+    monkeypatch.setattr(dashboard, "append_draft_version", append_version)
     monkeypatch.setattr(
         dashboard, "_log_registration_review_event", lambda *_args, **_kwargs: None
     )
