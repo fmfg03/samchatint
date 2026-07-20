@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 from io import BytesIO
 
@@ -25,16 +26,22 @@ def _parse_intake_context(context: str) -> dict:
     return payload
 
 
-async def _forbidden_provider_call(*args, **kwargs):  # pragma: no cover - failure helper
+async def _forbidden_provider_call(
+    *args, **kwargs
+):  # pragma: no cover - failure helper
     raise AssertionError("provider/OCR path must not be called for synthetic fixtures")
 
 
 def _forbidden_provider_order(*args, **kwargs):  # pragma: no cover - failure helper
-    raise AssertionError("provider order must not be resolved for text/spreadsheet fixtures")
+    raise AssertionError(
+        "provider order must not be resolved for text/spreadsheet fixtures"
+    )
 
 
 def _forbidden_openai_client(*args, **kwargs):  # pragma: no cover - failure helper
-    raise AssertionError("openai client must not be requested for text/spreadsheet fixtures")
+    raise AssertionError(
+        "openai client must not be requested for text/spreadsheet fixtures"
+    )
 
 
 def _roster_payload(records):
@@ -49,7 +56,9 @@ def _roster_payload(records):
     }
 
 
-def _run_upload(kind: str, upload: UploadFile, raw: bytes, note: str | None = None) -> str:
+def _run_upload(
+    kind: str, upload: UploadFile, raw: bytes, note: str | None = None
+) -> str:
     return asyncio.run(
         extract_text_from_media(
             kind=kind,
@@ -88,7 +97,10 @@ def test_upload_accounting_balance_context_surfaces_intake_and_blocks_writes() -
     assert {"company", "project", "period"}.issubset(set(intake["missing_fields"]))
     assert intake["proposed_actions"]
     assert all(action["risk_level"] == "read" for action in intake["proposed_actions"])
-    assert all(action["requires_confirmation"] is False for action in intake["proposed_actions"])
+    assert all(
+        action["requires_confirmation"] is False
+        for action in intake["proposed_actions"]
+    )
     assert intake["safety"]["can_execute_without_confirmation"] is False
     _assert_existing_canonical_actions_only(intake)
 
@@ -114,7 +126,9 @@ def test_upload_roster_context_extracts_team_players_and_requires_tournament() -
     assert "tournament" in intake["missing_fields"]
     assert "Confirma torneo" in " ".join(intake["questions_for_user"])
     write_actions = [
-        action for action in intake["proposed_actions"] if action["requires_confirmation"]
+        action
+        for action in intake["proposed_actions"]
+        if action["requires_confirmation"]
     ]
     assert write_actions
     assert all(action["write_blocked"] is True for action in write_actions)
@@ -148,7 +162,9 @@ def test_upload_cfdi_xml_context_extracts_invoice_fields_without_paid_state() ->
     _assert_existing_canonical_actions_only(intake)
 
 
-def test_upload_payment_proof_context_requires_candidate_before_registering_payment() -> None:
+def test_upload_payment_proof_context_requires_candidate_before_registering_payment() -> (
+    None
+):
     raw = (
         "Comprobante de pago SPEI\n"
         "Monto: $45,000.00\n"
@@ -170,7 +186,8 @@ def test_upload_payment_proof_context_requires_candidate_before_registering_paym
     assert intake["entities"]["bank_reference"] == "SPEI123ABC"
     assert "document_or_expense_candidate" in intake["missing_fields"]
     write_action = next(
-        action for action in intake["proposed_actions"]
+        action
+        for action in intake["proposed_actions"]
         if action["canonical_action"] == "receipts.register_document_payment"
     )
     assert write_action["requires_confirmation"] is True
@@ -191,5 +208,25 @@ def test_upload_unknown_context_has_summary_question_and_no_write_proposal() -> 
     assert intake["detected_document_type"] == "unknown_or_generic"
     assert intake["proposed_actions"] == []
     assert intake["missing_fields"] == ["target_workflow"]
-    assert intake["questions_for_user"] == ["Indica a que workflow pertenece este documento."]
+    assert intake["questions_for_user"] == [
+        "Indica a que workflow pertenece este documento."
+    ]
     assert intake["safety"]["blocked_reason"] == "unsupported_document_type"
+
+
+def test_upload_expense_receipt_includes_raw_file_evidence_hash() -> None:
+    raw = (
+        "Ticket de compra\nComercio: Papeleria Central\n"
+        "Total: 1250.00\nFecha: 2026-07-20\n"
+        "Concepto: Material de oficina\n"
+    ).encode("utf-8")
+
+    context = _run_upload(
+        "text",
+        _upload("ticket.txt", "text/plain", raw),
+        raw,
+    )
+    intake = _parse_intake_context(context)
+
+    assert intake["detected_document_type"] == "expense_receipt"
+    assert intake["evidence_sha256"] == hashlib.sha256(raw).hexdigest()

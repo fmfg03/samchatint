@@ -34,6 +34,13 @@ from .analyst_workbench import (
     extract_inline_analyst_evidence,
     run_analyst_workbench,
 )
+from .capability_negotiation import (
+    capability_negotiation_enabled,
+    detect_capability_goal,
+    evaluate_capability,
+    receipt_workflow_writes_enabled,
+    render_capability_response,
+)
 from .document_confirmation import AsyncActionRouterExecutor
 from .document_conversation import (
     extract_document_intake_result_from_text,
@@ -47,11 +54,14 @@ from .finance_query_service import (
     render_finance_comparison_result,
     run_read_only_comparison,
 )
+from .receipt_workflow_draft import (
+    advance_receipt_draft,
+    start_receipt_draft,
+)
 from .request_intent import detect_request_intent
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .request_router import route_request
-
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
 AppendExportPromptFn = Callable[[str, Any], str]
@@ -77,9 +87,7 @@ def _live_evidence_analyst_intent(
     raw_message: str,
     current_empleado: Any,
 ) -> Optional[AnalystIntent]:
-    if not live_evidence_enabled_for_employee(
-        getattr(current_empleado, "id", None)
-    ):
+    if not live_evidence_enabled_for_employee(getattr(current_empleado, "id", None)):
         return None
     intent = detect_analyst_intent(raw_message)
     if intent is None:
@@ -108,18 +116,13 @@ def _live_evidence_analyst_intent(
         )
     )
     has_explicit_named_target = (
-        route_hint.startswith(("cfdi.", "payments."))
-        and has_explicit_reference
-    ) or (
-        route_hint.startswith("tournament.")
-        and has_named_tournament
-    )
+        route_hint.startswith(("cfdi.", "payments.")) and has_explicit_reference
+    ) or (route_hint.startswith("tournament.") and has_named_tournament)
     if (
         route_hint.startswith(("cfdi.", "payments.", "tournament."))
         and has_explicit_named_target
         and any(
-            token in normalized
-            for token in ("explicame", "explica", "que implica")
+            token in normalized for token in ("explicame", "explica", "que implica")
         )
     ):
         return replace(
@@ -197,9 +200,7 @@ async def _latest_document_intake_result(
         )
     ).scalars()
     for message in rows:
-        intake = extract_document_intake_result_from_text(
-            message.content or ""
-        )
+        intake = extract_document_intake_result_from_text(message.content or "")
         if intake is not None:
             return intake
     return None
@@ -235,15 +236,15 @@ async def _build_document_upload_response(
     intake = extract_document_intake_result_from_text(raw_message)
     if intake is None:
         return None
+    if intake.get("detected_document_type") == "expense_receipt":
+        start_receipt_draft(conversation=conversation, intake=intake)
     rendered = render_document_intake_for_conversation(intake)
     tool_trace = [
         {
             "document_intake_live_wiring": {
                 "stage": "upload_render",
                 "detected_document_type": intake.get("detected_document_type"),
-                "proposed_action_count": len(
-                    intake.get("proposed_actions") or []
-                ),
+                "proposed_action_count": len(intake.get("proposed_actions") or []),
                 "missing_field_count": len(intake.get("missing_fields") or []),
                 "provider_called": False,
             }
@@ -421,6 +422,44 @@ async def _build_request_intelligence_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+async def _build_capability_negotiation_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    current_empleado: Any,
+    session: Any,
+) -> Optional[Any]:
+    if not capability_negotiation_enabled(getattr(current_empleado, "id", None)):
+        return None
+    goal = detect_capability_goal(raw_message)
+    if goal is None:
+        return None
+    evaluation = evaluate_capability(
+        goal,
+        supported_actions=supported_actions(),
+        role=getattr(current_empleado, "rol", None),
+    )
+    rendered = render_capability_response(goal, evaluation)
+    tool_trace = [
+        {
+            "capability_negotiation": {
+                "stage": "capability_inquiry",
+                "goal": goal.to_dict(),
+                "evaluation": evaluation.to_trace(),
+                "operational_tools_called": 0,
+                "writes_attempted": False,
+            }
+        }
+    ]
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def _build_analyst_workbench_response(
     *,
     raw_message: str,
@@ -428,15 +467,12 @@ async def _build_analyst_workbench_response(
     current_empleado: Any,
     session: Any,
     maybe_append_export_prompt: MaybeAppendExportPromptFn,
-    live_evidence_rows_provider: Optional[
-        LiveEvidenceRowsProvider
-    ] = None,
+    live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
     require_live_evidence: bool = False,
 ) -> Optional[Any]:
-    intent = (
-        _live_evidence_analyst_intent(raw_message, current_empleado)
-        or detect_analyst_intent(raw_message)
-    )
+    intent = _live_evidence_analyst_intent(
+        raw_message, current_empleado
+    ) or detect_analyst_intent(raw_message)
     if intent is None or intent.requires_operational_route:
         return None
 
@@ -449,9 +485,7 @@ async def _build_analyst_workbench_response(
         context=LiveEvidenceContext(
             employee_id=getattr(current_empleado, "id", None),
             role=str(getattr(current_empleado, "rol", "") or ""),
-            permissions=set(
-                getattr(current_empleado, "permissions", set()) or set()
-            ),
+            permissions=set(getattr(current_empleado, "permissions", set()) or set()),
             question=raw_message,
             department=getattr(current_empleado, "departamento", None),
             limit_per_source=live_evidence_limit_per_source(),
@@ -500,9 +534,7 @@ async def _build_analyst_workbench_response(
         result = replace(
             result,
             caveats=list(
-                dict.fromkeys(
-                    live_acquisition.collection.caveats + result.caveats
-                )
+                dict.fromkeys(live_acquisition.collection.caveats + result.caveats)
             ),
         )
     rendered = render_analyst_result(result)
@@ -518,9 +550,7 @@ async def _build_analyst_workbench_response(
         result=result,
     )
     if case_persistence.enabled:
-        tool_trace[0]["analyst_case_persistence"] = (
-            case_persistence.trace()
-        )
+        tool_trace[0]["analyst_case_persistence"] = case_persistence.trace()
     rendered = maybe_append_export_prompt(rendered, tool_trace)
     await _persist_document_conversation_messages(
         raw_message=raw_message,
@@ -546,13 +576,9 @@ async def run_conversation_turn(
     openai_api_key: Optional[str],
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
-    document_action_router_executor: Optional[
-        AsyncActionRouterExecutor
-    ] = None,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
-    live_evidence_rows_provider: Optional[
-        LiveEvidenceRowsProvider
-    ] = None,
+    live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
 ) -> Any:
     document_response = await _build_document_upload_response(
         raw_message=raw_message,
@@ -585,6 +611,15 @@ async def run_conversation_turn(
         )
         if analyst_response is not None:
             return analyst_response
+
+    capability_response = await _build_capability_negotiation_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        current_empleado=current_empleado,
+        session=session,
+    )
+    if capability_response is not None:
+        return capability_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
@@ -659,13 +694,9 @@ async def run_message_turn_with_pending(
     build_deterministic_pending_response: DeterministicResponseBuilderFn,
     assistant_turn: AssistantTurnFn,
     maybe_append_export_prompt: AppendExportPromptFn,
-    document_action_router_executor: Optional[
-        AsyncActionRouterExecutor
-    ] = None,
+    document_action_router_executor: Optional[AsyncActionRouterExecutor] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
-    live_evidence_rows_provider: Optional[
-        LiveEvidenceRowsProvider
-    ] = None,
+    live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
 ) -> Any:
     pending_run = await latest_pending_run_for_conversation(
         session=session,
@@ -704,6 +735,43 @@ async def run_message_turn_with_pending(
             )
             return response
 
+    receipt_advance = await advance_receipt_draft(
+        raw_message=raw_message,
+        conversation=conversation,
+        employee_id=current_empleado.id,
+        session=session,
+        writes_enabled=receipt_workflow_writes_enabled(current_empleado.id),
+    )
+    if receipt_advance is not None:
+        if receipt_advance.pending is not None:
+            return await build_deterministic_pending_response(
+                deterministic_pending=receipt_advance.pending,
+                raw_message=raw_message,
+                conversation=conversation,
+                current_empleado=current_empleado,
+                session=session,
+            )
+        await _persist_document_conversation_messages(
+            raw_message=raw_message,
+            assistant_message=receipt_advance.message,
+            conversation=conversation,
+            session=session,
+        )
+        return _response_object(
+            assistant_message=receipt_advance.message,
+            tool_trace=[
+                {
+                    "receipt_workflow_draft": {
+                        "status": (
+                            "canceled"
+                            if receipt_advance.canceled
+                            else "collecting_inputs"
+                        ),
+                        "writes_attempted": False,
+                    }
+                }
+            ],
+        )
     deterministic_pending = None
     for builder in deterministic_pending_builders:
         deterministic_pending = builder(
@@ -745,6 +813,15 @@ async def run_message_turn_with_pending(
         )
         if analyst_response is not None:
             return analyst_response
+
+    capability_response = await _build_capability_negotiation_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        current_empleado=current_empleado,
+        session=session,
+    )
+    if capability_response is not None:
+        return capability_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,

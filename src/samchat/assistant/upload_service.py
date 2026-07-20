@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import os
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -21,7 +22,6 @@ from .upload_context import (
     build_spreadsheet_upload_context,
     build_text_upload_context,
 )
-
 
 AnthropicTextExtractor = Callable[..., Awaitable[str]]
 ProviderOrderResolver = Callable[..., List[str]]
@@ -60,6 +60,7 @@ async def extract_text_from_media(
         raise HTTPException(status_code=400, detail="Max file size is 15MB")
 
     content_type = upload.content_type or "application/octet-stream"
+    evidence_sha256 = hashlib.sha256(raw).hexdigest()
     kind = (kind or "").strip().lower()
     if kind not in {"image", "voice", "spreadsheet", "text"}:
         raise HTTPException(
@@ -78,6 +79,7 @@ async def extract_text_from_media(
             file_kind="spreadsheet",
             records=records,
             text=note or "",
+            evidence_sha256=evidence_sha256,
         ).to_dict()
         if not spreadsheet_looks_like_roster(records):
             context = build_spreadsheet_upload_context(
@@ -115,6 +117,7 @@ async def extract_text_from_media(
             file_name=upload.filename or "",
             file_kind="text",
             text=parsed_text,
+            evidence_sha256=evidence_sha256,
         ).to_dict()
         context = build_text_upload_context(
             parsed_text=parsed_text,
@@ -200,6 +203,7 @@ async def extract_text_from_media(
         file_kind=kind,
         text=extracted,
         user_context={"note": note} if note else None,
+        evidence_sha256=evidence_sha256,
     ).to_dict()
     return _document_intake_context(intake) + build_media_upload_context(
         kind=kind,

@@ -86,8 +86,10 @@ def test_supported_actions_lists_initial_adapter_surface() -> None:
         "executive.strategy_snapshot",
         "expense.full_workflow_snapshot",
         "expenses.create_manual_expense",
+        "expenses.create_personal_receipt_workflow",
         "expenses.create_solicitud_personal",
         "expenses.create_solicitud_terceros",
+        "expenses.create_third_party_receipt_workflow",
         "operations.create_expense_from_context",
         "operations.create_media_asset",
         "operations.create_solicitud_from_commitment",
@@ -139,8 +141,10 @@ def test_supported_read_and_write_actions_are_split_correctly() -> None:
         "communications.send_tournament_email",
         "communications.send_tournament_whatsapp",
         "expenses.create_manual_expense",
+        "expenses.create_personal_receipt_workflow",
         "expenses.create_solicitud_personal",
         "expenses.create_solicitud_terceros",
+        "expenses.create_third_party_receipt_workflow",
         "operations.create_expense_from_context",
         "operations.create_media_asset",
         "operations.create_solicitud_from_commitment",
@@ -254,9 +258,7 @@ def test_build_expense_canonical_pending_returns_none_when_fields_missing():
 
 
 def test_extract_cfdi_use_from_message_detects_sat_code() -> None:
-    assert (
-        _extract_cfdi_use_from_message("Solicita factura con uso CFDI G03") == "G03"
-    )
+    assert _extract_cfdi_use_from_message("Solicita factura con uso CFDI G03") == "G03"
     assert _extract_cfdi_use_from_message("sin codigo") is None
 
 
@@ -283,10 +285,7 @@ def test_build_cfdi_canonical_pending_uses_existing_expense_context() -> None:
     tool_name, tool_args, assistant_message = pending
     assert tool_name == "assistant_canonical_action"
     assert tool_args["action"] == "receipts.request_cfdi"
-    assert (
-        tool_args["payload"]["expense_id"]
-        == "375645ec-da26-49ed-bcff-0b0938cac2b6"
-    )
+    assert tool_args["payload"]["expense_id"] == "375645ec-da26-49ed-bcff-0b0938cac2b6"
     assert tool_args["payload"]["cfdi_use"] == "G03"
     assert "solicitar el CFDI" in assistant_message
 
@@ -326,10 +325,7 @@ def test_build_link_cfdi_canonical_pending_uses_expense_context_and_uuid_from_me
     tool_name, tool_args, assistant_message = pending
     assert tool_name == "assistant_canonical_action"
     assert tool_args["action"] == "receipts.link_expense_to_cfdi"
-    assert (
-        tool_args["payload"]["expense_id"]
-        == "375645ec-da26-49ed-bcff-0b0938cac2b6"
-    )
+    assert tool_args["payload"]["expense_id"] == "375645ec-da26-49ed-bcff-0b0938cac2b6"
     assert (
         tool_args["payload"]["cfdi_uuid_manual"]
         == "C027C9F4-92CF-4190-BB89-3E76AB2ECA70"

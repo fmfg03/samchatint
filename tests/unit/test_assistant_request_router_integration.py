@@ -48,7 +48,7 @@ async def _run_message(
     return await run_message_turn_with_pending(
         raw_message=raw_message,
         conversation=SimpleNamespace(id="conv-request", updated_at=None),
-        current_empleado=SimpleNamespace(id="emp-1"),
+        current_empleado=SimpleNamespace(id="emp-1", rol="admin"),
         session=_FakeSession(),
         request=None,
         tournament_key=None,
@@ -78,8 +78,7 @@ async def test_deterministic_finance_request_bypasses_provider_and_exports():
     )
 
     assert (
-        "Comparación de gasto por concepto, 2026 vs 2025"
-        in response.assistant_message
+        "Comparación de gasto por concepto, 2026 vs 2025" in response.assistant_message
     )
     assert "Uniformes" in response.assistant_message
     assert (
@@ -145,6 +144,29 @@ async def test_payments_request_without_executor_fails_closed_no_provider():
     trace = response.tool_trace[0]["request_intelligence_live_wiring"]
     assert trace["domain"] == "payments"
     assert trace["status"] == "data_source_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_pending_payment_result_is_rendered_without_internal_action_name():
+    async def executor(action, payload):
+        assert action == "receipts.pending_payment_overview"
+        return {
+            "status": "completed",
+            "data": {
+                "pending_count": 3,
+                "total_pendiente": 35522.16,
+                "solicitud_terceros": 3,
+                "solicitud_personal": 0,
+            },
+        }
+
+    response = await _run_message("Qué pagos están pendientes", executor=executor)
+
+    assert "Pagos pendientes" in response.assistant_message
+    assert "3 solicitudes pendientes por $35,522.16" in response.assistant_message
+    assert "pending_payment_overview" not in response.assistant_message
+    assert "{'" not in response.assistant_message
+    trace = response.tool_trace[0]["request_intelligence_live_wiring"]
     assert trace["provider_called"] is False
 
 
@@ -164,4 +186,30 @@ async def test_no_write_or_adapter_execution_for_read_only_request():
     ]
     trace = response.tool_trace[0]["request_intelligence_live_wiring"]
     assert trace["actions_executed"] == []
+    assert trace["writes_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_capability_question_does_not_execute_pending_payment_query(
+    monkeypatch,
+):
+    monkeypatch.setenv("ASSISTANT_CAPABILITY_NEGOTIATION_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_RECEIPT_WORKFLOW_WRITES_ENABLED", "false")
+    calls = []
+
+    async def executor(action, payload):  # pragma: no cover - must not run
+        calls.append((action, payload))
+        return {"data": {"pending_count": 3}}
+
+    response = await _run_message(
+        "si te subo un comprobante puedes hacerme la cuenta de gastos "
+        "y la solicitud de pago?",
+        executor=executor,
+    )
+
+    assert calls == []
+    assert "Puedo leer el comprobante" in response.assistant_message
+    assert "pending_payment_overview" not in response.assistant_message
+    trace = response.tool_trace[0]["capability_negotiation"]
+    assert trace["operational_tools_called"] == 0
     assert trace["writes_attempted"] is False

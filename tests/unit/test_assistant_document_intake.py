@@ -2,6 +2,7 @@ from samchat.assistant.action_router import supported_actions
 from samchat.assistant.document_classifier import (
     ACCOUNTING_BALANCE,
     CFDI_INVOICE,
+    EXPENSE_RECEIPT,
     PAYMENT_PROOF,
     ROSTER,
     UNKNOWN_OR_GENERIC,
@@ -38,7 +39,9 @@ def test_intake_accounting_balance_extracts_period_totals_and_preview_action() -
     assert result.entities["account_count"] == 2
     assert result.entities["imbalance"] == "0.00"
     assert "company" in result.missing_fields
-    assert result.proposed_actions[0]["canonical_action"] == "executive.accounting_report"
+    assert (
+        result.proposed_actions[0]["canonical_action"] == "executive.accounting_report"
+    )
     assert result.safety["can_execute_without_confirmation"] is False
 
 
@@ -72,7 +75,10 @@ def test_intake_roster_extracts_players_and_requires_tournament() -> None:
     assert result.entities["player_count"] == 2
     assert result.entities["invalid_curp_count"] == 1
     assert "tournament" in result.missing_fields
-    assert any(action["canonical_action"] == "operations.verify_player_document" for action in result.proposed_actions)
+    assert any(
+        action["canonical_action"] == "operations.verify_player_document"
+        for action in result.proposed_actions
+    )
 
 
 def test_intake_cfdi_extracts_xml_fields_and_requires_candidate_choice() -> None:
@@ -99,7 +105,10 @@ def test_intake_cfdi_extracts_xml_fields_and_requires_candidate_choice() -> None
     assert result.entities["issuer_rfc"] == "AAA010101AAA"
     assert result.entities["amount"] == "45000.00"
     assert "expense_or_document_candidate" in result.missing_fields
-    assert any(action["canonical_action"] == "receipts.link_expense_to_cfdi" for action in result.proposed_actions)
+    assert any(
+        action["canonical_action"] == "receipts.link_expense_to_cfdi"
+        for action in result.proposed_actions
+    )
 
 
 def test_intake_payment_proof_extracts_reference_and_blocks_write() -> None:
@@ -122,7 +131,9 @@ def test_intake_payment_proof_extracts_reference_and_blocks_write() -> None:
     assert result.entities["amount"] == "45,000.00"
     assert result.entities["bank_reference"] == "SPEI123ABC"
     write_action = next(
-        action for action in result.proposed_actions if action["canonical_action"] == "receipts.register_document_payment"
+        action
+        for action in result.proposed_actions
+        if action["canonical_action"] == "receipts.register_document_payment"
     )
     assert write_action["requires_confirmation"] is True
     assert write_action["write_blocked"] is True
@@ -140,6 +151,30 @@ def test_intake_unknown_document_has_no_write_proposals() -> None:
     assert result.detected_document_type == UNKNOWN_OR_GENERIC
     assert result.proposed_actions == []
     assert result.safety["blocked_reason"] == "unsupported_document_type"
+
+
+def test_intake_expense_receipt_is_distinct_from_payment_proof_and_binds_evidence() -> (
+    None
+):
+    result = build_document_intake_result(
+        conversation_id="conv-receipt",
+        file_name="ticket.jpg",
+        file_kind="image",
+        text=(
+            "Ticket de compra\nComercio: Papeleria Central\n"
+            "Total: $1,250.00\nFecha: 2026-07-20\n"
+            "Concepto: Material de oficina"
+        ),
+        evidence_sha256="a" * 64,
+        supported_actions=supported_actions(),
+    )
+
+    assert result.detected_document_type == EXPENSE_RECEIPT
+    assert result.entities["merchant"] == "Papeleria Central"
+    assert result.entities["amount"] == "1,250.00"
+    assert result.evidence_sha256 == "a" * 64
+    assert "payment_subject_type" in result.missing_fields
+    assert "bank_reference" not in result.entities
 
 
 def test_intake_result_serializes_compact_public_fields() -> None:

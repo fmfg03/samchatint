@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import base64
 import asyncio
+import base64
 import csv
+import hashlib
 import html
 import io
 import json
@@ -10,20 +11,21 @@ import logging
 import math
 import os
 import re
-import time
-import uuid
 import secrets
 import string
+import time
 import unicodedata
-from urllib import error as urllib_error
-from urllib import parse as urllib_parse
-from urllib import request as urllib_request
+import uuid
 from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Literal, Optional, Tuple
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
+import httpx
 from fastapi import (
     APIRouter,
     Depends,
@@ -31,7 +33,9 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
-    Path as PathParam,
+)
+from fastapi import Path as PathParam
+from fastapi import (
     Query,
     Request,
     Response,
@@ -40,7 +44,6 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-import httpx
 
 from devnous.gastos.models import (
     AssistantConversation,
@@ -55,68 +58,11 @@ from devnous.gastos.models import (
 )
 from devnous.gastos.routes.dependencies import (
     get_current_empleado_or_service as get_current_empleado,
+)
+from devnous.gastos.routes.dependencies import (
     get_db_session,
     has_permission,
 )
-
-from .db import (
-    get_expenses_session_maker,
-    get_tournament_session_maker,
-)
-from .action_router import (
-    execute_canonical_action,
-    supported_read_actions,
-    supported_write_actions,
-)
-from .context import AssistantContext
-from .file_parsing import (
-    dataframe_records as _dataframe_records,
-    extract_document_text_from_bytes,
-    spreadsheet_records_from_bytes as _spreadsheet_records_from_bytes,
-)
-from .upload_service import extract_text_from_media
-from .conversation_service import (
-    run_conversation_turn,
-    run_message_turn_with_pending,
-)
-from .analyst_live_evidence import (
-    build_isolated_sqlalchemy_live_evidence_rows_provider,
-    live_evidence_enabled,
-)
-from .provider_service import (
-    assistant_contextual_pref as _provider_assistant_contextual_pref,
-    assistant_inference_tier as _provider_assistant_inference_tier,
-    assistant_model as _provider_assistant_model,
-    assistant_provider_order as _provider_assistant_provider_order,
-    assistant_provider_order_from_pref as _provider_assistant_provider_order_from_pref,
-    assistant_remote_allowed as _provider_assistant_remote_allowed,
-    csv_items as _provider_csv_items,
-    env_bool as _provider_env_bool,
-    env_float as _provider_env_float,
-    env_int as _provider_env_int,
-    get_anthropic_client as _provider_get_anthropic_client,
-    get_openai_client as _provider_get_openai_client,
-    matches_policy_target as _provider_matches_policy_target,
-    normalize_assistant_mode as _provider_normalize_assistant_mode,
-)
-from .turn_service import (
-    build_cached_response as _build_cached_response,
-    build_turn_messages as _build_turn_messages,
-    prepare_turn_state as _prepare_turn_state,
-)
-from .provider_execution import execute_provider as _execute_provider
-from .agent_runtime import (
-    build_agent_runtime_activation_trace as _build_agent_runtime_activation_trace,
-    build_agent_shadow_trace as _build_agent_shadow_trace,
-    build_agent_runtime_trace as _build_agent_runtime_trace,
-    evaluate_runtime_activation as _evaluate_runtime_activation,
-    evaluate_runtime_tool_call as _evaluate_runtime_tool_call,
-    evaluate_shadow_activation as _evaluate_shadow_activation,
-    is_agent_runtime_readonly_only as _is_agent_runtime_readonly_only,
-    is_agent_runtime_enabled as _is_agent_runtime_enabled,
-)
-from .rag import get_rag_store
-from .tool_registry import build_tool_registry as _build_tool_registry
 from samchat.budgets.service import (
     build_budget_snapshot,
     list_budget_lines,
@@ -126,7 +72,81 @@ from samchat.budgets.service import (
     update_budget_version_metadata,
 )
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
+
+from .action_router import (
+    execute_canonical_action,
+    supported_read_actions,
+    supported_write_actions,
+)
+from .agent_runtime import (
+    build_agent_runtime_activation_trace as _build_agent_runtime_activation_trace,
+)
+from .agent_runtime import build_agent_runtime_trace as _build_agent_runtime_trace
+from .agent_runtime import build_agent_shadow_trace as _build_agent_shadow_trace
+from .agent_runtime import evaluate_runtime_activation as _evaluate_runtime_activation
+from .agent_runtime import evaluate_runtime_tool_call as _evaluate_runtime_tool_call
+from .agent_runtime import evaluate_shadow_activation as _evaluate_shadow_activation
+from .agent_runtime import is_agent_runtime_enabled as _is_agent_runtime_enabled
+from .agent_runtime import (
+    is_agent_runtime_readonly_only as _is_agent_runtime_readonly_only,
+)
+from .analyst_live_evidence import (
+    build_isolated_sqlalchemy_live_evidence_rows_provider,
+    live_evidence_enabled,
+)
+from .capability_negotiation import capability_registry_hash
+from .context import AssistantContext
+from .conversation_service import (
+    run_conversation_turn,
+    run_message_turn_with_pending,
+)
+from .db import (
+    get_expenses_session_maker,
+    get_tournament_session_maker,
+)
+from .file_parsing import dataframe_records as _dataframe_records
+from .file_parsing import (
+    extract_document_text_from_bytes,
+)
+from .file_parsing import (
+    spreadsheet_records_from_bytes as _spreadsheet_records_from_bytes,
+)
+from .provider_execution import execute_provider as _execute_provider
+from .provider_service import (
+    assistant_contextual_pref as _provider_assistant_contextual_pref,
+)
+from .provider_service import (
+    assistant_inference_tier as _provider_assistant_inference_tier,
+)
+from .provider_service import assistant_model as _provider_assistant_model
+from .provider_service import (
+    assistant_provider_order as _provider_assistant_provider_order,
+)
+from .provider_service import (
+    assistant_provider_order_from_pref as _provider_assistant_provider_order_from_pref,
+)
+from .provider_service import (
+    assistant_remote_allowed as _provider_assistant_remote_allowed,
+)
+from .provider_service import csv_items as _provider_csv_items
+from .provider_service import env_bool as _provider_env_bool
+from .provider_service import env_float as _provider_env_float
+from .provider_service import env_int as _provider_env_int
+from .provider_service import get_anthropic_client as _provider_get_anthropic_client
+from .provider_service import get_openai_client as _provider_get_openai_client
+from .provider_service import matches_policy_target as _provider_matches_policy_target
+from .provider_service import (
+    normalize_assistant_mode as _provider_normalize_assistant_mode,
+)
+from .rag import get_rag_store
+from .tool_registry import build_tool_registry as _build_tool_registry
 from .tools import (
+    assistant_save_artifact,
+    dev_file_read,
+    dev_file_replace,
+    dev_file_write,
+    dev_repo_search,
+    dev_run_checks,
     finance_accounting_report,
     finance_alerts_scan,
     finance_expense_assign_accounting,
@@ -134,17 +154,11 @@ from .tools import (
     finance_expense_post_accounting,
     finance_expense_request_cfdi,
     finance_expense_search,
-    finance_strategy_snapshot,
+    finance_expense_update,
     finance_expense_workflow_status,
     finance_ops_query,
     finance_realtime_report,
-    finance_expense_update,
-    assistant_save_artifact,
-    dev_repo_search,
-    dev_file_read,
-    dev_file_write,
-    dev_file_replace,
-    dev_run_checks,
+    finance_strategy_snapshot,
     finance_vendor_create,
     finance_vendor_payments,
     tournament_ops_query,
@@ -153,10 +167,14 @@ from .tools import (
     tournament_schedule_regenerate_from_rules,
     tournament_team_register_from_roster,
 )
+from .turn_service import build_cached_response as _build_cached_response
+from .turn_service import build_turn_messages as _build_turn_messages
+from .turn_service import prepare_turn_state as _prepare_turn_state
+from .upload_service import extract_text_from_media
 
 try:
-    from reportlab.lib.pagesizes import A4
     from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas as pdf_canvas
 except Exception:  # pragma: no cover
@@ -176,6 +194,7 @@ def _configured_live_evidence_rows_provider():
     return build_isolated_sqlalchemy_live_evidence_rows_provider(
         get_expenses_session_maker()
     )
+
 
 _RATE_LIMIT_LOCK = Lock()
 _MESSAGE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
@@ -1193,9 +1212,7 @@ def _env_int(
     minimum: Optional[int] = None,
     maximum: Optional[int] = None,
 ) -> int:
-    return _provider_env_int(
-        name, default, minimum=minimum, maximum=maximum
-    )
+    return _provider_env_int(name, default, minimum=minimum, maximum=maximum)
 
 
 def _env_float(
@@ -1205,9 +1222,7 @@ def _env_float(
     minimum: Optional[float] = None,
     maximum: Optional[float] = None,
 ) -> float:
-    return _provider_env_float(
-        name, default, minimum=minimum, maximum=maximum
-    )
+    return _provider_env_float(name, default, minimum=minimum, maximum=maximum)
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -1248,9 +1263,7 @@ def _assistant_remote_allowed(
 
 
 def _assistant_provider_order_from_pref(pref: str, *, capability: str) -> List[str]:
-    return _provider_assistant_provider_order_from_pref(
-        pref, capability=capability
-    )
+    return _provider_assistant_provider_order_from_pref(pref, capability=capability)
 
 
 def _assistant_provider_order(
@@ -3834,8 +3847,32 @@ def _is_admin(role: Optional[str]) -> bool:
     return _normalize_role(role) in {"admin", "super_admin", "superadmin"}
 
 
-def _can_confirm_write(tool_name: str, role: Optional[str]) -> bool:
+SELF_SERVICE_RECEIPT_ACTIONS = {
+    "expenses.create_personal_receipt_workflow",
+    "expenses.create_third_party_receipt_workflow",
+}
+
+
+def _can_confirm_write(
+    tool_name: str,
+    role: Optional[str],
+    tool_args: Optional[Dict[str, Any]] = None,
+) -> bool:
     normalized_tool = (tool_name or "").strip()
+    canonical_action = str((tool_args or {}).get("action") or "").strip()
+    if (
+        normalized_tool == "assistant_canonical_action"
+        and canonical_action in SELF_SERVICE_RECEIPT_ACTIONS
+    ):
+        return _normalize_role(role) in {
+            "empleado",
+            "user",
+            "coordinador",
+            "finanzas",
+            "admin",
+            "super_admin",
+            "superadmin",
+        }
     if normalized_tool in DEV_WRITE_TOOLS or normalized_tool == "db_write_universal":
         return _is_superadmin(role)
     return _is_admin(role)
@@ -4571,8 +4608,27 @@ async def _confirm_pending_run(
     current_empleado: Empleado,
     session: AsyncSession,
 ) -> MessageResponse:
+    locked_run = (
+        await session.execute(
+            select(AssistantRun).where(AssistantRun.id == run.id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if locked_run is None:
+        raise HTTPException(status_code=404, detail="Pending run not found")
+    run = locked_run
+    if run.status != "pending_confirmation" or not run.pending_tool_name:
+        return MessageResponse(
+            assistant_message="Esta propuesta ya fue procesada; no ejecuté cambios adicionales.",
+            run_id=str(run.id),
+            tool_trace=run.tool_trace or [],
+            pending_confirmation=None,
+        )
     tool_name = run.pending_tool_name or ""
-    if not _can_confirm_write(tool_name, getattr(current_empleado, "rol", None)):
+    if not _can_confirm_write(
+        tool_name,
+        getattr(current_empleado, "rol", None),
+        run.pending_tool_args,
+    ):
         raise HTTPException(
             status_code=403,
             detail=(
@@ -4601,6 +4657,30 @@ async def _confirm_pending_run(
         raise HTTPException(
             status_code=400, detail="Run does not reference a write tool"
         )
+
+    capability_binding = tool_args.get("__capability_binding")
+    if isinstance(capability_binding, dict):
+        canonical_action = str(tool_args.get("action") or "")
+        if canonical_action not in SELF_SERVICE_RECEIPT_ACTIONS:
+            raise HTTPException(status_code=400, detail="Invalid capability binding")
+        if capability_binding.get("registry_hash") != capability_registry_hash():
+            raise HTTPException(
+                status_code=409,
+                detail="Capability proposal expired because the registry changed",
+            )
+        metadata = _conversation_metadata_dict(conversation)
+        media = metadata.get("assistant_last_media")
+        if not isinstance(media, dict):
+            raise HTTPException(
+                status_code=409, detail="Receipt evidence is no longer available"
+            )
+        payload = tool_args.get("payload") or {}
+        if str(media.get("id") or "") != str(payload.get("media_id") or "") or str(
+            media.get("evidence_sha256") or ""
+        ) != str(capability_binding.get("evidence_sha256") or ""):
+            raise HTTPException(
+                status_code=409, detail="Receipt evidence changed after preview"
+            )
 
     if _write_is_high_risk(tool_name, tool_args):
         confirm_stage = int(tool_args.get("__confirm_stage") or 1)
@@ -4737,6 +4817,33 @@ async def _confirm_pending_run(
                 verification=post_write_verification,
             )
     answer = _maybe_append_export_prompt(answer, tool_trace)
+    canonical_action = str(tool_args.get("action") or "")
+    if canonical_action in SELF_SERVICE_RECEIPT_ACTIONS:
+        result_data = result.get("data") if isinstance(result, dict) else {}
+        if not isinstance(result_data, dict):
+            result_data = {}
+        payment_request = result_data.get("payment_request")
+        request_reference = (
+            payment_request.get("numero_referencia")
+            if isinstance(payment_request, dict)
+            else None
+        )
+        if canonical_action == "expenses.create_personal_receipt_workflow":
+            account = result_data.get("account")
+            account_reference = (
+                account.get("referencia_base") if isinstance(account, dict) else None
+            )
+            answer = (
+                "Listo. Registré el gasto personal, la Cuenta de Gastos"
+                f"{f' {account_reference}' if account_reference else ''} y la solicitud"
+                f"{f' {request_reference}' if request_reference else ''}."
+            )
+        else:
+            answer = (
+                "Listo. Registré la solicitud de pago a tercero"
+                f"{f' {request_reference}' if request_reference else ''}. "
+                "No se creó una Cuenta de Gastos porque no aplica a pagos a terceros."
+            )
 
     assistant_msg = AssistantMessage(
         conversation_id=conversation.id,
@@ -7505,22 +7612,67 @@ async def _execute_write_tool(
 ) -> Dict[str, Any]:
     if tool_name == "assistant_canonical_action":
         canonical_payload = dict(args.get("payload") or {})
+        canonical_action = str(args.get("action") or "").strip()
+        receipt_media = None
+        if canonical_action in SELF_SERVICE_RECEIPT_ACTIONS:
+            conversation = (
+                await gastos_session.execute(
+                    select(AssistantConversation).where(
+                        AssistantConversation.id == conversation_id
+                    )
+                )
+            ).scalar_one_or_none()
+            metadata = _conversation_metadata_dict(conversation) if conversation else {}
+            receipt_media = metadata.get("assistant_last_media")
+            if not isinstance(receipt_media, dict):
+                raise HTTPException(
+                    status_code=409, detail="Receipt evidence is unavailable"
+                )
+            if str(receipt_media.get("id") or "") != str(
+                canonical_payload.get("media_id") or ""
+            ) or str(receipt_media.get("evidence_sha256") or "") != str(
+                canonical_payload.get("evidence_sha256") or ""
+            ):
+                raise HTTPException(status_code=409, detail="Receipt evidence mismatch")
+            if not receipt_media.get("has_inline_file") or not receipt_media.get(
+                "file_b64"
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="El comprobante debe medir 5 MB o menos para registrarlo.",
+                )
+            canonical_payload["file_b64"] = str(receipt_media["file_b64"])
+            canonical_payload["file_name"] = str(
+                receipt_media.get("filename") or "comprobante"
+            )
+            canonical_payload["content_type"] = str(
+                receipt_media.get("content_type") or "application/octet-stream"
+            )
         canonical_context = AssistantContext.from_dict(args.get("context")).merge(
             responsible_user_id=str(empleado_id)
         )
         canonical_payload.setdefault("empleado_id", str(empleado_id))
         result = await execute_canonical_action(
-            str(args.get("action") or "").strip(),
+            canonical_action,
             session=gastos_session,
             context=canonical_context,
             payload=canonical_payload,
         )
-        return {
+        response = {
             "action": result.action,
             "status": result.status,
             "data": result.data,
             "context": result.context.to_dict(),
         }
+        if receipt_media is not None and conversation is not None:
+            metadata = _conversation_metadata_dict(conversation)
+            current_media = metadata.get("assistant_last_media")
+            if isinstance(current_media, dict) and current_media.get(
+                "id"
+            ) == receipt_media.get("id"):
+                metadata.pop("assistant_last_media", None)
+                conversation.metadata_ = metadata
+        return response
 
     if tool_name == "finance_vendor_create":
         return await finance_vendor_create(gastos_session, **args)
@@ -7887,6 +8039,7 @@ async def _assistant_turn(
     provider_errors: List[str] = []
     tool_policy_evaluator = None
     if agent_runtime_enabled:
+
         def _runtime_tool_policy_evaluator(tool_name, args, role):
             return _evaluate_runtime_tool_call(
                 tool_name=tool_name,
@@ -8185,6 +8338,7 @@ def _store_last_media_draft(
         "note": (note or "").strip() or None,
         "captured_at": datetime.utcnow().isoformat(),
         "has_inline_file": False,
+        "evidence_sha256": hashlib.sha256(raw).hexdigest(),
     }
     if len(raw) <= max_bytes:
         payload["file_b64"] = base64.b64encode(raw).decode("ascii")
@@ -8278,7 +8432,9 @@ async def create_conversation(
     try:
         metadata: Dict[str, Any] = {}
         origin_info = _assistant_request_origin(request)
-        external_session_id = _normalize_external_session_id(payload.external_session_id)
+        external_session_id = _normalize_external_session_id(
+            payload.external_session_id
+        )
         title = str(payload.title or "").strip() or None
         if external_session_id:
             existing = await _find_conversation_by_external_session_id(
@@ -8434,7 +8590,9 @@ async def assistant_auth_bridge_supabase(
             )
 
         full_name = (
-            str((user_payload.get("user_metadata") or {}).get("full_name") or "").strip()
+            str(
+                (user_payload.get("user_metadata") or {}).get("full_name") or ""
+            ).strip()
             or str((user_payload.get("user_metadata") or {}).get("name") or "").strip()
             or email.split("@", 1)[0]
         )
@@ -8967,7 +9125,10 @@ async def admin_tournaments_update(
     except Exception:
         logger.exception(
             "Unexpected error updating assistant tournament",
-            extra={"actor_id": str(current_empleado.id), "tournament_id": tournament_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "tournament_id": tournament_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9043,7 +9204,10 @@ async def admin_invitations_create(
     except Exception:
         logger.exception(
             "Unexpected error creating assistant invitations",
-            extra={"actor_id": str(current_empleado.id), "tournament_id": tournament_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "tournament_id": tournament_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9092,7 +9256,10 @@ async def admin_invitations_toggle(
     except Exception:
         logger.exception(
             "Unexpected error toggling assistant invitation",
-            extra={"actor_id": str(current_empleado.id), "invitation_id": invitation_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "invitation_id": invitation_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9128,7 +9295,10 @@ async def admin_invitations_delete(
     except Exception:
         logger.exception(
             "Unexpected error deleting assistant invitation",
-            extra={"actor_id": str(current_empleado.id), "invitation_id": invitation_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "invitation_id": invitation_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9202,7 +9372,10 @@ async def admin_email_campaigns_send(
     except Exception:
         logger.exception(
             "Unexpected error sending assistant email campaign",
-            extra={"actor_id": str(current_empleado.id), "tournament_id": tournament_id_clean},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "tournament_id": tournament_id_clean,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9247,7 +9420,9 @@ async def admin_email_campaigns_schedule(
                     or _email_plain_text_from_html(payload.html_content)
                 ).strip()
                 or None,
-                "recipients": [recipient.model_dump() for recipient in payload.recipients],
+                "recipients": [
+                    recipient.model_dump() for recipient in payload.recipients
+                ],
                 "created_by": str(current_empleado.id),
                 "tournament_id": tournament_id_clean,
             },
@@ -9262,7 +9437,10 @@ async def admin_email_campaigns_schedule(
     except Exception:
         logger.exception(
             "Unexpected error scheduling assistant email campaign",
-            extra={"actor_id": str(current_empleado.id), "tournament_id": tournament_id_clean},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "tournament_id": tournament_id_clean,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9314,7 +9492,10 @@ async def admin_email_campaigns_cancel(
     except Exception:
         logger.exception(
             "Unexpected error cancelling assistant scheduled email",
-            extra={"actor_id": str(current_empleado.id), "scheduled_email_id": scheduled_email_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "scheduled_email_id": scheduled_email_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -9363,7 +9544,10 @@ async def admin_email_campaigns_delete(
     except Exception:
         logger.exception(
             "Unexpected error deleting assistant scheduled email",
-            extra={"actor_id": str(current_empleado.id), "scheduled_email_id": scheduled_email_id},
+            extra={
+                "actor_id": str(current_empleado.id),
+                "scheduled_email_id": scheduled_email_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -11508,6 +11692,7 @@ async def create_message(
                 "summary": str(result.data.get("summary") or result.status),
                 "status": result.status,
                 "action": result.action,
+                "data": result.data,
             }
 
         return await run_message_turn_with_pending(
@@ -11546,7 +11731,10 @@ async def create_message(
         await session.rollback()
         logger.exception(
             "Unexpected error creating assistant message",
-            extra={"empleado_id": str(current_empleado.id), "conversation_id": conversation_id},
+            extra={
+                "empleado_id": str(current_empleado.id),
+                "conversation_id": conversation_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 
@@ -11595,7 +11783,12 @@ async def create_media_message(
         await session.commit()
         raw_file = await file.read()
         await file.seek(0)
-        if (kind or "").strip().lower() in {"image", "voice"} and raw_file:
+        if (kind or "").strip().lower() in {
+            "image",
+            "voice",
+            "text",
+            "spreadsheet",
+        } and raw_file:
             _store_last_media_draft(
                 conversation=conversation,
                 kind=(kind or "").strip().lower(),
@@ -11638,7 +11831,10 @@ async def create_media_message(
         await session.rollback()
         logger.exception(
             "Unexpected error creating assistant media message",
-            extra={"empleado_id": str(current_empleado.id), "conversation_id": conversation_id},
+            extra={
+                "empleado_id": str(current_empleado.id),
+                "conversation_id": conversation_id,
+            },
         )
         raise HTTPException(status_code=500, detail="Unexpected processing error")
 

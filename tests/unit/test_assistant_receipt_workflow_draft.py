@@ -1,0 +1,210 @@
+from types import SimpleNamespace
+
+import pytest
+
+from samchat.assistant.receipt_workflow_draft import (
+    advance_receipt_draft,
+    start_receipt_draft,
+)
+
+
+class _Scalars:
+    def all(self):
+        return []
+
+
+class _Result:
+    def scalars(self):
+        return _Scalars()
+
+
+class _Session:
+    def __init__(self):
+        self.commits = 0
+
+    async def execute(self, _statement):
+        return _Result()
+
+    async def commit(self):
+        self.commits += 1
+
+
+class _SequenceSession(_Session):
+    def __init__(self, rows):
+        super().__init__()
+        self.rows = list(rows)
+
+    async def execute(self, _statement):
+        values = self.rows.pop(0) if self.rows else []
+
+        class _SequenceScalars:
+            def all(self):
+                return values
+
+        class _SequenceResult:
+            def scalars(self):
+                return _SequenceScalars()
+
+        return _SequenceResult()
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_builds_bound_personal_preview_without_writing() -> None:
+    evidence_hash = "a" * 64
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            },
+            "module_context": {
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "payment_method": "Transferencia",
+                "account_type": "local",
+            },
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-1",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+                "currency": "MXN",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_Session(),
+    )
+
+    assert result is not None
+    assert result.pending is not None
+    tool_name, tool_args, preview = result.pending
+    assert tool_name == "assistant_canonical_action"
+    assert tool_args["action"] == "expenses.create_personal_receipt_workflow"
+    assert tool_args["payload"]["evidence_sha256"] == evidence_hash
+    assert "Cuenta de Gastos" in preview
+    assert "expenses." not in preview
+
+
+def test_receipt_draft_rejects_mismatched_media_evidence() -> None:
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": "a" * 64,
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="does not match"):
+        start_receipt_draft(
+            conversation=conversation,
+            intake={
+                "intake_id": "docint-1",
+                "evidence_sha256": "b" * 64,
+                "entities": {},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_disabled_writes_return_preview_without_pending_confirmation() -> None:
+    evidence_hash = "a" * 64
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            },
+            "module_context": {
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "payment_method": "Transferencia",
+                "account_type": "local",
+            },
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-1",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_Session(),
+        writes_enabled=False,
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert "no está habilitado" in result.message
+    assert "confirmo" not in result.message
+
+
+@pytest.mark.asyncio
+async def test_third_party_draft_requires_and_binds_exact_budget_concept() -> None:
+    evidence_hash = "a" * 64
+    tournament_id = "11111111-1111-1111-1111-111111111111"
+    provider = SimpleNamespace(
+        id="33333333-3333-3333-3333-333333333333",
+        nombre="Proveedor Uno",
+    )
+    budget_concept = SimpleNamespace(
+        id="44444444-4444-4444-4444-444444444444",
+        concept_name="Hospedaje",
+    )
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            },
+            "module_context": {
+                "tournament_id": tournament_id,
+                "tournament_name": "Copa Telmex",
+            },
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-1",
+            "evidence_sha256": evidence_hash,
+            "entities": {"amount": "1250.00", "concept": "Hotel"},
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Pago a tercero Proveedor Uno, partida Hospedaje",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_SequenceSession([[], [provider], [budget_concept]]),
+    )
+
+    assert result is not None
+    assert result.pending is not None
+    _, tool_args, preview = result.pending
+    assert tool_args["action"] == "expenses.create_third_party_receipt_workflow"
+    assert tool_args["payload"]["provider_id"] == str(provider.id)
+    assert tool_args["payload"]["budget_concept_id"] == str(budget_concept.id)
+    assert "Hospedaje" in preview

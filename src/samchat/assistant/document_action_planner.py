@@ -6,6 +6,7 @@ from .document_classifier import (
     ACCOUNTING_BALANCE,
     CFDI_INVOICE,
     DOCUMENT_VALIDATION,
+    EXPENSE_RECEIPT,
     INVOICE_DOCUMENT,
     PAYMENT_PROOF,
     PLAYER_REGISTRATION,
@@ -69,7 +70,15 @@ def plan_document_actions(
     if document_type == ACCOUNTING_BALANCE:
         payload = _pick_payload(
             entities,
-            ["period", "company", "project", "account_count", "debit_total", "credit_total", "imbalance"],
+            [
+                "period",
+                "company",
+                "project",
+                "account_count",
+                "debit_total",
+                "credit_total",
+                "imbalance",
+            ],
         )
         add(
             canonical_action="executive.accounting_report",
@@ -89,7 +98,13 @@ def plan_document_actions(
     if document_type in {ROSTER, PLAYER_REGISTRATION, DOCUMENT_VALIDATION}:
         payload = _pick_payload(
             entities,
-            ["team_name", "category", "tournament", "player_count", "invalid_curp_count"],
+            [
+                "team_name",
+                "category",
+                "tournament",
+                "player_count",
+                "invalid_curp_count",
+            ],
         )
         add(
             canonical_action="operations.tournament_soul_snapshot",
@@ -127,7 +142,15 @@ def plan_document_actions(
     if document_type in {CFDI_INVOICE, INVOICE_DOCUMENT}:
         payload = _pick_payload(
             entities,
-            ["uuid", "issuer_rfc", "receiver_rfc", "amount", "date", "currency", "concept"],
+            [
+                "uuid",
+                "issuer_rfc",
+                "receiver_rfc",
+                "amount",
+                "date",
+                "currency",
+                "concept",
+            ],
         )
         add(
             canonical_action="receipts.cfdi_matching_overview",
@@ -152,7 +175,15 @@ def plan_document_actions(
     if document_type == PAYMENT_PROOF:
         payload = _pick_payload(
             entities,
-            ["amount", "date", "bank_reference", "beneficiary", "payer", "concept", "candidate_match"],
+            [
+                "amount",
+                "date",
+                "bank_reference",
+                "beneficiary",
+                "payer",
+                "concept",
+                "candidate_match",
+            ],
         )
         add(
             canonical_action="receipts.pending_payment_overview",
@@ -163,6 +194,34 @@ def plan_document_actions(
         add(
             canonical_action="receipts.register_document_payment",
             title="Registrar pago contra documento",
+            payload_preview=payload,
+            risk_level="high",
+        )
+        return actions
+
+    if document_type == EXPENSE_RECEIPT:
+        payload = _pick_payload(
+            entities,
+            [
+                "amount",
+                "date",
+                "merchant",
+                "concept",
+                "currency",
+                "payment_subject_type",
+                "tournament",
+                "evidence_sha256",
+            ],
+        )
+        add(
+            canonical_action="expenses.create_personal_receipt_workflow",
+            title="Preparar gasto personal y solicitud de pago",
+            payload_preview=payload,
+            risk_level="high",
+        )
+        add(
+            canonical_action="expenses.create_third_party_receipt_workflow",
+            title="Preparar solicitud de pago a tercero",
             payload_preview=payload,
             risk_level="high",
         )
@@ -186,8 +245,17 @@ def candidate_workflows_for_type(document_type: str) -> List[str]:
         DOCUMENT_VALIDATION: ["registration_review", "document_validation"],
         TOURNAMENT_OPS: ["tournament_soul_snapshot", "folder_commitment_snapshot"],
         CFDI_INVOICE: ["cfdi_matching", "expense_document_linking", "exception_queue"],
-        INVOICE_DOCUMENT: ["invoice_review", "expense_document_linking", "exception_queue"],
+        INVOICE_DOCUMENT: [
+            "invoice_review",
+            "expense_document_linking",
+            "exception_queue",
+        ],
         PAYMENT_PROOF: ["payment_matching", "payment_registration_proposal"],
+        EXPENSE_RECEIPT: [
+            "expense_receipt_intake",
+            "personal_expense_account_preview",
+            "third_party_payment_request_preview",
+        ],
         UNKNOWN_OR_GENERIC: ["manual_workflow_selection"],
     }
     return list(mapping.get(document_type, ["manual_workflow_selection"]))

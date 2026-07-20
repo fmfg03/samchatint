@@ -3,14 +3,27 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Awaitable, Callable, Dict, Iterable, List, Mapping, Optional, Sequence
-
+from typing import (
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+)
 
 WRITE_ACTIONS = {
     "accounting.assign_expense_accounting",
     "accounting.link_bank_to_expense",
     "accounting.post_expense_accounting",
     "expenses.create_manual_expense",
+    "expenses.create_personal_receipt_workflow",
+    "expenses.create_third_party_receipt_workflow",
+    "expenses.create_solicitud_personal",
+    "expenses.create_solicitud_terceros",
     "operations.create_expense_from_context",
     "operations.create_media_asset",
     "operations.create_solicitud_from_commitment",
@@ -66,7 +79,9 @@ AsyncActionRouterExecutor = Callable[
 
 
 def stable_payload_hash(payload_preview: Mapping[str, Any]) -> str:
-    encoded = json.dumps(payload_preview, ensure_ascii=False, sort_keys=True, default=str)
+    encoded = json.dumps(
+        payload_preview, ensure_ascii=False, sort_keys=True, default=str
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -126,7 +141,7 @@ def build_confirmation_prompt(
         preview_bits.append(f"{key}={value}")
     preview = "; ".join(preview_bits) if preview_bits else "payload pendiente"
     return (
-        f"Confirma explícitamente para ejecutar '{title}' vía action_router. "
+        f"Confirma explícitamente para ejecutar '{title}'. "
         f"Cambios propuestos: {preview}."
     )
 
@@ -548,7 +563,9 @@ async def confirm_document_action_async(
         )
 
     try:
-        execution = await action_router_executor(canonical_action, dict(payload_preview))
+        execution = await action_router_executor(
+            canonical_action, dict(payload_preview)
+        )
     except Exception as exc:
         return _result(
             intake_id=intake_id,
