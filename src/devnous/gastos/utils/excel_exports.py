@@ -52,14 +52,37 @@ def _get_base_docs_path() -> Path:
     return base / "docs"
 
 
+def _resolve_template_path(filename: str) -> Path:
+    """Resolve Excel templates across runtime overlays and the source checkout."""
+    candidates = [_get_base_docs_path() / filename]
+
+    import os
+
+    configured_docs = (os.getenv("SAMCHAT_TEMPLATE_DOCS_DIR") or "").strip()
+    if configured_docs:
+        candidates.append(Path(configured_docs) / filename)
+
+    candidates.append(Path("/root/samchat/docs") / filename)
+
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
 def _get_informe_template_path() -> Path:
     """Return path to the INFORME Excel template (docs/4599- Informe de gastos.xlsx)."""
-    return _get_base_docs_path() / "4599- Informe de gastos.xlsx"
+    return _resolve_template_path("4599- Informe de gastos.xlsx")
 
 
 def _get_solicitud_template_path() -> Path:
     """Return path to the SOLICITUD Excel template (docs/Sol trans.xlsx)."""
-    return _get_base_docs_path() / "Sol trans.xlsx"
+    return _resolve_template_path("Sol trans.xlsx")
 
 
 def create_solicitud_excel(
@@ -225,6 +248,16 @@ def create_solicitud_excel(
     if aprueba is not None:
         ws["E15"].value = aprueba
     # autoriza not present in this template; ignore while keeping source extraction unchanged.
+
+    # The source workbook contains historical sample rows below the signature
+    # area, including stale contract totals and an IVA note. They are not part
+    # of the generated solicitud and must not leak into downloads.
+    from openpyxl.cell.cell import MergedCell
+
+    for row in ws.iter_rows(min_row=17, max_row=ws.max_row, max_col=ws.max_column):
+        for cell in row:
+            if not isinstance(cell, MergedCell):
+                cell.value = None
 
     # Template may ship with extra worksheets; export only the filled sheet (Sol trans layout).
     for _extra in list(wb.worksheets):
