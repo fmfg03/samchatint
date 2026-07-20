@@ -410,6 +410,42 @@ class CopaTelmexDB:
         )
         return list(result.scalars().all())
 
+    async def get_player_photo_fingerprints_by_tournament(
+        self,
+        tournament_slug: str,
+    ) -> List[Dict[str, Any]]:
+        """Return committed player photo fingerprints for one tournament."""
+        slug = (tournament_slug or "").strip()
+        if not slug:
+            return []
+
+        result = await self.session.execute(
+            select(Player, Team)
+            .join(Team, Player.team_id == Team.id)
+            .where(
+                Team.tournament_slug == slug,
+                Player.governance_state.in_(("ACTIVE", "LEGACY_ACTIVE")),
+            )
+        )
+        records: List[Dict[str, Any]] = []
+        for player, team in result.all():
+            if not player.photo_sha256 and not player.photo_ahash:
+                continue
+            records.append(
+                {
+                    "player_ref": f"player-{player.id}",
+                    "player_id": str(player.id),
+                    "player_name": player.full_name,
+                    "team_ref": f"team-{team.id}",
+                    "team_id": str(team.id),
+                    "team_name": team.name,
+                    "tournament_slug": team.tournament_slug,
+                    "photo_sha256": player.photo_sha256,
+                    "photo_ahash": player.photo_ahash,
+                }
+            )
+        return records
+
     async def update_player(self, player_id: UUID, **fields: Any) -> Optional[Player]:
         """Update a player with the provided fields."""
         authority = self._persistence_guard.require()

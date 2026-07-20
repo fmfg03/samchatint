@@ -319,10 +319,13 @@ def summarize_cfdi_tax_components(
     # Some imported CFDIs have subtotal/total persisted correctly but an incomplete
     # impuestos_detalle payload and total_impuestos_trasladados=0. In that case the
     # fiscal IVA needed by COI can be recovered from the SAT equation:
-    # Total = SubTotal + Trasladados - Retenciones.
+    # Total = SubTotal - Descuento + Trasladados - Retenciones.
     subtotal = _money(getattr(cfdi_report, "subtotal", None))
+    descuento = _money(getattr(cfdi_report, "descuento", None))
     total = _money(getattr(cfdi_report, "total", None))
-    derived_trasladados = _money(total - subtotal + retenciones_total)
+    derived_trasladados = _money(
+        total - subtotal + descuento + retenciones_total
+    )
     if subtotal > 0 and total > 0 and derived_trasladados > iva_trasladado:
         iva_trasladado = derived_trasladados
 
