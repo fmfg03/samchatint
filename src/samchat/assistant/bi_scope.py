@@ -23,7 +23,6 @@ _SCOPE_QUERY_TERMS: Dict[str, Tuple[str, ...]] = {
     "copa-telmex": (
         "copa telmex",
         "copa-telmex",
-        "telmex telcel",
     ),
     "copa-america": (
         "copa america",

@@ -45,6 +45,9 @@ def test_bi_scope_matching_normalizes_accents_and_hyphens() -> None:
     assert text_matches_bi_scope("Copa Telmex Telcel de Fútbol", "copa-telmex")
     assert text_matches_bi_scope("copa-club-america-2026", "copa-america")
     assert text_matches_bi_scope("Liga Telmex Telcel de Béisbol", "beisbol")
+    assert not text_matches_bi_scope(
+        "Liga Telmex Telcel de Béisbol", "copa-telmex"
+    )
     assert not text_matches_bi_scope("Futbolito Bimbo", "copa-telmex")
 
 
