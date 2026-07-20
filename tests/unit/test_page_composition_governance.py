@@ -192,4 +192,3 @@ def test_page_manifest_changes_draft_content_hash():
         base, page_manifest_hash="sha256:" + "b" * 64
     )
     assert left["content_hash"] != right["content_hash"]
-
