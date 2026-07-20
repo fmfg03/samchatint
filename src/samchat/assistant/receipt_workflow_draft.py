@@ -12,6 +12,7 @@ from sqlalchemy import or_, select
 
 from devnous.gastos.models import BudgetConcept, ProveedorCliente, Tournament
 
+from .bi_scope import text_matches_bi_scope
 from .capability_negotiation import capability_registry_hash
 from .context import AssistantContext
 
@@ -171,6 +172,8 @@ async def advance_receipt_draft(
     employee_id: Any,
     session: Any,
     writes_enabled: bool = True,
+    bi_year: Optional[int] = None,
+    bi_scope: Optional[str] = None,
 ) -> Optional[ReceiptDraftAdvance]:
     metadata = _metadata(conversation)
     draft = metadata.get(DRAFT_KEY)
@@ -227,14 +230,43 @@ async def advance_receipt_draft(
         .scalars()
         .all()
     )
+    selected_tournament = None
     for tournament in tournaments:
         name = _normalize(str(getattr(tournament, "name", "") or ""))
         if name and name in normalized:
-            if str(draft.get("tournament_id") or "") != str(tournament.id):
-                draft["tournament_id"] = str(tournament.id)
-                draft["tournament_name"] = tournament.name
-                changed = True
+            selected_tournament = tournament
             break
+
+    normalized_scope = str(bi_scope or "").strip().lower()
+    if selected_tournament is None and normalized_scope not in {"", "all"}:
+        scope_candidates = [
+            tournament
+            for tournament in tournaments
+            if text_matches_bi_scope(
+                str(getattr(tournament, "name", "") or ""),
+                normalized_scope,
+            )
+        ]
+        if bi_year is not None:
+            year_pattern = re.compile(rf"\b{int(bi_year)}\b")
+            year_candidates = [
+                tournament
+                for tournament in scope_candidates
+                if year_pattern.search(
+                    _normalize(str(getattr(tournament, "name", "") or ""))
+                )
+            ]
+            if year_candidates:
+                scope_candidates = year_candidates
+        if len(scope_candidates) == 1:
+            selected_tournament = scope_candidates[0]
+
+    if selected_tournament is not None and str(
+        draft.get("tournament_id") or ""
+    ) != str(selected_tournament.id):
+        draft["tournament_id"] = str(selected_tournament.id)
+        draft["tournament_name"] = selected_tournament.name
+        changed = True
 
     if draft.get("payment_subject_type") == "third_party":
         providers = (

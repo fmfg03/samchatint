@@ -94,6 +94,7 @@ from .analyst_live_evidence import (
     build_isolated_sqlalchemy_live_evidence_rows_provider,
     live_evidence_enabled,
 )
+from .bi_scope import AssistantBIScope, bi_scope_terms, text_matches_bi_scope
 from .capability_negotiation import capability_registry_hash
 from .context import AssistantContext
 from .conversation_service import (
@@ -3645,7 +3646,7 @@ class MessageCreateRequest(BaseModel):
     module_context: Optional[Dict[str, Any]] = None
     assistant_mode: Optional[Literal["ahorro", "balanceado", "calidad"]] = None
     bi_year: Optional[int] = Field(default=None, ge=2000, le=2100)
-    bi_scope: Optional[Literal["all", "beisbol"]] = None
+    bi_scope: Optional[AssistantBIScope] = None
     bi_segment: Optional[str] = Field(default=None, max_length=120)
 
 
@@ -3770,13 +3771,13 @@ class AssistantReportExportRequest(BaseModel):
 
 class AssistantExecutiveDashboardRequest(BaseModel):
     year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
-    bi_scope: Optional[Literal["all", "beisbol"]] = None
+    bi_scope: Optional[AssistantBIScope] = None
     bi_segment: Optional[str] = Field(default=None, max_length=120)
 
 
 class AssistantAlertsRequest(BaseModel):
     year: int = Field(default=datetime.utcnow().year, ge=2000, le=2100)
-    bi_scope: Optional[Literal["all", "beisbol"]] = None
+    bi_scope: Optional[AssistantBIScope] = None
     bi_segment: Optional[str] = Field(default=None, max_length=120)
     spike_ratio: float = Field(default=1.35, ge=1.0, le=5.0)
 
@@ -6468,10 +6469,7 @@ async def _db_write_universal(
 
 
 def _workspace_scope_terms(scope: Optional[str]) -> List[str]:
-    normalized = (scope or "").strip().lower()
-    if normalized == "beisbol":
-        return ["beisbol", "béisbol", "liga telmex"]
-    return []
+    return bi_scope_terms(scope)
 
 
 def _expense_scope_predicates(
@@ -6517,9 +6515,7 @@ def _workspace_matches_scope(name: str, slug: str, scope: Optional[str]) -> bool
     normalized_scope = (scope or "").strip().lower()
     if not normalized_scope or normalized_scope == "all":
         return True
-    haystack = f"{name} {slug}".strip().lower()
-    terms = _workspace_scope_terms(normalized_scope)
-    return any(term in haystack for term in terms)
+    return text_matches_bi_scope(f"{name} {slug}", normalized_scope)
 
 
 def _workspace_matches_segment(name: str, slug: str, segment: Optional[str]) -> bool:

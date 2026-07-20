@@ -208,3 +208,150 @@ async def test_third_party_draft_requires_and_binds_exact_budget_concept() -> No
     assert tool_args["payload"]["provider_id"] == str(provider.id)
     assert tool_args["payload"]["budget_concept_id"] == str(budget_concept.id)
     assert "Hospedaje" in preview
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_resolves_unique_tournament_from_bi_scope() -> None:
+    evidence_hash = "a" * 64
+    tournament = SimpleNamespace(
+        id="11111111-1111-1111-1111-111111111111",
+        name="Copa Telmex Telcel de Fútbol",
+    )
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            }
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-scope",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal, cuenta local, pagado por transferencia",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_SequenceSession([[tournament]]),
+        writes_enabled=False,
+        bi_year=2026,
+        bi_scope="copa-telmex",
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert "Copa Telmex Telcel de Fútbol" in result.message
+    assert "no está habilitado" in result.message
+    assert "confirmo" not in result.message
+    assert "assistant_receipt_workflow_draft" not in conversation.metadata_
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_does_not_guess_ambiguous_scope_tournament() -> None:
+    evidence_hash = "a" * 64
+    tournaments = [
+        SimpleNamespace(
+            id="11111111-1111-1111-1111-111111111111",
+            name="Copa Telmex Zona Norte",
+        ),
+        SimpleNamespace(
+            id="22222222-2222-2222-2222-222222222222",
+            name="Copa Telmex Zona Sur",
+        ),
+    ]
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            }
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-ambiguous",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal, cuenta local, pagado por transferencia",
+        conversation=conversation,
+        employee_id="33333333-3333-3333-3333-333333333333",
+        session=_SequenceSession([tournaments]),
+        writes_enabled=False,
+        bi_year=2026,
+        bi_scope="copa-telmex",
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert "torneo/proyecto exacto" in result.message
+    draft = conversation.metadata_["assistant_receipt_workflow_draft"]
+    assert draft["tournament_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_prefers_matching_year_within_scope() -> None:
+    evidence_hash = "a" * 64
+    tournaments = [
+        SimpleNamespace(
+            id="11111111-1111-1111-1111-111111111111",
+            name="Copa Telmex 2025",
+        ),
+        SimpleNamespace(
+            id="22222222-2222-2222-2222-222222222222",
+            name="Copa Telmex 2026",
+        ),
+    ]
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            }
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-year",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal, cuenta local, pagado por transferencia",
+        conversation=conversation,
+        employee_id="33333333-3333-3333-3333-333333333333",
+        session=_SequenceSession([tournaments]),
+        writes_enabled=False,
+        bi_year=2026,
+        bi_scope="copa-telmex",
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert "Copa Telmex 2026" in result.message
+    assert "Copa Telmex 2025" not in result.message

@@ -741,6 +741,8 @@ async def run_message_turn_with_pending(
         employee_id=current_empleado.id,
         session=session,
         writes_enabled=receipt_workflow_writes_enabled(current_empleado.id),
+        bi_year=bi_year,
+        bi_scope=bi_scope,
     )
     if receipt_advance is not None:
         if receipt_advance.pending is not None:
