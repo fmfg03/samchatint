@@ -59,7 +59,10 @@ from devnous.gastos.routes.dependencies import (
     has_permission,
 )
 
-from .db import get_tournament_session_maker
+from .db import (
+    get_expenses_session_maker,
+    get_tournament_session_maker,
+)
 from .action_router import (
     execute_canonical_action,
     supported_read_actions,
@@ -75,6 +78,10 @@ from .upload_service import extract_text_from_media
 from .conversation_service import (
     run_conversation_turn,
     run_message_turn_with_pending,
+)
+from .analyst_live_evidence import (
+    build_isolated_sqlalchemy_live_evidence_rows_provider,
+    live_evidence_enabled,
 )
 from .provider_service import (
     assistant_contextual_pref as _provider_assistant_contextual_pref,
@@ -161,6 +168,14 @@ except Exception:  # pragma: no cover
 
 router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 logger = logging.getLogger(__name__)
+
+
+def _configured_live_evidence_rows_provider():
+    if not live_evidence_enabled():
+        return None
+    return build_isolated_sqlalchemy_live_evidence_rows_provider(
+        get_expenses_session_maker()
+    )
 
 _RATE_LIMIT_LOCK = Lock()
 _MESSAGE_BUCKETS: dict[str, deque[float]] = defaultdict(deque)
@@ -11523,6 +11538,7 @@ async def create_message(
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
             document_action_router_executor=document_action_router_executor,
+            live_evidence_rows_provider=_configured_live_evidence_rows_provider(),
         )
     except HTTPException:
         raise
@@ -11614,6 +11630,7 @@ async def create_media_message(
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
             document_action_router_executor=None,
+            live_evidence_rows_provider=_configured_live_evidence_rows_provider(),
         )
     except HTTPException:
         raise

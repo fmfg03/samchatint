@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
@@ -11,7 +13,19 @@ from sqlalchemy import select
 from devnous.gastos.models import AssistantMessage
 
 from .action_router import supported_actions
-from .analyst_intent import detect_analyst_intent
+from .analyst_case_persistence import persist_analyst_case
+from .analyst_intent import (
+    AnalystIntent,
+    detect_analyst_intent,
+    normalize_analyst_text,
+)
+from .analyst_live_evidence import (
+    LiveEvidenceContext,
+    LiveEvidenceRowsProvider,
+    acquire_live_analyst_evidence,
+    live_evidence_enabled,
+    live_evidence_limit_per_source,
+)
 from .analyst_response import build_analyst_trace, render_analyst_result
 from .analyst_workbench import (
     AnalystEvidence,
@@ -57,6 +71,69 @@ def _document_writes_enabled() -> bool:
         "yes",
         "on",
     }
+
+
+def _live_evidence_analyst_intent(
+    raw_message: str,
+) -> Optional[AnalystIntent]:
+    if not live_evidence_enabled():
+        return None
+    intent = detect_analyst_intent(raw_message)
+    if intent is None:
+        return None
+    if not intent.requires_operational_route:
+        return intent
+    route_hint = str(intent.operational_route_hint or "")
+    normalized = normalize_analyst_text(raw_message)
+    reference_tokens = re.findall(
+        r"[a-z0-9][a-z0-9._/-]{2,}",
+        normalized,
+    )
+    has_explicit_reference = any(
+        any(separator in token for separator in "-_/")
+        or (
+            any(char.isalpha() for char in token)
+            and any(char.isdigit() for char in token)
+        )
+        for token in reference_tokens
+    )
+    has_named_tournament = bool(
+        re.search(
+            r"\b(?:el|este|ese|un)\s+torneo\s+"
+            r"(?!activo\b|actual\b|pendiente\b|que\b|sin\b)",
+            normalized,
+        )
+    )
+    has_explicit_named_target = (
+        route_hint.startswith(("cfdi.", "payments."))
+        and has_explicit_reference
+    ) or (
+        route_hint.startswith("tournament.")
+        and has_named_tournament
+    )
+    if (
+        route_hint.startswith(("cfdi.", "payments.", "tournament."))
+        and has_explicit_named_target
+        and any(
+            token in normalized
+            for token in ("explicame", "explica", "que implica")
+        )
+    ):
+        return replace(
+            intent,
+            analyst_intent="explain",
+            confidence=0.86,
+            requires_operational_route=False,
+            operational_route_hint=None,
+            context_requirements=[],
+            missing_context=[],
+            conflict_resolution={
+                "selected_route": "analyst",
+                "reason": "enabled_live_evidence_explanation",
+                "operational_route_hint": None,
+            },
+        )
+    return None
 
 
 def _response_object(
@@ -345,10 +422,18 @@ async def _build_analyst_workbench_response(
     *,
     raw_message: str,
     conversation: Any,
+    current_empleado: Any,
     session: Any,
     maybe_append_export_prompt: MaybeAppendExportPromptFn,
+    live_evidence_rows_provider: Optional[
+        LiveEvidenceRowsProvider
+    ] = None,
+    require_live_evidence: bool = False,
 ) -> Optional[Any]:
-    intent = detect_analyst_intent(raw_message)
+    intent = (
+        _live_evidence_analyst_intent(raw_message)
+        or detect_analyst_intent(raw_message)
+    )
     if intent is None or intent.requires_operational_route:
         return None
 
@@ -357,14 +442,82 @@ async def _build_analyst_workbench_response(
         session=session,
         conversation_id=conversation.id,
     )
+    live_acquisition = await acquire_live_analyst_evidence(
+        context=LiveEvidenceContext(
+            employee_id=getattr(current_empleado, "id", None),
+            role=str(getattr(current_empleado, "rol", "") or ""),
+            permissions=set(
+                getattr(current_empleado, "permissions", set()) or set()
+            ),
+            question=raw_message,
+            department=getattr(current_empleado, "departamento", None),
+            limit_per_source=live_evidence_limit_per_source(),
+        ),
+        intent=intent,
+        rows_provider=live_evidence_rows_provider,
+    )
+    if require_live_evidence and not live_acquisition.collection.evidence:
+        return None
+    live_evidence_signatures = {
+        (
+            item.source_type,
+            item.source,
+            item.source_id,
+            item.reference,
+            item.label,
+            item.summary,
+            item.date,
+        )
+        for item in live_acquisition.collection.evidence
+    }
     evidence = build_analyst_evidence_pack(
+        live_evidence=live_acquisition.collection.evidence,
         inline_evidence=inline_evidence,
         history_evidence=history_evidence,
         intent=intent,
     )
-    result = await run_analyst_workbench(intent=intent, evidence=evidence)
+    result = await run_analyst_workbench(
+        intent=intent,
+        evidence=evidence,
+        live_evidence_used=any(
+            (
+                item.source_type,
+                item.source,
+                item.source_id,
+                item.reference,
+                item.label,
+                item.summary,
+                item.date,
+            )
+            in live_evidence_signatures
+            for item in evidence
+        ),
+    )
+    if live_acquisition.collection.caveats:
+        result = replace(
+            result,
+            caveats=list(
+                dict.fromkeys(
+                    live_acquisition.collection.caveats + result.caveats
+                )
+            ),
+        )
     rendered = render_analyst_result(result)
     tool_trace = build_analyst_trace(intent=intent, result=result)
+    if live_acquisition.enabled:
+        tool_trace[0]["analyst_live_evidence"] = live_acquisition.trace()
+    case_persistence = await persist_analyst_case(
+        session=session,
+        conversation_id=str(conversation.id),
+        current_empleado=current_empleado,
+        question=raw_message,
+        intent=intent,
+        result=result,
+    )
+    if case_persistence.enabled:
+        tool_trace[0]["analyst_case_persistence"] = (
+            case_persistence.trace()
+        )
     rendered = maybe_append_export_prompt(rendered, tool_trace)
     await _persist_document_conversation_messages(
         raw_message=raw_message,
@@ -394,6 +547,9 @@ async def run_conversation_turn(
         AsyncActionRouterExecutor
     ] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
+    live_evidence_rows_provider: Optional[
+        LiveEvidenceRowsProvider
+    ] = None,
 ) -> Any:
     document_response = await _build_document_upload_response(
         raw_message=raw_message,
@@ -414,6 +570,19 @@ async def run_conversation_turn(
     if document_response is not None:
         return document_response
 
+    if _live_evidence_analyst_intent(raw_message) is not None:
+        analyst_response = await _build_analyst_workbench_response(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            live_evidence_rows_provider=live_evidence_rows_provider,
+            require_live_evidence=True,
+        )
+        if analyst_response is not None:
+            return analyst_response
+
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -428,8 +597,10 @@ async def run_conversation_turn(
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
         conversation=conversation,
+        current_empleado=current_empleado,
         session=session,
         maybe_append_export_prompt=maybe_append_export_prompt,
+        live_evidence_rows_provider=live_evidence_rows_provider,
     )
     if analyst_response is not None:
         return analyst_response
@@ -489,6 +660,9 @@ async def run_message_turn_with_pending(
         AsyncActionRouterExecutor
     ] = None,
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
+    live_evidence_rows_provider: Optional[
+        LiveEvidenceRowsProvider
+    ] = None,
 ) -> Any:
     pending_run = await latest_pending_run_for_conversation(
         session=session,
@@ -556,6 +730,19 @@ async def run_message_turn_with_pending(
     if document_response is not None:
         return document_response
 
+    if _live_evidence_analyst_intent(raw_message) is not None:
+        analyst_response = await _build_analyst_workbench_response(
+            raw_message=raw_message,
+            conversation=conversation,
+            current_empleado=current_empleado,
+            session=session,
+            maybe_append_export_prompt=maybe_append_export_prompt,
+            live_evidence_rows_provider=live_evidence_rows_provider,
+            require_live_evidence=True,
+        )
+        if analyst_response is not None:
+            return analyst_response
+
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -570,8 +757,10 @@ async def run_message_turn_with_pending(
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
         conversation=conversation,
+        current_empleado=current_empleado,
         session=session,
         maybe_append_export_prompt=maybe_append_export_prompt,
+        live_evidence_rows_provider=live_evidence_rows_provider,
     )
     if analyst_response is not None:
         return analyst_response
@@ -602,4 +791,5 @@ async def run_message_turn_with_pending(
         maybe_append_export_prompt=maybe_append_export_prompt,
         document_action_router_executor=document_action_router_executor,
         finance_rows_provider=finance_rows_provider,
+        live_evidence_rows_provider=live_evidence_rows_provider,
     )
