@@ -144,6 +144,49 @@ async def test_receipt_draft_collects_explicit_followup_amount() -> None:
 
 
 @pytest.mark.asyncio
+async def test_receipt_draft_accepts_debit_abbreviation_without_provider() -> None:
+    evidence_hash = "a" * 64
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            },
+            "module_context": {
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "account_type": "local",
+            },
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-debit",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "amount": "1.00",
+                "date": "2026-07-21",
+                "concept": "WITNESS STAGE 3 NO PAGAR",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal, t debito",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_Session(),
+    )
+
+    assert result is not None
+    assert result.pending is not None
+    _, tool_args, preview = result.pending
+    assert tool_args["payload"]["payment_method"] == "Tarjeta de Debito"
+    assert "Tarjeta de Debito" in preview
+
+
+@pytest.mark.asyncio
 async def test_receipt_draft_builds_bound_personal_preview_without_writing() -> None:
     evidence_hash = "a" * 64
     conversation = SimpleNamespace(

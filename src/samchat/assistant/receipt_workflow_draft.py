@@ -244,13 +244,14 @@ async def advance_receipt_draft(
             break
 
     payment_methods = {
+        r"\b(?:t(?:arjeta)?\s+(?:de\s+)?debito|debito)\b": "Tarjeta de Debito",
         "efectivo": "Efectivo",
         "tarjeta personal": "Tarjeta Personal",
         "tarjeta de empresa": "Tarjeta de Empresa",
         "transferencia": "Transferencia",
     }
-    for token, value in payment_methods.items():
-        if token in normalized and draft.get("payment_method") != value:
+    for pattern, value in payment_methods.items():
+        if re.search(pattern, normalized) and draft.get("payment_method") != value:
             draft["payment_method"] = value
             changed = True
             break
@@ -355,7 +356,14 @@ async def advance_receipt_draft(
     if not changed and not any(
         token in normalized for token in ("continua", "prepara", "borrador")
     ):
-        return None
+        missing = _missing_fields(draft)
+        return ReceiptDraftAdvance(
+            message=(
+                "No reconoci un dato aplicable al borrador. "
+                f"{_prompt_for_missing(draft, missing)} "
+                "Para salir de este flujo, escribe 'cancela comprobante'."
+            )
+        )
 
     draft["registry_hash"] = capability_registry_hash()
     metadata[DRAFT_KEY] = draft

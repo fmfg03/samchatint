@@ -9,6 +9,7 @@ from samchat.assistant.conversation_service import (
     run_message_turn_with_pending,
 )
 from samchat.assistant.document_intake import build_document_intake_result
+from samchat.assistant.receipt_workflow_draft import DRAFT_KEY
 
 
 def _marker(intake: dict) -> str:
@@ -86,6 +87,9 @@ class _FakeScalars:
 
     def __iter__(self):
         return iter(self._rows)
+
+    def all(self):
+        return self._rows
 
 
 class _FakeExecuteResult:
@@ -376,3 +380,57 @@ async def test_confirmation_without_available_intake_fails_closed():
 
     assert "No encontre una accion documental propuesta" in response.assistant_message
     assert response.tool_trace[0]["document_confirmation_live_wiring"]["blocked_reason"] == "document_intake_context_missing"
+
+
+@pytest.mark.asyncio
+async def test_active_receipt_draft_blocks_provider_fallback_for_unknown_input():
+    conversation = SimpleNamespace(
+        id="conv-id",
+        updated_at=None,
+        metadata_={
+            DRAFT_KEY: {
+                "draft_id": "receiptdraft-docint-1",
+                "intake_id": "docint-1",
+                "registry_hash": "registry-1",
+                "evidence_sha256": "a" * 64,
+                "media_id": "media-1",
+                "amount": "1.00",
+                "date": "2026-07-21",
+                "concept": "WITNESS STAGE 3 NO PAGAR",
+                "currency": "MXN",
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "payment_subject_type": "personal",
+                "account_type": "local",
+                "payment_method": None,
+            }
+        },
+    )
+
+    response = await run_message_turn_with_pending(
+        raw_message="no entiendo",
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=2026,
+        bi_scope="copa-telmex",
+        bi_segment=None,
+        assistant_mode="ahorro",
+        openai_api_key=None,
+        latest_pending_run_for_conversation=_pending_none,
+        is_explicit_approval_message=lambda _text: False,
+        is_explicit_rejection_message=lambda _text: False,
+        confirm_pending_run=_should_not_call_provider,
+        deterministic_pending_builders=[],
+        build_deterministic_pending_response=_should_not_call_provider,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "No reconoci un dato aplicable" in response.assistant_message
+    assert "pago" in response.assistant_message
+    assert (
+        response.tool_trace[0]["receipt_workflow_draft"]["writes_attempted"] is False
+    )
