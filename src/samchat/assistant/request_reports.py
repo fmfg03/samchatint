@@ -36,6 +36,29 @@ ReadOnlyActionExecutor = Callable[
 ]
 
 
+PUBLIC_ACTION_TITLES = {
+    "receipts.pending_payment_overview": "Pagos pendientes",
+    "receipts.cfdi_matching_overview": "CFDIs y gastos candidatos",
+    "operations.tournament_soul_snapshot": "Estado operativo del torneo",
+    "executive.realtime_report": "Reporte ejecutivo",
+}
+
+
+def _public_summary(
+    action: Optional[str], data: Mapping[str, Any], fallback: str
+) -> str:
+    if action == "receipts.pending_payment_overview":
+        pending = int(data.get("pending_count") or 0)
+        total = float(data.get("total_pendiente") or 0)
+        third_party = int(data.get("solicitud_terceros") or 0)
+        personal = int(data.get("solicitud_personal") or 0)
+        return (
+            f"Hay {pending} solicitudes pendientes por ${total:,.2f}: "
+            f"{third_party} de terceros y {personal} personales."
+        )
+    return fallback
+
+
 def _finance_intent_from_operational(
     intent: OperationalRequestIntent,
 ) -> FinanceComparisonIntent:
@@ -86,16 +109,12 @@ def _rows_from_mapping(data: Mapping[str, Any]) -> List[Dict[str, Any]]:
         "tournaments",
     ):
         value = data.get(key)
-        if isinstance(value, list) and all(
-            isinstance(item, Mapping) for item in value
-        ):
+        if isinstance(value, list) and all(isinstance(item, Mapping) for item in value):
             return [dict(item) for item in value]
     breakdown = data.get("breakdown")
     if isinstance(breakdown, Mapping):
         items = breakdown.get("items")
-        if isinstance(items, list) and all(
-            isinstance(item, Mapping) for item in items
-        ):
+        if isinstance(items, list) and all(isinstance(item, Mapping) for item in items):
             return [dict(item) for item in items]
     return []
 
@@ -175,12 +194,8 @@ async def run_read_only_report(
                 "variacion_pct": row.get("variation_pct"),
             }
             if len(years) == 2:
-                output_row[f"gasto_{years[1]}"] = row.get(
-                    "amount_base_year"
-                )
-                output_row[f"gasto_{years[0]}"] = row.get(
-                    "amount_compare_year"
-                )
+                output_row[f"gasto_{years[1]}"] = row.get("amount_base_year")
+                output_row[f"gasto_{years[0]}"] = row.get("amount_compare_year")
             rows.append(output_row)
         return RequestReportResult(
             status=status,
@@ -233,8 +248,7 @@ async def run_read_only_report(
             status="data_source_unavailable",
             title="Fuente read-only no disponible",
             summary=(
-                f"La ruta read-only no pudo responder: {exc}. "
-                "No ejecuté cambios."
+                f"La ruta read-only no pudo responder: {exc}. " "No ejecuté cambios."
             ),
             columns=[],
             rows=[],
@@ -249,17 +263,21 @@ async def run_read_only_report(
     data = dict(executed.get("data") or executed)
     rows = _rows_from_mapping(data)
     status = "success" if rows or data else "empty"
+    public_title = str(
+        data.get("title")
+        or PUBLIC_ACTION_TITLES.get(route.canonical_action or "")
+        or "Reporte de operación"
+    )
+    fallback_summary = str(
+        data.get("summary") or executed.get("summary") or "Reporte generado."
+    )
     return RequestReportResult(
         status=status,
-        title=str(
-            data.get("title")
-            or route.canonical_action
-            or "Reporte read-only"
-        ),
-        summary=str(
-            data.get("summary")
-            or executed.get("summary")
-            or "Reporte read-only generado."
+        title=public_title,
+        summary=_public_summary(
+            route.canonical_action,
+            data,
+            fallback_summary,
         ),
         columns=_columns(rows),
         rows=rows,

@@ -16,6 +16,7 @@ from .document_classifier import (
     ACCOUNTING_BALANCE,
     CFDI_INVOICE,
     DOCUMENT_VALIDATION,
+    EXPENSE_RECEIPT,
     INVOICE_DOCUMENT,
     PAYMENT_PROOF,
     PLAYER_REGISTRATION,
@@ -26,7 +27,6 @@ from .document_classifier import (
 )
 from .document_confirmation import build_safety_status
 from .file_parsing import normalize_spreadsheet_records
-
 
 MONTHS = {
     "enero": "01",
@@ -60,6 +60,7 @@ class DocumentIntakeResult:
     proposed_actions: List[Dict[str, Any]]
     questions_for_user: List[str]
     safety: Dict[str, Any]
+    evidence_sha256: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -74,12 +75,14 @@ def _stable_intake_id(
     file_name: str,
     text: str,
     records: Sequence[Mapping[str, Any]] | None,
+    evidence_sha256: str = "",
 ) -> str:
     preview = {
         "conversation_id": conversation_id,
         "file_name": file_name,
         "text": (text or "")[:2000],
         "records": list(records or [])[:5],
+        "evidence_sha256": evidence_sha256,
     }
     encoded = json.dumps(preview, ensure_ascii=False, sort_keys=True, default=str)
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
@@ -214,11 +217,15 @@ def _extract_roster_entities(
         if first_name or last_name or curp:
             if curp and not curp_pattern.match(curp):
                 invalid_curp_count += 1
-            players.append({"name": " ".join([first_name, last_name]).strip(), "curp": curp})
+            players.append(
+                {"name": " ".join([first_name, last_name]).strip(), "curp": curp}
+            )
     if not team_name:
         team_name = _first_match(text, [r"equipo[:\s]+([^\n]+)", r"team[:\s]+([^\n]+)"])
     if not category:
-        category = _first_match(text, [r"categoria[:\s]+([^\n]+)", r"category[:\s]+([^\n]+)"])
+        category = _first_match(
+            text, [r"categoria[:\s]+([^\n]+)", r"category[:\s]+([^\n]+)"]
+        )
     return {
         "team_name": team_name,
         "category": category,
@@ -249,10 +256,16 @@ def _extract_cfdi_entities(text: str) -> Dict[str, Any]:
         if receptor is None:
             receptor = root.find(".//cfdi3:Receptor", namespaces)
         if emisor is not None:
-            entities["issuer_rfc"] = emisor.attrib.get("Rfc") or emisor.attrib.get("rfc")
-            entities["issuer_name"] = emisor.attrib.get("Nombre") or emisor.attrib.get("nombre")
+            entities["issuer_rfc"] = emisor.attrib.get("Rfc") or emisor.attrib.get(
+                "rfc"
+            )
+            entities["issuer_name"] = emisor.attrib.get("Nombre") or emisor.attrib.get(
+                "nombre"
+            )
         if receptor is not None:
-            entities["receiver_rfc"] = receptor.attrib.get("Rfc") or receptor.attrib.get("rfc")
+            entities["receiver_rfc"] = receptor.attrib.get(
+                "Rfc"
+            ) or receptor.attrib.get("rfc")
         entities["amount"] = root.attrib.get("Total") or root.attrib.get("total")
         entities["date"] = root.attrib.get("Fecha") or root.attrib.get("fecha")
         entities["currency"] = root.attrib.get("Moneda") or root.attrib.get("moneda")
@@ -260,13 +273,21 @@ def _extract_cfdi_entities(text: str) -> Dict[str, Any]:
         if concept is None:
             concept = root.find(".//cfdi3:Concepto", namespaces)
         if concept is not None:
-            entities["concept"] = concept.attrib.get("Descripcion") or concept.attrib.get("descripcion")
+            entities["concept"] = concept.attrib.get(
+                "Descripcion"
+            ) or concept.attrib.get("descripcion")
     except ET.ParseError:
         pass
     entities.setdefault("uuid", _first_match(raw, [r"uuid[:=\s]+([A-Fa-f0-9-]{20,})"]))
-    entities.setdefault("issuer_rfc", _first_match(raw, [r"rfc emisor[:=\s]+([A-Z&Ñ0-9]{12,13})"]))
-    entities.setdefault("receiver_rfc", _first_match(raw, [r"rfc receptor[:=\s]+([A-Z&Ñ0-9]{12,13})"]))
-    entities.setdefault("amount", _first_match(raw, [r"(?:total|monto|importe)[:=\s$]+([0-9,.]+)"]))
+    entities.setdefault(
+        "issuer_rfc", _first_match(raw, [r"rfc emisor[:=\s]+([A-Z&Ñ0-9]{12,13})"])
+    )
+    entities.setdefault(
+        "receiver_rfc", _first_match(raw, [r"rfc receptor[:=\s]+([A-Z&Ñ0-9]{12,13})"])
+    )
+    entities.setdefault(
+        "amount", _first_match(raw, [r"(?:total|monto|importe)[:=\s$]+([0-9,.]+)"])
+    )
     entities.setdefault("date", _first_match(raw, [r"(20\d{2}-\d{2}-\d{2})"]))
     return {key: value for key, value in entities.items() if value not in (None, "")}
 
@@ -276,10 +297,57 @@ def _extract_payment_entities(text: str) -> Dict[str, Any]:
     return {
         "amount": _first_match(raw, [r"(?:monto|importe|cantidad)[:=\s$]+([0-9,.]+)"]),
         "date": _first_match(raw, [r"(20\d{2}-\d{2}-\d{2})", r"fecha[:=\s]+([^\n]+)"]),
-        "bank_reference": _first_match(raw, [r"clave de rastreo[:=\s]+([A-Z0-9-]+)", r"referencia[:=\s]+([A-Z0-9-]+)"]),
+        "bank_reference": _first_match(
+            raw,
+            [r"clave de rastreo[:=\s]+([A-Z0-9-]+)", r"referencia[:=\s]+([A-Z0-9-]+)"],
+        ),
         "beneficiary": _first_match(raw, [r"beneficiario[:=\s]+([^\n]+)"]),
-        "payer": _first_match(raw, [r"ordenante[:=\s]+([^\n]+)", r"pagador[:=\s]+([^\n]+)"]),
+        "payer": _first_match(
+            raw, [r"ordenante[:=\s]+([^\n]+)", r"pagador[:=\s]+([^\n]+)"]
+        ),
         "concept": _first_match(raw, [r"concepto[:=\s]+([^\n]+)"]),
+    }
+
+
+def _extract_expense_receipt_entities(text: str) -> Dict[str, Any]:
+    raw = text or ""
+    currency = _first_match(raw, [r"\b(MXN|USD|EUR)\b"])
+    amount = _first_match(
+        raw,
+        [
+            r"(?:total|importe|monto)[*:=\s$]+([0-9][0-9,.]*)",
+            r"\$\s*([0-9][0-9,.]*)",
+        ],
+    )
+    amount = _money(_to_decimal(amount))
+    date = _first_match(
+        raw,
+        [
+            r"(20\d{2}[-/]\d{1,2}[-/]\d{1,2})",
+            r"(\d{1,2}[-/]\d{1,2}[-/]20\d{2})",
+            r"fecha[*:=\s]+([^\n]+)",
+        ],
+    )
+    merchant = _first_match(
+        raw,
+        [
+            r"(?:comercio|establecimiento|proveedor|razon social)[*:=\s]+([^\n]+)",
+        ],
+    )
+    concept = _first_match(
+        raw,
+        [r"(?:concepto|descripcion)[*:=\s]+([^\n]+)"],
+    )
+    return {
+        key: value
+        for key, value in {
+            "amount": amount,
+            "date": date,
+            "merchant": merchant,
+            "concept": concept,
+            "currency": currency or "MXN",
+        }.items()
+        if value not in (None, "")
     }
 
 
@@ -288,12 +356,18 @@ def _extract_tournament_entities(text: str) -> Dict[str, Any]:
     venues = re.findall(r"(?:sede|venue)[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE)
     dates = re.findall(r"20\d{2}-\d{2}-\d{2}", raw)
     return {
-        "tournament": _first_match(raw, [r"torneo[:=\s]+([^\n]+)", r"tournament[:=\s]+([^\n]+)"]),
+        "tournament": _first_match(
+            raw, [r"torneo[:=\s]+([^\n]+)", r"tournament[:=\s]+([^\n]+)"]
+        ),
         "dates": dates[:8],
         "venues": venues[:8],
         "teams": re.findall(r"equipo[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE)[:12],
-        "commitments": re.findall(r"compromiso[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE)[:12],
-        "milestones": re.findall(r"milestone[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE)[:12],
+        "commitments": re.findall(
+            r"compromiso[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE
+        )[:12],
+        "milestones": re.findall(r"milestone[:=\s]+([^\n]+)", raw, flags=re.IGNORECASE)[
+            :12
+        ],
     }
 
 
@@ -320,6 +394,13 @@ def _summary_for(document_type: str, entities: Mapping[str, Any]) -> str:
             f"Detecte comprobante de pago; monto {entities.get('amount') or 'pendiente'}, "
             f"referencia {entities.get('bank_reference') or 'pendiente'}."
         )
+    if document_type == EXPENSE_RECEIPT:
+        return (
+            f"Detecte comprobante de gasto; comercio "
+            f"{entities.get('merchant') or 'pendiente'}, monto "
+            f"{entities.get('amount') or 'pendiente'}, fecha "
+            f"{entities.get('date') or 'pendiente'}."
+        )
     if document_type == TOURNAMENT_OPS:
         return f"Detecte documento operativo de torneo; torneo {entities.get('tournament') or 'pendiente'}."
     return "Documento generico; no hay workflow deterministico suficiente para proponer escritura."
@@ -333,24 +414,48 @@ def _missing_fields(document_type: str, entities: Mapping[str, Any]) -> List[str
         DOCUMENT_VALIDATION: ["tournament", "category"],
         TOURNAMENT_OPS: ["tournament"],
         CFDI_INVOICE: ["uuid", "amount", "expense_or_document_candidate"],
-        INVOICE_DOCUMENT: ["uuid_or_invoice_id", "amount", "expense_or_document_candidate"],
+        INVOICE_DOCUMENT: [
+            "uuid_or_invoice_id",
+            "amount",
+            "expense_or_document_candidate",
+        ],
         PAYMENT_PROOF: ["amount", "bank_reference", "document_or_expense_candidate"],
+        EXPENSE_RECEIPT: [
+            "amount",
+            "date",
+            "concept",
+            "tournament",
+            "payment_subject_type",
+        ],
         UNKNOWN_OR_GENERIC: ["target_workflow"],
     }
-    return [field for field in required.get(document_type, []) if not entities.get(field)]
+    return [
+        field for field in required.get(document_type, []) if not entities.get(field)
+    ]
 
 
 def _questions(document_type: str, missing_fields: Sequence[str]) -> List[str]:
     if not missing_fields:
         return []
     if document_type == ACCOUNTING_BALANCE:
-        return ["Confirma empresa/proyecto y periodo antes de generar el preview contable."]
+        return [
+            "Confirma empresa/proyecto y periodo antes de generar el preview contable."
+        ]
     if document_type in {ROSTER, PLAYER_REGISTRATION, DOCUMENT_VALIDATION}:
-        return ["Confirma torneo, categoria y equipo antes de crear una revision de registro."]
+        return [
+            "Confirma torneo, categoria y equipo antes de crear una revision de registro."
+        ]
     if document_type in {CFDI_INVOICE, INVOICE_DOCUMENT}:
-        return ["Elige el gasto/documento candidato antes de vincular el CFDI o factura."]
+        return [
+            "Elige el gasto/documento candidato antes de vincular el CFDI o factura."
+        ]
     if document_type == PAYMENT_PROOF:
         return ["Elige el documento/informe candidato antes de registrar el pago."]
+    if document_type == EXPENSE_RECEIPT:
+        return [
+            "Confirma si es un gasto personal o un pago a tercero, "
+            "y selecciona el torneo/proyecto antes de preparar el borrador."
+        ]
     if document_type == TOURNAMENT_OPS:
         return ["Confirma el torneo o slug operativo al que pertenece este documento."]
     return ["Indica a que workflow pertenece este documento."]
@@ -360,8 +465,16 @@ def _risks(document_type: str, missing_fields: Sequence[str]) -> List[str]:
     risks = ["No se ejecutan escrituras durante intake documental."]
     if missing_fields:
         risks.append("Hay campos faltantes; se requiere aclaracion del usuario.")
-    if document_type in {ACCOUNTING_BALANCE, CFDI_INVOICE, INVOICE_DOCUMENT, PAYMENT_PROOF}:
-        risks.append("Documento financiero: cualquier cambio queda sujeto a confirmacion explicita.")
+    if document_type in {
+        ACCOUNTING_BALANCE,
+        CFDI_INVOICE,
+        INVOICE_DOCUMENT,
+        PAYMENT_PROOF,
+        EXPENSE_RECEIPT,
+    }:
+        risks.append(
+            "Documento financiero: cualquier cambio queda sujeto a confirmacion explicita."
+        )
     if document_type == UNKNOWN_OR_GENERIC:
         risks.append("Clasificacion insuficiente para proponer acciones de escritura.")
     return risks
@@ -377,6 +490,7 @@ def build_document_intake_result(
     user_context: Mapping[str, Any] | None = None,
     supported_actions: Sequence[str] | None = None,
     writes_enabled: bool = False,
+    evidence_sha256: str = "",
 ) -> DocumentIntakeResult:
     classification = classify_document(
         file_name=file_name,
@@ -386,20 +500,31 @@ def build_document_intake_result(
     )
     doc_type = classification.detected_document_type
     if doc_type == ACCOUNTING_BALANCE:
-        entities = _extract_accounting_entities(file_name=file_name, text=text, records=records)
+        entities = _extract_accounting_entities(
+            file_name=file_name, text=text, records=records
+        )
     elif doc_type in {ROSTER, PLAYER_REGISTRATION, DOCUMENT_VALIDATION}:
         entities = _extract_roster_entities(records, text)
     elif doc_type in {CFDI_INVOICE, INVOICE_DOCUMENT}:
         entities = _extract_cfdi_entities(text)
     elif doc_type == PAYMENT_PROOF:
         entities = _extract_payment_entities(text)
+    elif doc_type == EXPENSE_RECEIPT:
+        entities = _extract_expense_receipt_entities(text)
     elif doc_type == TOURNAMENT_OPS:
         entities = _extract_tournament_entities(text)
     else:
         entities = {"text_preview": (text or "")[:500].strip()}
 
     context = dict(user_context or {})
-    for key in ["company", "project", "tournament", "category", "team_name"]:
+    for key in [
+        "company",
+        "project",
+        "tournament",
+        "category",
+        "team_name",
+        "payment_subject_type",
+    ]:
         if context.get(key) and not entities.get(key):
             entities[key] = context[key]
 
@@ -408,6 +533,7 @@ def build_document_intake_result(
         file_name=file_name,
         text=text,
         records=records,
+        evidence_sha256=evidence_sha256,
     )
     missing = _missing_fields(doc_type, entities)
     proposed = plan_document_actions(
@@ -421,7 +547,9 @@ def build_document_intake_result(
     safety = build_safety_status(
         proposed_actions=proposed,
         missing_fields=missing,
-        blocked_reason="unsupported_document_type" if doc_type == UNKNOWN_OR_GENERIC else "",
+        blocked_reason=(
+            "unsupported_document_type" if doc_type == UNKNOWN_OR_GENERIC else ""
+        ),
     )
     return DocumentIntakeResult(
         intake_id=intake_id,
@@ -430,11 +558,16 @@ def build_document_intake_result(
         detected_document_type=doc_type,
         confidence=classification.confidence,
         summary=_summary_for(doc_type, entities),
-        entities={key: value for key, value in entities.items() if value not in (None, "", [], {})},
+        entities={
+            key: value
+            for key, value in entities.items()
+            if value not in (None, "", [], {})
+        },
         candidate_workflows=candidate_workflows_for_type(doc_type),
         missing_fields=missing,
         risks_or_caveats=_risks(doc_type, missing),
         proposed_actions=[action.to_dict() for action in proposed],
         questions_for_user=_questions(doc_type, missing),
         safety=safety,
+        evidence_sha256=evidence_sha256,
     )

@@ -4,7 +4,7 @@ import base64
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import date, datetime
 from typing import Dict, Optional, Sequence
 from uuid import UUID
 
@@ -12,9 +12,22 @@ from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
-from ..models import Aprobacion, Adjunto, CuentaDeGastos, Documento, Empleado, ProveedorCliente, Tournament
-from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
-from .tournament_project_visibility import visibility_validation_error
+from samchat.budgets.service import resolve_budget_concept
+
+from ..expense_metadata import (
+    normalize_categories,
+    normalize_currency,
+    normalize_edition,
+)
+from ..models import (
+    Adjunto,
+    Aprobacion,
+    CuentaDeGastos,
+    Documento,
+    Empleado,
+    ProveedorCliente,
+    Tournament,
+)
 from ..utils.receipt_bytes import (
     ALLOWED_SOLICITUD_ATTACHMENT_MIME_TYPES,
     MAX_SOLICITUD_ATTACHMENT_BYTES,
@@ -33,7 +46,7 @@ from .cfdi_ingestion_service import (
     has_existing_cfdi_usage,
     ingest_cfdi_from_upload,
 )
-from samchat.budgets.service import resolve_budget_concept
+from .tournament_project_visibility import visibility_validation_error
 
 logger = logging.getLogger(__name__)
 
@@ -534,6 +547,8 @@ async def allocate_next_referencia_operaciones(session: AsyncSession) -> str:
 async def create_solicitud_terceros_document(
     session: AsyncSession,
     payload: SolicitudTercerosPayload,
+    *,
+    commit: bool = True,
 ) -> Documento:
     """Create a SOLICITUD document for a third-party payment request."""
     proveedor_result = await session.execute(
@@ -584,7 +599,9 @@ async def create_solicitud_terceros_document(
             raise SolicitudValidationError("invalid_categorias", str(exc)) from exc
         concept = await resolve_budget_concept(
             session,
-            budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
+            budget_concept_id=(
+                str(payload.budget_concept_id) if payload.budget_concept_id else None
+            ),
             tournament_id=str(payload.torneo_id),
             tournament_code=None,
             fase=payload.fase,
@@ -693,8 +710,11 @@ async def create_solicitud_terceros_document(
             nombre_archivo=filename,
         )
 
-    await session.commit()
-    await session.refresh(documento)
+    if commit:
+        await session.commit()
+        await session.refresh(documento)
+    else:
+        await session.flush()
     logger.info(
         "Created SOLICITUD a terceros %s (%s) for empleado %s",
         documento.id,
@@ -747,8 +767,7 @@ async def _persist_solicitud_terceros_adjuntos(
     attachments: list[SolicitudTercerosAttachment],
 ) -> None:
     validated_attachments = [
-        validate_solicitud_terceros_attachment(attachment)
-        for attachment in attachments
+        validate_solicitud_terceros_attachment(attachment) for attachment in attachments
     ]
     numero_referencia = documento.numero_referencia or str(documento.id)
     await _ingest_solicitud_cfdi_from_attachments(
@@ -815,10 +834,12 @@ async def remove_solicitud_documento_adjunto(
 
     if categoria in {"cfdi_xml", "cfdi_pdf"}:
         remaining_cfdi = await session.execute(
-            select(Adjunto.id).where(
+            select(Adjunto.id)
+            .where(
                 Adjunto.documento_id == documento_id,
                 Adjunto.categoria.in_(["cfdi_xml", "cfdi_pdf"]),
-            ).limit(1)
+            )
+            .limit(1)
         )
         if remaining_cfdi.first() is None:
             documento = await session.get(Documento, documento_id)
@@ -900,7 +921,9 @@ async def update_solicitud_terceros_document(
             raise SolicitudValidationError("invalid_categorias", str(exc)) from exc
         concept = await resolve_budget_concept(
             session,
-            budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
+            budget_concept_id=(
+                str(payload.budget_concept_id) if payload.budget_concept_id else None
+            ),
             tournament_id=str(payload.torneo_id),
             tournament_code=None,
             fase=payload.fase,
@@ -965,6 +988,8 @@ async def update_solicitud_terceros_document(
 async def create_solicitud_personal_document(
     session: AsyncSession,
     payload: SolicitudPersonalPayload,
+    *,
+    commit: bool = True,
 ) -> Documento:
     """Create a SOLICITUD personal linked to a Cuenta de Gastos."""
     cuenta_result = await session.execute(
@@ -1004,8 +1029,12 @@ async def create_solicitud_personal_document(
         )
     concept = await resolve_budget_concept(
         session,
-        budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
-        tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
+        budget_concept_id=(
+            str(payload.budget_concept_id) if payload.budget_concept_id else None
+        ),
+        tournament_id=(
+            str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None
+        ),
         tournament_code=None,
         fase=getattr(cuenta, "fase", None),
     )
@@ -1086,8 +1115,11 @@ async def create_solicitud_personal_document(
         currency=normalize_currency(getattr(cuenta, "currency", None)),
     )
     session.add(documento)
-    await session.commit()
-    await session.refresh(documento)
+    if commit:
+        await session.commit()
+        await session.refresh(documento)
+    else:
+        await session.flush()
     logger.info(
         "Created SOLICITUD personal %s (%s) for cuenta %s and empleado %s",
         documento.id,

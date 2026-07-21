@@ -55,34 +55,49 @@ def test_cfdi_proposal_renders_confirmation_instruction() -> None:
     intake = _cfdi_intake_without_missing()
     rendered = render_document_intake_for_conversation(intake)
     action = next(
-        item for item in intake["proposed_actions"]
+        item
+        for item in intake["proposed_actions"]
         if item["canonical_action"] == "receipts.link_expense_to_cfdi"
     )
 
     assert "Documento detectado: cfdi_invoice" in rendered
     assert "Resumen:" in rendered
     assert "Vincular CFDI" in rendered
-    assert "receipts.link_expense_to_cfdi" in rendered
+    assert "receipts.link_expense_to_cfdi" not in rendered
     assert action["action_id"] in rendered
     assert f"CONFIRMAR accion {action['action_id']}" in rendered
 
 
 def test_confirmation_command_parser_accepts_spanish_and_english_forms() -> None:
-    assert parse_document_confirmation_command("CONFIRMAR accion docact_123").to_dict() == {
+    assert parse_document_confirmation_command(
+        "CONFIRMAR accion docact_123"
+    ).to_dict() == {
         "action": "confirm",
         "proposed_action_id": "docact_123",
         "raw_text": "CONFIRMAR accion docact_123",
     }
-    assert parse_document_confirmation_command("CONFIRM action docact_123").action == "confirm"
-    assert parse_document_confirmation_command("cancelar accion docact_123").action == "cancel"
-    assert parse_document_confirmation_command("cancel action docact_123").action == "cancel"
+    assert (
+        parse_document_confirmation_command("CONFIRM action docact_123").action
+        == "confirm"
+    )
+    assert (
+        parse_document_confirmation_command("cancelar accion docact_123").action
+        == "cancel"
+    )
+    assert (
+        parse_document_confirmation_command("cancel action docact_123").action
+        == "cancel"
+    )
     assert parse_document_confirmation_command("confirmo esto") is None
 
 
-def test_cfdi_write_confirmation_while_writes_disabled_blocks_without_executor_call() -> None:
+def test_cfdi_write_confirmation_while_writes_disabled_blocks_without_executor_call() -> (
+    None
+):
     intake = _cfdi_intake_without_missing()
     action = next(
-        item for item in intake["proposed_actions"]
+        item
+        for item in intake["proposed_actions"]
         if item["canonical_action"] == "receipts.link_expense_to_cfdi"
     )
     calls = []
@@ -107,10 +122,13 @@ def test_cfdi_write_confirmation_while_writes_disabled_blocks_without_executor_c
     assert calls == []
 
 
-def test_read_only_accounting_preview_confirmation_uses_action_router_executor() -> None:
+def test_read_only_accounting_preview_confirmation_uses_action_router_executor() -> (
+    None
+):
     intake = _accounting_intake_without_missing()
     action = next(
-        item for item in intake["proposed_actions"]
+        item
+        for item in intake["proposed_actions"]
         if item["canonical_action"] == "executive.accounting_report"
     )
     calls = []

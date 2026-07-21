@@ -9,6 +9,7 @@ from samchat.assistant.conversation_service import (
     run_message_turn_with_pending,
 )
 from samchat.assistant.document_intake import build_document_intake_result
+from samchat.assistant.receipt_workflow_draft import DRAFT_KEY
 
 
 def _marker(intake: dict) -> str:
@@ -87,6 +88,9 @@ class _FakeScalars:
     def __iter__(self):
         return iter(self._rows)
 
+    def all(self):
+        return self._rows
+
 
 class _FakeExecuteResult:
     def __init__(self, rows):
@@ -109,10 +113,7 @@ class _FakeSession:
         self.commits += 1
 
     async def execute(self, _stmt):
-        rows = [
-            SimpleNamespace(content=content)
-            for content in self.latest_contents
-        ]
+        rows = [SimpleNamespace(content=content) for content in self.latest_contents]
         return _FakeExecuteResult(rows)
 
 
@@ -153,22 +154,131 @@ async def test_upload_context_with_document_intake_returns_deterministic_proposa
     assert "Documento detectado: cfdi_invoice" in response.assistant_message
     assert "proposed_action_id:" in response.assistant_message
     assert "CONFIRMAR accion" in response.assistant_message
-    assert response.tool_trace[0]["document_intake_live_wiring"]["provider_called"] is False
+    assert (
+        response.tool_trace[0]["document_intake_live_wiring"]["provider_called"]
+        is False
+    )
     assert session.commits == 1
 
 
 @pytest.mark.asyncio
-async def test_confirmation_command_for_write_like_action_blocks_when_writes_disabled(monkeypatch):
+async def test_cfdi_upload_starts_receipt_workflow_draft():
+    intake = _cfdi_intake_without_missing()
+    session = _FakeSession()
+    conversation = SimpleNamespace(id="conv-id", updated_at=None, metadata_={})
+
+    response = await run_conversation_turn(
+        raw_message=_marker(intake),
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=session,
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "Documento detectado: cfdi_invoice" in response.assistant_message
+    assert conversation.metadata_[DRAFT_KEY]["intake_id"] == intake["intake_id"]
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
+async def test_receipt_evidence_mismatch_returns_controlled_response():
+    intake = build_document_intake_result(
+        conversation_id="conv-id",
+        file_name="ticket.jpg",
+        file_kind="image",
+        text="Ticket Total: 100.00 Fecha: 2026-07-21 Concepto: Papeleria",
+        evidence_sha256="a" * 64,
+        supported_actions=supported_actions(),
+    ).to_dict()
+    conversation = SimpleNamespace(
+        id="conv-id",
+        updated_at=None,
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": "b" * 64,
+            }
+        },
+    )
+
+    response = await run_conversation_turn(
+        raw_message=_marker(intake),
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "evidencia cargada cambió" in response.assistant_message
+    assert response.tool_trace[0]["receipt_workflow_draft"] == {
+        "status": "evidence_mismatch",
+        "writes_attempted": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_capability_response_respects_employee_write_allowlist(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_CAPABILITY_NEGOTIATION_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_CAPABILITY_NEGOTIATION_EMPLOYEE_IDS", "emp-1")
+    monkeypatch.setenv("ASSISTANT_RECEIPT_WORKFLOW_WRITES_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_RECEIPT_WORKFLOW_EMPLOYEE_IDS", "other-employee")
+
+    response = await run_conversation_turn(
+        raw_message=(
+            "Si te subo un comprobante puedes hacer la cuenta de gastos "
+            "y la solicitud de pago?"
+        ),
+        conversation=SimpleNamespace(id="conv-id", updated_at=None),
+        current_empleado=SimpleNamespace(id="emp-1", rol="empleado"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "no está habilitado" in response.assistant_message
+    assert response.tool_trace[0]["capability_negotiation"]["writes_attempted"] is False
+
+
+@pytest.mark.asyncio
+async def test_confirmation_command_for_write_like_action_blocks_when_writes_disabled(
+    monkeypatch,
+):
     monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "false")
     intake = _cfdi_intake_without_missing()
     action = next(
-        item for item in intake["proposed_actions"]
+        item
+        for item in intake["proposed_actions"]
         if item["canonical_action"] == "receipts.link_expense_to_cfdi"
     )
     session = _FakeSession(latest_contents=[_marker(intake)])
     calls = []
 
-    async def executor(canonical_action, payload):  # pragma: no cover - should not be called
+    async def executor(
+        canonical_action, payload
+    ):  # pragma: no cover - should not be called
         calls.append((canonical_action, payload))
         return {"summary": "unexpected"}
 
@@ -196,8 +306,13 @@ async def test_confirmation_command_for_write_like_action_blocks_when_writes_dis
     )
 
     assert "no se ejecuto ningun write" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["blocked_reason"] == "writes_disabled"
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
+    )
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["blocked_reason"]
+        == "writes_disabled"
+    )
     assert calls == []
 
 
@@ -230,8 +345,13 @@ async def test_cancel_command_returns_canceled_without_execution():
     )
 
     assert "cancelada" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["status"] == "canceled"
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["status"]
+        == "canceled"
+    )
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
+    )
 
 
 @pytest.mark.asyncio
@@ -263,8 +383,13 @@ async def test_missing_fields_prevent_confirmation():
     )
 
     assert "Faltan datos" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["status"] == "needs_clarification"
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["status"]
+        == "needs_clarification"
+    )
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is False
+    )
 
 
 @pytest.mark.asyncio
@@ -273,7 +398,9 @@ async def test_wrong_action_id_fails_closed_without_provider_or_executor():
     session = _FakeSession(latest_contents=[_marker(intake)])
     calls = []
 
-    async def executor(canonical_action, payload):  # pragma: no cover - should not be called
+    async def executor(
+        canonical_action, payload
+    ):  # pragma: no cover - should not be called
         calls.append((canonical_action, payload))
         return {"summary": "unexpected"}
 
@@ -301,7 +428,10 @@ async def test_wrong_action_id_fails_closed_without_provider_or_executor():
     )
 
     assert "No encontre una accion propuesta" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["status"] == "rejected"
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["status"]
+        == "rejected"
+    )
     assert calls == []
 
 
@@ -310,7 +440,8 @@ async def test_read_only_preview_uses_mocked_action_router_executor(monkeypatch)
     monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "false")
     intake = _accounting_intake_without_missing()
     action = next(
-        item for item in intake["proposed_actions"]
+        item
+        for item in intake["proposed_actions"]
         if item["canonical_action"] == "executive.accounting_report"
     )
     session = _FakeSession(latest_contents=[_marker(intake)])
@@ -344,7 +475,9 @@ async def test_read_only_preview_uses_mocked_action_router_executor(monkeypatch)
     )
 
     assert "preview contable listo" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is True
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["executed"] is True
+    )
     assert calls == [("executive.accounting_report", action["payload_preview"])]
 
 
@@ -375,4 +508,59 @@ async def test_confirmation_without_available_intake_fails_closed():
     )
 
     assert "No encontre una accion documental propuesta" in response.assistant_message
-    assert response.tool_trace[0]["document_confirmation_live_wiring"]["blocked_reason"] == "document_intake_context_missing"
+    assert (
+        response.tool_trace[0]["document_confirmation_live_wiring"]["blocked_reason"]
+        == "document_intake_context_missing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_active_receipt_draft_blocks_provider_fallback_for_unknown_input():
+    conversation = SimpleNamespace(
+        id="conv-id",
+        updated_at=None,
+        metadata_={
+            DRAFT_KEY: {
+                "draft_id": "receiptdraft-docint-1",
+                "intake_id": "docint-1",
+                "registry_hash": "registry-1",
+                "evidence_sha256": "a" * 64,
+                "media_id": "media-1",
+                "amount": "1.00",
+                "date": "2026-07-21",
+                "concept": "WITNESS STAGE 3 NO PAGAR",
+                "currency": "MXN",
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "payment_subject_type": "personal",
+                "account_type": "local",
+                "payment_method": None,
+            }
+        },
+    )
+
+    response = await run_message_turn_with_pending(
+        raw_message="no entiendo",
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=2026,
+        bi_scope="copa-telmex",
+        bi_segment=None,
+        assistant_mode="ahorro",
+        openai_api_key=None,
+        latest_pending_run_for_conversation=_pending_none,
+        is_explicit_approval_message=lambda _text: False,
+        is_explicit_rejection_message=lambda _text: False,
+        confirm_pending_run=_should_not_call_provider,
+        deterministic_pending_builders=[],
+        build_deterministic_pending_response=_should_not_call_provider,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "No reconoci un dato aplicable" in response.assistant_message
+    assert "pago" in response.assistant_message
+    assert response.tool_trace[0]["receipt_workflow_draft"]["writes_attempted"] is False

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
 import json
 import logging
 import os
@@ -18,64 +20,57 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.models import (
-    Aprobacion,
     AccountingPoliza,
+    Aprobacion,
     BankMovement,
     CFDIReport,
     Documento,
     Empleado,
-    InvoiceReport,
     ExpenseReport,
+    InvoiceReport,
     ReconciliationAuditLog,
     Reembolso,
     Tournament,
-)
-from devnous.gastos.services.documento_service import (
-    build_solicitud_personal_payload,
-    create_solicitud_personal_document,
-    SolicitudValidationError,
-    build_solicitud_terceros_payload,
-    create_solicitud_terceros_document,
-)
-from devnous.gastos.services.documento_workflow_service import (
-    transition_documento_workflow,
-)
-from devnous.gastos.services.documento_payment_service import (
-    get_pending_document_payment_overview,
-    register_document_payment,
-    register_document_reembolso,
 )
 from devnous.gastos.services.cfdi_expense_link_service import (
     link_expense_to_cfdi_if_manual_uuid_set,
     normalize_cfdi_uuid_to_canonical,
 )
+from devnous.gastos.services.cfdi_matching_service import get_cfdi_matching_overview
+from devnous.gastos.services.documento_payment_service import (
+    get_pending_document_payment_overview,
+    register_document_payment,
+    register_document_reembolso,
+)
+from devnous.gastos.services.documento_service import (
+    SolicitudValidationError,
+    build_solicitud_personal_payload,
+    build_solicitud_terceros_payload,
+    create_solicitud_personal_document,
+    create_solicitud_terceros_document,
+)
+from devnous.gastos.services.documento_workflow_service import (
+    transition_documento_workflow,
+)
 from devnous.gastos.services.expense_accounting_service import (
     build_expense_accounting_preview,
 )
-from devnous.gastos.services.cfdi_matching_service import get_cfdi_matching_overview
 from devnous.gastos.services.expense_service import (
     create_expense_from_data,
     trigger_cfdi_generation,
 )
-from devnous.gastos.services.tournament_phase_service import get_tournament_etapas
-from .tools import (
-    finance_accounting_report,
-    finance_alerts_scan,
-    finance_planner_snapshot,
-    finance_realtime_report,
-    finance_expense_assign_accounting,
-    finance_expense_post_accounting,
-    finance_expense_workflow_status,
-    finance_strategy_snapshot,
+from devnous.gastos.services.receipt_workflow_service import (
+    create_personal_receipt_workflow,
+    create_third_party_receipt_workflow,
 )
-from samchat.tournaments_v2.services import build_tournament_soul_snapshot
+from devnous.gastos.services.tournament_phase_service import get_tournament_etapas
 from samchat.budgets.service import (
     build_budget_commitment_expense_preview,
     build_budget_executive_alerts,
     build_budget_snapshot,
     get_budget_version,
-    list_budget_tournament_commitments,
     list_budget_lines,
+    list_budget_tournament_commitments,
     transition_budget_version,
     update_budget_line,
     update_budget_version_metadata,
@@ -85,8 +80,20 @@ from samchat.tournaments_v2.adapters import (
     update_player_fields_v2,
     update_team_fields_v2,
 )
+from samchat.tournaments_v2.services import build_tournament_soul_snapshot
 
+from .capability_negotiation import receipt_workflow_writes_enabled
 from .context import AssistantContext
+from .tools import (
+    finance_accounting_report,
+    finance_alerts_scan,
+    finance_expense_assign_accounting,
+    finance_expense_post_accounting,
+    finance_expense_workflow_status,
+    finance_planner_snapshot,
+    finance_realtime_report,
+    finance_strategy_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +113,9 @@ async def _raise_unexpected_adapter_error(
     extra: Optional[Dict[str, Any]] = None,
 ) -> None:
     await session.rollback()
-    logger.exception("Unexpected adapter error", extra={"action": action, **(extra or {})})
+    logger.exception(
+        "Unexpected adapter error", extra={"action": action, **(extra or {})}
+    )
     raise RuntimeError("Unexpected processing error")
 
 
@@ -529,7 +538,9 @@ async def create_manual_expense_adapter(
             concepto=str(concept),
             gasto_cantidad=_normalize_amount(amount),
             fecha=_normalize_datetime(payload.get("fecha")),
-            empleado_id=_as_uuid(payload.get("empleado_id") or context.responsible_user_id),
+            empleado_id=_as_uuid(
+                payload.get("empleado_id") or context.responsible_user_id
+            ),
             proyecto=payload.get("proyecto") or context.tournament_name,
             tipo_gasto=str(payload.get("tipo_gasto") or "manual"),
             departamento=payload.get("departamento") or context.departamento,
@@ -562,8 +573,12 @@ async def create_manual_expense_adapter(
             session,
             action="expenses.create_manual_expense",
             extra={
-                "empleado_id": str(payload.get("empleado_id") or context.responsible_user_id or ""),
-                "tournament_id": str(payload.get("tournament_id") or context.tournament_id or ""),
+                "empleado_id": str(
+                    payload.get("empleado_id") or context.responsible_user_id or ""
+                ),
+                "tournament_id": str(
+                    payload.get("tournament_id") or context.tournament_id or ""
+                ),
             },
         )
     updated_context = context.merge(
@@ -1063,7 +1078,8 @@ async def budgets_update_line_adapter(
         data={"line": updated_line, "version": version},
         context=context.merge(
             tournament_id=updated_line.get("tournament_id") or context.tournament_id,
-            tournament_name=updated_line.get("tournament_name") or context.tournament_name,
+            tournament_name=updated_line.get("tournament_name")
+            or context.tournament_name,
             edition=str(version.get("edition_year") or context.edition or "2026"),
         ),
     )
@@ -1089,7 +1105,9 @@ async def budgets_update_version_adapter(
         action="budgets.update_version",
         status="completed",
         data={"version": version},
-        context=context.merge(edition=str(version.get("edition_year") or context.edition or "2026")),
+        context=context.merge(
+            edition=str(version.get("edition_year") or context.edition or "2026")
+        ),
     )
 
 
@@ -1113,7 +1131,9 @@ async def budgets_submit_for_approval_adapter(
         action="budgets.submit_for_approval",
         status="completed",
         data={"version": version},
-        context=context.merge(edition=str(version.get("edition_year") or context.edition or "2026")),
+        context=context.merge(
+            edition=str(version.get("edition_year") or context.edition or "2026")
+        ),
     )
 
 
@@ -1137,7 +1157,9 @@ async def budgets_approve_version_adapter(
         action="budgets.approve_version",
         status="completed",
         data={"version": version},
-        context=context.merge(edition=str(version.get("edition_year") or context.edition or "2026")),
+        context=context.merge(
+            edition=str(version.get("edition_year") or context.edition or "2026")
+        ),
     )
 
 
@@ -1161,7 +1183,9 @@ async def budgets_freeze_version_adapter(
         action="budgets.freeze_version",
         status="completed",
         data={"version": version},
-        context=context.merge(edition=str(version.get("edition_year") or context.edition or "2026")),
+        context=context.merge(
+            edition=str(version.get("edition_year") or context.edition or "2026")
+        ),
     )
 
 
@@ -1185,7 +1209,9 @@ async def budgets_reforecast_adapter(
         action="budgets.reforecast",
         status="completed",
         data={"version": version},
-        context=context.merge(edition=str(version.get("edition_year") or context.edition or "2026")),
+        context=context.merge(
+            edition=str(version.get("edition_year") or context.edition or "2026")
+        ),
     )
 
 
@@ -1657,7 +1683,10 @@ async def operations_create_solicitud_from_commitment_adapter(
         await _raise_unexpected_adapter_error(
             session,
             action="operations.create_solicitud_from_commitment",
-            extra={"commitment_id": str(commitment_id), "empleado_id": str(empleado_id)},
+            extra={
+                "commitment_id": str(commitment_id),
+                "empleado_id": str(empleado_id),
+            },
         )
 
     update_notes = "\n".join(
@@ -1835,7 +1864,9 @@ async def link_expense_to_cfdi_adapter(
         linked = await link_expense_to_cfdi_if_manual_uuid_set(
             session,
             expense,
-            clear_report_if_no_match=bool(payload.get("clear_report_if_no_match", False)),
+            clear_report_if_no_match=bool(
+                payload.get("clear_report_if_no_match", False)
+            ),
         )
         await session.commit()
         await session.refresh(expense)
@@ -2055,6 +2086,78 @@ async def create_solicitud_personal_adapter(
         status="completed",
         data={"documento": _documento_snapshot(documento)},
         context=updated_context,
+    )
+
+
+def _verified_receipt_bytes(payload: Dict[str, Any]) -> bytes:
+    encoded = str(payload.get("file_b64") or "")
+    if not encoded:
+        raise ValueError("file_b64 is required")
+    raw = base64.b64decode(encoded, validate=True)
+    expected = str(payload.get("evidence_sha256") or "").lower()
+    if not expected or hashlib.sha256(raw).hexdigest() != expected:
+        raise ValueError("receipt evidence hash mismatch")
+    return raw
+
+
+async def create_personal_receipt_workflow_adapter(
+    session: AsyncSession,
+    *,
+    context: AssistantContext,
+    payload: Dict[str, Any],
+) -> AdapterResult:
+    actor_id = str(context.responsible_user_id or "")
+    if not actor_id or not receipt_workflow_writes_enabled(actor_id):
+        raise ValueError("receipt workflow writes are disabled for this actor")
+    _verified_receipt_bytes(payload)
+    result = await create_personal_receipt_workflow(
+        session,
+        employee_id=UUID(actor_id),
+        payload=payload,
+        commit=False,
+    )
+    return AdapterResult(
+        action="expenses.create_personal_receipt_workflow",
+        status="completed",
+        data={
+            "account": result.account.to_dict(),
+            "expense": _expense_snapshot(result.expense),
+            "payment_request": _documento_snapshot(result.payment_request),
+        },
+        context=context.merge(
+            expense_account_id=str(result.account.id),
+            expense_id=str(result.expense.id),
+            document_id=str(result.payment_request.id),
+            referencia_base=result.account.referencia_base,
+        ),
+    )
+
+
+async def create_third_party_receipt_workflow_adapter(
+    session: AsyncSession,
+    *,
+    context: AssistantContext,
+    payload: Dict[str, Any],
+) -> AdapterResult:
+    actor_id = str(context.responsible_user_id or "")
+    if not actor_id or not receipt_workflow_writes_enabled(actor_id):
+        raise ValueError("receipt workflow writes are disabled for this actor")
+    raw = _verified_receipt_bytes(payload)
+    document = await create_third_party_receipt_workflow(
+        session,
+        employee_id=UUID(actor_id),
+        payload={**payload, "file_bytes": raw},
+        commit=False,
+    )
+    return AdapterResult(
+        action="expenses.create_third_party_receipt_workflow",
+        status="completed",
+        data={"payment_request": _documento_snapshot(document)},
+        context=context.merge(
+            document_id=str(document.id),
+            need_id=str(document.id),
+            concepto=getattr(document, "concepto_pago", None),
+        ),
     )
 
 

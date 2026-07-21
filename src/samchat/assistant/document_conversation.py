@@ -51,7 +51,9 @@ CANCEL_RE = re.compile(
 DOCUMENT_INTAKE_MARKER = "DOCUMENT_INTAKE_RESULT JSON:"
 
 
-def parse_document_confirmation_command(text: str) -> Optional[DocumentConfirmationCommand]:
+def parse_document_confirmation_command(
+    text: str,
+) -> Optional[DocumentConfirmationCommand]:
     raw = text or ""
     match = CONFIRM_RE.match(raw)
     if match:
@@ -99,7 +101,9 @@ def _actions_by_id(intake_result: Mapping[str, Any]) -> Dict[str, Mapping[str, A
     for action in actions:
         if not isinstance(action, Mapping):
             continue
-        action_id = str(action.get("proposed_action_id") or action.get("action_id") or "")
+        action_id = str(
+            action.get("proposed_action_id") or action.get("action_id") or ""
+        )
         if action_id:
             indexed[action_id] = action
     return indexed
@@ -108,12 +112,22 @@ def _actions_by_id(intake_result: Mapping[str, Any]) -> Dict[str, Mapping[str, A
 def render_document_intake_for_conversation(intake_result: Mapping[str, Any]) -> str:
     doc_type = str(intake_result.get("detected_document_type") or "unknown_or_generic")
     summary = str(intake_result.get("summary") or "Documento recibido.")
-    missing = [str(item) for item in (intake_result.get("missing_fields") or []) if item]
-    questions = [str(item) for item in (intake_result.get("questions_for_user") or []) if item]
+    missing = [
+        str(item) for item in (intake_result.get("missing_fields") or []) if item
+    ]
+    questions = [
+        str(item) for item in (intake_result.get("questions_for_user") or []) if item
+    ]
     lines = [
         f"Documento detectado: {doc_type}",
         f"Resumen: {summary}",
     ]
+    if doc_type == "expense_receipt":
+        return (
+            f"Recibí el comprobante. {summary}\n\n"
+            "Antes de preparar el borrador, indica si corresponde a un gasto "
+            "personal/reembolso o a un pago a tercero. No registré cambios."
+        )
     if missing:
         lines.append(f"Faltantes: {', '.join(missing)}")
     if questions:
@@ -123,10 +137,8 @@ def render_document_intake_for_conversation(intake_result: Mapping[str, Any]) ->
         lines.append("Acciones propuestas:")
         for action_id, action in actions.items():
             title = str(action.get("title") or "Accion propuesta")
-            canonical = str(action.get("canonical_action") or "")
             prompt = str(action.get("confirmation_prompt") or "")
             lines.append(f"- {title}")
-            lines.append(f"  canonical_action: {canonical}")
             lines.append(f"  proposed_action_id: {action_id}")
             if prompt:
                 lines.append(f"  confirmacion: {prompt}")
@@ -170,7 +182,9 @@ def handle_document_confirmation_command(
 ) -> DocumentConversationResult:
     command = parse_document_confirmation_command(text)
     if command is None:
-        empty = DocumentConfirmationCommand(action="none", proposed_action_id="", raw_text=text)
+        empty = DocumentConfirmationCommand(
+            action="none", proposed_action_id="", raw_text=text
+        )
         return _conversation_result(
             command=empty,
             confirmed=False,
@@ -205,7 +219,9 @@ def handle_document_confirmation_command(
             message="Accion documental cancelada. No se ejecuto ningun cambio.",
         )
 
-    missing = [str(item) for item in (intake_result.get("missing_fields") or []) if item]
+    missing = [
+        str(item) for item in (intake_result.get("missing_fields") or []) if item
+    ]
     if missing:
         return _conversation_result(
             command=command,
@@ -230,7 +246,9 @@ def handle_document_confirmation_command(
         action_router_executor=action_router_executor,
     )
     if confirmation.executed:
-        message = f"Accion confirmada y procesada por action_router: {confirmation.execution_result_summary}"
+        message = (
+            f"Acción confirmada y procesada: {confirmation.execution_result_summary}"
+        )
     elif confirmation.blocked_reason == "writes_disabled":
         message = "Accion confirmada, pero no se ejecuto ningun write porque las escrituras estan deshabilitadas."
     else:
@@ -257,7 +275,9 @@ async def handle_document_confirmation_command_async(
 ) -> DocumentConversationResult:
     command = parse_document_confirmation_command(text)
     if command is None:
-        empty = DocumentConfirmationCommand(action="none", proposed_action_id="", raw_text=text)
+        empty = DocumentConfirmationCommand(
+            action="none", proposed_action_id="", raw_text=text
+        )
         return _conversation_result(
             command=empty,
             confirmed=False,
@@ -292,7 +312,9 @@ async def handle_document_confirmation_command_async(
             message="Accion documental cancelada. No se ejecuto ningun cambio.",
         )
 
-    missing = [str(item) for item in (intake_result.get("missing_fields") or []) if item]
+    missing = [
+        str(item) for item in (intake_result.get("missing_fields") or []) if item
+    ]
     if missing:
         return _conversation_result(
             command=command,
@@ -317,7 +339,9 @@ async def handle_document_confirmation_command_async(
         action_router_executor=action_router_executor,
     )
     if confirmation.executed:
-        message = f"Accion confirmada y procesada por action_router: {confirmation.execution_result_summary}"
+        message = (
+            f"Acción confirmada y procesada: {confirmation.execution_result_summary}"
+        )
     elif confirmation.blocked_reason == "writes_disabled":
         message = "Accion confirmada, pero no se ejecuto ningun write porque las escrituras estan deshabilitadas."
     else:

@@ -5,7 +5,6 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 from .file_parsing import normalize_spreadsheet_records
 
-
 ACCOUNTING_BALANCE = "accounting_balance"
 ROSTER = "roster"
 PLAYER_REGISTRATION = "player_registration"
@@ -14,6 +13,7 @@ TOURNAMENT_OPS = "tournament_ops"
 CFDI_INVOICE = "cfdi_invoice"
 INVOICE_DOCUMENT = "invoice_document"
 PAYMENT_PROOF = "payment_proof"
+EXPENSE_RECEIPT = "expense_receipt"
 UNKNOWN_OR_GENERIC = "unknown_or_generic"
 
 
@@ -81,7 +81,9 @@ def classify_document(
         signals.append("accounting_balance_markers")
         return DocumentClassification(
             detected_document_type=ACCOUNTING_BALANCE,
-            confidence=_bounded_confidence(0.72 + 0.04 * min(len(keys.intersection(accounting_keys)), 5)),
+            confidence=_bounded_confidence(
+                0.72 + 0.04 * min(len(keys.intersection(accounting_keys)), 5)
+            ),
             signals=signals,
             file_kind=kind or "spreadsheet",
         )
@@ -102,15 +104,24 @@ def classify_document(
         blob, ["curp", "roster", "plantilla", "jugadores", "categoria"]
     ):
         signals.append("roster_or_registration_markers")
-        doc_type = ROSTER if "equipo" in keys or "team_name" in keys else PLAYER_REGISTRATION
+        doc_type = (
+            ROSTER if "equipo" in keys or "team_name" in keys else PLAYER_REGISTRATION
+        )
         return DocumentClassification(
             detected_document_type=doc_type,
-            confidence=_bounded_confidence(0.68 + 0.04 * min(len(keys.intersection(roster_keys)), 6)),
+            confidence=_bounded_confidence(
+                0.68 + 0.04 * min(len(keys.intersection(roster_keys)), 6)
+            ),
             signals=signals,
             file_kind=kind or "spreadsheet",
         )
 
-    if "<cfdi:" in blob or "timbrefiscaldigital" in blob or "uuid" in blob and "rfc" in blob:
+    if (
+        "<cfdi:" in blob
+        or "timbrefiscaldigital" in blob
+        or "uuid" in blob
+        and "rfc" in blob
+    ):
         signals.append("cfdi_xml_markers")
         return DocumentClassification(
             detected_document_type=CFDI_INVOICE,
@@ -128,7 +139,16 @@ def classify_document(
             file_kind=kind or "text",
         )
 
-    if _has_any(blob, ["spei", "clave de rastreo", "comprobante de pago", "beneficiario", "ordenante"]):
+    if _has_any(
+        blob,
+        [
+            "spei",
+            "clave de rastreo",
+            "comprobante de pago",
+            "beneficiario",
+            "ordenante",
+        ],
+    ):
         signals.append("payment_proof_markers")
         return DocumentClassification(
             detected_document_type=PAYMENT_PROOF,
@@ -137,7 +157,27 @@ def classify_document(
             file_kind=kind or "text",
         )
 
-    if _has_any(blob, ["fixture", "calendario", "sede", "venue", "torneo", "compromiso", "milestone"]):
+    receipt_marker = _has_any(
+        blob,
+        ["ticket", "recibo", "nota de consumo", "nota de venta"],
+    )
+    receipt_structure = "total" in blob and _has_any(
+        blob,
+        ["comercio", "establecimiento", "proveedor", "fecha"],
+    )
+    if receipt_marker or receipt_structure:
+        signals.append("expense_receipt_markers")
+        return DocumentClassification(
+            detected_document_type=EXPENSE_RECEIPT,
+            confidence=0.78 if receipt_marker else 0.68,
+            signals=signals,
+            file_kind=kind or "image",
+        )
+
+    if _has_any(
+        blob,
+        ["fixture", "calendario", "sede", "venue", "torneo", "compromiso", "milestone"],
+    ):
         signals.append("tournament_ops_markers")
         return DocumentClassification(
             detected_document_type=TOURNAMENT_OPS,
