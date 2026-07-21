@@ -4640,6 +4640,7 @@ async def _confirm_pending_run(
             ),
         )
 
+    await session.refresh(conversation, attribute_names=["metadata_"])
     if not approve:
         run.status = "failed"
         run.assistant_message = (

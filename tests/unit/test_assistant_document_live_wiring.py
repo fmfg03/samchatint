@@ -189,6 +189,80 @@ async def test_cfdi_upload_starts_receipt_workflow_draft():
 
 
 @pytest.mark.asyncio
+async def test_receipt_evidence_mismatch_returns_controlled_response():
+    intake = build_document_intake_result(
+        conversation_id="conv-id",
+        file_name="ticket.jpg",
+        file_kind="image",
+        text="Ticket Total: 100.00 Fecha: 2026-07-21 Concepto: Papeleria",
+        evidence_sha256="a" * 64,
+        supported_actions=supported_actions(),
+    ).to_dict()
+    conversation = SimpleNamespace(
+        id="conv-id",
+        updated_at=None,
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": "b" * 64,
+            }
+        },
+    )
+
+    response = await run_conversation_turn(
+        raw_message=_marker(intake),
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "evidencia cargada cambió" in response.assistant_message
+    assert response.tool_trace[0]["receipt_workflow_draft"] == {
+        "status": "evidence_mismatch",
+        "writes_attempted": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_capability_response_respects_employee_write_allowlist(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_CAPABILITY_NEGOTIATION_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_CAPABILITY_NEGOTIATION_EMPLOYEE_IDS", "emp-1")
+    monkeypatch.setenv("ASSISTANT_RECEIPT_WORKFLOW_WRITES_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_RECEIPT_WORKFLOW_EMPLOYEE_IDS", "other-employee")
+
+    response = await run_conversation_turn(
+        raw_message=(
+            "Si te subo un comprobante puedes hacer la cuenta de gastos "
+            "y la solicitud de pago?"
+        ),
+        conversation=SimpleNamespace(id="conv-id", updated_at=None),
+        current_empleado=SimpleNamespace(id="emp-1", rol="empleado"),
+        session=_FakeSession(),
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "no está habilitado" in response.assistant_message
+    assert response.tool_trace[0]["capability_negotiation"]["writes_attempted"] is False
+
+
+@pytest.mark.asyncio
 async def test_confirmation_command_for_write_like_action_blocks_when_writes_disabled(
     monkeypatch,
 ):

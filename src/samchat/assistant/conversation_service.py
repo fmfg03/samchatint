@@ -241,7 +241,31 @@ async def _build_document_upload_response(
         EXPENSE_RECEIPT,
         CFDI_INVOICE,
     }:
-        start_receipt_draft(conversation=conversation, intake=intake)
+        try:
+            start_receipt_draft(conversation=conversation, intake=intake)
+        except ValueError:
+            rendered = (
+                "No pude vincular el comprobante porque la evidencia cargada cambió. "
+                "Vuelve a adjuntar el archivo; no registré cambios."
+            )
+            tool_trace = [
+                {
+                    "receipt_workflow_draft": {
+                        "status": "evidence_mismatch",
+                        "writes_attempted": False,
+                    }
+                }
+            ]
+            await _persist_document_conversation_messages(
+                raw_message=raw_message,
+                assistant_message=rendered,
+                conversation=conversation,
+                session=session,
+            )
+            return _response_object(
+                assistant_message=rendered,
+                tool_trace=tool_trace,
+            )
     rendered = render_document_intake_for_conversation(intake)
     tool_trace = [
         {
@@ -442,6 +466,11 @@ async def _build_capability_negotiation_response(
         goal,
         supported_actions=supported_actions(),
         role=getattr(current_empleado, "rol", None),
+        flags={
+            "ASSISTANT_RECEIPT_WORKFLOW_WRITES_ENABLED": receipt_workflow_writes_enabled(
+                getattr(current_empleado, "id", None)
+            )
+        },
     )
     rendered = render_capability_response(goal, evaluation)
     tool_trace = [

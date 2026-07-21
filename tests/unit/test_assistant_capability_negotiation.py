@@ -36,6 +36,7 @@ def test_detects_policy_to_coi_capability_without_phrase_specific_rule() -> None
 
 def test_operational_pending_payment_query_is_not_capability_inquiry() -> None:
     assert detect_capability_goal("Qué pagos están pendientes") is None
+    assert detect_capability_goal("¿Me puedes decir los pagos pendientes?") is None
 
 
 def test_receipt_capability_requires_inputs_when_actions_and_flag_exist() -> None:

@@ -69,7 +69,7 @@ def start_receipt_draft(
     if not isinstance(entities, Mapping):
         entities = {}
     draft = {
-        "draft_id": f"receiptdraft_{str(intake.get('intake_id') or '')}",
+        "draft_id": f"receiptdraft_{intake.get('intake_id') or ''}",
         "intake_id": str(intake.get("intake_id") or ""),
         "registry_hash": capability_registry_hash(),
         "evidence_sha256": evidence_sha256 or media_hash,
@@ -257,7 +257,7 @@ async def advance_receipt_draft(
             break
 
     tournaments = (
-        (await session.execute(select(Tournament).where(Tournament.active == True)))
+        (await session.execute(select(Tournament).where(Tournament.active.is_(True))))
         .scalars()
         .all()
     )
@@ -303,7 +303,7 @@ async def advance_receipt_draft(
         providers = (
             (
                 await session.execute(
-                    select(ProveedorCliente).where(ProveedorCliente.activo == True)
+                    select(ProveedorCliente).where(ProveedorCliente.activo.is_(True))
                 )
             )
             .scalars()
@@ -329,7 +329,7 @@ async def advance_receipt_draft(
                     (
                         await session.execute(
                             select(BudgetConcept).where(
-                                BudgetConcept.active == True,
+                                BudgetConcept.active.is_(True),
                                 or_(
                                     BudgetConcept.tournament_id == tournament_uuid,
                                     BudgetConcept.tournament_id.is_(None),
@@ -343,8 +343,12 @@ async def advance_receipt_draft(
                 matches = [
                     concept
                     for concept in budget_concepts
-                    if _normalize(str(getattr(concept, "concept_name", "") or ""))
-                    in normalized
+                    if (
+                        name := _normalize(
+                            str(getattr(concept, "concept_name", "") or "")
+                        )
+                    )
+                    and name in normalized
                 ]
                 if len(matches) == 1:
                     concept = matches[0]

@@ -169,14 +169,7 @@ def detect_capability_goal(text: str) -> Optional[CapabilityGoal]:
                 raw_text=text or "",
             )
 
-    return CapabilityGoal(
-        interaction_mode=CAPABILITY_INQUIRY,
-        capability_id="unknown",
-        input_artifact_type="unknown",
-        desired_outcome="unknown",
-        destination_system="unknown",
-        raw_text=text or "",
-    )
+    return None
 
 
 def capability_negotiation_enabled(employee_id: Any = None) -> bool:
@@ -184,13 +177,13 @@ def capability_negotiation_enabled(employee_id: Any = None) -> bool:
     if enabled.lower() not in {"1", "true", "yes", "on"}:
         return False
     allowlist = {
-        item.strip()
+        item.strip().casefold()
         for item in (
             os.getenv("ASSISTANT_CAPABILITY_NEGOTIATION_EMPLOYEE_IDS") or ""
         ).split(",")
         if item.strip()
     }
-    return not allowlist or str(employee_id or "").strip() in allowlist
+    return not allowlist or str(employee_id or "").strip().casefold() in allowlist
 
 
 def receipt_workflow_writes_enabled(employee_id: Any = None) -> bool:
@@ -198,13 +191,13 @@ def receipt_workflow_writes_enabled(employee_id: Any = None) -> bool:
     if enabled.lower() not in {"1", "true", "yes", "on"}:
         return False
     allowlist = {
-        item.strip()
+        item.strip().casefold()
         for item in (os.getenv("ASSISTANT_RECEIPT_WORKFLOW_EMPLOYEE_IDS") or "").split(
             ","
         )
         if item.strip()
     }
-    return not allowlist or str(employee_id or "").strip() in allowlist
+    return not allowlist or str(employee_id or "").strip().casefold() in allowlist
 
 
 def _flag_enabled(name: Optional[str], flags: Optional[Mapping[str, bool]]) -> bool:

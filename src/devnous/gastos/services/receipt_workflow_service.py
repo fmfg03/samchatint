@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Mapping
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.expense_metadata import (
@@ -65,6 +65,10 @@ async def _employee_and_tournament(
 
 
 async def _unique_reference(session: AsyncSession, employee_id: UUID) -> str:
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"assistant_receipt_account_ref:{employee_id}"},
+    )
     for _ in range(25):
         candidate = str(100000 + secrets.randbelow(900000))
         exists = (
