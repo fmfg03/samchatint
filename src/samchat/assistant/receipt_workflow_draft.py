@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -27,7 +28,7 @@ def _normalize(value: str) -> str:
 
 def _metadata(conversation: Any) -> dict[str, Any]:
     value = getattr(conversation, "metadata_", None)
-    return dict(value) if isinstance(value, dict) else {}
+    return copy.deepcopy(value) if isinstance(value, dict) else {}
 
 
 def start_receipt_draft(

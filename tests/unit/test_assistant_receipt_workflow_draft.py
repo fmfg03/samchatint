@@ -1,8 +1,11 @@
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.orm.attributes import get_history, set_committed_value
 
+from devnous.gastos.models import AssistantConversation
 from samchat.assistant.receipt_workflow_draft import (
+    DRAFT_KEY,
     advance_receipt_draft,
     start_receipt_draft,
 )
@@ -46,6 +49,41 @@ class _SequenceSession(_Session):
                 return _SequenceScalars()
 
         return _SequenceResult()
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_marks_json_metadata_dirty_when_collecting_inputs() -> None:
+    conversation = AssistantConversation()
+    set_committed_value(
+        conversation,
+        "metadata_",
+        {
+            DRAFT_KEY: {
+                "draft_id": "receiptdraft-docint-1",
+                "intake_id": "docint-1",
+                "registry_hash": "registry-1",
+                "evidence_sha256": "a" * 64,
+                "media_id": "media-1",
+                "amount": "1250.00",
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+                "currency": "MXN",
+                "payment_subject_type": None,
+            }
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es un gasto personal",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_Session(),
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert conversation.metadata_[DRAFT_KEY]["payment_subject_type"] == "personal"
+    assert get_history(conversation, "metadata_").has_changes()
 
 
 @pytest.mark.asyncio
