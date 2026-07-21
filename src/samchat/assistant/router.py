@@ -11865,15 +11865,27 @@ async def confirm_write(
         if not run or run.status != "pending_confirmation":
             raise HTTPException(status_code=404, detail="Pending run not found")
 
-        return await _confirm_pending_run(
-            run=run,
-            conversation=conversation,
-            approve=payload.approve,
-            assistant_mode=payload.assistant_mode,
-            openai_api_key=openai_api_key,
-            current_empleado=current_empleado,
-            session=session,
-        )
+        try:
+            return await _confirm_pending_run(
+                run=run,
+                conversation=conversation,
+                approve=payload.approve,
+                assistant_mode=payload.assistant_mode,
+                openai_api_key=openai_api_key,
+                current_empleado=current_empleado,
+                session=session,
+            )
+        except ValueError as exc:
+            pending_args = run.pending_tool_args or {}
+            pending_action = str(pending_args.get("action") or "")
+            if pending_action not in SELF_SERVICE_RECEIPT_ACTIONS:
+                raise
+            await session.rollback()
+            logger.warning(
+                "Assistant receipt confirmation rejected by validation",
+                extra={"action": pending_action, "run_id": str(run.id)},
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception:

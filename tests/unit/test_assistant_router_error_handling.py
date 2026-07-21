@@ -159,7 +159,9 @@ async def test_create_solicitud_from_commitment_keeps_value_error_as_400(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_create_solicitud_from_commitment_rolls_back_unexpected_error(monkeypatch):
+async def test_create_solicitud_from_commitment_rolls_back_unexpected_error(
+    monkeypatch,
+):
     empleado = _empleado()
     session = AsyncMock()
     monkeypatch.setattr(
@@ -248,4 +250,43 @@ async def test_confirm_write_rolls_back_on_unexpected_confirm_error(monkeypatch)
 
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "Unexpected processing error"
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_confirm_write_returns_receipt_validation_error_without_500(monkeypatch):
+    empleado = _empleado()
+    session = AsyncMock()
+    conversation = SimpleNamespace(id=uuid.uuid4())
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="pending_confirmation",
+        pending_tool_args={"action": "expenses.create_personal_receipt_workflow"},
+    )
+    execute_result = MagicMock()
+    execute_result.scalar_one_or_none.return_value = run
+    monkeypatch.setattr(assistant_router, "_enforce_rate_limit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        assistant_router,
+        "_load_conversation",
+        AsyncMock(return_value=conversation),
+    )
+    session.execute = AsyncMock(return_value=execute_result)
+    monkeypatch.setattr(
+        assistant_router,
+        "_confirm_pending_run",
+        AsyncMock(side_effect=ValueError("Su usuario no tiene departamento asignado.")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await assistant_router.confirm_write(
+            payload=assistant_router.ConfirmRequest(run_id=str(uuid.uuid4())),
+            conversation_id=str(uuid.uuid4()),
+            openai_api_key=None,
+            current_empleado=empleado,
+            session=session,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "Su usuario no tiene departamento asignado."
     session.rollback.assert_awaited_once()
