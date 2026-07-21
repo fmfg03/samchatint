@@ -26,6 +26,7 @@ from .amex_expense_service import (
     sum_paid_solicitud_amounts,
 )
 from .cuenta_settlement_service import compute_cuenta_saldo_adjustments
+from .documento_semantics import is_employee_reimbursement
 from .telegram_notify import schedule_fire_and_forget
 from .telegram_outbox_service import (
     deliver_telegram_notification,
@@ -352,6 +353,13 @@ def _bold_field_line(label: str, value: str) -> str:
 
 
 def _leading_identity_lines(documento: Documento) -> List[str]:
+    if is_employee_reimbursement(documento):
+        return [
+            _bold_field_line("Tipo de pago", "Reembolso a empleado"),
+            _bold_field_line(
+                "Beneficiario del reembolso", beneficiario_label(documento)
+            ),
+        ]
     beneficiario_heading = (
         "Beneficiario / tercero" if documento.tipo == "INFORME" else "Beneficiario"
     )

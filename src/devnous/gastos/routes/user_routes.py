@@ -133,6 +133,11 @@ from ..services.documento_payment_service import (
     register_document_payment,
     register_document_reembolso,
 )
+from ..services.documento_semantics import (
+    EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+    effective_account_beneficiary_id,
+    is_employee_reimbursement,
+)
 from ..services.cuenta_settlement_service import (
     CuentaSettlementPermissionError,
     CuentaSettlementValidationError,
@@ -12291,7 +12296,15 @@ async def gastos_terceros(
     # Build query: tipo='SOLICITUD' AND proveedor_cliente_id IS NOT NULL
     query = select(Documento).where(
         Documento.tipo == 'SOLICITUD',
-        Documento.proveedor_cliente_id.isnot(None)
+        Documento.proveedor_cliente_id.isnot(None),
+        or_(
+            Documento.cuenta_gastos_id.is_(None),
+            Documento.beneficiario_empleado_id.is_(None),
+            Documento.concepto_pago.is_(None),
+            ~Documento.concepto_pago.like(
+                f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"
+            ),
+        ),
     ).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
@@ -22481,7 +22494,10 @@ async def documentos_pendientes_pago(
 
     informes_result = await session.execute(
         select(Documento)
-        .options(selectinload(Documento.empleado))
+        .options(
+            selectinload(Documento.empleado),
+            selectinload(Documento.beneficiario_empleado),
+        )
         .where(
             Documento.estado == "aprobado",
             Documento.tipo == "INFORME",
@@ -22516,7 +22532,14 @@ async def documentos_pendientes_pago(
         tipo_solicitud = "—"
         beneficiario_nombre = "—"
         
-        if documento.proveedor_cliente_id and documento.proveedor_cliente:
+        if is_employee_reimbursement(documento):
+            tipo_solicitud = "Reembolso a empleado"
+            beneficiario_nombre = (
+                documento.beneficiario_empleado.nombre
+                if documento.beneficiario_empleado
+                else "—"
+            )
+        elif documento.proveedor_cliente_id and documento.proveedor_cliente:
             tipo_solicitud = "Terceros"
             beneficiario_nombre = documento.proveedor_cliente.nombre
         elif documento.beneficiario_empleado_id and documento.beneficiario_empleado:
@@ -22559,6 +22582,11 @@ async def documentos_pendientes_pago(
     for documento, saldo_pendiente in informes_pendientes:
         aprobado_str = format_value(documento.aprobado_en) if documento.aprobado_en else format_value(documento.creado_en)
         empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
+        beneficiario_nombre = (
+            documento.beneficiario_empleado.nombre
+            if documento.beneficiario_empleado
+            else empleado_nombre
+        )
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
         doc_id_short = str(documento.id)[:8]
@@ -22574,7 +22602,7 @@ async def documentos_pendientes_pago(
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>Reembolso informe</td>
-            <td>{empleado_nombre}</td>
+            <td>{beneficiario_nombre}</td>
             <td>{documento.estado}</td>
             <td>{format_currency(saldo_pendiente, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
@@ -22584,7 +22612,11 @@ async def documentos_pendientes_pago(
         </tr>
         """
 
-    solicitud_terceros = sum(1 for documento in documentos if documento.proveedor_cliente_id)
+    solicitud_terceros = sum(
+        1
+        for documento in documentos
+        if documento.proveedor_cliente_id and not is_employee_reimbursement(documento)
+    )
     solicitud_personal = sum(1 for documento in documentos if documento.beneficiario_empleado_id)
     informes_count = len(informes_pendientes)
     html = f"""
@@ -27599,19 +27631,20 @@ async def cuenta_de_gastos_detail(
         and cuenta.estado in {"abierta", "cerrada"}
     )
 
-    # Shared "Cerrar informe" form. When there is saldo a favor del empleado
+    # Shared "Cerrar informe" form. When there is saldo a favor del beneficiario
     # (saldo < 0), embed a bank-account selector so closing also generates a
     # reembolso SOLICITUD de transferencia for the chosen account.
     cerrar_informe_form_html = ""
     if informe_doc_can_close:
         if saldo < 0:
-            owner_result = await session.execute(
-                select(Empleado).where(Empleado.id == cuenta.empleado_id)
+            beneficiary_id = effective_account_beneficiary_id(cuenta)
+            beneficiary_result = await session.execute(
+                select(Empleado).where(Empleado.id == beneficiary_id)
             )
-            owner_empleado = owner_result.scalar_one_or_none()
-            if owner_empleado is not None:
+            beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+            if beneficiary_empleado is not None:
                 bank_options_html = await _html_empleado_bank_account_options(
-                    session=session, empleado=owner_empleado
+                    session=session, empleado=beneficiary_empleado
                 )
             else:
                 bank_options_html = (
@@ -27624,14 +27657,14 @@ async def cuenta_de_gastos_detail(
                 '<div style="margin-bottom:8px;">'
                 '<label style="display:block;font-size:13px;color:#374151;'
                 'margin-bottom:4px;">'
-                "Cuenta para el reembolso del saldo a favor</label>"
+                "Cuenta del beneficiario para el reembolso</label>"
                 '<select name="proveedor_cliente_id" required '
                 f'style="min-width:260px;padding:6px;">{bank_options_html}</select>'
                 "</div>"
                 '<button type="submit" class="button warning" '
                 "onclick=\"return confirm('¿Cerrar este informe de gastos y enviarlo "
                 "para aprobación? Se generará una solicitud de transferencia por el "
-                "saldo a favor del empleado.')\">Cerrar informe</button>"
+                "saldo a favor del beneficiario.')\">Cerrar informe</button>"
                 "</form>"
             )
         else:
@@ -28886,12 +28919,13 @@ async def cerrar_cuenta_de_gastos(
         saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta_id)
         saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
         if saldo_raw < -0.005:
+            beneficiary_id = effective_account_beneficiary_id(cuenta)
             existing_reembolso = await session.execute(
                 select(Documento.id)
                 .where(
                     Documento.cuenta_gastos_id == cuenta_id,
                     Documento.tipo == "SOLICITUD",
-                    Documento.beneficiario_empleado_id == cuenta.empleado_id,
+                    Documento.beneficiario_empleado_id == beneficiary_id,
                     Documento.concepto_pago.like("Reembolso de saldo a favor%"),
                     Documento.estado.notin_(["rechazado", "cancelado"]),
                 )
@@ -28899,14 +28933,14 @@ async def cerrar_cuenta_de_gastos(
             )
             if existing_reembolso.scalar_one_or_none() is None:
                 owner_result = await session.execute(
-                    select(Empleado).where(Empleado.id == cuenta.empleado_id)
+                    select(Empleado).where(Empleado.id == beneficiary_id)
                 )
-                owner_empleado = owner_result.scalar_one_or_none()
+                beneficiary_empleado = owner_result.scalar_one_or_none()
                 matches = (
                     await _get_matching_bank_accounts_for_empleado(
-                        session=session, empleado=owner_empleado
+                        session=session, empleado=beneficiary_empleado
                     )
-                    if owner_empleado is not None
+                    if beneficiary_empleado is not None
                     else []
                 )
                 allowed_ids = {prov.id for prov, _ in matches}
@@ -28924,9 +28958,9 @@ async def cerrar_cuenta_de_gastos(
                             {
                                 "error": "invalid_bank_account",
                                 "error_msg": (
-                                    "Seleccione una cuenta bancaria válida para el "
-                                    "reembolso del saldo a favor antes de cerrar el "
-                                    "informe."
+                                    "Seleccione una cuenta bancaria válida del "
+                                    "beneficiario para el reembolso del saldo a favor "
+                                    "antes de cerrar el informe."
                                 ),
                             },
                         ),
