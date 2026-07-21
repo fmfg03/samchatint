@@ -6,6 +6,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, Mapping, Optional
 from uuid import UUID
 
@@ -24,6 +25,23 @@ def _normalize(value: str) -> str:
     text = unicodedata.normalize("NFKD", value or "")
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
     return re.sub(r"\s+", " ", text.lower()).strip()
+
+
+def _explicit_followup_amount(value: str) -> Optional[str]:
+    match = re.search(
+        r"\b(?:importe|monto|total|cantidad)\b\s*(?:es|de)?\s*"
+        r"[:=$]?\s*\$?\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)(?![0-9.,])",
+        value,
+    )
+    if match is None:
+        return None
+    try:
+        amount = Decimal(match.group(1).replace(",", ""))
+        if amount <= 0:
+            return None
+        return format(amount.quantize(Decimal("0.01")), "f")
+    except InvalidOperation:
+        return None
 
 
 def _metadata(conversation: Any) -> dict[str, Any]:
@@ -195,6 +213,17 @@ async def advance_receipt_draft(
         )
 
     changed = False
+    explicit_amount = _explicit_followup_amount(normalized)
+    if explicit_amount is not None and draft.get("amount") != explicit_amount:
+        draft["amount"] = explicit_amount
+        changed = True
+    currency_match = re.search(r"\b(mxn|usd|eur)\b", normalized)
+    if currency_match is not None:
+        currency = currency_match.group(1).upper()
+        if draft.get("currency") != currency:
+            draft["currency"] = currency
+            changed = True
+
     if any(
         token in normalized
         for token in ("personal", "reembolso", "lo pague", "yo pague")

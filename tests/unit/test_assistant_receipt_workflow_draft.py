@@ -6,6 +6,7 @@ from sqlalchemy.orm.attributes import get_history, set_committed_value
 from devnous.gastos.models import AssistantConversation
 from samchat.assistant.receipt_workflow_draft import (
     DRAFT_KEY,
+    _explicit_followup_amount,
     advance_receipt_draft,
     start_receipt_draft,
 )
@@ -51,6 +52,21 @@ class _SequenceSession(_Session):
         return _SequenceResult()
 
 
+@pytest.mark.parametrize(
+    ("raw_message", "expected"),
+    [
+        ("importe 1.00 MXN", "1.00"),
+        ("monto $1,250.00", "1250.00"),
+        ("importe 1.234", None),
+        ("importe 0", None),
+    ],
+)
+def test_explicit_followup_amount_fails_closed(
+    raw_message: str, expected: str | None
+) -> None:
+    assert _explicit_followup_amount(raw_message) == expected
+
+
 @pytest.mark.asyncio
 async def test_receipt_draft_marks_json_metadata_dirty_when_collecting_inputs() -> None:
     conversation = AssistantConversation()
@@ -84,6 +100,47 @@ async def test_receipt_draft_marks_json_metadata_dirty_when_collecting_inputs() 
     assert result.pending is None
     assert conversation.metadata_[DRAFT_KEY]["payment_subject_type"] == "personal"
     assert get_history(conversation, "metadata_").has_changes()
+
+
+@pytest.mark.asyncio
+async def test_receipt_draft_collects_explicit_followup_amount() -> None:
+    evidence_hash = "a" * 64
+    conversation = SimpleNamespace(
+        metadata_={
+            "assistant_last_media": {
+                "id": "media-1",
+                "evidence_sha256": evidence_hash,
+            },
+            "module_context": {
+                "tournament_id": "11111111-1111-1111-1111-111111111111",
+                "tournament_name": "Copa Telmex",
+                "account_type": "local",
+            },
+        }
+    )
+    start_receipt_draft(
+        conversation=conversation,
+        intake={
+            "intake_id": "docint-amount",
+            "evidence_sha256": evidence_hash,
+            "entities": {
+                "date": "2026-07-20",
+                "concept": "Material de oficina",
+            },
+        },
+    )
+
+    result = await advance_receipt_draft(
+        raw_message="Es personal, importe 1.00 MXN",
+        conversation=conversation,
+        employee_id="22222222-2222-2222-2222-222222222222",
+        session=_Session(),
+    )
+
+    assert result is not None
+    assert result.pending is None
+    assert "importe" not in result.message
+    assert conversation.metadata_[DRAFT_KEY]["amount"] == "1.00"
 
 
 @pytest.mark.asyncio

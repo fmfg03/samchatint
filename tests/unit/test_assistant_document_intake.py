@@ -177,6 +177,29 @@ def test_intake_expense_receipt_is_distinct_from_payment_proof_and_binds_evidenc
     assert "bank_reference" not in result.entities
 
 
+def test_intake_expense_receipt_accepts_markdown_emphasis_separators() -> None:
+    result = build_document_intake_result(
+        conversation_id="conv-markdown-receipt",
+        file_name="ticket.png",
+        file_kind="image",
+        text=(
+            "Ticket de compra\n"
+            "Comercio ** Witness Controlado SamChat\n"
+            "Total ** 1.00\n"
+            "Fecha ** 2026-07-21\n"
+            "Concepto ** WITNESS STAGE 3 NO PAGAR\n"
+            "Moneda MXN"
+        ),
+        evidence_sha256="b" * 64,
+        supported_actions=supported_actions(),
+    )
+
+    assert result.detected_document_type == EXPENSE_RECEIPT
+    assert result.entities["merchant"] == "Witness Controlado SamChat"
+    assert result.entities["amount"] == "1.00"
+    assert result.entities["concept"] == "WITNESS STAGE 3 NO PAGAR"
+
+
 def test_intake_result_serializes_compact_public_fields() -> None:
     result = build_document_intake_result(
         conversation_id="conv-6",

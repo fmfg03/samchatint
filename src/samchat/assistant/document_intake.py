@@ -315,7 +315,7 @@ def _extract_expense_receipt_entities(text: str) -> Dict[str, Any]:
     amount = _first_match(
         raw,
         [
-            r"(?:total|importe|monto)[:=\s$]+([0-9][0-9,.]*)",
+            r"(?:total|importe|monto)[*:=\s$]+([0-9][0-9,.]*)",
             r"\$\s*([0-9][0-9,.]*)",
         ],
     )
@@ -324,18 +324,18 @@ def _extract_expense_receipt_entities(text: str) -> Dict[str, Any]:
         [
             r"(20\d{2}[-/]\d{1,2}[-/]\d{1,2})",
             r"(\d{1,2}[-/]\d{1,2}[-/]20\d{2})",
-            r"fecha[:=\s]+([^\n]+)",
+            r"fecha[*:=\s]+([^\n]+)",
         ],
     )
     merchant = _first_match(
         raw,
         [
-            r"(?:comercio|establecimiento|proveedor|razon social)[:=\s]+([^\n]+)",
+            r"(?:comercio|establecimiento|proveedor|razon social)[*:=\s]+([^\n]+)",
         ],
     )
     concept = _first_match(
         raw,
-        [r"(?:concepto|descripcion)[:=\s]+([^\n]+)"],
+        [r"(?:concepto|descripcion)[*:=\s]+([^\n]+)"],
     )
     return {
         key: value
