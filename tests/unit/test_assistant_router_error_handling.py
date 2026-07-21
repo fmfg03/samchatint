@@ -290,3 +290,59 @@ async def test_confirm_write_returns_receipt_validation_error_without_500(monkey
     assert exc_info.value.status_code == 422
     assert exc_info.value.detail == "Su usuario no tiene departamento asignado."
     session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_confirmation_returns_receipt_validation_error_without_500(
+    monkeypatch,
+):
+    empleado = _empleado()
+    session = AsyncMock()
+    conversation = SimpleNamespace(id=uuid.uuid4(), metadata_={}, tournament_key=None)
+    run = SimpleNamespace(
+        id=uuid.uuid4(),
+        status="pending_confirmation",
+        pending_tool_args={"action": "expenses.create_personal_receipt_workflow"},
+    )
+
+    async def trigger_confirmation(**kwargs):
+        return await kwargs["confirm_pending_run"](
+            run=run,
+            conversation=conversation,
+            approve=True,
+            assistant_mode=None,
+            openai_api_key=None,
+            current_empleado=empleado,
+            session=session,
+        )
+
+    monkeypatch.setattr(assistant_router, "_enforce_rate_limit", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        assistant_router,
+        "_load_conversation",
+        AsyncMock(return_value=conversation),
+    )
+    monkeypatch.setattr(
+        assistant_router,
+        "run_message_turn_with_pending",
+        trigger_confirmation,
+    )
+    monkeypatch.setattr(
+        assistant_router,
+        "_confirm_pending_run",
+        AsyncMock(side_effect=ValueError("El importe del comprobante no es valido.")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await assistant_router.create_message(
+            payload=assistant_router.MessageCreateRequest(message="confirmo"),
+            request=SimpleNamespace(),
+            conversation_id=str(conversation.id),
+            openai_api_key=None,
+            current_empleado=empleado,
+            session=session,
+        )
+
+    assert exc_info.value.status_code == 422
+    assert exc_info.value.detail == "El importe del comprobante no es valido."
+    session.rollback.assert_awaited_once()

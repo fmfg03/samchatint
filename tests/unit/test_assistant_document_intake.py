@@ -171,7 +171,7 @@ def test_intake_expense_receipt_is_distinct_from_payment_proof_and_binds_evidenc
 
     assert result.detected_document_type == EXPENSE_RECEIPT
     assert result.entities["merchant"] == "Papeleria Central"
-    assert result.entities["amount"] == "1,250.00"
+    assert result.entities["amount"] == "1250.00"
     assert result.evidence_sha256 == "a" * 64
     assert "payment_subject_type" in result.missing_fields
     assert "bank_reference" not in result.entities

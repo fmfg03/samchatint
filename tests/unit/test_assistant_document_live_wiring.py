@@ -162,6 +162,33 @@ async def test_upload_context_with_document_intake_returns_deterministic_proposa
 
 
 @pytest.mark.asyncio
+async def test_cfdi_upload_starts_receipt_workflow_draft():
+    intake = _cfdi_intake_without_missing()
+    session = _FakeSession()
+    conversation = SimpleNamespace(id="conv-id", updated_at=None, metadata_={})
+
+    response = await run_conversation_turn(
+        raw_message=_marker(intake),
+        conversation=conversation,
+        current_empleado=SimpleNamespace(id="emp-1"),
+        session=session,
+        request=None,
+        tournament_key=None,
+        bi_year=None,
+        bi_scope=None,
+        bi_segment=None,
+        assistant_mode=None,
+        openai_api_key=None,
+        assistant_turn=_should_not_call_provider,
+        maybe_append_export_prompt=_append_noop,
+    )
+
+    assert "Documento detectado: cfdi_invoice" in response.assistant_message
+    assert conversation.metadata_[DRAFT_KEY]["intake_id"] == intake["intake_id"]
+    assert session.commits == 1
+
+
+@pytest.mark.asyncio
 async def test_confirmation_command_for_write_like_action_blocks_when_writes_disabled(
     monkeypatch,
 ):

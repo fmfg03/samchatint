@@ -4871,6 +4871,31 @@ async def _confirm_pending_run(
     )
 
 
+async def _confirm_pending_run_with_receipt_validation(
+    **kwargs: Any,
+) -> MessageResponse:
+    """Map receipt validation failures consistently for chat and API confirms."""
+    run = kwargs.get("run")
+    session = kwargs.get("session")
+    try:
+        return await _confirm_pending_run(**kwargs)
+    except ValueError as exc:
+        pending_args = getattr(run, "pending_tool_args", None) or {}
+        pending_action = str(pending_args.get("action") or "")
+        if pending_action not in SELF_SERVICE_RECEIPT_ACTIONS:
+            raise
+        if session is not None:
+            await session.rollback()
+        logger.warning(
+            "Assistant receipt confirmation rejected by validation",
+            extra={
+                "action": pending_action,
+                "run_id": str(getattr(run, "id", "")),
+            },
+        )
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 def _verification_domain_for_tool(tool_name: str) -> str:
     normalized_tool = (tool_name or "").strip()
     if normalized_tool in DEV_READ_TOOLS or normalized_tool in DEV_WRITE_TOOLS:
@@ -11706,7 +11731,7 @@ async def create_message(
             latest_pending_run_for_conversation=_latest_pending_run_for_conversation,
             is_explicit_approval_message=_is_explicit_approval_message,
             is_explicit_rejection_message=_is_explicit_rejection_message,
-            confirm_pending_run=_confirm_pending_run,
+            confirm_pending_run=_confirm_pending_run_with_receipt_validation,
             deterministic_pending_builders=[
                 _build_expense_canonical_pending,
                 _build_cfdi_canonical_pending,
@@ -11865,27 +11890,15 @@ async def confirm_write(
         if not run or run.status != "pending_confirmation":
             raise HTTPException(status_code=404, detail="Pending run not found")
 
-        try:
-            return await _confirm_pending_run(
-                run=run,
-                conversation=conversation,
-                approve=payload.approve,
-                assistant_mode=payload.assistant_mode,
-                openai_api_key=openai_api_key,
-                current_empleado=current_empleado,
-                session=session,
-            )
-        except ValueError as exc:
-            pending_args = run.pending_tool_args or {}
-            pending_action = str(pending_args.get("action") or "")
-            if pending_action not in SELF_SERVICE_RECEIPT_ACTIONS:
-                raise
-            await session.rollback()
-            logger.warning(
-                "Assistant receipt confirmation rejected by validation",
-                extra={"action": pending_action, "run_id": str(run.id)},
-            )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return await _confirm_pending_run_with_receipt_validation(
+            run=run,
+            conversation=conversation,
+            approve=payload.approve,
+            assistant_mode=payload.assistant_mode,
+            openai_api_key=openai_api_key,
+            current_empleado=current_empleado,
+            session=session,
+        )
     except HTTPException:
         raise
     except Exception:

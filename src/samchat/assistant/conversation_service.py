@@ -48,6 +48,7 @@ from .document_conversation import (
     parse_document_confirmation_command,
     render_document_intake_for_conversation,
 )
+from .document_classifier import CFDI_INVOICE, EXPENSE_RECEIPT
 from .finance_query_intent import detect_finance_comparison_intent
 from .finance_query_service import (
     FinanceRowsProvider,
@@ -236,7 +237,10 @@ async def _build_document_upload_response(
     intake = extract_document_intake_result_from_text(raw_message)
     if intake is None:
         return None
-    if intake.get("detected_document_type") == "expense_receipt":
+    if intake.get("detected_document_type") in {
+        EXPENSE_RECEIPT,
+        CFDI_INVOICE,
+    }:
         start_receipt_draft(conversation=conversation, intake=intake)
     rendered = render_document_intake_for_conversation(intake)
     tool_trace = [

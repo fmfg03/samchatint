@@ -319,6 +319,7 @@ def _extract_expense_receipt_entities(text: str) -> Dict[str, Any]:
             r"\$\s*([0-9][0-9,.]*)",
         ],
     )
+    amount = _money(_to_decimal(amount))
     date = _first_match(
         raw,
         [
