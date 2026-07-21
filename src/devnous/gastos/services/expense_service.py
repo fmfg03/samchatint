@@ -53,21 +53,21 @@ async def generate_reference_number(
 ) -> str:
     """
     Generate reference number based on department, year, and sequence.
-
+    
     Format: D-YY######
     - D: First letter of department (M, O, F, G, or U)
     - YY: Last two digits of current year
     - ######: 6-digit sequence number (starting from 000001 per department/year)
     """
     from sqlalchemy import func
-
+    
     # Get department code
     dept_code = DEPARTAMENTO_MAP.get(departamento, "U")
-
+    
     # Get current year (last 2 digits)
     current_year = datetime.now().year
     year_suffix = str(current_year)[-2:]
-
+    
     # Find the highest sequence number for this department/year
     # Pattern: D-YY######
     prefix = f"{dept_code}-{year_suffix}"
@@ -85,14 +85,14 @@ async def generate_reference_number(
             "falling back to best-effort allocation",
             extra={"prefix": prefix, "error": str(e)},
         )
-
+    
     # Query existing reference numbers with this prefix
     result = await session.execute(
         select(func.max(ExpenseReport.numero_referencia))
         .where(ExpenseReport.numero_referencia.like(f"{prefix}%"))
     )
     max_ref = result.scalar_one_or_none()
-
+    
     if max_ref:
         # Extract sequence number from max reference
         # Format: D-YY######
@@ -103,15 +103,15 @@ async def generate_reference_number(
             next_sequence = 1
     else:
         next_sequence = 1
-
+    
     # Format sequence as 6-digit number
     sequence_str = f"{next_sequence:06d}"
-
+    
     # Build reference number
     reference_number = f"{prefix}{sequence_str}"
-
+    
     logger.info(f"Generated reference number: {reference_number} for department {departamento}")
-
+    
     return reference_number
 
 
@@ -142,14 +142,14 @@ async def get_concepto_mapping(
                 }
         except Exception as e:
             logger.error(f"Error getting tournament concepto mapping: {e}", exc_info=True)
-
+    
     # Fallback to global map
     if concepto in CONCEPTO_SUB_CUENTA_MAP:
         return {
             'sub_cuenta': CONCEPTO_SUB_CUENTA_MAP[concepto],
             'concepto_display': concepto
         }
-
+    
     return None
 
 
@@ -187,7 +187,7 @@ async def create_expense_from_data(
     """
     Create an ExpenseReport from structured data.
     This is the shared function used by both Telegram and web routes.
-
+    
     Args:
         session: Database session
         concepto: Expense concept
@@ -215,23 +215,23 @@ async def create_expense_from_data(
         origen: Source/origin identifier (e.g., "amex_batch" for AMEX batch imports)
         skip_initial_tocino: If True and tipo_gasto is ticket, leave estado_factura None
             (comprobante guardado sin envío a Tocino en este paso).
-
+    
     Returns:
         Created ExpenseReport instance
     """
     # Set default proyecto if not provided
     if not proyecto:
         proyecto = "Importación Masiva"
-
+    
     # Generate reference number
     if not departamento:
         departamento = "Operaciones"  # Default
     reference_number = await generate_reference_number(session, departamento)
-
+    
     # Get concepto mapping (sub_cuenta)
     concepto_mapping = await get_concepto_mapping(tournament_id, concepto, session)
     sub_cuenta = concepto_mapping['sub_cuenta'] if concepto_mapping else None
-
+    
     # Get tournament cuenta_contable_base if tournament_id provided
     cuenta_contable_base = None
     if tournament_id:
@@ -244,7 +244,7 @@ async def create_expense_from_data(
                 cuenta_contable_base = tournament.cuenta_contable_relacionada
         except Exception as e:
             logger.error(f"Error getting tournament cuenta_contable: {e}", exc_info=True)
-
+    
     # Set fase_torneo to source tag if origen is provided and fase_torneo is not set
     if origen and not fase_torneo:
         if origen == "amex_batch":
@@ -252,7 +252,7 @@ async def create_expense_from_data(
         else:
             # For other origins, use the origen value as tag
             fase_torneo = origen.upper()
-
+    
     # Safe defaulting: if empleado_id is provided and nombre_enviador is None, fetch empleado and set nombre
     if empleado_id is not None and nombre_enviador is None:
         try:
@@ -262,7 +262,7 @@ async def create_expense_from_data(
         except Exception as e:
             logger.warning(f"Could not fetch empleado {empleado_id} for nombre_enviador defaulting: {e}")
             # Leave nombre_enviador as None if empleado not found (non-breaking)
-
+    
     # estado_factura: ticket + immediate Tocino path uses "pendiente" until trigger_cfdi_generation updates it;
     # ticket + skip_initial_tocino keeps None until user solicits CFDI later.
     if tipo_gasto == "ticket":
@@ -312,7 +312,7 @@ async def create_expense_from_data(
         hospedaje_impuesto_confirmado=bool(hospedaje_impuesto_confirmado),
         origen=origen,
     )
-
+    
     session.add(expense)
     await session.flush()  # Get expense.id
 
@@ -357,13 +357,13 @@ async def trigger_cfdi_generation(
     """
     Trigger CFDI generation for an expense via Tocino API.
     This is the shared function used by both Telegram and web routes.
-
+    
     Args:
         session: Database session
         expense: ExpenseReport instance (must have archivo_data for ticket expenses)
         rfc_id: RFC config UUID (optional, will use env vars if not provided)
         cfdi_use: CFDI use code (optional, defaults to expense.cfdi_use or 'G03')
-
+    
     Returns:
         nova_request_id if successful, None if failed
     """
@@ -371,7 +371,7 @@ async def trigger_cfdi_generation(
     if expense.tipo_gasto != "ticket":
         logger.warning(f"Attempted to trigger CFDI for non-ticket expense {expense.id}")
         return None
-
+    
     # Check if expense already has a CFDI request
     if expense.nova_request_id:
         # Check if there's an existing invoice_report
@@ -385,7 +385,7 @@ async def trigger_cfdi_generation(
                 logger.info(f"Expense {expense.id} already has CFDI request {expense.nova_request_id} with estado {estado}")
                 return expense.nova_request_id
             # If error state, allow retry
-
+    
     # Validate required data
     if not expense.archivo_data:
         logger.error(f"Expense {expense.id} missing archivo_data for CFDI generation")
@@ -394,7 +394,7 @@ async def trigger_cfdi_generation(
         session.add(expense)
         await session.commit()
         return None
-
+    
     # Get Tocino client
     try:
         tocino_client = get_tocino_client()
@@ -405,7 +405,7 @@ async def trigger_cfdi_generation(
         session.add(expense)
         await session.commit()
         return None
-
+    
     # Prepare Tocino payload
     # Use selected RFC configuration or fallback to environment variables
     if rfc_id:
@@ -415,7 +415,7 @@ async def trigger_cfdi_generation(
                 select(RFCConfig).where(RFCConfig.id == UUID(rfc_id))
             )
             rfc = result.scalar_one_or_none()
-
+            
             if rfc:
                 # Use RFC configuration data
                 tocino_payload = {
@@ -456,23 +456,23 @@ async def trigger_cfdi_generation(
         tocino_payload = _build_tocino_payload_from_env(
             expense, cfdi_use or expense.cfdi_use or "G03"
         )
-
+    
     # Submit to Tocino
     try:
         tocino_result = tocino_client.submit_ticket(tocino_payload)
-
+        
         # Extract ticket ID (Tocino returns ticket_id and internal_id; we store as nova_request_id)
         nova_request_id = None
         if isinstance(tocino_result, dict):
             nova_request_id = tocino_result.get("ticket_id") or tocino_result.get("internal_id") or tocino_result.get("nova_request_id")
-
+        
         if nova_request_id:
             # Update expense with nova_request_id
             expense.nova_request_id = nova_request_id
             expense.estado_factura = "en_proceso"
             session.add(expense)
             await session.commit()
-
+            
             logger.info(f"✅ Tocino API call successful: {nova_request_id} for expense {expense.id}")
             return nova_request_id
         else:
@@ -482,7 +482,7 @@ async def trigger_cfdi_generation(
             session.add(expense)
             await session.commit()
             return None
-
+            
     except TocinoAPIError as e:
         logger.error(f"Tocino API error for expense {expense.id}: {e}", exc_info=True)
         # Update expense with error state

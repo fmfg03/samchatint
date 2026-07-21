@@ -55,12 +55,6 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("assistant_messages", "tool_payload"),
     RequiredColumn("assistant_runs", "tool_trace"),
     RequiredColumn("assistant_artifacts", "metadata"),
-    RequiredColumn("analyst_cases", "case_id"),
-    RequiredColumn("analyst_cases", "status"),
-    RequiredColumn("analyst_cases", "suggested_routes"),
-    RequiredColumn("analyst_case_versions", "case_id"),
-    RequiredColumn("analyst_case_versions", "version_number"),
-    RequiredColumn("analyst_case_versions", "changed_fields"),
     RequiredColumn("empleados", "password_hash"),
     RequiredColumn("empleados", "aprobador_id"),
     RequiredColumn("documentos", "beneficiario_empleado_id"),
@@ -82,6 +76,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("cuentas_de_gastos", "categorias"),
     RequiredColumn("cuentas_de_gastos", "edicion"),
     RequiredColumn("cuentas_de_gastos", "currency"),
+    RequiredColumn("cuentas_de_gastos", "beneficiario_empleado_id"),
     RequiredColumn("tournaments", "etapas"),
     RequiredColumn("tournaments", "categorias"),
     RequiredColumn("access_profiles", "id"),
@@ -119,6 +114,12 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("support_tickets", "requester_empleado_id"),
     RequiredColumn("support_ticket_comments", "ticket_id"),
     RequiredColumn("support_ticket_comments", "body"),
+    RequiredColumn("budget_concepts", "budget_direction"),
+    RequiredColumn("budget_lines", "line_direction"),
+    RequiredColumn("access_control_rules", "tool_key"),
+    RequiredColumn("access_control_rules", "role_key"),
+    RequiredColumn("access_control_audit_logs", "tool_key"),
+    RequiredColumn("access_control_audit_logs", "actor_empleado_id"),
 )
 
 
@@ -150,10 +151,6 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
         "assistant_artifacts", "ix_assistant_artifacts_created_by_empleado_id"
     ),
     RequiredIndex("assistant_artifacts", "ix_assistant_artifacts_artifact_type"),
-    RequiredIndex("analyst_cases", "idx_analyst_cases_user_id"),
-    RequiredIndex("analyst_cases", "idx_analyst_cases_status"),
-    RequiredIndex("analyst_cases", "idx_analyst_cases_updated_at"),
-    RequiredIndex("analyst_case_versions", "idx_analyst_case_versions_case_id"),
     RequiredIndex("empleados", "idx_empleados_aprobador_id"),
     RequiredIndex("documentos", "idx_documentos_beneficiario_empleado_id"),
     RequiredIndex("documentos", "idx_documentos_gasto_generado_id"),
@@ -233,10 +230,73 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex(
         "support_ticket_comments", "ix_support_ticket_comments_created_at"
     ),
+    RequiredIndex("budget_concepts", "ix_budget_concepts_direction"),
+    RequiredIndex("budget_lines", "ix_budget_lines_direction"),
+    RequiredIndex("access_control_rules", "ux_access_control_rules_unique"),
+    RequiredIndex("access_control_rules", "ix_access_control_rules_tool"),
+    RequiredIndex("access_control_rules", "ix_access_control_rules_role_area"),
+    RequiredIndex("access_control_audit_logs", "ix_access_control_audit_tool"),
+    RequiredIndex("access_control_audit_logs", "ix_access_control_audit_actor"),
 )
 
 
 SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
+    (
+        "create_access_control_rules_table",
+        """
+        CREATE TABLE IF NOT EXISTS access_control_rules (
+            id UUID PRIMARY KEY,
+            tool_key VARCHAR(120) NOT NULL,
+            path_pattern TEXT NULL,
+            action_key VARCHAR(40) NOT NULL DEFAULT 'ver',
+            role_key VARCHAR(50) NOT NULL,
+            area_key VARCHAR(100) NOT NULL DEFAULT '',
+            allowed BOOLEAN NOT NULL DEFAULT TRUE,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+            updated_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "create_access_control_audit_logs_table",
+        """
+        CREATE TABLE IF NOT EXISTS access_control_audit_logs (
+            id UUID PRIMARY KEY,
+            actor_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+            tool_key VARCHAR(120) NOT NULL,
+            action_key VARCHAR(40) NOT NULL,
+            role_key VARCHAR(50) NOT NULL,
+            area_key VARCHAR(100) NOT NULL DEFAULT '',
+            before_allowed BOOLEAN NULL,
+            after_allowed BOOLEAN NOT NULL,
+            reason TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "ux_access_control_rules_unique",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_access_control_rules_unique ON access_control_rules(tool_key, action_key, role_key, area_key)",
+    ),
+    (
+        "ix_access_control_rules_tool",
+        "CREATE INDEX IF NOT EXISTS ix_access_control_rules_tool ON access_control_rules(tool_key, action_key, active)",
+    ),
+    (
+        "ix_access_control_rules_role_area",
+        "CREATE INDEX IF NOT EXISTS ix_access_control_rules_role_area ON access_control_rules(role_key, area_key, active)",
+    ),
+    (
+        "ix_access_control_audit_tool",
+        "CREATE INDEX IF NOT EXISTS ix_access_control_audit_tool ON access_control_audit_logs(tool_key, action_key, created_at)",
+    ),
+    (
+        "ix_access_control_audit_actor",
+        "CREATE INDEX IF NOT EXISTS ix_access_control_audit_actor ON access_control_audit_logs(actor_empleado_id, created_at)",
+    ),
     (
         "create_accounting_import_runs_table",
         """
@@ -254,6 +314,30 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             error_text TEXT NULL
         )
         """,
+    ),
+    (
+        "budget_concepts_budget_direction_column",
+        "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense'",
+    ),
+    (
+        "budget_concepts_budget_direction_backfill",
+        "UPDATE budget_concepts SET budget_direction = 'expense' WHERE budget_direction IS NULL OR budget_direction NOT IN ('expense', 'income')",
+    ),
+    (
+        "ix_budget_concepts_direction",
+        "CREATE INDEX IF NOT EXISTS ix_budget_concepts_direction ON budget_concepts(budget_direction)",
+    ),
+    (
+        "budget_lines_line_direction_column",
+        "ALTER TABLE IF EXISTS budget_lines ADD COLUMN IF NOT EXISTS line_direction VARCHAR(20) NOT NULL DEFAULT 'expense'",
+    ),
+    (
+        "budget_lines_line_direction_backfill",
+        "UPDATE budget_lines SET line_direction = 'expense' WHERE line_direction IS NULL OR line_direction NOT IN ('expense', 'income')",
+    ),
+    (
+        "ix_budget_lines_direction",
+        "CREATE INDEX IF NOT EXISTS ix_budget_lines_direction ON budget_lines(line_direction)",
     ),
     (
         "create_accounting_polizas_table",
@@ -507,101 +591,6 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
-    ),
-    (
-        "create_analyst_cases_table",
-        """
-        CREATE TABLE IF NOT EXISTS analyst_cases (
-            case_id VARCHAR(80) PRIMARY KEY,
-            user_id VARCHAR(120) NOT NULL,
-            role VARCHAR(80) NOT NULL,
-            question TEXT NOT NULL,
-            analyst_intent JSONB NOT NULL,
-            status VARCHAR(40) NOT NULL,
-            evidence JSONB NOT NULL,
-            current_answer TEXT NOT NULL,
-            next_questions JSONB NOT NULL,
-            suggested_routes JSONB NOT NULL,
-            caveats JSONB NOT NULL,
-            writes_policy JSONB NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_by VARCHAR(120) NULL,
-            closed_at TIMESTAMPTZ NULL,
-            closed_by VARCHAR(120) NULL,
-            CONSTRAINT check_analyst_cases_status
-                CHECK (
-                    status IN (
-                        'open',
-                        'waiting_context',
-                        'analyzed',
-                        'reviewed',
-                        'closed'
-                    )
-                )
-        )
-        """,
-    ),
-    (
-        "create_analyst_case_versions_table",
-        """
-        CREATE TABLE IF NOT EXISTS analyst_case_versions (
-            version_id VARCHAR(96) PRIMARY KEY,
-            case_id VARCHAR(80) NOT NULL
-                REFERENCES analyst_cases(case_id) ON DELETE CASCADE,
-            version_number INTEGER NOT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            created_by VARCHAR(120) NOT NULL,
-            status VARCHAR(40) NOT NULL,
-            answer TEXT NOT NULL,
-            evidence JSONB NOT NULL,
-            next_questions JSONB NOT NULL,
-            suggested_routes JSONB NOT NULL,
-            caveats JSONB NOT NULL,
-            answer_contract JSONB NOT NULL,
-            changed_fields JSONB NOT NULL,
-            CONSTRAINT ux_analyst_case_versions_case_version
-                UNIQUE (case_id, version_number),
-            CONSTRAINT check_analyst_case_versions_status
-                CHECK (
-                    status IN (
-                        'open',
-                        'waiting_context',
-                        'analyzed',
-                        'reviewed',
-                        'closed'
-                    )
-                )
-        )
-        """,
-    ),
-    (
-        "create_idx_analyst_cases_user_id",
-        (
-            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_user_id "
-            "ON analyst_cases(user_id)"
-        ),
-    ),
-    (
-        "create_idx_analyst_cases_status",
-        (
-            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_status "
-            "ON analyst_cases(status)"
-        ),
-    ),
-    (
-        "create_idx_analyst_cases_updated_at",
-        (
-            "CREATE INDEX IF NOT EXISTS idx_analyst_cases_updated_at "
-            "ON analyst_cases(updated_at)"
-        ),
-    ),
-    (
-        "create_idx_analyst_case_versions_case_id",
-        (
-            "CREATE INDEX IF NOT EXISTS idx_analyst_case_versions_case_id "
-            "ON analyst_case_versions(case_id)"
-        ),
     ),
     (
         "create_access_profiles_table",
@@ -1352,6 +1341,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "cuentas_de_gastos_currency_column",
         "ALTER TABLE IF EXISTS cuentas_de_gastos ADD COLUMN IF NOT EXISTS currency VARCHAR(3) NOT NULL DEFAULT 'MXN'",
+    ),
+    (
+        "cuentas_de_gastos_beneficiario_empleado_id_column",
+        "ALTER TABLE IF EXISTS cuentas_de_gastos ADD COLUMN IF NOT EXISTS beneficiario_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "cuentas_de_gastos_beneficiario_empleado_id_index",
+        "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_empleado_id ON cuentas_de_gastos (beneficiario_empleado_id)",
     ),
     (
         "documentos_estado_check_rechazado",
@@ -2332,6 +2329,118 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "ix_telegram_notification_outbox_next_retry_at",
         "CREATE INDEX IF NOT EXISTS ix_telegram_notification_outbox_next_retry_at ON telegram_notification_outbox(next_retry_at)",
+    ),
+    (
+        "create_sat_sync_state_table",
+        """
+        CREATE TABLE IF NOT EXISTS sat_sync_state (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            rfc VARCHAR(13) NOT NULL,
+            direction VARCHAR(20) NOT NULL,
+            june_2026_backfill_completed_at TIMESTAMP NULL,
+            last_successful_sync_at TIMESTAMP NULL,
+            cursor_fecha_emision TIMESTAMP NULL,
+            cursor_fecha_timbrado TIMESTAMP NULL,
+            forward_floor_fecha_emision TIMESTAMP NULL,
+            quota_blocked_until TIMESTAMP NULL,
+            last_error_code INTEGER NULL,
+            last_error_message TEXT NULL,
+            next_retry_at TIMESTAMP NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            CONSTRAINT uq_sat_sync_state_rfc_direction UNIQUE (rfc, direction)
+        )
+        """,
+    ),
+    (
+        "ix_sat_sync_state_rfc",
+        "CREATE INDEX IF NOT EXISTS ix_sat_sync_state_rfc ON sat_sync_state(rfc)",
+    ),
+    (
+        "create_sat_download_requests_table",
+        """
+        CREATE TABLE IF NOT EXISTS sat_download_requests (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            rfc VARCHAR(13) NOT NULL,
+            direction VARCHAR(20) NOT NULL,
+            sync_mode VARCHAR(30) NOT NULL DEFAULT 'forward',
+            fecha_inicial TIMESTAMP NOT NULL,
+            fecha_final TIMESTAMP NOT NULL,
+            solicitud_id VARCHAR(100) NULL,
+            estado_sat VARCHAR(50) NULL,
+            package_ids JSONB NULL,
+            packages_downloaded JSONB NULL,
+            packages_ingested JSONB NULL,
+            ingested_cfdis INTEGER NOT NULL DEFAULT 0,
+            linked_expenses INTEGER NOT NULL DEFAULT 0,
+            linked_documentos INTEGER NOT NULL DEFAULT 0,
+            last_error_code INTEGER NULL,
+            last_error_message TEXT NULL,
+            is_complete BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "ix_sat_download_requests_rfc",
+        "CREATE INDEX IF NOT EXISTS ix_sat_download_requests_rfc ON sat_download_requests(rfc)",
+    ),
+    (
+        "ix_sat_download_requests_solicitud_id",
+        "CREATE INDEX IF NOT EXISTS ix_sat_download_requests_solicitud_id ON sat_download_requests(solicitud_id)",
+    ),
+    (
+        "sat_download_requests_sat_num_cfdis",
+        "ALTER TABLE IF EXISTS sat_download_requests ADD COLUMN IF NOT EXISTS sat_num_cfdis INTEGER NULL",
+    ),
+    (
+        "sat_download_requests_last_verified_at",
+        "ALTER TABLE IF EXISTS sat_download_requests ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMP NULL",
+    ),
+    (
+        "create_sat_package_blobs_table",
+        """
+        CREATE TABLE IF NOT EXISTS sat_package_blobs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            package_id VARCHAR(200) NOT NULL UNIQUE,
+            rfc VARCHAR(13) NOT NULL,
+            solicitud_id VARCHAR(100) NULL,
+            package_bytes TEXT NOT NULL,
+            cod_estatus INTEGER NULL,
+            downloaded_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "ix_sat_package_blobs_rfc",
+        "CREATE INDEX IF NOT EXISTS ix_sat_package_blobs_rfc ON sat_package_blobs(rfc)",
+    ),
+    (
+        "create_sat_sync_runs_table",
+        """
+        CREATE TABLE IF NOT EXISTS sat_sync_runs (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            mode VARCHAR(30) NOT NULL,
+            trigger_source VARCHAR(30) NOT NULL,
+            started_at TIMESTAMP NOT NULL,
+            finished_at TIMESTAMP NULL,
+            status VARCHAR(30) NOT NULL,
+            summary_message TEXT NULL,
+            results JSONB NULL,
+            http_status INTEGER NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "ix_sat_sync_runs_started_at",
+        "CREATE INDEX IF NOT EXISTS ix_sat_sync_runs_started_at ON sat_sync_runs(started_at DESC)",
+    ),
+    (
+        "ix_sat_sync_runs_trigger_source",
+        "CREATE INDEX IF NOT EXISTS ix_sat_sync_runs_trigger_source ON sat_sync_runs(trigger_source)",
     ),
 )
 

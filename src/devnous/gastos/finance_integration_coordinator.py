@@ -30,19 +30,19 @@ logger = logging.getLogger(__name__)
 class FinanceIntegrationCoordinator:
     """
     Coordinates the finance integration project using multi-agent system.
-
+    
     Manages:
     - Task assignment to specialized agents
     - Progress tracking
     - Agent communications logging
     - Workspace file updates
     """
-
+    
     def __init__(self, workspace_file_path: str = None):
         """Initialize the finance integration coordinator."""
         self.coordinator = MultiAgentCoordinator()
         self.workspace_file = Path(workspace_file_path or "/root/samchat/FINANCE_INTEGRATION_WORKSPACE.md")
-
+        
         # Project state
         self.project_status = {
             "phase": "setup",
@@ -52,7 +52,7 @@ class FinanceIntegrationCoordinator:
             "issues": [],
             "blockers": []
         }
-
+        
         # Agent assignments
         self.agent_assignments = {
             "project_manager": AgentRole.PROJECT_MANAGER,
@@ -61,9 +61,9 @@ class FinanceIntegrationCoordinator:
             "database_engineer": AgentRole.DATABASE_ENGINEER,
             "qa": AgentRole.QUALITY_ASSURANCE
         }
-
+        
         logger.info("Finance Integration Coordinator initialized")
-
+    
     async def log_to_workspace(
         self,
         agent_role: str,
@@ -74,7 +74,7 @@ class FinanceIntegrationCoordinator:
         """Log agent communication to workspace file."""
         try:
             timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
+            
             log_entry = f"""
 ### {timestamp} - {agent_role}
 
@@ -86,15 +86,15 @@ class FinanceIntegrationCoordinator:
 """
             if next_steps:
                 log_entry += f"**Next Steps:**\n{next_steps}\n"
-
+            
             log_entry += "---\n"
-
+            
             # Read current workspace content
             if self.workspace_file.exists():
                 content = self.workspace_file.read_text(encoding='utf-8')
             else:
                 content = ""
-
+            
             # Find Agent Communications section and append
             if "## Agent Communications" in content:
                 # Insert after the section header
@@ -108,28 +108,28 @@ class FinanceIntegrationCoordinator:
                         if log_format_end != -1:
                             insert_pos = log_format_end + 3
                             new_content = (
-                                section_content[:insert_pos] +
-                                "\n" + log_entry +
+                                section_content[:insert_pos] + 
+                                "\n" + log_entry + 
                                 section_content[insert_pos:]
                             )
                         else:
                             new_content = log_entry + section_content
                     else:
                         new_content = log_entry + section_content
-
+                    
                     content = parts[0] + "## Agent Communications" + new_content
                 else:
                     content += "\n## Agent Communications\n" + log_entry
             else:
                 content += "\n## Agent Communications\n" + log_entry
-
+            
             # Write back
             self.workspace_file.write_text(content, encoding='utf-8')
             logger.info(f"Logged to workspace: {agent_role} - {action}")
-
+            
         except Exception as e:
             logger.error(f"Error logging to workspace: {e}", exc_info=True)
-
+    
     async def assign_task(
         self,
         task_name: str,
@@ -146,18 +146,18 @@ class FinanceIntegrationCoordinator:
             "dependencies": dependencies or [],
             "assigned_at": datetime.utcnow().isoformat()
         }
-
+        
         self.project_status["tasks_pending"].append(task)
-
+        
         await self.log_to_workspace(
             agent_role=AgentRole.PROJECT_MANAGER.value,
             action=f"Assigned task: {task_name}",
             details=f"Task assigned to {agent_role.value}.\n\n**Description:** {description}",
             next_steps=f"{agent_role.value} should begin work on this task"
         )
-
+        
         return task
-
+    
     async def mark_task_in_progress(self, task_name: str, agent_role: str):
         """Mark a task as in progress."""
         # Move from pending to in_progress
@@ -167,7 +167,7 @@ class FinanceIntegrationCoordinator:
                 task["started_at"] = datetime.utcnow().isoformat()
                 self.project_status["tasks_in_progress"].append(task)
                 self.project_status["tasks_pending"].remove(task)
-
+                
                 await self.log_to_workspace(
                     agent_role=agent_role,
                     action=f"Started task: {task_name}",
@@ -175,7 +175,7 @@ class FinanceIntegrationCoordinator:
                     next_steps="Continue implementation"
                 )
                 break
-
+    
     async def mark_task_completed(
         self,
         task_name: str,
@@ -195,7 +195,7 @@ class FinanceIntegrationCoordinator:
                 task["files_modified"] = files_modified or []
                 self.project_status["tasks_completed"].append(task)
                 self.project_status["tasks_in_progress"].remove(task)
-
+                
                 await self.log_to_workspace(
                     agent_role=agent_role,
                     action=f"Completed task: {task_name}",
@@ -203,18 +203,18 @@ class FinanceIntegrationCoordinator:
                     next_steps="Review and proceed to next task"
                 )
                 break
-
+    
     async def coordinate_integration(self) -> Dict[str, Any]:
         """Coordinate the entire finance integration project."""
         logger.info("Starting finance integration coordination")
-
+        
         # Create user context for agent coordination
         user_context = UserContext(
             user_id="finance_integration_project",
             emotional_state=EmotionalState.FOCUSED,
             activity_level=0.8
         )
-
+        
         # Phase 1: Setup
         await self.log_to_workspace(
             agent_role=AgentRole.PROJECT_MANAGER.value,
@@ -222,7 +222,7 @@ class FinanceIntegrationCoordinator:
             details="Starting finance integration project. Multi-agent coordinator setup complete.",
             next_steps="Begin backend integration phase"
         )
-
+        
         # Define integration tasks
         integration_tasks = [
             {
@@ -280,7 +280,7 @@ class FinanceIntegrationCoordinator:
                 "dependencies": ["schema-alignment"]
             }
         ]
-
+        
         # Assign all tasks
         for task_def in integration_tasks:
             await self.assign_task(
@@ -289,13 +289,13 @@ class FinanceIntegrationCoordinator:
                 description=task_def["description"],
                 dependencies=task_def["dependencies"]
             )
-
+        
         return {
             "status": "coordinated",
             "tasks_assigned": len(integration_tasks),
             "project_status": self.project_status
         }
-
+    
     async def get_project_status(self) -> Dict[str, Any]:
         """Get current project status."""
         return {
@@ -320,3 +320,4 @@ async def log_agent_work(
     """Helper function for agents to log their work to workspace."""
     coordinator = FinanceIntegrationCoordinator(workspace_file)
     await coordinator.log_to_workspace(agent_role, action, details, next_steps)
+

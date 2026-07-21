@@ -10,9 +10,6 @@ from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Optional, Tuple
 
-from .cfdi_parser import parse_cfdi_xml
-from .cfdi_pdf_reader import parse_cfdi_pdf
-
 
 @dataclass(frozen=True)
 class CfdiAutofillData:
@@ -287,25 +284,11 @@ def parse_cfdi_for_autofill(
     """
     Parse CFDI bytes for form autofill. XML takes precedence when both are supplied.
     """
-    if xml_bytes:
-        xml_text = None
-        for encoding in ("utf-8-sig", "utf-8", "latin-1"):
-            try:
-                xml_text = xml_bytes.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        if xml_text is None:
-            return {}, "El CFDI XML no usa una codificación válida."
-        parsed = parse_cfdi_xml(xml_text)
-        if not parsed:
-            return {}, "El archivo XML no es un CFDI válido."
-        return parsed, None
+    from .cfdi_upload_resolver import resolve_cfdi_upload
 
-    if pdf_bytes:
-        parsed = parse_cfdi_pdf(pdf_bytes)
-        if not parsed:
-            return {}, "No se pudieron extraer datos del CFDI PDF."
-        return parsed, None
-
-    return {}, "Adjunte un CFDI XML o PDF."
+    resolved, error = resolve_cfdi_upload(xml_bytes=xml_bytes, pdf_bytes=pdf_bytes)
+    if error:
+        return {}, error
+    if resolved is None:
+        return {}, "Adjunte un CFDI XML o PDF."
+    return resolved.parsed, None

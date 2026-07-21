@@ -18,7 +18,7 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
-from ..models import Documento, Empleado, ExpenseReport
+from ..models import CuentaDeGastos, Documento, Empleado, ExpenseReport
 from ..utils.mexico_city_dates import format_mexico_city_datetime
 from .amex_expense_service import (
     calculate_informe_expense_totals,
@@ -371,6 +371,32 @@ def beneficiario_label(documento: Documento) -> str:
     return "—"
 
 
+def _project_and_phase_labels(documento: Documento) -> Tuple[str, str]:
+    """Resolve project and phase from the document, falling back to its expense account."""
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    torneo = getattr(documento, "torneo", None)
+    if torneo is None and cuenta is not None:
+        torneo = getattr(cuenta, "torneo", None)
+
+    torneo_name = getattr(torneo, "name", None) if torneo is not None else None
+    proyecto_otro = getattr(documento, "proyecto_otro", None)
+    project = (
+        torneo_name.strip()
+        if isinstance(torneo_name, str) and torneo_name.strip()
+        else (
+            proyecto_otro.strip()
+            if isinstance(proyecto_otro, str) and proyecto_otro.strip()
+            else "—"
+        )
+    )
+
+    phase = getattr(documento, "fase", None)
+    if not isinstance(phase, str) or not phase.strip():
+        phase = getattr(cuenta, "fase", None) if cuenta is not None else None
+    phase_label = phase.strip() if isinstance(phase, str) and phase.strip() else "—"
+    return project, phase_label
+
+
 async def build_documento_telegram_context(
     session: AsyncSession,
     documento: Documento,
@@ -382,6 +408,9 @@ async def build_documento_telegram_context(
     }
     solicitante = documento.empleado.nombre if documento.empleado else "—"
     ctx["solicitante"] = solicitante
+    project, phase = _project_and_phase_labels(documento)
+    ctx["proyecto"] = project
+    ctx["etapa"] = phase
 
     if documento.tipo == "INFORME":
         expenses = await load_informe_active_expenses(session, documento)
@@ -423,6 +452,8 @@ def format_documento_resumen_es(
     tipo = escape_markdown_light(documento.tipo)
     estado = escape_markdown_light(documento.estado)
     sol = escape_markdown_light(str(context.get("solicitante") or "—"))
+    proyecto = escape_markdown_light(str(context.get("proyecto") or "—"))
+    etapa = escape_markdown_light(str(context.get("etapa") or "—"))
     concepto = escape_markdown_light(concepto_resumen(documento))
     saldo_line = context.get("saldo_line")
     saldo_txt = escape_markdown_light(str(saldo_line)) if saldo_line else None
@@ -435,6 +466,8 @@ def format_documento_resumen_es(
             f"*Documento* `{ref}` · *Tipo* {tipo}",
             f"*Estado* {estado}",
             f"*Solicitante* {sol}",
+            f"*Proyecto* {proyecto}",
+            f"*Etapa / subproyecto* {etapa}",
             f"*Concepto / notas* {concepto}",
             f"*Referencia Operaciones* {ro}",
             f"*Monto solicitado* {monto_val}",
@@ -448,6 +481,8 @@ def format_documento_resumen_es(
             f"*Documento* `{ref}` · *Tipo* {tipo}",
             f"*Estado* {estado}",
             f"*Solicitante* {sol}",
+            f"*Proyecto* {proyecto}",
+            f"*Etapa / subproyecto* {etapa}",
             f"*Concepto / notas* {concepto}",
             f"*Monto solicitado* {monto_sol}",
             f"*Monto gastado* {monto_gas}",
@@ -460,6 +495,8 @@ def format_documento_resumen_es(
             f"*Documento* `{ref}` · *Tipo* {tipo}",
             f"*Estado* {estado}",
             f"*Solicitante* {sol}",
+            f"*Proyecto* {proyecto}",
+            f"*Etapa / subproyecto* {etapa}",
             f"*Concepto / notas* {concepto}",
             monto_line,
         ]
@@ -515,6 +552,8 @@ async def load_documento_for_telegram(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
         )
         .where(Documento.id == documento_id)
     )
@@ -550,6 +589,8 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.empleado),
         selectinload(Documento.beneficiario_empleado),
         selectinload(Documento.proveedor_cliente),
+        selectinload(Documento.torneo),
+        selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
     if empleado.rol in SUPERADMIN_ROLES:
         result = await session.execute(
@@ -589,6 +630,8 @@ async def query_documentos_for_requester(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
         )
         .where(Documento.empleado_id == empleado_id)
         .order_by(Documento.creado_en.desc())
@@ -612,6 +655,8 @@ async def find_documento_by_referencia_for_requester(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
         )
         .where(
             and_(

@@ -7,6 +7,7 @@ Coordinates SAT CFDI downloads and links them to expense reports.
 import base64
 import io
 import logging
+import os
 import tempfile
 import zipfile
 from datetime import datetime, timedelta
@@ -30,8 +31,23 @@ from .error_codes import (
 
 from devnous.gastos.models import ExpenseReport
 from devnous.gastos.services.cfdi_ingestion_service import ingest_cfdi_xml
+from devnous.gastos.services.cfdi_expense_link_service import (
+    bulk_link_pending_documentos_to_cfdi_reports,
+    bulk_link_pending_expenses_to_cfdi_reports,
+)
+from .package_cache import SATPackageCache, SAT_PACKAGE_MAX_DOWNLOADS
 
 logger = logging.getLogger(__name__)
+
+
+def sat_production_enabled() -> bool:
+    """True when SAT_USE_PRODUCTION opts into the live SAT endpoints."""
+    return os.getenv("SAT_USE_PRODUCTION", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 class SATExpenseHandler:
@@ -46,15 +62,20 @@ class SATExpenseHandler:
     - Certificate management
     """
 
-    def __init__(self, use_testing_endpoint: bool = True):
+    def __init__(self, use_testing_endpoint: Optional[bool] = None):
         """
         Initialize SAT expense handler.
 
         Args:
-            use_testing_endpoint: Use SAT testing endpoint (default: True)
+            use_testing_endpoint: Use SAT testing endpoint. When None (default),
+                it is resolved from the SAT_USE_PRODUCTION environment variable:
+                a truthy value targets the live SAT endpoints, otherwise the
+                testing endpoints are used.
         """
         self.config_handler = SATConfigHandler()
         self.cfdi_status_service = SATCFDIStatusService()
+        if use_testing_endpoint is None:
+            use_testing_endpoint = not sat_production_enabled()
         self.use_testing_endpoint = use_testing_endpoint
         self.logger = logging.getLogger(__name__)
 
@@ -63,6 +84,54 @@ class SATExpenseHandler:
         start = anchor - timedelta(days=7)
         end = anchor + timedelta(days=7)
         return start, end
+
+    async def _download_package_with_cache(
+        self,
+        session: AsyncSession,
+        *,
+        verification_agent: CFDIVerificationAgent,
+        package_cache: SATPackageCache,
+        package_id: str,
+        rfc: str,
+        solicitud_id: str,
+    ) -> Dict[str, Any]:
+        cached = await package_cache.get(session, package_id)
+        if cached:
+            return {
+                "package_id": package_id,
+                "package_bytes": cached,
+                "from_cache": True,
+                "cod_estatus": 5000,
+                "status": "success",
+            }
+
+        package_result = await verification_agent.download_package(
+            package_id=package_id,
+            rfc=rfc,
+        )
+        cod_estatus = int(package_result.get("cod_estatus") or 0)
+        package_bytes = package_result.get("package_bytes") or b""
+
+        if (cod_estatus == SAT_PACKAGE_MAX_DOWNLOADS or not package_bytes) and cod_estatus != 5000:
+            cached = await package_cache.get(session, package_id)
+            if cached:
+                package_result["package_bytes"] = cached
+                package_result["from_cache"] = True
+                package_result["status"] = "success"
+                warnings_key = "cache_fallback_5008"
+                package_result[warnings_key] = True
+                return package_result
+
+        if package_bytes:
+            await package_cache.save(
+                session,
+                package_id=package_id,
+                rfc=rfc,
+                solicitud_id=solicitud_id,
+                package_bytes=package_bytes,
+                cod_estatus=cod_estatus,
+            )
+        return package_result
 
     def _extract_xml_payloads(self, package_bytes: bytes) -> List[str]:
         if not package_bytes:
@@ -232,6 +301,7 @@ class SATExpenseHandler:
         telegram_user_id: Optional[int] = None,
         rfc: Optional[str] = None,
         expense: Optional[ExpenseReport] = None,
+        poll_until_complete: bool = True,
     ) -> Dict[str, Any]:
         credentials = await self._get_active_credentials(
             session,
@@ -263,7 +333,7 @@ class SATExpenseHandler:
                 verification = await verification_agent.verify_solicitud(
                     solicitud_id=solicitud_id,
                     rfc=credentials.rfc,
-                    poll_until_complete=True,
+                    poll_until_complete=poll_until_complete,
                 )
                 if verification.get("estado") != "Terminada":
                     return {
@@ -275,10 +345,15 @@ class SATExpenseHandler:
                 downloaded_packages = []
                 ingested_cfdis = 0
                 warnings: List[str] = []
+                package_cache = SATPackageCache()
                 for package_id in verification.get("paquetes", []):
-                    package_result = await verification_agent.download_package(
+                    package_result = await self._download_package_with_cache(
+                        session,
+                        verification_agent=verification_agent,
+                        package_cache=package_cache,
                         package_id=package_id,
                         rfc=credentials.rfc,
+                        solicitud_id=solicitud_id,
                     )
                     downloaded_packages.append(package_result)
                     for xml_payload in self._extract_xml_payloads(package_result.get("package_bytes", b"")):
@@ -298,11 +373,30 @@ class SATExpenseHandler:
                         "SAT reportó CFDIs, pero no se logró ingerir ningún XML del paquete."
                     )
 
+                # Mirror the CSV carga masiva path: after ingesting CFDIs, auto-link
+                # any pending expenses/documentos by fiscal UUID so SAT ingest yields
+                # the same downstream linkage as a manual batch upload.
+                linked_expenses = 0
+                linked_documentos = 0
+                if ingested_cfdis > 0:
+                    try:
+                        linked_expenses = await bulk_link_pending_expenses_to_cfdi_reports(session)
+                        linked_documentos = await bulk_link_pending_documentos_to_cfdi_reports(session)
+                    except Exception:
+                        logger.warning(
+                            "SAT ingest auto-link by UUID failed for solicitud %s",
+                            solicitud_id,
+                            exc_info=True,
+                        )
+
                 if expense is not None:
                     expense.nova_request_id = solicitud_id
                     expense.estado_factura = "completada" if ingested_cfdis > 0 else "error"
                     expense.mensaje_error = warnings[0] if warnings else None
-                    await session.commit()
+
+                # Commit unconditionally so ingested CFDIs and auto-links persist even
+                # when no single expense is attached to the request (bulk SAT sync).
+                await session.commit()
 
                 return {
                     "status": "success" if not warnings else "warning",
@@ -311,6 +405,8 @@ class SATExpenseHandler:
                         "verification": verification,
                         "packages": downloaded_packages,
                         "ingested_cfdis": ingested_cfdis,
+                        "linked_expenses": linked_expenses,
+                        "linked_documentos": linked_documentos,
                         "warnings": warnings,
                     },
                 }

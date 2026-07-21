@@ -155,11 +155,19 @@ class SATAuthenticationAgent:
             with open(self.key_path, "rb") as f:
                 key_data = f.read()
 
-            self.private_key = serialization.load_pem_private_key(
-                key_data,
-                password=self.passphrase,
-                backend=default_backend()
-            )
+            try:
+                self.private_key = serialization.load_pem_private_key(
+                    key_data,
+                    password=self.passphrase,
+                    backend=default_backend()
+                )
+            except ValueError:
+                # SAT e.firma .key files are commonly DER-encoded.
+                self.private_key = serialization.load_der_private_key(
+                    key_data,
+                    password=self.passphrase,
+                    backend=default_backend()
+                )
 
             logger.info("Private key loaded successfully")
 
@@ -464,8 +472,8 @@ class SATAuthenticationAgent:
             "subject": str(self.certificate.subject),
             "issuer": str(self.certificate.issuer),
             "serial_number": self.certificate.serial_number,
-            "not_valid_before": self.certificate.not_valid_before.isoformat(),
-            "not_valid_after": self.certificate.not_valid_after.isoformat(),
+            "not_valid_before": self.certificate.not_valid_before,
+            "not_valid_after": self.certificate.not_valid_after,
             "days_until_expiration": validation.get("days_until_expiration"),
             "valid": validation["valid"]
         }

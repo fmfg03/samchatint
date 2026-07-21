@@ -18,6 +18,7 @@ Date: 2025-10-10
 
 import asyncio
 import base64
+import hashlib
 import logging
 import time
 import uuid
@@ -28,6 +29,8 @@ from urllib.parse import urljoin
 
 import aiohttp
 from lxml import etree
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 
 from .error_codes import (
     SATErrorCode,
@@ -39,6 +42,11 @@ from .error_codes import (
     is_success
 )
 from .authentication_agent import SATAuthenticationAgent
+from .timeout_config import (
+    sat_http_timeout_seconds,
+    sat_poll_interval_seconds,
+    sat_poll_max_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +82,8 @@ class CFDIVerificationAgent:
     # SAT Endpoints
     PRODUCTION_ENDPOINT = "https://cfdidescargamasivasolicitud.clouda.sat.gob.mx/VerificaSolicitudDescargaService.svc"
     TESTING_ENDPOINT = "https://pruebascfdiws.clouda.sat.gob.mx/VerificaSolicitudDescargaService.svc"
+    PRODUCTION_AUTH_ENDPOINT = "https://cfdidescargamasivasolicitud.clouda.sat.gob.mx/Autenticacion/Autenticacion.svc"
+    TESTING_AUTH_ENDPOINT = "https://pruebascfdiws.clouda.sat.gob.mx/Autenticacion/Autenticacion.svc"
     PRODUCTION_SOLICITUD_ENDPOINT = "https://cfdidescargamasivasolicitud.clouda.sat.gob.mx/SolicitaDescargaService.svc"
     TESTING_SOLICITUD_ENDPOINT = "https://pruebascfdiws.clouda.sat.gob.mx/SolicitaDescargaService.svc"
     PRODUCTION_DOWNLOAD_ENDPOINT = "https://cfdidescargamasiva.clouda.sat.gob.mx/DescargaMasivaService.svc"
@@ -84,16 +94,20 @@ class CFDIVerificationAgent:
     INITIAL_BACKOFF = 2  # seconds
     MAX_BACKOFF = 300    # 5 minutes
 
-    # Estado solicitud polling
-    POLL_INTERVAL = 5    # seconds
-    MAX_POLL_TIME = 300  # 5 minutes
+    # Estado solicitud polling defaults (override via SAT_* env vars)
+    POLL_INTERVAL = 5
+    MAX_POLL_TIME = 1800
 
     def __init__(
         self,
         auth_agent: SATAuthenticationAgent,
         endpoint: Optional[str] = None,
         testing: bool = True,
-        alert_callback: Optional[callable] = None
+        alert_callback: Optional[callable] = None,
+        *,
+        http_timeout_seconds: Optional[int] = None,
+        poll_max_seconds: Optional[int] = None,
+        poll_interval_seconds: Optional[int] = None,
     ):
         """
         Initialize CFDI verification agent.
@@ -108,12 +122,27 @@ class CFDIVerificationAgent:
         self.auth_agent = auth_agent
         self.endpoint = endpoint or (self.TESTING_ENDPOINT if testing else self.PRODUCTION_ENDPOINT)
         self.error_handler = SATErrorHandler(alert_callback=alert_callback)
+        self.http_timeout_seconds = (
+            http_timeout_seconds
+            if http_timeout_seconds is not None
+            else sat_http_timeout_seconds()
+        )
+        self.poll_max_seconds = (
+            poll_max_seconds if poll_max_seconds is not None else sat_poll_max_seconds()
+        )
+        self.poll_interval_seconds = (
+            poll_interval_seconds
+            if poll_interval_seconds is not None
+            else sat_poll_interval_seconds()
+        )
 
         # Rate limiting
         self.rate_limiter = SATRateLimiter()
 
         # Request tracking
         self.pending_requests: Dict[str, Dict[str, Any]] = {}
+        self._access_token: Optional[str] = None
+        self._access_token_expires: Optional[datetime] = None
 
         logger.info(f"CFDI Verification Agent initialized with endpoint: {self.endpoint}")
 
@@ -130,6 +159,11 @@ class CFDIVerificationAgent:
         """Create a SAT mass-download request."""
 
         await self.rate_limiter.check_rate_limit(rfc_solicitante)
+        operation = self._solicita_descarga_operation(
+            rfc_solicitante=rfc_solicitante,
+            rfc_emisor=rfc_emisor,
+            rfc_receptor=rfc_receptor,
+        )
         soap_request = self._build_solicita_descarga_request(
             rfc_solicitante=rfc_solicitante,
             fecha_inicial=fecha_inicial,
@@ -137,6 +171,7 @@ class CFDIVerificationAgent:
             rfc_emisor=rfc_emisor,
             rfc_receptor=rfc_receptor,
             tipo_solicitud=tipo_solicitud,
+            operation=operation,
         )
         response = await self._make_soap_request_with_retry(
             soap_request,
@@ -144,8 +179,9 @@ class CFDIVerificationAgent:
             endpoint=self._solicitud_endpoint(),
             soap_action=(
                 "http://DescargaMasivaTerceros.sat.gob.mx/"
-                "ISolicitaDescargaService/SolicitaDescarga"
+                f"ISolicitaDescargaService/{operation}"
             ),
+            authorization_token=await self._get_access_token(),
         )
         return self._parse_solicita_descarga_response(response)
 
@@ -182,7 +218,11 @@ class CFDIVerificationAgent:
         soap_request = self._build_verifica_solicitud_request(solicitud_id, rfc)
 
         # Make request with retry logic
-        response = await self._make_soap_request_with_retry(soap_request, rfc)
+        response = await self._make_soap_request_with_retry(
+            soap_request,
+            rfc,
+            authorization_token=await self._get_access_token(),
+        )
 
         # Parse response
         result = self._parse_verifica_solicitud_response(response)
@@ -217,21 +257,124 @@ class CFDIVerificationAgent:
             SOAP envelope XML string
         """
 
-        # Build solicitud element
-        solicitud_xml = f"""
-        <VerificaSolicitudDescarga xmlns="http://DescargaMasivaTerceros.sat.gob.mx">
-            <solicitud IdSolicitud="{solicitud_id}" RfcSolicitante="{rfc}">
-            </solicitud>
-        </VerificaSolicitudDescarga>
-        """
-
-        # Create authenticated envelope
-        envelope = self.auth_agent.create_authenticated_envelope(
-            body_xml=solicitud_xml,
-            rfc=rfc
+        return self._create_signed_envelope(
+            operation="VerificaSolicitudDescarga",
+            solicitud_tag="solicitud",
+            attrs={
+                "IdSolicitud": solicitud_id,
+                "RfcSolicitante": rfc,
+            },
         )
 
-        return envelope
+    def _create_signed_envelope(
+        self,
+        *,
+        operation: str,
+        solicitud_tag: str,
+        attrs: Dict[str, Any],
+    ) -> str:
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        des_ns = "http://DescargaMasivaTerceros.sat.gob.mx"
+        dsig_ns = "http://www.w3.org/2000/09/xmldsig#"
+        envelope = etree.Element(
+            f"{{{soap_ns}}}Envelope",
+            nsmap={"des": des_ns, "s": soap_ns, "xd": dsig_ns},
+        )
+        etree.SubElement(envelope, f"{{{soap_ns}}}Header")
+        body = etree.SubElement(envelope, f"{{{soap_ns}}}Body")
+        operation_element = etree.SubElement(body, f"{{{des_ns}}}{operation}")
+        solicitud = etree.SubElement(operation_element, f"{{{des_ns}}}{solicitud_tag}")
+        for key, value in sorted(attrs.items()):
+            if value is not None:
+                solicitud.set(key, str(value))
+
+        solicitud.append(self._create_payload_signature(operation_element))
+        return etree.tostring(envelope, encoding="unicode", pretty_print=False)
+
+    def _create_payload_signature(self, element: etree._Element) -> etree._Element:
+        dsig_ns = "http://www.w3.org/2000/09/xmldsig#"
+        digest = hashlib.sha1(
+            etree.tostring(
+                element,
+                method="c14n",
+                exclusive=False,
+                with_comments=False,
+            )
+        ).digest()
+        digest_b64 = base64.b64encode(digest).decode("utf-8")
+
+        signature = etree.Element(f"{{{dsig_ns}}}Signature", nsmap={None: dsig_ns})
+        signed_info = etree.SubElement(signature, f"{{{dsig_ns}}}SignedInfo")
+        etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}CanonicalizationMethod",
+            Algorithm="http://www.w3.org/TR/2001/REC-xml-c14n-20010315",
+        )
+        etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}SignatureMethod",
+            Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1",
+        )
+        reference = etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}Reference",
+            URI="",
+        )
+        transforms = etree.SubElement(reference, f"{{{dsig_ns}}}Transforms")
+        etree.SubElement(
+            transforms,
+            f"{{{dsig_ns}}}Transform",
+            Algorithm="http://www.w3.org/2000/09/xmldsig#enveloped-signature",
+        )
+        etree.SubElement(
+            reference,
+            f"{{{dsig_ns}}}DigestMethod",
+            Algorithm="http://www.w3.org/2000/09/xmldsig#sha1",
+        )
+        etree.SubElement(reference, f"{{{dsig_ns}}}DigestValue").text = digest_b64
+
+        signature_value = self.auth_agent.private_key.sign(
+            etree.tostring(
+                signed_info,
+                method="c14n",
+                exclusive=False,
+                with_comments=False,
+            ),
+            padding.PKCS1v15(),
+            hashes.SHA1(),
+        )
+        etree.SubElement(signature, f"{{{dsig_ns}}}SignatureValue").text = (
+            base64.b64encode(signature_value).decode("utf-8")
+        )
+        key_info = etree.SubElement(signature, f"{{{dsig_ns}}}KeyInfo")
+        x509_data = etree.SubElement(key_info, f"{{{dsig_ns}}}X509Data")
+        issuer_serial = etree.SubElement(x509_data, f"{{{dsig_ns}}}X509IssuerSerial")
+        etree.SubElement(issuer_serial, f"{{{dsig_ns}}}X509IssuerName").text = (
+            self.auth_agent.certificate.issuer.rfc4514_string()
+        )
+        etree.SubElement(issuer_serial, f"{{{dsig_ns}}}X509SerialNumber").text = str(
+            self.auth_agent.certificate.serial_number
+        )
+        etree.SubElement(x509_data, f"{{{dsig_ns}}}X509Certificate").text = (
+            self.auth_agent.certificate_b64
+        )
+        return signature
+
+    def _solicita_descarga_operation(
+        self,
+        *,
+        rfc_solicitante: str,
+        rfc_emisor: Optional[str] = None,
+        rfc_receptor: Optional[str] = None,
+    ) -> str:
+        solicitante = (rfc_solicitante or "").strip().upper()
+        emisor = (rfc_emisor or "").strip().upper()
+        receptor = (rfc_receptor or "").strip().upper()
+        if receptor and receptor == solicitante:
+            return "SolicitaDescargaRecibidos"
+        if emisor and emisor == solicitante:
+            return "SolicitaDescargaEmitidos"
+        return "SolicitaDescarga"
 
     def _build_solicita_descarga_request(
         self,
@@ -242,29 +385,29 @@ class CFDIVerificationAgent:
         rfc_emisor: Optional[str] = None,
         rfc_receptor: Optional[str] = None,
         tipo_solicitud: str = "CFDI",
+        operation: str = "SolicitaDescarga",
     ) -> str:
         fecha_inicial_str = fecha_inicial.strftime("%Y-%m-%dT%H:%M:%S")
         fecha_final_str = fecha_final.strftime("%Y-%m-%dT%H:%M:%S")
-        optional_attrs = []
+        attrs: Dict[str, Any] = {
+            "RfcSolicitante": rfc_solicitante,
+            "FechaInicial": fecha_inicial_str,
+            "FechaFinal": fecha_final_str,
+            "TipoSolicitud": tipo_solicitud,
+        }
+        if operation == "SolicitaDescargaRecibidos":
+            attrs["EstadoComprobante"] = "Vigente"
+        elif operation == "SolicitaDescargaEmitidos":
+            attrs["EstadoComprobante"] = "Todos"
         if rfc_emisor:
-            optional_attrs.append(f'RfcEmisor="{rfc_emisor}"')
+            attrs["RfcEmisor"] = rfc_emisor
         if rfc_receptor:
-            optional_attrs.append(f'RfcReceptor="{rfc_receptor}"')
+            attrs["RfcReceptor"] = rfc_receptor
 
-        solicitud_xml = f"""
-        <SolicitaDescarga xmlns="http://DescargaMasivaTerceros.sat.gob.mx">
-            <solicitud
-                RfcSolicitante="{rfc_solicitante}"
-                FechaInicial="{fecha_inicial_str}"
-                FechaFinal="{fecha_final_str}"
-                TipoSolicitud="{tipo_solicitud}"
-                {' '.join(optional_attrs)}>
-            </solicitud>
-        </SolicitaDescarga>
-        """
-        return self.auth_agent.create_authenticated_envelope(
-            body_xml=solicitud_xml,
-            rfc=rfc_solicitante,
+        return self._create_signed_envelope(
+            operation=operation,
+            solicitud_tag="solicitud",
+            attrs=attrs,
         )
 
     def _build_download_package_request(
@@ -273,13 +416,14 @@ class CFDIVerificationAgent:
         package_id: str,
         rfc: str,
     ) -> str:
-        body_xml = f"""
-        <PeticionDescargaMasivaTercerosEntrada xmlns="http://DescargaMasivaTerceros.sat.gob.mx">
-            <peticionDescarga IdPaquete="{package_id}" RfcSolicitante="{rfc}">
-            </peticionDescarga>
-        </PeticionDescargaMasivaTercerosEntrada>
-        """
-        return self.auth_agent.create_authenticated_envelope(body_xml=body_xml, rfc=rfc)
+        return self._create_signed_envelope(
+            operation="PeticionDescargaMasivaTercerosEntrada",
+            solicitud_tag="peticionDescarga",
+            attrs={
+                "IdPaquete": package_id,
+                "RfcSolicitante": rfc,
+            },
+        )
 
     def _solicitud_endpoint(self) -> str:
         if self.endpoint == self.TESTING_ENDPOINT:
@@ -295,6 +439,163 @@ class CFDIVerificationAgent:
             return self.PRODUCTION_DOWNLOAD_ENDPOINT
         return self.endpoint
 
+    def _auth_endpoint(self) -> str:
+        if self.endpoint == self.TESTING_ENDPOINT:
+            return self.TESTING_AUTH_ENDPOINT
+        if self.endpoint == self.PRODUCTION_ENDPOINT:
+            return self.PRODUCTION_AUTH_ENDPOINT
+        return self.PRODUCTION_AUTH_ENDPOINT
+
+    async def _get_access_token(self) -> str:
+        if (
+            self._access_token
+            and self._access_token_expires
+            and datetime.utcnow() < self._access_token_expires - timedelta(seconds=30)
+        ):
+            return self._access_token
+
+        response = await self._make_soap_request(
+            self._build_authentication_request(),
+            endpoint=self._auth_endpoint(),
+            soap_action="http://DescargaMasivaTerceros.gob.mx/IAutenticacion/Autentica",
+        )
+        root = etree.fromstring(response.encode("utf-8"))
+        token = root.find(".//{http://DescargaMasivaTerceros.gob.mx}AutenticaResult")
+        if token is None or not token.text:
+            raise SATRequestError("SAT authentication response did not include a token")
+
+        expires = root.find(
+            ".//{http://docs.oasis-open.org/wss/2004/01/"
+            "oasis-200401-wss-wssecurity-utility-1.0.xsd}Expires"
+        )
+        self._access_token = token.text
+        if expires is not None and expires.text:
+            self._access_token_expires = datetime.fromisoformat(
+                expires.text.rstrip("Z")
+            )
+        else:
+            self._access_token_expires = datetime.utcnow() + timedelta(minutes=4)
+        return self._access_token
+
+    def _build_authentication_request(self) -> str:
+        soap_ns = "http://schemas.xmlsoap.org/soap/envelope/"
+        wsse_ns = (
+            "http://docs.oasis-open.org/wss/2004/01/"
+            "oasis-200401-wss-wssecurity-secext-1.0.xsd"
+        )
+        wsu_ns = (
+            "http://docs.oasis-open.org/wss/2004/01/"
+            "oasis-200401-wss-wssecurity-utility-1.0.xsd"
+        )
+        dsig_ns = "http://www.w3.org/2000/09/xmldsig#"
+        sat_auth_ns = "http://DescargaMasivaTerceros.gob.mx"
+
+        envelope = etree.Element(
+            f"{{{soap_ns}}}Envelope",
+            nsmap={"s": soap_ns, "o": wsse_ns, "u": wsu_ns},
+        )
+        header = etree.SubElement(envelope, f"{{{soap_ns}}}Header")
+        security = etree.SubElement(
+            header,
+            f"{{{wsse_ns}}}Security",
+            {f"{{{soap_ns}}}mustUnderstand": "1"},
+        )
+        timestamp = etree.SubElement(security, f"{{{wsu_ns}}}Timestamp")
+        timestamp.set(f"{{{wsu_ns}}}Id", "_0")
+        created_at = datetime.utcnow()
+        expires_at = created_at + timedelta(minutes=5)
+        etree.SubElement(timestamp, f"{{{wsu_ns}}}Created").text = (
+            created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        )
+        etree.SubElement(timestamp, f"{{{wsu_ns}}}Expires").text = (
+            expires_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        )
+        binary_token = etree.SubElement(
+            security,
+            f"{{{wsse_ns}}}BinarySecurityToken",
+            ValueType=(
+                "http://docs.oasis-open.org/wss/2004/01/"
+                "oasis-200401-wss-x509-token-profile-1.0#X509v3"
+            ),
+            EncodingType=(
+                "http://docs.oasis-open.org/wss/2004/01/"
+                "oasis-200401-wss-soap-message-security-1.0#Base64Binary"
+            ),
+        )
+        binary_token.set(f"{{{wsu_ns}}}Id", "BinarySecurityToken")
+        binary_token.text = self.auth_agent.certificate_b64
+
+        signature = etree.SubElement(
+            security,
+            f"{{{dsig_ns}}}Signature",
+            nsmap={None: dsig_ns},
+        )
+        signed_info = etree.SubElement(signature, f"{{{dsig_ns}}}SignedInfo")
+        etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}CanonicalizationMethod",
+            Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#",
+        )
+        etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}SignatureMethod",
+            Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1",
+        )
+        reference = etree.SubElement(
+            signed_info,
+            f"{{{dsig_ns}}}Reference",
+            URI="#_0",
+        )
+        transforms = etree.SubElement(reference, f"{{{dsig_ns}}}Transforms")
+        etree.SubElement(
+            transforms,
+            f"{{{dsig_ns}}}Transform",
+            Algorithm="http://www.w3.org/2001/10/xml-exc-c14n#",
+        )
+        etree.SubElement(
+            reference,
+            f"{{{dsig_ns}}}DigestMethod",
+            Algorithm="http://www.w3.org/2000/09/xmldsig#sha1",
+        )
+        digest = hashlib.sha1(
+            etree.tostring(
+                timestamp,
+                method="c14n",
+                exclusive=True,
+                with_comments=False,
+            )
+        ).digest()
+        etree.SubElement(reference, f"{{{dsig_ns}}}DigestValue").text = (
+            base64.b64encode(digest).decode("utf-8")
+        )
+        signature_value = self.auth_agent.private_key.sign(
+            etree.tostring(
+                signed_info,
+                method="c14n",
+                exclusive=True,
+                with_comments=False,
+            ),
+            padding.PKCS1v15(),
+            hashes.SHA1(),
+        )
+        etree.SubElement(signature, f"{{{dsig_ns}}}SignatureValue").text = (
+            base64.b64encode(signature_value).decode("utf-8")
+        )
+        key_info = etree.SubElement(signature, f"{{{dsig_ns}}}KeyInfo")
+        security_ref = etree.SubElement(key_info, f"{{{wsse_ns}}}SecurityTokenReference")
+        etree.SubElement(
+            security_ref,
+            f"{{{wsse_ns}}}Reference",
+            ValueType=(
+                "http://docs.oasis-open.org/wss/2004/01/"
+                "oasis-200401-wss-x509-token-profile-1.0#X509v3"
+            ),
+            URI="#BinarySecurityToken",
+        )
+        body = etree.SubElement(envelope, f"{{{soap_ns}}}Body")
+        etree.SubElement(body, f"{{{sat_auth_ns}}}Autentica")
+        return etree.tostring(envelope, encoding="unicode", pretty_print=False)
+
     async def _make_soap_request_with_retry(
         self,
         soap_request: str,
@@ -302,6 +603,7 @@ class CFDIVerificationAgent:
         *,
         endpoint: Optional[str] = None,
         soap_action: Optional[str] = None,
+        authorization_token: Optional[str] = None,
     ) -> str:
         """
         Make SOAP request with retry logic.
@@ -323,6 +625,7 @@ class CFDIVerificationAgent:
                     soap_request,
                     endpoint=endpoint,
                     soap_action=soap_action,
+                    authorization_token=authorization_token,
                 )
 
             except SATRateLimitError as e:
@@ -355,6 +658,7 @@ class CFDIVerificationAgent:
         *,
         endpoint: Optional[str] = None,
         soap_action: Optional[str] = None,
+        authorization_token: Optional[str] = None,
     ) -> str:
         """
         Make SOAP request to SAT endpoint.
@@ -367,13 +671,17 @@ class CFDIVerificationAgent:
         """
 
         headers = {
-            "Content-Type": "text/xml; charset=utf-8",
+            "Content-Type": 'text/xml; charset="utf-8"',
+            "Accept": "text/xml",
+            "Cache-Control": "no-cache",
             "SOAPAction": soap_action
             or "http://DescargaMasivaTerceros.sat.gob.mx/IVerificaSolicitudDescargaService/VerificaSolicitudDescarga"
         }
+        if authorization_token:
+            headers["Authorization"] = f'WRAP access_token="{authorization_token}"'
         target_endpoint = endpoint or self.endpoint
 
-        timeout = aiohttp.ClientTimeout(total=30)
+        timeout = aiohttp.ClientTimeout(total=self.http_timeout_seconds)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             try:
@@ -392,8 +700,12 @@ class CFDIVerificationAgent:
                     return response_text
 
             except asyncio.TimeoutError:
-                logger.error("SAT request timeout")
-                raise SATRequestError("Request timeout (30s)")
+                logger.error(
+                    "SAT request timeout after %ss", self.http_timeout_seconds
+                )
+                raise SATRequestError(
+                    f"Request timeout ({self.http_timeout_seconds}s)"
+                )
 
             except aiohttp.ClientError as e:
                 logger.error(f"SAT client error: {e}")
@@ -423,6 +735,11 @@ class CFDIVerificationAgent:
                 ".//sat:VerificaSolicitudDescargaResult",
                 namespaces
             )
+            if result is None:
+                matches = root.xpath(
+                    "//*[local-name()='VerificaSolicitudDescargaResult']"
+                )
+                result = matches[0] if matches else None
 
             if result is None:
                 raise SATRequestError("No result element in response")
@@ -430,9 +747,18 @@ class CFDIVerificationAgent:
             # Extract fields
             cod_estatus = int(result.get("CodEstatus", "0"))
             mensaje = result.get("Mensaje", "")
-            codigo_estado = int(result.get("CodigoEstadoSolicitud", "0"))
-            estado_solicitud = result.get("EstadoSolicitud", "")
-            num_cfdis = int(result.get("NumeroCFDIs", "0"))
+            # SAT uses EstadoSolicitud (1-6) for processing state; CodigoEstadoSolicitud
+            # often mirrors CodEstatus (5000) and must not be used as estado enum.
+            estado_code_raw = result.get("EstadoSolicitud")
+            if estado_code_raw is None or str(estado_code_raw).strip() == "":
+                fallback = result.get("CodigoEstadoSolicitud", "0")
+                # CodigoEstadoSolicitud often mirrors CodEstatus (5000) — not estado enum.
+                if str(fallback).strip().isdigit() and int(fallback) >= 5000:
+                    codigo_estado = 0
+                else:
+                    codigo_estado = int(fallback or "0")
+            else:
+                codigo_estado = int(estado_code_raw or "0")
 
             # Handle error codes
             if not is_success(cod_estatus):
@@ -444,13 +770,32 @@ class CFDIVerificationAgent:
                 if cod_estatus == 5003:  # Rate limit
                     raise SATRateLimitError(mensaje)
 
-            # Extract package IDs
-            paquetes = []
-            ids_paquetes = result.find(".//sat:IdsPaquetes", namespaces)
-            if ids_paquetes is not None:
-                for string_elem in ids_paquetes.findall(".//sat:string", namespaces):
-                    if string_elem.text:
-                        paquetes.append(string_elem.text)
+                return {
+                    "cod_estatus": cod_estatus,
+                    "mensaje": mensaje,
+                    "codigo_estado": codigo_estado,
+                    "estado": "Error verificación",
+                    "estado_enum": None,
+                    "num_cfdis": 0,
+                    "paquetes": [],
+                    "is_final": False,
+                    "should_retry": bool(error_response.retry),
+                    "verify_failed": True,
+                }
+
+            num_cfdis = int(result.get("NumeroCFDIs", "0") or "0")
+
+            # Extract package IDs (text node and/or repeated IdsPaquetes elements)
+            paquetes: List[str] = []
+            for ids_paquetes in result.xpath(
+                ".//*[local-name()='IdsPaquetes']"
+            ):
+                text = (ids_paquetes.text or "").strip()
+                if text:
+                    paquetes.append(text)
+                for string_elem in ids_paquetes.xpath(".//*[local-name()='string']"):
+                    if string_elem.text and string_elem.text.strip():
+                        paquetes.append(string_elem.text.strip())
 
             # Determine estado
             try:
@@ -458,6 +803,10 @@ class CFDIVerificationAgent:
             except ValueError:
                 logger.warning(f"Unknown estado code: {codigo_estado}")
                 estado = None
+
+            estado_solicitud = (
+                estado.description_es if estado else str(estado_code_raw or "")
+            )
 
             return {
                 "cod_estatus": cod_estatus,
@@ -468,7 +817,8 @@ class CFDIVerificationAgent:
                 "num_cfdis": num_cfdis,
                 "paquetes": paquetes,
                 "is_final": estado.is_final if estado else False,
-                "should_retry": estado.should_retry if estado else False
+                "should_retry": estado.should_retry if estado else False,
+                "verify_failed": False,
             }
 
         except etree.XMLSyntaxError as e:
@@ -482,6 +832,13 @@ class CFDIVerificationAgent:
                 "sat": "http://DescargaMasivaTerceros.sat.gob.mx",
             }
             result = root.find(".//sat:SolicitaDescargaResult", namespaces)
+            if result is None:
+                matches = root.xpath(
+                    "//*[local-name()='SolicitaDescargaRecibidosResult' "
+                    "or local-name()='SolicitaDescargaEmitidosResult' "
+                    "or local-name()='SolicitaDescargaFolioResult']"
+                )
+                result = matches[0] if matches else None
             if result is None:
                 raise SATRequestError("No result element in response")
 
@@ -523,11 +880,27 @@ class CFDIVerificationAgent:
                     result = candidate
                     break
             if result is None:
+                matches = root.xpath(
+                    "//*[local-name()='RespuestaDescargaMasivaTercerosSalida' "
+                    "or local-name()='DescargaMasivaTercerosResult']"
+                )
+                result = matches[0] if matches else None
+            if result is None:
                 raise SATRequestError("No download result element in response")
 
-            cod_estatus = int(result.get("CodEstatus", "0"))
-            mensaje = result.get("Mensaje", "")
-            paquete_b64 = result.get("Paquete", "") or (result.text or "").strip()
+            header_nodes = root.xpath("//*[local-name()='respuesta']")
+            if header_nodes:
+                cod_estatus = int(header_nodes[0].get("CodEstatus", "0") or "0")
+                mensaje = header_nodes[0].get("Mensaje", "") or result.get("Mensaje", "")
+            else:
+                cod_estatus = int(result.get("CodEstatus", "0") or "0")
+                mensaje = result.get("Mensaje", "")
+
+            paquete_nodes = result.xpath(".//*[local-name()='Paquete']")
+            if paquete_nodes:
+                paquete_b64 = (paquete_nodes[0].text or "").strip()
+            else:
+                paquete_b64 = result.get("Paquete", "") or (result.text or "").strip()
 
             if not is_success(cod_estatus):
                 error_response = self.error_handler.handle_error(cod_estatus, mensaje)
@@ -574,12 +947,19 @@ class CFDIVerificationAgent:
             elapsed = time.time() - start_time
 
             # Check timeout
-            if elapsed > self.MAX_POLL_TIME:
-                logger.warning(f"Polling timeout after {elapsed:.1f}s ({attempts} attempts)")
-                raise SATRequestError(f"Polling timeout after {self.MAX_POLL_TIME}s")
+            if elapsed > self.poll_max_seconds:
+                logger.warning(
+                    "Polling timeout after %.1fs (%s attempts, max=%ss)",
+                    elapsed,
+                    attempts,
+                    self.poll_max_seconds,
+                )
+                raise SATRequestError(
+                    f"Polling timeout after {self.poll_max_seconds}s"
+                )
 
             # Wait before checking
-            await asyncio.sleep(self.POLL_INTERVAL)
+            await asyncio.sleep(self.poll_interval_seconds)
 
             # Check status
             result = await self.verify_solicitud(solicitud_id, rfc, poll_until_complete=False)
@@ -625,8 +1005,9 @@ class CFDIVerificationAgent:
             endpoint=self._download_endpoint(),
             soap_action=(
                 "http://DescargaMasivaTerceros.sat.gob.mx/"
-                "IDescargaMasivaTercerosService/PeticionDescargaMasivaTercerosEntrada"
+                "IDescargaMasivaTercerosService/Descargar"
             ),
+            authorization_token=await self._get_access_token(),
         )
         parsed = self._parse_download_package_response(response)
         parsed["package_id"] = package_id

@@ -471,7 +471,7 @@ class CFDIReport(Base):
     # Data source tracking
     origen = Column(
         String(50), nullable=True, index=True
-    )  # 'tocino' or 'csv' - tracks data source
+    )  # 'tocino', 'csv', 'sat', etc. - tracks data source
 
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -507,6 +507,67 @@ class CFDIReport(Base):
             "descripcion_concepto_principal": self.descripcion_concepto_principal,
             "created_at": self.created_at.isoformat() if self.created_at else None,
         }
+
+
+class BudgetCFDIIncomeLink(Base):
+    """Active/soft-deleted bridge from PSP-emitted CFDIs to budget real income."""
+
+    __tablename__ = "budget_cfdi_income_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    cfdi_report_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cfdi_reports.id", onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    budget_line_id = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    budget_version_id = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True,
+    )
+    tournament_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tournaments.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    phase = Column(String(200), nullable=True, index=True)
+    budget_concept_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_concepts.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    amount = Column(Numeric(18, 2), nullable=False, default=0)
+    income_date = Column(DateTime(timezone=True), nullable=False, index=True)
+    linked_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    source = Column(String(80), nullable=False, default="admin_ui")
+    metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    unlinked_at = Column(DateTime(timezone=True), nullable=True, index=True)
+    unlinked_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
 
 class AccountingImportRun(Base):
@@ -1042,6 +1103,7 @@ class BudgetConcept(Base):
     tournament_name = Column(String(200), nullable=False)
     concept_name = Column(String(200), nullable=False)
     concept_key = Column(String(200), nullable=False, index=True)
+    budget_direction = Column(String(20), nullable=False, default="expense", index=True)
     active = Column(Boolean, default=True, nullable=False, index=True)
     source = Column(String(80), nullable=False, default="manual")
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
@@ -1340,6 +1402,53 @@ class Empleado(Base):
                 self.actualizado_en.isoformat() if self.actualizado_en else None
             ),
         }
+
+
+class AccessControlRule(Base):
+    """Role/area access rule for SamChat module visibility and authorization."""
+
+    __tablename__ = "access_control_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    tool_key = Column(String(120), nullable=False, index=True)
+    path_pattern = Column(Text, nullable=True)
+    action_key = Column(String(40), nullable=False, default="ver", index=True)
+    role_key = Column(String(50), nullable=False, index=True)
+    area_key = Column(String(100), nullable=False, default="", index=True)
+    allowed = Column(Boolean, nullable=False, default=True)
+    active = Column(Boolean, nullable=False, default=True, index=True)
+    created_by_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True, index=True
+    )
+    updated_by_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True, index=True
+    )
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class AccessControlAuditLog(Base):
+    """Audit trail for superadmin access-control changes."""
+
+    __tablename__ = "access_control_audit_logs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    actor_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True, index=True
+    )
+    tool_key = Column(String(120), nullable=False, index=True)
+    action_key = Column(String(40), nullable=False, index=True)
+    role_key = Column(String(50), nullable=False, index=True)
+    area_key = Column(String(100), nullable=False, default="", index=True)
+    before_allowed = Column(Boolean, nullable=True)
+    after_allowed = Column(Boolean, nullable=False)
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
 
 
 class CuentaContable(Base):
@@ -1946,6 +2055,12 @@ class CuentaDeGastos(Base):
     empleado_id = Column(
         UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=False, index=True
     )
+    beneficiario_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     referencia_base = Column(Text, nullable=False, index=True)
     nombre = Column(
         Text, nullable=True
@@ -1978,6 +2093,9 @@ class CuentaDeGastos(Base):
 
     # Relationships
     empleado = relationship("Empleado", foreign_keys=[empleado_id], lazy="selectin")
+    beneficiario_empleado = relationship(
+        "Empleado", foreign_keys=[beneficiario_empleado_id], lazy="selectin"
+    )
     torneo = relationship("Tournament", foreign_keys=[torneo_id], lazy="selectin")
     documentos = relationship(
         "Documento", back_populates="cuenta_gastos", lazy="selectin"
@@ -2005,6 +2123,11 @@ class CuentaDeGastos(Base):
         return {
             "id": str(self.id),
             "empleado_id": str(self.empleado_id),
+            "beneficiario_empleado_id": (
+                str(self.beneficiario_empleado_id)
+                if self.beneficiario_empleado_id
+                else None
+            ),
             "referencia_base": self.referencia_base,
             "nombre": self.nombre,
             "estado": self.estado,

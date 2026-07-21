@@ -14,7 +14,7 @@ import time
 import asyncio
 import secrets
 from collections import deque
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from threading import Lock
@@ -76,6 +76,7 @@ from ..services.import_proveedores_service import (
 from ..services.import_runa_payroll_service import import_runa_payroll_workbook
 from ..services.tournament_phase_service import (
     get_tournament_etapas,
+    get_tournament_scope_labels,
     get_tournament_scope_options,
     tournament_scope_config_changed,
 )
@@ -129,6 +130,7 @@ from ..services.customer_success_audit import (
     build_customer_success_audit_report,
     is_superadmin_role,
 )
+from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
 from ..utils.receipt_bytes import (
     fetch_expense_ids_with_archivo_data,
@@ -155,6 +157,7 @@ from samchat.budgets.service import (
     build_budget_snapshot,
     bulk_save_budget_concepts,
     clear_budget_concept_scope_for_tournament,
+    create_budget_concept,
     create_budget_line,
     create_budget_version,
     ensure_budget_schema,
@@ -166,13 +169,18 @@ from samchat.budgets.service import (
     list_budget_lines,
     list_budget_tournament_commitments,
     list_budget_versions,
+    list_monthly_allocations_for_lines,
+    replace_budget_line_monthly_allocations,
+    replace_budget_line_monthly_plan,
     transition_budget_version,
     update_budget_line,
     update_budget_concept,
     update_budget_version_metadata,
+    validate_active_cuenta_contable_id,
 )
 from samchat.sam_inbox import build_sam_inbox_payload
 from devnous.sat.sat_handler import SATExpenseHandler
+from devnous.sat.sat_sync_service import SATSyncService
 from devnous.gastos.services.sat_catalog_service import (
     list_sat_catalogs,
     render_catalog_preview_rows,
@@ -386,6 +394,17 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "communications.whatsapp.read",
         ],
     },
+    "operaciones_presupuesto": {
+        "label": "Lectura de presupuestos - Alicia",
+        "base_role": "empleado",
+        "description": "Acceso de solo lectura reservado a Alicia; las modificaciones requieren superadmin.",
+        "permissions": [
+            "budgets.read",
+            "budgets.version.read",
+            "budgets.line.read",
+            "budgets.audit.read",
+        ],
+    },
     "finanzas": {
         "label": "Finanzas",
         "base_role": "finanzas",
@@ -481,78 +500,38 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
-_BUDGET_ROLE_ALLOW = {"admin", "finanzas", "superadmin", "super_admin"}
+_BUDGET_SUPER_ROLES = {"superadmin", "super_admin"}
+_BUDGET_VIEWER_EMAILS = {"azuniga@plataformasports.com"}
 
 
-def _budget_can(current_empleado: Empleado, *tokens: str) -> bool:
+def _budget_can_view(current_empleado: Empleado) -> bool:
     role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
-    if role in _BUDGET_ROLE_ALLOW:
+    if role in _BUDGET_SUPER_ROLES:
         return True
-    return any(has_permission(current_empleado, token) for token in tokens if token)
+    department = str(
+        getattr(current_empleado, "departamento", "") or ""
+    ).strip().lower()
+    email = str(getattr(current_empleado, "correo", "") or "").strip().lower()
+    return department.startswith("direcci") or email in _BUDGET_VIEWER_EMAILS
+
+
+def _budget_can_mutate(current_empleado: Empleado) -> bool:
+    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    return role in _BUDGET_SUPER_ROLES
 
 
 def _budget_access_map(current_empleado: Empleado) -> dict[str, bool]:
+    can_view = _budget_can_view(current_empleado)
+    can_mutate = _budget_can_mutate(current_empleado)
     return {
-        "read": _budget_can(
-            current_empleado,
-            "budgets.read",
-            "budgets.version.read",
-            "budgets.line.read",
-            "budgets.manage",
-            "budgets.*",
-        ),
-        "create": _budget_can(
-            current_empleado,
-            "budgets.create",
-            "budgets.version.create",
-            "budgets.manage",
-            "budgets.version.manage",
-            "budgets.*",
-        ),
-        "version_update": _budget_can(
-            current_empleado,
-            "budgets.update",
-            "budgets.version.update",
-            "budgets.manage",
-            "budgets.version.manage",
-            "budgets.*",
-        ),
-        "line_update": _budget_can(
-            current_empleado,
-            "budgets.update",
-            "budgets.line.update",
-            "budgets.manage",
-            "budgets.line.manage",
-            "budgets.*",
-        ),
-        "approve": _budget_can(
-            current_empleado,
-            "budgets.approve",
-            "budgets.version.approve",
-            "budgets.manage",
-            "budgets.version.manage",
-            "budgets.*",
-        ),
-        "freeze": _budget_can(
-            current_empleado,
-            "budgets.freeze",
-            "budgets.version.manage",
-            "budgets.manage",
-            "budgets.*",
-        ),
-        "audit_read": _budget_can(
-            current_empleado,
-            "budgets.audit.read",
-            "audit.logs.read",
-            "budgets.manage",
-            "budgets.*",
-        ),
-        "export": _budget_can(
-            current_empleado,
-            "budgets.export",
-            "budgets.manage",
-            "budgets.*",
-        ),
+        "read": can_view,
+        "create": can_mutate,
+        "version_update": can_mutate,
+        "line_update": can_mutate,
+        "approve": can_mutate,
+        "freeze": can_mutate,
+        "audit_read": can_view,
+        "export": can_view,
     }
 
 
@@ -751,7 +730,7 @@ def _build_effective_profile_preview(
         or _has_prefix("finance.solicitudes", "communications", "documents"),
         "operations": role_norm in {"coordinador", "admin", "superadmin", "super_admin"}
         or _has_prefix("operations"),
-        "budgets": role_norm in _BUDGET_ROLE_ALLOW
+        "budgets": role_norm in _BUDGET_SUPER_ROLES
         or _has_prefix("budgets", "executive"),
     }
     enabled_surfaces = [
@@ -977,41 +956,65 @@ def render_admin_navigation(
     subtitle: str = "Administración financiera y operativa",
 ) -> str:
     role_norm = (getattr(current_empleado, "rol", "") or "").strip().lower()
+    visible_tool_keys = set(getattr(current_empleado, "visible_tool_keys", set()) or set())
+    is_superadmin = role_norm in {"superadmin", "super_admin"}
+
+    def can_nav(tool_key: str) -> bool:
+        if is_superadmin:
+            return True
+        if visible_tool_keys:
+            return tool_key in visible_tool_keys
+        return True
+
     inicio_items = [
-        ("/admin/gastos", "Resumen", "dashboard"),
-        ("/admin/sam-inbox", "Sam Inbox", "sam_inbox"),
+        ("admin.gastos.dashboard", "/admin/gastos", "Resumen", "dashboard"),
+        ("admin.finanzas", "/admin/sam-inbox", "Sam Inbox", "sam_inbox"),
     ]
     finanzas_items = [
-        ("/admin/finanzas", "Finanzas", "finanzas"),
-        ("/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
-        ("/admin/gastos/sat", "e.firma SAT", "sat"),
-        ("/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
+        ("admin.finanzas", "/admin/finanzas", "Finanzas", "finanzas"),
+        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
+        ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
     ]
     catalogos_items = [
-        ("/admin/empleados", "Empleados", "empleados"),
-        ("/admin/perfiles", "Perfiles", "perfiles"),
-        ("/admin/rfc", "RFC", "rfc"),
-        ("/admin/cuentas-contables", "Cuentas", "cuentas"),
-        ("/admin/centros-costo", "Centros", "centros"),
-        ("/admin/proveedores-clientes", "Proveedores", "proveedores"),
-        ("/admin/torneos", "Torneos y proyectos", "torneos"),
+        ("admin.empleados", "/admin/empleados", "Empleados", "empleados"),
+        ("admin.perfiles", "/admin/perfiles", "Perfiles", "perfiles"),
+        ("admin.rfc", "/admin/rfc", "RFC", "rfc"),
+        ("admin.cuentas_contables", "/admin/cuentas-contables", "Cuentas", "cuentas"),
+        ("admin.centros_costo", "/admin/centros-costo", "Centros", "centros"),
+        ("admin.proveedores", "/admin/proveedores-clientes", "Proveedores", "proveedores"),
+        ("admin.torneos", "/admin/torneos", "Torneos y proyectos", "torneos"),
     ]
     avanzado_items = [
-        ("/admin/sports", "Sports", "sports"),
-        ("/admin/torneos/domain-alignment", "Alineación", "alineacion"),
-        ("/admin/presupuestos", "Presupuestos", "presupuestos"),
+        ("admin.torneos", "/admin/sports", "Sports", "sports"),
+        ("admin.torneos", "/admin/torneos/domain-alignment", "Alineación", "alineacion"),
+        ("presupuestos.ingresos", "/admin/presupuestos", "Presupuestos", "presupuestos"),
     ]
-    if role_norm in {"admin", "superadmin", "super_admin"}:
+    if not _budget_can_view(current_empleado):
+        avanzado_items = [
+            item for item in avanzado_items if item[3] != "presupuestos"
+        ]
+    elif role_norm not in {"admin", "superadmin", "super_admin"}:
+        avanzado_items = [
+            item for item in avanzado_items if item[3] == "presupuestos"
+        ]
+    if avanzado_items and (
+        role_norm in {"admin", "superadmin", "super_admin"}
+        or _budget_can_view(current_empleado)
+    ):
         avanzado_items.append(
-            ("/admin/customer-success/uso", "Customer Success", "customer_success")
+            ("admin.customer_success", "/admin/customer-success/uso", "Customer Success", "customer_success")
         )
     if role_norm in {"superadmin", "super_admin"}:
         avanzado_items.append(
-            ("/admin/customer-success/bitacora", "Bitácora", "customer_success_audit")
+            ("admin.customer_success", "/admin/customer-success/bitacora", "Bitácora", "customer_success_audit")
         )
+    inicio_items = [(href, label, key) for tool_key, href, label, key in inicio_items if can_nav(tool_key)]
+    finanzas_items = [(href, label, key) for tool_key, href, label, key in finanzas_items if can_nav(tool_key)]
+    catalogos_items = [(href, label, key) for tool_key, href, label, key in catalogos_items if can_nav(tool_key)]
+    avanzado_items = [(href, label, key) for tool_key, href, label, key in avanzado_items if can_nav(tool_key)]
     avanzado_keys = {key for _, _, key in avanzado_items}
     avanzado_open = active_area in avanzado_keys
-    is_superadmin = role_norm in {"superadmin", "super_admin"}
     impersonator_id = getattr(current_empleado, "impersonator_empleado_id", None)
     identity_link_html = ""
     if is_superadmin or impersonator_id:
@@ -1814,6 +1817,46 @@ def format_value(value) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M")
     return str(value)
+
+
+def _cfdi_origen_badge(origen: Optional[str]) -> str:
+    """Render persisted CFDI ingest source for admin fiscal views."""
+    normalized = (origen or "").strip().lower()
+    badges = {
+        "csv": ('CSV', "#2196F3"),
+        "sat": ('SAT', "#9333EA"),
+        "tocino": ('Tocino', "#4CAF50"),
+        "tocino_webhook": ('Tocino', "#4CAF50"),
+        "user_upload": ('Usuario', "#7E57C2"),
+        "coi_xlsx": ('COI', "#FF9800"),
+        "document_upload": ('Documento', "#009688"),
+    }
+    if normalized in badges:
+        label, color = badges[normalized]
+        return f'<span style="color: {color};">{label}</span>'
+    if not normalized:
+        return "-"
+    return f'<span style="color: #607D8B;">{escape(normalized)}</span>'
+
+
+def _cfdi_matches_origen_filter(
+    cfdi: Optional["CFDIReport"],
+    origen_filter: str,
+    *,
+    invoice_pending: bool = False,
+) -> bool:
+    """Match CFDI (or pending invoice) against admin origen query filter."""
+    normalized = (origen_filter or "").strip().lower()
+    cfdi_origen = (getattr(cfdi, "origen", None) or "").strip().lower()
+    if normalized == "tocino":
+        if invoice_pending and cfdi is None:
+            return True
+        return cfdi_origen in ("", "tocino", "tocino_webhook")
+    if normalized == "csv":
+        return cfdi_origen == "csv"
+    if normalized == "sat":
+        return cfdi_origen == "sat"
+    return True
 
 
 def is_valid_uuid(value: str) -> bool:
@@ -2715,6 +2758,8 @@ async def admin_dashboard(
     bi_scope: Optional[str] = Query(None),
 ) -> str:
     """Admin dashboard with statistics."""
+    visible_tool_keys = await visible_tools_for(session, current_empleado)
+    current_empleado.visible_tool_keys = visible_tool_keys
 
     # Get counts
     expenses_result = await session.execute(select(func.count(ExpenseReport.id)))
@@ -2732,13 +2777,20 @@ async def admin_dashboard(
         bi_scope_safe = ""
     bi_context_label = f"año={bi_year_safe or 'n/a'} · ámbito={bi_scope_safe or 'all'}"
 
-    hero_actions_html = """
-        <a href="/admin/gastos/expenses" class="button">Ver gastos</a>
-        <a href="/admin/gastos/invoices" class="button secondary">Ver facturas</a>
-        <a href="/admin/gastos/finance-training" class="button secondary">Dataset capacitación</a>
-        <a href="/admin/contabilidad/estado" class="button secondary">Estado contable</a>
-        <a href="/admin/nomina/prenomina" class="button secondary">Prenómina</a>
-    """
+    hero_actions = filter_cards_by_tools(
+        [
+            ("admin.gastos.expenses", "/admin/gastos/expenses", "Ver gastos", ""),
+            ("admin.gastos.invoices", "/admin/gastos/invoices", "Ver facturas", ""),
+            ("admin.gastos.finance_training", "/admin/gastos/finance-training", "Dataset capacitación", ""),
+            ("admin.contabilidad", "/admin/contabilidad/estado", "Estado contable", ""),
+            ("admin.nomina", "/admin/nomina/prenomina", "Prenómina", ""),
+        ],
+        visible_tool_keys,
+    )
+    hero_actions_html = "".join(
+        f'<a href="{href}" class="button {"secondary" if index else ""}">{escape(title)}</a>'
+        for index, (href, title, _description) in enumerate(hero_actions)
+    )
     hero_side_html = f"""
         <div class="eyebrow">Contexto BI</div>
         <div class="meta-grid">
@@ -2801,26 +2853,20 @@ async def admin_dashboard(
                         </div>
                     </div>
                     <div class="action-grid">
-                        <a href="/admin/finanzas" class="action-card">
-                            <strong>Cierre del mes</strong>
-                            <p>Prioriza pagos, COI, DIOT y pólizas del periodo activo.</p>
-                        </a>
-                        <a href="/admin/gastos/sin-cuenta-contable" class="action-card">
-                            <strong>Limpieza contable</strong>
-                            <p>Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI.</p>
-                        </a>
-                        <a href="/admin/contabilidad/estado" class="action-card">
-                            <strong>Estado contable</strong>
-                            <p>Resumen mensual de COI, auxiliar, banco y conciliación.</p>
-                        </a>
-                        <a href="/admin/gastos/expenses" class="action-card">
-                            <strong>Gastos</strong>
-                            <p>Tabla global de gastos, filtros operativos y exportaciones.</p>
-                        </a>
-                        <a href="/admin/gastos/invoices" class="action-card">
-                            <strong>Facturas</strong>
-                            <p>Seguimiento fiscal, CFDI y estado documental.</p>
-                        </a>
+                        {"".join(
+                            f'<a href="{href}" class="action-card"><strong>{escape(title)}</strong><p>{escape(description)}</p></a>'
+                            for href, title, description in filter_cards_by_tools(
+                                [
+                                    ("admin.finanzas", "/admin/finanzas", "Cierre del mes", "Prioriza pagos, COI, DIOT y pólizas del periodo activo."),
+                                    ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+                                    ("admin.contabilidad", "/admin/contabilidad/estado", "Estado contable", "Resumen mensual de COI, auxiliar, banco y conciliación."),
+                                    ("admin.gastos.expenses", "/admin/gastos/expenses", "Gastos", "Tabla global de gastos, filtros operativos y exportaciones."),
+                                    ("presupuestos.ingresos", "/admin/presupuestos", "Ingresos", "Vincula CFDI PSP a torneo, fase y partida para alimentar Ingreso real."),
+                                    ("admin.gastos.invoices", "/admin/gastos/invoices", "Facturas", "Seguimiento fiscal, CFDI y estado documental."),
+                                ],
+                                visible_tool_keys,
+                            )
+                        )}
                     </div>
                 </section>
             </div>
@@ -3770,7 +3816,7 @@ async def admin_invoices(
     has_error: Optional[bool] = Query(None),
     created_from: Optional[str] = Query(None),
     created_to: Optional[str] = Query(None),
-    origen: Optional[str] = Query(None),  # 'tocino', 'csv'
+    origen: Optional[str] = Query(None),  # 'tocino', 'csv', 'sat'
     current_empleado: Empleado = require_admin_finanzas(),
 ) -> str:
     """
@@ -3819,6 +3865,8 @@ async def admin_invoices(
             cfdi_conditions = []
             if origen == "csv":
                 cfdi_conditions.append(CFDIReport.origen == "csv")
+            elif origen == "sat":
+                cfdi_conditions.append(CFDIReport.origen == "sat")
             elif origen == "tocino":
                 cfdi_conditions.append(CFDIReport.origen == "tocino")
 
@@ -3839,9 +3887,14 @@ async def admin_invoices(
                 if invoice.nova_request_id
                 else None
             )
-            origen_display = (
-                '<span style="color: #4CAF50;">Tocino</span>' if cfdi else "-"
-            )
+            if origen and not _cfdi_matches_origen_filter(
+                cfdi, origen, invoice_pending=True
+            ):
+                continue
+            if cfdi:
+                origen_display = _cfdi_origen_badge(cfdi.origen)
+            else:
+                origen_display = "-"
 
             rows_html += f"""
             <tr>
@@ -3868,11 +3921,7 @@ async def admin_invoices(
             if cfdi.nova_request_id and cfdi.nova_request_id in invoice_nova_ids:
                 continue  # Already shown via invoice_reports
 
-            origen_display = (
-                '<span style="color: #2196F3;">CSV</span>'
-                if cfdi.origen == "csv"
-                else '<span style="color: #4CAF50;">Tocino</span>'
-            )
+            origen_display = _cfdi_origen_badge(cfdi.origen)
 
             rows_html += f"""
             <tr style="background-color: #f0f8ff;">
@@ -3898,6 +3947,7 @@ async def admin_invoices(
             1 for c in standalone_cfdis if c.origen == "tocino" or c.origen is None
         )
         csv_count = sum(1 for c in standalone_cfdis if c.origen == "csv")
+        sat_count = sum(1 for c in standalone_cfdis if c.origen == "sat")
 
         hero_actions_html = """
             <a href="/admin/gastos/invoices/export" class="button">Exportar CSV</a>
@@ -3946,6 +3996,7 @@ async def admin_invoices(
                     <section class="meta-grid">
                         <div class="meta-card"><span>Tocino</span><strong>{tocino_count}</strong><small>CFDI originados por flujo integrado.</small></div>
                         <div class="meta-card"><span>CSV</span><strong>{csv_count}</strong><small>CFDI importados manualmente.</small></div>
+                        <div class="meta-card"><span>SAT</span><strong>{sat_count}</strong><small>CFDI descargados vía e.firma SAT.</small></div>
                         <div class="meta-card"><span>Total visible</span><strong>{len(invoices) + len(standalone_cfdis)}</strong><small>Suma de invoice reports y CFDI standalone.</small></div>
                     </section>
                     <section class="surface">
@@ -3953,12 +4004,13 @@ async def admin_invoices(
                             <div>
                                 <div class="eyebrow">Origen</div>
                                 <h2>Lectura rápida</h2>
-                                <div class="section-note">Salta entre origen Tocino, CSV o la vista completa sin abandonar la consola.</div>
+                                <div class="section-note">Salta entre origen Tocino, CSV, SAT o la vista completa sin abandonar la consola.</div>
                             </div>
                         </div>
                         <div class="summary-links">
                             <a href="?origen=tocino">Tocino: {tocino_count}</a>
                             <a href="?origen=csv">CSV import: {csv_count}</a>
+                            <a href="?origen=sat">SAT: {sat_count}</a>
                             <a href="/admin/gastos/invoices">Ver todos</a>
                         </div>
                     </section>
@@ -4494,6 +4546,7 @@ def _sat_redirect_url(
     error_msg: Optional[str] = None,
     current_result: Optional[Dict[str, Any]] = None,
     cfdi_status_result: Optional[Dict[str, Any]] = None,
+    sync_result: Optional[str] = None,
 ) -> str:
     params: List[str] = []
     if success_msg:
@@ -4509,8 +4562,219 @@ def _sat_redirect_url(
             "cfdi_status_result="
             f"{quote(_encode_sat_result_payload(cfdi_status_result))}"
         )
+    if sync_result:
+        params.append(f"sync_result={quote(sync_result)}")
     suffix = f"?{'&'.join(params)}" if params else ""
     return f"/admin/gastos/sat{suffix}"
+
+
+def _sat_sync_run_trigger_label(trigger_source: Optional[str]) -> str:
+    mapping = {
+        "cron": "Cron programado",
+        "admin": "Admin UI",
+        "api": "API",
+    }
+    return mapping.get((trigger_source or "").strip().lower(), trigger_source or "—")
+
+
+def _sat_sync_run_status_style(status: Optional[str]) -> str:
+    normalized = (status or "").strip().lower()
+    if normalized == "success":
+        return "background:#dcfce7;color:#166534;"
+    if normalized in {"error", "quota_blocked"}:
+        return "background:#fee2e2;color:#991b1b;"
+    if normalized in {"processing", "skipped", "running"}:
+        return "background:#fef3c7;color:#92400e;"
+    return "background:#e2e8f0;color:#334155;"
+
+
+def _sat_sync_run_ingested_total(results: Optional[Any]) -> int:
+    if isinstance(results, dict):
+        return int(results.get("ingested_cfdis") or 0)
+    if not isinstance(results, list):
+        return 0
+    total = 0
+    for row in results:
+        if isinstance(row, dict):
+            total += int(row.get("ingested_cfdis") or 0)
+    return total
+
+
+def _sat_job_detail_url(run_id: Any) -> str:
+    return f"/admin/gastos/sat/jobs/{run_id}"
+
+
+def _sat_job_is_active(status: Optional[str]) -> bool:
+    return (status or "").strip().lower() == "running"
+
+
+def _format_sat_daily_sla_rows(rows: List[Any]) -> str:
+    if not rows:
+        return (
+            '<tr><td colspan="5" style="text-align:center;padding:24px;">'
+            "Sin datos de cobertura SAT en el rango seleccionado."
+            "</td></tr>"
+        )
+    html = ""
+    for row in rows:
+        day_label = escape(row.day.strftime("%Y-%m-%d"))
+        rec = "✓" if row.received_covered else "—"
+        issued = "✓" if row.issued_covered else "—"
+        status = escape(str(row.status or "—"))
+        html += f"""
+        <tr>
+            <td><strong>{day_label}</strong></td>
+            <td>{int(row.cfdis_in_db)}</td>
+            <td>{rec}</td>
+            <td>{issued}</td>
+            <td><span style="display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;{row.status_style}">{status}</span></td>
+        </tr>
+        """
+    return html
+
+
+def _format_sat_open_solicitud_rows(rows: List[Any]) -> str:
+    if not rows:
+        return (
+            '<tr><td colspan="9" style="text-align:center;padding:24px;">'
+            "No hay solicitudes SAT abiertas. Las descargas completadas desaparecen de esta bandeja."
+            "</td></tr>"
+        )
+    html = ""
+    for row in rows:
+        quota_note = " (cuota)" if row.quota_blocked else ""
+        verified = (
+            row.last_verified_at.strftime("%Y-%m-%d %H:%M UTC")
+            if row.last_verified_at
+            else "—"
+        )
+        sat_num = "—" if row.sat_num_cfdis is None else str(int(row.sat_num_cfdis))
+        html += f"""
+        <tr>
+            <td><code>{escape(row.rfc)}</code></td>
+            <td>{escape(row.direction)}{quota_note}</td>
+            <td><code>{escape(row.solicitud_id)}</code></td>
+            <td>{escape(row.estado_sat)}</td>
+            <td>{int(row.age_hours)}h</td>
+            <td><code>{escape(row.fecha_inicial.strftime('%Y-%m-%d'))}</code> → <code>{escape(row.fecha_final.strftime('%Y-%m-%d'))}</code></td>
+            <td>{sat_num}</td>
+            <td>{int(row.ingested_cfdis)}</td>
+            <td title="{escape(row.last_error_message)}">{escape(verified)}</td>
+        </tr>
+        """
+    return html
+
+
+def _format_sat_direction_health_rows(summaries: List[Any]) -> str:
+    if not summaries:
+        return (
+            '<tr><td colspan="6" style="text-align:center;padding:24px;">'
+            "Sin estado de sync persistido todavía."
+            "</td></tr>"
+        )
+    html = ""
+    for item in summaries:
+        quota = "—"
+        if item.quota_blocked and item.quota_blocked_until:
+            quota = item.quota_blocked_until.strftime("%Y-%m-%d %H:%M UTC")
+        elif item.quota_blocked:
+            quota = "Activa"
+        cursor = (
+            item.cursor_fecha_emision.strftime("%Y-%m-%d %H:%M")
+            if item.cursor_fecha_emision
+            else "—"
+        )
+        last_ok = (
+            item.last_successful_sync_at.strftime("%Y-%m-%d %H:%M UTC")
+            if item.last_successful_sync_at
+            else "—"
+        )
+        html += f"""
+        <tr>
+            <td><code>{escape(item.rfc)}</code></td>
+            <td>{escape(item.direction)}</td>
+            <td>{int(item.open_jobs)}</td>
+            <td>{escape(quota)}</td>
+            <td>{escape(cursor)}</td>
+            <td>{escape(last_ok)}</td>
+        </tr>
+        """
+    return html
+
+
+def _format_sat_daily_coverage_rows(rows: List[Any]) -> str:
+    if not rows:
+        return (
+            '<tr><td colspan="4" style="text-align:center;padding:24px;">'
+            "Sin CFDIs SAT con fecha de emisión en el rango seleccionado. "
+            "Ejecuta Backfill o Actualizar para iniciar la descarga."
+            "</td></tr>"
+        )
+    html = ""
+    for row in rows:
+        day_label = escape(row.day.strftime("%Y-%m-%d"))
+        status = escape(str(row.status or "—"))
+        status_style = row.status_style
+        html += f"""
+        <tr>
+            <td><strong>{day_label}</strong></td>
+            <td>{int(row.sat_emission_count)}</td>
+            <td>{int(row.ingested_emission_count)}</td>
+            <td><span style="display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;{status_style}">{status}</span></td>
+        </tr>
+        """
+    return html
+
+
+def _format_sat_sync_run_history_rows(runs: List[Any]) -> str:
+    if not runs:
+        return (
+            '<tr><td colspan="9" style="text-align:center;padding:24px;">'
+            "Sin ejecuciones registradas todavía. Las corridas del cron y los botones "
+            "Backfill/Actualizar aparecerán aquí."
+            "</td></tr>"
+        )
+    rows_html = ""
+    for run in runs:
+        started = (
+            run.started_at.strftime("%Y-%m-%d %H:%M UTC")
+            if getattr(run, "started_at", None)
+            else "—"
+        )
+        finished = (
+            run.finished_at.strftime("%Y-%m-%d %H:%M UTC")
+            if getattr(run, "finished_at", None)
+            else "—"
+        )
+        duration = "—"
+        if getattr(run, "started_at", None) and getattr(run, "finished_at", None):
+            seconds = int((run.finished_at - run.started_at).total_seconds())
+            if seconds >= 0:
+                duration = f"{seconds}s"
+        ingested = _sat_sync_run_ingested_total(getattr(run, "results", None))
+        status = escape(str(getattr(run, "status", "") or "—"))
+        status_style = _sat_sync_run_status_style(getattr(run, "status", None))
+        summary = escape(str(getattr(run, "summary_message", "") or ""))
+        run_id = getattr(run, "id", None)
+        detail_link = (
+            f'<a href="{escape(_sat_job_detail_url(run_id))}">Ver job</a>'
+            if run_id
+            else "—"
+        )
+        rows_html += f"""
+        <tr>
+            <td>{escape(started)}</td>
+            <td>{escape(finished)}</td>
+            <td>{escape(duration)}</td>
+            <td>{escape(str(getattr(run, "mode", "") or "—"))}</td>
+            <td>{escape(_sat_sync_run_trigger_label(getattr(run, "trigger_source", None)))}</td>
+            <td><span style="display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;{status_style}">{status}</span></td>
+            <td>{ingested}</td>
+            <td title="{summary}">{summary[:120] + ("…" if len(summary) > 120 else "")}</td>
+            <td>{detail_link}</td>
+        </tr>
+        """
+    return rows_html
 
 
 def _format_sat_status_result(result: Optional[Dict[str, Any]]) -> str:
@@ -6901,7 +7165,7 @@ async def admin_tournaments(
                     </div>
                 </div>
             </div>
-
+            
             <div class="tournaments-list">
                 <h2 style="margin-bottom: 20px;">📋 Proyectos ({len(tournaments)})</h2>
                 {"<p style='color: #666;'>No hay proyectos aún. Usa una de las rutas de creación arriba.</p>" if not tournaments else ""}
@@ -7793,7 +8057,72 @@ async def get_tournament_etapas_api(
     tournament = result.scalar_one_or_none()
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    return JSONResponse(content={"etapas": get_tournament_etapas(tournament)})
+    scope_labels = get_tournament_scope_labels(tournament)
+    etapas = get_tournament_etapas(tournament)
+    return JSONResponse(
+        content={
+            "etapas": etapas,
+            "categorias": get_tournament_scope_options(tournament)["categorias"],
+            "scope_labels": scope_labels or etapas,
+        }
+    )
+
+
+@router.get("/api/torneos/{tournament_id}/partidas-presupuestales")
+async def get_tournament_partidas_presupuestales_api(
+    tournament_id: UUIDType,
+    fase: Optional[str] = Query(None),
+    session: AsyncSession = Depends(get_db_session),
+):
+    """Return active partidas presupuestales for proyecto/subproyecto dropdowns."""
+    from fastapi.responses import JSONResponse
+
+    from samchat.budgets.service import budget_concept_matches_fase, list_budget_concepts
+
+    result = await session.execute(
+        select(Tournament).where(Tournament.id == tournament_id)
+    )
+    tournament = result.scalar_one_or_none()
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    concepts = await list_budget_concepts(
+        session,
+        tournament_id=str(tournament_id),
+        active_only=True,
+        limit=5000,
+    )
+    clean_fase = str(fase or "").strip()
+    if clean_fase:
+        concepts = [
+            item for item in concepts if budget_concept_matches_fase(item, clean_fase)
+        ]
+
+    partidas = []
+    for item in concepts:
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        applicable_keys = sorted(
+            {
+                str(key).strip()
+                for key in (
+                    list(metadata.get("applicable_phase_keys") or [])
+                    + list(metadata.get("applicable_subproject_keys") or [])
+                )
+                if str(key).strip()
+            }
+        )
+        partidas.append(
+            {
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("concept_name") or ""),
+                "cuenta_contable_codigo": item.get("cuenta_contable_codigo"),
+                "cuenta_contable_nombre": item.get("cuenta_contable_nombre"),
+                "global": budget_concept_matches_fase(item, None) and not applicable_keys,
+                "applicable_keys": applicable_keys,
+            }
+        )
+    partidas.sort(key=lambda entry: str(entry.get("label") or "").lower())
+    return JSONResponse(content={"partidas": partidas})
 
 
 # RFC Configuration Management Routes
@@ -8006,10 +8335,10 @@ async def admin_rfc(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "rfc", subtitle="Configuración fiscal reutilizable para flujos internos, Telegram y administración.")}
-
+            
             <h1>Gestión de RFC</h1>
             <p class="subtitle">Configura los RFC disponibles para selección en Telegram</p>
-
+            
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Configuración RFC</h2>
                 <form id="rfcForm" method="POST" action="/admin/rfc/create">
@@ -8099,7 +8428,7 @@ async def admin_rfc(
                     <button type="submit" class="btn btn-primary">Crear RFC</button>
                 </form>
             </div>
-
+            
             <div class="rfc-list">
                 <h2 style="margin-bottom: 20px;">📋 Configuraciones RFC ({len(rfc_configs)})</h2>
                 {"<p style='color: #666;'>No hay RFC configurados aún. Crea el primero usando el formulario arriba.</p>" if not rfc_configs else ""}
@@ -8144,7 +8473,7 @@ async def admin_rfc(
                                 {'Desactivar' if rfc.active else 'Activar'}
                             </button>
                         </form>
-                        <form method="POST" action="/admin/rfc/delete/{rfc.id}" style="display: inline;"
+                        <form method="POST" action="/admin/rfc/delete/{rfc.id}" style="display: inline;" 
                               onsubmit="return confirm('¿Estás seguro de eliminar esta configuración RFC?');">
                             <button type="submit" class="btn btn-danger btn-small">🗑️ Eliminar</button>
                         </form>
@@ -8590,7 +8919,7 @@ async def admin_empleados(
         text(
             """
             SELECT id, nombre, correo, rol
-            FROM empleados
+            FROM empleados 
             WHERE activo = TRUE
             ORDER BY nombre
         """
@@ -8782,11 +9111,11 @@ async def admin_empleados(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "empleados", subtitle="Catálogo de empleados internos, permisos y vinculación operativa.")}
-
+            
             <h1>Gestión de Empleados</h1>
             <p class="subtitle">Administra el catálogo de empleados</p>
             {success_html}
-
+            
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Empleado</h2>
                 <form method="POST" action="/admin/empleados/create">
@@ -8850,7 +9179,7 @@ async def admin_empleados(
                     <button type="submit" class="btn btn-primary">Crear Empleado</button>
                 </form>
             </div>
-
+            
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Empleados ({len(empleados)})</h2>
                 <div class="search-box">
@@ -10734,8 +11063,8 @@ async def admin_perfiles_unassign(
         )
 
 
-@router.get("/admin/presupuestos", response_class=HTMLResponse)
-async def admin_presupuestos(
+@router.get("/admin/presupuestos-legacy", response_class=HTMLResponse)
+async def admin_presupuestos_legacy(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
@@ -10774,6 +11103,14 @@ async def admin_presupuestos(
         )
         if selected_version
         else []
+    )
+    line_monthly_map = (
+        await list_monthly_allocations_for_lines(
+            session,
+            line_ids=[str(line.get("id") or "") for line in selected_lines if line.get("id")],
+        )
+        if selected_lines
+        else {}
     )
     budget_concepts = await list_budget_concepts(
         session,
@@ -11567,6 +11904,30 @@ async def admin_presupuestos(
         if line_drilldown.get("active")
         else '<div style="color:#64748b;">Selecciona un concepto, proveedor, fase, entidad, responsable o cuenta final desde los breakdowns para abrir un drilldown ejecutivo sobre la misma versión.</div>'
     )
+
+    _month_short = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
+
+    def _render_monthly_budget_inputs(line_id: str) -> str:
+        monthly = line_monthly_map.get(str(line_id or ""), {})
+        disabled = "" if access.get("line_update") else " disabled"
+        cells = []
+        for month in range(1, 13):
+            amount = float(monthly.get(month, 0) or 0)
+            label = _month_short[month - 1]
+            cells.append(
+                f'<label style="display:grid;gap:2px;font-size:10px;color:#64748b;">'
+                f"{escape(label)}"
+                f'<input type="number" step="0.01" min="0" name="month_{month}" value="{amount:.2f}"'
+                f' style="width:100%;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:11px;"{disabled}>'
+                f"</label>"
+            )
+        return (
+            '<div style="margin-top:8px;">'
+            '<div style="font-size:11px;font-weight:700;color:#475569;margin-bottom:4px;">Distribución mensual</div>'
+            f'<div style="display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:6px;">{"".join(cells)}</div>'
+            "</div>"
+        )
+
     line_rows = "".join(
         f"""
         <tr>
@@ -11583,6 +11944,7 @@ async def admin_presupuestos(
                     <input type="text" name="owner_name" value="{escape(str(line.get('owner_name') or ''))}" placeholder="Responsable" {'disabled' if not access.get("line_update") else ''}>
                     <input type="text" name="priority" value="{escape(str(line.get('priority') or ''))}" placeholder="Prioridad" {'disabled' if not access.get("line_update") else ''}>
                     <input type="number" step="0.01" min="0" name="budget_amount" value="{float(line.get('budget_amount') or 0):.2f}" placeholder="Monto" {'disabled' if not access.get("line_update") else ''}>
+                    {_render_monthly_budget_inputs(str(line.get('id') or ''))}
                     <textarea name="criteria_note" rows="2" placeholder="Criterio" {'disabled' if not access.get("line_update") else ''}>{escape(str(line.get('criteria_note') or ''))}</textarea>
                     <textarea name="observations" rows="2" placeholder="Observaciones" {'disabled' if not access.get("line_update") else ''}>{escape(str(line.get('observations') or ''))}</textarea>
                     {f'<button type="submit" style="width:max-content;">Guardar línea</button>' if access.get("line_update") else '<div style="color:#64748b;font-size:12px;">Sin permiso para editar líneas.</div>'}
@@ -12279,7 +12641,10 @@ async def admin_presupuestos_import_default(
 
 def _presupuestos_redirect_url(
     *,
+    edition_year: Optional[int] = None,
     version_id: Optional[str] = None,
+    tournament_key: Optional[str] = None,
+    phase_filter: Optional[str] = None,
     success_msg: Optional[str] = None,
     error_msg: Optional[str] = None,
     drill_dimension: Optional[str] = None,
@@ -12287,20 +12652,23 @@ def _presupuestos_redirect_url(
     drill_tournament: Optional[str] = None,
     drill_document: Optional[str] = None,
 ) -> str:
-    params: list[str] = []
-    for key, value in [
-        ("version_id", version_id),
-        ("success_msg", success_msg),
-        ("error_msg", error_msg),
-        ("drill_dimension", drill_dimension),
-        ("drill_value", drill_value),
-        ("drill_tournament", drill_tournament),
-        ("drill_document", drill_document),
-    ]:
-        if value:
-            params.append(f"{key}={quote(str(value))}")
-    query = f"?{'&'.join(params)}" if params else ""
-    return f"/admin/presupuestos{query}"
+    from .admin_budget_ui import budget_dashboard_url, budget_tournament_detail_url
+
+    if tournament_key:
+        return budget_tournament_detail_url(
+            tournament_key,
+            edition_year=edition_year,
+            version_id=version_id,
+            phase_filter=phase_filter,
+            success_msg=success_msg,
+            error_msg=error_msg,
+        )
+    return budget_dashboard_url(
+        edition_year=edition_year,
+        version_id=version_id,
+        success_msg=success_msg,
+        error_msg=error_msg,
+    )
 
 
 @router.post("/admin/presupuestos/conceptos/bulk-save")
@@ -12552,21 +12920,27 @@ async def admin_presupuestos_export_xlsx(
 async def admin_presupuestos_create_version(
     version_name: str = Form(...),
     notes: Optional[str] = Form(None),
+    edition_year: Optional[int] = Form(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
     _require_budget_access(current_empleado, "create")
     try:
+        resolved_year = int(edition_year) if edition_year else date.today().year
         version = await create_budget_version(
             session,
-            edition_year=2026,
+            edition_year=resolved_year,
             version_name=version_name,
             notes=notes,
             created_by_empleado_id=str(current_empleado.id),
         )
         msg = f"Borrador creado: {version.get('version_name') or version_name}"
         return RedirectResponse(
-            url=f"/admin/presupuestos?version_id={quote(str(version.get('id') or ''))}&success_msg={quote(msg)}",
+            url=_presupuestos_redirect_url(
+                edition_year=resolved_year,
+                version_id=str(version.get("id") or ""),
+                success_msg=msg,
+            ),
             status_code=303,
         )
     except Exception as exc:
@@ -12665,9 +13039,11 @@ async def admin_presupuestos_update_version(
 async def admin_presupuestos_create_line(
     version_id: UUIDType,
     budget_concept_id: Optional[str] = Form(None),
+    tournament_id: Optional[str] = Form(None),
     tournament_code: Optional[str] = Form(None),
     tournament_name: Optional[str] = Form(None),
     concept_name: Optional[str] = Form(None),
+    cuenta_contable_id: Optional[str] = Form(None),
     account_code_final: Optional[str] = Form(None),
     phase: Optional[str] = Form(None),
     owner_name: Optional[str] = Form(None),
@@ -12676,20 +13052,42 @@ async def admin_presupuestos_create_line(
     reference_amount: Optional[float] = Form(0),
     criteria_note: Optional[str] = Form(None),
     observations: Optional[str] = Form(None),
+    line_direction: Optional[str] = Form(None),
+    tournament_key: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
     _require_budget_access(current_empleado, "line_update")
     try:
+        concept_id_for_line = budget_concept_id
+        account_code_for_line = account_code_final
+        if not concept_id_for_line and str(tournament_id or "").strip():
+            created_concept = await create_budget_concept(
+                session,
+                tournament_id=str(tournament_id or "").strip(),
+                concept_name=concept_name or "",
+                scope_labels=[phase] if str(phase or "").strip() else [],
+                cuenta_contable_id=cuenta_contable_id,
+                budget_direction=line_direction,
+                actor_empleado_id=str(current_empleado.id),
+                source="admin_budget_detail_add_line",
+                commit=False,
+            )
+            concept_id_for_line = str(created_concept.get("id") or "")
+            account_code_for_line = (
+                str(created_concept.get("cuenta_contable_codigo") or "").strip()
+                or account_code_for_line
+            )
         line = await create_budget_line(
             session,
             version_id=str(version_id),
             actor_empleado_id=str(current_empleado.id),
-            budget_concept_id=budget_concept_id,
+            budget_concept_id=concept_id_for_line,
             tournament_code=tournament_code,
             tournament_name=tournament_name,
             concept_name=concept_name or "",
-            account_code_final=account_code_final,
+            line_direction=line_direction,
+            account_code_final=account_code_for_line,
             phase=phase,
             owner_name=owner_name,
             priority=priority,
@@ -12700,7 +13098,11 @@ async def admin_presupuestos_create_line(
         )
         msg = f"Línea creada: {line.get('concept_name') or concept_name}"
         return RedirectResponse(
-            url=f"/admin/presupuestos?version_id={quote(str(version_id))}&success_msg={quote(msg)}",
+            url=_presupuestos_redirect_url(
+                version_id=str(version_id),
+                tournament_key=tournament_key or tournament_code,
+                success_msg=msg,
+            ),
             status_code=303,
         )
     except Exception as exc:
@@ -12720,11 +13122,16 @@ async def admin_presupuestos_create_line(
 
 @router.post("/admin/presupuestos/lineas/{line_id}/update")
 async def admin_presupuestos_update_line(
+    request: Request,
     line_id: UUIDType,
     version_id: str = Form(...),
+    tournament_key: Optional[str] = Form(None),
+    edition_year: Optional[int] = Form(None),
+    phase_filter: Optional[str] = Form(None),
     budget_concept_id: Optional[str] = Form(None),
     concept_name: Optional[str] = Form(None),
     account_code_final: Optional[str] = Form(None),
+    cuenta_contable_id: Optional[str] = Form(None),
     phase: Optional[str] = Form(None),
     owner_name: Optional[str] = Form(None),
     priority: Optional[str] = Form(None),
@@ -12736,29 +13143,143 @@ async def admin_presupuestos_update_line(
 ):
     _require_budget_access(current_empleado, "line_update")
     try:
-        line = await update_budget_line(
-            session,
-            line_id=str(line_id),
-            actor_empleado_id=str(current_empleado.id),
-            updates={
-                key: value
-                for key, value in {
-                    "budget_concept_id": budget_concept_id,
-                    "concept_name": concept_name,
-                    "account_code_final": account_code_final,
-                    "phase": phase,
-                    "owner_name": owner_name,
-                    "priority": priority,
-                    "budget_amount": budget_amount,
-                    "criteria_note": criteria_note,
-                    "observations": observations,
-                }.items()
-                if value is not None
-            },
-        )
+        form = await request.form()
+        cuenta_contable_id_raw = str(
+            cuenta_contable_id or form.get("cuenta_contable_id") or ""
+        ).strip()
+        account_code_from_form = str(
+            account_code_final or form.get("account_code_final") or ""
+        ).strip()
+        concept_cuenta_update: Optional[str] = None
+        if "cuenta_contable_id" in form or cuenta_contable_id is not None:
+            if cuenta_contable_id_raw:
+                concept_cuenta_update = await validate_active_cuenta_contable_id(
+                    session,
+                    cuenta_contable_id_raw,
+                )
+                account_row = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT codigo
+                            FROM cuentas_contables
+                            WHERE CAST(id AS text) = :cuenta_contable_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"cuenta_contable_id": concept_cuenta_update},
+                    )
+                ).mappings().first()
+                account_code_from_form = str(
+                    (account_row or {}).get("codigo") or account_code_from_form
+                ).strip()
+
+        line_level_updates = {
+            key: value
+            for key, value in {
+                "budget_concept_id": budget_concept_id,
+                "concept_name": concept_name,
+                "account_code_final": account_code_from_form or None,
+                "phase": phase,
+                "owner_name": owner_name,
+                "priority": priority,
+                "budget_amount": budget_amount,
+                "criteria_note": criteria_note,
+                "observations": observations,
+            }.items()
+            if value is not None
+        }
+        if concept_cuenta_update and "account_code_final" not in line_level_updates:
+            line_level_updates["account_code_final"] = account_code_from_form or None
+        monthly_plan: dict[int, dict[str, float]] = {}
+        for key in form.keys():
+            key_str = str(key)
+            if key_str.startswith("month_") and (
+                key_str.endswith("_expense") or key_str.endswith("_income")
+            ):
+                try:
+                    parts = key_str.split("_")
+                    month_number = int(parts[1])
+                    field = parts[2]
+                    monthly_plan.setdefault(month_number, {})
+                    monthly_plan[month_number][
+                        "budget_expense_amount"
+                        if field == "expense"
+                        else "expected_income_amount"
+                    ] = float(form.get(key) or 0)
+                except (TypeError, ValueError, IndexError):
+                    continue
+            elif key_str.startswith("month_"):
+                try:
+                    month_number = int(key_str.split("_", 1)[1])
+                    monthly_plan.setdefault(month_number, {})
+                    monthly_plan[month_number]["budget_expense_amount"] = float(
+                        form.get(key) or 0
+                    )
+                except (TypeError, ValueError):
+                    continue
+        if not line_level_updates and not monthly_plan:
+            raise ValueError("No budget line updates were provided")
+
+        if line_level_updates:
+            line = await update_budget_line(
+                session,
+                line_id=str(line_id),
+                actor_empleado_id=str(current_empleado.id),
+                updates=line_level_updates,
+            )
+        else:
+            current = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT l.id, l.concept_name, l.budget_concept_id, v.status AS version_status
+                        FROM budget_lines l
+                        JOIN budget_versions v ON v.id = l.budget_version_id
+                        WHERE l.id = :line_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"line_id": str(line_id)},
+                )
+            ).mappings().first()
+            if not current:
+                raise ValueError("Budget line not found")
+            from samchat.budgets.service import _editable_version_status
+
+            if not _editable_version_status(current.get("version_status")):
+                raise ValueError("Only draft or reforecast versions allow line edits")
+            line = dict(current)
+
+        if concept_cuenta_update:
+            concept_id = str(line.get("budget_concept_id") or "").strip()
+            if concept_id:
+                await update_budget_concept(
+                    session,
+                    concept_id=concept_id,
+                    cuenta_contable_id=concept_cuenta_update,
+                    cuenta_contable_provided=True,
+                    actor_empleado_id=str(current_empleado.id),
+                    commit=True,
+                )
+
+        if monthly_plan:
+            await replace_budget_line_monthly_plan(
+                session,
+                budget_line_id=str(line_id),
+                plan=monthly_plan,
+                actor_empleado_id=str(current_empleado.id),
+            )
+            await session.commit()
         msg = f"Línea actualizada: {line.get('concept_name') or ''}"
         return RedirectResponse(
-            url=f"/admin/presupuestos?version_id={quote(version_id)}&success_msg={quote(msg)}",
+            url=_presupuestos_redirect_url(
+                edition_year=edition_year,
+                version_id=version_id,
+                tournament_key=tournament_key,
+                phase_filter=phase_filter,
+                success_msg=msg,
+            ),
             status_code=303,
         )
     except Exception as exc:
@@ -12772,7 +13293,13 @@ async def admin_presupuestos_update_line(
             },
         )
         return RedirectResponse(
-            url=f"/admin/presupuestos?version_id={quote(version_id)}&error_msg={quote(_OPERATION_GENERIC_ERROR)}",
+            url=_presupuestos_redirect_url(
+                edition_year=edition_year,
+                version_id=version_id,
+                tournament_key=tournament_key,
+                phase_filter=phase_filter,
+                error_msg=_OPERATION_GENERIC_ERROR,
+            ),
             status_code=303,
         )
 
@@ -13014,7 +13541,7 @@ async def edit_empleado_form(
         text(
             """
             SELECT id, nombre, correo, rol
-            FROM empleados
+            FROM empleados 
             WHERE activo = TRUE AND id != :empleado_id
             ORDER BY nombre
         """
@@ -13800,11 +14327,11 @@ async def admin_cuentas_contables(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "cuentas", subtitle="Plan de cuentas y clasificación contable base para gastos, pólizas y conciliación.")}
-
+            
             <h1>Gestión de Cuentas Contables</h1>
             <p class="subtitle">Administra el catálogo de cuentas contables</p>
             {bi_context_html}
-
+            
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Cuenta Contable</h2>
                 <form method="POST" action="/admin/cuentas-contables/create{bi_query_suffix}">
@@ -13838,7 +14365,7 @@ async def admin_cuentas_contables(
                     <button type="submit" class="btn btn-primary">Crear Cuenta</button>
                 </form>
             </div>
-
+            
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Cuentas Contables ({len(cuentas)})</h2>
                 {"<p style='color: #666;'>No hay cuentas contables registradas aún.</p>" if not cuentas else ""}
@@ -15118,10 +15645,10 @@ async def carga_masiva_cuentas_contables_form(
             {_CONFIG_PANEL_BACK_LINK_HTML}
             <h1>📥 Carga Masiva de Cuentas Contables</h1>
             <p class="subtitle">Importar cuentas contables desde archivo CSV o XLSX (Balanza)</p>
-
+            
             {'<div class="alert alert-success">✅ ' + success_msg + '</div>' if success_msg else ''}
             {'<div class="alert alert-error">❌ ' + error_msg + '</div>' if error_msg else ''}
-
+            
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -15167,13 +15694,13 @@ async def carga_masiva_cuentas_contables_form(
                     <li>Se ignoran filas vacías</li>
                 </ul>
             </div>
-
+            
             <form method="POST" action="/admin/cuentas-contables/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV o XLSX:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv,.xlsx" required>
                 </div>
-
+                
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar Cuentas Contables</button>
                     <a href="/admin/cuentas-contables" class="btn btn-secondary">⬅️ Volver</a>
@@ -15448,10 +15975,10 @@ async def admin_centros_costo(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "centros", subtitle="Centros de costo alineados al control contable y operativo.")}
-
+            
             <h1>Gestión de Centros de Costo</h1>
             <p class="subtitle">Administra el catálogo de centros de costo</p>
-
+            
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Centro de Costo</h2>
                 <form method="POST" action="/admin/centros-costo/create">
@@ -15472,7 +15999,7 @@ async def admin_centros_costo(
                     <button type="submit" class="btn btn-primary">Crear Centro de Costo</button>
                 </form>
             </div>
-
+            
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Centros de Costo ({len(centros)})</h2>
                 {"<p style='color: #666;'>No hay centros de costo registrados aún.</p>" if not centros else ""}
@@ -15943,13 +16470,13 @@ async def admin_proveedores_clientes(
         <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "proveedores", subtitle="Catálogo comercial y operativo para proveedores, clientes y operadores regionales.")}
-
+            
             <h1>Proveedores, Operadores y Clientes</h1>
             <p class="subtitle">Administra el catálogo de proveedores, operadores y clientes</p>
-
+            
             {success_html}
             {error_html}
-
+            
             <div class="filters-section">
                 <h2 style="margin-bottom: 15px;">🔍 Buscar y Filtrar</h2>
                 <form method="GET" action="/admin/proveedores-clientes">
@@ -15981,7 +16508,7 @@ async def admin_proveedores_clientes(
                     </div>
                 </form>
             </div>
-
+            
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Proveedor/Cliente</h2>
                 <form method="POST" action="/admin/proveedores-clientes/create">
@@ -16038,7 +16565,7 @@ async def admin_proveedores_clientes(
                     <button type="submit" class="btn btn-primary">Crear Proveedor/Cliente</button>
                 </form>
             </div>
-
+            
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Proveedores, Operadores y Clientes ({len(proveedores)})</h2>
                 {"<p style='color: #666;'>No hay proveedores/clientes registrados aún.</p>" if not proveedores else ""}
@@ -16452,9 +16979,9 @@ async def edit_proveedor_cliente_form(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "proveedores", subtitle="Edición puntual del catálogo comercial.")}
-
+            
             <h1>Editar Proveedor/Cliente</h1>
-
+            
             <form method="POST" action="/admin/proveedores-clientes/update/{proveedor_id}">
                 <div class="form-row">
                     <div class="form-group">
@@ -16817,10 +17344,10 @@ async def carga_masiva_proveedores_clientes_form(
             {_CONFIG_PANEL_BACK_LINK_HTML}
             <h1>📥 Carga Masiva de Proveedores/Clientes</h1>
             <p class="subtitle">Importar proveedores y clientes desde archivo CSV o XLSX tipo RFC</p>
-
+            
             {f'<div class="alert alert-success">✅ {escape(success_msg)}</div>' if success_msg else ''}
             {f'<div class="alert alert-error">❌ {escape(error_msg)}</div>' if error_msg else ''}
-
+            
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -16899,12 +17426,12 @@ async def carga_masiva_proveedores_clientes_form(
                     <li>Para XLSX RFC: se detectan columnas tipo <span class="code">BENEFICIARIO</span>, <span class="code">BANCOS</span>, <span class="code">CUENTA</span>, <span class="code">CLABE</span></li>
                     <li>Se ignoran filas vacías</li>
                 </ul>
-
+                
                 <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 6px;">
                     <a href="/admin/proveedores-clientes/plantilla.csv" class="btn btn-primary" style="text-decoration: none; display: inline-block; margin-bottom: 10px;">⬇️ Descargar plantilla CSV</a>
                     <p style="margin: 0; color: #555; font-size: 14px;">Usa esta plantilla para evitar errores de columnas.</p>
                 </div>
-
+                
                 <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
                     <h3 style="margin-top: 0; color: #856404;">⚠️ Reglas de Validación</h3>
                     <ul>
@@ -16915,7 +17442,7 @@ async def carga_masiva_proveedores_clientes_form(
                         <li><strong>activo</strong>: Por defecto es "true" si no se especifica</li>
                     </ul>
                 </div>
-
+                
                 <div style="margin-top: 20px; padding: 15px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 6px;">
                     <h3 style="margin-top: 0; color: #155724;">ℹ️ Nota Importante</h3>
                     <p style="margin: 0; color: #155724;">
@@ -16925,13 +17452,13 @@ async def carga_masiva_proveedores_clientes_form(
                     </p>
                 </div>
             </div>
-
+            
             <form method="POST" action="/admin/proveedores-clientes/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV o XLSX:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv,.xlsx" required>
                 </div>
-
+                
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar Proveedores/Clientes</button>
                     <a href="/admin/proveedores-clientes" class="btn btn-secondary">⬅️ Volver</a>
@@ -17288,10 +17815,10 @@ async def carga_masiva_cfdis_form(
         <div class="container">
             <h1>📥 Carga Masiva de CFDIs</h1>
             <p class="subtitle">Importar CFDIs emitidos desde archivo CSV</p>
-
+            
             {'<div class="alert alert-success">✅ ' + success_msg + '</div>' if success_msg else ''}
             {'<div class="alert alert-error">❌ ' + error_msg + '</div>' if error_msg else ''}
-
+            
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -17302,13 +17829,13 @@ async def carga_masiva_cfdis_form(
                     <li>Se ignoran filas vacías y filas con UUID inválido o duplicado en el mismo CSV</li>
                 </ul>
             </div>
-
+            
             <form method="POST" action="/admin/gastos/cfdis/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv" required>
                 </div>
-
+                
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar CFDIs</button>
                     <a href="/admin/gastos/invoices" class="btn btn-secondary">⬅️ Volver</a>
@@ -17740,6 +18267,7 @@ async def carga_masiva_cfdis_post(
         created_count = 0
         updated_count = 0
         skipped_count = 0
+        sat_protected_count = 0
         truncated_fields_count = 0
         invalid_uuid_count = 0
         duplicate_uuid_count = 0
@@ -17830,6 +18358,9 @@ async def carga_masiva_cfdis_post(
                             conceptos_data["_csv_unmapped_columns"] = row_unmapped
 
                     if existing_cfdi:
+                        if existing_cfdi.origen == "sat":
+                            sat_protected_count += 1
+                            continue
                         # Update existing record
                         if "fecha" in mapped_cols:
                             existing_cfdi.fecha = parse_date(get_col("fecha"))
@@ -18147,6 +18678,10 @@ async def carga_masiva_cfdis_post(
                 warnings.append(f"{invalid_uuid_count} UUIDs inválidos")
             if duplicate_uuid_count > 0:
                 warnings.append(f"{duplicate_uuid_count} UUIDs duplicados en CSV")
+            if sat_protected_count > 0:
+                warnings.append(
+                    f"{sat_protected_count} CFDIs protegidos por ingest SAT (sin cambios)"
+                )
 
             if warnings:
                 success_msg += " Advertencias: " + ", ".join(warnings) + "."
@@ -18206,6 +18741,7 @@ async def admin_sat_dashboard(
     current_empleado: Empleado = require_admin_finanzas(),
 ) -> str:
     sat_handler = SATExpenseHandler()
+    sync_service = SATSyncService()
     success_msg = (request.query_params.get("success_msg") or "").strip()
     error_msg = (request.query_params.get("error_msg") or "").strip()
     current_result = _decode_sat_result_payload(
@@ -18219,6 +18755,64 @@ async def admin_sat_dashboard(
 
     credentials_status = await sat_handler.get_credentials_status(session)
     credentials = credentials_status.get("credentials")
+    sync_states = await sync_service.get_sync_states(
+        session, rfc=credentials.rfc if credentials else None
+    )
+    recent_sync_runs = await sync_service.get_recent_sync_runs(session, limit=50)
+    sync_run_rows = _format_sat_sync_run_history_rows(recent_sync_runs)
+    daily_sla_html = ""
+    open_solicitud_html = ""
+    direction_health_html = ""
+    coverage_rfc = ""
+    if credentials and credentials.rfc:
+        from devnous.sat.sat_sync_health import (
+            get_daily_sla_rows,
+            get_direction_health_summaries,
+            get_open_solicitudes,
+        )
+
+        coverage_rfc = (credentials.rfc or "").strip()
+        daily_sla_html = _format_sat_daily_sla_rows(
+            await get_daily_sla_rows(session, rfc=coverage_rfc, days=30)
+        )
+        open_solicitud_html = _format_sat_open_solicitud_rows(
+            await get_open_solicitudes(session, rfc=coverage_rfc, limit=30)
+        )
+        direction_health_html = _format_sat_direction_health_rows(
+            await get_direction_health_summaries(session, rfc=coverage_rfc)
+        )
+    else:
+        daily_sla_html = (
+            '<tr><td colspan="5" style="text-align:center;padding:24px;">'
+            "Configura e.firma SAT para ver cobertura y SLA."
+            "</td></tr>"
+        )
+        open_solicitud_html = daily_sla_html.replace("colspan=\"5\"", "colspan=\"9\"")
+        direction_health_html = daily_sla_html.replace("colspan=\"5\"", "colspan=\"6\"")
+    sla_hours_label = os.getenv("SAT_EMISSION_SLA_HOURS", "24")
+    now_utc = datetime.utcnow()
+    quota_banner_html = ""
+    for st in sync_states:
+        if st.quota_blocked_until and st.quota_blocked_until > now_utc:
+            quota_banner_html = f"""
+            <div class="status-banner error">
+                <strong>Cuota SAT (5002):</strong>
+                {escape(st.rfc)} / {escape(st.direction)} bloqueado hasta
+                {escape(st.quota_blocked_until.strftime('%Y-%m-%d %H:%M UTC'))}.
+                {escape(st.last_error_message or '')}
+            </div>
+            """
+            break
+
+    sync_result_raw = (request.query_params.get("sync_result") or "").strip()
+    sync_result_html = ""
+    if sync_result_raw:
+        try:
+            sync_payload = json.loads(urlsafe_b64decode(sync_result_raw + "==").decode("utf-8"))
+            sync_result_html = f'<div class="status-banner success"><strong>Último sync:</strong> {escape(json.dumps(sync_payload, ensure_ascii=False)[:1200])}</div>'
+        except Exception:
+            sync_result_html = ""
+
     current_request_id = ""
     recent_requests: List[Dict[str, Any]] = []
 
@@ -18379,6 +18973,8 @@ async def admin_sat_dashboard(
             )}
             <div class="stack">
                 {alerts_html}
+                {quota_banner_html}
+                {sync_result_html}
                 <nav class="sat-tabs" aria-label="Pestañas SAT">
                     <a class="sat-tab active" href="#efirma-sat">e.firma SAT</a>
                     <a class="sat-tab" href="#descarga-sat">Descarga masiva</a>
@@ -18391,6 +18987,141 @@ async def admin_sat_dashboard(
                 <section class="surface">
                     <div class="section-head"><div><div class="eyebrow">Credenciales</div><h2>Estado de e.firma</h2><div class="section-note">Se reutiliza la credencial SAT activa del ambiente actual.</div></div></div>
                     {cred_detail_html}
+                </section>
+                <section class="surface" id="sync-programado">
+                    <div class="section-head">
+                        <div>
+                            <div class="eyebrow">Sync programado</div>
+                            <h2>Backfill junio 2026 y sync diario</h2>
+                            <div class="section-note">
+                                Sync completo 2×/día vía <code>POST /ingress/sat-cfdi-sync</code>.
+                                Open jobs cada hora vía <code>POST /ingress/sat-cfdi-open-jobs</code>
+                                (<code>scripts/run_sat_open_jobs.sh</code>).
+                                RFC activo: <code>{escape(coverage_rfc or "—")}</code>.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="hero-actions" style="margin-bottom:16px;">
+                        <form method="POST" action="/admin/gastos/sat/sync" style="display:inline-block;margin-right:8px;">
+                            <input type="hidden" name="mode" value="june_2026_backfill">
+                            <button type="submit" class="button primary">Backfill Junio 2026</button>
+                        </form>
+                        <form method="POST" action="/admin/gastos/sat/sync" style="display:inline-block;margin-right:8px;">
+                            <input type="hidden" name="mode" value="auto">
+                            <button type="submit" class="button secondary">Actualizar ahora</button>
+                        </form>
+                        <span class="section-note" style="display:inline-block;margin-left:8px;">
+                            Las descargas SAT corren en segundo plano; se abrirá la página del job.
+                        </span>
+                    </div>
+                    <div class="section-head" style="margin-top:4px;">
+                        <div>
+                            <div class="eyebrow">Salud por dirección</div>
+                            <h3>Recibidos + emitidos (obligatorio)</h3>
+                            <div class="section-note">
+                                Ambas direcciones deben estar al día. Solicitudes abiertas &gt;72h se reclaman
+                                automáticamente para recreación en la siguiente corrida.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>RFC</th>
+                                    <th>Dirección</th>
+                                    <th>Abiertas</th>
+                                    <th>Cuota hasta</th>
+                                    <th>Cursor emisión</th>
+                                    <th>Último sync OK</th>
+                                </tr>
+                            </thead>
+                            <tbody>{direction_health_html}</tbody>
+                        </table>
+                    </div>
+                    <div class="section-head" style="margin-top:24px;">
+                        <div>
+                            <div class="eyebrow">Solicitudes abiertas</div>
+                            <h3>Bandeja operativa</h3>
+                            <div class="section-note">
+                                Solicitudes SAT aún no <strong>Terminada</strong>. Revisa edad, estado SAT y
+                                <code>num_cfdis</code> reportado vs ingeridos.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>RFC</th>
+                                    <th>Dirección</th>
+                                    <th>Solicitud</th>
+                                    <th>Estado SAT</th>
+                                    <th>Edad</th>
+                                    <th>Ventana</th>
+                                    <th>SAT CFDIs</th>
+                                    <th>Ingeridos</th>
+                                    <th>Última verificación</th>
+                                </tr>
+                            </thead>
+                            <tbody>{open_solicitud_html}</tbody>
+                        </table>
+                    </div>
+                    <div class="section-head" style="margin-top:24px;">
+                        <div>
+                            <div class="eyebrow">SLA emisión</div>
+                            <h3>Cobertura diaria (últimos 30 días)</h3>
+                            <div class="section-note">
+                                <strong>CFDIs en DB</strong> por fecha de emisión.
+                                <strong>Rec./Emit.</strong> = solicitud <em>Terminada</em> cubriendo ese día.
+                                Tras {escape(sla_hours_label)}h sin cobertura ni CFDIs →
+                                <strong>Pendiente cobertura</strong> o <strong>Hueco</strong>.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Día (emisión)</th>
+                                    <th>CFDIs en DB</th>
+                                    <th>Recibidos</th>
+                                    <th>Emitidos</th>
+                                    <th>Estado SLA</th>
+                                </tr>
+                            </thead>
+                            <tbody>{daily_sla_html}</tbody>
+                        </table>
+                    </div>
+                    <div class="section-head" style="margin-top:24px;">
+                        <div>
+                            <div class="eyebrow">Historial</div>
+                            <h3>Ejecuciones recientes</h3>
+                            <div class="section-note">
+                                Incluye corridas del cron (<code>run_sat_cfdi_sync.sh</code>),
+                                botones Backfill/Actualizar y otros triggers del endpoint
+                                <code>/ingress/sat-cfdi-sync</code>.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="table-shell">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Inicio</th>
+                                    <th>Fin</th>
+                                    <th>Duración</th>
+                                    <th>Modo</th>
+                                    <th>Origen</th>
+                                    <th>Estado</th>
+                                    <th>CFDIs</th>
+                                    <th>Resultado</th>
+                                    <th>Job</th>
+                                </tr>
+                            </thead>
+                            <tbody>{sync_run_rows}</tbody>
+                        </table>
+                    </div>
                 </section>
                 <section class="surface" id="efirma-sat">
                     <div class="section-head"><div><div class="eyebrow">Pestaña e.firma SAT</div><h2>Cargar archivos de firma electrónica</h2><div class="section-note">Carga RFC, certificado `.cer` o `.cert`, llave `.key` y password.</div></div></div>
@@ -18473,6 +19204,246 @@ async def admin_sat_dashboard(
     </body>
     </html>
     """
+
+
+@router.post("/admin/gastos/sat/sync")
+async def admin_sat_scheduled_sync(
+    mode: str = Form("auto"),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    from devnous.sat.sat_background_runner import enqueue_scheduled_sync
+
+    normalized = (mode or "auto").strip().lower()
+    try:
+        run = await enqueue_scheduled_sync(
+            session,
+            mode=normalized,
+            trigger_source="admin",
+        )
+        return RedirectResponse(
+            url=_sat_job_detail_url(run.id),
+            status_code=303,
+        )
+    except RuntimeError:
+        return RedirectResponse(
+            url=_sat_redirect_url(
+                error_msg="Ya hay un job SAT en ejecución. Espera a que termine o revisa su estado."
+            ),
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("Admin SAT scheduled sync enqueue failed")
+        return RedirectResponse(
+            url=_sat_redirect_url(error_msg=f"No se pudo iniciar SAT sync: {str(exc)[:300]}"),
+            status_code=303,
+        )
+
+
+@router.get("/admin/gastos/sat/jobs/{run_id}", response_class=HTMLResponse)
+async def admin_sat_job_status_page(
+    run_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> str:
+    from devnous.sat.sat_background_runner import get_sat_job
+
+    run = await get_sat_job(session, run_id)
+    if run is None:
+        return _render_admin_error_page(
+            title="Job SAT no encontrado",
+            message="No existe un job con ese identificador.",
+            detail="Verifica el enlace desde Ejecuciones recientes o vuelve al panel SAT.",
+            return_href="/admin/gastos/sat",
+            return_label="Volver a SAT",
+        )
+
+    status = (run.status or "unknown").strip().lower()
+    status_style = _sat_sync_run_status_style(status)
+    ingested = _sat_sync_run_ingested_total(run.results)
+    started = run.started_at.strftime("%Y-%m-%d %H:%M UTC") if run.started_at else "—"
+    finished = run.finished_at.strftime("%Y-%m-%d %H:%M UTC") if run.finished_at else "—"
+    duration = "—"
+    if run.started_at and run.finished_at:
+        seconds = int((run.finished_at - run.started_at).total_seconds())
+        if seconds >= 0:
+            duration = f"{seconds}s"
+    summary = escape(str(run.summary_message or ""))
+    results_json = escape(json.dumps(run.results or {}, ensure_ascii=False, indent=2))
+    refresh_meta = (
+        '<meta http-equiv="refresh" content="3">'
+        if _sat_job_is_active(status)
+        else ""
+    )
+    status_note = (
+        "El job sigue en ejecución. Esta página se actualiza cada 3 segundos."
+        if _sat_job_is_active(status)
+        else "Job finalizado."
+    )
+    status_banner_class = "active" if _sat_job_is_active(status) else "done"
+    nav = render_admin_navigation(current_empleado, "sat", subtitle="Job SAT en segundo plano")
+    return f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="utf-8">
+        <title>Job SAT {escape(str(run_id))}</title>
+        {refresh_meta}
+        <style>
+            {_admin_workspace_styles("1240px")}
+            .job-status-banner {{
+                border-radius:18px;
+                padding:14px 16px;
+                border:1px solid transparent;
+                font-size:14px;
+                line-height:1.55;
+                margin-bottom:16px;
+            }}
+            .job-status-banner.active {{
+                background:#eff6ff;
+                border-color:#bfdbfe;
+                color:#1e40af;
+            }}
+            .job-status-banner.done {{
+                background:#f8fafc;
+                border-color:#e2e8f0;
+                color:#475569;
+            }}
+            .table-shell {{
+                overflow:auto;
+                border:1px solid var(--shell-line);
+                border-radius:16px;
+                background:#fff;
+            }}
+            .table-shell table {{
+                width:100%;
+                border-collapse:collapse;
+            }}
+            .table-shell th,
+            .table-shell td {{
+                text-align:left;
+                padding:14px 16px;
+                border-bottom:1px solid #e2e8f0;
+                font-size:14px;
+                line-height:1.5;
+                vertical-align:top;
+            }}
+            .table-shell th {{
+                width:180px;
+                color:#64748b;
+                font-size:11px;
+                text-transform:uppercase;
+                letter-spacing:.1em;
+                background:#f8fafc;
+                font-weight:800;
+            }}
+            .table-shell td {{
+                background:#fff;
+                color:#0f172a;
+            }}
+            .table-shell tr:last-child th,
+            .table-shell tr:last-child td {{
+                border-bottom:none;
+            }}
+            .table-shell code {{
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+                font-size:12px;
+                background:#f1f5f9;
+                color:#0f172a;
+                padding:3px 7px;
+                border-radius:6px;
+                word-break:break-all;
+            }}
+            .section-head h3 {{
+                margin:0;
+                font-size:1rem;
+                letter-spacing:-.02em;
+                color:#0f172a;
+            }}
+            .job-payload {{
+                background:#0f172a;
+                color:#e2e8f0;
+                padding:16px 18px;
+                border-radius:12px;
+                overflow:auto;
+                max-height:420px;
+                font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+                font-size:12px;
+                line-height:1.55;
+                margin:0;
+                border:1px solid #1e293b;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {nav}
+            <div class="stack">
+                <section class="surface">
+                    <div class="section-head">
+                        <div>
+                            <div class="eyebrow">SAT background job</div>
+                            <h2>Estado del job</h2>
+                        </div>
+                        <div class="hero-actions">
+                            <a class="button secondary" href="/admin/gastos/sat">Volver a SAT</a>
+                            <a class="button secondary" href="{escape(_sat_job_detail_url(run_id))}">Actualizar</a>
+                        </div>
+                    </div>
+                    <div class="job-status-banner {status_banner_class}">{escape(status_note)}</div>
+                    <div class="table-shell">
+                        <table>
+                            <tbody>
+                                <tr><th>Job ID</th><td><code>{escape(str(run_id))}</code></td></tr>
+                                <tr><th>Modo</th><td>{escape(str(run.mode or "—"))}</td></tr>
+                                <tr><th>Origen</th><td>{escape(_sat_sync_run_trigger_label(run.trigger_source))}</td></tr>
+                                <tr><th>Estado</th><td><span style="display:inline-flex;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:800;{status_style}">{escape(status)}</span></td></tr>
+                                <tr><th>Inicio</th><td>{escape(started)}</td></tr>
+                                <tr><th>Fin</th><td>{escape(finished)}</td></tr>
+                                <tr><th>Duración</th><td>{escape(duration)}</td></tr>
+                                <tr><th>CFDIs</th><td>{ingested}</td></tr>
+                                <tr><th>Resultado</th><td>{summary or "—"}</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="section-head" style="margin-top:24px;">
+                        <div><div class="eyebrow">Detalle</div><h3>Payload</h3></div>
+                    </div>
+                    <pre class="job-payload">{results_json}</pre>
+                </section>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@router.get("/admin/gastos/sat/jobs/{run_id}/status")
+async def admin_sat_job_status_json(
+    run_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    from devnous.sat.sat_background_runner import get_sat_job
+
+    run = await get_sat_job(session, run_id)
+    if run is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=404, detail="SAT job not found")
+    return {
+        "id": str(run.id),
+        "mode": run.mode,
+        "trigger_source": run.trigger_source,
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "summary_message": run.summary_message,
+        "ingested_cfdis": _sat_sync_run_ingested_total(run.results),
+        "results": run.results,
+        "active": _sat_job_is_active(run.status),
+    }
 
 
 @router.post("/admin/gastos/sat/credentials")
@@ -18824,45 +19795,35 @@ async def admin_sat_process_request(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
 ):
-    sat_handler = SATExpenseHandler()
+    from devnous.sat.sat_background_runner import enqueue_process_download
+
     try:
-        expense = None
-        expense_id_clean = (expense_id or "").strip()
-        if expense_id_clean:
-            expense = await session.get(ExpenseReport, UUIDType(expense_id_clean))
-        result = await sat_handler.process_download_request(
+        run = await enqueue_process_download(
             session,
             solicitud_id=(solicitud_id or "").strip(),
-            expense=expense,
+            expense_id=(expense_id or "").strip() or None,
+            trigger_source="admin",
         )
-        process_result = result.get("result") or {}
-        verification = process_result.get("verification") or {}
-        payload = {
-            "solicitud_id": (solicitud_id or "").strip(),
-            "expense_id": expense_id_clean,
-            "reference": getattr(expense, "numero_referencia", "") if expense else "",
-            "employee": getattr(getattr(expense, "empleado", None), "nombre", "") if expense else "",
-            "fecha_inicial": "",
-            "fecha_final": "",
-            "estado": verification.get("estado") or result.get("status") or "—",
-            "num_cfdis": verification.get("num_cfdis", ""),
-            "num_paquetes": len(process_result.get("packages") or []),
-            "ingested_cfdis": process_result.get("ingested_cfdis", ""),
-            "message": "; ".join(process_result.get("warnings") or []) or result.get("message") or "",
-            "source": "manual",
-        }
+        return RedirectResponse(
+            url=_sat_job_detail_url(run.id),
+            status_code=303,
+        )
+    except RuntimeError:
         return RedirectResponse(
             url=_sat_redirect_url(
-                success_msg=result.get("message") if result.get("status") in {"success", "warning"} else None,
-                error_msg=result.get("message") if result.get("status") not in {"success", "warning"} else None,
-                current_result=payload,
+                error_msg="Ya hay un job SAT en ejecución. Espera a que termine o revisa su estado."
             ),
             status_code=303,
         )
-    except Exception as exc:
+    except ValueError as exc:
+        return RedirectResponse(
+            url=_sat_redirect_url(error_msg=str(exc)),
+            status_code=303,
+        )
+    except Exception:
         await session.rollback()
         logger.exception(
-            "Unexpected error processing SAT request",
+            "Unexpected error enqueueing SAT process job",
             extra={
                 "solicitud_id": (solicitud_id or "").strip(),
                 "expense_id": (expense_id or "").strip(),
@@ -19523,6 +20484,12 @@ async def gastos_sin_cuenta_contable(
                 else "Falta CFDI"
             )
         )
+        cfdi_origen_display = (
+            _cfdi_origen_badge(gasto.cfdi_report.origen)
+            if gasto.cfdi_report
+            else "-"
+        )
+
         cfdi_match_html = f"""
             <div class="cfdi-selector" style="min-width:280px; position:relative;">
                 <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:6px;">Vinculación CFDI</div>
@@ -19556,7 +20523,7 @@ async def gastos_sin_cuenta_contable(
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">
                         {escape(suggestion.reason)}
                     </div>
-                    <button class="btn-accept-suggestion"
+                    <button class="btn-accept-suggestion" 
                             data-gasto-id="{gasto.id}"
                             data-cuenta-id="{suggestion.cuenta_contable_id}"
                             data-cuenta-codigo="{escape(suggestion.cuenta_codigo)}"
@@ -19722,6 +20689,7 @@ async def gastos_sin_cuenta_contable(
             <td>${gasto.gasto_cantidad:,.2f}</td>
             <td>{metodo_pago_safe}</td>
             <td>{documento_ref_safe}</td>
+            <td>{cfdi_origen_display}</td>
             <td>{cfdi_match_html}</td>
             <td style="min-width: 420px;">
                 {tax_summary_html}
@@ -19731,12 +20699,12 @@ async def gastos_sin_cuenta_contable(
                     <div class="cuenta-selector" {preselect_data}>
                         <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cargo gasto</div>
                         {main_assigned_html}
-                        <input type="text"
-                               class="account-search"
+                        <input type="text" 
+                               class="account-search" 
                                data-gasto-id="{gasto.id}"
                                data-target="main"
                                data-existing-id="{escape(str(gasto.cuenta_contable_id or ''))}"
-                               placeholder="Buscar o escribir cuenta del gasto..."
+                               placeholder="Buscar o escribir cuenta del gasto..." 
                                autocomplete="off"
                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
                         <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
@@ -19745,12 +20713,12 @@ async def gastos_sin_cuenta_contable(
                     <div class="cuenta-selector" {contra_preselect_data}>
                         <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Contrapartida</div>
                         {contra_assigned_html}
-                        <input type="text"
-                               class="account-search"
+                        <input type="text" 
+                               class="account-search" 
                                data-gasto-id="{gasto.id}"
                                data-target="contra"
                                data-existing-id="{escape(str(gasto.contra_cuenta_contable_id or ''))}"
-                               placeholder="Buscar cuenta origen del dinero..."
+                               placeholder="Buscar cuenta origen del dinero..." 
                                autocomplete="off"
                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
                         <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
@@ -19779,7 +20747,7 @@ async def gastos_sin_cuenta_contable(
                 </div>
             </td>
             <td>
-                <button class="btn-asignar"
+                <button class="btn-asignar" 
                         data-gasto-id="{gasto.id}"
                         style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                     Guardar limpieza contable
@@ -20072,25 +21040,26 @@ async def gastos_sin_cuenta_contable(
                                     <th>Monto</th>
                                     <th>Método Pago</th>
                                     <th>Documento</th>
+                                    <th>Origen factura</th>
                                     <th>Vinculación CFDI</th>
                                     <th>Configuración contable</th>
                                     <th>Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 40px;">No hay gastos pendientes de limpieza contable</td></tr>'}
+                                {rows_html if rows_html else '<tr><td colspan="15" style="text-align: center; padding: 40px;">No hay gastos pendientes de limpieza contable</td></tr>'}
                             </tbody>
                         </table>
                     </div>
                 </section>
             </div>
         </div>
-
+        
         <script>
             const cuentasContables = {cuentas_json};
             const suggestions = {suggestions_json};
             const cfdiOptions = {cfdi_options_json};
-
+            
             // Pre-select high confidence suggestions on page load
             document.addEventListener('DOMContentLoaded', function() {{
                 document.querySelectorAll('.cuenta-selector[data-preselect-id]').forEach(selector => {{
@@ -20100,16 +21069,16 @@ async def gastos_sin_cuenta_contable(
                     const preId = selector.getAttribute('data-preselect-id');
                     const preCodigo = selector.getAttribute('data-preselect-codigo');
                     const preNombre = selector.getAttribute('data-preselect-nombre');
-
+                    
                     const hiddenInput = selector.querySelector('input[type="hidden"]');
-
+                    
                     searchInput.value = `${{preCodigo}} - ${{preNombre}}`;
                     hiddenInput.value = preId;
                     searchInput.style.borderColor = '#4CAF50';
                     searchInput.style.background = '#f0fff0';
                 }});
             }});
-
+            
             // Accept suggestion button handler
             document.querySelectorAll('.btn-accept-suggestion').forEach(button => {{
                 button.addEventListener('click', function() {{
@@ -20117,26 +21086,26 @@ async def gastos_sin_cuenta_contable(
                     const cuentaId = this.getAttribute('data-cuenta-id');
                     const cuentaCodigo = this.getAttribute('data-cuenta-codigo');
                     const cuentaNombre = this.getAttribute('data-cuenta-nombre');
-
+                    
                     const selector = document.querySelector(`.account-search[data-gasto-id="${{gastoId}}"][data-target="main"]`).parentElement;
                     const searchInput = selector.querySelector('.account-search');
                     const hiddenInput = selector.querySelector('.main-cuenta-id');
-
+                    
                     searchInput.value = `${{cuentaCodigo}} - ${{cuentaNombre}}`;
                     hiddenInput.value = cuentaId;
                     searchInput.style.borderColor = '#4CAF50';
                     searchInput.style.background = '#f0fff0';
-
+                    
                     // Visual feedback
                     this.textContent = '✓ Seleccionado';
                     this.style.background = '#45a049';
                 }});
             }});
-
+            
             // Accept all high confidence suggestions
             document.getElementById('btn-accept-all-high').addEventListener('click', async function() {{
                 const highConfidenceRows = [];
-
+                
                 // Find all rows with high confidence suggestions (preselected)
                 document.querySelectorAll('.cuenta-selector[data-preselect-id]').forEach(selector => {{
                     const searchInput = selector.querySelector('.account-search');
@@ -20148,22 +21117,22 @@ async def gastos_sin_cuenta_contable(
                     const contraId = document.querySelector(`.contra-cuenta-id[data-gasto-id="${{gastoId}}"]`)?.value || '';
                     highConfidenceRows.push({{ gastoId, cuentaId, contraId }});
                 }});
-
+                
                 if (highConfidenceRows.length === 0) {{
                     alert('No hay sugerencias de alta confianza para aceptar');
                     return;
                 }}
-
+                
                 if (!confirm(`¿Asignar cuenta contable a ${{highConfidenceRows.length}} gastos con sugerencias de alta confianza?`)) {{
                     return;
                 }}
-
+                
                 this.disabled = true;
                 this.textContent = 'Procesando...';
-
+                
                 let successCount = 0;
                 let errorCount = 0;
-
+                
                 for (const {{ gastoId, cuentaId, contraId }} of highConfidenceRows) {{
                     try {{
                         const params = new URLSearchParams();
@@ -20176,7 +21145,7 @@ async def gastos_sin_cuenta_contable(
                             headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
                             body: params.toString()
                         }});
-
+                        
                         if (response.ok) {{
                             successCount++;
                             const row = document.getElementById(`row-${{gastoId}}`);
@@ -20190,43 +21159,43 @@ async def gastos_sin_cuenta_contable(
                         errorCount++;
                     }}
                 }}
-
+                
                 // Show result and reload
                 alert(`Procesado: ${{successCount}} exitosos, ${{errorCount}} errores`);
                 window.location.reload();
             }});
-
+            
             // Setup search functionality for all rows
             document.querySelectorAll('.account-search').forEach(searchInput => {{
                 const gastoId = searchInput.getAttribute('data-gasto-id');
                 const target = searchInput.getAttribute('data-target');
                 const resultsDiv = searchInput.nextElementSibling;
                 const hiddenInput = searchInput.parentElement.querySelector('input[type="hidden"]');
-
+                
                 searchInput.addEventListener('input', function() {{
                     const query = this.value.toLowerCase().trim();
-
+                    
                     // Reset styling when user types
                     this.style.borderColor = '#ddd';
                     this.style.background = 'white';
-
+                    
                     if (query.length < 2) {{
                         resultsDiv.style.display = 'none';
                         return;
                     }}
-
-                    const filtered = cuentasContables.filter(c =>
-                        c.codigo.toLowerCase().includes(query) ||
+                    
+                    const filtered = cuentasContables.filter(c => 
+                        c.codigo.toLowerCase().includes(query) || 
                         c.nombre.toLowerCase().includes(query) ||
                         c.tipo.toLowerCase().includes(query)
                     );
-
+                    
                     if (filtered.length === 0) {{
                         resultsDiv.innerHTML = '<div style="padding: 10px; color: #999;">No se encontraron cuentas</div>';
                         resultsDiv.style.display = 'block';
                         return;
                     }}
-
+                    
                     let html = '';
                     filtered.slice(0, 50).forEach(c => {{
                         html += `<div class="account-option" data-id="${{c.id}}" data-codigo="${{c.codigo}}" data-nombre="${{c.nombre}}">
@@ -20234,17 +21203,17 @@ async def gastos_sin_cuenta_contable(
                             <small style="color: #666;">Tipo: ${{c.tipo}}</small>
                         </div>`;
                     }});
-
+                    
                     resultsDiv.innerHTML = html;
                     resultsDiv.style.display = 'block';
-
+                    
                     // Add click handlers
                     resultsDiv.querySelectorAll('.account-option').forEach(option => {{
                         option.addEventListener('click', function() {{
                             const id = this.getAttribute('data-id');
                             const codigo = this.getAttribute('data-codigo');
                             const nombre = this.getAttribute('data-nombre');
-
+                            
                             hiddenInput.value = id;
                             searchInput.value = `${{codigo}} - ${{nombre}}`;
                             searchInput.style.borderColor = '#2196F3';
@@ -20253,7 +21222,7 @@ async def gastos_sin_cuenta_contable(
                         }});
                     }});
                 }});
-
+                
                 // Hide results when clicking outside
                 document.addEventListener('click', function(e) {{
                     if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {{
@@ -20323,7 +21292,7 @@ async def gastos_sin_cuenta_contable(
                     }}
                 }});
             }});
-
+            
             // Setup assign button handlers
             document.querySelectorAll('.btn-asignar').forEach(button => {{
                 button.addEventListener('click', async function() {{
@@ -20335,19 +21304,19 @@ async def gastos_sin_cuenta_contable(
                     const cuentaId = mainInput.value;
                     const contraId = contraInput.value;
                     const cuentaIvaId = ivaInput ? ivaInput.value : '';
-
+                    
                     if (!cuentaId && !document.querySelector(`.account-search[data-gasto-id="${{gastoId}}"][data-target="main"]`)?.getAttribute('data-existing-id')) {{
                         alert('Por favor seleccione una cuenta contable del gasto');
                         return;
                     }}
-
+                    
                     const cfdiInput = document.querySelector(`.cfdi-report-id[data-gasto-id="${{gastoId}}"]`);
                     const fiscalInputs = document.querySelectorAll(`.fiscal-input[data-gasto-id="${{gastoId}}"]`);
-
+                    
                     // Disable button
                     this.disabled = true;
                     this.textContent = 'Guardando...';
-
+                    
                     try {{
                         const params = new URLSearchParams();
                         if (cuentaId) {{
@@ -20386,7 +21355,7 @@ async def gastos_sin_cuenta_contable(
                             }},
                             body: params.toString()
                         }});
-
+                        
                         if (response.ok) {{
                             window.location.reload();
                         }} else {{
@@ -20620,3 +21589,8 @@ async def asignar_cuenta_contable(
         logger.error(f"Error assigning cuenta contable: {e}", exc_info=True)
         await session.rollback()
         return PlainTextResponse(f"Error: {str(e)}", status_code=500)
+
+
+from .admin_budget_routes import register_presupuestos_routes
+
+register_presupuestos_routes(router)

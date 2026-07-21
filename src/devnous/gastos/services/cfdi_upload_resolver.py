@@ -29,6 +29,23 @@ def _non_empty_upload_bytes(data: Optional[bytes]) -> bool:
     return bool(data and data.strip())
 
 
+def merge_cfdi_upload_bytes(
+    *,
+    xml_bytes: Optional[bytes] = None,
+    pdf_bytes: Optional[bytes] = None,
+    extra_xml_bytes: Optional[bytes] = None,
+    extra_pdf_bytes: Optional[bytes] = None,
+) -> tuple[Optional[bytes], Optional[bytes]]:
+    """Merge CFDI upload bytes; explicit (new) values override persisted extras."""
+    merged_xml = extra_xml_bytes if _non_empty_upload_bytes(extra_xml_bytes) else None
+    merged_pdf = extra_pdf_bytes if _non_empty_upload_bytes(extra_pdf_bytes) else None
+    if _non_empty_upload_bytes(xml_bytes):
+        merged_xml = xml_bytes
+    if _non_empty_upload_bytes(pdf_bytes):
+        merged_pdf = pdf_bytes
+    return merged_xml, merged_pdf
+
+
 def resolve_cfdi_upload(
     *,
     xml_bytes: Optional[bytes] = None,

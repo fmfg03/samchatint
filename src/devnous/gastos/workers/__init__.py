@@ -8,3 +8,4 @@ __all__ = [
     'update_invoice_statuses',
     'update_single_invoice',
 ]
+

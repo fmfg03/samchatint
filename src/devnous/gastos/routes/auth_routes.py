@@ -402,18 +402,15 @@ def _sanitize_next_path(candidate: Optional[str]) -> str:
 
 def _post_login_redirect_path(next_path: str, rol: Optional[str]) -> str:
     """
-    Default post-login landing is /panel for every role.
-
-    Preserves explicit deep links (e.g. gastos, documentos, admin) when ``next`` points elsewhere.
+    Direct login lands on /panel; protected-route login returns to the requested URL.
     """
     _ = rol
     path = (next_path or "").strip()
-    low = path.lower()
-    if low in ("", "/"):
+    if not path or path == "/" or path.startswith("//"):
         return "/panel"
-    if low == "/assistant" or low.startswith("/assistant/"):
+    if path == "/login" or path.startswith("/login?"):
         return "/panel"
-    return next_path
+    return path
 
 
 def _is_superadmin_role(role: Optional[str]) -> bool:
@@ -748,8 +745,8 @@ async def login(
         result = await session.execute(
             text(
                 """
-                SELECT id, nombre, correo, rol, activo, password_hash
-                FROM empleados
+                SELECT id, nombre, correo, rol, activo, password_hash 
+                FROM empleados 
                 WHERE correo = :correo
             """
             ),

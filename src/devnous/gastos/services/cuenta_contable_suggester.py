@@ -35,7 +35,7 @@ class CuentaContableSuggestion:
     confidence_score: float  # 0.0 to 1.0
     reason: str
     tier: str  # 'torneo', 'amex_batch', 'rules', 'learned', 'llm'
-
+    
     def to_dict(self) -> Dict[str, Any]:
         return {
             'cuenta_contable_id': str(self.cuenta_contable_id),
@@ -45,7 +45,7 @@ class CuentaContableSuggestion:
             'reason': self.reason,
             'tier': self.tier,
         }
-
+    
     @property
     def confidence_label(self) -> str:
         """Human-readable confidence label."""
@@ -55,7 +55,7 @@ class CuentaContableSuggestion:
             return "Media"
         else:
             return "Baja"
-
+    
     @property
     def confidence_color(self) -> str:
         """Color for UI display."""
@@ -178,7 +178,7 @@ METODO_PAGO_RULES: Dict[str, Dict[str, Any]] = {
 class CuentaContableSuggester:
     """
     Multi-tier cuenta contable suggestion system.
-
+    
     Tier -1: Partida presupuestal catalog mapping (budget_concepts.cuenta_contable_id)
     Tier 0: Torneo/Proyecto (primary) - base from tournament, sub_cuenta from concepto mapping
     Tier 0.5: AMEX batch - base 2120-002, suffix from empleado (learned)
@@ -219,7 +219,7 @@ class CuentaContableSuggester:
     ) -> Optional[CuentaContableSuggestion]:
         """
         Get a cuenta contable suggestion for an expense.
-
+        
         Tier order: Partida catalog → Torneo/Proyecto → AMEX batch → rules → learned → LLM.
         """
         if self._cuentas_cache is None:
@@ -309,7 +309,7 @@ class CuentaContableSuggester:
                 logger.debug(f"Tier 3 (LLM) suggestion for expense {expense_id}: {suggestion.cuenta_codigo}")
 
         return suggestion
-
+    
     async def get_suggestions_batch(
         self,
         expenses: List[Dict[str, Any]],
@@ -318,7 +318,7 @@ class CuentaContableSuggester:
     ) -> Dict[UUID, Optional[CuentaContableSuggestion]]:
         """
         Get suggestions for multiple expenses efficiently.
-
+        
         Args:
             expenses: List of expense dictionaries with keys:
                 - id: UUID
@@ -334,14 +334,14 @@ class CuentaContableSuggester:
                 - budget_concept_id: Optional[UUID]
             use_llm: Whether to use LLM fallback
             llm_confidence_threshold: Minimum confidence to skip LLM
-
+            
         Returns:
             Dictionary mapping expense_id to suggestion
         """
         # Pre-load cuentas contables
         if self._cuentas_cache is None:
             await self._load_cuentas_contables()
-
+        
         results = {}
         for exp in expenses:
             suggestion = await self.get_suggestion(
@@ -362,7 +362,7 @@ class CuentaContableSuggester:
             results[exp['id']] = suggestion
 
         return results
-
+    
     async def _load_cuentas_contables(self) -> None:
         """Load and cache active cuentas contables."""
         from devnous.gastos.models import CuentaContable
@@ -606,7 +606,7 @@ class CuentaContableSuggester:
     ) -> Optional[CuentaContableSuggestion]:
         """
         Apply deterministic rules to suggest a cuenta contable.
-
+        
         Rules are applied in priority order:
         1. Proveedor/Cliente mapping (if has cuenta_contable_id)
         2. Keyword matching on concepto
@@ -617,7 +617,7 @@ class CuentaContableSuggester:
             proveedor_suggestion = await self._check_proveedor_cuenta(proveedor_cliente_id)
             if proveedor_suggestion:
                 return proveedor_suggestion
-
+        
         # Rule 2: Keyword matching on concepto
         if concepto:
             keyword_suggestion = self._match_concepto_keywords(concepto)
@@ -628,34 +628,34 @@ class CuentaContableSuggester:
                         keyword_suggestion, metodo_pago
                     )
                 return keyword_suggestion
-
+        
         return None
-
+    
     async def _check_proveedor_cuenta(
         self,
         proveedor_cliente_id: UUID,
     ) -> Optional[CuentaContableSuggestion]:
         """
         Check if proveedor/cliente has a pre-assigned cuenta contable.
-
+        
         NOTE: Per LEAP_SPEC_CUENTA_BANCARIA_CLEANUP, proveedores/clientes NO LONGER
         have cuenta_contable assignments. This is intentional - cuenta_bancaria (bank account)
         is NOT the same as cuenta_contable (accounting classification).
-
+        
         Cuenta contable assignment must be explicit on expenses/informes, never implicit
         from proveedor/cliente.
         """
         # Proveedores/clientes no longer have cuenta_contable mapping
         # This method now always returns None (no implicit assignment)
         return None
-
+    
     def _match_concepto_keywords(self, concepto: str) -> Optional[CuentaContableSuggestion]:
         """Match concepto against keyword rules."""
         concepto_lower = concepto.lower().strip()
-
+        
         if not concepto_lower or not self._cuentas_cache:
             return None
-
+        
         for rule in CONCEPTO_KEYWORD_RULES:
             # Check if any keyword matches
             matched_keyword = None
@@ -663,7 +663,7 @@ class CuentaContableSuggester:
                 if keyword in concepto_lower:
                     matched_keyword = keyword
                     break
-
+            
             if matched_keyword:
                 # Find matching cuenta contable (supports one or many nombre patterns)
                 cuenta = None
@@ -688,7 +688,7 @@ class CuentaContableSuggester:
                         codigo_pattern=rule.get('cuenta_codigo_pattern'),
                         nombre_pattern=None,
                     )
-
+                
                 if cuenta:
                     return CuentaContableSuggestion(
                         cuenta_contable_id=cuenta.id,
@@ -698,9 +698,9 @@ class CuentaContableSuggester:
                         reason=rule['reason_template'].format(concepto=concepto),
                         tier='rules',
                     )
-
+        
         return None
-
+    
     def _find_cuenta_by_pattern(
         self,
         codigo_pattern: Optional[str] = None,
@@ -709,35 +709,35 @@ class CuentaContableSuggester:
         """Find a cuenta contable matching the given patterns."""
         if not self._cuentas_cache:
             return None
-
+        
         candidates = []
-
+        
         for cuenta in self._cuentas_cache:
             score = 0
-
+            
             # Check codigo pattern
             if codigo_pattern and cuenta.codigo:
                 if cuenta.codigo.startswith(codigo_pattern):
                     score += 2
                 elif codigo_pattern in cuenta.codigo:
                     score += 1
-
+            
             # Check nombre pattern
             if nombre_pattern and cuenta.nombre:
                 nombre_lower = cuenta.nombre.lower()
                 if nombre_pattern.lower() in nombre_lower:
                     score += 3  # Nombre match is more specific
-
+            
             if score > 0:
                 candidates.append((cuenta, score))
-
+        
         if candidates:
             # Return the best match
             candidates.sort(key=lambda x: x[1], reverse=True)
             return candidates[0][0]
-
+        
         return None
-
+    
     def _apply_metodo_pago_boost(
         self,
         suggestion: CuentaContableSuggestion,
@@ -745,7 +745,7 @@ class CuentaContableSuggester:
     ) -> CuentaContableSuggestion:
         """Apply confidence boost based on payment method."""
         metodo_lower = metodo_pago.lower().strip() if metodo_pago else ''
-
+        
         for key, rule in METODO_PAGO_RULES.items():
             if key in metodo_lower or metodo_lower in key:
                 # Only boost if we don't exceed 1.0
@@ -758,9 +758,9 @@ class CuentaContableSuggester:
                     reason=f"{suggestion.reason}. {rule['reason']}",
                     tier=suggestion.tier,
                 )
-
+        
         return suggestion
-
+    
     async def _apply_learned_mappings(
         self,
         concepto: str,
@@ -768,12 +768,12 @@ class CuentaContableSuggester:
     ) -> Optional[CuentaContableSuggestion]:
         """
         Apply learned mappings from historical expense data.
-
+        
         Uses two history sources in order:
 
         1. Imported COI accounting history (`accounting_polizas` + `accounting_poliza_lines`)
         2. Existing operational expense history (`expense_reports`)
-
+        
         NOTE: Per LEAP_SPEC_CUENTA_BANCARIA_CLEANUP, proveedor_cliente_id is no longer
         used for cuenta_contable suggestions (proveedores/clientes don't have accounting codes).
         """
@@ -784,7 +784,7 @@ class CuentaContableSuggester:
             ExpenseReport,
             ProveedorCliente,
         )
-
+        
         MIN_OCCURRENCES = 3  # Minimum historical matches for confidence
         provider_name = None
         if proveedor_cliente_id:
@@ -794,10 +794,10 @@ class CuentaContableSuggester:
             proveedor = proveedor_result.scalar_one_or_none()
             if proveedor and proveedor.nombre:
                 provider_name = self._normalize_text_key(proveedor.nombre)
-
+        
         if concepto:
             concepto_normalized = self._normalize_concepto(concepto)
-
+            
             if concepto_normalized:
                 # Strategy 1: imported COI history
                 coi_conditions = [
@@ -869,25 +869,25 @@ class CuentaContableSuggester:
                     .group_by(ExpenseReport.cuenta_contable_id)
                     .order_by(func.count(ExpenseReport.id).desc())
                 )
-
+                
                 rows = result.all()
-
+                
                 if rows:
                     top_cuenta_id, count = rows[0]
                     total_matches = sum(r[1] for r in rows)
-
+                    
                     if count >= MIN_OCCURRENCES:
                         # Calculate confidence based on consistency
                         consistency_ratio = count / total_matches if total_matches > 0 else 0
                         base_confidence = 0.6  # Base confidence for learned mappings
                         confidence = min(0.9, base_confidence + (consistency_ratio * 0.3))
-
+                        
                         # Load cuenta details
                         cuenta_result = await self.session.execute(
                             select(CuentaContable).where(CuentaContable.id == top_cuenta_id)
                         )
                         cuenta = cuenta_result.scalar_one_or_none()
-
+                        
                         if cuenta:
                             return CuentaContableSuggestion(
                                 cuenta_contable_id=cuenta.id,
@@ -897,7 +897,7 @@ class CuentaContableSuggester:
                                 reason=f"Aprendido: {count} gastos previos con concepto similar usan esta cuenta ({int(consistency_ratio*100)}% consistencia)",
                                 tier='learned',
                             )
-
+        
         return None
 
     def _normalize_text_key(self, text: str) -> str:
@@ -906,11 +906,11 @@ class CuentaContableSuggester:
         normalized = re.sub(r'[^a-záéíóúñü\s]', ' ', text.lower().strip())
         normalized = re.sub(r'\s+', ' ', normalized)
         return normalized.strip()
-
+    
     def _normalize_concepto(self, concepto: str) -> str:
         """
         Normalize concepto for comparison.
-
+        
         - Lowercase
         - Remove extra whitespace
         - Remove special characters
@@ -918,18 +918,18 @@ class CuentaContableSuggester:
         """
         if not concepto:
             return ''
-
+        
         # Lowercase and strip
         normalized = concepto.lower().strip()
-
+        
         # Remove special characters except spaces
         normalized = re.sub(r'[^a-záéíóúñü\s]', ' ', normalized)
-
+        
         # Collapse multiple spaces
         normalized = re.sub(r'\s+', ' ', normalized)
-
+        
         return normalized.strip()
-
+    
     async def _apply_llm_fallback(
         self,
         concepto: str,
@@ -938,14 +938,14 @@ class CuentaContableSuggester:
     ) -> Optional[CuentaContableSuggestion]:
         """
         Use LLM to suggest a cuenta contable when rules and learned mappings fail.
-
+        
         This is strictly optional and wrapped in try/except to never affect the request.
-
+        
         LLM input:
         - Expense concept
         - Proveedor/Cliente name (if available)
         - List of available cuentas contables (codes + names)
-
+        
         LLM output (strict JSON):
         {
             "cuenta_codigo": "5300-001",
@@ -957,20 +957,20 @@ class CuentaContableSuggester:
             # Check if LLM is configured
             anthropic_key = os.environ.get('ANTHROPIC_API_KEY')
             openai_key = os.environ.get('OPENAI_API_KEY')
-
+            
             if not anthropic_key and not openai_key:
                 logger.debug("No LLM API key configured, skipping LLM fallback")
                 return None
-
+            
             # Prepare cuentas list for LLM
             if not self._cuentas_cache:
                 return None
-
+            
             cuentas_list = "\n".join([
                 f"- {c.codigo}: {c.nombre} (tipo: {c.tipo})"
                 for c in self._cuentas_cache[:50]  # Limit to avoid token overflow
             ])
-
+            
             # Get proveedor name if available
             proveedor_name = None
             if proveedor_cliente_id:
@@ -981,7 +981,7 @@ class CuentaContableSuggester:
                 proveedor = result.scalar_one_or_none()
                 if proveedor:
                     proveedor_name = proveedor.nombre
-
+            
             # Build prompt
             prompt = f"""Eres un asistente contable mexicano. Dado el siguiente gasto, sugiere la cuenta contable más apropiada.
 
@@ -1006,26 +1006,26 @@ Reglas:
                 suggestion = await self._call_anthropic(prompt, anthropic_key)
                 if suggestion:
                     return suggestion
-
+            
             # Fall back to OpenAI
             if openai_key:
                 suggestion = await self._call_openai(prompt, openai_key)
                 if suggestion:
                     return suggestion
-
+            
             return None
-
+            
         except Exception as e:
             # Never let LLM errors affect the request
             logger.warning(f"LLM fallback error (ignored): {e}")
             return None
-
+    
     async def _call_anthropic(self, prompt: str, api_key: str) -> Optional[CuentaContableSuggestion]:
         """Call Anthropic Claude API for suggestion."""
         try:
             import httpx
             import json
-
+            
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     "https://api.anthropic.com/v1/messages",
@@ -1040,26 +1040,26 @@ Reglas:
                         "messages": [{"role": "user", "content": prompt}]
                     }
                 )
-
+                
                 if response.status_code != 200:
                     logger.warning(f"Anthropic API error: {response.status_code}")
                     return None
-
+                
                 data = response.json()
                 content = data.get('content', [{}])[0].get('text', '')
-
+                
                 return self._parse_llm_response(content)
-
+                
         except Exception as e:
             logger.warning(f"Anthropic API call failed: {e}")
             return None
-
+    
     async def _call_openai(self, prompt: str, api_key: str) -> Optional[CuentaContableSuggestion]:
         """Call OpenAI API for suggestion."""
         try:
             import httpx
             import json
-
+            
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(
                     "https://api.openai.com/v1/chat/completions",
@@ -1074,47 +1074,47 @@ Reglas:
                         "messages": [{"role": "user", "content": prompt}]
                     }
                 )
-
+                
                 if response.status_code != 200:
                     logger.warning(f"OpenAI API error: {response.status_code}")
                     return None
-
+                
                 data = response.json()
                 content = data.get('choices', [{}])[0].get('message', {}).get('content', '')
-
+                
                 return self._parse_llm_response(content)
-
+                
         except Exception as e:
             logger.warning(f"OpenAI API call failed: {e}")
             return None
-
+    
     def _parse_llm_response(self, content: str) -> Optional[CuentaContableSuggestion]:
         """Parse LLM JSON response into a suggestion."""
         try:
             import json
-
+            
             # Try to extract JSON from response
             content = content.strip()
-
+            
             # Handle markdown code blocks
             if '```json' in content:
                 content = content.split('```json')[1].split('```')[0]
             elif '```' in content:
                 content = content.split('```')[1].split('```')[0]
-
+            
             data = json.loads(content.strip())
-
+            
             cuenta_codigo = data.get('cuenta_codigo', '')
             confidence = float(data.get('confidence', 0.0))
             reason = data.get('reason', 'Sugerido por IA')
-
+            
             # Find the cuenta by codigo
             if self._cuentas_cache and cuenta_codigo:
                 for cuenta in self._cuentas_cache:
                     if cuenta.codigo == cuenta_codigo:
                         # Cap LLM confidence at 0.7 to prefer rules/learned
                         capped_confidence = min(0.7, confidence)
-
+                        
                         return CuentaContableSuggestion(
                             cuenta_contable_id=cuenta.id,
                             cuenta_codigo=cuenta.codigo,
@@ -1123,9 +1123,9 @@ Reglas:
                             reason=f"IA: {reason}",
                             tier='llm',
                         )
-
+            
             return None
-
+            
         except Exception as e:
             logger.warning(f"Failed to parse LLM response: {e}")
             return None
