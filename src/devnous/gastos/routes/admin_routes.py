@@ -16263,6 +16263,17 @@ async def admin_proveedores_clientes(
         result = await session.execute(query)
         proveedores = result.scalars().all()
 
+        empleados_result = await session.execute(
+            select(Empleado)
+            .where(Empleado.activo.is_(True))
+            .order_by(Empleado.nombre)
+        )
+        empleados_activos = empleados_result.scalars().all()
+        empleado_options = "".join(
+            f'<option value="{empleado.id}">{escape(empleado.nombre)}</option>'
+            for empleado in empleados_activos
+        )
+
         success_html = ""
         if success_msg:
             success_html = f"""
@@ -16283,7 +16294,7 @@ async def admin_proveedores_clientes(
         <!DOCTYPE html>
         <html>
         <head>
-        <title>Proveedores, Operadores y Clientes - Copa Telmex</title>
+        <title>Proveedores, Clientes, Operadores y Empleados - Copa Telmex</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -16439,6 +16450,10 @@ async def admin_proveedores_clientes(
                 background: #d1e7dd;
                 color: #0f5132;
             }}
+            .badge-empleado {{
+                background: #e2d9f3;
+                color: #432874;
+            }}
             .nav-links {{
                 margin-bottom: 20px;
             }}
@@ -16469,10 +16484,10 @@ async def admin_proveedores_clientes(
         </head>
         <body>
         <div class="container">
-            {render_admin_navigation(current_empleado, "proveedores", subtitle="Catálogo comercial y operativo para proveedores, clientes y operadores regionales.")}
+            {render_admin_navigation(current_empleado, "proveedores", subtitle="Catálogo comercial, operativo y de cuentas destino para empleados.")}
             
-            <h1>Proveedores, Operadores y Clientes</h1>
-            <p class="subtitle">Administra el catálogo de proveedores, operadores y clientes</p>
+            <h1>Proveedores, Clientes, Operadores y Empleados</h1>
+            <p class="subtitle">Administra contrapartes y cuentas destino sin confundir empleados con proveedores.</p>
             
             {success_html}
             {error_html}
@@ -16492,6 +16507,7 @@ async def admin_proveedores_clientes(
                                 <option value="proveedor" {'selected' if tipo_filter == 'proveedor' else ''}>Proveedor</option>
                                 <option value="cliente" {'selected' if tipo_filter == 'cliente' else ''}>Cliente</option>
                                 <option value="operadores_regionales" {'selected' if tipo_filter == 'operadores_regionales' else ''}>Operadores Regionales</option>
+                                <option value="empleado" {'selected' if tipo_filter == 'empleado' else ''}>Empleado</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -16510,7 +16526,7 @@ async def admin_proveedores_clientes(
             </div>
             
             <div class="form-section">
-                <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Proveedor/Cliente</h2>
+                <h2 style="margin-bottom: 15px;">➕ Agregar registro al padrón</h2>
                 <form method="POST" action="/admin/proveedores-clientes/create">
                     <div class="form-row">
                         <div class="form-group">
@@ -16520,11 +16536,28 @@ async def admin_proveedores_clientes(
                                 <option value="proveedor">Proveedor</option>
                                 <option value="cliente">Cliente</option>
                                 <option value="operadores_regionales">Operadores Regionales</option>
+                                <option value="empleado">Empleado</option>
                             </select>
                         </div>
                         <div class="form-group">
                             <label for="nombre">Nombre *</label>
                             <input type="text" id="nombre" name="nombre" required placeholder="Nombre del proveedor/cliente">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <div class="checkbox-group">
+                                <input type="checkbox" id="es_empleado" name="es_empleado">
+                                <label for="es_empleado" style="margin: 0;">Es empleado (no proveedor)</label>
+                            </div>
+                            <small style="color:#666;">Al marcarlo, la categoría canónica será Empleado.</small>
+                        </div>
+                        <div class="form-group" id="empleado_selector_group" style="display:none;">
+                            <label for="empleado_id">Empleado activo *</label>
+                            <select id="empleado_id" name="empleado_id">
+                                <option value="">Seleccionar empleado...</option>
+                                {empleado_options}
+                            </select>
                         </div>
                     </div>
                     <div class="form-row">
@@ -16562,12 +16595,12 @@ async def admin_proveedores_clientes(
                             <label for="activo" style="margin: 0;">Activo</label>
                         </div>
                     </div>
-                    <button type="submit" class="btn btn-primary">Crear Proveedor/Cliente</button>
+                    <button type="submit" class="btn btn-primary">Crear registro</button>
                 </form>
             </div>
             
             <div style="margin-top: 30px;">
-                <h2 style="margin-bottom: 20px;">📋 Proveedores, Operadores y Clientes ({len(proveedores)})</h2>
+                <h2 style="margin-bottom: 20px;">📋 Padrón ({len(proveedores)})</h2>
                 {"<p style='color: #666;'>No hay proveedores/clientes registrados aún.</p>" if not proveedores else ""}
                 <table>
                     <thead>
@@ -16591,12 +16624,14 @@ async def admin_proveedores_clientes(
                 tipo_class = "badge-proveedor"
             elif prov.tipo == "cliente":
                 tipo_class = "badge-cliente"
+            elif prov.tipo == "empleado":
+                tipo_class = "badge-empleado"
             else:
                 tipo_class = "badge-operadores-regionales"
             tipo_display = (
                 "Operadores Regionales"
                 if prov.tipo == "operadores_regionales"
-                else prov.tipo.capitalize()
+                else ("Empleado" if prov.tipo == "empleado" else prov.tipo.capitalize())
             )
             status_class = "badge-active" if prov.activo else "badge-inactive"
             status_text = "Activo" if prov.activo else "Inactivo"
@@ -16659,6 +16694,31 @@ async def admin_proveedores_clientes(
                 </table>
             </div>
         </div>
+        <script>
+        (() => {
+            const tipo = document.getElementById('tipo');
+            const checkbox = document.getElementById('es_empleado');
+            const group = document.getElementById('empleado_selector_group');
+            const employee = document.getElementById('empleado_id');
+            const name = document.getElementById('nombre');
+            const sync = (fromCheckbox = false) => {
+                if (fromCheckbox && checkbox.checked) tipo.value = 'empleado';
+                checkbox.checked = tipo.value === 'empleado' || checkbox.checked;
+                if (tipo.value !== 'empleado' && !fromCheckbox) checkbox.checked = false;
+                const enabled = checkbox.checked || tipo.value === 'empleado';
+                group.style.display = enabled ? 'block' : 'none';
+                employee.required = enabled;
+            };
+            checkbox.addEventListener('change', () => sync(true));
+            tipo.addEventListener('change', () => sync(false));
+            employee.addEventListener('change', () => {
+                if (employee.selectedIndex > 0) {
+                    name.value = employee.options[employee.selectedIndex].text;
+                }
+            });
+            sync(false);
+        })();
+        </script>
         </body>
         </html>
         """
@@ -16699,6 +16759,7 @@ async def create_proveedor_cliente(
     cuenta_clabe: Optional[str] = Form(None),
     cuenta_bancaria: Optional[str] = Form(None),
     entidad_region: Optional[str] = Form(None),
+    empleado_id: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
@@ -16706,10 +16767,11 @@ async def create_proveedor_cliente(
     try:
         form_data = await request.form()
         activo = form_data.get("activo") == "on"
+        es_empleado = form_data.get("es_empleado") == "on" or tipo == "empleado"
 
         # Validations
         nombre = nombre.strip()
-        if not nombre:
+        if not nombre and not es_empleado:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -16723,7 +16785,7 @@ async def create_proveedor_cliente(
                 status_code=400,
             )
 
-        if tipo not in ["proveedor", "cliente", "operadores_regionales"]:
+        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado"]:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -16736,6 +16798,37 @@ async def create_proveedor_cliente(
                 """,
                 status_code=400,
             )
+
+        empleado_uuid = None
+        if es_empleado:
+            tipo = "empleado"
+            try:
+                empleado_uuid = UUIDType((empleado_id or "").strip())
+            except (TypeError, ValueError):
+                return RedirectResponse(
+                    url=(
+                        "/admin/proveedores-clientes?error_msg="
+                        + quote("Seleccione un empleado activo válido.")
+                    ),
+                    status_code=303,
+                )
+            empleado_result = await session.execute(
+                select(Empleado).where(
+                    Empleado.id == empleado_uuid,
+                    Empleado.activo.is_(True),
+                )
+            )
+            linked_employee = empleado_result.scalar_one_or_none()
+            if linked_employee is None:
+                return RedirectResponse(
+                    url=(
+                        "/admin/proveedores-clientes?error_msg="
+                        + quote("El empleado seleccionado no existe o está inactivo.")
+                    ),
+                    status_code=303,
+                )
+            nombre = linked_employee.nombre
+            rfc = None
 
         # Validate cuenta_clabe if provided
         if cuenta_clabe:
@@ -16766,6 +16859,7 @@ async def create_proveedor_cliente(
             cuenta_clabe=cuenta_clabe if cuenta_clabe else None,
             cuenta_bancaria=cuenta_bancaria_val,
             entidad_region=entidad_region_val,
+            empleado_id=empleado_uuid,
             activo=activo,
         )
         session.add(proveedor)
@@ -16865,6 +16959,21 @@ async def edit_proveedor_cliente_form(
 
     if not prov:
         raise HTTPException(status_code=404, detail="Proveedor/Cliente no encontrado")
+
+    empleados_result = await session.execute(
+        select(Empleado)
+        .where(Empleado.activo.is_(True))
+        .order_by(Empleado.nombre)
+    )
+    empleados_activos = empleados_result.scalars().all()
+    empleado_options = "".join(
+        (
+            f'<option value="{empleado.id}" '
+            f'{"selected" if prov.empleado_id == empleado.id else ""}>'
+            f'{escape(empleado.nombre)}</option>'
+        )
+        for empleado in empleados_activos
+    )
 
     html_content = f"""
     <!DOCTYPE html>
@@ -16990,11 +17099,27 @@ async def edit_proveedor_cliente_form(
                             <option value="proveedor" {'selected' if prov.tipo == 'proveedor' else ''}>Proveedor</option>
                             <option value="cliente" {'selected' if prov.tipo == 'cliente' else ''}>Cliente</option>
                             <option value="operadores_regionales" {'selected' if prov.tipo == 'operadores_regionales' else ''}>Operadores Regionales</option>
+                            <option value="empleado" {'selected' if prov.tipo == 'empleado' else ''}>Empleado</option>
                         </select>
                     </div>
                     <div class="form-group">
                         <label for="nombre">Nombre *</label>
                         <input type="text" id="nombre" name="nombre" value="{prov.nombre or ''}" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <input type="checkbox" id="es_empleado" name="es_empleado" {'checked' if prov.tipo == 'empleado' else ''}>
+                            <label for="es_empleado" style="margin:0;">Es empleado (no proveedor)</label>
+                        </div>
+                    </div>
+                    <div class="form-group" id="empleado_selector_group" {'style="display:none;"' if prov.tipo != 'empleado' else ''}>
+                        <label for="empleado_id">Empleado activo *</label>
+                        <select id="empleado_id" name="empleado_id">
+                            <option value="">Seleccionar empleado...</option>
+                            {empleado_options}
+                        </select>
                     </div>
                 </div>
                 <div class="form-row">
@@ -17036,6 +17161,31 @@ async def edit_proveedor_cliente_form(
                 <a href="/admin/proveedores-clientes" class="btn btn-secondary">Cancelar</a>
             </form>
         </div>
+        <script>
+        (() => {{
+            const tipo = document.getElementById('tipo');
+            const checkbox = document.getElementById('es_empleado');
+            const group = document.getElementById('empleado_selector_group');
+            const employee = document.getElementById('empleado_id');
+            const name = document.getElementById('nombre');
+            const sync = (fromCheckbox = false) => {{
+                if (fromCheckbox && checkbox.checked) tipo.value = 'empleado';
+                if (tipo.value !== 'empleado' && !fromCheckbox) checkbox.checked = false;
+                if (tipo.value === 'empleado') checkbox.checked = true;
+                const enabled = checkbox.checked;
+                group.style.display = enabled ? 'block' : 'none';
+                employee.required = enabled;
+            }};
+            checkbox.addEventListener('change', () => sync(true));
+            tipo.addEventListener('change', () => sync(false));
+            employee.addEventListener('change', () => {{
+                if (employee.selectedIndex > 0) {{
+                    name.value = employee.options[employee.selectedIndex].text;
+                }}
+            }});
+            sync(false);
+        }})();
+        </script>
     </body>
     </html>
     """
@@ -17053,6 +17203,7 @@ async def update_proveedor_cliente(
     cuenta_clabe: Optional[str] = Form(None),
     cuenta_bancaria: Optional[str] = Form(None),
     entidad_region: Optional[str] = Form(None),
+    empleado_id: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
@@ -17068,10 +17219,11 @@ async def update_proveedor_cliente(
     try:
         form_data = await request.form()
         activo = form_data.get("activo") == "on"
+        es_empleado = form_data.get("es_empleado") == "on" or tipo == "empleado"
 
         # Validations (same as create)
         nombre = nombre.strip()
-        if not nombre:
+        if not nombre and not es_empleado:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -17085,7 +17237,7 @@ async def update_proveedor_cliente(
                 status_code=400,
             )
 
-        if tipo not in ["proveedor", "cliente", "operadores_regionales"]:
+        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado"]:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -17098,6 +17250,37 @@ async def update_proveedor_cliente(
                 """,
                 status_code=400,
             )
+
+        empleado_uuid = None
+        if es_empleado:
+            tipo = "empleado"
+            try:
+                empleado_uuid = UUIDType((empleado_id or "").strip())
+            except (TypeError, ValueError):
+                return RedirectResponse(
+                    url=(
+                        "/admin/proveedores-clientes?error_msg="
+                        + quote("Seleccione un empleado activo válido.")
+                    ),
+                    status_code=303,
+                )
+            empleado_result = await session.execute(
+                select(Empleado).where(
+                    Empleado.id == empleado_uuid,
+                    Empleado.activo.is_(True),
+                )
+            )
+            linked_employee = empleado_result.scalar_one_or_none()
+            if linked_employee is None:
+                return RedirectResponse(
+                    url=(
+                        "/admin/proveedores-clientes?error_msg="
+                        + quote("El empleado seleccionado no existe o está inactivo.")
+                    ),
+                    status_code=303,
+                )
+            nombre = linked_employee.nombre
+            rfc = None
 
         # Validate cuenta_clabe if provided
         if cuenta_clabe:
@@ -17128,6 +17311,7 @@ async def update_proveedor_cliente(
         prov.cuenta_clabe = cuenta_clabe if cuenta_clabe else None
         prov.cuenta_bancaria = cuenta_bancaria_val
         prov.entidad_region = entidad_region_val
+        prov.empleado_id = empleado_uuid
         prov.activo = activo
 
         await session.commit()

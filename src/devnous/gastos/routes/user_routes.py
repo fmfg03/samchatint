@@ -8446,13 +8446,36 @@ async def _get_matching_bank_accounts_for_empleado(
     Return a list of (ProveedorCliente, similarity) that look like bank accounts for this empleado.
     """
     empleado_nombre = empleado.nombre if empleado else None
-    if not empleado_nombre:
+    empleado_id = getattr(empleado, "id", None)
+    if not empleado_nombre or empleado_id is None:
         return []
+
+    exact_result = await session.execute(
+        select(ProveedorCliente).where(
+            and_(
+                ProveedorCliente.activo == True,
+                ProveedorCliente.tipo == "empleado",
+                ProveedorCliente.empleado_id == empleado_id,
+                or_(
+                    ProveedorCliente.banco.isnot(None),
+                    ProveedorCliente.cuenta_clabe.isnot(None),
+                    ProveedorCliente.cuenta_bancaria.isnot(None),
+                ),
+            )
+        )
+    )
+    exact_accounts = list(exact_result.scalars().all())
+    if exact_accounts:
+        exact_accounts.sort(key=lambda account: (account.nombre or "").lower())
+        if limit:
+            exact_accounts = exact_accounts[:limit]
+        return [(account, 1.0) for account in exact_accounts]
 
     proveedores_result = await session.execute(
         select(ProveedorCliente).where(
             and_(
                 ProveedorCliente.activo == True,
+                ProveedorCliente.tipo != "empleado",
                 or_(
                     ProveedorCliente.banco.isnot(None),
                     ProveedorCliente.cuenta_clabe.isnot(None),
@@ -19745,7 +19768,10 @@ async def nueva_solicitud_form(
     # Get active proveedores_clientes
     proveedores_result = await session.execute(
         select(ProveedorCliente)
-        .where(ProveedorCliente.activo == True)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo != "empleado",
+        )
         .order_by(ProveedorCliente.nombre)
     )
     proveedores = proveedores_result.scalars().all()
@@ -22947,7 +22973,10 @@ async def _render_solicitud_terceros_form(
     # Get active proveedores_clientes
     proveedores_result = await session.execute(
         select(ProveedorCliente)
-        .where(ProveedorCliente.activo == True)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo != "empleado",
+        )
         .order_by(ProveedorCliente.nombre)
     )
     proveedores = proveedores_result.scalars().all()

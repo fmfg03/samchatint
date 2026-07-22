@@ -542,6 +542,7 @@ async def create_solicitud_terceros_document(
             and_(
                 ProveedorCliente.id == payload.proveedor_cliente_id,
                 ProveedorCliente.activo == True,
+                ProveedorCliente.tipo != "empleado",
             )
         )
     )
@@ -903,6 +904,7 @@ async def update_solicitud_terceros_document(
             and_(
                 ProveedorCliente.id == payload.proveedor_cliente_id,
                 ProveedorCliente.activo == True,
+                ProveedorCliente.tipo != "empleado",
             )
         )
     )

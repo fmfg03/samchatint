@@ -1546,7 +1546,7 @@ class ProveedorCliente(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     tipo = Column(
         String(50), nullable=False
-    )  # 'proveedor', 'cliente', 'operadores_regionales'
+    )  # 'proveedor', 'cliente', 'operadores_regionales', 'empleado'
     nombre = Column(Text, nullable=False)
     rfc = Column(Text, nullable=True)
     banco = Column(Text, nullable=True)
@@ -1554,6 +1554,12 @@ class ProveedorCliente(Base):
     # Bank account number (NOT accounting code) - stored as plain text, no FK
     cuenta_bancaria = Column(Text, nullable=True, index=True)
     entidad_region = Column(Text, nullable=True)
+    empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     activo = Column(Boolean, default=True, nullable=False, index=True)
 
     # Metadata
@@ -1567,6 +1573,7 @@ class ProveedorCliente(Base):
 
     # Relationships
     documentos = relationship("Documento", back_populates="proveedor_cliente")
+    empleado = relationship("Empleado", foreign_keys=[empleado_id], lazy="selectin")
 
     def __repr__(self):
         return f"<ProveedorCliente(id={self.id}, tipo='{self.tipo}', nombre='{self.nombre}', activo={self.activo})>"
@@ -1582,6 +1589,7 @@ class ProveedorCliente(Base):
             "cuenta_clabe": self.cuenta_clabe,
             "cuenta_bancaria": self.cuenta_bancaria,
             "entidad_region": self.entidad_region,
+            "empleado_id": str(self.empleado_id) if self.empleado_id else None,
             "activo": self.activo,
             "creado_en": self.creado_en.isoformat() if self.creado_en else None,
             "actualizado_en": (

@@ -1263,6 +1263,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS beneficiario_empleado_id UUID NULL",
     ),
     (
+        "proveedores_clientes_empleado_id_column",
+        "ALTER TABLE IF EXISTS proveedores_clientes ADD COLUMN IF NOT EXISTS empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "idx_proveedores_clientes_empleado_id",
+        "CREATE INDEX IF NOT EXISTS idx_proveedores_clientes_empleado_id ON proveedores_clientes(empleado_id)",
+    ),
+    (
         "documentos_proveedor_cliente_id_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
