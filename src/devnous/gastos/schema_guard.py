@@ -1271,6 +1271,34 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "CREATE INDEX IF NOT EXISTS idx_proveedores_clientes_empleado_id ON proveedores_clientes(empleado_id)",
     ),
     (
+        "proveedores_clientes_tipo_check_employee",
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'proveedores_clientes'::regclass
+                  AND conname = 'proveedores_clientes_tipo_check'
+                  AND pg_get_constraintdef(oid) NOT LIKE '%empleado%'
+            ) THEN
+                ALTER TABLE proveedores_clientes
+                    DROP CONSTRAINT proveedores_clientes_tipo_check;
+            END IF;
+            IF NOT EXISTS (
+                SELECT 1
+                FROM pg_constraint
+                WHERE conrelid = 'proveedores_clientes'::regclass
+                  AND conname = 'proveedores_clientes_tipo_check'
+            ) THEN
+                ALTER TABLE proveedores_clientes
+                    ADD CONSTRAINT proveedores_clientes_tipo_check
+                    CHECK (tipo IN ('proveedor', 'cliente', 'operadores_regionales', 'empleado'));
+            END IF;
+        END $$
+        """,
+    ),
+    (
         "documentos_proveedor_cliente_id_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
