@@ -213,7 +213,7 @@ Los componentes que no forman parte de esta valorización deben revisarse por se
 
 Texto sugerido para revisar con cliente:
 
-“Con base en la revisión del alcance original y del sistema actualmente construido, la valorización distingue tres bloques: primero, el trabajo ya realizado dentro del alcance base; segundo, el trabajo adicional ejecutado fuera del alcance inicial; y tercero, los componentes de cierre rápido que pueden abordarse en una etapa separada. Bajo esta lectura, el valor del trabajo ya ejecutado dentro del alcance base asciende aproximadamente a 392 mil pesos, y el trabajo adicional ya desarrollado representa aproximadamente 150 mil pesos adicionales en valor construido. Los componentes restantes no cambian la valorización del trabajo ya realizado, porque corresponden a cierres puntuales e integraciones finales sobre una base ya desarrollada.” 
+“Con base en la revisión del alcance original y del sistema actualmente construido, la valorización distingue tres bloques: primero, el trabajo ya realizado dentro del alcance base; segundo, el trabajo adicional ejecutado fuera del alcance inicial; y tercero, los componentes de cierre rápido que pueden abordarse en una etapa separada. Bajo esta lectura, el valor del trabajo ya ejecutado dentro del alcance base asciende aproximadamente a 392 mil pesos, y el trabajo adicional ya desarrollado representa aproximadamente 150 mil pesos adicionales en valor construido. Los componentes restantes no cambian la valorización del trabajo ya realizado, porque corresponden a cierres puntuales e integraciones finales sobre una base ya desarrollada.”
 
 ## 7. Observación final
 
