@@ -7165,7 +7165,7 @@ async def admin_tournaments(
                     </div>
                 </div>
             </div>
-            
+
             <div class="tournaments-list">
                 <h2 style="margin-bottom: 20px;">📋 Proyectos ({len(tournaments)})</h2>
                 {"<p style='color: #666;'>No hay proyectos aún. Usa una de las rutas de creación arriba.</p>" if not tournaments else ""}
@@ -8335,10 +8335,10 @@ async def admin_rfc(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "rfc", subtitle="Configuración fiscal reutilizable para flujos internos, Telegram y administración.")}
-            
+
             <h1>Gestión de RFC</h1>
             <p class="subtitle">Configura los RFC disponibles para selección en Telegram</p>
-            
+
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Configuración RFC</h2>
                 <form id="rfcForm" method="POST" action="/admin/rfc/create">
@@ -8428,7 +8428,7 @@ async def admin_rfc(
                     <button type="submit" class="btn btn-primary">Crear RFC</button>
                 </form>
             </div>
-            
+
             <div class="rfc-list">
                 <h2 style="margin-bottom: 20px;">📋 Configuraciones RFC ({len(rfc_configs)})</h2>
                 {"<p style='color: #666;'>No hay RFC configurados aún. Crea el primero usando el formulario arriba.</p>" if not rfc_configs else ""}
@@ -8473,7 +8473,7 @@ async def admin_rfc(
                                 {'Desactivar' if rfc.active else 'Activar'}
                             </button>
                         </form>
-                        <form method="POST" action="/admin/rfc/delete/{rfc.id}" style="display: inline;" 
+                        <form method="POST" action="/admin/rfc/delete/{rfc.id}" style="display: inline;"
                               onsubmit="return confirm('¿Estás seguro de eliminar esta configuración RFC?');">
                             <button type="submit" class="btn btn-danger btn-small">🗑️ Eliminar</button>
                         </form>
@@ -8919,7 +8919,7 @@ async def admin_empleados(
         text(
             """
             SELECT id, nombre, correo, rol
-            FROM empleados 
+            FROM empleados
             WHERE activo = TRUE
             ORDER BY nombre
         """
@@ -9111,11 +9111,11 @@ async def admin_empleados(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "empleados", subtitle="Catálogo de empleados internos, permisos y vinculación operativa.")}
-            
+
             <h1>Gestión de Empleados</h1>
             <p class="subtitle">Administra el catálogo de empleados</p>
             {success_html}
-            
+
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Empleado</h2>
                 <form method="POST" action="/admin/empleados/create">
@@ -9179,7 +9179,7 @@ async def admin_empleados(
                     <button type="submit" class="btn btn-primary">Crear Empleado</button>
                 </form>
             </div>
-            
+
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Empleados ({len(empleados)})</h2>
                 <div class="search-box">
@@ -13541,7 +13541,7 @@ async def edit_empleado_form(
         text(
             """
             SELECT id, nombre, correo, rol
-            FROM empleados 
+            FROM empleados
             WHERE activo = TRUE AND id != :empleado_id
             ORDER BY nombre
         """
@@ -14327,11 +14327,11 @@ async def admin_cuentas_contables(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "cuentas", subtitle="Plan de cuentas y clasificación contable base para gastos, pólizas y conciliación.")}
-            
+
             <h1>Gestión de Cuentas Contables</h1>
             <p class="subtitle">Administra el catálogo de cuentas contables</p>
             {bi_context_html}
-            
+
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Cuenta Contable</h2>
                 <form method="POST" action="/admin/cuentas-contables/create{bi_query_suffix}">
@@ -14365,7 +14365,7 @@ async def admin_cuentas_contables(
                     <button type="submit" class="btn btn-primary">Crear Cuenta</button>
                 </form>
             </div>
-            
+
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Cuentas Contables ({len(cuentas)})</h2>
                 {"<p style='color: #666;'>No hay cuentas contables registradas aún.</p>" if not cuentas else ""}
@@ -15645,10 +15645,10 @@ async def carga_masiva_cuentas_contables_form(
             {_CONFIG_PANEL_BACK_LINK_HTML}
             <h1>📥 Carga Masiva de Cuentas Contables</h1>
             <p class="subtitle">Importar cuentas contables desde archivo CSV o XLSX (Balanza)</p>
-            
+
             {'<div class="alert alert-success">✅ ' + success_msg + '</div>' if success_msg else ''}
             {'<div class="alert alert-error">❌ ' + error_msg + '</div>' if error_msg else ''}
-            
+
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -15694,13 +15694,13 @@ async def carga_masiva_cuentas_contables_form(
                     <li>Se ignoran filas vacías</li>
                 </ul>
             </div>
-            
+
             <form method="POST" action="/admin/cuentas-contables/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV o XLSX:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv,.xlsx" required>
                 </div>
-                
+
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar Cuentas Contables</button>
                     <a href="/admin/cuentas-contables" class="btn btn-secondary">⬅️ Volver</a>
@@ -15975,10 +15975,10 @@ async def admin_centros_costo(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "centros", subtitle="Centros de costo alineados al control contable y operativo.")}
-            
+
             <h1>Gestión de Centros de Costo</h1>
             <p class="subtitle">Administra el catálogo de centros de costo</p>
-            
+
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nuevo Centro de Costo</h2>
                 <form method="POST" action="/admin/centros-costo/create">
@@ -15999,7 +15999,7 @@ async def admin_centros_costo(
                     <button type="submit" class="btn btn-primary">Crear Centro de Costo</button>
                 </form>
             </div>
-            
+
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Centros de Costo ({len(centros)})</h2>
                 {"<p style='color: #666;'>No hay centros de costo registrados aún.</p>" if not centros else ""}
@@ -16485,13 +16485,13 @@ async def admin_proveedores_clientes(
         <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "proveedores", subtitle="Catálogo comercial, operativo y de cuentas destino para empleados.")}
-            
+
             <h1>Proveedores, Clientes, Operadores y Empleados</h1>
             <p class="subtitle">Administra contrapartes y cuentas destino sin confundir empleados con proveedores.</p>
-            
+
             {success_html}
             {error_html}
-            
+
             <div class="filters-section">
                 <h2 style="margin-bottom: 15px;">🔍 Buscar y Filtrar</h2>
                 <form method="GET" action="/admin/proveedores-clientes">
@@ -16524,7 +16524,7 @@ async def admin_proveedores_clientes(
                     </div>
                 </form>
             </div>
-            
+
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar registro al padrón</h2>
                 <form method="POST" action="/admin/proveedores-clientes/create">
@@ -16598,7 +16598,7 @@ async def admin_proveedores_clientes(
                     <button type="submit" class="btn btn-primary">Crear registro</button>
                 </form>
             </div>
-            
+
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Padrón ({len(proveedores)})</h2>
                 {"<p style='color: #666;'>No hay proveedores/clientes registrados aún.</p>" if not proveedores else ""}
@@ -17088,9 +17088,9 @@ async def edit_proveedor_cliente_form(
     <body>
         <div class="container">
             {render_admin_navigation(current_empleado, "proveedores", subtitle="Edición puntual del catálogo comercial.")}
-            
+
             <h1>Editar Proveedor/Cliente</h1>
-            
+
             <form method="POST" action="/admin/proveedores-clientes/update/{proveedor_id}">
                 <div class="form-row">
                     <div class="form-group">
@@ -17528,10 +17528,10 @@ async def carga_masiva_proveedores_clientes_form(
             {_CONFIG_PANEL_BACK_LINK_HTML}
             <h1>📥 Carga Masiva de Proveedores/Clientes</h1>
             <p class="subtitle">Importar proveedores y clientes desde archivo CSV o XLSX tipo RFC</p>
-            
+
             {f'<div class="alert alert-success">✅ {escape(success_msg)}</div>' if success_msg else ''}
             {f'<div class="alert alert-error">❌ {escape(error_msg)}</div>' if error_msg else ''}
-            
+
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -17610,12 +17610,12 @@ async def carga_masiva_proveedores_clientes_form(
                     <li>Para XLSX RFC: se detectan columnas tipo <span class="code">BENEFICIARIO</span>, <span class="code">BANCOS</span>, <span class="code">CUENTA</span>, <span class="code">CLABE</span></li>
                     <li>Se ignoran filas vacías</li>
                 </ul>
-                
+
                 <div style="margin-top: 20px; padding: 15px; background: #e7f3ff; border: 1px solid #b3d9ff; border-radius: 6px;">
                     <a href="/admin/proveedores-clientes/plantilla.csv" class="btn btn-primary" style="text-decoration: none; display: inline-block; margin-bottom: 10px;">⬇️ Descargar plantilla CSV</a>
                     <p style="margin: 0; color: #555; font-size: 14px;">Usa esta plantilla para evitar errores de columnas.</p>
                 </div>
-                
+
                 <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
                     <h3 style="margin-top: 0; color: #856404;">⚠️ Reglas de Validación</h3>
                     <ul>
@@ -17626,7 +17626,7 @@ async def carga_masiva_proveedores_clientes_form(
                         <li><strong>activo</strong>: Por defecto es "true" si no se especifica</li>
                     </ul>
                 </div>
-                
+
                 <div style="margin-top: 20px; padding: 15px; background: #d4edda; border: 1px solid #c3e6cb; border-radius: 6px;">
                     <h3 style="margin-top: 0; color: #155724;">ℹ️ Nota Importante</h3>
                     <p style="margin: 0; color: #155724;">
@@ -17636,13 +17636,13 @@ async def carga_masiva_proveedores_clientes_form(
                     </p>
                 </div>
             </div>
-            
+
             <form method="POST" action="/admin/proveedores-clientes/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV o XLSX:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv,.xlsx" required>
                 </div>
-                
+
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar Proveedores/Clientes</button>
                     <a href="/admin/proveedores-clientes" class="btn btn-secondary">⬅️ Volver</a>
@@ -17999,10 +17999,10 @@ async def carga_masiva_cfdis_form(
         <div class="container">
             <h1>📥 Carga Masiva de CFDIs</h1>
             <p class="subtitle">Importar CFDIs emitidos desde archivo CSV</p>
-            
+
             {'<div class="alert alert-success">✅ ' + success_msg + '</div>' if success_msg else ''}
             {'<div class="alert alert-error">❌ ' + error_msg + '</div>' if error_msg else ''}
-            
+
             <div class="instructions">
                 <h2>📋 Instrucciones</h2>
                 <ul>
@@ -18013,13 +18013,13 @@ async def carga_masiva_cfdis_form(
                     <li>Se ignoran filas vacías y filas con UUID inválido o duplicado en el mismo CSV</li>
                 </ul>
             </div>
-            
+
             <form method="POST" action="/admin/gastos/cfdis/carga-masiva" enctype="multipart/form-data">
                 <div class="form-group">
                     <label for="archivo_csv">📂 Selecciona el archivo CSV:</label>
                     <input type="file" id="archivo_csv" name="archivo_csv" accept=".csv" required>
                 </div>
-                
+
                 <div style="margin-top: 30px;">
                     <button type="submit" class="btn btn-primary">📤 Importar CFDIs</button>
                     <a href="/admin/gastos/invoices" class="btn btn-secondary">⬅️ Volver</a>
@@ -20707,7 +20707,7 @@ async def gastos_sin_cuenta_contable(
                     <div style="font-size: 11px; color: #666; margin-top: 4px;">
                         {escape(suggestion.reason)}
                     </div>
-                    <button class="btn-accept-suggestion" 
+                    <button class="btn-accept-suggestion"
                             data-gasto-id="{gasto.id}"
                             data-cuenta-id="{suggestion.cuenta_contable_id}"
                             data-cuenta-codigo="{escape(suggestion.cuenta_codigo)}"
@@ -20883,12 +20883,12 @@ async def gastos_sin_cuenta_contable(
                     <div class="cuenta-selector" {preselect_data}>
                         <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cargo gasto</div>
                         {main_assigned_html}
-                        <input type="text" 
-                               class="account-search" 
+                        <input type="text"
+                               class="account-search"
                                data-gasto-id="{gasto.id}"
                                data-target="main"
                                data-existing-id="{escape(str(gasto.cuenta_contable_id or ''))}"
-                               placeholder="Buscar o escribir cuenta del gasto..." 
+                               placeholder="Buscar o escribir cuenta del gasto..."
                                autocomplete="off"
                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
                         <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
@@ -20897,12 +20897,12 @@ async def gastos_sin_cuenta_contable(
                     <div class="cuenta-selector" {contra_preselect_data}>
                         <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Contrapartida</div>
                         {contra_assigned_html}
-                        <input type="text" 
-                               class="account-search" 
+                        <input type="text"
+                               class="account-search"
                                data-gasto-id="{gasto.id}"
                                data-target="contra"
                                data-existing-id="{escape(str(gasto.contra_cuenta_contable_id or ''))}"
-                               placeholder="Buscar cuenta origen del dinero..." 
+                               placeholder="Buscar cuenta origen del dinero..."
                                autocomplete="off"
                                style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
                         <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
@@ -20931,7 +20931,7 @@ async def gastos_sin_cuenta_contable(
                 </div>
             </td>
             <td>
-                <button class="btn-asignar" 
+                <button class="btn-asignar"
                         data-gasto-id="{gasto.id}"
                         style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
                     Guardar limpieza contable
@@ -21238,12 +21238,12 @@ async def gastos_sin_cuenta_contable(
                 </section>
             </div>
         </div>
-        
+
         <script>
             const cuentasContables = {cuentas_json};
             const suggestions = {suggestions_json};
             const cfdiOptions = {cfdi_options_json};
-            
+
             // Pre-select high confidence suggestions on page load
             document.addEventListener('DOMContentLoaded', function() {{
                 document.querySelectorAll('.cuenta-selector[data-preselect-id]').forEach(selector => {{
@@ -21253,16 +21253,16 @@ async def gastos_sin_cuenta_contable(
                     const preId = selector.getAttribute('data-preselect-id');
                     const preCodigo = selector.getAttribute('data-preselect-codigo');
                     const preNombre = selector.getAttribute('data-preselect-nombre');
-                    
+
                     const hiddenInput = selector.querySelector('input[type="hidden"]');
-                    
+
                     searchInput.value = `${{preCodigo}} - ${{preNombre}}`;
                     hiddenInput.value = preId;
                     searchInput.style.borderColor = '#4CAF50';
                     searchInput.style.background = '#f0fff0';
                 }});
             }});
-            
+
             // Accept suggestion button handler
             document.querySelectorAll('.btn-accept-suggestion').forEach(button => {{
                 button.addEventListener('click', function() {{
@@ -21270,26 +21270,26 @@ async def gastos_sin_cuenta_contable(
                     const cuentaId = this.getAttribute('data-cuenta-id');
                     const cuentaCodigo = this.getAttribute('data-cuenta-codigo');
                     const cuentaNombre = this.getAttribute('data-cuenta-nombre');
-                    
+
                     const selector = document.querySelector(`.account-search[data-gasto-id="${{gastoId}}"][data-target="main"]`).parentElement;
                     const searchInput = selector.querySelector('.account-search');
                     const hiddenInput = selector.querySelector('.main-cuenta-id');
-                    
+
                     searchInput.value = `${{cuentaCodigo}} - ${{cuentaNombre}}`;
                     hiddenInput.value = cuentaId;
                     searchInput.style.borderColor = '#4CAF50';
                     searchInput.style.background = '#f0fff0';
-                    
+
                     // Visual feedback
                     this.textContent = '✓ Seleccionado';
                     this.style.background = '#45a049';
                 }});
             }});
-            
+
             // Accept all high confidence suggestions
             document.getElementById('btn-accept-all-high').addEventListener('click', async function() {{
                 const highConfidenceRows = [];
-                
+
                 // Find all rows with high confidence suggestions (preselected)
                 document.querySelectorAll('.cuenta-selector[data-preselect-id]').forEach(selector => {{
                     const searchInput = selector.querySelector('.account-search');
@@ -21301,22 +21301,22 @@ async def gastos_sin_cuenta_contable(
                     const contraId = document.querySelector(`.contra-cuenta-id[data-gasto-id="${{gastoId}}"]`)?.value || '';
                     highConfidenceRows.push({{ gastoId, cuentaId, contraId }});
                 }});
-                
+
                 if (highConfidenceRows.length === 0) {{
                     alert('No hay sugerencias de alta confianza para aceptar');
                     return;
                 }}
-                
+
                 if (!confirm(`¿Asignar cuenta contable a ${{highConfidenceRows.length}} gastos con sugerencias de alta confianza?`)) {{
                     return;
                 }}
-                
+
                 this.disabled = true;
                 this.textContent = 'Procesando...';
-                
+
                 let successCount = 0;
                 let errorCount = 0;
-                
+
                 for (const {{ gastoId, cuentaId, contraId }} of highConfidenceRows) {{
                     try {{
                         const params = new URLSearchParams();
@@ -21329,7 +21329,7 @@ async def gastos_sin_cuenta_contable(
                             headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
                             body: params.toString()
                         }});
-                        
+
                         if (response.ok) {{
                             successCount++;
                             const row = document.getElementById(`row-${{gastoId}}`);
@@ -21343,43 +21343,43 @@ async def gastos_sin_cuenta_contable(
                         errorCount++;
                     }}
                 }}
-                
+
                 // Show result and reload
                 alert(`Procesado: ${{successCount}} exitosos, ${{errorCount}} errores`);
                 window.location.reload();
             }});
-            
+
             // Setup search functionality for all rows
             document.querySelectorAll('.account-search').forEach(searchInput => {{
                 const gastoId = searchInput.getAttribute('data-gasto-id');
                 const target = searchInput.getAttribute('data-target');
                 const resultsDiv = searchInput.nextElementSibling;
                 const hiddenInput = searchInput.parentElement.querySelector('input[type="hidden"]');
-                
+
                 searchInput.addEventListener('input', function() {{
                     const query = this.value.toLowerCase().trim();
-                    
+
                     // Reset styling when user types
                     this.style.borderColor = '#ddd';
                     this.style.background = 'white';
-                    
+
                     if (query.length < 2) {{
                         resultsDiv.style.display = 'none';
                         return;
                     }}
-                    
-                    const filtered = cuentasContables.filter(c => 
-                        c.codigo.toLowerCase().includes(query) || 
+
+                    const filtered = cuentasContables.filter(c =>
+                        c.codigo.toLowerCase().includes(query) ||
                         c.nombre.toLowerCase().includes(query) ||
                         c.tipo.toLowerCase().includes(query)
                     );
-                    
+
                     if (filtered.length === 0) {{
                         resultsDiv.innerHTML = '<div style="padding: 10px; color: #999;">No se encontraron cuentas</div>';
                         resultsDiv.style.display = 'block';
                         return;
                     }}
-                    
+
                     let html = '';
                     filtered.slice(0, 50).forEach(c => {{
                         html += `<div class="account-option" data-id="${{c.id}}" data-codigo="${{c.codigo}}" data-nombre="${{c.nombre}}">
@@ -21387,17 +21387,17 @@ async def gastos_sin_cuenta_contable(
                             <small style="color: #666;">Tipo: ${{c.tipo}}</small>
                         </div>`;
                     }});
-                    
+
                     resultsDiv.innerHTML = html;
                     resultsDiv.style.display = 'block';
-                    
+
                     // Add click handlers
                     resultsDiv.querySelectorAll('.account-option').forEach(option => {{
                         option.addEventListener('click', function() {{
                             const id = this.getAttribute('data-id');
                             const codigo = this.getAttribute('data-codigo');
                             const nombre = this.getAttribute('data-nombre');
-                            
+
                             hiddenInput.value = id;
                             searchInput.value = `${{codigo}} - ${{nombre}}`;
                             searchInput.style.borderColor = '#2196F3';
@@ -21406,7 +21406,7 @@ async def gastos_sin_cuenta_contable(
                         }});
                     }});
                 }});
-                
+
                 // Hide results when clicking outside
                 document.addEventListener('click', function(e) {{
                     if (!searchInput.contains(e.target) && !resultsDiv.contains(e.target)) {{
@@ -21476,7 +21476,7 @@ async def gastos_sin_cuenta_contable(
                     }}
                 }});
             }});
-            
+
             // Setup assign button handlers
             document.querySelectorAll('.btn-asignar').forEach(button => {{
                 button.addEventListener('click', async function() {{
@@ -21488,19 +21488,19 @@ async def gastos_sin_cuenta_contable(
                     const cuentaId = mainInput.value;
                     const contraId = contraInput.value;
                     const cuentaIvaId = ivaInput ? ivaInput.value : '';
-                    
+
                     if (!cuentaId && !document.querySelector(`.account-search[data-gasto-id="${{gastoId}}"][data-target="main"]`)?.getAttribute('data-existing-id')) {{
                         alert('Por favor seleccione una cuenta contable del gasto');
                         return;
                     }}
-                    
+
                     const cfdiInput = document.querySelector(`.cfdi-report-id[data-gasto-id="${{gastoId}}"]`);
                     const fiscalInputs = document.querySelectorAll(`.fiscal-input[data-gasto-id="${{gastoId}}"]`);
-                    
+
                     // Disable button
                     this.disabled = true;
                     this.textContent = 'Guardando...';
-                    
+
                     try {{
                         const params = new URLSearchParams();
                         if (cuentaId) {{
@@ -21539,7 +21539,7 @@ async def gastos_sin_cuenta_contable(
                             }},
                             body: params.toString()
                         }});
-                        
+
                         if (response.ok) {{
                             window.location.reload();
                         }} else {{

@@ -745,8 +745,8 @@ async def login(
         result = await session.execute(
             text(
                 """
-                SELECT id, nombre, correo, rol, activo, password_hash 
-                FROM empleados 
+                SELECT id, nombre, correo, rol, activo, password_hash
+                FROM empleados
                 WHERE correo = :correo
             """
             ),

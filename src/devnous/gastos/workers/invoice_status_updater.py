@@ -85,27 +85,27 @@ def _map_tocino_status_for_sync(status_data: Dict[str, Any]) -> tuple[Optional[s
 
 async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
     """Mirror Tocino statuses into invoice_reports and sync snapshot into expense_reports.
-    
+
     Strategy:
     - Select expenses that are CFDI (tipo_gasto='ticket') and have a nova_request_id.
     - Fetch status from Tocino.
     - Upsert into invoice_reports (mirror table).
     - Update snapshot fields in expense_reports (estado_factura, links, mensaje_error, updated_at).
     """
-    
+
     gastos_stmt = select(ExpenseReport).where(
         ExpenseReport.tipo_gasto == "ticket",
         ExpenseReport.nova_request_id.isnot(None)
     )
     result = await session.execute(gastos_stmt)
     gastos = result.scalars().all()
-    
+
     if not gastos:
         logger.info("No CFDI-linked expenses to update")
         return {"updated": 0, "completed": 0, "failed": 0, "errors": []}
-    
+
     logger.info(f"Checking status for {len(gastos)} CFDI expenses")
-    
+
     client = get_tocino_client()
     results = {
         "updated": 0,
@@ -113,19 +113,19 @@ async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
         "failed": 0,
         "errors": []
     }
-    
+
     for gasto in gastos:
         if not gasto.nova_request_id:
             logger.warning(f"Expense {gasto.id} has no nova_request_id, skipping")
             continue
-            
+
         try:
             # Get current status from Tocino
             status_data = client.check_invoice_status(gasto.nova_request_id)
             tocino_status = status_data.get("status", "")
-            
+
             logger.info(f"Expense {gasto.id} status: {tocino_status}")
-            
+
             # Map Tocino status to our database status
             was_updated = False
             estado, mensaje_error, is_completed, is_failed = _map_tocino_status_for_sync(status_data)
@@ -136,14 +136,14 @@ async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
                     results["completed"] += 1
                 if is_failed:
                     results["failed"] += 1
-            
+
             if was_updated:
                 # Upsert into invoice_reports (mirror)
                 invoice_result = await session.execute(
                     select(InvoiceReport).where(InvoiceReport.nova_request_id == gasto.nova_request_id)
                 )
                 factura = invoice_result.scalar_one_or_none()
-                
+
                 if not factura:
                     factura = InvoiceReport(
                         expense_id=gasto.id,
@@ -173,17 +173,17 @@ async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
                 gasto.updated_at = datetime.utcnow()
                 session.add(gasto)
                 results["updated"] += 1
-                
+
         except TocinoAPIError as e:
             error_msg = f"Expense {gasto.id}: Tocino API error: {str(e)}"
             logger.error(error_msg)
             results["errors"].append(error_msg)
-            
+
         except Exception as e:
             error_msg = f"Expense {gasto.id}: Unexpected error: {str(e)}"
             logger.error(error_msg, exc_info=True)
             results["errors"].append(error_msg)
-    
+
     # Commit all updates
     try:
         await session.commit()
@@ -191,34 +191,34 @@ async def update_invoice_statuses(session: AsyncSession) -> Dict[str, Any]:
     except Exception as e:
         logger.error("Error committing invoice updates", extra={"error": str(e)})
         await session.rollback()
-    
+
     return results
 
 
 async def update_single_invoice(session: AsyncSession, expense_id: str) -> Optional[Dict[str, Any]]:
     """Update status for a single invoice by expense ID."""
-    
+
     result = await session.execute(
         select(ExpenseReport).where(ExpenseReport.id == expense_id)
     )
     expense = result.scalar_one_or_none()
-    
+
     if not expense:
         logger.warning(f"Expense {expense_id} not found")
         return None
-    
+
     if not expense.nova_request_id:
         logger.warning(f"Expense {expense_id} has no nova_request_id")
         return None
-    
+
     try:
         # Get current status from Tocino
         client = get_tocino_client()
         status_data = client.check_invoice_status(expense.nova_request_id)
         tocino_status = status_data.get("status", "")
-        
+
         logger.info(f"Expense {expense_id} status: {tocino_status}")
-        
+
         # Map Tocino status to our database status
         estado, mensaje_error, _, _ = _map_tocino_status_for_sync(status_data)
         link_pdf, link_xml = _extract_invoice_links(status_data)
@@ -230,13 +230,13 @@ async def update_single_invoice(session: AsyncSession, expense_id: str) -> Optio
             expense.link_xml = link_xml
         if mensaje_error is not None:
             expense.mensaje_error = mensaje_error
-        
+
         expense.updated_at = datetime.utcnow()
         session.add(expense)
         await session.commit()
-        
+
         return {"status": "success", "expense_id": expense_id, "tocino_status": tocino_status}
-        
+
     except TocinoAPIError as e:
         logger.error(f"Expense {expense_id}: Tocino API error", extra={"error": str(e)})
         await session.rollback()
@@ -245,4 +245,3 @@ async def update_single_invoice(session: AsyncSession, expense_id: str) -> Optio
         logger.error(f"Expense {expense_id}: Unexpected error", extra={"error": str(e)})
         await session.rollback()
         return {"status": "error", "message": str(e)}
-

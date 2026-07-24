@@ -165,10 +165,10 @@ class ExpenseHandler:
 
     async def handle_restart_command(self, chat_id: int, user_id: int) -> Dict[str, Any]:
         """Handle /reiniciar command to clear state and start over."""
-        
+
         # Clear user state if exists
         self.clear_user_state(chat_id)
-        
+
         message = """🔄 **Sesión Reiniciada**
 
 ¡Listo! He reiniciado tu sesión.
@@ -192,7 +192,7 @@ Tu información anterior ha sido descartada (no se guardó nada en la base de da
 ¡Estoy listo para ayudarte! 🚀"""
 
         logger.info(f"User {user_id} restarted their expense session")
-        
+
         return {
             "status": "restarted",
             "message": message,
@@ -201,26 +201,26 @@ Tu información anterior ha sido descartada (no se guardó nada en la base de da
 
     async def generate_reference_number(self, session: AsyncSession, departamento: str) -> str:
         """Generate reference number based on department, year, and sequence.
-        
+
         Format: D-YY######
         - D: First letter of department (M, O, F)
         - YY: Last two digits of current year
         - ######: 6-digit sequence number (starting from 000001 per department/year)
-        
+
         Examples:
         - O-25000001 (Operations, 2025, first ticket)
         - O-25000002 (Operations, 2025, second ticket)
         - M-25000001 (Marketing, 2025, first ticket)
         """
         from sqlalchemy import func
-        
+
         # Get department code
         dept_code = DEPARTAMENTO_MAP.get(departamento, "U")
-        
+
         # Get current year (last 2 digits)
         current_year = datetime.now().year
         year_suffix = str(current_year)[-2:]
-        
+
         # Find the highest sequence number for this department/year
         # Pattern: D-YY######
         prefix = f"{dept_code}-{year_suffix}"
@@ -238,14 +238,14 @@ Tu información anterior ha sido descartada (no se guardó nada en la base de da
                 "falling back to best-effort allocation",
                 extra={"prefix": prefix, "error": str(e)},
             )
-        
+
         # Query existing reference numbers with this prefix
         result = await session.execute(
             select(func.max(ExpenseReport.numero_referencia))
             .where(ExpenseReport.numero_referencia.like(f"{prefix}%"))
         )
         max_ref = result.scalar_one_or_none()
-        
+
         if max_ref:
             # Extract sequence number from max reference
             # Format: D-YY######
@@ -256,15 +256,15 @@ Tu información anterior ha sido descartada (no se guardó nada en la base de da
                 next_sequence = 1
         else:
             next_sequence = 1
-        
+
         # Format sequence as 6-digit number
         sequence_str = f"{next_sequence:06d}"
-        
+
         # Build reference number
         reference_number = f"{prefix}{sequence_str}"
-        
+
         logger.info(f"Generated reference number: {reference_number} for department {departamento}")
-        
+
         return reference_number
 
     async def handle_expense_command(self, chat_id: int, user_id: int) -> Dict[str, Any]:
@@ -441,7 +441,7 @@ Ahora necesito información adicional para procesar tu gasto:
         if current_state == "collecting_name":
             state.data["nombre_enviador"] = text.strip()
             state.state = "collecting_departamento"
-            
+
             # Build inline keyboard with department options
             keyboard = {"inline_keyboard": []}
             # Add departments in a single column
@@ -450,7 +450,7 @@ Ahora necesito información adicional para procesar tu gasto:
                     "text": departamento,
                     "callback_data": f"departamento:{departamento}"
                 }])
-            
+
             message = f"""✅ **Nombre:** {text.strip()}
 
 **Pregunta 2:**
@@ -471,14 +471,14 @@ Selecciona el departamento:
             if departamento in DEPARTAMENTO_MAP:
                 state.data["departamento"] = departamento
                 state.state = "collecting_rfc"
-                
+
                 # Get active RFC configurations
                 result = await session.execute(
                     select(RFCConfig).where(RFCConfig.active == True)
                     .order_by(RFCConfig.display_order, RFCConfig.name)
                 )
                 rfc_configs = result.scalars().all()
-                
+
                 if rfc_configs:
                     # Build inline keyboard with RFC options
                     keyboard = {"inline_keyboard": []}
@@ -492,14 +492,14 @@ Selecciona el departamento:
                         if len(row) == 2 or i == len(rfc_configs) - 1:
                             keyboard["inline_keyboard"].append(row)
                             row = []
-                    
+
                     # Add "No Aplica" option only for manual expenses (reportar_gasto)
                     if state.expense_type == "manual":
                         keyboard["inline_keyboard"].append([{
                             "text": "No Aplica",
                             "callback_data": "rfc:no_aplica"
                         }])
-                    
+
                     message = f"""✅ **Departamento:** {departamento}
 
 **Pregunta 3:**
@@ -530,7 +530,7 @@ Selecciona el RFC a utilizar:
                     tournaments = await fetch_active_tournaments_for_telegram_user(
                         session, user_id
                     )
-                    
+
                     if tournaments:
                         # Build inline keyboard with tournament options
                         keyboard = {"inline_keyboard": []}
@@ -544,7 +544,7 @@ Selecciona el RFC a utilizar:
                             if len(row) == 2 or i == len(tournaments) - 1:
                                 keyboard["inline_keyboard"].append(row)
                                 row = []
-                        
+
                         return {
                             "status": "collecting_project",
                             "message": message,
@@ -606,11 +606,11 @@ Selecciona la fase del torneo:
                     state.state = "collecting_concepto"
                 else:
                     state.state = "manual_collecting_concepto"
-                
+
                 # Check if tournament_id exists in state
                 tournament_id = state.data.get("tournament_id")
                 conceptos_to_show = []
-                
+
                 if tournament_id:
                     # Get tournament-specific conceptos
                     tournament_conceptos = await get_tournament_conceptos(tournament_id, session)
@@ -622,11 +622,11 @@ Selecciona la fase del torneo:
                 else:
                     # No tournament selected, use global list
                     conceptos_to_show = None
-                
+
                 # Build inline keyboard with concepto options
                 keyboard = {"inline_keyboard": []}
                 row = []
-                
+
                 if conceptos_to_show:
                     # Use tournament-specific conceptos
                     for i, mapping in enumerate(conceptos_to_show):
@@ -648,7 +648,7 @@ Selecciona la fase del torneo:
                         if len(row) == 2 or i == len(CONCEPTOS_LIST) - 1:
                             keyboard["inline_keyboard"].append(row)
                             row = []
-                
+
                 message = f"""✅ **Fase del Torneo:** {fase_torneo}
 
 **Pregunta 6:**
@@ -674,12 +674,12 @@ Selecciona el concepto del gasto:
             # This should not happen if using inline keyboard, but handle text fallback
             concepto = text.strip()
             tournament_id = state.data.get("tournament_id")
-            
+
             # Try to get tournament-specific mapping first
             mapping = None
             if tournament_id:
                 mapping = await get_concepto_mapping(tournament_id, concepto, session)
-            
+
             # Validate concepto - check tournament mapping or global map
             if mapping:
                 # Use tournament mapping
@@ -695,11 +695,11 @@ Selecciona el concepto del gasto:
                     "message": "❌ Concepto no válido. Por favor selecciona una opción de la lista.",
                     "parse_mode": "Markdown"
                 }
-            
+
             state.data["concepto"] = concepto
             state.data["sub_cuenta"] = sub_cuenta
             state.state = "collecting_metodo_pago"
-            
+
             # Build inline keyboard with payment method options
             keyboard = {"inline_keyboard": []}
             row = []
@@ -711,7 +711,7 @@ Selecciona el concepto del gasto:
                 if len(row) == 2 or i == len(METODO_PAGO_LIST) - 1:
                     keyboard["inline_keyboard"].append(row)
                     row = []
-            
+
             message = f"""✅ **Concepto:** {concepto_display}
 
 **Pregunta 7:**
@@ -725,18 +725,18 @@ Selecciona el concepto del gasto:
                 "parse_mode": "Markdown",
                 "reply_markup": keyboard
             }
-        
+
         # Concepto collection (for manual expenses) - fallback for text input
         elif current_state == "manual_collecting_concepto":
             # This should not happen if using inline keyboard, but handle text fallback
             concepto = text.strip()
             tournament_id = state.data.get("tournament_id")
-            
+
             # Try to get tournament-specific mapping first
             mapping = None
             if tournament_id:
                 mapping = await get_concepto_mapping(tournament_id, concepto, session)
-            
+
             # Validate concepto - check tournament mapping or global map
             if mapping:
                 # Use tournament mapping
@@ -752,11 +752,11 @@ Selecciona el concepto del gasto:
                     "message": "❌ Concepto no válido. Por favor selecciona una opción de la lista.",
                     "parse_mode": "Markdown"
                 }
-            
+
             state.data["concepto"] = concepto
             state.data["sub_cuenta"] = sub_cuenta
             state.state = "collecting_metodo_pago"
-            
+
             # Build inline keyboard with payment method options
             keyboard = {"inline_keyboard": []}
             row = []
@@ -768,7 +768,7 @@ Selecciona el concepto del gasto:
                 if len(row) == 2 or i == len(METODO_PAGO_LIST) - 1:
                     keyboard["inline_keyboard"].append(row)
                     row = []
-            
+
             message = f"""✅ **Concepto:** {concepto_display}
 
 **Pregunta 7:**
@@ -782,17 +782,17 @@ Selecciona el concepto del gasto:
                 "parse_mode": "Markdown",
                 "reply_markup": keyboard
             }
-        
+
         # Payment method collection - fallback for text input
         elif current_state == "collecting_metodo_pago":
             metodo_pago = text.strip()
             if metodo_pago in METODO_PAGO_LIST:
                 state.data["metodo_pago"] = metodo_pago
-                
+
                 # If it's a card payment, ask for last 4 digits
                 if metodo_pago == "Tarjeta":
                     state.state = "collecting_ultimos_4_digitos"
-                    
+
                     message = f"""✅ **Método de Pago:** {metodo_pago}
 
 **Pregunta 7.1:**
@@ -801,7 +801,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 *Por favor ingresa solo los 4 dígitos (ejemplo: 1234)*
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
-                    
+
                     return {
                         "status": "collecting_ultimos_4_digitos",
                         "message": message,
@@ -825,7 +825,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 ¿Cuál es el monto del gasto en MXN?
 
 *Por favor ingresa solo el número (ejemplo: 150.50)*"""
-                    
+
                     return {
                         "status": "collecting_amount",
                         "message": message,
@@ -844,11 +844,11 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
             digits = text.strip()
             if digits.isdigit() and len(digits) == 4:
                 state.data["ultimos_4_digitos"] = digits
-                
+
                 # Move to amount collection
                 if state.expense_type == "ticket":
                     state.state = "collecting_amount"
-                    
+
                     message = f"""✅ **Últimos 4 dígitos:** {digits}
 
 **Pregunta 8:**
@@ -857,14 +857,14 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 *Por favor ingresa solo el número (ejemplo: 150.50)*"""
                 else:
                     state.state = "manual_collecting_amount"
-                    
+
                     message = f"""✅ **Últimos 4 dígitos:** {digits}
 
 **Pregunta 8:**
 ¿Cuál es el monto del gasto en MXN?
 
 *Por favor ingresa solo el número (ejemplo: 150.50)*"""
-                
+
                 return {
                     "status": "collecting_amount",
                     "message": message,
@@ -884,13 +884,13 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                 state.data["amount"] = amount
                 state.data["date"] = datetime.utcnow()
                 state.state = "collecting_has_iva"
-                
+
                 # Build inline keyboard with Yes/No options
                 keyboard = {"inline_keyboard": [[
                     {"text": "Sí", "callback_data": "has_iva:Sí"},
                     {"text": "No", "callback_data": "has_iva:No"}
                 ]]}
-                
+
                 message = f"""✅ **Monto Total:** ${amount:.2f} MXN
 
 **Pregunta 8.1:**
@@ -912,20 +912,20 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                     "message": message,
                     "parse_mode": "Markdown"
                 }
-        
+
         # Amount collection (for manual expenses)
         elif current_state == "manual_collecting_amount":
             try:
                 amount = float(text.strip())
                 state.data["amount"] = amount
                 state.state = "collecting_has_iva"
-                
+
                 # Build inline keyboard with Yes/No options
                 keyboard = {"inline_keyboard": [[
                     {"text": "Sí", "callback_data": "has_iva:Sí"},
                     {"text": "No", "callback_data": "has_iva:No"}
                 ]]}
-                
+
                 message = f"""✅ **Monto Total:** ${amount:.2f} MXN
 
 **Pregunta 8.1:**
@@ -976,21 +976,21 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                     "message": "❌ **Respuesta inválida**\n\nPor favor selecciona 'Sí' o 'No' usando los botones, o escribe 'Sí' o 'No'.",
                     "parse_mode": "Markdown"
                 }
-            
+
             # Use the callback handler logic
             amount = state.data.get("amount", 0.0)
-            
+
             if has_iva == "Sí":
                 # Calculate IVA as 16% of total (extract IVA from total if it includes it)
                 iva_amount = amount * (0.16 / 1.16)
                 state.data["iva"] = round(iva_amount, 2)
             else:
                 state.data["iva"] = None
-            
+
             # Move to next step based on expense type
             if state.expense_type == "ticket":
                 state.state = "collecting_cfdi_use"
-                
+
                 message = f"""✅ **IVA:** {"Sí" if has_iva == "Sí" else "No"}
 {f"*Monto IVA calculado: ${state.data['iva']:.2f} MXN*" if has_iva == "Sí" else ""}
 
@@ -1003,7 +1003,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 • G01 - Adquisición de mercancías
 • G02 - Devoluciones, descuentos o bonificaciones
 • G03 - Gastos en general"""
-                
+
                 return {
                     "status": "collecting_cfdi_use",
                     "message": message,
@@ -1011,7 +1011,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                 }
             else:
                 state.state = "collecting_date"
-                
+
                 message = f"""✅ **IVA:** {"Sí" if has_iva == "Sí" else "No"}
 {f"*Monto IVA calculado: ${state.data['iva']:.2f} MXN*" if has_iva == "Sí" else ""}
 
@@ -1019,7 +1019,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 ¿En qué fecha fue el gasto?
 
 *Formato: AAAA-MM-DD (ejemplo: 2025-11-10)*"""
-                
+
                 return {
                     "status": "collecting_date",
                     "message": message,
@@ -1098,11 +1098,11 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
             # Call Tocino API to generate CFDI
             nova_request_id = None
             tocino_error = None
-            
+
             try:
                 # Get Tocino client
                 tocino_client = get_tocino_client()
-                
+
                 # Prepare Tocino payload
                 # Use selected RFC configuration or fallback to environment variables
                 rfc_id = data.get('rfc_id')
@@ -1113,7 +1113,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                         select(RFCConfig).where(RFCConfig.id == UUID(rfc_id))
                     )
                     rfc = rfc_result.scalar_one_or_none()
-                    
+
                     if rfc:
                         # Use RFC configuration data
                         tocino_payload = {
@@ -1200,26 +1200,26 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                             ultimos_4_digitos=data.get("ultimos_4_digitos"),
                         )
                     )
-                
+
                 # Submit to Tocino
                 tocino_result = tocino_client.submit_ticket(tocino_payload)
-                
+
                 # Extract ticket ID (Tocino returns ticket_id and internal_id; we store as nova_request_id)
                 if isinstance(tocino_result, dict):
                     nova_request_id = tocino_result.get("ticket_id") or tocino_result.get("internal_id") or tocino_result.get("nova_request_id")
-                
+
                 if nova_request_id:
                     # Update expense with nova_request_id
                     expense.nova_request_id = nova_request_id
                     expense.estado_factura = "en_proceso"
                     session.add(expense)
                     await session.commit()
-                    
+
                     logger.info(f"✅ Tocino API call successful: {nova_request_id}")
                 else:
                     logger.warning("Tocino API response missing nova_request_id")
                     tocino_error = "No se recibió ID de solicitud de Tocino"
-                    
+
             except TocinoAPIError as e:
                 logger.error(f"Tocino API error: {e}", exc_info=True)
                 tocino_error = f"Error de Tocino API: {str(e)}"
@@ -1420,19 +1420,19 @@ Tu gasto ha sido registrado en el sistema sin generar CFDI."""
                     "message": "❌ Departamento no válido. Por favor intenta de nuevo.",
                     "parse_mode": "Markdown"
                 }
-            
+
             # Store in user state
             state = self.get_user_state(chat_id)
             state.data["departamento"] = departamento
             state.state = "collecting_rfc"
-            
+
             # Get active RFC configurations
             result = await session.execute(
                 select(RFCConfig).where(RFCConfig.active == True)
                 .order_by(RFCConfig.display_order, RFCConfig.name)
             )
             rfc_configs = result.scalars().all()
-            
+
             if rfc_configs:
                 # Build inline keyboard with RFC options
                 keyboard = {"inline_keyboard": []}
@@ -1446,14 +1446,14 @@ Tu gasto ha sido registrado en el sistema sin generar CFDI."""
                     if len(row) == 2 or i == len(rfc_configs) - 1:
                         keyboard["inline_keyboard"].append(row)
                         row = []
-                
+
                 # Add "No Aplica" option only for manual expenses (reportar_gasto)
                 if state.expense_type == "manual":
                     keyboard["inline_keyboard"].append([{
                         "text": "No Aplica",
                         "callback_data": "rfc:no_aplica"
                     }])
-                
+
                 message = f"""✅ **Departamento:** {departamento}
 
 **Pregunta 3:**
@@ -1484,7 +1484,7 @@ Selecciona el RFC a utilizar:
                 tournaments = await fetch_active_tournaments_for_telegram_user(
                     session, user_id
                 )
-                
+
                 if tournaments:
                     # Build inline keyboard with tournament options
                     keyboard = {"inline_keyboard": []}
@@ -1498,7 +1498,7 @@ Selecciona el RFC a utilizar:
                         if len(row) == 2 or i == len(tournaments) - 1:
                             keyboard["inline_keyboard"].append(row)
                             row = []
-                    
+
                     return {
                         "status": "collecting_project",
                         "message": message,
@@ -1531,12 +1531,12 @@ Selecciona el RFC a utilizar:
             # Get user state
             state = self.get_user_state(chat_id)
             tournament_id = state.data.get("tournament_id")
-            
+
             # Try to get tournament-specific mapping first
             mapping = None
             if tournament_id:
                 mapping = await get_concepto_mapping(tournament_id, concepto, session)
-            
+
             # Validate concepto - check tournament mapping or global map
             if mapping:
                 # Use tournament mapping
@@ -1552,14 +1552,14 @@ Selecciona el RFC a utilizar:
                     "message": "❌ Concepto no válido. Por favor intenta de nuevo.",
                     "parse_mode": "Markdown"
                 }
-            
+
             # Store in user state
             state.data["concepto"] = concepto
             state.data["sub_cuenta"] = sub_cuenta
-            
+
             # Move to payment method collection
             state.state = "collecting_metodo_pago"
-            
+
             # Build inline keyboard with payment method options
             keyboard = {"inline_keyboard": []}
             # Add payment methods in rows of 2
@@ -1572,14 +1572,14 @@ Selecciona el RFC a utilizar:
                 if len(row) == 2 or i == len(METODO_PAGO_LIST) - 1:
                     keyboard["inline_keyboard"].append(row)
                     row = []
-            
+
             message = f"""✅ **Concepto:** {concepto}
 
 **Pregunta 7:**
 ¿Cuál fue el método de pago utilizado?
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
-            
+
             return {
                 "status": "collecting_metodo_pago",
                 "message": message,
@@ -1605,11 +1605,11 @@ Selecciona el RFC a utilizar:
             # Store in user state
             state = self.get_user_state(chat_id)
             state.data["metodo_pago"] = metodo_pago
-            
+
             # If it's a card payment, ask for last 4 digits
             if metodo_pago == "Tarjeta":
                 state.state = "collecting_ultimos_4_digitos"
-                
+
                 message = f"""✅ **Método de Pago:** {metodo_pago}
 
 **Pregunta 7.1:**
@@ -1618,7 +1618,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 *Por favor ingresa solo los 4 dígitos (ejemplo: 1234)*
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
-                
+
                 return {
                     "status": "collecting_ultimos_4_digitos",
                     "message": message,
@@ -1628,7 +1628,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                 # Efectivo - no need for card digits, go to amount
                 if state.expense_type == "ticket":
                     state.state = "collecting_amount"
-                    
+
                     message = f"""✅ **Método de Pago:** {metodo_pago}
 
 **Pregunta 8:**
@@ -1637,14 +1637,14 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 *Por favor ingresa solo el número (ejemplo: 150.50)*"""
                 else:
                     state.state = "manual_collecting_amount"
-                    
+
                     message = f"""✅ **Método de Pago:** {metodo_pago}
 
 **Pregunta 8:**
 ¿Cuál es el monto del gasto en MXN?
 
 *Por favor ingresa solo el número (ejemplo: 150.50)*"""
-                
+
                 return {
                     "status": "collecting_amount",
                     "message": message,
@@ -1668,7 +1668,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
         try:
             state = self.get_user_state(chat_id)
             amount = state.data.get("amount", 0.0)
-            
+
             if has_iva == "Sí":
                 # Calculate IVA as 16% of total (extract IVA from total if it includes it)
                 # Formula: IVA = total_amount × (0.16 / 1.16)
@@ -1677,11 +1677,11 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
             else:
                 # No IVA
                 state.data["iva"] = None
-            
+
             # Move to next step based on expense type
             if state.expense_type == "ticket":
                 state.state = "collecting_cfdi_use"
-                
+
                 message = f"""✅ **IVA:** {"Sí" if has_iva == "Sí" else "No"}
 {f"*Monto IVA calculado: ${state.data['iva']:.2f} MXN*" if has_iva == "Sí" else ""}
 
@@ -1694,7 +1694,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 • G01 - Adquisición de mercancías
 • G02 - Devoluciones, descuentos o bonificaciones
 • G03 - Gastos en general"""
-                
+
                 return {
                     "status": "collecting_cfdi_use",
                     "message": message,
@@ -1702,7 +1702,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                 }
             else:
                 state.state = "collecting_date"
-                
+
                 message = f"""✅ **IVA:** {"Sí" if has_iva == "Sí" else "No"}
 {f"*Monto IVA calculado: ${state.data['iva']:.2f} MXN*" if has_iva == "Sí" else ""}
 
@@ -1710,7 +1710,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
 ¿En qué fecha fue el gasto?
 
 *Formato: AAAA-MM-DD (ejemplo: 2025-11-10)*"""
-                
+
                 return {
                     "status": "collecting_date",
                     "message": message,
@@ -1733,10 +1733,10 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
     ) -> Dict[str, Any]:
         """Handle RFC selection from inline keyboard."""
         from uuid import UUID
-        
+
         try:
             state = self.get_user_state(chat_id)
-            
+
             # Handle "No Aplica" option (only for manual expenses)
             if rfc_id == "no_aplica":
                 if state.expense_type != "manual":
@@ -1745,14 +1745,14 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                         "message": "❌ Esta opción solo está disponible para gastos manuales.",
                         "parse_mode": "Markdown"
                     }
-                
+
                 # Don't store rfc_id for "No Aplica"
                 state.state = "collecting_project"
-                
+
                 tournaments = await fetch_active_tournaments_for_telegram_user(
                     session, user_id
                 )
-                
+
                 if tournaments:
                     # Build inline keyboard with tournament options
                     keyboard = {"inline_keyboard": []}
@@ -1766,7 +1766,7 @@ Ingresa los últimos 4 dígitos de la tarjeta utilizada:
                         if len(row) == 2 or i == len(tournaments) - 1:
                             keyboard["inline_keyboard"].append(row)
                             row = []
-                    
+
                     message = """✅ **RFC:** No Aplica
 
 **Pregunta 4:**
@@ -1796,28 +1796,28 @@ Selecciona el torneo/proyecto:
                         "message": message,
                         "parse_mode": "Markdown"
                     }
-            
+
             # Get RFC configuration
             result = await session.execute(
                 select(RFCConfig).where(RFCConfig.id == UUID(rfc_id))
             )
             rfc = result.scalar_one_or_none()
-            
+
             if not rfc:
                 return {
                     "status": "error",
                     "message": "❌ RFC no encontrado. Por favor intenta de nuevo.",
                     "parse_mode": "Markdown"
                 }
-            
+
             # Store in user state
             state.data["rfc_id"] = str(rfc.id)
             state.state = "collecting_project"
-            
+
             tournaments = await fetch_active_tournaments_for_telegram_user(
                 session, user_id
             )
-            
+
             if tournaments:
                 # Build inline keyboard with tournament options
                 keyboard = {"inline_keyboard": []}
@@ -1831,7 +1831,7 @@ Selecciona el torneo/proyecto:
                     if len(row) == 2 or i == len(tournaments) - 1:
                         keyboard["inline_keyboard"].append(row)
                         row = []
-                
+
                 message = f"""✅ **RFC:** {rfc.name}
 
 **Pregunta 4:**
@@ -1878,14 +1878,14 @@ Selecciona el torneo/proyecto:
     ) -> Dict[str, Any]:
         """Handle tournament selection from inline keyboard."""
         from uuid import UUID
-        
+
         try:
             # Get tournament
             result = await session.execute(
                 select(Tournament).where(Tournament.id == UUID(tournament_id))
             )
             tournament = result.scalar_one_or_none()
-            
+
             if not tournament:
                 return {
                     "status": "error",
@@ -1908,7 +1908,7 @@ Selecciona el torneo/proyecto:
                         "message": f"❌ {vis_err}",
                         "parse_mode": "Markdown",
                     }
-            
+
             # Store in user state
             state = self.get_user_state(chat_id)
             state.data["project"] = tournament.name
@@ -1921,14 +1921,14 @@ Selecciona el torneo/proyecto:
             fase_options = get_tournament_etapas(tournament)
             state.data["fase_options"] = fase_options
             keyboard = _build_inline_keyboard(fase_options, "fase_torneo")
-            
+
             message = f"""✅ **Proyecto:** {tournament.name}
 
 **Pregunta 5:**
 Selecciona la fase del torneo:
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
-            
+
             return {
                 "status": "collecting_fase_torneo",
                 "message": message,
@@ -1962,17 +1962,17 @@ Selecciona la fase del torneo:
                     "parse_mode": "Markdown"
                 }
             state.data["fase_torneo"] = fase_torneo
-            
+
             # Determine next state based on expense type
             if state.expense_type == "ticket":
                 state.state = "collecting_concepto"
             else:
                 state.state = "manual_collecting_concepto"
-            
+
             # Check if tournament_id exists in state
             tournament_id = state.data.get("tournament_id")
             conceptos_to_show = []
-            
+
             if tournament_id:
                 # Get tournament-specific conceptos
                 tournament_conceptos = await get_tournament_conceptos(tournament_id, session)
@@ -1984,11 +1984,11 @@ Selecciona la fase del torneo:
             else:
                 # No tournament selected, use global list
                 conceptos_to_show = None
-            
+
             # Build inline keyboard with concepto options
             keyboard = {"inline_keyboard": []}
             row = []
-            
+
             if conceptos_to_show:
                 # Use tournament-specific conceptos
                 for i, mapping in enumerate(conceptos_to_show):
@@ -2010,14 +2010,14 @@ Selecciona la fase del torneo:
                     if len(row) == 2 or i == len(CONCEPTOS_LIST) - 1:
                         keyboard["inline_keyboard"].append(row)
                         row = []
-            
+
             message = f"""✅ **Fase del Torneo:** {fase_torneo}
 
 **Pregunta 6:**
 Selecciona el concepto del gasto:
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
-            
+
             return {
                 "status": "collecting_concepto",
                 "message": message,
