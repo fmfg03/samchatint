@@ -73,11 +73,11 @@ def analyst_case_persistence_allowed(employee_id: str) -> bool:
 
     if not analyst_case_persistence_enabled():
         return False
-    subject = str(employee_id or "").strip()
+    subject = str(employee_id or "").strip().casefold()
     if not subject:
         return False
     allowed = {
-        value.strip()
+        value.strip().casefold()
         for value in os.getenv(CASE_PERSISTENCE_EMPLOYEE_IDS_ENV, "").split(",")
         if value.strip()
     }

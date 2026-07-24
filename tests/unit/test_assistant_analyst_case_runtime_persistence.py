@@ -20,6 +20,7 @@ from samchat.assistant.analyst_case_models import (
 )
 from samchat.assistant.analyst_case_store import AnalystCaseStore
 from samchat.assistant.analyst_case_persistence import (
+    analyst_case_persistence_allowed,
     analyst_case_persistence_enabled,
     persist_analyst_case,
 )
@@ -217,6 +218,21 @@ async def test_non_allowlisted_employee_cannot_persist(
 
     assert persisted.outcome == "not_allowed"
     assert persisted.trace()["product_case_write"] is False
+
+
+def test_persistence_cohort_matching_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS",
+        "ABCDEF00-0000-0000-0000-000000000001",
+    )
+
+    assert analyst_case_persistence_allowed("abcdef00-0000-0000-0000-000000000001")
 
 
 @pytest.mark.asyncio
