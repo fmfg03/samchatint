@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from samchat.assistant.agent_runtime import (
     build_agent_runtime_trace,
     build_agent_runtime_activation_trace,
@@ -98,7 +100,9 @@ def test_runtime_activation_allows_employee_id(monkeypatch) -> None:
     assert activation.to_trace()["subject"]["employee_id_hash"].startswith("sha256:")
 
 
-def test_runtime_activation_fails_closed_when_readonly_mode_is_off(monkeypatch) -> None:
+def test_runtime_activation_fails_closed_when_readonly_mode_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
@@ -111,7 +115,9 @@ def test_runtime_activation_fails_closed_when_readonly_mode_is_off(monkeypatch) 
     assert activation.safety_violations == ("readonly_mode_required",)
 
 
-def test_runtime_activation_fails_closed_when_writes_are_enabled(monkeypatch) -> None:
+def test_runtime_activation_fails_closed_when_writes_are_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "true")
@@ -127,7 +133,9 @@ def test_runtime_activation_fails_closed_when_writes_are_enabled(monkeypatch) ->
     assert "emp-1" not in str(trace)
 
 
-def test_readonly_canary_violations_report_all_contradictions(monkeypatch) -> None:
+def test_readonly_canary_violations_report_all_contradictions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
     monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "true")
@@ -166,7 +174,9 @@ def test_runtime_canary_evaluates_multiple_explicit_employees(monkeypatch) -> No
     assert "emp-1" not in str(summary)
 
 
-def test_runtime_canary_denies_every_subject_in_unsafe_posture(monkeypatch) -> None:
+def test_runtime_canary_denies_every_subject_in_unsafe_posture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1,emp-2")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
