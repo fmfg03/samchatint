@@ -8561,6 +8561,68 @@ def _beneficiary_selection_allowed(
     )
 
 
+def _beneficiary_employee_control_html(
+    *,
+    requester: Empleado,
+    beneficiary: Empleado,
+    options_html: str,
+    select_id: str,
+    help_text: str,
+) -> str:
+    """Render an explicit employee selector only for authorized requesters."""
+    beneficiary_name = escape(
+        beneficiary.nombre or beneficiary.correo or str(beneficiary.id)
+    )
+    if _can_request_for_other_employee(requester):
+        return (
+            f'<label for="{select_id}" style="display:block;font-weight:700;'
+            'margin-bottom:6px;">Empleado beneficiario</label>'
+            f'<select name="beneficiario_empleado_id" id="{select_id}" required '
+            f'style="margin-bottom:8px;">{options_html}</select>'
+            f'<small>{escape(help_text)}</small>'
+        )
+    return (
+        f'<input type="hidden" name="beneficiario_empleado_id" '
+        f'value="{beneficiary.id}">'
+        '<span style="display:block;font-weight:700;">'
+        f'{beneficiary_name}</span>'
+        '<small>Este usuario solamente puede solicitar para sí mismo.</small>'
+    )
+
+
+def _can_cancel_empty_informe_draft(
+    actor: Empleado, cuenta: CuentaDeGastos
+) -> bool:
+    """Only the requester/owner or a superadmin can cancel an empty draft."""
+    role = (getattr(actor, "rol", None) or "").strip().lower()
+    return bool(
+        getattr(cuenta, "empleado_id", None) == getattr(actor, "id", None)
+        or role in {"superadmin", "super_admin"}
+    )
+
+
+def _empty_informe_cancel_error(
+    *,
+    cuenta_estado: str,
+    informe_estado: str,
+    expense_count: int,
+    solicitud_count: int,
+    settlement_count: int,
+    attachment_count: int,
+) -> Optional[str]:
+    if cuenta_estado != "abierta" or informe_estado != "borrador":
+        return "Solo puede cancelarse un informe abierto que siga en borrador."
+    if expense_count:
+        return "El informe tiene gastos vinculados y no puede cancelarse como vacío."
+    if solicitud_count:
+        return "El informe tiene solicitudes vinculadas y no puede cancelarse como vacío."
+    if settlement_count:
+        return "El informe tiene liquidaciones vinculadas y no puede cancelarse como vacío."
+    if attachment_count:
+        return "El informe tiene archivos vinculados y no puede cancelarse como vacío."
+    return None
+
+
 async def _active_beneficiary_empleados(
     session: AsyncSession, requester: Empleado
 ) -> List[Empleado]:
@@ -12650,6 +12712,16 @@ async def solicitar_anticipo_form(
     beneficiary_options = _html_beneficiary_employee_options(
         active_empleados, beneficiario.id
     )
+    beneficiary_employee_control = _beneficiary_employee_control_html(
+        requester=current_empleado,
+        beneficiary=beneficiario,
+        options_html=beneficiary_options,
+        select_id="beneficiario_empleado_id",
+        help_text=(
+            "Selecciona a la persona que recibirá el anticipo. La solicitud, "
+            "su propiedad y su aprobación permanecen a nombre de quien solicita."
+        ),
+    )
     bank_account_options = await _html_empleado_bank_account_options(
         session,
         beneficiario,
@@ -12717,14 +12789,13 @@ async def solicitar_anticipo_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
-                                <select name="beneficiario_empleado_id" id="beneficiario_empleado_id" required style="margin-bottom:8px;">
-                                    {beneficiary_options}
-                                </select>
-                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(beneficiario.nombre or "")}</div>
+                                {beneficiary_employee_control}
+                                <div id="st_preview_beneficiario" style="margin-top:8px;font-size:12px;color:#475569;">Beneficiario seleccionado: {escape(beneficiario.nombre or "")}</div>
+                                <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:12px 0 6px;">Cuenta bancaria del beneficiario</label>
                                 <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
                                     {bank_account_options}
                                 </select>
-                                <small>La cuenta bancaria debe corresponder al beneficiario. La solicitud y su aprobaciÃ³n permanecen a nombre de quien solicita.</small>
+                                <small>Después de elegir al empleado, selecciona una cuenta bancaria registrada a su nombre.</small>
                             </div>''',
                         )}
                         {render_st_doc_row(
@@ -12797,7 +12868,7 @@ async def solicitar_anticipo_form(
                 var beneficiarySelect = document.getElementById("beneficiario_empleado_id");
                 var accountSelect = document.getElementById("proveedor_cliente_id");
                 var beneficiaryPreview = document.getElementById("st_preview_beneficiario");
-                if (!beneficiarySelect || !accountSelect) return;
+                if (!beneficiarySelect || !accountSelect || beneficiarySelect.tagName !== "SELECT") return;
                 beneficiarySelect.addEventListener("change", async function() {{
                     var selected = beneficiarySelect.options[beneficiarySelect.selectedIndex];
                     if (beneficiaryPreview) beneficiaryPreview.textContent = selected ? selected.textContent : "";
@@ -26084,6 +26155,16 @@ async def crear_cuenta_de_gastos_form(
     beneficiary_options = _html_beneficiary_employee_options(
         active_empleados, beneficiario.id
     )
+    beneficiary_employee_control = _beneficiary_employee_control_html(
+        requester=current_empleado,
+        beneficiary=beneficiario,
+        options_html=beneficiary_options,
+        select_id="beneficiario_empleado_id",
+        help_text=(
+            "Selecciona a la persona a cuyo nombre se prepara el informe. "
+            "El responsable, propietario y aprobador continúan siendo los del usuario que lo crea."
+        ),
+    )
     preserve_uuid = None
     if preserve_torneo_id:
         try:
@@ -26166,11 +26247,8 @@ async def crear_cuenta_de_gastos_form(
             <p class="section-note" style="margin:0 0 18px 0;">Se creará un informe de gastos con su documento principal. Las solicitudes de transferencia se agregan desde el detalle del informe.</p>
             <form method="POST" action="/informes-de-gastos/crear" id="form-crear-cuenta">
                 <div class="form-group">
-                    <label for="beneficiario_empleado_id">Beneficiario del informe</label>
-                    <select name="beneficiario_empleado_id" id="beneficiario_empleado_id" required>
-                        {beneficiary_options}
-                    </select>
-                    <small>El responsable, propietario y aprobador continÃºan siendo los del usuario que crea el informe.</small>
+                    <label>Beneficiario del informe</label>
+                    {beneficiary_employee_control}
                 </div>
                 <div class="form-group">
                     <label for="nombre">Motivo del gasto</label>
@@ -26749,6 +26827,7 @@ async def cuentas_de_gastos_list(
 
         # INFORME document per cuenta: Referencia Operaciones lives on the informe row
         informe_ro_by_cuenta_id: Dict[UUIDType, Optional[str]] = {}
+        informe_doc_by_cuenta_id: Dict[UUIDType, Documento] = {}
         if cuentas:
             cuenta_ids = [c.id for c in cuentas]
             informes_result = await session.execute(
@@ -26764,6 +26843,7 @@ async def cuentas_de_gastos_list(
                 if cid and cid not in informe_ro_by_cuenta_id:
                     ro = (inf.referencia_operaciones or "").strip() or None
                     informe_ro_by_cuenta_id[cid] = ro
+                    informe_doc_by_cuenta_id[cid] = inf
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
 
@@ -26797,11 +26877,12 @@ async def cuentas_de_gastos_list(
             num_solicitudes = len(solicitudes_list)
 
             try:
-                settled_amount_list, _settled_count_list = (
+                settled_amount_list, settled_count_list = (
                     await compute_cuenta_saldo_adjustments(session, cuenta.id)
                 )
             except (ProgrammingError, OperationalError):
                 settled_amount_list = 0.0
+                settled_count_list = 0
             saldo_breakdown = compute_informe_saldo(
                 employee_paid=total_pagado_empleado,
                 monto_entregado=monto_entregado,
@@ -26819,6 +26900,8 @@ async def cuentas_de_gastos_list(
                 'saldo': saldo,
                 'num_expenses': len(expenses),
                 'num_solicitudes': num_solicitudes,
+                'settlement_count': settled_count_list,
+                'informe_doc': informe_doc_by_cuenta_id.get(cuenta.id),
             })
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
@@ -26834,7 +26917,16 @@ async def cuentas_de_gastos_list(
     rows_html = ""
     for data in cuenta_data:
         cuenta = data['cuenta']
-        estado_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Abierta</span>' if cuenta.estado == 'abierta' else '<span style="background: #9e9e9e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Cerrada</span>'
+        informe_doc = data.get('informe_doc')
+        informe_cancelado = bool(
+            informe_doc and informe_doc.estado == "rechazado" and cuenta.estado == "cerrada"
+        )
+        if informe_cancelado:
+            estado_badge = '<span style="background:#991b1b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Cancelado</span>'
+        elif cuenta.estado == 'abierta':
+            estado_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Abierta</span>'
+        else:
+            estado_badge = '<span style="background: #9e9e9e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Cerrada</span>'
 
         saldo_color = '#f44336' if data['saldo'] > 0 else '#4CAF50'
         saldo_label = 'A pagar' if data['saldo'] > 0 else ('A favor' if data['saldo'] < 0 else 'Saldado')
@@ -26855,10 +26947,33 @@ async def cuentas_de_gastos_list(
             or current_empleado.rol in ('admin', 'finanzas', 'superadmin', 'super_admin')
         )
         cerrar_cell = ''
-        if cuenta.estado == 'abierta' and _can_manage_cuenta_row:
+        if (
+            cuenta.estado == 'abierta'
+            and _can_manage_cuenta_row
+            and not informe_cancelado
+            and data['num_expenses'] > 0
+        ):
             cerrar_cell = (
                 '<form method="POST" action="/informes-de-gastos/' + str(cuenta.id)
                 + '/cerrar" style="display: inline;"><button type="submit" style="background: #ff9800; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;" onclick="return confirm(\'¿Cerrar este informe de gastos? No podrás agregar más gastos.\')">Cerrar</button></form>'
+            )
+        cancelar_borrador_cell = ''
+        if (
+            informe_doc
+            and informe_doc.estado == "borrador"
+            and cuenta.estado == "abierta"
+            and data['num_expenses'] == 0
+            and data['num_solicitudes'] == 0
+            and data['settlement_count'] == 0
+            and _can_cancel_empty_informe_draft(current_empleado, cuenta)
+        ):
+            cancelar_borrador_cell = (
+                '<form method="POST" action="/informes-de-gastos/' + str(cuenta.id)
+                + '/cancelar-borrador" style="display:inline;margin-left:6px;">'
+                '<button type="submit" style="background:#991b1b;color:white;border:none;'
+                'padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;" '
+                'onclick="return confirm(\'¿Cancelar este informe vacío? Se conservará el registro de auditoría.\')">'
+                'Cancelar borrador</button></form>'
             )
         rows_html += f"""
         <tr>
@@ -26879,6 +26994,7 @@ async def cuentas_de_gastos_list(
             <td>
                 <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; margin-right: 10px;">Ver</a>
                 {cerrar_cell}
+                {cancelar_borrador_cell}
             </td>
         </tr>
         """
@@ -26983,6 +27099,147 @@ async def cuentas_de_gastos_list(
     </html>
     """
     return html
+
+
+@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador")
+async def cancelar_informe_vacio_borrador(
+    cuenta_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    """Soft-cancel an empty draft while retaining approval and audit history."""
+    cuenta_result = await session.execute(
+        select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_id)
+    )
+    cuenta = cuenta_result.scalar_one_or_none()
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if not _can_cancel_empty_informe_draft(current_empleado, cuenta):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el solicitante o un superadmin puede cancelar este borrador.",
+        )
+
+    informe_result = await session.execute(
+        select(Documento)
+        .where(
+            Documento.cuenta_gastos_id == cuenta.id,
+            Documento.tipo == "INFORME",
+        )
+        .order_by(Documento.creado_en.asc())
+        .limit(1)
+    )
+    informe_doc = informe_result.scalar_one_or_none()
+    if informe_doc is None:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta.id}",
+                error_msg="El informe no tiene documento principal; contacte a soporte.",
+            ),
+            status_code=303,
+        )
+
+    expense_count = int(
+        (
+            await session.execute(
+                select(func.count(ExpenseReport.id)).where(
+                    ExpenseReport.cuenta_gastos_id == cuenta.id
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    solicitud_count = int(
+        (
+            await session.execute(
+                select(func.count(Documento.id)).where(
+                    Documento.cuenta_gastos_id == cuenta.id,
+                    Documento.tipo == "SOLICITUD",
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    settlement_count = int(
+        (
+            await session.execute(
+                select(func.count(Reembolso.id)).where(
+                    Reembolso.cuenta_gastos_id == cuenta.id
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    attachment_count = int(
+        (
+            await session.execute(
+                select(func.count(Adjunto.id)).where(
+                    Adjunto.documento_id == informe_doc.id
+                )
+            )
+        ).scalar_one()
+        or 0
+    )
+    validation_error = _empty_informe_cancel_error(
+        cuenta_estado=cuenta.estado or "",
+        informe_estado=informe_doc.estado or "",
+        expense_count=expense_count,
+        solicitud_count=solicitud_count,
+        settlement_count=settlement_count,
+        attachment_count=attachment_count,
+    )
+    if validation_error:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta.id}",
+                error_msg=validation_error,
+            ),
+            status_code=303,
+        )
+
+    cancelled_at = datetime.utcnow()
+    cuenta.estado = "cerrada"
+    cuenta.closed_at = cancelled_at
+    informe_doc.estado = "rechazado"
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=informe_doc.id,
+            aprobador_id=current_empleado.id,
+            accion="cancelar",
+            comentario="Borrador vacío cancelado por el solicitante.",
+            fecha=cancelled_at,
+        )
+    )
+    await record_customer_success_audit_event(
+        session,
+        action="informe.empty_draft_cancelled",
+        actor_empleado_id=current_empleado.id,
+        target_empleado_id=cuenta.empleado_id,
+        documento_id=informe_doc.id,
+        entity_type="cuenta_de_gastos",
+        entity_id=cuenta.id,
+        documento_referencia=informe_doc.numero_referencia,
+        request=request,
+        summary="Borrador vacío de informe de gastos cancelado.",
+        metadata={
+            "beneficiario_empleado_id": (
+                str(cuenta.beneficiario_empleado_id)
+                if cuenta.beneficiario_empleado_id
+                else None
+            )
+        },
+    )
+    await session.commit()
+    return RedirectResponse(
+        url=_append_success_params(
+            "/informes-de-gastos",
+            success="borrador_cancelado",
+            msg="El borrador vacío fue cancelado y quedó registrado para auditoría.",
+        ),
+        status_code=303,
+    )
 
 
 def _can_quick_capture_expense(
@@ -27656,6 +27913,7 @@ async def cuenta_de_gastos_detail(
     informe_doc_can_close = (
         bool(informe_doc)
         and informe_doc_estado == "borrador"
+        and bool(active_expenses)
         and _can_manage_cuenta
         and cuenta.estado in {"abierta", "cerrada"}
     )
@@ -27703,6 +27961,24 @@ async def cuenta_de_gastos_detail(
                 "onclick=\"return confirm('¿Cerrar este informe de gastos y enviarlo "
                 "para aprobación?')\">Cerrar informe</button></form>"
             )
+
+    cancelar_borrador_form_html = ""
+    if (
+        informe_doc
+        and informe_doc.estado == "borrador"
+        and cuenta.estado == "abierta"
+        and not expenses
+        and not solicitudes_list
+        and not cuenta_reembolsos
+        and _can_cancel_empty_informe_draft(current_empleado, cuenta)
+    ):
+        cancelar_borrador_form_html = (
+            f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cancelar-borrador" '
+            'style="display:inline;">'
+            '<button type="submit" class="button" style="background:#991b1b;" '
+            'onclick="return confirm(\'¿Cancelar este informe vacío? El registro se conservará para auditoría.\')">'
+            'Cancelar borrador vacío</button></form>'
+        )
 
     informe_not_approved_note = ""
     if saldo != 0 and not informe_doc_approved and not informe_doc_can_close:
@@ -27894,6 +28170,7 @@ async def cuenta_de_gastos_detail(
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if cuenta.estado == 'abierta' and _can_manage_cuenta else ''}
         {cerrar_informe_form_html}
+        {cancelar_borrador_form_html}
     """
     detail_side_html = f"""
         <div class="eyebrow">Estado del informe</div>
