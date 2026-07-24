@@ -22,6 +22,7 @@ RUNTIME_DISABLED = "RUNTIME_DISABLED"
 RUNTIME_ALLOWLIST_EMPTY = "RUNTIME_ALLOWLIST_EMPTY"
 RUNTIME_SUBJECT_NOT_ALLOWED = "RUNTIME_SUBJECT_NOT_ALLOWED"
 RUNTIME_ALLOWED_EMPLOYEE_ID = "RUNTIME_ALLOWED_EMPLOYEE_ID"
+RUNTIME_UNSAFE_CONFIGURATION = "RUNTIME_UNSAFE_CONFIGURATION"
 
 
 @dataclass
@@ -66,6 +67,7 @@ class RuntimeActivation:
     decision: str
     employee_id_present: bool
     employee_id_hash: Optional[str] = None
+    safety_violations: tuple[str, ...] = ()
 
     def to_trace(self) -> Dict[str, Any]:
         return {
@@ -77,6 +79,7 @@ class RuntimeActivation:
             },
             "readonly_only": is_agent_runtime_readonly_only(),
             "writes_enabled": is_agent_writes_enabled(),
+            "safety_violations": list(self.safety_violations),
         }
 
 
@@ -103,6 +106,19 @@ def is_agent_writes_enabled() -> bool:
     return (
         os.getenv("ASSISTANT_AGENT_WRITES_ENABLED") or ""
     ).strip().lower() in TRUE_VALUES
+
+
+def runtime_readonly_canary_violations() -> tuple[str, ...]:
+    """Return privacy-safe reasons the enabled runtime is not a read-only canary."""
+    if not is_agent_runtime_enabled():
+        return ()
+
+    violations: list[str] = []
+    if not is_agent_runtime_readonly_only():
+        violations.append("readonly_mode_required")
+    if is_agent_writes_enabled():
+        violations.append("writes_must_be_disabled")
+    return tuple(violations)
 
 
 def _csv_set(env_var: str) -> Set[str]:
@@ -144,6 +160,16 @@ def evaluate_runtime_activation(
             decision=RUNTIME_DISABLED,
             employee_id_present=employee_id_present,
             employee_id_hash=_stable_subject_hash(employee_key),
+        )
+
+    safety_violations = runtime_readonly_canary_violations()
+    if safety_violations:
+        return RuntimeActivation(
+            enabled=False,
+            decision=RUNTIME_UNSAFE_CONFIGURATION,
+            employee_id_present=employee_id_present,
+            employee_id_hash=_stable_subject_hash(employee_key),
+            safety_violations=safety_violations,
         )
 
     if not employee_ids:
@@ -193,11 +219,14 @@ def evaluate_runtime_canary_subjects(
                 "side_effects_allowed": False,
             }
         )
+    safety_violations = runtime_readonly_canary_violations()
     return {
         "runtime_allowed": runtime_allowed,
         "runtime_denied": runtime_denied,
         "writes_enabled": is_agent_writes_enabled(),
         "readonly_only": is_agent_runtime_readonly_only(),
+        "safe_readonly_posture": not safety_violations,
+        "safety_violations": list(safety_violations),
         "general_runtime": False,
         "write_handlers_invoked": 0,
         "side_effects_detected": 0,

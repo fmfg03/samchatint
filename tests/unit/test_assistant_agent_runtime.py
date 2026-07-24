@@ -13,6 +13,7 @@ from samchat.assistant.agent_runtime import (
     is_agent_writes_enabled,
     is_agent_runtime_enabled,
     is_agent_shadow_enabled,
+    runtime_readonly_canary_violations,
 )
 from samchat.assistant.tool_registry import build_tool_registry
 
@@ -97,6 +98,46 @@ def test_runtime_activation_allows_employee_id(monkeypatch) -> None:
     assert activation.to_trace()["subject"]["employee_id_hash"].startswith("sha256:")
 
 
+def test_runtime_activation_fails_closed_when_readonly_mode_is_off(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "false")
+
+    activation = evaluate_runtime_activation(employee_id="emp-1")
+
+    assert activation.enabled is False
+    assert activation.decision == "RUNTIME_UNSAFE_CONFIGURATION"
+    assert activation.safety_violations == ("readonly_mode_required",)
+
+
+def test_runtime_activation_fails_closed_when_writes_are_enabled(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "true")
+
+    activation = evaluate_runtime_activation(employee_id="emp-1")
+    trace = activation.to_trace()
+
+    assert activation.enabled is False
+    assert activation.decision == "RUNTIME_UNSAFE_CONFIGURATION"
+    assert activation.safety_violations == ("writes_must_be_disabled",)
+    assert trace["safety_violations"] == ["writes_must_be_disabled"]
+    assert "emp-1" not in str(trace)
+
+
+def test_readonly_canary_violations_report_all_contradictions(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "true")
+
+    assert runtime_readonly_canary_violations() == (
+        "readonly_mode_required",
+        "writes_must_be_disabled",
+    )
+
+
 def test_runtime_canary_evaluates_multiple_explicit_employees(monkeypatch) -> None:
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1,emp-2")
@@ -111,6 +152,8 @@ def test_runtime_canary_evaluates_multiple_explicit_employees(monkeypatch) -> No
     assert summary["runtime_denied"] == 1
     assert summary["writes_enabled"] is False
     assert summary["readonly_only"] is True
+    assert summary["safe_readonly_posture"] is True
+    assert summary["safety_violations"] == []
     assert summary["general_runtime"] is False
     assert summary["write_handlers_invoked"] == 0
     assert summary["side_effects_detected"] == 0
@@ -121,6 +164,26 @@ def test_runtime_canary_evaluates_multiple_explicit_employees(monkeypatch) -> No
     ]
     assert all(item["handler_invoked"] is False for item in summary["decisions"])
     assert "emp-1" not in str(summary)
+
+
+def test_runtime_canary_denies_every_subject_in_unsafe_posture(monkeypatch) -> None:
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_ENABLED", "true")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_EMPLOYEE_IDS", "emp-1,emp-2")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_READONLY_ONLY", "false")
+    monkeypatch.setenv("ASSISTANT_AGENT_WRITES_ENABLED", "true")
+
+    summary = evaluate_runtime_canary_subjects(employee_ids=["emp-1", "emp-2"])
+
+    assert summary["runtime_allowed"] == 0
+    assert summary["runtime_denied"] == 2
+    assert summary["safe_readonly_posture"] is False
+    assert summary["safety_violations"] == [
+        "readonly_mode_required",
+        "writes_must_be_disabled",
+    ]
+    assert {item["decision"] for item in summary["decisions"]} == {
+        "RUNTIME_UNSAFE_CONFIGURATION"
+    }
 
 
 def test_agent_shadow_flag_is_independent_from_real_runtime(monkeypatch) -> None:
