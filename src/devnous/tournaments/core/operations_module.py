@@ -451,6 +451,51 @@ class OperationsModule:
         merged["confidence"] = max(float((base or {}).get("confidence") or 0.0), float((incoming or {}).get("confidence") or 0.0))
         return merged if any(merged.get(k) for k in ("name", "phone", "email")) else None
 
+    def _merge_combined_provider_payload(
+        self,
+        base: Dict[str, Any],
+        provider: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Add combined-document OCR without erasing accepted review values."""
+        merged = dict(provider or {})
+        merged["team"] = self._merge_review_team_fields(
+            (base or {}).get("team") or {},
+            merged.get("team") or {},
+        )
+        merged["manager"] = self._merge_review_manager_fields(
+            (base or {}).get("manager"),
+            merged.get("manager"),
+        )
+
+        base_players = list((base or {}).get("players") or [])
+        provider_players = list(merged.get("players") or [])
+        players: List[Dict[str, Any]] = []
+        for index in range(max(len(base_players), len(provider_players))):
+            if index >= len(base_players):
+                players.append(dict(provider_players[index]))
+                continue
+            if index >= len(provider_players):
+                players.append(dict(base_players[index]))
+                continue
+
+            player = dict(provider_players[index])
+            for key, value in dict(base_players[index]).items():
+                if value is not None and not (
+                    isinstance(value, str) and not value.strip()
+                ):
+                    player[key] = value
+            player["confidence"] = max(
+                float(base_players[index].get("confidence") or 0.0),
+                float(provider_players[index].get("confidence") or 0.0),
+            )
+            players.append(player)
+        merged["players"] = players
+        merged["overall_confidence"] = max(
+            float((base or {}).get("overall_confidence") or 0.0),
+            float(merged.get("overall_confidence") or 0.0),
+        )
+        return merged
+
     @staticmethod
     def _extend_player_page_map(
         existing: Optional[Dict[str, int]],
@@ -654,7 +699,10 @@ class OperationsModule:
                             # This replaces only the proposed review draft.  The
                             # governance gate below still owns admission and no
                             # Team/Player row is materialized here.
-                            merged_payload = chandra_extraction
+                            merged_payload = self._merge_combined_provider_payload(
+                                base_extraction,
+                                chandra_extraction,
+                            )
                         else:
                             logger.info(
                                 "Telegram CTT shadow complete: document=%s canonical=%s comparisons=%s",
@@ -697,7 +745,10 @@ class OperationsModule:
                             await self._call_openai_vision_multi(image_b64_values)
                         )
                         combined_extraction = RegistrationFormExtraction.model_validate(combined_raw_payload)
-                        merged_payload = combined_extraction.model_dump(mode="json")
+                        merged_payload = self._merge_combined_provider_payload(
+                            base_extraction,
+                            combined_extraction.model_dump(mode="json"),
+                        )
                         logger.info(
                             "✅ Multi-page OpenAI registration extraction completed: players=%s confidence=%s",
                             len(merged_payload.get("players") or []),

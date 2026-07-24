@@ -48,3 +48,55 @@ async def test_chandra_first_page_uses_openai_only_for_governed_precapture(
     assert result == {"text": "pre-capture only"}
     assert calls[0]["provider"] == "openai"
     assert module.ocr_provider == mode
+
+
+def test_combined_provider_preserves_reviewed_front_page_values() -> None:
+    module = OperationsModule(
+        tournament_id="copa_telmex",
+        config={"operations": {"ocr_enabled": True}},
+        db=None,
+    )
+    base = {
+        "team": {
+            "name": "Equipo corregido",
+            "state": "Michoacán",
+            "municipality": "Tacámbaro",
+            "confidence": 0.91,
+        },
+        "manager": {"name": "Representante corregido", "confidence": 0.9},
+        "players": [
+            {
+                "name": "Jugador corregido",
+                "birth_date": "01/02/2011",
+                "confidence": 0.88,
+                "needs_review": False,
+            }
+        ],
+        "overall_confidence": 0.91,
+    }
+    provider = {
+        "team": {
+            "name": "Equipo OCR",
+            "state": None,
+            "municipality": "",
+            "confidence": 0.6,
+        },
+        "manager": None,
+        "players": [
+            {"name": "Jugador OCR", "confidence": 0.7, "needs_review": True},
+            {"name": "Jugador página 2", "confidence": 0.84},
+        ],
+        "overall_confidence": 0.7,
+    }
+
+    merged = module._merge_combined_provider_payload(base, provider)
+
+    assert merged["team"]["name"] == "Equipo corregido"
+    assert merged["team"]["state"] == "Michoacán"
+    assert merged["team"]["municipality"] == "Tacámbaro"
+    assert merged["manager"]["name"] == "Representante corregido"
+    assert merged["players"][0]["name"] == "Jugador corregido"
+    assert merged["players"][0]["birth_date"] == "01/02/2011"
+    assert merged["players"][0]["needs_review"] is False
+    assert merged["players"][1]["name"] == "Jugador página 2"
+    assert merged["overall_confidence"] == 0.91
