@@ -27212,6 +27212,11 @@ async def cancelar_informe_vacio_borrador(
             fecha=cancelled_at,
         )
     )
+    # Persist the business transition before the best-effort audit transaction.
+    # The audit helper deliberately rolls its transaction back when its schema or
+    # insert is unavailable; sharing the uncommitted business transaction would
+    # otherwise report success after silently restoring the draft.
+    await session.commit()
     await record_customer_success_audit_event(
         session,
         action="informe.empty_draft_cancelled",
@@ -27230,13 +27235,13 @@ async def cancelar_informe_vacio_borrador(
                 else None
             )
         },
+        commit=True,
     )
-    await session.commit()
     return RedirectResponse(
         url=_append_success_params(
             "/informes-de-gastos",
             success="borrador_cancelado",
-            msg="El borrador vacío fue cancelado y quedó registrado para auditoría.",
+            msg="El borrador vacío fue cancelado.",
         ),
         status_code=303,
     )

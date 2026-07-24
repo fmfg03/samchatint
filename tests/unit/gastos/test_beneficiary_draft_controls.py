@@ -1,7 +1,7 @@
 """Authorization and rendering tests for beneficiaries and empty drafts."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -154,3 +154,81 @@ async def test_cancel_empty_draft_route_rejects_non_owner() -> None:
 
     assert exc_info.value.status_code == 403
     assert session.execute.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_empty_draft_commits_before_best_effort_audit_rollback(
+    monkeypatch,
+) -> None:
+    owner_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=owner_id,
+        beneficiario_empleado_id=None,
+        estado="abierta",
+        closed_at=None,
+    )
+    informe = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta.id,
+        tipo="INFORME",
+        estado="borrador",
+        numero_referencia="I-TEST",
+    )
+
+    class ScalarResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalar_one(self):
+            return self.value
+
+    events = []
+
+    async def commit():
+        events.append("business_commit")
+
+    async def rollback():
+        events.append("audit_rollback")
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                ScalarResult(cuenta),
+                ScalarResult(informe),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+            ]
+        ),
+        add=Mock(),
+        commit=AsyncMock(side_effect=commit),
+        rollback=AsyncMock(side_effect=rollback),
+    )
+
+    async def failing_best_effort_audit(audit_session, **kwargs):
+        events.append("audit_attempt")
+        assert kwargs["commit"] is True
+        await audit_session.rollback()
+
+    monkeypatch.setattr(
+        user_routes,
+        "record_customer_success_audit_event",
+        failing_best_effort_audit,
+    )
+
+    response = await user_routes.cancelar_informe_vacio_borrador(
+        cuenta_id=cuenta.id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=owner_id, rol="empleado"),
+    )
+
+    assert response.status_code == 303
+    assert events == ["business_commit", "audit_attempt", "audit_rollback"]
+    assert cuenta.estado == "cerrada"
+    assert informe.estado == "rechazado"
