@@ -29,10 +29,9 @@ logger = logging.getLogger(__name__)
 PERSISTABLE_ANALYST_STATUSES = frozenset(
     {"success", "needs_context", "provider_unavailable"}
 )
-TERMINAL_ANALYST_CASE_STATUSES = frozenset(
-    {CASE_STATUS_REVIEWED, CASE_STATUS_CLOSED}
-)
+TERMINAL_ANALYST_CASE_STATUSES = frozenset({CASE_STATUS_REVIEWED, CASE_STATUS_CLOSED})
 MAX_CASE_SUCCESSOR_DEPTH = 16
+CASE_PERSISTENCE_EMPLOYEE_IDS_ENV = "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS"
 
 
 @dataclass(frozen=True)
@@ -67,6 +66,22 @@ def analyst_case_persistence_enabled() -> bool:
         "false",
     )
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def analyst_case_persistence_allowed(employee_id: str) -> bool:
+    """Return whether one employee is in the explicit persistence cohort."""
+
+    if not analyst_case_persistence_enabled():
+        return False
+    subject = str(employee_id or "").strip()
+    if not subject:
+        return False
+    allowed = {
+        value.strip()
+        for value in os.getenv(CASE_PERSISTENCE_EMPLOYEE_IDS_ENV, "").split(",")
+        if value.strip()
+    }
+    return subject in allowed
 
 
 def _get_or_create_case(
@@ -165,15 +180,19 @@ async def persist_analyst_case(
             enabled=False,
             outcome="skipped",
         )
-    if result.status not in PERSISTABLE_ANALYST_STATUSES:
+    user_id = str(getattr(current_empleado, "id", "") or "").strip()
+    role = str(getattr(current_empleado, "rol", "") or "").strip()
+    if not user_id or not role or not str(conversation_id or "").strip():
         return AnalystCasePersistenceResult(
             enabled=True,
             outcome="skipped",
         )
-
-    user_id = str(getattr(current_empleado, "id", "") or "").strip()
-    role = str(getattr(current_empleado, "rol", "") or "").strip()
-    if not user_id or not role or not str(conversation_id or "").strip():
+    if not analyst_case_persistence_allowed(user_id):
+        return AnalystCasePersistenceResult(
+            enabled=True,
+            outcome="not_allowed",
+        )
+    if result.status not in PERSISTABLE_ANALYST_STATUSES:
         return AnalystCasePersistenceResult(
             enabled=True,
             outcome="skipped",
@@ -243,9 +262,7 @@ async def persist_analyst_case(
 
         scope = f"{scope}|after:{_terminal_lineage_id(stored)}"
 
-    _log_persistence_failure(
-        RuntimeError("Analyst case successor depth exceeded")
-    )
+    _log_persistence_failure(RuntimeError("Analyst case successor depth exceeded"))
     return AnalystCasePersistenceResult(
         enabled=True,
         outcome="failed",
