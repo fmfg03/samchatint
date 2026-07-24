@@ -113,6 +113,7 @@ def render_budget_matrix_filters(
     *,
     tournament_key: str,
     edition_year: int,
+    version_id: str,
     all_versions: list[dict[str, Any]],
     phase_options: list[tuple[str, str]],
     selected_phase_filter: str = "",
@@ -154,6 +155,7 @@ def render_budget_matrix_filters(
         style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;margin-bottom:14px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;"
     >
         <input type="hidden" name="show_committed" value="{"1" if show_committed else "0"}">
+        <input type="hidden" name="version_id" value="{escape(version_id)}">
         <div>
             <label for="matrix-edition-year" style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;">
                 Año edición

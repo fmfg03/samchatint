@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date
+from html import escape as escape_html
 from typing import Optional
 
 from fastapi import Depends, File, Form, Query, UploadFile
@@ -45,6 +46,46 @@ from ..services.cfdi_income_bridge_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _render_budget_status_message(message: Optional[str], *, is_error: bool) -> str:
+    """Render a query-driven status message without allowing HTML injection."""
+    if not message:
+        return ""
+    safe_message = escape_html(str(message), quote=True)
+    if is_error:
+        return (
+            '<div style="background:#f8d7da;border:1px solid #f5c6cb;color:#721c24;'
+            'padding:10px;border-radius:6px;margin-bottom:12px;">'
+            f"<strong>⚠️ {safe_message}</strong></div>"
+        )
+    return (
+        '<div style="background:#d4edda;border:1px solid #c3e6cb;color:#155724;'
+        'padding:10px;border-radius:6px;margin-bottom:12px;">'
+        f"<strong>✅ {safe_message}</strong></div>"
+    )
+
+
+def _select_requested_budget_version(
+    versions: list[dict],
+    *,
+    requested_version_id: Optional[str],
+    edition_year: int,
+) -> Optional[dict]:
+    """Return the explicitly requested version only when it belongs to the year."""
+    if not requested_version_id:
+        return None
+    for version in versions:
+        try:
+            version_year = int(version.get("edition_year") or 0)
+        except (TypeError, ValueError):
+            continue
+        if (
+            str(version.get("id") or "") == str(requested_version_id)
+            and version_year == int(edition_year)
+        ):
+            return version
+    return None
 
 
 def register_presupuestos_routes(router) -> None:
@@ -188,16 +229,8 @@ def register_presupuestos_routes(router) -> None:
             version_id=selected_version["id"] if selected_version else None,
             tournament_rollups=tournament_rollups,
         )
-        success_html = (
-            f'<div style="background:#d4edda;border:1px solid #c3e6cb;color:#155724;padding:10px;border-radius:6px;margin-bottom:12px;"><strong>✅ {success_msg}</strong></div>'
-            if success_msg
-            else ""
-        )
-        error_html = (
-            f'<div style="background:#f8d7da;border:1px solid #f5c6cb;color:#721c24;padding:10px;border-radius:6px;margin-bottom:12px;"><strong>⚠️ {error_msg}</strong></div>'
-            if error_msg
-            else ""
-        )
+        success_html = _render_budget_status_message(success_msg, is_error=False)
+        error_html = _render_budget_status_message(error_msg, is_error=True)
         create_version_form = (
             f"""
             <form method="POST" action="/admin/presupuestos/versiones/create" style="display:grid;gap:8px;">
@@ -278,6 +311,7 @@ def register_presupuestos_routes(router) -> None:
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
         edition_year: Optional[int] = Query(None),
+        version_id: Optional[str] = Query(None),
         phase_filter: Optional[str] = Query(None),
         show_committed: int = Query(1),
         show_yoy: int = Query(0),
@@ -297,10 +331,16 @@ def register_presupuestos_routes(router) -> None:
 
         all_versions = await list_budget_versions(session)
         resolved_year = edition_year or date.today().year
-        selected_version = await resolve_definitive_budget_version(
-            session,
+        selected_version = _select_requested_budget_version(
+            all_versions,
+            requested_version_id=version_id,
             edition_year=resolved_year,
         )
+        if selected_version is None:
+            selected_version = await resolve_definitive_budget_version(
+                session,
+                edition_year=resolved_year,
+            )
         if selected_version is None:
             return RedirectResponse(
                 url=budget_dashboard_url(
@@ -443,6 +483,7 @@ def register_presupuestos_routes(router) -> None:
         matrix_filters_html = render_budget_matrix_filters(
             tournament_key=tournament_key,
             edition_year=resolved_year,
+            version_id=str(selected_version["id"]),
             all_versions=all_versions,
             phase_options=phase_options,
             selected_phase_filter=selected_phase_filter,
@@ -496,16 +537,8 @@ def register_presupuestos_routes(router) -> None:
             can_edit=bool(access.get("line_update")),
         )
 
-        success_html = (
-            f'<div style="background:#d4edda;border:1px solid #c3e6cb;color:#155724;padding:10px;border-radius:6px;margin-bottom:12px;"><strong>✅ {success_msg}</strong></div>'
-            if success_msg
-            else ""
-        )
-        error_html = (
-            f'<div style="background:#f8d7da;border:1px solid #f5c6cb;color:#721c24;padding:10px;border-radius:6px;margin-bottom:12px;"><strong>⚠️ {error_msg}</strong></div>'
-            if error_msg
-            else ""
-        )
+        success_html = _render_budget_status_message(success_msg, is_error=False)
+        error_html = _render_budget_status_message(error_msg, is_error=True)
 
         html = f"""
         <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
