@@ -12,7 +12,7 @@ def test_only_superadmin_can_modify_budgets() -> None:
         rol="superadmin", departamento="Operaciones", correo="super@example.com"
     )
     director = SimpleNamespace(
-        rol="admin", departamento="DirecciÃ³n", correo="director@example.com"
+        rol="admin", departamento="Dirección", correo="director@example.com"
     )
 
     assert admin_routes._budget_access_map(superadmin)["line_update"] is True
@@ -70,7 +70,7 @@ def test_budget_link_is_hidden_from_unauthorized_user() -> None:
 
 def test_operations_analytics_budget_api_uses_same_strict_policy() -> None:
     director = SimpleNamespace(
-        rol="admin", departamento="DirecciÃ³n", correo="director@example.com"
+        rol="admin", departamento="Dirección", correo="director@example.com"
     )
     alicia = SimpleNamespace(
         rol="coordinador",
