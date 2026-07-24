@@ -29,6 +29,33 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
+
+
+def _samchat_runtime_env() -> str:
+    for name in ("SAMCHAT_ENV", "ENVIRONMENT", "APP_ENV", "FASTAPI_ENV"):
+        value = (os.getenv(name) or "").strip().lower()
+        if value:
+            return value
+    return ""
+
+
+def _is_production_runtime() -> bool:
+    return _samchat_runtime_env() in PRODUCTION_ENV_VALUES
+
+
+def _tocino_webhook_secret_for_runtime() -> str:
+    secret = (os.getenv("TOCINO_WEBHOOK_SECRET") or "").strip()
+    if secret:
+        return secret
+    if _is_production_runtime():
+        logger.error("TOCINO_WEBHOOK_SECRET is missing in production mode")
+        raise HTTPException(
+            status_code=503,
+            detail="Webhook signature verification is not configured",
+        )
+    return ""
+
 
 async def _upsert_gasto_adjunto_tocino(
     session: AsyncSession,
@@ -537,8 +564,8 @@ async def receive_tocino_webhook(
 
     signature_header_name = os.getenv("TOCINO_WEBHOOK_SIGNATURE_HEADER", "typeform-signature").lower()
 
-    # Verify signature if secret is configured
-    webhook_secret = os.getenv("TOCINO_WEBHOOK_SECRET")
+    # Verify signature when configured; fail closed in explicit production mode.
+    webhook_secret = _tocino_webhook_secret_for_runtime()
     if webhook_secret:
         configured_signature = request.headers.get(signature_header_name)
         signature_to_verify = configured_signature or typeform_signature
@@ -769,3 +796,151 @@ async def tocino_cfdi_sync(
         "total_open": len(expenses),
         "errors": errors[:10],
     }
+
+
+# SAT scheduled CFDI sync — distinct advisory lock from Tocino fallback sync.
+SAT_SYNC_ADVISORY_LOCK_KEY = 876543210987654
+
+
+@router.post("/sat-cfdi-sync")
+async def sat_cfdi_sync(
+    request: Request,
+    x_sat_sync_secret: Optional[str] = Header(None, alias="X-SAT-Sync-Secret"),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Quota-aware SAT CFDI ingest for active e.firma credentials.
+
+    Protected by X-SAT-Sync-Secret (env: SAT_SYNC_SECRET). Uses a PostgreSQL advisory
+    lock distinct from Tocino sync. Optional query/body ``mode``:
+    ``auto`` | ``daily_forward`` | ``june_2026_backfill``.
+
+    Crontab (America/Mexico_City, daily 06:00)::
+
+        0 6 * * * curl -sf -X POST \\
+          -H \"X-SAT-Sync-Secret: $SAT_SYNC_SECRET\" \\
+          \"https://sam.chat/ingress/sat-cfdi-sync?mode=auto\"
+
+    Production requires SAT_USE_PRODUCTION=true so live SAT endpoints are used.
+    """
+    from devnous.sat.sat_handler import sat_production_enabled
+
+    sync_secret = os.getenv("SAT_SYNC_SECRET")
+    if not sync_secret or x_sat_sync_secret != sync_secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing sync secret")
+
+    if not sat_production_enabled():
+        logger.warning(
+            "SAT CFDI sync refused: SAT_USE_PRODUCTION is not enabled",
+            extra={"event": "sat_sync_refused"},
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="SAT_USE_PRODUCTION must be true for scheduled SAT sync",
+        )
+
+    from devnous.sat.sat_background_runner import enqueue_scheduled_sync, has_running_sat_job
+    from devnous.sat.sat_sync_service import SATSyncService
+
+    mode = (request.query_params.get("mode") or "auto").strip().lower()
+    if request.headers.get("content-type", "").startswith("application/json"):
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and body.get("mode"):
+                mode = str(body["mode"]).strip().lower()
+        except Exception:
+            pass
+
+    if await has_running_sat_job(session):
+        started_at = datetime.utcnow()
+        service = SATSyncService()
+        await service.persist_sync_run(
+            session,
+            mode=mode,
+            trigger_source="cron",
+            started_at=started_at,
+            finished_at=datetime.utcnow(),
+            status="skipped",
+            summary_message="Otra ejecución de sync SAT ya estaba en curso.",
+            http_status=409,
+        )
+        await session.commit()
+        raise HTTPException(status_code=409, detail="SAT sync already in progress")
+
+    try:
+        run = await enqueue_scheduled_sync(
+            session,
+            mode=mode,
+            trigger_source="cron",
+        )
+    except RuntimeError:
+        raise HTTPException(status_code=409, detail="SAT sync already in progress")
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("SAT CFDI sync enqueue failed", extra={"event": "sat_sync_error"})
+        raise HTTPException(status_code=500, detail="Unexpected SAT sync error") from exc
+
+    logger.info(
+        "SAT CFDI sync accepted | event=sat_sync_accepted mode=%s run_id=%s",
+        mode,
+        run.id,
+        extra={"event": "sat_sync_accepted", "mode": mode, "run_id": str(run.id)},
+    )
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "mode": mode,
+            "run_id": str(run.id),
+            "job_url": f"/admin/gastos/sat/jobs/{run.id}",
+            "message": "SAT sync job started in background.",
+        },
+    )
+
+
+@router.post("/sat-cfdi-open-jobs")
+async def sat_cfdi_open_jobs(
+    request: Request,
+    x_sat_sync_secret: Optional[str] = Header(None, alias="X-SAT-Sync-Secret"),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Lightweight hourly cron: reclaim stuck solicitudes and verify open jobs only."""
+    from devnous.sat.sat_handler import sat_production_enabled
+
+    sync_secret = os.getenv("SAT_SYNC_SECRET")
+    if not sync_secret or x_sat_sync_secret != sync_secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing sync secret")
+
+    if not sat_production_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="SAT_USE_PRODUCTION must be true for scheduled SAT sync",
+        )
+
+    from devnous.sat.sat_background_runner import enqueue_open_jobs, has_running_sat_job
+
+    if await has_running_sat_job(session):
+        raise HTTPException(status_code=409, detail="SAT sync already in progress")
+
+    try:
+        run = await enqueue_open_jobs(session, trigger_source="cron")
+    except RuntimeError:
+        raise HTTPException(status_code=409, detail="SAT sync already in progress")
+    except Exception as exc:
+        await session.rollback()
+        logger.exception("SAT open jobs enqueue failed", extra={"event": "sat_open_jobs_error"})
+        raise HTTPException(status_code=500, detail="Unexpected SAT open jobs error") from exc
+
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "accepted",
+            "mode": "open_jobs",
+            "run_id": str(run.id),
+            "job_url": f"/admin/gastos/sat/jobs/{run.id}",
+            "message": "SAT open-jobs worker started in background.",
+        },
+    )

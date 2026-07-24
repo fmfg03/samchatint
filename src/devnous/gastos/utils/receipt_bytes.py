@@ -98,8 +98,30 @@ def decode_base64_to_bytes(raw: str, max_size: int = MAX_DECODE_BYTES) -> bytes:
     return decoded
 
 
+_PDF_DOC_TITLE_PREAMBLE = re.compile(
+    rb"\^\{doc_title = [^{}\r\n]{1,255}\}\r?\n\Z"
+)
+
+
+def pdf_content_offset(raw: bytes) -> int:
+    """Return the PDF header offset, allowing the known SAT title preamble."""
+    if not raw:
+        return -1
+    if raw.startswith(b"%PDF-"):
+        return 0
+
+    # Some downloaded CFDI representations prepend a short, plain-text
+    # ``^{doc_title = ...}`` line before the otherwise valid PDF.  Accept only
+    # that narrowly defined wrapper instead of treating arbitrary polyglot
+    # content containing a later PDF marker as a PDF.
+    marker = raw.find(b"%PDF-", 1, 512)
+    if marker < 0:
+        return -1
+    return marker if _PDF_DOC_TITLE_PREAMBLE.fullmatch(raw[:marker]) else -1
+
+
 def is_pdf_content(raw: bytes) -> bool:
-    return bool(raw) and raw[:4] == b"%PDF"
+    return pdf_content_offset(raw) >= 0
 
 
 def resolve_media_type(filename: Optional[str], raw: bytes) -> str:

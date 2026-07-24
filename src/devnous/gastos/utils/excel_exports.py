@@ -332,6 +332,8 @@ def create_informe_excel(
     categorias: Optional[List[str]] = None,
     edicion: Optional[int] = None,
     currency: str = "MXN",
+    solicitante_nombre: Optional[str] = None,
+    beneficiario_nombre: Optional[str] = None,
     **kwargs: Any,
 ) -> bytes:
     """
@@ -343,6 +345,8 @@ def create_informe_excel(
     Args:
         numero_referencia: Reference number (e.g. I-26000001)
         empleado_nombre: Name of person who verifies (Nombre de la persona que comprueba)
+        solicitante_nombre: User who owns and submits the report.
+        beneficiario_nombre: Employee on whose behalf the report is made.
         fecha_documento: Document date string (YYYY-MM-DD)
         expenses: List of dicts with keys: concepto, fecha, no_factura (CFDI UUID), importe_sin_iva, iva, total
         cantidad_entregada: Sum of paid solicitudes (Cantidad Entregada)
@@ -367,6 +371,11 @@ def create_informe_excel(
     metadata_ws.append(["Categorías", ", ".join(categorias or [])])
     metadata_ws.append(["Edición", edicion])
     metadata_ws.append(["Moneda", currency or "MXN"])
+
+    metadata_ws.append(["Solicitante", solicitante_nombre or empleado_nombre or ""])
+    metadata_ws.append(
+        ["Beneficiario", beneficiario_nombre or empleado_nombre or ""]
+    )
 
     # Clear template placeholders immediately (openpyxl cell(row, col, value=None) does not
     # clear existing values; we must assign .value = None on the cell object).
@@ -402,8 +411,9 @@ def create_informe_excel(
     # Header per 4599: F5=date (anchor F5:I5) in Spanish long form; B8=nombre (anchor B8:F9)
     if fecha_documento:
         ws.cell(row=5, column=6, value=_fmt_date_informe_header(fecha_documento))
-    if empleado_nombre:
-        ws.cell(row=8, column=2, value=empleado_nombre)
+    comprobante_nombre = beneficiario_nombre or empleado_nombre
+    if comprobante_nombre:
+        ws.cell(row=8, column=2, value=comprobante_nombre)
     motivo_cell = (motivo_del_gasto or "").strip()
     if motivo_cell:
         ws.cell(row=21, column=2, value=motivo_cell)

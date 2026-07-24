@@ -16,9 +16,11 @@ from .cfdi_expense_link_service import (
     normalize_cfdi_uuid_to_canonical,
 )
 from .cfdi_parser import parse_cfdi_xml
-from .cfdi_upload_resolver import resolve_cfdi_upload
+from .cfdi_upload_resolver import merge_cfdi_upload_bytes, resolve_cfdi_upload
 
 CFDIEntity = Union[ExpenseReport, Documento]
+
+SAT_ORIGEN = "sat"
 
 _CFDI_DATA_FIELDS = (
     "version",
@@ -75,6 +77,10 @@ _MATERIAL_IDENTITY_FIELDS = (
 )
 
 
+def _is_sat_source_of_truth(report: CFDIReport) -> bool:
+    return (getattr(report, "origen", None) or "").strip().lower() == SAT_ORIGEN
+
+
 def _report_has_canonical_xml(report: CFDIReport) -> bool:
     return bool((getattr(report, "xml_raw", None) or "").strip())
 
@@ -103,14 +109,21 @@ def _plan_existing_cfdi_ingest(
     *,
     xml_raw: Optional[str],
     entity: Optional[CFDIEntity],
+    source: str,
 ) -> _ExistingIngestPlan:
     """Decide whether incoming upload may enrich, replace, or only re-link."""
-    conflicts = _material_conflicts(report, parsed)
+    if _is_sat_source_of_truth(report) and source != SAT_ORIGEN:
+        return _ExistingIngestPlan(
+            conflicts=[],
+            apply_fiscal_data=False,
+            overwrite=False,
+            pdf_attach_only=True,
+        )
+
     incoming_xml = bool(xml_raw and str(xml_raw).strip())
     existing_xml = _report_has_canonical_xml(report)
-    same_entity = _entity_linked_to_report(entity, report)
 
-    # PDF is an attachment when canonical XML already exists; never override XML.
+    # Canonical XML already stored: PDF uploads are attachments only.
     if not incoming_xml and existing_xml:
         return _ExistingIngestPlan(
             conflicts=[],
@@ -119,29 +132,30 @@ def _plan_existing_cfdi_ingest(
             pdf_attach_only=True,
         )
 
-    # Same solicitud/gasto already linked: allow companion PDF/XML uploads.
-    if same_entity:
-        if incoming_xml and conflicts:
+    conflicts = _material_conflicts(report, parsed)
+
+    if incoming_xml:
+        if existing_xml and conflicts:
             return _ExistingIngestPlan(
-                conflicts=[],
-                apply_fiscal_data=True,
-                overwrite=True,
+                conflicts=conflicts,
+                apply_fiscal_data=False,
+                overwrite=False,
                 pdf_attach_only=False,
             )
         return _ExistingIngestPlan(
             conflicts=[],
-            apply_fiscal_data=incoming_xml,
-            overwrite=False,
-            pdf_attach_only=not incoming_xml,
+            apply_fiscal_data=True,
+            overwrite=not existing_xml,
+            pdf_attach_only=False,
         )
 
-    # Uploaded XML replaces provisional PDF/text data for the same UUID.
-    if incoming_xml and conflicts and not existing_xml:
+    same_entity = _entity_linked_to_report(entity, report)
+    if same_entity:
         return _ExistingIngestPlan(
             conflicts=[],
-            apply_fiscal_data=True,
-            overwrite=True,
-            pdf_attach_only=False,
+            apply_fiscal_data=False,
+            overwrite=False,
+            pdf_attach_only=True,
         )
 
     return _ExistingIngestPlan(
@@ -307,32 +321,57 @@ async def _ingest_cfdi_parsed(
             parsed,
             xml_raw=xml_raw,
             entity=entity,
+            source=source,
         )
         if plan.conflicts:
             raise CFDIConflictError(canonical_uuid, plan.conflicts)
 
-        changed = False
-        if plan.apply_fiscal_data:
-            changed = _apply_parsed_data(
-                report, parsed, overwrite=plan.overwrite
+        incoming_xml = bool(xml_raw and str(xml_raw).strip())
+        had_canonical_xml = _report_has_canonical_xml(report)
+
+        if _is_sat_source_of_truth(report) and source != SAT_ORIGEN:
+            warnings.append(
+                "CFDI protegido por ingest SAT; los datos fiscales no se modificaron."
             )
-        if xml_raw and (plan.overwrite or not report.xml_raw):
-            report.xml_raw = xml_raw
-            changed = True
-        if not report.xml_parsed:
-            report.xml_parsed = True
-            changed = True
-        if not report.parsed_at:
-            report.parsed_at = datetime.utcnow()
-            changed = True
-        if not report.nova_request_id and nova_request_id:
-            report.nova_request_id = nova_request_id
-            changed = True
-        if not report.numero_referencia and numero_referencia:
-            report.numero_referencia = numero_referencia
-            changed = True
-        if changed:
-            status = "enriched"
+        elif plan.pdf_attach_only and not incoming_xml and had_canonical_xml:
+            warnings.append(
+                "CFDI XML existente conservado; el PDF se adjuntó sin modificar datos fiscales."
+            )
+        elif incoming_xml and not had_canonical_xml and source != SAT_ORIGEN:
+            warnings.append(
+                "CFDI XML reemplazó datos provisionales extraídos del PDF."
+            )
+
+        skip_fiscal_mutation = (
+            (_is_sat_source_of_truth(report) and source != SAT_ORIGEN)
+            or plan.pdf_attach_only
+        )
+        if not skip_fiscal_mutation:
+            changed = False
+            if plan.apply_fiscal_data:
+                changed = _apply_parsed_data(
+                    report, parsed, overwrite=plan.overwrite
+                )
+            if xml_raw and (plan.overwrite or not report.xml_raw):
+                report.xml_raw = xml_raw
+                changed = True
+            if not report.xml_parsed:
+                report.xml_parsed = True
+                changed = True
+            if not report.parsed_at:
+                report.parsed_at = datetime.utcnow()
+                changed = True
+            if not report.nova_request_id and nova_request_id:
+                report.nova_request_id = nova_request_id
+                changed = True
+            if not report.numero_referencia and numero_referencia:
+                report.numero_referencia = numero_referencia
+                changed = True
+            if source == SAT_ORIGEN and report.origen != SAT_ORIGEN:
+                report.origen = SAT_ORIGEN
+                changed = True
+            if changed:
+                status = "enriched"
 
     linked = False
     if entity is not None:

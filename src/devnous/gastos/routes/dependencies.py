@@ -6,17 +6,28 @@ import json
 import logging
 import os
 from typing import Optional, Any, Set, Iterable
+from urllib.parse import quote
 from uuid import UUID
 from fastapi import Depends, HTTPException, Request, Header
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Empleado
+from ..services.access_control_service import can_access_path, visible_tools_for
 
 logger = logging.getLogger(__name__)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
+
+
+def _login_redirect_for_request(request: Request) -> str:
+    path = str(getattr(request.url, "path", "") or "/").strip() or "/"
+    if not path.startswith("/") or path.startswith("//"):
+        path = "/"
+    query = str(getattr(request.url, "query", "") or "").strip()
+    target = f"{path}?{query}" if query else path
+    return f"/login?next={quote(target, safe='/%?=&')}"
 
 
 def _normalize_role(value: Any) -> str:
@@ -176,7 +187,7 @@ async def get_current_empleado(
         raise HTTPException(
             status_code=401,
             detail="No has iniciado sesión. Inicia sesión para continuar.",
-            headers={"Location": "/login"},
+            headers={"Location": _login_redirect_for_request(request)},
         )
 
     try:
@@ -187,7 +198,7 @@ async def get_current_empleado(
         raise HTTPException(
             status_code=401,
             detail="La sesión ya no es válida. Inicia sesión nuevamente.",
-            headers={"Location": "/login"},
+            headers={"Location": _login_redirect_for_request(request)},
         )
 
     empleado = await _load_empleado_proxy_by_id(session, empleado_id)
@@ -197,7 +208,7 @@ async def get_current_empleado(
         raise HTTPException(
             status_code=401,
             detail="La cuenta asociada a esta sesión ya no existe. Inicia sesión nuevamente.",
-            headers={"Location": "/login"},
+            headers={"Location": _login_redirect_for_request(request)},
         )
 
     if not getattr(empleado, "activo", False):
@@ -205,12 +216,29 @@ async def get_current_empleado(
         raise HTTPException(
             status_code=401,
             detail="La cuenta está inactiva. Contacta a un administrador.",
-            headers={"Location": "/login"},
+            headers={"Location": _login_redirect_for_request(request)},
         )
 
     empleado.impersonator_empleado_id = request.session.get("impersonator_empleado_id")
     empleado.impersonator_nombre = request.session.get("impersonator_nombre")
     empleado.impersonator_rol = request.session.get("impersonator_rol")
+    try:
+        empleado.visible_tool_keys = await visible_tools_for(session, empleado)
+        empleado.can_access_path = await can_access_path(
+            session,
+            empleado,
+            str(getattr(request.url, "path", "") or ""),
+            str(getattr(request, "method", "GET") or "GET"),
+        )
+    except Exception as exc:
+        logger.debug("Access-control visibility lookup failed: %s", exc)
+        empleado.visible_tool_keys = set()
+        empleado.can_access_path = True
+    if not getattr(empleado, "can_access_path", True):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes acceso a esta herramienta.",
+        )
 
     return empleado
 
@@ -359,7 +387,7 @@ async def get_current_empleado_or_service(
         raise HTTPException(
             status_code=401,
             detail="No has iniciado sesión. Inicia sesión o usa credenciales de servicio.",
-            headers={"Location": "/login"},
+            headers={"Location": _login_redirect_for_request(request)},
         )
     if not configured_token:
         raise HTTPException(

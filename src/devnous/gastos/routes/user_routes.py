@@ -14,6 +14,7 @@ import os
 import re
 import sys
 import asyncio
+import unicodedata
 import zipfile
 from collections import Counter
 from html import escape
@@ -83,6 +84,17 @@ from ..services.amex_expense_service import (
     set_company_amex_status,
     sum_paid_solicitud_amounts,
 )
+from ..services.access_control_service import (
+    ACCESS_TOOLS,
+    ALL_ROLES,
+    NON_CONFIGURABLE_GATEWAY_TOOL_KEYS,
+    filter_cards_by_tools,
+    is_superadmin_role,
+    list_known_areas,
+    list_rules,
+    upsert_rule,
+    visible_tools_for,
+)
 from ..services.expense_accounting_service import build_expense_accounting_preview
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
@@ -120,6 +132,11 @@ from ..services.documento_payment_service import (
     DocumentoPaymentValidationError,
     register_document_payment,
     register_document_reembolso,
+)
+from ..services.documento_semantics import (
+    EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+    effective_account_beneficiary_id,
+    is_employee_reimbursement,
 )
 from ..services.cuenta_settlement_service import (
     CuentaSettlementPermissionError,
@@ -1238,6 +1255,182 @@ def _render_domain_subnav(
         <div style="display:flex;gap:8px;flex-wrap:wrap;">{links}</div>
     </section>
     """
+
+
+def _require_control_accesos_superadmin(current_empleado: Empleado) -> None:
+    if not is_superadmin_role(getattr(current_empleado, "rol", "")):
+        raise HTTPException(status_code=403, detail="Solo superadmin puede administrar accesos.")
+
+
+@router.get("/admin/control-accesos", response_class=HTMLResponse)
+async def control_accesos_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_control_accesos_superadmin(current_empleado)
+    rules = await list_rules(session)
+    areas = await list_known_areas(session)
+    configurable_tools = [
+        tool
+        for tool in ACCESS_TOOLS
+        if tool.key not in NON_CONFIGURABLE_GATEWAY_TOOL_KEYS
+    ]
+    selected_tool_key = (request.query_params.get("tool_key") or "").strip()
+    if selected_tool_key not in {tool.key for tool in configurable_tools}:
+        selected_tool_key = configurable_tools[0].key if configurable_tools else ""
+    selected_tools = [
+        tool for tool in configurable_tools if not selected_tool_key or tool.key == selected_tool_key
+    ]
+    tool_filter_options = "".join(
+        f"""
+        <option value="{escape(tool.key)}" {"selected" if tool.key == selected_tool_key else ""}>
+            {escape(tool.group)} · {escape(tool.label)}
+        </option>
+        """
+        for tool in configurable_tools
+    )
+    success_msg = request.query_params.get("success_msg", "")
+    error_msg = request.query_params.get("error_msg", "")
+    matrix_rows = ""
+    for tool in selected_tools:
+        for role in ALL_ROLES:
+            for area in areas:
+                area_key = str(area or "").strip().lower()
+                if not area_key:
+                    continue
+                explicit = rules.get((tool.key, "ver", role, area_key))
+                effective = bool(explicit) if explicit is not None else role in tool.default_roles
+                source = "Regla guardada" if explicit is not None else "Default actual"
+                matrix_rows += f"""
+                    <tr>
+                        <td>
+                            <strong>{escape(tool.label)}</strong>
+                            <br><span class="muted">{escape(tool.group)} · {escape(tool.key)}</span>
+                        </td>
+                        <td>{escape(role)}</td>
+                        <td>{escape(str(area or "Todas"))}</td>
+                        <td>
+                            <form method="POST" action="/admin/control-accesos/rules" class="inline-rule-form">
+                                <input type="hidden" name="tool_key" value="{escape(tool.key)}">
+                                <input type="hidden" name="return_tool_key" value="{escape(selected_tool_key)}">
+                                <input type="hidden" name="role_key" value="{escape(role)}">
+                                <input type="hidden" name="area_key" value="{escape(str(area))}">
+                                <select name="allowed" aria-label="Visibilidad y acceso">
+                                    <option value="1" {"selected" if effective else ""}>Sí</option>
+                                    <option value="0" {"selected" if not effective else ""}>No</option>
+                                </select>
+                                <input type="hidden" name="reason" value="Actualización desde Control de accesos">
+                                <button class="button secondary" type="submit">Guardar</button>
+                                <span class="muted">{escape(source)}</span>
+                            </form>
+                        </td>
+                    </tr>
+                """
+    if not matrix_rows:
+        matrix_rows = """
+            <tr>
+                <td colspan="4" class="muted">
+                    No hay áreas registradas para configurar. Asigna departamento a los usuarios primero.
+                </td>
+            </tr>
+        """
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Control de accesos</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {_workspace_shell_styles("1320px")}
+            .card {{ background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:18px;margin-bottom:16px; }}
+            label {{ display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;text-transform:uppercase; }}
+            select,input {{ width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff; }}
+            table {{ width:100%;border-collapse:collapse;background:#fff; }}
+            th,td {{ border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top; }}
+            th {{ background:#f8fafc;font-size:12px;text-transform:uppercase;color:#475569; }}
+            .button {{ display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:#0f172a;color:#fff;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0;color:#0f172a; }}
+            .inline-rule-form {{ display:grid;grid-template-columns:minmax(74px,100px) auto minmax(100px,1fr);gap:8px;align-items:center; }}
+            .filter-form {{ display:grid;grid-template-columns:minmax(260px,420px) auto;gap:10px;align-items:end; }}
+            .muted {{ color:#64748b;font-size:12px; }}
+            .notice {{ padding:12px 14px;border-radius:12px;margin-bottom:14px;font-weight:700; }}
+            .notice.ok {{ background:#dcfce7;color:#166534; }}
+            .notice.error {{ background:#fee2e2;color:#991b1b; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "admin")}
+            <section class="card">
+                <div class="eyebrow">Configuración</div>
+                <h1 style="margin:4px 0 8px;">Control de accesos</h1>
+                <p class="muted" style="margin:0;">Configura el gateway de visibilidad y acceso por herramienta, rol y área concreta. No hay reglas `Todas` para evitar contradicciones.</p>
+            </section>
+            {f'<div class="notice ok">{escape(success_msg)}</div>' if success_msg else ''}
+            {f'<div class="notice error">{escape(error_msg)}</div>' if error_msg else ''}
+            <section class="card">
+                <form method="GET" action="/admin/control-accesos" class="filter-form">
+                    <div>
+                        <label>Herramienta</label>
+                        <select name="tool_key" onchange="this.form.submit()">{tool_filter_options}</select>
+                    </div>
+                    <button class="button" type="submit">Filtrar</button>
+                </form>
+            </section>
+            <section class="card" style="overflow:auto;">
+                <div class="eyebrow">Vista actual</div>
+                <h2 style="margin:4px 0 12px;">Gateway de herramientas</h2>
+                <table>
+                    <thead>
+                        <tr><th>Herramienta</th><th>Rol</th><th>Área</th><th>Visibilidad y acceso</th></tr>
+                    </thead>
+                    <tbody>{matrix_rows}</tbody>
+                </table>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/admin/control-accesos/rules")
+async def control_accesos_save_rule(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    tool_key: str = Form(...),
+    role_key: str = Form(...),
+    area_key: str = Form(""),
+    allowed: str = Form("1"),
+    reason: str = Form(""),
+    return_tool_key: str = Form(""),
+) -> RedirectResponse:
+    _require_control_accesos_superadmin(current_empleado)
+    try:
+        await upsert_rule(
+            session,
+            actor=current_empleado,
+            tool_key=tool_key,
+            action_key="ver",
+            role_key=role_key,
+            area_key=area_key,
+            allowed=_truthy_form(allowed),
+            reason=reason,
+        )
+        await session.commit()
+        suffix = f"&tool_key={quote(return_tool_key or tool_key)}"
+        return RedirectResponse(
+            url=f"/admin/control-accesos?success_msg=Regla%20guardada{suffix}",
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        suffix = f"&tool_key={quote(return_tool_key or tool_key)}"
+        return RedirectResponse(
+            url=f"/admin/control-accesos?error_msg={quote(str(exc))}{suffix}",
+            status_code=303,
+        )
 
 
 def _payroll_subnav(active: str) -> str:
@@ -8204,7 +8397,16 @@ def is_valid_uuid(value: str) -> bool:
 def _normalize_name_for_similarity(name: Optional[str]) -> str:
     if not name:
         return ""
-    return " ".join(name.strip().lower().split())
+    decomposed = unicodedata.normalize("NFKD", name)
+    without_accents = "".join(
+        character
+        for character in decomposed
+        if not unicodedata.combining(character)
+    )
+    without_punctuation = re.sub(r"[^\w\s]", "", without_accents).replace(
+        "_", ""
+    )
+    return " ".join(without_punctuation.strip().lower().split())
 
 
 def _token_set_jaccard(a: str, b: str) -> float:
@@ -8244,13 +8446,36 @@ async def _get_matching_bank_accounts_for_empleado(
     Return a list of (ProveedorCliente, similarity) that look like bank accounts for this empleado.
     """
     empleado_nombre = empleado.nombre if empleado else None
-    if not empleado_nombre:
+    empleado_id = getattr(empleado, "id", None)
+    if not empleado_nombre or empleado_id is None:
         return []
+
+    exact_result = await session.execute(
+        select(ProveedorCliente).where(
+            and_(
+                ProveedorCliente.activo == True,
+                ProveedorCliente.tipo == "empleado",
+                ProveedorCliente.empleado_id == empleado_id,
+                or_(
+                    ProveedorCliente.banco.isnot(None),
+                    ProveedorCliente.cuenta_clabe.isnot(None),
+                    ProveedorCliente.cuenta_bancaria.isnot(None),
+                ),
+            )
+        )
+    )
+    exact_accounts = list(exact_result.scalars().all())
+    if exact_accounts:
+        exact_accounts.sort(key=lambda account: (account.nombre or "").lower())
+        if limit:
+            exact_accounts = exact_accounts[:limit]
+        return [(account, 1.0) for account in exact_accounts]
 
     proveedores_result = await session.execute(
         select(ProveedorCliente).where(
             and_(
                 ProveedorCliente.activo == True,
+                ProveedorCliente.tipo != "empleado",
                 or_(
                     ProveedorCliente.banco.isnot(None),
                     ProveedorCliente.cuenta_clabe.isnot(None),
@@ -8313,6 +8538,117 @@ async def _html_empleado_bank_account_options(
     return options
 
 
+_THIRD_PARTY_EMPLOYEE_REQUESTER_IDS = {
+    "90701d00-5f0b-4b3d-b677-e491e53caf82",  # Alicia
+    "435825e1-0bd0-45c1-a7cc-c97cd18a2b15",  # Bibiana
+    "7a782ddb-64a1-4d7b-86c8-cbaf925fef90",  # Carlos
+    "27fa7e56-aee9-4c8d-b7d1-c886bc6bed63",  # Roberto
+    "6380f16d-2b89-491c-8457-c5b80c319a0f",  # Benjamín
+    "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo
+}
+
+
+def _can_request_for_other_employee(empleado: Empleado) -> bool:
+    return str(getattr(empleado, "id", "")) in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
+
+
+def _beneficiary_selection_allowed(
+    requester: Empleado, beneficiary: Empleado
+) -> bool:
+    return (
+        getattr(requester, "id", None) == getattr(beneficiary, "id", None)
+        or _can_request_for_other_employee(requester)
+    )
+
+
+async def _active_beneficiary_empleados(
+    session: AsyncSession, requester: Empleado
+) -> List[Empleado]:
+    if not _can_request_for_other_employee(requester):
+        return [requester]
+    result = await session.execute(
+        select(Empleado)
+        .where(Empleado.activo == True)
+        .order_by(Empleado.nombre.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _resolve_active_beneficiary_empleado(
+    session: AsyncSession,
+    raw_id: Optional[str],
+    *,
+    default: Empleado,
+) -> Optional[Empleado]:
+    value = (raw_id or "").strip()
+    if not value:
+        return default
+    try:
+        empleado_id = UUIDType(value)
+    except (TypeError, ValueError):
+        return None
+    result = await session.execute(
+        select(Empleado).where(
+            Empleado.id == empleado_id,
+            Empleado.activo == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _html_beneficiary_employee_options(
+    empleados: List[Empleado], selected_id: UUIDType
+) -> str:
+    selected = str(selected_id)
+    return "".join(
+        f'<option value="{empleado.id}"'
+        f'{" selected" if str(empleado.id) == selected else ""}>'
+        f'{escape(empleado.nombre or empleado.correo or str(empleado.id))}</option>'
+        for empleado in empleados
+    )
+
+
+@router.get("/api/empleados/{beneficiario_id}/cuentas-bancarias")
+async def employee_bank_accounts_for_beneficiary(
+    beneficiario_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> JSONResponse:
+    result = await session.execute(
+        select(Empleado).where(
+            Empleado.id == beneficiario_id,
+            Empleado.activo == True,
+        )
+    )
+    beneficiario = result.scalar_one_or_none()
+    if beneficiario is None:
+        raise HTTPException(status_code=404, detail="Beneficiario no encontrado o inactivo")
+    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permiso para solicitar a nombre de otro empleado",
+        )
+    matches = await _get_matching_bank_accounts_for_empleado(session, beneficiario)
+    return JSONResponse(
+        content={
+            "beneficiario": {
+                "id": str(beneficiario.id),
+                "nombre": beneficiario.nombre or "",
+            },
+            "cuentas": [
+                {
+                    "id": str(proveedor.id),
+                    "nombre": proveedor.nombre or "",
+                    "banco": proveedor.banco or "",
+                    "cuenta": proveedor.cuenta_bancaria or "",
+                    "cuenta_clabe": proveedor.cuenta_clabe or "",
+                }
+                for proveedor, _score in matches
+            ],
+        }
+    )
+
+
 def _solicitar_anticipo_form_url(
     *,
     error_msg: Optional[str] = None,
@@ -8324,6 +8660,7 @@ def _solicitar_anticipo_form_url(
     currency: str = "",
     edicion: str = "",
     budget_concept_id: str = "",
+    beneficiario_empleado_id: str = "",
 ) -> str:
     """Build redirect URL back to Solicitar Anticipo with optional preserved fields."""
     url = "/gastos-terceros/solicitar-anticipo"
@@ -8346,6 +8683,10 @@ def _solicitar_anticipo_form_url(
         extra.append(f"edicion={quote(edicion)}")
     if budget_concept_id:
         extra.append(f"budget_concept_id={quote(budget_concept_id)}")
+    if beneficiario_empleado_id:
+        extra.append(
+            f"beneficiario_empleado_id={quote(str(beneficiario_empleado_id))}"
+        )
     if not extra:
         return url
     joiner = "&" if "?" in url else "?"
@@ -9337,6 +9678,19 @@ async def generate_documento_reference_number(
     return await service_generate_documento_reference_number(session, tipo, empleado_id)
 
 
+def _can_view_presupuestos(current_empleado: Empleado) -> bool:
+    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    department = str(
+        getattr(current_empleado, "departamento", "") or ""
+    ).strip().lower()
+    email = str(getattr(current_empleado, "correo", "") or "").strip().lower()
+    return (
+        role in {"superadmin", "super_admin"}
+        or department.startswith("direcci")
+        or email == "azuniga@plataformasports.com"
+    )
+
+
 def render_top_navigation(current_empleado: Empleado, active_area: Optional[str] = None) -> str:
     """
     Render top navigation bar HTML.
@@ -9376,19 +9730,27 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
         ("/panel", "Panel de administración", "panel"),
         ("/panel/operaciones-console", "Operaciones", "operacion"),
     ]
-    if current_empleado.rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
-        links.extend([
-            ("/admin/contabilidad/estado", "Contabilidad", "contabilidad"),
-            ("/admin/nomina/prenomina", "Nómina", "nomina"),
-            ("/admin/gastos", "Administración", "administracion"),
-        ])
-    if current_empleado.rol in ("admin", "superadmin", "super_admin"):
-        links.append(
-            ("/admin/customer-success/uso", "Customer Success", "customer_success")
-        )
-        links.append(
-            ("https://sam.chat/assistant", "BI/assistant", "assistant"),
-        )
+    visible_tool_keys = set(getattr(current_empleado, "visible_tool_keys", set()) or set())
+
+    def can_nav(tool_key: str, fallback_roles: tuple[str, ...]) -> bool:
+        if is_superadmin:
+            return True
+        if visible_tool_keys:
+            return tool_key in visible_tool_keys
+        return current_empleado.rol in fallback_roles
+
+    if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
+        links.append(("/admin/contabilidad/estado", "Contabilidad", "contabilidad"))
+    if can_nav("admin.nomina", ('finanzas', 'admin', 'superadmin', 'super_admin')):
+        links.append(("/admin/nomina/prenomina", "Nómina", "nomina"))
+    if can_nav("admin.gastos.dashboard", ('finanzas', 'admin', 'superadmin', 'super_admin')):
+        links.append(("/admin/gastos", "Administración", "administracion"))
+    if can_nav("admin.customer_success", ("admin", "superadmin", "super_admin")):
+        links.append(("/admin/customer-success/uso", "Customer Success", "customer_success"))
+    if can_nav("assistant.shell", ("admin", "superadmin", "super_admin")):
+        links.append(("https://sam.chat/assistant", "BI/assistant", "assistant"))
+    if _can_view_presupuestos(current_empleado):
+        links.append(("/admin/presupuestos", "Presupuestos", "presupuestos"))
 
     links_html = "".join(
         f"""
@@ -11017,6 +11379,8 @@ async def panel_operaciones_console(
         "super_admin",
         "finanzas",
     } or has_permission(current_empleado, "operations.folders.read")
+    can_view_budget = _can_view_presupuestos(current_empleado)
+    budget_visibility_style = "" if can_view_budget else 'style="display:none"'
 
     tournament_rows = (
         await session.execute(
@@ -11056,7 +11420,7 @@ async def panel_operaciones_console(
 
     summary = snapshot_data.get("summary") or {}
     alerts = list(snapshot_data.get("alerts") or [])
-    budget = snapshot_data.get("budget") or {}
+    budget = (snapshot_data.get("budget") or {}) if can_view_budget else {}
     budget_forecast = budget.get("forecast") or {}
     budget_alerts = list(budget.get("executive_alerts") or [])
     top_alert = alerts[0] if alerts else {}
@@ -11070,7 +11434,7 @@ async def panel_operaciones_console(
             tournament_code=None,
             limit=12,
         )
-        if can_operate and selected_tournament
+        if can_operate and can_view_budget and selected_tournament
         else []
     )
     active_commitment = next(
@@ -11083,6 +11447,16 @@ async def panel_operaciones_console(
     )
     active_commitment_expense = build_budget_commitment_expense_preview(active_commitment)
     selected_tournament_name = selected_tournament["name"] if selected_tournament else "Sin torneo"
+    operations_console_description = (
+        "Superficie visible para carpetas y seguimiento operativo. Junta alertas de compromisos, responsables y vencimientos con la lectura ejecutiva de presupuesto del mismo torneo."
+        if can_view_budget
+        else "Superficie visible para carpetas y seguimiento operativo, responsables y vencimientos."
+    )
+    operations_summary_note = (
+        "Lectura rápida de carpetas y presupuesto para dirección y operaciones."
+        if can_view_budget
+        else "Lectura rápida de carpetas y seguimiento operativo."
+    )
 
     filter_chips = [
         f'<span class="ops-filter-chip">Torneo · {escape(selected_tournament_name)}</span>',
@@ -11182,7 +11556,7 @@ async def panel_operaciones_console(
                 <div class="ops-stat-value">{escape(str(budget_forecast.get("health") or "sin dato"))}</div>
                 <div class="ops-stat-note">Lectura ejecutiva traída del snapshot presupuestal canónico.</div>
             </div>
-            """,
+            """ if can_view_budget else "",
         ]
     )
     spotlight_cards = "".join(
@@ -11200,7 +11574,7 @@ async def panel_operaciones_console(
                 <div class="ops-spotlight-title">{escape(str(top_budget_alert.get("title") or "Sin alerta"))}</div>
                 <div class="ops-spotlight-meta">{escape(str(top_budget_alert.get("playbook") or "No hay playbook presupuestal activo."))}</div>
             </div>
-            """,
+            """ if can_view_budget else "",
             f"""
             <div class="ops-spotlight-card">
                 <div class="ops-spotlight-label">Riesgo operativo líder</div>
@@ -11499,7 +11873,7 @@ async def panel_operaciones_console(
             {_render_workspace_hero(
                 eyebrow="Operaciones",
                 title="Consola de Operaciones",
-                description="Superficie visible para carpetas y seguimiento operativo. Junta alertas de compromisos, responsables y vencimientos con la lectura ejecutiva de presupuesto del mismo torneo.",
+                description=operations_console_description,
                 actions_html=hero_actions,
                 side_html=side_html,
             )}
@@ -11536,7 +11910,7 @@ async def panel_operaciones_console(
                     <div class="section-head">
                         <div>
                             <h2>Resumen ejecutivo</h2>
-                            <div class="section-note">Lectura rápida de carpetas y presupuesto para dirección y operaciones.</div>
+                            <div class="section-note">{operations_summary_note}</div>
                         </div>
                     </div>
                     <div class="ops-stat-grid">
@@ -11554,7 +11928,7 @@ async def panel_operaciones_console(
                         {spotlight_cards}
                     </div>
                 </section>
-                <section class="surface">
+                <section class="surface" {budget_visibility_style}>
                     <div class="section-head">
                         <div>
                             <h2>Playbooks de presupuesto</h2>
@@ -11565,7 +11939,7 @@ async def panel_operaciones_console(
                         {budget_alert_cards or '<div class="meta-card"><span>Sin alertas</span><strong style="font-size:1rem;">Presupuesto estable</strong><small>No hay playbooks activos para el torneo seleccionado.</small></div>'}
                     </div>
                 </section>
-                <section class="surface">
+                <section class="surface" {budget_visibility_style}>
                     <div class="section-head">
                         <div>
                             <h2>Compromisos del torneo</h2>
@@ -11633,6 +12007,8 @@ async def panel(
     """
     Main dashboard panel showing different sections based on user role.
     """
+    visible_tool_keys = await visible_tools_for(session, current_empleado)
+    current_empleado.visible_tool_keys = visible_tool_keys
     nav = render_top_navigation(current_empleado, "panel")
     rol = current_empleado.rol or "empleado"
 
@@ -11679,10 +12055,10 @@ async def panel(
                 </div>
             </div>
             <div class="action-grid">
-                {build_link_cards([
-                    ("https://drive.google.com/drive/u/0/folders/1cf-JOZodLSdZo-iiQrSsCwQtepatj7Gv", "Videos tutoriales", "Consulta los tutoriales en video del sistema."),
-                    ("/static/manual_usuario_gastos.pdf", "Manual de usuario", "Descarga la guía del sistema para operación y finanzas."),
-                ], "tone-slate")}
+                {build_link_cards(filter_cards_by_tools([
+                    ("panel.entrenamiento", "https://drive.google.com/drive/u/0/folders/1cf-JOZodLSdZo-iiQrSsCwQtepatj7Gv", "Videos tutoriales", "Consulta los tutoriales en video del sistema."),
+                    ("panel.entrenamiento", "/static/manual_usuario_gastos.pdf", "Manual de usuario", "Descarga la guía del sistema para operación y finanzas."),
+                ], visible_tool_keys), "tone-slate")}
             </div>
         </section>
     """
@@ -11697,16 +12073,16 @@ async def panel(
                 </div>
             </div>
             <div class="action-grid">
-                {build_link_cards([
-                    ("/informes-de-gastos", "Informe de Gastos", "Administra solicitudes e informes."),
-                    ("/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
-                ], "tone-blue")}
+                {build_link_cards(filter_cards_by_tools([
+                    ("gastos.informes", "/informes-de-gastos", "Informe de Gastos", "Administra solicitudes e informes."),
+                    ("gastos.solicitudes", "/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
+                ], visible_tool_keys), "tone-blue")}
             </div>
         </section>
     """
 
     aprobaciones_section = ""
-    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin') and "gastos.solicitudes" in visible_tool_keys:
         aprobaciones_links = [
             ("/documentos/pendientes", "Aprobaciones pendientes", "Valida solicitudes pendientes."),
             ("/documentos/historial-aprobador", "Historial de aprobaciones", "Consulta aprobaciones pasadas."),
@@ -11728,74 +12104,65 @@ async def panel(
             </section>
         """
 
-    soporte_cards: list[tuple[str, str, str]] = [
-        ("/soporte", "Mis tickets de soporte", "Consulta el estado de tus solicitudes."),
-        ("/soporte/nuevo", "Abrir nuevo ticket", "Reporta una falla o pide ayuda al equipo."),
-    ]
-    if rol in ("superadmin", "super_admin"):
+    soporte_cards = filter_cards_by_tools([
+        ("soporte.self", "/soporte", "Mis tickets de soporte", "Consulta el estado de tus solicitudes."),
+        ("soporte.self", "/soporte/nuevo", "Abrir nuevo ticket", "Reporta una falla o pide ayuda al equipo."),
+    ], visible_tool_keys)
+    if "admin.soporte" in visible_tool_keys:
         soporte_cards.append(
             ("/admin/soporte", "Panel de soporte", "Triage y respuesta de los tickets recibidos.")
         )
-    soporte_section = f"""
-        <section class="surface">
-            <div class="section-head">
-                <div>
-                    <div class="eyebrow">Soporte</div>
-                    <h2>Ayuda y tickets</h2>
-                    <div class="section-note">¿Algo no funciona o tienes una duda? Abre un ticket y el equipo lo atenderá.</div>
+    soporte_section = ""
+    if soporte_cards:
+        soporte_section = f"""
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Soporte</div>
+                        <h2>Ayuda y tickets</h2>
+                        <div class="section-note">¿Algo no funciona o tienes una duda? Abre un ticket y el equipo lo atenderá.</div>
+                    </div>
                 </div>
-            </div>
-            <div class="action-grid">
-                {build_link_cards(soporte_cards, "tone-amber")}
-            </div>
-        </section>
-    """
+                <div class="action-grid">
+                    {build_link_cards(soporte_cards, "tone-amber")}
+                </div>
+            </section>
+        """
 
-    configuracion_cards: list[tuple[str, str, str]] = [
-        ("/admin/proveedores-clientes", "Proveedores y clientes", "Gestionar catálogo comercial."),
-    ]
-    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
-        configuracion_cards.append(
-            ("/admin/torneos", "Torneos y Proyectos", "Gestionar torneos y proyectos."),
-        )
-    if rol == 'coordinador':
-        configuracion_cards.append(
-            ("/documentos/todos", "Todos los documentos", "Vista global de documentos."),
-        )
-    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
-        configuracion_cards.extend([
-            ("/admin/finanzas", "Administración financiera", "Abrir consola financiera para administradores."),
-            ("/admin/empleados", "Empleados", "Gestionar empleados y permisos."),
-            ("/admin/perfiles", "Perfiles ad-hoc", "Crear perfiles personalizados y asignarlos a usuarios."),
-            ("/admin/cuentas-contables", "Cuentas contables", "Gestionar plan de cuentas."),
-            ("/admin/centros-costo", "Centros de costo", "Gestionar catálogo de centros."),
-            ("/admin/rfc", "RFC", "Gestionar configuraciones RFC."),
-            ("/documentos/todos", "Todos los documentos", "Vista global de documentos."),
-            ("/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
-            (
-                "/admin/gastos/sat",
-                "e.firma SAT",
-                "Carga certificado, llave y password para el conector SAT.",
-            ),
-            ("/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
-            ("/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
-            ("/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
-            ("/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
-        ])
-    configuracion_section = f"""
-        <section class="surface">
-            <div class="section-head">
-                <div>
-                    <div class="eyebrow">Administración</div>
-                    <h2>Configuración</h2>
-                    <div class="section-note">Catálogos, seguridad, contabilidad y gobierno operativo bajo una sola área administrativa.</div>
+    configuracion_cards = filter_cards_by_tools([
+        ("admin.proveedores", "/admin/proveedores-clientes", "Proveedores y clientes", "Gestionar catálogo comercial."),
+        ("admin.torneos", "/admin/torneos", "Torneos y Proyectos", "Gestionar torneos y proyectos."),
+        ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
+        ("admin.finanzas", "/admin/finanzas", "Administración financiera", "Abrir consola financiera para administradores."),
+        ("admin.empleados", "/admin/empleados", "Empleados", "Gestionar empleados y permisos."),
+        ("admin.perfiles", "/admin/perfiles", "Perfiles ad-hoc", "Crear perfiles personalizados y asignarlos a usuarios."),
+        ("admin.cuentas_contables", "/admin/cuentas-contables", "Cuentas contables", "Gestionar plan de cuentas."),
+        ("admin.centros_costo", "/admin/centros-costo", "Centros de costo", "Gestionar catálogo de centros."),
+        ("admin.rfc", "/admin/rfc", "RFC", "Gestionar configuraciones RFC."),
+        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
+        ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "Carga certificado, llave y password para el conector SAT."),
+        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
+        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
+        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+        ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
+    ], visible_tool_keys)
+    configuracion_section = ""
+    if configuracion_cards:
+        configuracion_section = f"""
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Administración</div>
+                        <h2>Configuración</h2>
+                        <div class="section-note">Catálogos, seguridad, contabilidad y gobierno operativo bajo una sola área administrativa.</div>
+                    </div>
                 </div>
-            </div>
-            <div class="action-grid">
-                {build_link_cards(configuracion_cards, "tone-slate")}
-            </div>
-        </section>
-    """
+                <div class="action-grid">
+                    {build_link_cards(configuracion_cards, "tone-slate")}
+                </div>
+            </section>
+        """
 
     html = f"""
     <!DOCTYPE html>
@@ -11952,7 +12319,15 @@ async def gastos_terceros(
     # Build query: tipo='SOLICITUD' AND proveedor_cliente_id IS NOT NULL
     query = select(Documento).where(
         Documento.tipo == 'SOLICITUD',
-        Documento.proveedor_cliente_id.isnot(None)
+        Documento.proveedor_cliente_id.isnot(None),
+        or_(
+            Documento.cuenta_gastos_id.is_(None),
+            Documento.beneficiario_empleado_id.is_(None),
+            Documento.concepto_pago.is_(None),
+            ~Documento.concepto_pago.like(
+                f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"
+            ),
+        ),
     ).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
@@ -12213,6 +12588,9 @@ async def solicitar_anticipo_form(
     preserve_currency = request.query_params.get("currency", "MXN")
     preserve_edicion = request.query_params.get("edicion", str(date.today().year))
     preserve_categorias = _form_list(request.query_params, "categorias")
+    preserve_beneficiario = request.query_params.get(
+        "beneficiario_empleado_id", ""
+    )
     preserve_concepto = request.query_params.get("concepto_pago", "")
     preserve_monto = request.query_params.get("monto_solicitado", "")
     preserve_proveedor = request.query_params.get("proveedor_cliente_id", "")
@@ -12257,9 +12635,24 @@ async def solicitar_anticipo_form(
         categories_for_preserve, selected_categories
     )
 
+    beneficiario = await _resolve_active_beneficiary_empleado(
+        session,
+        preserve_beneficiario,
+        default=current_empleado,
+    )
+    if beneficiario is None:
+        beneficiario = current_empleado
+    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+        beneficiario = current_empleado
+    active_empleados = await _active_beneficiary_empleados(
+        session, current_empleado
+    )
+    beneficiary_options = _html_beneficiary_employee_options(
+        active_empleados, beneficiario.id
+    )
     bank_account_options = await _html_empleado_bank_account_options(
         session,
-        current_empleado,
+        beneficiario,
         selected_id=preserve_proveedor or None,
     )
 
@@ -12324,11 +12717,14 @@ async def solicitar_anticipo_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
-                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(current_empleado.nombre or "")}</div>
+                                <select name="beneficiario_empleado_id" id="beneficiario_empleado_id" required style="margin-bottom:8px;">
+                                    {beneficiary_options}
+                                </select>
+                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(beneficiario.nombre or "")}</div>
                                 <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
                                     {bank_account_options}
                                 </select>
-                                <small>Seleccione la cuenta bancaria para la transferencia.</small>
+                                <small>La cuenta bancaria debe corresponder al beneficiario. La solicitud y su aprobaciÃ³n permanecen a nombre de quien solicita.</small>
                             </div>''',
                         )}
                         {render_st_doc_row(
@@ -12396,6 +12792,41 @@ async def solicitar_anticipo_form(
             </form>
         </div>
         {render_proveedor_bank_preview_script()}
+        <script>
+            (function() {{
+                var beneficiarySelect = document.getElementById("beneficiario_empleado_id");
+                var accountSelect = document.getElementById("proveedor_cliente_id");
+                var beneficiaryPreview = document.getElementById("st_preview_beneficiario");
+                if (!beneficiarySelect || !accountSelect) return;
+                beneficiarySelect.addEventListener("change", async function() {{
+                    var selected = beneficiarySelect.options[beneficiarySelect.selectedIndex];
+                    if (beneficiaryPreview) beneficiaryPreview.textContent = selected ? selected.textContent : "";
+                    accountSelect.innerHTML = '<option value="" selected disabled>â€” Cargando cuentas â€”</option>';
+                    try {{
+                        var response = await fetch("/api/empleados/" + encodeURIComponent(beneficiarySelect.value) + "/cuentas-bancarias");
+                        if (!response.ok) throw new Error("No se pudieron consultar las cuentas");
+                        var payload = await response.json();
+                        accountSelect.innerHTML = '<option value="" selected disabled>â€” Seleccione cuenta bancaria â€”</option>';
+                        (payload.cuentas || []).forEach(function(account) {{
+                            var option = document.createElement("option");
+                            option.value = account.id;
+                            option.dataset.banco = account.banco || "";
+                            option.dataset.cuenta = account.cuenta || "";
+                            option.dataset.cuentaClabe = account.cuenta_clabe || "";
+                            var raw = account.cuenta || account.cuenta_clabe || "";
+                            var last4 = raw.length >= 4 ? raw.slice(-4) : "";
+                            option.dataset.ultimos4 = last4;
+                            option.textContent = account.nombre + (account.banco ? " â€” " + account.banco : "") + (last4 ? " (â€¦" + last4 + ")" : "");
+                            accountSelect.appendChild(option);
+                        }});
+                        accountSelect.dispatchEvent(new Event("change"));
+                    }} catch (error) {{
+                        accountSelect.innerHTML = '<option value="" selected disabled>â€” Sin cuentas disponibles â€”</option>';
+                        accountSelect.dispatchEvent(new Event("change"));
+                    }}
+                }});
+            }})();
+        </script>
         {_render_auto_number_formatter_script([
             {
                 "displayId": "monto_solicitado_display",
@@ -12455,6 +12886,9 @@ async def solicitar_anticipo_submit(
     monto_str = (form_data.get("monto_solicitado") or "").strip()
     concepto_pago = (form_data.get("concepto_pago") or "").strip()
     proveedor_cliente_id_raw = (form_data.get("proveedor_cliente_id") or "").strip()
+    beneficiario_empleado_id_raw = (
+        form_data.get("beneficiario_empleado_id") or ""
+    ).strip()
     categorias_raw = _form_list(form_data, "categorias")
     edicion_raw = form_data.get("edicion")
     currency_raw = form_data.get("currency")
@@ -12467,7 +12901,31 @@ async def solicitar_anticipo_submit(
         proveedor_cliente_id=proveedor_cliente_id_raw,
         currency=(currency_raw or "MXN"),
         edicion=str(edicion_raw or ""),
+        beneficiario_empleado_id=beneficiario_empleado_id_raw,
     )
+
+    beneficiario = await _resolve_active_beneficiary_empleado(
+        session,
+        beneficiario_empleado_id_raw,
+        default=current_empleado,
+    )
+    if beneficiario is None:
+        return RedirectResponse(
+            url=_solicitar_anticipo_form_url(
+                error_msg="Seleccione un beneficiario activo.", **preserve
+            ),
+            status_code=303,
+        )
+    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+        return RedirectResponse(
+            url=_solicitar_anticipo_form_url(
+                error_msg=(
+                    "No tienes permiso para solicitar un anticipo a nombre de otro empleado."
+                ),
+                **preserve,
+            ),
+            status_code=303,
+        )
 
     err, tipo_ok, torneo_uuid, fase_final = await _validate_cuenta_informe_proyecto_fields(
         session,
@@ -12505,7 +12963,7 @@ async def solicitar_anticipo_submit(
             proveedor_uuid = None
         if proveedor_uuid is not None:
             matches = await _get_matching_bank_accounts_for_empleado(
-                session=session, empleado=current_empleado
+                session=session, empleado=beneficiario
             )
             allowed_ids = {prov.id for prov, _ in matches}
             if proveedor_uuid in allowed_ids:
@@ -12545,6 +13003,7 @@ async def solicitar_anticipo_submit(
         cuenta, create_err = await _create_cuenta_de_gastos_with_informe(
             session,
             empleado=current_empleado,
+            beneficiario=beneficiario,
             nombre=None,
             tipo_cuenta=tipo_ok,
             torneo_id=torneo_uuid,
@@ -12768,8 +13227,25 @@ async def nuevo_gasto_form(
 
     # Build RFC options
     rfc_options = '<option value="">Usar configuración por defecto</option>'
+    rfc_search_options = ""
+    rfc_search_data = []
     for rfc in rfc_configs:
-        rfc_options += f'<option value="{rfc.id}">{rfc.name}</option>'
+        rfc_label = (
+            f"{rfc.name} · {rfc.tax_id}"
+            if getattr(rfc, "tax_id", None)
+            else str(rfc.name or "")
+        )
+        rfc_options += f'<option value="{rfc.id}">{escape(str(rfc_label))}</option>'
+        rfc_search_options += f'<option value="{escape(str(rfc_label))}"></option>'
+        rfc_search_data.append(
+            {
+                "id": str(rfc.id),
+                "label": str(rfc_label),
+                "name": str(rfc.name or ""),
+                "tax_id": str(getattr(rfc, "tax_id", "") or ""),
+            }
+        )
+    rfc_search_json = json.dumps(rfc_search_data)
 
     # Prepare cuentas contables data for JSON (for search functionality)
     cuentas_data = []
@@ -12988,10 +13464,11 @@ async def nuevo_gasto_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="fase_torneo">Fase del Torneo <span class="required">*</span></label>
+                    <label for="fase_torneo">Fase/Subproyecto <span class="required">*</span></label>
                     <select name="fase_torneo" id="fase_torneo" required disabled>
                         <option value="">Seleccione...</option>
                     </select>
+                    <small>La partida presupuestal se ajusta al subproyecto/fase seleccionado.</small>
                 </div>
 
                 <div class="form-group">
@@ -13001,11 +13478,13 @@ async def nuevo_gasto_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="budget_concept_id">Partida Presupuestal</label>
+                    <label for="budget_concept_search">Partida Presupuestal</label>
+                    <input type="text" id="budget_concept_search" list="budget_concept_options" placeholder="Escriba para buscar o seleccione de la lista" autocomplete="off" disabled>
+                    <datalist id="budget_concept_options"></datalist>
                     <select name="budget_concept_id" id="budget_concept_id" disabled>
                         <option value="">— Seleccione primero un torneo —</option>
                     </select>
-                    <small>Obligatoria cuando el gasto se registra contra un torneo del catálogo.</small>
+                    <small>Escriba para filtrar o elija en el dropdown. Obligatoria cuando el gasto se registra contra un torneo del catálogo.</small>
                 </div>
 
                 <div class="form-group">
@@ -13081,11 +13560,16 @@ async def nuevo_gasto_form(
                 </div>
 
                 <div class="form-group" id="rfc-group" style="display: none;">
-                    <label for="rfc_id">RFC</label>
+                    <label for="cfdi_emisor_search">CFDI emisor</label>
+                    <input type="text" id="cfdi_emisor_search" list="cfdi_emisor_options" placeholder="Escriba o seleccione el emisor CFDI" autocomplete="off">
+                    <datalist id="cfdi_emisor_options">
+                        {rfc_search_options}
+                    </datalist>
+                    <label for="rfc_id" style="margin-top:10px;">RFC configurado</label>
                     <select name="rfc_id" id="rfc_id">
                         {rfc_options}
                     </select>
-                    <small>RFC a utilizar para la facturación (opcional, se usará configuración por defecto si no se selecciona)</small>
+                    <small>Seleccione un emisor configurado o escriba para buscarlo; si no selecciona uno, se usará la configuración por defecto.</small>
                 </div>
 
                 <div class="form-group">
@@ -13130,12 +13614,15 @@ async def nuevo_gasto_form(
         <script>
             // Cuenta contable search data
             const cuentasContables = {cuentas_json};
+            const cfdiEmisores = {rfc_search_json};
             const defaultFaseTorneo = {default_fase_torneo_json};
             const tournamentBudgetConcepts = {tournament_budget_concepts_json};
             const proyectoSelect = document.getElementById('proyecto');
             const proyectoManualInput = document.getElementById('proyecto_manual');
             const faseTorneoSelect = document.getElementById('fase_torneo');
             const budgetConceptSelect = document.getElementById('budget_concept_id');
+            const budgetConceptSearch = document.getElementById('budget_concept_search');
+            const budgetConceptOptions = document.getElementById('budget_concept_options');
             const uuidRegex = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
 
             function resetFaseTorneoOptions(placeholderText) {{
@@ -13207,41 +13694,150 @@ async def nuevo_gasto_form(
             }}
 
             function syncBudgetConceptOptions() {{
+                if (!budgetConceptSelect) return;
                 const tournamentId = (proyectoSelect.value || '').trim();
                 const manualProject = (proyectoManualInput.value || '').trim();
-                if (!budgetConceptSelect) return;
+                const fase = faseTorneoSelect ? (faseTorneoSelect.value || '').trim() : '';
                 budgetConceptSelect.innerHTML = '';
-                if (tournamentId && uuidRegex.test(tournamentId)) {{
-                    const concepts = tournamentBudgetConcepts[tournamentId] || [];
+                if (budgetConceptSearch) {{
+                    budgetConceptSearch.value = '';
+                    budgetConceptSearch.disabled = true;
+                }}
+                if (budgetConceptOptions) {{
+                    budgetConceptOptions.innerHTML = '';
+                }}
+                if (!(tournamentId && uuidRegex.test(tournamentId))) {{
                     const placeholder = document.createElement('option');
                     placeholder.value = '';
-                    placeholder.textContent = '— Seleccione partida presupuestal —';
-                    placeholder.disabled = true;
+                    placeholder.textContent = manualProject
+                        ? '— No obligatoria para proyecto manual —'
+                        : '— Seleccione primero un torneo —';
                     placeholder.selected = true;
                     budgetConceptSelect.appendChild(placeholder);
-                    concepts.forEach(function(item) {{
-                        const opt = document.createElement('option');
-                        opt.value = item.id;
-                        opt.textContent = item.label;
-                        budgetConceptSelect.appendChild(opt);
-                    }});
-                    budgetConceptSelect.disabled = concepts.length === 0;
-                    budgetConceptSelect.required = concepts.length > 0;
+                    budgetConceptSelect.disabled = true;
+                    budgetConceptSelect.required = false;
                     return;
                 }}
-                const placeholder = document.createElement('option');
-                placeholder.value = '';
-                placeholder.textContent = manualProject
-                    ? '— No obligatoria para proyecto manual —'
-                    : '— Seleccione primero un torneo —';
-                placeholder.selected = true;
-                budgetConceptSelect.appendChild(placeholder);
+                const loading = document.createElement('option');
+                loading.value = '';
+                loading.textContent = 'Cargando partidas...';
+                loading.selected = true;
+                budgetConceptSelect.appendChild(loading);
                 budgetConceptSelect.disabled = true;
                 budgetConceptSelect.required = false;
+                let url = '/api/torneos/' + encodeURIComponent(tournamentId) + '/partidas-presupuestales';
+                if (fase) {{
+                    url += '?fase=' + encodeURIComponent(fase);
+                }}
+                fetch(url, {{ headers: {{ Accept: 'application/json' }} }})
+                    .then(function(response) {{
+                        if (!response.ok) throw new Error('HTTP ' + response.status);
+                        return response.json();
+                    }})
+                    .then(function(data) {{
+                        const concepts = Array.isArray(data.partidas) ? data.partidas : [];
+                        budgetConceptSelect.innerHTML = '';
+                        const placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = concepts.length
+                            ? '— Seleccione partida presupuestal —'
+                            : '— Sin partidas para este subproyecto —';
+                        placeholder.disabled = true;
+                        placeholder.selected = true;
+                        budgetConceptSelect.appendChild(placeholder);
+                        concepts.forEach(function(item) {{
+                            const opt = document.createElement('option');
+                            opt.value = item.id;
+                            let label = item.label || '';
+                            if (item.cuenta_contable_codigo) {{
+                                label += ' (' + item.cuenta_contable_codigo + ')';
+                            }}
+                            opt.textContent = label;
+                            opt.dataset.label = label;
+                            budgetConceptSelect.appendChild(opt);
+                            if (budgetConceptOptions) {{
+                                const dataOpt = document.createElement('option');
+                                dataOpt.value = label;
+                                budgetConceptOptions.appendChild(dataOpt);
+                            }}
+                        }});
+                        budgetConceptSelect.disabled = concepts.length === 0;
+                        if (budgetConceptSearch) {{
+                            budgetConceptSearch.disabled = concepts.length === 0;
+                        }}
+                        budgetConceptSelect.required = concepts.length > 0;
+                    }})
+                    .catch(function(error) {{
+                        console.error('No se pudieron cargar las partidas presupuestales.', error);
+                        budgetConceptSelect.innerHTML = '';
+                        const placeholder = document.createElement('option');
+                        placeholder.value = '';
+                        placeholder.textContent = '— Error al cargar partidas —';
+                        placeholder.selected = true;
+                        budgetConceptSelect.appendChild(placeholder);
+                        budgetConceptSelect.disabled = true;
+                        budgetConceptSelect.required = false;
+                    }});
             }}
+
+            function normalizeText(value) {{
+                return String(value || '')
+                    .trim()
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+            }}
+
+            if (budgetConceptSearch && budgetConceptSelect) {{
+                budgetConceptSearch.addEventListener('input', function() {{
+                    const typed = normalizeText(this.value);
+                    let matched = false;
+                    Array.from(budgetConceptSelect.options).forEach(function(option) {{
+                        const label = option.dataset.label || option.textContent || '';
+                        if (option.value && normalizeText(label) === typed) {{
+                            budgetConceptSelect.value = option.value;
+                            matched = true;
+                        }}
+                    }});
+                    if (!matched) {{
+                        budgetConceptSelect.value = '';
+                    }}
+                }});
+                budgetConceptSelect.addEventListener('change', function() {{
+                    const selected = budgetConceptSelect.options[budgetConceptSelect.selectedIndex];
+                    budgetConceptSearch.value = selected && selected.value
+                        ? (selected.dataset.label || selected.textContent || '')
+                        : '';
+                }});
+            }}
+
+            (function() {{
+                const emisorSearch = document.getElementById('cfdi_emisor_search');
+                const rfcSelect = document.getElementById('rfc_id');
+                if (!emisorSearch || !rfcSelect) return;
+                function syncRfcFromText() {{
+                    const typed = normalizeText(emisorSearch.value);
+                    const match = cfdiEmisores.find(function(item) {{
+                        return normalizeText(item.label) === typed
+                            || normalizeText(item.tax_id) === typed
+                            || normalizeText(item.name) === typed;
+                    }});
+                    rfcSelect.value = match ? match.id : '';
+                }}
+                emisorSearch.addEventListener('input', syncRfcFromText);
+                rfcSelect.addEventListener('change', function() {{
+                    const match = cfdiEmisores.find(function(item) {{
+                        return item.id === rfcSelect.value;
+                    }});
+                    emisorSearch.value = match ? match.label : '';
+                }});
+            }})();
 
             proyectoSelect.addEventListener('change', syncFaseTorneoOptions);
             proyectoSelect.addEventListener('change', syncBudgetConceptOptions);
+            if (faseTorneoSelect) {{
+                faseTorneoSelect.addEventListener('change', syncBudgetConceptOptions);
+            }}
             proyectoManualInput.addEventListener('input', function() {{
                 if (!(proyectoSelect.value || '').trim()) {{
                     syncFaseTorneoOptions();
@@ -13554,6 +14150,7 @@ async def crear_gasto(
                 tournament_id=tournament_id,
                 tournament_code=None,
                 fase=fase_torneo,
+                budget_direction="expense",
             )
             if budget_concept is None:
                 return RedirectResponse(
@@ -18332,6 +18929,7 @@ async def editar_gasto(
             budget_concept_id=budget_concept_raw,
             tournament_id=str(selected_cuenta_gastos.torneo_id),
             fase=getattr(selected_cuenta_gastos, "fase", None),
+            budget_direction="expense",
         )
         if budget_concept is None:
             return RedirectResponse(
@@ -19170,7 +19768,10 @@ async def nueva_solicitud_form(
     # Get active proveedores_clientes
     proveedores_result = await session.execute(
         select(ProveedorCliente)
-        .where(ProveedorCliente.activo == True)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo != "empleado",
+        )
         .order_by(ProveedorCliente.nombre)
     )
     proveedores = proveedores_result.scalars().all()
@@ -21346,6 +21947,11 @@ async def exportar_informe_gastos(
     )
     empleado = empleado_result.scalar_one_or_none()
     empleado_nombre = empleado.nombre if empleado else "N/A"
+    beneficiario_nombre = (
+        documento.beneficiario_empleado.nombre
+        if documento.beneficiario_empleado is not None
+        else empleado_nombre
+    )
 
     # Load torneo if linked
     torneo = None
@@ -21497,6 +22103,8 @@ async def exportar_informe_gastos(
         excel_bytes_informe = create_informe_excel(
             numero_referencia=documento.numero_referencia,
             empleado_nombre=empleado_nombre,
+            solicitante_nombre=empleado_nombre,
+            beneficiario_nombre=beneficiario_nombre,
             fecha_documento=fecha_documento_str,
             expenses=expense_rows,
             cantidad_entregada=cantidad_entregada,
@@ -21912,7 +22520,10 @@ async def documentos_pendientes_pago(
 
     informes_result = await session.execute(
         select(Documento)
-        .options(selectinload(Documento.empleado))
+        .options(
+            selectinload(Documento.empleado),
+            selectinload(Documento.beneficiario_empleado),
+        )
         .where(
             Documento.estado == "aprobado",
             Documento.tipo == "INFORME",
@@ -21947,7 +22558,14 @@ async def documentos_pendientes_pago(
         tipo_solicitud = "—"
         beneficiario_nombre = "—"
 
-        if documento.proveedor_cliente_id and documento.proveedor_cliente:
+        if is_employee_reimbursement(documento):
+            tipo_solicitud = "Reembolso a empleado"
+            beneficiario_nombre = (
+                documento.beneficiario_empleado.nombre
+                if documento.beneficiario_empleado
+                else "—"
+            )
+        elif documento.proveedor_cliente_id and documento.proveedor_cliente:
             tipo_solicitud = "Terceros"
             beneficiario_nombre = documento.proveedor_cliente.nombre
         elif documento.beneficiario_empleado_id and documento.beneficiario_empleado:
@@ -21990,6 +22608,11 @@ async def documentos_pendientes_pago(
     for documento, saldo_pendiente in informes_pendientes:
         aprobado_str = format_value(documento.aprobado_en) if documento.aprobado_en else format_value(documento.creado_en)
         empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
+        beneficiario_nombre = (
+            documento.beneficiario_empleado.nombre
+            if documento.beneficiario_empleado
+            else empleado_nombre
+        )
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
         doc_id_short = str(documento.id)[:8]
@@ -22005,7 +22628,7 @@ async def documentos_pendientes_pago(
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>Reembolso informe</td>
-            <td>{empleado_nombre}</td>
+            <td>{beneficiario_nombre}</td>
             <td>{documento.estado}</td>
             <td>{format_currency(saldo_pendiente, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
@@ -22015,7 +22638,11 @@ async def documentos_pendientes_pago(
         </tr>
         """
 
-    solicitud_terceros = sum(1 for documento in documentos if documento.proveedor_cliente_id)
+    solicitud_terceros = sum(
+        1
+        for documento in documentos
+        if documento.proveedor_cliente_id and not is_employee_reimbursement(documento)
+    )
     solicitud_personal = sum(1 for documento in documentos if documento.beneficiario_empleado_id)
     informes_count = len(informes_pendientes)
     html = f"""
@@ -22346,7 +22973,10 @@ async def _render_solicitud_terceros_form(
     # Get active proveedores_clientes
     proveedores_result = await session.execute(
         select(ProveedorCliente)
-        .where(ProveedorCliente.activo == True)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo != "empleado",
+        )
         .order_by(ProveedorCliente.nombre)
     )
     proveedores = proveedores_result.scalars().all()
@@ -22721,7 +23351,10 @@ async def _render_solicitud_terceros_form(
                     if (!text) return '';
                     return text.toLowerCase()
                         .normalize('NFD')
-                        .replace(/[\u0300-\u036f]/g, ''); // Remove accents
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .replace(/[^a-z0-9]+/g, ' ')
+                        .trim()
+                        .replace(/\\s+/g, ' ');
                 }}
 
                 function filterOptions() {{
@@ -22774,9 +23407,28 @@ async def _render_solicitud_terceros_form(
                         resultsText.textContent = '';
                     }}
 
-                    // If current selection is hidden, reset to placeholder
-                    if (currentSelectionHidden && placeholderOption) {{
+                    const visibleOptions = options.filter(function(option) {{
+                        return (
+                            option.getAttribute('data-is-placeholder') !== 'true'
+                            && !option.hidden
+                        );
+                    }});
+
+                    // A unique match is safe to select automatically. The change
+                    // event also refreshes banco, cuenta and CLABE previews.
+                    if (query && visibleOptions.length === 1) {{
+                        const uniqueOption = visibleOptions[0];
+                        if (select.value !== uniqueOption.value) {{
+                            uniqueOption.selected = true;
+                            select.dispatchEvent(
+                                new Event('change', {{ bubbles: true }})
+                            );
+                        }}
+                    }} else if (currentSelectionHidden && placeholderOption) {{
                         placeholderOption.selected = true;
+                        select.dispatchEvent(
+                            new Event('change', {{ bubbles: true }})
+                        );
                     }}
                 }}
 
@@ -24706,7 +25358,12 @@ async def _tournament_budget_concepts_map_for_js(
     session: AsyncSession,
     torneos: List[Any],
 ) -> Dict[str, List[Dict[str, str]]]:
-    concept_rows = await list_budget_concepts(session, active_only=True, limit=5000)
+    concept_rows = await list_budget_concepts(
+        session,
+        budget_direction="expense",
+        active_only=True,
+        limit=5000,
+    )
     by_tournament: Dict[str, List[Dict[str, str]]] = {}
     for torneo in torneos:
         aliases = budget_alias_candidates(getattr(torneo, "name", "") or "")
@@ -24714,6 +25371,12 @@ async def _tournament_budget_concepts_map_for_js(
             {
                 "id": str(item.get("id") or ""),
                 "label": str(item.get("concept_name") or ""),
+                "cuenta_contable_codigo": str(
+                    item.get("cuenta_contable_codigo") or ""
+                ),
+                "cuenta_contable_nombre": str(
+                    item.get("cuenta_contable_nombre") or ""
+                ),
                 "global": budget_concept_matches_fase(item, None)
                 and not (
                     (item.get("metadata") or {}).get("applicable_phase_keys")
@@ -24810,6 +25473,7 @@ async def _budget_concepts_for_cuenta(
     rows = await list_budget_concepts(
         session,
         tournament_id=str(torneo_id),
+        budget_direction="expense",
         active_only=True,
         limit=500,
     )
@@ -24863,6 +25527,7 @@ def _render_budget_concept_sync_script(
             var conceptSelect = document.getElementById({json.dumps(concept_select_id)});
             var phaseSelect = document.getElementById({json.dumps(phase_select_id)}) || null;
             var selectedId = {selected_json};
+            var uuidRegex = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
             if (!tournamentSelect || !conceptSelect) return;
             function normalizeScopeKey(value) {{
                 if (!value) return "";
@@ -24884,8 +25549,7 @@ def _render_budget_concept_sync_script(
                 var keys = Array.isArray(item.applicable_keys) ? item.applicable_keys : [];
                 return keys.indexOf(selectedKey) >= 0 || keys.indexOf("fase_" + selectedKey) >= 0;
             }}
-            function syncBudgetConcepts() {{
-                var items = (conceptMap[tournamentSelect.value] || []).filter(itemMatchesPhase);
+            function renderConceptOptions(items) {{
                 conceptSelect.innerHTML = "";
                 var placeholder = document.createElement("option");
                 placeholder.value = "";
@@ -24896,12 +25560,49 @@ def _render_budget_concept_sync_script(
                 items.forEach(function(item) {{
                     var option = document.createElement("option");
                     option.value = item.id;
-                    option.textContent = item.label;
+                    var label = item.label || "";
+                    if (item.cuenta_contable_codigo) {{
+                        label += " (" + item.cuenta_contable_codigo + ")";
+                    }}
+                    option.textContent = label;
                     option.selected = item.id === selectedId;
                     conceptSelect.appendChild(option);
                 }});
                 conceptSelect.disabled = items.length === 0;
                 conceptSelect.required = items.length > 0 && {json.dumps(required)};
+            }}
+            function syncBudgetConcepts() {{
+                var tournamentId = (tournamentSelect.value || "").trim();
+                var fase = phaseSelect ? (phaseSelect.value || "").trim() : "";
+                if (!tournamentId || !uuidRegex.test(tournamentId)) {{
+                    renderConceptOptions([]);
+                    return;
+                }}
+                conceptSelect.innerHTML = "";
+                var loading = document.createElement("option");
+                loading.value = "";
+                loading.textContent = "Cargando partidas...";
+                loading.selected = true;
+                conceptSelect.appendChild(loading);
+                conceptSelect.disabled = true;
+                var url = "/api/torneos/" + encodeURIComponent(tournamentId) + "/partidas-presupuestales";
+                if (fase) {{
+                    url += "?fase=" + encodeURIComponent(fase);
+                }}
+                fetch(url, {{ headers: {{ Accept: "application/json" }} }})
+                    .then(function(response) {{
+                        if (!response.ok) throw new Error("HTTP " + response.status);
+                        return response.json();
+                    }})
+                    .then(function(data) {{
+                        var items = Array.isArray(data.partidas) ? data.partidas : [];
+                        renderConceptOptions(items);
+                    }})
+                    .catch(function(error) {{
+                        console.error("No se pudieron cargar partidas presupuestales.", error);
+                        var fallback = (conceptMap[tournamentSelect.value] || []).filter(itemMatchesPhase);
+                        renderConceptOptions(fallback);
+                    }});
             }}
             tournamentSelect.addEventListener("change", function() {{
                 selectedId = "";
@@ -25091,6 +25792,7 @@ async def _create_cuenta_de_gastos_with_informe(
     session: AsyncSession,
     *,
     empleado: Empleado,
+    beneficiario: Optional[Empleado],
     nombre: Optional[str],
     tipo_cuenta: str,
     torneo_id: UUIDType,
@@ -25119,6 +25821,7 @@ async def _create_cuenta_de_gastos_with_informe(
     try:
         cuenta = CuentaDeGastos(
             empleado_id=empleado.id,
+            beneficiario_empleado_id=(beneficiario or empleado).id,
             referencia_base=referencia_base_final,
             nombre=nombre,
             estado="abierta",
@@ -25136,6 +25839,7 @@ async def _create_cuenta_de_gastos_with_informe(
         )
         informe = Documento(
             empleado_id=empleado.id,
+            beneficiario_empleado_id=(beneficiario or empleado).id,
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -25229,6 +25933,34 @@ def _append_error_params(
     if error_msg is not None:
         params["error_msg"] = error_msg
     return _append_query_params(url, params)
+
+
+def _render_transient_message_query_cleanup_script() -> str:
+    """Remove one-time status messages from the URL after they are rendered."""
+    return """
+    <script>
+        (function() {
+            if (!window.history || !window.history.replaceState) return;
+            const url = new URL(window.location.href);
+            const transientKeys = [
+                "error", "error_msg", "success", "success_msg", "msg"
+            ];
+            let changed = false;
+            transientKeys.forEach(function(key) {
+                if (url.searchParams.has(key)) {
+                    url.searchParams.delete(key);
+                    changed = true;
+                }
+            });
+            if (changed) {
+                const cleanUrl = url.pathname
+                    + (url.searchParams.toString() ? "?" + url.searchParams.toString() : "")
+                    + url.hash;
+                window.history.replaceState(window.history.state, document.title, cleanUrl);
+            }
+        })();
+    </script>
+    """
 
 
 async def _count_active_cuenta_expenses(
@@ -25334,6 +26066,24 @@ async def crear_cuenta_de_gastos_form(
     preserve_currency = request.query_params.get("currency", "MXN")
     preserve_edicion = request.query_params.get("edicion", str(date.today().year))
     preserve_categorias = _form_list(request.query_params, "categorias")
+    preserve_beneficiario = request.query_params.get(
+        "beneficiario_empleado_id", ""
+    )
+    beneficiario = await _resolve_active_beneficiary_empleado(
+        session,
+        preserve_beneficiario,
+        default=current_empleado,
+    )
+    if beneficiario is None:
+        beneficiario = current_empleado
+    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+        beneficiario = current_empleado
+    active_empleados = await _active_beneficiary_empleados(
+        session, current_empleado
+    )
+    beneficiary_options = _html_beneficiary_employee_options(
+        active_empleados, beneficiario.id
+    )
     preserve_uuid = None
     if preserve_torneo_id:
         try:
@@ -25415,6 +26165,13 @@ async def crear_cuenta_de_gastos_form(
             <section class="surface">
             <p class="section-note" style="margin:0 0 18px 0;">Se creará un informe de gastos con su documento principal. Las solicitudes de transferencia se agregan desde el detalle del informe.</p>
             <form method="POST" action="/informes-de-gastos/crear" id="form-crear-cuenta">
+                <div class="form-group">
+                    <label for="beneficiario_empleado_id">Beneficiario del informe</label>
+                    <select name="beneficiario_empleado_id" id="beneficiario_empleado_id" required>
+                        {beneficiary_options}
+                    </select>
+                    <small>El responsable, propietario y aprobador continÃºan siendo los del usuario que crea el informe.</small>
+                </div>
                 <div class="form-group">
                     <label for="nombre">Motivo del gasto</label>
                     <input type="text" name="nombre" id="nombre" value="{escape(preserve_nombre)}" placeholder="Ej: Viaje Nacional 2026">
@@ -25513,6 +26270,38 @@ async def crear_cuenta_de_gastos_submit(
     categorias_raw = _form_list(form_data, "categorias")
     edicion_raw = form_data.get("edicion")
     currency_raw = form_data.get("currency")
+    beneficiario_empleado_id_raw = (
+        form_data.get("beneficiario_empleado_id") or ""
+    ).strip()
+    beneficiario = await _resolve_active_beneficiary_empleado(
+        session,
+        beneficiario_empleado_id_raw,
+        default=current_empleado,
+    )
+    if beneficiario is None:
+        return RedirectResponse(
+            url=_append_query_params(
+                "/informes-de-gastos/crear",
+                {
+                    "error_msg": "Seleccione un beneficiario activo.",
+                    "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                },
+            ),
+            status_code=303,
+        )
+    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+        return RedirectResponse(
+            url=_append_query_params(
+                "/informes-de-gastos/crear",
+                {
+                    "error_msg": (
+                        "No tienes permiso para crear un informe a nombre de otro empleado."
+                    ),
+                    "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                },
+            ),
+            status_code=303,
+        )
 
     err, tipo_ok, torneo_id_uuid, fase_final = await _validate_cuenta_informe_proyecto_fields(
         session,
@@ -25534,6 +26323,11 @@ async def crear_cuenta_de_gastos_submit(
             base += f"&torneo_id={quote(str(torneo_id_raw))}"
         if fase_raw:
             base += f"&fase={quote(fase_raw)}"
+        if beneficiario_empleado_id_raw:
+            base += (
+                "&beneficiario_empleado_id="
+                f"{quote(beneficiario_empleado_id_raw)}"
+            )
         return RedirectResponse(url=base, status_code=303)
 
     assert tipo_ok is not None and torneo_id_uuid is not None
@@ -25576,6 +26370,7 @@ async def crear_cuenta_de_gastos_submit(
 
         cuenta = CuentaDeGastos(
             empleado_id=current_empleado.id,
+            beneficiario_empleado_id=beneficiario.id,
             referencia_base=referencia_base_final,
             nombre=nombre_val,
             estado="abierta",
@@ -25593,6 +26388,7 @@ async def crear_cuenta_de_gastos_submit(
         )
         informe = Documento(
             empleado_id=current_empleado.id,
+            beneficiario_empleado_id=beneficiario.id,
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -26350,6 +27146,7 @@ async def crear_gasto_rapido_en_informe(
                 undefer(CuentaDeGastos.currency),
                 selectinload(CuentaDeGastos.torneo),
                 selectinload(CuentaDeGastos.empleado),
+                selectinload(CuentaDeGastos.beneficiario_empleado),
             )
         )
         cuenta = cuenta_result.scalar_one_or_none()
@@ -26436,6 +27233,7 @@ async def crear_gasto_rapido_en_informe(
             tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
             tournament_code=None,
             fase=getattr(cuenta, "fase", None),
+            budget_direction="expense",
         )
         if available_budget_concepts and not budget_concept_raw:
             raise ValueError("La partida presupuestal es requerida para este informe.")
@@ -26496,6 +27294,18 @@ async def crear_gasto_rapido_en_informe(
                 nombre_archivo=cfdi_pdf.filename or "cfdi.pdf",
                 mime_type="application/pdf",
                 categoria="cfdi_pdf",
+                origen="user_upload",
+            )
+
+        if xml_bytes is not None:
+            await create_adjunto_record(
+                session,
+                gasto_id=expense.id,
+                ruta_archivo=base64.b64encode(xml_bytes).decode("ascii"),
+                tipo_archivo="application/xml",
+                nombre_archivo=(cfdi_xml.filename if cfdi_xml else None) or "cfdi.xml",
+                mime_type="application/xml",
+                categoria="cfdi_xml",
                 origen="user_upload",
             )
 
@@ -26616,6 +27426,8 @@ async def cuenta_de_gastos_detail(
                 undefer(CuentaDeGastos.edicion),
                 undefer(CuentaDeGastos.currency),
                 selectinload(CuentaDeGastos.torneo),
+                selectinload(CuentaDeGastos.empleado),
+                selectinload(CuentaDeGastos.beneficiario_empleado),
             )
         )
         cuenta = cuenta_result.scalar_one_or_none()
@@ -26848,19 +27660,20 @@ async def cuenta_de_gastos_detail(
         and cuenta.estado in {"abierta", "cerrada"}
     )
 
-    # Shared "Cerrar informe" form. When there is saldo a favor del empleado
+    # Shared "Cerrar informe" form. When there is saldo a favor del beneficiario
     # (saldo < 0), embed a bank-account selector so closing also generates a
     # reembolso SOLICITUD de transferencia for the chosen account.
     cerrar_informe_form_html = ""
     if informe_doc_can_close:
         if saldo < 0:
-            owner_result = await session.execute(
-                select(Empleado).where(Empleado.id == cuenta.empleado_id)
+            beneficiary_id = effective_account_beneficiary_id(cuenta)
+            beneficiary_result = await session.execute(
+                select(Empleado).where(Empleado.id == beneficiary_id)
             )
-            owner_empleado = owner_result.scalar_one_or_none()
-            if owner_empleado is not None:
+            beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+            if beneficiary_empleado is not None:
                 bank_options_html = await _html_empleado_bank_account_options(
-                    session=session, empleado=owner_empleado
+                    session=session, empleado=beneficiary_empleado
                 )
             else:
                 bank_options_html = (
@@ -26873,14 +27686,14 @@ async def cuenta_de_gastos_detail(
                 '<div style="margin-bottom:8px;">'
                 '<label style="display:block;font-size:13px;color:#374151;'
                 'margin-bottom:4px;">'
-                "Cuenta para el reembolso del saldo a favor</label>"
+                "Cuenta del beneficiario para el reembolso</label>"
                 '<select name="proveedor_cliente_id" required '
                 f'style="min-width:260px;padding:6px;">{bank_options_html}</select>'
                 "</div>"
                 '<button type="submit" class="button warning" '
                 "onclick=\"return confirm('¿Cerrar este informe de gastos y enviarlo "
                 "para aprobación? Se generará una solicitud de transferencia por el "
-                "saldo a favor del empleado.')\">Cerrar informe</button>"
+                "saldo a favor del beneficiario.')\">Cerrar informe</button>"
                 "</form>"
             )
         else:
@@ -27005,8 +27818,22 @@ async def cuenta_de_gastos_detail(
     # Tipo de gasto y proyecto (safe if columns missing)
     tipo_display, torneo_name, fase_val = _get_cuenta_tipo_torneo_fase(cuenta)
     tipo_label = _cuenta_informe_tipo_label(tipo_display)
+    solicitante_cuenta = getattr(cuenta, "empleado", None)
+    if solicitante_cuenta is None and cuenta.empleado_id == current_empleado.id:
+        solicitante_cuenta = current_empleado
+    solicitante_display = (
+        solicitante_cuenta.nombre if solicitante_cuenta is not None else "â€”"
+    )
+    beneficiario_cuenta = (
+        getattr(cuenta, "beneficiario_empleado", None) or solicitante_cuenta
+    )
+    beneficiario_display = (
+        beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "â€”"
+    )
     clasificacion_info = (
-        f'<p class="section-note" style="margin:8px 0 0;"><strong>Tipo de gasto:</strong> '
+        f'<p class="section-note" style="margin:8px 0 0;"><strong>Solicita:</strong> '
+        f'{escape(solicitante_display)} &nbsp;| &nbsp;<strong>Beneficiario:</strong> '
+        f'{escape(beneficiario_display)} &nbsp;| &nbsp;<strong>Tipo de gasto:</strong> '
         f'{escape(tipo_label)}'
     )
     if torneo_name != "—":
@@ -27338,6 +28165,7 @@ async def cuenta_de_gastos_detail(
             }})();
         </script>
         {render_cfdi_quick_expense_autofill_script()}
+        {_render_transient_message_query_cleanup_script()}
     </body>
     </html>
     """
@@ -28120,12 +28948,13 @@ async def cerrar_cuenta_de_gastos(
         saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta_id)
         saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
         if saldo_raw < -0.005:
+            beneficiary_id = effective_account_beneficiary_id(cuenta)
             existing_reembolso = await session.execute(
                 select(Documento.id)
                 .where(
                     Documento.cuenta_gastos_id == cuenta_id,
                     Documento.tipo == "SOLICITUD",
-                    Documento.beneficiario_empleado_id == cuenta.empleado_id,
+                    Documento.beneficiario_empleado_id == beneficiary_id,
                     Documento.concepto_pago.like("Reembolso de saldo a favor%"),
                     Documento.estado.notin_(["rechazado", "cancelado"]),
                 )
@@ -28133,14 +28962,14 @@ async def cerrar_cuenta_de_gastos(
             )
             if existing_reembolso.scalar_one_or_none() is None:
                 owner_result = await session.execute(
-                    select(Empleado).where(Empleado.id == cuenta.empleado_id)
+                    select(Empleado).where(Empleado.id == beneficiary_id)
                 )
-                owner_empleado = owner_result.scalar_one_or_none()
+                beneficiary_empleado = owner_result.scalar_one_or_none()
                 matches = (
                     await _get_matching_bank_accounts_for_empleado(
-                        session=session, empleado=owner_empleado
+                        session=session, empleado=beneficiary_empleado
                     )
-                    if owner_empleado is not None
+                    if beneficiary_empleado is not None
                     else []
                 )
                 allowed_ids = {prov.id for prov, _ in matches}
@@ -28158,9 +28987,9 @@ async def cerrar_cuenta_de_gastos(
                             {
                                 "error": "invalid_bank_account",
                                 "error_msg": (
-                                    "Seleccione una cuenta bancaria válida para el "
-                                    "reembolso del saldo a favor antes de cerrar el "
-                                    "informe."
+                                    "Seleccione una cuenta bancaria válida del "
+                                    "beneficiario para el reembolso del saldo a favor "
+                                    "antes de cerrar el informe."
                                 ),
                             },
                         ),

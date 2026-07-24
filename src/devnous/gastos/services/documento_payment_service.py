@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from ..models import Aprobacion, Documento, Empleado, Reembolso, Tournament
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
 from .documento_workflow_service import promote_solicitudes_ready_for_payment
+from .documento_semantics import is_employee_reimbursement
 from .expense_service import create_expense_from_data
 
 logger = logging.getLogger(__name__)
@@ -457,7 +458,15 @@ async def get_pending_document_payment_overview(
         total_pendiente += monto
         tipo_solicitud = "—"
         beneficiario_nombre = "—"
-        if documento.proveedor_cliente_id and documento.proveedor_cliente:
+        if is_employee_reimbursement(documento):
+            tipo_solicitud = "Reembolso a empleado"
+            beneficiario_nombre = (
+                documento.beneficiario_empleado.nombre
+                if documento.beneficiario_empleado
+                else "—"
+            )
+            solicitud_personal += 1
+        elif documento.proveedor_cliente_id and documento.proveedor_cliente:
             tipo_solicitud = "Terceros"
             beneficiario_nombre = documento.proveedor_cliente.nombre
             solicitud_terceros += 1

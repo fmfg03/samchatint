@@ -252,7 +252,7 @@ async def import_coi_workbook(
             existing_cfdi = await find_cfdi_report_by_fiscal_uuid(session, canon_uid)
             if existing_cfdi:
                 cfdi_reused += 1
-                if apply_changes:
+                if apply_changes and existing_cfdi.origen != "sat":
                     if parsed.cfdi.fecha:
                         existing_cfdi.fecha = parsed.cfdi.fecha
                     existing_cfdi.folio = parsed.cfdi.folio

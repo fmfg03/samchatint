@@ -373,20 +373,52 @@ def solicitud_transferencia_doc_styles() -> str:
             gap: 8px;
         }
         .st-materialidades-item {
-            display: flex;
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto;
             align-items: center;
-            justify-content: space-between;
             gap: 10px;
             padding: 8px 10px;
             border: 1px solid #dbe2ea;
             border-radius: 8px;
             background: #ffffff;
         }
+        .st-materialidades-preview-link {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 92px;
+            height: 92px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            background: #f8fafc;
+            color: #1d4ed8;
+            font-size: 12px;
+            font-weight: 700;
+            overflow: hidden;
+            text-decoration: none;
+        }
+        .st-materialidades-thumbnail {
+            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            background: #ffffff;
+        }
+        .st-materialidades-file-info {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
         .st-materialidades-name {
-            flex: 1;
             min-width: 0;
             font-size: 13px;
             color: #334155;
+            word-break: break-word;
+        }
+        .st-materialidades-meta {
+            font-size: 11px;
+            color: #64748b;
             word-break: break-word;
         }
         .st-materialidades-remove {
@@ -658,23 +690,37 @@ def render_solicitud_transferencia_detail_view(
     supplement_rows = []
     if referencia_pago:
         supplement_rows.append(
-            render_st_doc_row("REFERENCIA DE PAGO:", render_st_doc_readonly_value(referencia_pago), readonly=True)
+            render_st_doc_row(
+                "REFERENCIA DE PAGO:",
+                render_st_doc_readonly_value(referencia_pago),
+                readonly=True,
+            )
         )
     if metodo_pago:
         supplement_rows.append(
-            render_st_doc_row("MÉTODO DE PAGO:", render_st_doc_readonly_value(metodo_pago), readonly=True)
+            render_st_doc_row(
+                "MÉTODO DE PAGO:",
+                render_st_doc_readonly_value(metodo_pago),
+                readonly=True,
+            )
         )
     if pago_urgente:
-        supplement_rows.append(
-            render_st_doc_row("PAGO URGENTE:", "Si", readonly=True)
-        )
+        supplement_rows.append(render_st_doc_row("PAGO URGENTE:", "Si", readonly=True))
     if fecha_inicio_display and fecha_inicio_display != "—":
         supplement_rows.append(
-            render_st_doc_row("FECHA INICIO:", render_st_doc_readonly_value(fecha_inicio_display), readonly=True)
+            render_st_doc_row(
+                "FECHA INICIO:",
+                render_st_doc_readonly_value(fecha_inicio_display),
+                readonly=True,
+            )
         )
     if fecha_fin_display and fecha_fin_display != "—":
         supplement_rows.append(
-            render_st_doc_row("FECHA FIN:", render_st_doc_readonly_value(fecha_fin_display), readonly=True)
+            render_st_doc_row(
+                "FECHA FIN:",
+                render_st_doc_readonly_value(fecha_fin_display),
+                readonly=True,
+            )
         )
 
     supplement_html = ""
@@ -1154,7 +1200,7 @@ def render_materialidades_file_picker_html(
                 id="{escape(picker_id, quote=True)}"
                 accept="{escape(MATERIALIDADES_FILE_ACCEPT, quote=True)}"
             >
-            <small>Seleccione un archivo a la vez. Puede agregar varios antes de guardar.</small>
+            <small>Seleccione un archivo a la vez. Puede agregar varios antes de guardar. Toque la miniatura para verla completa.</small>
             <p id="{escape(empty_id, quote=True)}" class="st-materialidades-empty">Aún no hay archivos agregados.</p>
             <ul id="{escape(list_id, quote=True)}" class="st-materialidades-list" hidden></ul>
             <input
@@ -1185,6 +1231,20 @@ def render_materialidades_file_picker_script(
             const listEl = document.getElementById({json.dumps(list_id)});
             const emptyEl = document.getElementById({json.dumps(empty_id)});
             const selectedFiles = [];
+            const previewUrls = [];
+
+            function clearPreviewUrls() {{
+                previewUrls.splice(0).forEach(function(url) {{
+                    URL.revokeObjectURL(url);
+                }});
+            }}
+
+            function formatFileSize(bytes) {{
+                const size = Number(bytes || 0);
+                if (size < 1024) return size + ' B';
+                if (size < 1024 * 1024) return (size / 1024).toFixed(1) + ' KB';
+                return (size / (1024 * 1024)).toFixed(1) + ' MB';
+            }}
 
             function syncHiddenInput() {{
                 if (!hiddenInput) {{
@@ -1201,14 +1261,48 @@ def render_materialidades_file_picker_script(
                 if (!listEl) {{
                     return;
                 }}
+                clearPreviewUrls();
                 listEl.innerHTML = '';
                 selectedFiles.forEach(function(file, index) {{
                     const item = document.createElement('li');
                     item.className = 'st-materialidades-item';
 
+                    const mimeType = (file.type || '').toLowerCase();
+                    const filename = file.name || ('Archivo ' + (index + 1));
+                    const isImage = mimeType.startsWith('image/') || /\\.(jpe?g|png|gif|webp)$/i.test(filename);
+                    const isPdf = mimeType === 'application/pdf' || /\\.pdf$/i.test(filename);
+                    let previewLink = null;
+                    if ((isImage || isPdf) && window.URL && URL.createObjectURL) {{
+                        const previewUrl = URL.createObjectURL(file);
+                        previewUrls.push(previewUrl);
+                        previewLink = document.createElement('a');
+                        previewLink.className = 'st-materialidades-preview-link';
+                        previewLink.href = previewUrl;
+                        previewLink.target = '_blank';
+                        previewLink.rel = 'noopener';
+                        previewLink.title = 'Abrir vista previa de ' + filename;
+                        if (isImage) {{
+                            const image = document.createElement('img');
+                            image.className = 'st-materialidades-thumbnail';
+                            image.src = previewUrl;
+                            image.alt = 'Vista previa de ' + filename;
+                            previewLink.appendChild(image);
+                        }} else {{
+                            previewLink.textContent = 'Abrir PDF';
+                        }}
+                    }}
+
+                    const fileInfo = document.createElement('div');
+                    fileInfo.className = 'st-materialidades-file-info';
                     const name = document.createElement('span');
                     name.className = 'st-materialidades-name';
-                    name.textContent = file.name || ('Archivo ' + (index + 1));
+                    name.textContent = filename;
+
+                    const meta = document.createElement('span');
+                    meta.className = 'st-materialidades-meta';
+                    meta.textContent = formatFileSize(file.size) + (mimeType ? ' · ' + mimeType : '');
+                    fileInfo.appendChild(name);
+                    fileInfo.appendChild(meta);
 
                     const removeBtn = document.createElement('button');
                     removeBtn.type = 'button';
@@ -1220,7 +1314,15 @@ def render_materialidades_file_picker_script(
                         syncHiddenInput();
                     }});
 
-                    item.appendChild(name);
+                    if (previewLink) {{
+                        item.appendChild(previewLink);
+                    }} else {{
+                        const placeholder = document.createElement('span');
+                        placeholder.className = 'st-materialidades-preview-link';
+                        placeholder.textContent = 'Archivo';
+                        item.appendChild(placeholder);
+                    }}
+                    item.appendChild(fileInfo);
                     item.appendChild(removeBtn);
                     listEl.appendChild(item);
                 }});
@@ -1257,6 +1359,8 @@ def render_materialidades_file_picker_script(
                     syncHiddenInput();
                 }});
             }}
+
+            window.addEventListener('beforeunload', clearPreviewUrls);
 
             renderList();
             syncHiddenInput();

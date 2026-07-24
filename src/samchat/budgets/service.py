@@ -23,6 +23,7 @@ DEFAULT_BUDGET_ARTIFACT = (
     _ROOT / "Conta2025" / "reportes_2025" / "borrador_presupuesto_2026.csv"
 )
 DEFAULT_BUDGET_CONCEPT_CATALOG = _ROOT / "docs" / "Catálogo de Torneos.xlsx"
+DEMO_BUDGET_SOURCE = "demo_operaciones_analytics"
 _BUDGET_STATUS_ORDER = {
     "frozen": 1,
     "approved": 2,
@@ -38,6 +39,17 @@ _BUDGET_ALLOWED_TRANSITIONS = {
     "frozen": {"reforecast", "closed"},
     "reforecast": {"submitted", "approved", "frozen", "closed"},
     "closed": set(),
+}
+_BUDGET_LINE_DIRECTION_DEFAULT = "expense"
+_BUDGET_LINE_DIRECTIONS = {"expense", "income"}
+_BUDGET_LINE_DIRECTION_ALIASES = {
+    "expense": "expense",
+    "expenses": "expense",
+    "gasto": "expense",
+    "gastos": "expense",
+    "income": "income",
+    "ingreso": "income",
+    "ingresos": "income",
 }
 _BUDGET_ALIAS_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -115,6 +127,17 @@ def _active_budget_label(value: Optional[str]) -> str:
 def _normalize_budget_status(value: Optional[str]) -> str:
     normalized = _safe_str(value).lower()
     return normalized or "draft"
+
+
+def normalize_budget_line_direction(
+    value: Optional[str],
+    *,
+    default: str = _BUDGET_LINE_DIRECTION_DEFAULT,
+) -> str:
+    normalized = _BUDGET_LINE_DIRECTION_ALIASES.get(_safe_str(value).lower(), "")
+    if normalized in _BUDGET_LINE_DIRECTIONS:
+        return normalized
+    return default
 
 
 def _editable_version_status(status: Optional[str]) -> bool:
@@ -1033,7 +1056,7 @@ async def _load_tournament_rows(session: AsyncSession) -> list[dict[str, Any]]:
         await session.execute(
             text(
                 """
-                SELECT id, name
+                SELECT id, name, active, etapas
                 FROM tournaments
                 ORDER BY active DESC, display_order ASC, name ASC
                 """
@@ -1146,16 +1169,16 @@ async def validate_active_cuenta_contable_id(
 
 
 DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING = (
-    Path(__file__).resolve().parents[2]
+    _ROOT
     / "docs"
-    / "Catálogo de Partidas Presupuestales vs Cuenta Contable.xlsx"
+    / "1.2 Catálogo de Partidas Presupuestales vs Cuenta Contable (1).xlsx"
 )
 
 
 def _iter_budget_concept_account_mapping_rows(
     workbook_path: str | Path = DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING,
     *,
-    sheet_name: str = "Catálogo General",
+    sheet_name: str = "Catálogo Final",
 ) -> list[dict[str, Any]]:
     path = Path(workbook_path)
     if not path.exists():
@@ -1229,6 +1252,23 @@ def _iter_budget_concept_account_mapping_rows(
     return rows
 
 
+def collect_workbook_project_configs(
+    workbook_path: str | Path = DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING,
+) -> list[dict[str, Any]]:
+    """Return workbook projects with ordered Subproyecto values as tournament etapas."""
+    projects: dict[str, dict[str, Any]] = {}
+    for row in _iter_budget_concept_account_mapping_rows(workbook_path):
+        proyecto = _safe_str(row.get("proyecto"))
+        if not proyecto:
+            continue
+        if proyecto not in projects:
+            projects[proyecto] = {"proyecto": proyecto, "etapas": []}
+        subproyecto = _safe_str(row.get("subproyecto"))
+        if subproyecto and subproyecto not in projects[proyecto]["etapas"]:
+            projects[proyecto]["etapas"].append(subproyecto)
+    return list(projects.values())
+
+
 def collect_workbook_cuentas_contables(
     workbook_path: str | Path = DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING,
 ) -> dict[str, str]:
@@ -1270,21 +1310,46 @@ async def ensure_missing_cuentas_contables_from_workbook(
         await session.execute(
             text(
                 """
-                SELECT codigo
+                SELECT codigo, nombre, activo
                 FROM cuentas_contables
                 WHERE codigo = ANY(:codigos)
                 """
             ),
             {"codigos": sorted(workbook_accounts)},
         )
-    ).scalars().all()
-    existing_codes = {_safe_str(code) for code in existing_rows if _safe_str(code)}
+    ).mappings().all()
+    existing_by_code = {
+        _safe_str(row.get("codigo")): row
+        for row in existing_rows
+        if _safe_str(row.get("codigo"))
+    }
+    existing_codes = set(existing_by_code)
 
     created: list[dict[str, str]] = []
+    updated: list[dict[str, str]] = []
     for codigo in sorted(workbook_accounts):
-        if codigo in existing_codes:
-            continue
         nombre = workbook_accounts[codigo]
+        existing = existing_by_code.get(codigo)
+        if existing:
+            if _safe_str(existing.get("nombre")) != nombre or bool(
+                existing.get("activo")
+            ) != bool(activo):
+                await session.execute(
+                    text(
+                        """
+                        UPDATE cuentas_contables
+                        SET nombre = :nombre,
+                            activo = :activo,
+                            actualizado_en = NOW()
+                        WHERE codigo = :codigo
+                        """
+                    ),
+                    {"codigo": codigo, "nombre": nombre, "activo": bool(activo)},
+                )
+                updated.append(
+                    {"codigo": codigo, "nombre": nombre, "tipo": _safe_str(tipo) or "gasto"}
+                )
+            continue
         session.add(
             CuentaContable(
                 codigo=codigo,
@@ -1295,14 +1360,150 @@ async def ensure_missing_cuentas_contables_from_workbook(
         )
         created.append({"codigo": codigo, "nombre": nombre, "tipo": _safe_str(tipo) or "gasto"})
 
-    if commit and created:
+    if commit and (created or updated):
         await session.commit()
 
     return {
         "workbook_accounts_count": len(workbook_accounts),
         "created_count": len(created),
+        "updated_count": len(updated),
         "existing_count": len(existing_codes),
         "created": created,
+        "updated": updated,
+    }
+
+
+async def sync_budget_projects_from_partidas_workbook(
+    session: AsyncSession,
+    *,
+    workbook_path: str | Path = DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING,
+    commit: bool = True,
+) -> dict[str, Any]:
+    """Create/update workbook projects and align their Subproyecto values to etapas."""
+    project_configs = collect_workbook_project_configs(workbook_path)
+    if not project_configs:
+        return {
+            "workbook_projects_count": 0,
+            "projects_matched": 0,
+            "projects_created": 0,
+            "projects_updated": 0,
+            "project_ids_by_name": {},
+        }
+
+    tournament_rows = await _load_tournament_rows(session)
+    max_order_result = await session.execute(
+        text("SELECT COALESCE(MAX(display_order), 0) FROM tournaments")
+    )
+    try:
+        next_display_order = int(max_order_result.scalar() or 0)
+    except (AttributeError, TypeError, ValueError):
+        next_display_order = 0
+
+    projects_matched = 0
+    projects_created = 0
+    projects_updated = 0
+    project_ids_by_name: dict[str, str] = {}
+
+    for config in project_configs:
+        proyecto = _safe_str(config.get("proyecto"))
+        etapas = [
+            _safe_str(value)
+            for value in (config.get("etapas") or [])
+            if _safe_str(value)
+        ]
+        tournament_id = _match_tournament_id(
+            tournament_rows,
+            tournament_code=None,
+            tournament_name=proyecto,
+        )
+        if tournament_id:
+            projects_matched += 1
+            current = next(
+                (
+                    row
+                    for row in tournament_rows
+                    if _safe_str(row.get("id")) == tournament_id
+                ),
+                {},
+            )
+            current_etapas = [
+                _safe_str(value)
+                for value in (current.get("etapas") or [])
+                if _safe_str(value)
+            ]
+            if (
+                _safe_str(current.get("name")) != proyecto
+                or current_etapas != etapas
+                or not bool(current.get("active", True))
+            ):
+                await session.execute(
+                    text(
+                        """
+                        UPDATE tournaments
+                        SET name = :name,
+                            etapas = CAST(:etapas AS jsonb),
+                            active = TRUE,
+                            updated_at = NOW()
+                        WHERE CAST(id AS text) = :tournament_id
+                        """
+                    ),
+                    {
+                        "tournament_id": tournament_id,
+                        "name": proyecto,
+                        "etapas": json.dumps(etapas, ensure_ascii=False),
+                    },
+                )
+                current["name"] = proyecto
+                current["etapas"] = etapas
+                current["active"] = True
+                projects_updated += 1
+            project_ids_by_name[proyecto] = tournament_id
+            continue
+
+        next_display_order += 1
+        tournament_id = str(uuid.uuid4())
+        await session.execute(
+            text(
+                """
+                INSERT INTO tournaments (
+                    id, name, description, active, display_order,
+                    cuenta_contable_relacionada, etapas, categorias,
+                    created_at, updated_at
+                ) VALUES (
+                    :id, :name, :description, TRUE, :display_order,
+                    NULL, CAST(:etapas AS jsonb), NULL,
+                    NOW(), NOW()
+                )
+                """
+            ),
+            {
+                "id": tournament_id,
+                "name": proyecto,
+                "description": "Sincronizado desde catálogo SSOT de partidas presupuestales.",
+                "display_order": next_display_order,
+                "etapas": json.dumps(etapas, ensure_ascii=False),
+            },
+        )
+        tournament_rows.append(
+            {
+                "id": tournament_id,
+                "name": proyecto,
+                "active": True,
+                "etapas": etapas,
+            }
+        )
+        project_ids_by_name[proyecto] = tournament_id
+        projects_created += 1
+
+    if commit:
+        await session.commit()
+
+    return {
+        "workbook_projects_count": len(project_configs),
+        "projects_matched": projects_matched,
+        "projects_created": projects_created,
+        "projects_updated": projects_updated,
+        "project_ids_by_name": project_ids_by_name,
     }
 
 
@@ -1369,6 +1570,9 @@ def _match_budget_concept_for_account_mapping(
     ]
     if len(ssot_matches) == 1:
         return ssot_matches[0]
+
+    if subproyecto:
+        return None
 
     name_matches = [
         item
@@ -1535,6 +1739,284 @@ async def import_budget_concept_account_mappings(
         "dry_run": False,
         "create_missing_cuentas": create_missing_cuentas,
     }
+
+
+_DEFINITIVE_VERSION_STATUS_ORDER = {
+    "approved": 0,
+    "frozen": 1,
+    "reforecast": 2,
+    "draft": 3,
+    "submitted": 4,
+    "closed": 5,
+}
+
+
+async def resolve_definitive_budget_version(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+) -> Optional[dict[str, Any]]:
+    """Return the single operational budget version for an edition year."""
+    versions = await list_budget_versions(session, edition_year=edition_year)
+    if not versions:
+        return None
+
+    def _sort_key(item: dict[str, Any]) -> tuple[int, int, str]:
+        status = _normalize_budget_status(item.get("status"))
+        return (
+            _DEFINITIVE_VERSION_STATUS_ORDER.get(status, 99),
+            -int(item.get("line_count") or 0),
+            _safe_str(item.get("updated_at")) or _safe_str(item.get("created_at")),
+        )
+
+    return sorted(versions, key=_sort_key)[0]
+
+
+def _scoped_budget_concept_key(partida: str, subproyecto: str = "") -> str:
+    base_key = _normalize_budget_key(partida)
+    sub_key = _normalize_budget_key(subproyecto)
+    if base_key and sub_key:
+        return f"{base_key}__{sub_key}"
+    return base_key
+
+
+async def sync_budget_concepts_from_partidas_workbook(
+    session: AsyncSession,
+    *,
+    workbook_path: str | Path = DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING,
+    actor_empleado_id: Optional[str] = None,
+    create_missing_cuentas: bool = True,
+) -> dict[str, Any]:
+    """Upsert budget_concepts from the client partidas/cuenta workbook SSOT."""
+    await ensure_budget_schema(session)
+    mapping_rows = _iter_budget_concept_account_mapping_rows(workbook_path)
+    if not mapping_rows:
+        raise ValueError(
+            "No se encontraron partidas en el catálogo SSOT de partidas vs cuenta contable."
+        )
+    project_report = await sync_budget_projects_from_partidas_workbook(
+        session,
+        workbook_path=workbook_path,
+        commit=False,
+    )
+    cuenta_report: dict[str, Any] = {}
+    if create_missing_cuentas:
+        cuenta_report = await ensure_missing_cuentas_contables_from_workbook(
+            session,
+            workbook_path=workbook_path,
+            commit=True,
+        ) or {}
+
+    concepts = await list_budget_concepts(session, active_only=False, limit=5000)
+    tournament_rows = await _load_tournament_rows(session)
+    account_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT id, codigo, nombre, activo
+                FROM cuentas_contables
+                ORDER BY codigo ASC
+                """
+            )
+        )
+    ).mappings().all()
+    accounts_by_code = {
+        _normalize_budget_key(_safe_str(row.get("codigo"))): row for row in account_rows
+    }
+
+    created = 0
+    updated = 0
+    skipped_no_tournament = 0
+    skipped_no_account = 0
+    matched_tournament_ids: set[str] = set()
+    workbook_concept_keys_by_tournament: dict[str, set[str]] = defaultdict(set)
+
+    for row in mapping_rows:
+        tournament_id = _match_tournament_id(
+            tournament_rows,
+            tournament_code=None,
+            tournament_name=row.get("proyecto") or "",
+        )
+        if not tournament_id:
+            skipped_no_tournament += 1
+            continue
+
+        tournament = await _resolve_tournament_for_budget_concept(
+            session,
+            tournament_id=tournament_id,
+        )
+        subproyecto = _safe_str(row.get("subproyecto"))
+        partida = _safe_str(row.get("partida"))
+        concept_key = _scoped_budget_concept_key(partida, subproyecto)
+        if not concept_key:
+            continue
+        matched_tournament_ids.add(tournament_id)
+        workbook_concept_keys_by_tournament[tournament_id].add(concept_key)
+        account = accounts_by_code.get(
+            _normalize_budget_key(_safe_str(row.get("cuenta_contable_codigo")))
+        )
+        cuenta_id = _safe_str(account.get("id")) if account else ""
+        if not cuenta_id:
+            skipped_no_account += 1
+            continue
+
+        tournament_code = tournament.get("tournament_code") or ""
+        existing = _match_budget_concept_for_account_mapping(
+            concepts,
+            row=row,
+            tournament_code=tournament_code,
+        )
+        if existing is None:
+            existing = next(
+                (
+                    item
+                    for item in concepts
+                    if _safe_str(item.get("tournament_id")) == tournament_id
+                    and _safe_str(item.get("concept_key")) == concept_key
+                ),
+                None,
+            )
+
+        ssot_metadata = {
+            "ssot_proyecto": _safe_str(row.get("proyecto")) or None,
+            "ssot_subproyecto": subproyecto or None,
+            "ssot_row_index": row.get("sheet_row_index"),
+            "ssot_source": "partidas_cuenta_workbook",
+            "ssot_cuenta_contable_codigo": _safe_str(row.get("cuenta_contable_codigo")),
+        }
+
+        if existing:
+            concept_id = _safe_str(existing.get("id"))
+            await update_budget_concept(
+                session,
+                concept_id=concept_id,
+                concept_name=partida,
+                tournament_id=tournament_id,
+                scope_labels=[subproyecto] if subproyecto else [],
+                cuenta_contable_id=cuenta_id,
+                cuenta_contable_provided=True,
+                active=True,
+                actor_empleado_id=actor_empleado_id,
+                commit=False,
+            )
+            await session.execute(
+                text(
+                    """
+                    UPDATE budget_concepts
+                    SET concept_key = :concept_key,
+                        source = 'ssot_workbook',
+                        metadata = COALESCE(metadata, '{}'::jsonb) || CAST(:metadata AS jsonb),
+                        updated_at = NOW()
+                    WHERE id = :concept_id
+                    """
+                ),
+                {
+                    "concept_id": concept_id,
+                    "concept_key": concept_key,
+                    "metadata": json.dumps(ssot_metadata, ensure_ascii=False),
+                },
+            )
+            existing.update(
+                {
+                    "concept_key": concept_key,
+                    "concept_name": partida,
+                    "tournament_id": tournament_id,
+                    "metadata": {**(existing.get("metadata") or {}), **ssot_metadata},
+                }
+            )
+            updated += 1
+            continue
+
+        concept = await create_budget_concept(
+            session,
+            tournament_id=tournament_id,
+            concept_name=partida,
+            scope_labels=[subproyecto] if subproyecto else [],
+            cuenta_contable_id=cuenta_id,
+            actor_empleado_id=actor_empleado_id,
+            source="ssot_workbook",
+            commit=False,
+            concept_key=concept_key,
+            extra_metadata=ssot_metadata,
+        )
+        concepts.append(concept)
+        created += 1
+
+    deactivated_stale = 0
+    for tournament_id in sorted(matched_tournament_ids):
+        workbook_keys = sorted(workbook_concept_keys_by_tournament.get(tournament_id) or [])
+        if not workbook_keys:
+            continue
+        result = await session.execute(
+            text(
+                """
+                UPDATE budget_concepts
+                SET active = FALSE,
+                    updated_at = NOW()
+                WHERE CAST(tournament_id AS text) = :tournament_id
+                  AND active = TRUE
+                  AND NOT (concept_key = ANY(:workbook_keys))
+                """
+            ),
+            {
+                "tournament_id": tournament_id,
+                "workbook_keys": workbook_keys,
+            },
+        )
+        deactivated_stale += int(getattr(result, "rowcount", 0) or 0)
+
+    await session.commit()
+    return {
+        "workbook_path": str(Path(workbook_path)),
+        "rows_total": len(mapping_rows),
+        "created": created,
+        "updated": updated,
+        "deactivated_stale": deactivated_stale,
+        "matched_tournaments": len(matched_tournament_ids),
+        "workbook_projects_count": project_report.get("workbook_projects_count", 0),
+        "projects_matched": project_report.get("projects_matched", 0),
+        "projects_created": project_report.get("projects_created", 0),
+        "projects_updated": project_report.get("projects_updated", 0),
+        "workbook_accounts_count": cuenta_report.get("workbook_accounts_count", 0),
+        "accounts_created": cuenta_report.get("created_count", 0),
+        "accounts_updated": cuenta_report.get("updated_count", 0),
+        "accounts_existing": cuenta_report.get("existing_count", 0),
+        "skipped_no_tournament": skipped_no_tournament,
+        "skipped_no_account": skipped_no_account,
+    }
+
+
+async def attach_cuenta_contable_to_budget_lines(
+    session: AsyncSession,
+    lines: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Enrich budget lines with cuenta contable from linked budget concepts."""
+    concept_ids = {
+        _safe_str(line.get("budget_concept_id"))
+        for line in lines
+        if _safe_str(line.get("budget_concept_id"))
+    }
+    if not concept_ids:
+        return lines
+    concepts = await list_budget_concepts(session, active_only=False, limit=5000)
+    concepts_by_id = {
+        _safe_str(item.get("id")): item for item in concepts if _safe_str(item.get("id"))
+    }
+    enriched: list[dict[str, Any]] = []
+    for line in lines:
+        payload = dict(line)
+        concept = concepts_by_id.get(_safe_str(line.get("budget_concept_id")) or "")
+        if concept:
+            payload["cuenta_contable_id"] = concept.get("cuenta_contable_id")
+            payload["cuenta_contable_codigo"] = (
+                concept.get("cuenta_contable_codigo")
+                or payload.get("account_code_final")
+            )
+            payload["cuenta_contable_nombre"] = concept.get("cuenta_contable_nombre")
+        elif payload.get("account_code_final"):
+            payload["cuenta_contable_codigo"] = payload.get("account_code_final")
+        enriched.append(payload)
+    return enriched
 
 
 def _iter_budget_concept_catalog_phase_rows(
@@ -1898,12 +2380,17 @@ async def list_budget_concepts(
     *,
     tournament_id: Optional[str] = None,
     tournament_code: Optional[str] = None,
+    budget_direction: Optional[str] = None,
     active_only: bool = True,
     limit: int = 2000,
 ) -> list[dict[str, Any]]:
     await ensure_budget_schema(session)
     filters = []
     params: dict[str, Any] = {"limit": max(1, min(limit, 5000))}
+    clean_direction = _safe_str(budget_direction)
+    if clean_direction:
+        filters.append("COALESCE(bc.budget_direction, 'expense') = :budget_direction")
+        params["budget_direction"] = normalize_budget_line_direction(clean_direction)
     if active_only:
         filters.append("bc.active = TRUE")
     if tournament_id:
@@ -1926,6 +2413,7 @@ async def list_budget_concepts(
                     bc.tournament_name,
                     bc.concept_name,
                     bc.concept_key,
+                    COALESCE(bc.budget_direction, 'expense') AS budget_direction,
                     bc.active,
                     bc.source,
                     bc.metadata,
@@ -1954,6 +2442,9 @@ async def list_budget_concepts(
             "tournament_name": _safe_str(row.get("tournament_name")) or None,
             "concept_name": _safe_str(row.get("concept_name")) or None,
             "concept_key": _safe_str(row.get("concept_key")) or None,
+            "budget_direction": normalize_budget_line_direction(
+                _safe_str(row.get("budget_direction"))
+            ),
             "active": bool(row.get("active")),
             "source": _safe_str(row.get("source")) or None,
             "cuenta_contable_id": _safe_str(row.get("cuenta_contable_id")) or None,
@@ -1985,11 +2476,17 @@ async def resolve_budget_concept(
     tournament_id: Optional[str] = None,
     tournament_code: Optional[str] = None,
     fase: Optional[str] = None,
+    budget_direction: Optional[str] = None,
 ) -> Optional[dict[str, Any]]:
     concept_id = _safe_str(budget_concept_id)
     if not concept_id:
         return None
-    concepts = await list_budget_concepts(session, active_only=True, limit=5000)
+    concepts = await list_budget_concepts(
+        session,
+        budget_direction=budget_direction,
+        active_only=True,
+        limit=5000,
+    )
     concept = next((item for item in concepts if item["id"] == concept_id), None)
     if concept is None:
         return None
@@ -2223,9 +2720,12 @@ async def create_budget_concept(
     concept_name: str,
     scope_labels: Optional[list[str]] = None,
     cuenta_contable_id: Optional[str] = None,
+    budget_direction: Optional[str] = None,
     actor_empleado_id: Optional[str] = None,
     source: str = "admin_ui",
     commit: bool = True,
+    concept_key: Optional[str] = None,
+    extra_metadata: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
     tournament = await _resolve_tournament_for_budget_concept(
@@ -2233,9 +2733,10 @@ async def create_budget_concept(
         tournament_id=tournament_id,
     )
     clean_name = _safe_str(concept_name)
-    concept_key = _normalize_budget_key(clean_name)
-    if not clean_name or not concept_key:
+    resolved_concept_key = _safe_str(concept_key) or _normalize_budget_key(clean_name)
+    if not clean_name or not resolved_concept_key:
         raise ValueError("El nombre de la partida presupuestal es obligatorio.")
+    clean_direction = normalize_budget_line_direction(budget_direction)
     existing = (
         await session.execute(
             text(
@@ -2250,7 +2751,7 @@ async def create_budget_concept(
             ),
             {
                 "tournament_code": tournament["tournament_code"] or "",
-                "concept_key": concept_key,
+                "concept_key": resolved_concept_key,
             },
         )
     ).mappings().first()
@@ -2262,8 +2763,10 @@ async def create_budget_concept(
     metadata = build_budget_concept_scope_metadata(
         scope_labels,
         tournament_etapas=tournament.get("etapas"),
-        tournament_categorias=[],
+        tournament_categorias=tournament.get("categorias") or [],
     )
+    if isinstance(extra_metadata, dict):
+        metadata.update(extra_metadata)
     resolved_cuenta_id: Optional[str] = None
     clean_cuenta = _safe_str(cuenta_contable_id)
     if clean_cuenta:
@@ -2275,11 +2778,11 @@ async def create_budget_concept(
             """
             INSERT INTO budget_concepts (
                 id, tournament_id, tournament_code, tournament_name,
-                concept_name, concept_key, active, source, metadata,
+                concept_name, concept_key, budget_direction, active, source, metadata,
                 cuenta_contable_id, created_by_empleado_id, created_at, updated_at
             ) VALUES (
                 :id, :tournament_id, :tournament_code, :tournament_name,
-                :concept_name, :concept_key, TRUE, :source, CAST(:metadata AS jsonb),
+                :concept_name, :concept_key, :budget_direction, TRUE, :source, CAST(:metadata AS jsonb),
                 :cuenta_contable_id, :created_by_empleado_id, NOW(), NOW()
             )
             """
@@ -2290,7 +2793,8 @@ async def create_budget_concept(
             "tournament_code": tournament["tournament_code"],
             "tournament_name": tournament["tournament_name"],
             "concept_name": clean_name,
-            "concept_key": concept_key,
+            "concept_key": resolved_concept_key,
+            "budget_direction": clean_direction,
             "source": _safe_str(source) or "admin_ui",
             "metadata": json.dumps(metadata, ensure_ascii=False),
             "cuenta_contable_id": resolved_cuenta_id,
@@ -3032,6 +3536,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 tournament_name VARCHAR(200) NOT NULL,
                 concept_name VARCHAR(200) NOT NULL,
                 concept_key VARCHAR(200) NOT NULL,
+                budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense',
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 source VARCHAR(80) NOT NULL DEFAULT 'manual',
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -3048,6 +3553,24 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
             ALTER TABLE budget_concepts
             ADD COLUMN IF NOT EXISTS cuenta_contable_id UUID NULL
             REFERENCES cuentas_contables(id) ON DELETE SET NULL
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            ALTER TABLE budget_concepts
+            ADD COLUMN IF NOT EXISTS budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense'
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE budget_concepts
+            SET budget_direction = 'expense'
+            WHERE budget_direction IS NULL
+               OR budget_direction NOT IN ('expense', 'income')
             """
         )
     )
@@ -3101,6 +3624,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 phase VARCHAR(80) NULL,
                 entity_name VARCHAR(200) NULL,
                 concept_name VARCHAR(200) NOT NULL,
+                line_direction VARCHAR(20) NOT NULL DEFAULT 'expense',
                 account_code_suggested VARCHAR(80) NULL,
                 account_code_final VARCHAR(80) NULL,
                 budget_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
@@ -3123,6 +3647,24 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
             ALTER TABLE budget_lines
             ADD COLUMN IF NOT EXISTS budget_concept_id UUID NULL
             REFERENCES budget_concepts(id) ON DELETE SET NULL
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            ALTER TABLE budget_lines
+            ADD COLUMN IF NOT EXISTS line_direction VARCHAR(20) NOT NULL DEFAULT 'expense'
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE budget_lines
+            SET line_direction = 'expense'
+            WHERE line_direction IS NULL
+               OR line_direction NOT IN ('expense', 'income')
             """
         )
     )
@@ -3226,6 +3768,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
     )
     await session.execute(
         text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_concepts_direction "
+            "ON budget_concepts(budget_direction)"
+        )
+    )
+    await session.execute(
+        text(
             "CREATE INDEX IF NOT EXISTS ix_budget_versions_edition_year "
             "ON budget_versions(edition_year)"
         )
@@ -3256,6 +3804,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
     )
     await session.execute(
         text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_lines_direction "
+            "ON budget_lines(line_direction)"
+        )
+    )
+    await session.execute(
+        text(
             "CREATE INDEX IF NOT EXISTS ix_budget_lines_budget_concept "
             "ON budget_lines(budget_concept_id)"
         )
@@ -3270,6 +3824,149 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_budget_version_audit_log_version "
             "ON budget_version_audit_log(budget_version_id)"
+        )
+    )
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS budget_line_monthly_plan (
+                id UUID PRIMARY KEY,
+                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON DELETE CASCADE,
+                month_number INTEGER NOT NULL,
+                budget_expense_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                expected_income_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (budget_line_id, month_number)
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS budget_income_bridge (
+                id UUID PRIMARY KEY,
+                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON DELETE CASCADE,
+                income_event_id UUID NULL,
+                actual_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                paid_at TIMESTAMPTZ NULL,
+                source VARCHAR(80) NOT NULL DEFAULT 'manual',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS budget_cfdi_income_links (
+                id UUID PRIMARY KEY,
+                cfdi_report_id UUID NOT NULL REFERENCES cfdi_reports(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                budget_version_id UUID NOT NULL REFERENCES budget_versions(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                tournament_id UUID NULL REFERENCES tournaments(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                phase VARCHAR(200) NULL,
+                budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                amount NUMERIC(18,2) NOT NULL DEFAULT 0,
+                income_date TIMESTAMPTZ NOT NULL,
+                linked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                source VARCHAR(80) NOT NULL DEFAULT 'admin_ui',
+                metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                unlinked_at TIMESTAMPTZ NULL,
+                unlinked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            ALTER TABLE budget_concepts
+            ADD COLUMN IF NOT EXISTS lineage_key VARCHAR(200) NULL
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE budget_concepts
+            SET lineage_key = concept_key
+            WHERE lineage_key IS NULL OR TRIM(lineage_key) = ''
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO budget_line_monthly_plan (
+                id, budget_line_id, month_number,
+                budget_expense_amount, expected_income_amount, metadata, created_at, updated_at
+            )
+            SELECT
+                gen_random_uuid(),
+                a.budget_line_id,
+                a.month_number,
+                a.allocated_amount,
+                0,
+                a.metadata,
+                a.created_at,
+                a.updated_at
+            FROM budget_line_monthly_allocations a
+            ON CONFLICT (budget_line_id, month_number) DO NOTHING
+            """
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_line_monthly_plan_line "
+            "ON budget_line_monthly_plan(budget_line_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_income_bridge_line "
+            "ON budget_income_bridge(budget_line_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_cfdi "
+            "ON budget_cfdi_income_links(cfdi_report_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_line "
+            "ON budget_cfdi_income_links(budget_line_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_version_tournament "
+            "ON budget_cfdi_income_links(budget_version_id, tournament_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_income_date "
+            "ON budget_cfdi_income_links(income_date)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_budget_cfdi_income_links_active_cfdi_version "
+            "ON budget_cfdi_income_links(cfdi_report_id, budget_version_id) "
+            "WHERE unlinked_at IS NULL"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_concepts_lineage_key "
+            "ON budget_concepts(lineage_key)"
         )
     )
     await session.commit()
@@ -3683,6 +4380,7 @@ async def create_budget_line(
     tournament_code: Optional[str] = None,
     tournament_name: Optional[str] = None,
     budget_concept_id: Optional[str] = None,
+    line_direction: Optional[str] = None,
     concept_name: str,
     account_code_final: Optional[str] = None,
     phase: Optional[str] = None,
@@ -3698,11 +4396,13 @@ async def create_budget_line(
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line creation")
 
+    clean_direction = normalize_budget_line_direction(line_direction)
     clean_concept = _safe_str(concept_name)
     concept = await resolve_budget_concept(
         session,
         budget_concept_id=budget_concept_id,
         tournament_code=tournament_code,
+        budget_direction=clean_direction,
     )
     if concept is not None:
         clean_concept = _safe_str(concept.get("concept_name"))
@@ -3718,13 +4418,13 @@ async def create_budget_line(
             """
             INSERT INTO budget_lines (
                 id, budget_version_id, budget_concept_id, tournament_code, tournament_name, phase,
-                concept_name, account_code_suggested, account_code_final,
+                concept_name, line_direction, account_code_suggested, account_code_final,
                 budget_amount, reference_amount, variance_amount, priority,
                 owner_name, criteria_note, observations, metadata,
                 created_at, updated_at
             ) VALUES (
                 :id, :budget_version_id, :budget_concept_id, :tournament_code, :tournament_name, :phase,
-                :concept_name, NULL, :account_code_final,
+                :concept_name, :line_direction, NULL, :account_code_final,
                 :budget_amount, :reference_amount, :variance_amount, :priority,
                 :owner_name, :criteria_note, :observations, CAST(:metadata AS jsonb),
                 NOW(), NOW()
@@ -3741,6 +4441,7 @@ async def create_budget_line(
             "tournament_name": _safe_str(tournament_name) or "Presupuesto general",
             "phase": _safe_str(phase) or None,
             "concept_name": clean_concept,
+            "line_direction": clean_direction,
             "account_code_final": _safe_str(account_code_final) or None,
             "budget_amount": amount,
             "reference_amount": reference,
@@ -3762,6 +4463,7 @@ async def create_budget_line(
         to_status=current.get("status"),
         payload={
             "line_id": line_id,
+            "line_direction": clean_direction,
             "budget_concept_id": (
                 _safe_str(concept.get("id")) or None if concept else None
             ),
@@ -3924,14 +4626,23 @@ async def list_budget_lines(
     *,
     version_id: str,
     tournament_id: Optional[str] = None,
+    tournament_code: Optional[str] = None,
+    line_direction: Optional[str] = None,
     limit: int = 200,
 ) -> list[dict[str, Any]]:
     await ensure_budget_schema(session)
     filters = ["l.budget_version_id = :version_id"]
-    params: dict[str, Any] = {"version_id": version_id, "limit": max(1, min(limit, 500))}
+    params: dict[str, Any] = {"version_id": version_id, "limit": max(1, min(limit, 5000))}
+    clean_direction = _safe_str(line_direction)
+    if clean_direction:
+        filters.append("COALESCE(l.line_direction, 'expense') = :line_direction")
+        params["line_direction"] = normalize_budget_line_direction(clean_direction)
     if tournament_id:
         filters.append("CAST(l.tournament_id AS text) = :tournament_id")
         params["tournament_id"] = tournament_id
+    elif tournament_code:
+        filters.append("UPPER(COALESCE(l.tournament_code, '')) = UPPER(:tournament_code)")
+        params["tournament_code"] = _safe_str(tournament_code)
     rows = (
         await session.execute(
             text(
@@ -3947,6 +4658,7 @@ async def list_budget_lines(
                     l.phase,
                     l.entity_name,
                     l.concept_name,
+                    COALESCE(l.line_direction, 'expense') AS line_direction,
                     l.account_code_suggested,
                     l.account_code_final,
                     l.budget_amount,
@@ -3980,6 +4692,9 @@ async def list_budget_lines(
             "phase": _safe_str(row["phase"]) or None,
             "entity_name": _safe_str(row["entity_name"]) or None,
             "concept_name": _safe_str(row["concept_name"]),
+            "line_direction": normalize_budget_line_direction(
+                _safe_str(row["line_direction"])
+            ),
             "account_code_suggested": _safe_str(row["account_code_suggested"]) or None,
             "account_code_final": _safe_str(row["account_code_final"]) or None,
             "budget_amount": round(_safe_decimal(row["budget_amount"]), 2),
@@ -4018,6 +4733,7 @@ async def update_budget_line(
                     l.account_code_final,
                     l.account_code_suggested,
                     l.budget_amount,
+                    COALESCE(l.line_direction, 'expense') AS line_direction,
                     l.reference_amount,
                     l.variance_amount,
                     l.priority,
@@ -4062,6 +4778,9 @@ async def update_budget_line(
             session,
             budget_concept_id=_safe_str(requested_fields.get("budget_concept_id")),
             tournament_code=_safe_str(current.get("tournament_code")),
+            budget_direction=normalize_budget_line_direction(
+                _safe_str(current.get("line_direction"))
+            ),
         )
         if concept is None:
             raise ValueError("Budget concept not found for this tournament")
@@ -4126,6 +4845,9 @@ async def update_budget_line(
             "before": {
                 "concept_name": _safe_str(current["concept_name"]),
                 "budget_concept_id": _safe_str(current["budget_concept_id"]) or None,
+                "line_direction": normalize_budget_line_direction(
+                    _safe_str(current.get("line_direction"))
+                ),
                 "account_code_final": _safe_str(current["account_code_final"])
                 or _safe_str(current["account_code_suggested"]),
                 "budget_amount": round(_safe_decimal(current["budget_amount"]), 2),
@@ -4214,7 +4936,7 @@ async def _build_budget_finance_comparison(
                 WHERE {' AND '.join(document_filter)}
                 """
             ),
-            {**params, "today": today.isoformat(), "next_30": next_30.isoformat()},
+            {**params, "today": today, "next_30": next_30},
         )
     ).mappings().first()
     expense_row = (
@@ -4565,3 +5287,920 @@ async def build_budget_snapshot(
         ),
         "tournaments": tournaments,
     }
+
+
+_MONTH_LABELS_ES = {
+    1: "Ene",
+    2: "Feb",
+    3: "Mar",
+    4: "Abr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Ago",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dic",
+}
+
+
+def month_labels_es(month_numbers: list[int]) -> list[dict[str, Any]]:
+    return [
+        {"month_number": month, "label": _MONTH_LABELS_ES.get(month, str(month))}
+        for month in month_numbers
+    ]
+
+
+async def list_budget_line_monthly_allocations(
+    session: AsyncSession,
+    *,
+    budget_line_id: str,
+) -> list[dict[str, Any]]:
+    await ensure_budget_schema(session)
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT month_number, allocated_amount
+                FROM budget_line_monthly_allocations
+                WHERE budget_line_id = :budget_line_id
+                ORDER BY month_number ASC
+                """
+            ),
+            {"budget_line_id": budget_line_id},
+        )
+    ).mappings().all()
+    return [
+        {
+            "month_number": int(row["month_number"]),
+            "label": _MONTH_LABELS_ES.get(int(row["month_number"]), str(row["month_number"])),
+            "allocated_amount": round(_safe_decimal(row["allocated_amount"]), 2),
+        }
+        for row in rows
+    ]
+
+
+async def list_monthly_allocations_for_lines(
+    session: AsyncSession,
+    *,
+    line_ids: list[str],
+) -> dict[str, dict[int, float]]:
+    await ensure_budget_schema(session)
+    clean_ids = [_safe_str(line_id) for line_id in line_ids if _safe_str(line_id)]
+    if not clean_ids:
+        return {}
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT budget_line_id, month_number, allocated_amount
+                FROM budget_line_monthly_allocations
+                WHERE budget_line_id = ANY(CAST(:line_ids AS uuid[]))
+                ORDER BY budget_line_id ASC, month_number ASC
+                """
+            ),
+            {"line_ids": clean_ids},
+        )
+    ).mappings().all()
+    result: dict[str, dict[int, float]] = defaultdict(dict)
+    for row in rows:
+        line_id = _safe_str(row["budget_line_id"])
+        month_number = int(row["month_number"])
+        result[line_id][month_number] = round(_safe_decimal(row["allocated_amount"]), 2)
+    return dict(result)
+
+
+async def replace_budget_line_monthly_allocations(
+    session: AsyncSession,
+    *,
+    budget_line_id: str,
+    allocations: dict[int, Any],
+) -> list[dict[str, Any]]:
+    await ensure_budget_schema(session)
+    clean_line_id = _safe_str(budget_line_id)
+    if not clean_line_id:
+        raise ValueError("Budget line id is required")
+    await session.execute(
+        text(
+            """
+            DELETE FROM budget_line_monthly_allocations
+            WHERE budget_line_id = :budget_line_id
+            """
+        ),
+        {"budget_line_id": clean_line_id},
+    )
+    for month_number in sorted(allocations.keys()):
+        month_int = int(month_number)
+        if month_int < 1 or month_int > 12:
+            raise ValueError(f"Invalid month number: {month_int}")
+        amount = round(_safe_decimal(allocations[month_number]), 2)
+        await session.execute(
+            text(
+                """
+                INSERT INTO budget_line_monthly_allocations (
+                    id, budget_line_id, month_number, allocated_amount, metadata, created_at, updated_at
+                ) VALUES (
+                    :id, :budget_line_id, :month_number, :allocated_amount, CAST(:metadata AS jsonb), NOW(), NOW()
+                )
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "budget_line_id": clean_line_id,
+                "month_number": month_int,
+                "allocated_amount": amount,
+                "metadata": json.dumps({"source": "ui_manual"}, ensure_ascii=False),
+            },
+        )
+    return await list_budget_line_monthly_allocations(
+        session, budget_line_id=clean_line_id
+    )
+
+
+def distribute_even_monthly_allocations(budget_amount: float) -> dict[int, float]:
+    total = round(_safe_decimal(budget_amount), 2)
+    base = round(total / 12.0, 2)
+    allocations = {month: base for month in range(1, 13)}
+    remainder = round(total - sum(allocations.values()), 2)
+    if remainder:
+        allocations[12] = round(allocations[12] + remainder, 2)
+    return allocations
+
+
+async def get_budget_version_by_source(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+    source: str,
+) -> Optional[dict[str, Any]]:
+    await ensure_budget_schema(session)
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                FROM budget_versions
+                WHERE edition_year = :edition_year AND source = :source
+                ORDER BY updated_at DESC
+                LIMIT 1
+                """
+            ),
+            {"edition_year": edition_year, "source": _safe_str(source)},
+        )
+    ).mappings().first()
+    if not row:
+        return None
+    versions = await list_budget_versions(session, edition_year=edition_year)
+    target_id = _safe_str(row["id"])
+    for version in versions:
+        if version["id"] == target_id:
+            return version
+    return None
+
+
+async def list_budget_lines_with_monthly(
+    session: AsyncSession,
+    *,
+    version_id: str,
+    tournament_id: Optional[str] = None,
+    line_direction: Optional[str] = None,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    lines = await list_budget_lines(
+        session,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        line_direction=line_direction,
+        limit=limit,
+    )
+    monthly_map = await list_monthly_allocations_for_lines(
+        session,
+        line_ids=[line["id"] for line in lines],
+    )
+    enriched: list[dict[str, Any]] = []
+    for line in lines:
+        monthly = monthly_map.get(line["id"], {})
+        enriched.append(
+            {
+                **line,
+                "monthly_allocations": [
+                    {
+                        "month_number": month,
+                        "label": _MONTH_LABELS_ES.get(month, str(month)),
+                        "allocated_amount": amount,
+                    }
+                    for month, amount in sorted(monthly.items())
+                ],
+                "monthly_total": round(sum(monthly.values()), 2),
+            }
+        )
+    return enriched
+
+
+async def upsert_budget_line_for_concept(
+    session: AsyncSession,
+    *,
+    version_id: str,
+    budget_concept_id: str,
+    budget_amount: Any,
+    actor_empleado_id: Optional[str] = None,
+    phase: Optional[str] = None,
+    line_direction: Optional[str] = None,
+    monthly_allocations: Optional[dict[int, Any]] = None,
+) -> dict[str, Any]:
+    await ensure_budget_schema(session)
+    clean_direction = normalize_budget_line_direction(line_direction)
+    concept = await resolve_budget_concept(
+        session,
+        budget_concept_id=budget_concept_id,
+        budget_direction=clean_direction,
+    )
+    if concept is None:
+        raise ValueError("Budget concept not found")
+
+    existing = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                FROM budget_lines
+                WHERE budget_version_id = :version_id
+                  AND budget_concept_id = :budget_concept_id
+                  AND COALESCE(line_direction, 'expense') = :line_direction
+                LIMIT 1
+                """
+            ),
+            {
+                "version_id": version_id,
+                "budget_concept_id": _safe_str(budget_concept_id),
+                "line_direction": clean_direction,
+            },
+        )
+    ).mappings().first()
+
+    amount = round(_safe_decimal(budget_amount), 2)
+    metadata = concept.get("metadata") if isinstance(concept.get("metadata"), dict) else {}
+    phase_labels = metadata.get("applicable_phase_labels") or []
+    resolved_phase = _safe_str(phase) or (
+        str(phase_labels[0]).strip() if phase_labels else None
+    )
+
+    if existing:
+        line = await update_budget_line(
+            session,
+            line_id=_safe_str(existing["id"]),
+            actor_empleado_id=actor_empleado_id,
+            updates={"budget_amount": amount, "phase": resolved_phase},
+        )
+        line_id = line["id"]
+    else:
+        line = await create_budget_line(
+            session,
+            version_id=version_id,
+            actor_empleado_id=actor_empleado_id,
+            budget_concept_id=budget_concept_id,
+            concept_name=_safe_str(concept.get("concept_name")),
+            tournament_code=_safe_str(concept.get("tournament_code")) or None,
+            tournament_name=_safe_str(concept.get("tournament_name")) or "Presupuesto general",
+            phase=resolved_phase,
+            line_direction=clean_direction,
+            budget_amount=amount,
+        )
+        line_id = line["id"]
+
+    allocations = monthly_allocations
+    if allocations is None:
+        allocations = distribute_even_monthly_allocations(amount)
+    monthly = await replace_budget_line_monthly_allocations(
+        session,
+        budget_line_id=line_id,
+        allocations=allocations,
+    )
+    await session.commit()
+    refreshed = await list_budget_lines(
+        session,
+        version_id=version_id,
+        line_direction=clean_direction,
+        limit=5000,
+    )
+    for item in refreshed:
+        if item["id"] == line_id:
+            return {**item, "monthly_allocations": monthly}
+    raise ValueError("Budget line not found after upsert")
+
+
+_UNASSIGNED_BUDGET_CONCEPT_KEY = "__unassigned__"
+
+
+def _empty_monthly_actual_bucket() -> dict[str, float]:
+    return {
+        "real_expense_cash": 0.0,
+        "real_income": 0.0,
+        "committed_unpaid": 0.0,
+    }
+
+
+def _monthly_actual_store() -> dict[str, dict[int, dict[str, float]]]:
+    return defaultdict(lambda: defaultdict(_empty_monthly_actual_bucket))
+
+
+def _merge_monthly_actual(
+    store: dict[str, dict[int, dict[str, float]]],
+    *,
+    concept_key: str,
+    month_number: int,
+    **values: float,
+) -> None:
+    if month_number < 1 or month_number > 12:
+        return
+    bucket = store[concept_key][month_number]
+    for key, value in values.items():
+        bucket[key] = round(bucket.get(key, 0.0) + _safe_decimal(value), 2)
+
+
+async def list_monthly_plan_for_lines(
+    session: AsyncSession,
+    *,
+    line_ids: list[str],
+) -> dict[str, dict[int, dict[str, float]]]:
+    await ensure_budget_schema(session)
+    clean_ids = [_safe_str(line_id) for line_id in line_ids if _safe_str(line_id)]
+    if not clean_ids:
+        return {}
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT budget_line_id, month_number, budget_expense_amount, expected_income_amount
+                FROM budget_line_monthly_plan
+                WHERE budget_line_id = ANY(CAST(:line_ids AS uuid[]))
+                ORDER BY budget_line_id ASC, month_number ASC
+                """
+            ),
+            {"line_ids": clean_ids},
+        )
+    ).mappings().all()
+    result: dict[str, dict[int, dict[str, float]]] = defaultdict(dict)
+    for row in rows:
+        line_id = _safe_str(row["budget_line_id"])
+        month_number = int(row["month_number"])
+        result[line_id][month_number] = {
+            "budget_expense_amount": round(_safe_decimal(row["budget_expense_amount"]), 2),
+            "expected_income_amount": round(
+                _safe_decimal(row["expected_income_amount"]), 2
+            ),
+        }
+    return dict(result)
+
+
+async def replace_budget_line_monthly_plan(
+    session: AsyncSession,
+    *,
+    budget_line_id: str,
+    plan: dict[int, dict[str, Any]],
+    actor_empleado_id: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    await ensure_budget_schema(session)
+    clean_line_id = _safe_str(budget_line_id)
+    if not clean_line_id:
+        raise ValueError("Budget line id is required")
+    current = (
+        await session.execute(
+            text(
+                """
+                SELECT l.budget_version_id, v.status AS version_status
+                FROM budget_lines l
+                JOIN budget_versions v ON v.id = l.budget_version_id
+                WHERE l.id = :budget_line_id
+                LIMIT 1
+                """
+            ),
+            {"budget_line_id": clean_line_id},
+        )
+    ).mappings().first()
+    if not current:
+        raise ValueError("Budget line not found")
+    if not _editable_version_status(current.get("version_status")):
+        raise ValueError("Only draft or reforecast versions allow line edits")
+    before_plan = (
+        await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+    ).get(clean_line_id, {})
+    await session.execute(
+        text(
+            """
+            DELETE FROM budget_line_monthly_plan
+            WHERE budget_line_id = :budget_line_id
+            """
+        ),
+        {"budget_line_id": clean_line_id},
+    )
+    expense_allocations: dict[int, float] = {}
+    for month_number in sorted(plan.keys()):
+        month_int = int(month_number)
+        if month_int < 1 or month_int > 12:
+            raise ValueError(f"Invalid month number: {month_int}")
+        payload = plan[month_int] if isinstance(plan[month_int], dict) else {}
+        expense_amount = round(_safe_decimal(payload.get("budget_expense_amount", 0)), 2)
+        income_amount = round(_safe_decimal(payload.get("expected_income_amount", 0)), 2)
+        expense_allocations[month_int] = expense_amount
+        await session.execute(
+            text(
+                """
+                INSERT INTO budget_line_monthly_plan (
+                    id, budget_line_id, month_number,
+                    budget_expense_amount, expected_income_amount,
+                    metadata, created_at, updated_at
+                ) VALUES (
+                    :id, :budget_line_id, :month_number,
+                    :budget_expense_amount, :expected_income_amount,
+                    CAST(:metadata AS jsonb), NOW(), NOW()
+                )
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "budget_line_id": clean_line_id,
+                "month_number": month_int,
+                "budget_expense_amount": expense_amount,
+                "expected_income_amount": income_amount,
+                "metadata": json.dumps({"source": "ui_manual"}, ensure_ascii=False),
+            },
+        )
+    await replace_budget_line_monthly_allocations(
+        session,
+        budget_line_id=clean_line_id,
+        allocations=expense_allocations,
+    )
+    rows = await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
+    line_plan = rows.get(clean_line_id, {})
+    await _audit_budget_event(
+        session,
+        budget_version_id=_safe_str(current["budget_version_id"]),
+        event_type="line_monthly_plan_updated",
+        actor_empleado_id=actor_empleado_id,
+        from_status=_safe_str(current["version_status"]),
+        to_status=_safe_str(current["version_status"]),
+        payload={
+            "line_id": clean_line_id,
+            "before": before_plan,
+            "after": line_plan,
+        },
+    )
+    return [
+        {
+            "month_number": month,
+            "label": _MONTH_LABELS_ES.get(month, str(month)),
+            "budget_expense_amount": values.get("budget_expense_amount", 0.0),
+            "expected_income_amount": values.get("expected_income_amount", 0.0),
+        }
+        for month, values in sorted(line_plan.items())
+    ]
+
+
+async def build_budget_monthly_plan_rollups(
+    session: AsyncSession,
+    *,
+    version_id: str,
+    tournament_id: Optional[str] = None,
+    tournament_code: Optional[str] = None,
+) -> dict[str, float]:
+    lines = await list_budget_lines(
+        session,
+        version_id=version_id,
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=5000,
+    )
+    plan_map = await list_monthly_plan_for_lines(
+        session,
+        line_ids=[line["id"] for line in lines],
+    )
+    budget_expense_total = 0.0
+    expected_income_total = 0.0
+    for line in lines:
+        monthly = plan_map.get(line["id"], {})
+        if monthly:
+            budget_expense_total += sum(
+                float(item.get("budget_expense_amount") or 0) for item in monthly.values()
+            )
+            expected_income_total += sum(
+                float(item.get("expected_income_amount") or 0) for item in monthly.values()
+            )
+        else:
+            budget_expense_total += float(line.get("budget_amount") or 0)
+    return {
+        "budget_expense_total": round(budget_expense_total, 2),
+        "expected_income_total": round(expected_income_total, 2),
+    }
+
+
+async def build_budget_monthly_actuals(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+    version_id: str,
+    tournament_id: Optional[str] = None,
+    tournament_name: Optional[str] = None,
+    tournament_code: Optional[str] = None,
+) -> dict[str, dict[int, dict[str, float]]]:
+    document_filter, expense_filter, params = _build_budget_scope_filters(
+        edition_year=edition_year,
+        tournament_id=tournament_id,
+        tournament_name=tournament_name,
+        tournament_code=tournament_code,
+    )
+    store = _monthly_actual_store()
+
+    document_paid_rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT
+                    COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
+                    EXTRACT(MONTH FROM COALESCE(d.fecha_pago, DATE(d.pagado_en)))::int AS month_number,
+                    COALESCE(SUM(COALESCE(d.monto_total, d.monto_solicitado, 0)), 0) AS paid_total
+                FROM documentos d
+                LEFT JOIN tournaments t ON t.id = d.torneo_id
+                WHERE {' AND '.join(document_filter)}
+                  AND d.tipo = 'SOLICITUD'
+                  AND (
+                    d.estado IN ('pagado', 'cerrado')
+                    OR d.pagado_en IS NOT NULL
+                  )
+                  AND COALESCE(d.fecha_pago, DATE(d.pagado_en)) IS NOT NULL
+                GROUP BY 1, 2
+                """
+            ),
+            {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
+        )
+    ).mappings().all()
+    for row in document_paid_rows:
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=int(row["month_number"] or 0),
+            real_expense_cash=_safe_decimal(row["paid_total"]),
+        )
+
+    document_committed_rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT
+                    COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
+                    EXTRACT(MONTH FROM DATE(d.creado_en))::int AS month_number,
+                    COALESCE(SUM(CASE
+                        WHEN d.estado IN ('aprobado', 'pagado', 'cerrado')
+                        THEN COALESCE(d.monto_solicitado, d.monto_total, 0)
+                        ELSE 0
+                    END), 0) AS committed_total,
+                    COALESCE(SUM(CASE
+                        WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL
+                        THEN COALESCE(d.monto_total, d.monto_solicitado, 0)
+                        ELSE 0
+                    END), 0) AS paid_total
+                FROM documentos d
+                LEFT JOIN tournaments t ON t.id = d.torneo_id
+                WHERE {' AND '.join(document_filter)}
+                  AND d.tipo = 'SOLICITUD'
+                GROUP BY 1, 2
+                """
+            ),
+            {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
+        )
+    ).mappings().all()
+    for row in document_committed_rows:
+        committed = _safe_decimal(row["committed_total"])
+        paid = _safe_decimal(row["paid_total"])
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=int(row["month_number"] or 0),
+            committed_unpaid=max(committed - paid, 0),
+        )
+
+    expense_paid_rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT
+                    COALESCE(CAST(e.budget_concept_id AS text), :unassigned_key) AS concept_key,
+                    EXTRACT(MONTH FROM COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::int AS month_number,
+                    COALESCE(SUM(e.gasto_cantidad), 0) AS paid_total
+                FROM expense_reports e
+                LEFT JOIN documentos d ON d.id = e.documento_id
+                LEFT JOIN documentos pay_doc ON pay_doc.id = COALESCE(e.documento_id, e.informe_documento_id)
+                LEFT JOIN documentos inf_doc ON inf_doc.id = e.informe_documento_id
+                LEFT JOIN tournaments t ON t.id = COALESCE(d.torneo_id, pay_doc.torneo_id, inf_doc.torneo_id)
+                WHERE {' AND '.join(expense_filter)}
+                  AND (
+                    pay_doc.estado IN ('pagado', 'cerrado')
+                    OR pay_doc.pagado_en IS NOT NULL
+                    OR inf_doc.estado IN ('pagado', 'cerrado')
+                    OR inf_doc.pagado_en IS NOT NULL
+                  )
+                  AND COALESCE(
+                    pay_doc.fecha_pago,
+                    DATE(pay_doc.pagado_en),
+                    inf_doc.fecha_pago,
+                    DATE(inf_doc.pagado_en)
+                  ) IS NOT NULL
+                GROUP BY 1, 2
+                """
+            ),
+            {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
+        )
+    ).mappings().all()
+    for row in expense_paid_rows:
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=int(row["month_number"] or 0),
+            real_expense_cash=_safe_decimal(row["paid_total"]),
+        )
+
+    income_rows = (
+        await session.execute(
+            text(
+                """
+                SELECT
+                    COALESCE(CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
+                    EXTRACT(MONTH FROM COALESCE(b.paid_at, b.created_at))::int AS month_number,
+                    COALESCE(SUM(b.actual_amount), 0) AS income_total
+                FROM budget_income_bridge b
+                JOIN budget_lines l ON l.id = b.budget_line_id
+                WHERE l.budget_version_id = :version_id
+                  AND EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year
+                GROUP BY 1, 2
+                """
+            ),
+            {
+                "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
+                "version_id": version_id,
+                "edition_year": edition_year,
+            },
+        )
+    ).mappings().all()
+    for row in income_rows:
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=int(row["month_number"] or 0),
+            real_income=_safe_decimal(row["income_total"]),
+        )
+
+    cfdi_filters = [
+        "l.budget_version_id = :version_id",
+        "b.budget_version_id = :version_id",
+        "b.unlinked_at IS NULL",
+        "EXTRACT(YEAR FROM b.income_date)::int = :edition_year",
+    ]
+    cfdi_params: dict[str, Any] = {
+        "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
+        "version_id": version_id,
+        "edition_year": edition_year,
+    }
+    if tournament_id:
+        cfdi_filters.append("b.tournament_id = CAST(:cfdi_tournament_id AS uuid)")
+        cfdi_params["cfdi_tournament_id"] = tournament_id
+    elif tournament_code:
+        cfdi_filters.append("UPPER(COALESCE(l.tournament_code, '')) = UPPER(:cfdi_tournament_code)")
+        cfdi_params["cfdi_tournament_code"] = tournament_code
+
+    cfdi_income_rows = (
+        await session.execute(
+            text(
+                f"""
+                SELECT
+                    COALESCE(CAST(b.budget_concept_id AS text), CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
+                    EXTRACT(MONTH FROM b.income_date)::int AS month_number,
+                    COALESCE(SUM(b.amount), 0) AS income_total
+                FROM budget_cfdi_income_links b
+                JOIN budget_lines l ON l.id = b.budget_line_id
+                WHERE {' AND '.join(cfdi_filters)}
+                GROUP BY 1, 2
+                """
+            ),
+            cfdi_params,
+        )
+    ).mappings().all()
+    for row in cfdi_income_rows:
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=int(row["month_number"] or 0),
+            real_income=_safe_decimal(row["income_total"]),
+        )
+
+    return {key: dict(months) for key, months in store.items()}
+
+
+async def resolve_budget_tournament_context(
+    session: AsyncSession,
+    *,
+    tournament_key: str,
+) -> Optional[dict[str, Any]]:
+    clean_key = _safe_str(tournament_key)
+    if not clean_key:
+        return None
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, name
+                FROM tournaments
+                WHERE CAST(id AS text) = :key
+                   OR UPPER(name) = UPPER(:key)
+                LIMIT 1
+                """
+            ),
+            {"key": clean_key},
+        )
+    ).mappings().first()
+    if row:
+        return {
+            "tournament_id": _safe_str(row["id"]),
+            "tournament_name": _safe_str(row["name"]),
+            "tournament_code": clean_key.upper(),
+            "tournament_key": clean_key,
+        }
+    return {
+        "tournament_id": None,
+        "tournament_name": clean_key,
+        "tournament_code": clean_key.upper(),
+        "tournament_key": clean_key,
+    }
+
+
+async def copy_budget_version_forward(
+    session: AsyncSession,
+    *,
+    source_version_id: str,
+    target_edition_year: int,
+    version_name: str,
+    actor_empleado_id: Optional[str] = None,
+) -> dict[str, Any]:
+    await ensure_budget_schema(session)
+    source = await get_budget_version(session, version_id=source_version_id)
+    if source is None:
+        raise ValueError("Source budget version not found")
+    target = await create_budget_version(
+        session,
+        edition_year=target_edition_year,
+        version_name=version_name,
+        source="copy_forward",
+        notes=f"Copiado desde {source.get('version_name') or source_version_id}",
+        created_by_empleado_id=actor_empleado_id,
+    )
+    source_lines = await list_budget_lines(
+        session,
+        version_id=source_version_id,
+        limit=5000,
+    )
+    plan_map = await list_monthly_plan_for_lines(
+        session,
+        line_ids=[line["id"] for line in source_lines],
+    )
+    allocation_map = await list_monthly_allocations_for_lines(
+        session,
+        line_ids=[line["id"] for line in source_lines],
+    )
+    copied_lines = 0
+    for line in source_lines:
+        new_line = await create_budget_line(
+            session,
+            version_id=target["id"],
+            actor_empleado_id=actor_empleado_id,
+            tournament_code=line.get("tournament_code"),
+            tournament_name=line.get("tournament_name"),
+            budget_concept_id=line.get("budget_concept_id"),
+            line_direction=line.get("line_direction"),
+            concept_name=line.get("concept_name"),
+            account_code_final=line.get("account_code_final"),
+            phase=line.get("phase"),
+            owner_name=line.get("owner_name"),
+            priority=line.get("priority"),
+            budget_amount=line.get("budget_amount"),
+            reference_amount=line.get("reference_amount"),
+            criteria_note=line.get("criteria_note"),
+            observations=line.get("observations"),
+        )
+        monthly_plan = plan_map.get(line["id"]) or {}
+        if not monthly_plan:
+            monthly_plan = {
+                month: {"budget_expense_amount": amount, "expected_income_amount": 0.0}
+                for month, amount in allocation_map.get(line["id"], {}).items()
+            }
+        if monthly_plan:
+            await replace_budget_line_monthly_plan(
+                session,
+                budget_line_id=new_line["id"],
+                plan=monthly_plan,
+            )
+        copied_lines += 1
+    await _audit_budget_event(
+        session,
+        budget_version_id=target["id"],
+        event_type="copy_forward",
+        actor_empleado_id=actor_empleado_id,
+        note=f"Copied {copied_lines} lines from {source_version_id}",
+        payload={"source_version_id": source_version_id, "copied_lines": copied_lines},
+    )
+    await session.commit()
+    return {
+        "version": target,
+        "copied_lines": copied_lines,
+        "source_version_id": source_version_id,
+    }
+
+
+async def build_budget_yoy_comparison(
+    session: AsyncSession,
+    *,
+    current_version_id: str,
+    prior_version_id: str,
+    tournament_id: Optional[str] = None,
+    tournament_code: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    current_lines = await list_budget_lines(
+        session,
+        version_id=current_version_id,
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=5000,
+    )
+    prior_lines = await list_budget_lines(
+        session,
+        version_id=prior_version_id,
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=5000,
+    )
+    concept_ids = {
+        _safe_str(line.get("budget_concept_id"))
+        for line in current_lines + prior_lines
+        if _safe_str(line.get("budget_concept_id"))
+    }
+    lineage_map: dict[str, str] = {}
+    if concept_ids:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, concept_name, lineage_key, concept_key
+                    FROM budget_concepts
+                    WHERE id = ANY(CAST(:concept_ids AS uuid[]))
+                    """
+                ),
+                {"concept_ids": list(concept_ids)},
+            )
+        ).mappings().all()
+        for row in rows:
+            lineage_map[_safe_str(row["id"])] = (
+                _safe_str(row.get("lineage_key"))
+                or _safe_str(row.get("concept_key"))
+                or _safe_str(row["id"])
+            )
+
+    def _index_lines(lines: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        indexed: dict[str, dict[str, Any]] = {}
+        for line in lines:
+            concept_id = _safe_str(line.get("budget_concept_id"))
+            lineage = lineage_map.get(concept_id) or concept_id or _safe_str(line.get("concept_name"))
+            indexed[lineage] = line
+        return indexed
+
+    current_index = _index_lines(current_lines)
+    prior_index = _index_lines(prior_lines)
+    all_keys = sorted(set(current_index) | set(prior_index))
+    rows: list[dict[str, Any]] = []
+    for key in all_keys:
+        current = current_index.get(key)
+        prior = prior_index.get(key)
+        current_amount = float((current or {}).get("budget_amount") or 0)
+        prior_amount = float((prior or {}).get("budget_amount") or 0)
+        status = "stable"
+        if current and not prior:
+            status = "new"
+        elif prior and not current:
+            status = "retired"
+        delta = round(current_amount - prior_amount, 2)
+        delta_pct = round((delta / prior_amount) * 100, 2) if prior_amount else None
+        rows.append(
+            {
+                "lineage_key": key,
+                "concept_name": _safe_str((current or prior or {}).get("concept_name")),
+                "prior_budget": round(prior_amount, 2),
+                "current_budget": round(current_amount, 2),
+                "delta": delta,
+                "delta_pct": delta_pct,
+                "status": status,
+            }
+        )
+    return rows
