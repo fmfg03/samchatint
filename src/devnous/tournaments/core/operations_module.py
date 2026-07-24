@@ -129,7 +129,10 @@ class OperationsModule:
         # - local_only: local Moondream/TrOCR subprocess only
         # - local_first: prefer local OCR and fallback to remote when quality is low
         # - compare_anthropic_openai: run both and let admin choose
-        self.ocr_provider = self.config.get("ocr_provider", "claude_structured")
+        self.ocr_provider = (
+            os.getenv("OCR_PROVIDER")
+            or self.config.get("ocr_provider", "claude_structured")
+        ).strip().lower()
 
         self.admin_chat_ids = set(self.telegram_config.get("admin_chat_ids") or [])
 
@@ -448,30 +451,6 @@ class OperationsModule:
         merged["confidence"] = max(float((base or {}).get("confidence") or 0.0), float((incoming or {}).get("confidence") or 0.0))
         return merged if any(merged.get(k) for k in ("name", "phone", "email")) else None
 
-    def _compose_review_page_append(
-        self,
-        base_extraction: Dict[str, Any],
-        incoming_payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Compose one append-only page without re-authoring the base roster."""
-        merged_payload = dict(base_extraction)
-        merged_payload["team"] = self._merge_review_team_fields(
-            base_extraction.get("team") or {},
-            incoming_payload.get("team") or {},
-        )
-        merged_payload["manager"] = self._merge_review_manager_fields(
-            base_extraction.get("manager"),
-            incoming_payload.get("manager"),
-        )
-        merged_payload["players"] = list(
-            base_extraction.get("players") or []
-        ) + list(incoming_payload.get("players") or [])
-        merged_payload["overall_confidence"] = max(
-            float(base_extraction.get("overall_confidence") or 0.0),
-            float(incoming_payload.get("overall_confidence") or 0.0),
-        )
-        return merged_payload
-
     @staticmethod
     def _extend_player_page_map(
         existing: Optional[Dict[str, int]],
@@ -643,11 +622,108 @@ class OperationsModule:
                     )
 
                 base_extraction = dict(draft.review_edits or draft.extraction or {})
+                base_players = list(base_extraction.get("players") or [])
                 incoming_payload = extraction.model_dump(mode="json")
-                merged_payload = self._compose_review_page_append(
-                    base_extraction,
-                    incoming_payload,
+                merged_payload = None
+                combined_raw_payload = None
+                chandra_runtime_raw = None
+                from devnous.tournaments.core.ctt_ocr_provider import CttOcrMode
+                from devnous.tournaments.core.ctt_provider_runtime import (
+                    configured_ctt_ocr_mode,
+                    run_ctt_provider_runtime,
                 )
+
+                ctt_mode = configured_ctt_ocr_mode(self.ocr_provider)
+                if ctt_mode in {
+                    CttOcrMode.CHANDRA_SHADOW,
+                    CttOcrMode.CHANDRA_PRIMARY,
+                } and next_page_index == 2:
+                    try:
+                        page_paths = [asset.image_path for asset in assets] + [
+                            str(image_path)
+                        ]
+                        chandra_extraction, chandra_runtime_raw = (
+                            await run_ctt_provider_runtime(
+                                page_paths,
+                                mode=ctt_mode,
+                                repo_root=Path(__file__).resolve().parents[4],
+                                openai_api_key=self.openai_key,
+                            )
+                        )
+                        if ctt_mode == CttOcrMode.CHANDRA_PRIMARY:
+                            # This replaces only the proposed review draft.  The
+                            # governance gate below still owns admission and no
+                            # Team/Player row is materialized here.
+                            merged_payload = chandra_extraction
+                        else:
+                            logger.info(
+                                "Telegram CTT shadow complete: document=%s canonical=%s comparisons=%s",
+                                str(chandra_runtime_raw.get("document_sha256") or "")[:16],
+                                str(chandra_runtime_raw.get("canonical_hash") or "")[:16],
+                                len(chandra_runtime_raw.get("shadow") or []),
+                            )
+                            # Shadow cannot alter the operational draft or its
+                            # persisted OCR payload.
+                            chandra_runtime_raw = None
+                    except Exception as exc:
+                        logger.warning(
+                            "Telegram CTT %s failed closed: %s",
+                            ctt_mode.value,
+                            type(exc).__name__,
+                        )
+                        chandra_runtime_raw = {
+                            "mode": ctt_mode.value,
+                            "status": "failed_closed",
+                            "error_type": type(exc).__name__,
+                        }
+                        if ctt_mode == CttOcrMode.CHANDRA_PRIMARY:
+                            return (
+                                False,
+                                "Chandra primario no produjo un draft verificable; "
+                                "no se ejecutó fallback del expediente.",
+                            )
+                if merged_payload is None and self.openai_key and provider == "openai":
+                    try:
+                        image_b64_values: List[str] = []
+                        for asset in assets:
+                            existing_bytes = Path(asset.image_path).read_bytes()
+                            image_b64_values.append(base64.b64encode(existing_bytes).decode("utf-8"))
+                        image_b64_values.append(base64.b64encode(optimized_bytes).decode("utf-8"))
+                        from devnous.agents.ocr_schemas import (
+                            RegistrationFormExtraction,
+                        )
+
+                        combined_raw_payload = self._normalize_openai_registration_payload(
+                            await self._call_openai_vision_multi(image_b64_values)
+                        )
+                        combined_extraction = RegistrationFormExtraction.model_validate(combined_raw_payload)
+                        merged_payload = combined_extraction.model_dump(mode="json")
+                        logger.info(
+                            "✅ Multi-page OpenAI registration extraction completed: players=%s confidence=%s",
+                            len(merged_payload.get("players") or []),
+                            merged_payload.get("overall_confidence"),
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Multi-page OpenAI extraction failed; falling back to page merge",
+                            exc_info=True,
+                        )
+
+                if merged_payload is None:
+                    merged_payload = dict(base_extraction)
+                    merged_payload["team"] = self._merge_review_team_fields(
+                        base_extraction.get("team") or {},
+                        incoming_payload.get("team") or {},
+                    )
+                    merged_payload["manager"] = self._merge_review_manager_fields(
+                        base_extraction.get("manager"),
+                        incoming_payload.get("manager"),
+                    )
+                    merged_payload["players"] = base_players + list(incoming_payload.get("players") or [])
+                    merged_payload["overall_confidence"] = max(
+                        float(base_extraction.get("overall_confidence") or 0.0),
+                        float(incoming_payload.get("overall_confidence") or 0.0),
+                    )
 
                 layout_regions = dict(draft.layout_regions or {"pages": {}, "player_page_map": {}})
                 pages = dict(layout_regions.get("pages") or {})
@@ -672,11 +748,13 @@ class OperationsModule:
                 proposed_raw = {
                     "provider": review_session.provider,
                     "page_count": next_page_index,
+                    "chandra_runtime": chandra_runtime_raw,
                     "pages": list((draft.ocr_raw or {}).get("pages") or [])
                     + [
                         {
                             "page_index": next_page_index,
                             "raw": raw_payload,
+                            "combined_raw": combined_raw_payload,
                             "player_count": len(
                                 incoming_payload.get("players") or []
                             ),
@@ -3265,6 +3343,18 @@ Total partidos: {len(self.matches)}
                 )
 
             if provider in ("openai_vision", "openai"):
+                return await self._ocr_single_provider(
+                    chat_id=chat_id,
+                    user_id=message.user_id,
+                    optimized_bytes=optimized_bytes,
+                    image_b64=image_b64,
+                    provider="openai",
+                )
+
+            if provider in ("chandra_shadow", "chandra_primary"):
+                # The first page creates only a governed precapture.  The shared
+                # two-page runtime replaces/evaluates its proposed draft when the
+                # back page arrives; it never commits domain rows here.
                 return await self._ocr_single_provider(
                     chat_id=chat_id,
                     user_id=message.user_id,
