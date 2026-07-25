@@ -118,6 +118,7 @@ def test_workspace_tools_are_registered_as_read_only_workspace_surface() -> None
         "workspace_file_read": ("workspace", "read"),
         "workspace_list": ("workspace", "read"),
         "workspace_search": ("workspace", "read"),
+        "workspace_task_list": ("workspace", "read"),
         "workspace_task_file_read": ("workspace", "read"),
     }
 
