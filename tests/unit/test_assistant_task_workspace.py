@@ -1,12 +1,18 @@
+import hashlib
+import os
 from pathlib import Path
+import time
 
 import pytest
 
 from samchat.assistant import router as assistant_router
+from samchat.assistant import readonly_workspace as task_workspace
 from samchat.assistant.agent_runtime import evaluate_runtime_tool_call
 from samchat.assistant.readonly_workspace import (
+    cleanup_expired_task_scopes,
     workspace_task_file_create,
     workspace_task_file_read,
+    workspace_task_file_replace,
     workspace_task_mutation_allowed,
 )
 from samchat.assistant.tool_registry import build_tool_registry
@@ -19,6 +25,7 @@ def task_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_MUTATIONS_ENABLED", "true")
     monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_EMPLOYEE_IDS", "EMP-1")
     monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_ROOT", str(root))
+    monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_TTL_SECONDS", "86400")
     return root
 
 
@@ -46,6 +53,8 @@ async def test_create_is_scoped_and_readable_only_by_same_conversation(
         employee_id="emp-1", conversation_id="conv-1", path="notes/result.md"
     )
     assert read["content"] == "controlled result\n"
+    assert read["bytes"] == len("controlled result\n")
+    assert read["sha256"] == created["sha256"]
     with pytest.raises(FileNotFoundError):
         await workspace_task_file_read(
             employee_id="emp-1", conversation_id="conv-2", path="notes/result.md"
@@ -63,6 +72,165 @@ async def test_create_never_overwrites(task_root: Path) -> None:
     await workspace_task_file_create(**kwargs)
     with pytest.raises(FileExistsError):
         await workspace_task_file_create(**{**kwargs, "content": "second"})
+
+
+@pytest.mark.asyncio
+async def test_replace_requires_observed_sha_and_is_atomic(task_root: Path) -> None:
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-1",
+        path="result.md",
+        content="first",
+    )
+    replaced = await workspace_task_file_replace(
+        employee_id="emp-1",
+        conversation_id="conv-1",
+        path="result.md",
+        expected_sha256=created["sha256"],
+        content="second",
+    )
+
+    assert replaced["replaced"] is True
+    assert replaced["created"] is False
+    assert replaced["previous_sha256"] == created["sha256"]
+    assert replaced["sha256"] == hashlib.sha256(b"second").hexdigest()
+    read = await workspace_task_file_read(
+        employee_id="emp-1", conversation_id="conv-1", path="result.md"
+    )
+    assert read["content"] == "second"
+    assert next(task_root.rglob("result.md")).stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_replace_rejects_stale_sha_and_preserves_content(task_root: Path) -> None:
+    await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-1",
+        path="result.md",
+        content="original",
+    )
+    with pytest.raises(ValueError, match="changed"):
+        await workspace_task_file_replace(
+            employee_id="emp-1",
+            conversation_id="conv-1",
+            path="result.md",
+            expected_sha256="0" * 64,
+            content="must-not-land",
+        )
+    read = await workspace_task_file_read(
+        employee_id="emp-1", conversation_id="conv-1", path="result.md"
+    )
+    assert read["content"] == "original"
+    assert not list(task_root.rglob(".replace-*"))
+
+
+@pytest.mark.asyncio
+async def test_replace_failure_cleans_temp_and_preserves_original(
+    task_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-1",
+        path="result.md",
+        content="original",
+    )
+
+    def fail_replace(source, target):
+        raise RuntimeError("simulated atomic replace failure")
+
+    monkeypatch.setattr(task_workspace.os, "replace", fail_replace)
+    with pytest.raises(RuntimeError, match="simulated"):
+        await workspace_task_file_replace(
+            employee_id="emp-1",
+            conversation_id="conv-1",
+            path="result.md",
+            expected_sha256=created["sha256"],
+            content="must-not-land",
+        )
+
+    target = next(task_root.rglob("result.md"))
+    assert target.read_text() == "original"
+    assert not list(task_root.rglob(".replace-*"))
+
+
+@pytest.mark.asyncio
+async def test_replace_rejects_missing_other_scope_and_invalid_hash(
+    task_root: Path,
+) -> None:
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-1",
+        path="result.md",
+        content="original",
+    )
+    with pytest.raises(FileNotFoundError):
+        await workspace_task_file_replace(
+            employee_id="emp-1",
+            conversation_id="conv-2",
+            path="result.md",
+            expected_sha256=created["sha256"],
+            content="blocked",
+        )
+    with pytest.raises(ValueError, match="SHA-256"):
+        await workspace_task_file_replace(
+            employee_id="emp-1",
+            conversation_id="conv-1",
+            path="result.md",
+            expected_sha256="not-a-hash",
+            content="blocked",
+        )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_only_expired_valid_scopes(
+    task_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_TTL_SECONDS", "300")
+    for conversation in ("old", "fresh"):
+        await workspace_task_file_create(
+            employee_id="emp-1",
+            conversation_id=conversation,
+            path="result.md",
+            content=conversation,
+        )
+    scopes = sorted(task_root.iterdir())
+    old_scope = next(
+        scope for scope in scopes if (scope / "result.md").read_text() == "old"
+    )
+    fresh_scope = next(
+        scope for scope in scopes if (scope / "result.md").read_text() == "fresh"
+    )
+    now = time.time()
+    os.utime(old_scope, (now - 600, now - 600))
+    unexpected = task_root / "not-a-task-scope"
+    unexpected.mkdir()
+    os.utime(unexpected, (now - 600, now - 600))
+    linked_scope = task_root / ("f" * 64)
+    linked_scope.symlink_to(fresh_scope, target_is_directory=True)
+
+    result = cleanup_expired_task_scopes(now=now)
+
+    assert result["removed"] == 1
+    assert not old_scope.exists()
+    assert fresh_scope.exists()
+    assert unexpected.exists()
+    assert linked_scope.is_symlink()
+
+
+def test_cleanup_is_bounded_per_call(
+    task_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ASSISTANT_TASK_WORKSPACE_TTL_SECONDS", "300")
+    now = time.time()
+    for index in range(21):
+        scope = task_root / f"{index:064x}"
+        scope.mkdir()
+        os.utime(scope, (now - 600, now - 600))
+
+    result = cleanup_expired_task_scopes(now=now)
+
+    assert result == {"removed": 20, "examined": 20}
+    assert len(list(task_root.iterdir())) == 1
 
 
 @pytest.mark.asyncio
@@ -109,10 +277,11 @@ async def test_create_rejects_other_subject_and_large_content(task_root: Path) -
 def _task_registry():
     return build_tool_registry(
         tool_defs=[
-            {"type": "function", "function": {"name": "workspace_task_file_create"}}
+            {"type": "function", "function": {"name": "workspace_task_file_create"}},
+            {"type": "function", "function": {"name": "workspace_task_file_replace"}},
         ],
         read_tools=set(),
-        write_tools={"workspace_task_file_create"},
+        write_tools={"workspace_task_file_create", "workspace_task_file_replace"},
         finance_tools=set(),
         tournament_tools=set(),
         dev_tools=set(),
@@ -136,6 +305,26 @@ def test_task_workspace_write_still_requires_confirmation(
     assert decision["requires_confirmation"] is True
     assert decision["allowed"] is False
     assert assistant_router._can_confirm_write("workspace_task_file_create", "empleado")
+    replace_decision = evaluate_runtime_tool_call(
+        tool_name="workspace_task_file_replace",
+        args={
+            "path": "result.md",
+            "expected_sha256": "0" * 64,
+            "content": "replacement",
+        },
+        role="empleado",
+        registry=_task_registry(),
+    )
+    assert replace_decision["decision"] == "confirm"
+    assert assistant_router._can_confirm_write(
+        "workspace_task_file_replace", "empleado"
+    )
+    registered = assistant_router._assistant_tool_registry()[
+        "workspace_task_file_replace"
+    ]
+    assert registered.surface == "workspace"
+    assert registered.operation_type == "write"
+    assert registered.requires_confirmation is True
 
 
 @pytest.mark.asyncio
@@ -161,6 +350,34 @@ async def test_router_executor_rechecks_cohort_and_scopes_conversation(
         current_conversation_id="conv-router",
     )
     assert read["content"] == "routed"
+
+    replaced = await assistant_router._execute_write_tool(
+        "workspace_task_file_replace",
+        {
+            "path": "router.md",
+            "expected_sha256": read["sha256"],
+            "content": "replaced",
+        },
+        gastos_session=None,
+        conversation_id="conv-router",
+        empleado_id="emp-1",
+        tournament_key_default=None,
+    )
+    assert replaced["replaced"] is True
+    with pytest.raises(assistant_router.HTTPException) as stale:
+        await assistant_router._execute_write_tool(
+            "workspace_task_file_replace",
+            {
+                "path": "router.md",
+                "expected_sha256": read["sha256"],
+                "content": "stale-replacement",
+            },
+            gastos_session=None,
+            conversation_id="conv-router",
+            empleado_id="emp-1",
+            tournament_key_default=None,
+        )
+    assert stale.value.status_code == 409
 
     with pytest.raises(FileNotFoundError):
         await assistant_router._run_read_tool(
@@ -199,5 +416,6 @@ def test_prompts_route_task_workspace_to_integrated_confirmation_gate() -> None:
 
     assert "no pidas una confirmacion conversacional adicional" in system_prompt
     assert "no son ediciones del repositorio" in system_prompt
+    assert "primero usa workspace_task_file_read" in system_prompt
     assert "usa workspace_task_*" in route_prompt
     assert "confirmacion al gate integrado" in route_prompt

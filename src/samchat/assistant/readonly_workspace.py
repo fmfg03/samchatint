@@ -1,19 +1,31 @@
-"""Fail-closed, text-only workspace reads for the assistant canary."""
+"""Fail-closed, text-only workspace boundaries for the assistant canary."""
 
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from pathlib import Path
+import re
+import shutil
+import tempfile
+import time
 from typing import Any
 
 
+logger = logging.getLogger(__name__)
 TRUE_VALUES = {"1", "true", "yes", "on"}
 DEFAULT_ROOT = Path("/srv/samchat/workspaces/assistant-readonly")
 MAX_FILE_BYTES = 131_072
 MAX_LIST_RESULTS = 200
 MAX_SEARCH_RESULTS = 100
 MAX_TASK_FILE_BYTES = 65_536
+DEFAULT_TASK_WORKSPACE_TTL_SECONDS = 86_400
+MIN_TASK_WORKSPACE_TTL_SECONDS = 300
+MAX_TASK_WORKSPACE_TTL_SECONDS = 2_592_000
+MAX_TASK_SCOPES_CLEANED_PER_CALL = 20
+TASK_SCOPE_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 TEXT_EXTENSIONS = {
     ".csv",
     ".json",
@@ -73,6 +85,15 @@ def workspace_task_mutation_allowed(employee_id: Any) -> bool:
         if value.strip()
     }
     return bool(subject and cohort and subject in cohort)
+
+
+def task_workspace_ttl_seconds() -> int:
+    raw = os.getenv("ASSISTANT_TASK_WORKSPACE_TTL_SECONDS", "").strip()
+    value = int(raw) if raw else DEFAULT_TASK_WORKSPACE_TTL_SECONDS
+    return max(
+        MIN_TASK_WORKSPACE_TTL_SECONDS,
+        min(value, MAX_TASK_WORKSPACE_TTL_SECONDS),
+    )
 
 
 def workspace_root() -> Path:
@@ -146,6 +167,40 @@ def _task_base_root() -> Path:
     return resolved
 
 
+def cleanup_expired_task_scopes(*, now: float | None = None) -> dict[str, int]:
+    if not workspace_task_mutations_enabled():
+        return {"removed": 0, "examined": 0}
+    root = _task_base_root()
+    cutoff = (
+        float(now if now is not None else time.time()) - task_workspace_ttl_seconds()
+    )
+    removed = 0
+    examined = 0
+    candidates = sorted(root.iterdir(), key=lambda item: item.lstat().st_mtime)
+    for scope in candidates:
+        if examined >= MAX_TASK_SCOPES_CLEANED_PER_CALL:
+            break
+        if (
+            not TASK_SCOPE_PATTERN.fullmatch(scope.name)
+            or scope.is_symlink()
+            or not scope.is_dir()
+        ):
+            continue
+        examined += 1
+        resolved = scope.resolve(strict=True)
+        if not resolved.is_relative_to(root) or resolved.stat().st_mtime >= cutoff:
+            continue
+        shutil.rmtree(resolved)
+        removed += 1
+    if removed:
+        logger.info("Expired task workspace scopes removed", extra={"count": removed})
+    return {"removed": removed, "examined": examined}
+
+
+def _touch_task_scope(scope: Path) -> None:
+    os.utime(scope, None, follow_symlinks=False)
+
+
 def _task_scope(employee_id: Any, conversation_id: Any, *, create: bool) -> Path:
     subject = str(employee_id or "").strip().casefold()
     conversation = str(conversation_id or "").strip().casefold()
@@ -188,6 +243,7 @@ async def workspace_task_file_create(
 ) -> dict[str, Any]:
     if not workspace_task_mutation_allowed(employee_id):
         raise PermissionError("Task workspace mutation is not enabled for this subject")
+    cleanup = cleanup_expired_task_scopes()
     raw = str(content or "")
     encoded = raw.encode("utf-8")
     if not encoded or len(encoded) > MAX_TASK_FILE_BYTES:
@@ -204,12 +260,14 @@ async def workspace_task_file_create(
     with target.open("x", encoding="utf-8") as handle:
         handle.write(raw)
     os.chmod(target, 0o600)
+    _touch_task_scope(scope)
     return {
         "path": Path(path).as_posix(),
         "bytes": len(encoded),
         "sha256": hashlib.sha256(encoded).hexdigest(),
         "created": True,
         "overwritten": False,
+        "expired_scopes_removed": cleanup["removed"],
     }
 
 
@@ -218,11 +276,16 @@ def _validate_text_file_name(path: Path) -> None:
         raise ValueError("Unsupported task workspace file")
 
 
-async def workspace_task_file_read(
-    *, employee_id: Any, conversation_id: Any, path: str, max_chars: int = 20_000
-) -> dict[str, Any]:
-    if not workspace_task_mutation_allowed(employee_id):
-        raise PermissionError("Task workspace is not enabled for this subject")
+def _validate_expected_sha256(value: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    if not SHA256_PATTERN.fullmatch(normalized):
+        raise ValueError("Expected SHA-256 is invalid")
+    return normalized
+
+
+def _validated_task_file(
+    *, employee_id: Any, conversation_id: Any, path: str
+) -> tuple[Path, Path]:
     target = _task_path(employee_id, conversation_id, path, create_scope=False)
     if target.is_symlink():
         raise ValueError("Task workspace symlinks are blocked")
@@ -233,10 +296,84 @@ async def workspace_task_file_read(
     _validate_text_file_name(resolved)
     if resolved.stat().st_size > MAX_TASK_FILE_BYTES:
         raise ValueError("Task workspace file exceeds the read limit")
-    limit = max(100, min(int(max_chars or 20_000), 50_000))
+    return resolved, scope
+
+
+async def workspace_task_file_replace(
+    *,
+    employee_id: Any,
+    conversation_id: Any,
+    path: str,
+    expected_sha256: str,
+    content: str,
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace mutation is not enabled for this subject")
+    cleanup = cleanup_expired_task_scopes()
+    expected = _validate_expected_sha256(expected_sha256)
+    raw = str(content or "")
+    encoded = raw.encode("utf-8")
+    if not encoded or len(encoded) > MAX_TASK_FILE_BYTES:
+        raise ValueError("Task workspace content size is invalid")
+    target, scope = _validated_task_file(
+        employee_id=employee_id,
+        conversation_id=conversation_id,
+        path=path,
+    )
+    original = target.read_bytes()
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    if original_sha256 != expected:
+        raise ValueError("Task workspace file changed since it was read")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", prefix=".replace-", dir=target.parent, delete=False
+        ) as handle:
+            temporary_path = Path(handle.name)
+            os.chmod(temporary_path, 0o600)
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            raise ValueError("Task workspace file changed during replacement")
+        os.replace(temporary_path, target)
+        temporary_path = None
+        os.chmod(target, 0o600)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    _touch_task_scope(scope)
     return {
         "path": Path(path).as_posix(),
-        "content": resolved.read_text(encoding="utf-8", errors="replace")[:limit],
+        "bytes": len(encoded),
+        "previous_sha256": original_sha256,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "replaced": True,
+        "created": False,
+        "expired_scopes_removed": cleanup["removed"],
+    }
+
+
+async def workspace_task_file_read(
+    *, employee_id: Any, conversation_id: Any, path: str, max_chars: int = 20_000
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace is not enabled for this subject")
+    cleanup = cleanup_expired_task_scopes()
+    resolved, scope = _validated_task_file(
+        employee_id=employee_id,
+        conversation_id=conversation_id,
+        path=path,
+    )
+    limit = max(100, min(int(max_chars or 20_000), 50_000))
+    raw = resolved.read_bytes()
+    _touch_task_scope(scope)
+    return {
+        "path": Path(path).as_posix(),
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "content": raw.decode("utf-8", errors="replace")[:limit],
+        "expired_scopes_removed": cleanup["removed"],
     }
 
 
