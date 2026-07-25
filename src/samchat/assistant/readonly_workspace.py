@@ -354,6 +354,135 @@ async def workspace_task_file_replace(
     }
 
 
+async def workspace_task_file_patch(
+    *,
+    employee_id: Any,
+    conversation_id: Any,
+    path: str,
+    expected_sha256: str,
+    old_text: str,
+    new_text: str,
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace mutation is not enabled for this subject")
+    cleanup = cleanup_expired_task_scopes()
+    expected = _validate_expected_sha256(expected_sha256)
+    old = str(old_text or "")
+    new = str(new_text or "")
+    if not old or old == new:
+        raise ValueError("Task workspace patch must describe a change")
+    if (
+        len(old.encode("utf-8")) > MAX_TASK_FILE_BYTES
+        or len(new.encode("utf-8")) > MAX_TASK_FILE_BYTES
+    ):
+        raise ValueError("Task workspace patch size is invalid")
+
+    target, scope = _validated_task_file(
+        employee_id=employee_id,
+        conversation_id=conversation_id,
+        path=path,
+    )
+    original = target.read_bytes()
+    original_sha256 = hashlib.sha256(original).hexdigest()
+    if original_sha256 != expected:
+        raise ValueError("Task workspace file changed since it was read")
+    try:
+        original_text = original.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Task workspace patch requires valid UTF-8 text") from exc
+    first_occurrence = original_text.find(old)
+    if first_occurrence < 0:
+        raise ValueError("Task workspace patch context was not found")
+    if original_text.find(old, first_occurrence + 1) >= 0:
+        raise ValueError("Task workspace patch context is ambiguous")
+    patched_text = (
+        original_text[:first_occurrence]
+        + new
+        + original_text[first_occurrence + len(old) :]
+    )
+    encoded = patched_text.encode("utf-8")
+    if not encoded or len(encoded) > MAX_TASK_FILE_BYTES:
+        raise ValueError("Task workspace patched content size is invalid")
+
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", prefix=".patch-", dir=target.parent, delete=False
+        ) as handle:
+            temporary_path = Path(handle.name)
+            os.chmod(temporary_path, 0o600)
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if hashlib.sha256(target.read_bytes()).hexdigest() != expected:
+            raise ValueError("Task workspace file changed during patch")
+        os.replace(temporary_path, target)
+        temporary_path = None
+        os.chmod(target, 0o600)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    _touch_task_scope(scope)
+    return {
+        "path": Path(path).as_posix(),
+        "bytes": len(encoded),
+        "previous_sha256": original_sha256,
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "patched": True,
+        "created": False,
+        "occurrences_replaced": 1,
+        "expired_scopes_removed": cleanup["removed"],
+    }
+
+
+async def workspace_task_list(
+    *, employee_id: Any, conversation_id: Any, path: str = ".", limit: int = 100
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace is not enabled for this subject")
+    cleanup = cleanup_expired_task_scopes()
+    scope = _task_scope(employee_id, conversation_id, create=False)
+    relative = _validate_relative_path(path)
+    candidate = scope / relative
+    current = scope
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Task workspace symlinks are blocked")
+    resolved = candidate.resolve(strict=True)
+    if not resolved.is_relative_to(scope) or not resolved.is_dir():
+        raise ValueError("Task workspace directory not found")
+
+    bounded = max(1, min(int(limit or 100), MAX_LIST_RESULTS))
+    entries: list[dict[str, Any]] = []
+    for item in sorted(resolved.iterdir(), key=lambda value: value.name.casefold()):
+        if len(entries) >= bounded:
+            break
+        if (
+            item.is_symlink()
+            or item.name.startswith(".")
+            or _is_sensitive_name(item.name)
+        ):
+            continue
+        if item.is_file() and item.suffix.casefold() not in TEXT_EXTENSIONS:
+            continue
+        if not item.is_dir() and not item.is_file():
+            continue
+        entries.append(
+            {
+                "path": item.relative_to(scope).as_posix(),
+                "kind": "directory" if item.is_dir() else "file",
+                "bytes": item.stat().st_size if item.is_file() else None,
+            }
+        )
+    _touch_task_scope(scope)
+    return {
+        "path": "." if resolved == scope else resolved.relative_to(scope).as_posix(),
+        "entries": entries,
+        "expired_scopes_removed": cleanup["removed"],
+    }
+
+
 async def workspace_task_file_read(
     *, employee_id: Any, conversation_id: Any, path: str, max_chars: int = 20_000
 ) -> dict[str, Any]:

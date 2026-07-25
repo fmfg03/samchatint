@@ -11,8 +11,10 @@ from samchat.assistant.agent_runtime import evaluate_runtime_tool_call
 from samchat.assistant.readonly_workspace import (
     cleanup_expired_task_scopes,
     workspace_task_file_create,
+    workspace_task_file_patch,
     workspace_task_file_read,
     workspace_task_file_replace,
+    workspace_task_list,
     workspace_task_mutation_allowed,
 )
 from samchat.assistant.tool_registry import build_tool_registry
@@ -171,6 +173,204 @@ async def test_replace_rejects_missing_other_scope_and_invalid_hash(
             expected_sha256=created["sha256"],
             content="blocked",
         )
+
+
+@pytest.mark.asyncio
+async def test_task_list_is_same_scope_non_recursive_and_bounded(
+    task_root: Path,
+) -> None:
+    for path, content in (
+        ("notes/a.md", "a"),
+        ("notes/b.txt", "b"),
+        ("root.json", "{}"),
+    ):
+        await workspace_task_file_create(
+            employee_id="emp-1",
+            conversation_id="conv-list",
+            path=path,
+            content=content,
+        )
+
+    root_listing = await workspace_task_list(
+        employee_id="emp-1", conversation_id="conv-list", limit=1
+    )
+    assert root_listing["path"] == "."
+    assert len(root_listing["entries"]) == 1
+    assert root_listing["entries"][0] == {
+        "path": "notes",
+        "kind": "directory",
+        "bytes": None,
+    }
+    nested_listing = await workspace_task_list(
+        employee_id="emp-1",
+        conversation_id="conv-list",
+        path="notes",
+    )
+    assert [entry["path"] for entry in nested_listing["entries"]] == [
+        "notes/a.md",
+        "notes/b.txt",
+    ]
+    with pytest.raises(FileNotFoundError):
+        await workspace_task_list(
+            employee_id="emp-1", conversation_id="other-conversation"
+        )
+    with pytest.raises(ValueError, match="relative"):
+        await workspace_task_list(
+            employee_id="emp-1",
+            conversation_id="conv-list",
+            path="../escape",
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_list_filters_symlinks_hidden_and_unsupported(
+    task_root: Path,
+) -> None:
+    await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-list-filter",
+        path="visible.md",
+        content="visible",
+    )
+    scope = task_root / hashlib.sha256(b"emp-1:conv-list-filter").hexdigest()
+    (scope / ".hidden.md").write_text("hidden", encoding="utf-8")
+    (scope / "binary.bin").write_bytes(b"binary")
+    outside = task_root / "outside.md"
+    outside.write_text("outside", encoding="utf-8")
+    (scope / "linked.md").symlink_to(outside)
+
+    listing = await workspace_task_list(
+        employee_id="emp-1", conversation_id="conv-list-filter"
+    )
+    assert [entry["path"] for entry in listing["entries"]] == ["visible.md"]
+
+
+@pytest.mark.asyncio
+async def test_patch_changes_one_exact_context_and_preserves_rest(
+    task_root: Path,
+) -> None:
+    original = "title: Test\nstatus: pending\nowner: Ana\n"
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-patch",
+        path="state.md",
+        content=original,
+    )
+    patched = await workspace_task_file_patch(
+        employee_id="emp-1",
+        conversation_id="conv-patch",
+        path="state.md",
+        expected_sha256=created["sha256"],
+        old_text="status: pending",
+        new_text="status: complete",
+    )
+    read = await workspace_task_file_read(
+        employee_id="emp-1", conversation_id="conv-patch", path="state.md"
+    )
+
+    assert patched["patched"] is True
+    assert patched["created"] is False
+    assert patched["occurrences_replaced"] == 1
+    assert patched["previous_sha256"] == created["sha256"]
+    assert read["content"] == "title: Test\nstatus: complete\nowner: Ana\n"
+    assert read["sha256"] == patched["sha256"]
+    assert next(task_root.rglob("state.md")).stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.asyncio
+async def test_patch_rejects_stale_missing_ambiguous_and_empty_result(
+    task_root: Path,
+) -> None:
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-patch-negative",
+        path="state.md",
+        content="same\nsame\n",
+    )
+    common = {
+        "employee_id": "emp-1",
+        "conversation_id": "conv-patch-negative",
+        "path": "state.md",
+        "expected_sha256": created["sha256"],
+    }
+    with pytest.raises(ValueError, match="changed"):
+        await workspace_task_file_patch(
+            **{**common, "expected_sha256": "0" * 64},
+            old_text="same",
+            new_text="other",
+        )
+    with pytest.raises(ValueError, match="not found"):
+        await workspace_task_file_patch(**common, old_text="missing", new_text="other")
+    with pytest.raises(ValueError, match="ambiguous"):
+        await workspace_task_file_patch(**common, old_text="same", new_text="other")
+    overlapping = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-patch-overlap",
+        path="overlap.md",
+        content="aaa",
+    )
+    with pytest.raises(ValueError, match="ambiguous"):
+        await workspace_task_file_patch(
+            employee_id="emp-1",
+            conversation_id="conv-patch-overlap",
+            path="overlap.md",
+            expected_sha256=overlapping["sha256"],
+            old_text="aa",
+            new_text="b",
+        )
+    with pytest.raises(ValueError, match="describe a change"):
+        await workspace_task_file_patch(**common, old_text="same", new_text="same")
+    single = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-patch-empty",
+        path="single.md",
+        content="only",
+    )
+    with pytest.raises(ValueError, match="size"):
+        await workspace_task_file_patch(
+            employee_id="emp-1",
+            conversation_id="conv-patch-empty",
+            path="single.md",
+            expected_sha256=single["sha256"],
+            old_text="only",
+            new_text="",
+        )
+    read = await workspace_task_file_read(
+        employee_id="emp-1",
+        conversation_id="conv-patch-negative",
+        path="state.md",
+    )
+    assert read["content"] == "same\nsame\n"
+    assert not list(task_root.rglob(".patch-*"))
+
+
+@pytest.mark.asyncio
+async def test_patch_atomic_failure_preserves_original_and_cleans_temp(
+    task_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    created = await workspace_task_file_create(
+        employee_id="emp-1",
+        conversation_id="conv-patch-atomic",
+        path="state.md",
+        content="before",
+    )
+
+    def fail_replace(source, target):
+        raise RuntimeError("simulated patch replace failure")
+
+    monkeypatch.setattr(task_workspace.os, "replace", fail_replace)
+    with pytest.raises(RuntimeError, match="simulated"):
+        await workspace_task_file_patch(
+            employee_id="emp-1",
+            conversation_id="conv-patch-atomic",
+            path="state.md",
+            expected_sha256=created["sha256"],
+            old_text="before",
+            new_text="after",
+        )
+    target = next(task_root.rglob("state.md"))
+    assert target.read_text() == "before"
+    assert not list(task_root.rglob(".patch-*"))
     with pytest.raises(ValueError, match="SHA-256"):
         await workspace_task_file_replace(
             employee_id="emp-1",
@@ -278,10 +478,15 @@ def _task_registry():
     return build_tool_registry(
         tool_defs=[
             {"type": "function", "function": {"name": "workspace_task_file_create"}},
+            {"type": "function", "function": {"name": "workspace_task_file_patch"}},
             {"type": "function", "function": {"name": "workspace_task_file_replace"}},
         ],
         read_tools=set(),
-        write_tools={"workspace_task_file_create", "workspace_task_file_replace"},
+        write_tools={
+            "workspace_task_file_create",
+            "workspace_task_file_patch",
+            "workspace_task_file_replace",
+        },
         finance_tools=set(),
         tournament_tools=set(),
         dev_tools=set(),
@@ -325,6 +530,26 @@ def test_task_workspace_write_still_requires_confirmation(
     assert registered.surface == "workspace"
     assert registered.operation_type == "write"
     assert registered.requires_confirmation is True
+    patch_decision = evaluate_runtime_tool_call(
+        tool_name="workspace_task_file_patch",
+        args={
+            "path": "result.md",
+            "expected_sha256": "0" * 64,
+            "old_text": "before",
+            "new_text": "after",
+        },
+        role="empleado",
+        registry=_task_registry(),
+    )
+    assert patch_decision["decision"] == "confirm"
+    assert patch_decision["requires_confirmation"] is True
+    assert assistant_router._can_confirm_write("workspace_task_file_patch", "empleado")
+    patch_registration = assistant_router._assistant_tool_registry()[
+        "workspace_task_file_patch"
+    ]
+    assert patch_registration.surface == "workspace"
+    assert patch_registration.operation_type == "write"
+    assert patch_registration.requires_confirmation is True
 
 
 @pytest.mark.asyncio
@@ -350,12 +575,45 @@ async def test_router_executor_rechecks_cohort_and_scopes_conversation(
         current_conversation_id="conv-router",
     )
     assert read["content"] == "routed"
+    listing = await assistant_router._run_read_tool(
+        "workspace_task_list",
+        {"path": "."},
+        gastos_session=None,
+        tournament_key_default=None,
+        current_employee_id="emp-1",
+        current_conversation_id="conv-router",
+    )
+    assert listing["entries"][0]["path"] == "router.md"
+
+    patched = await assistant_router._execute_write_tool(
+        "workspace_task_file_patch",
+        {
+            "path": "router.md",
+            "expected_sha256": read["sha256"],
+            "old_text": "routed",
+            "new_text": "patched",
+        },
+        gastos_session=None,
+        conversation_id="conv-router",
+        empleado_id="emp-1",
+        tournament_key_default=None,
+    )
+    assert patched["patched"] is True
+    patched_read = await assistant_router._run_read_tool(
+        "workspace_task_file_read",
+        {"path": "router.md"},
+        gastos_session=None,
+        tournament_key_default=None,
+        current_employee_id="emp-1",
+        current_conversation_id="conv-router",
+    )
+    assert patched_read["content"] == "patched"
 
     replaced = await assistant_router._execute_write_tool(
         "workspace_task_file_replace",
         {
             "path": "router.md",
-            "expected_sha256": read["sha256"],
+            "expected_sha256": patched_read["sha256"],
             "content": "replaced",
         },
         gastos_session=None,
@@ -369,7 +627,7 @@ async def test_router_executor_rechecks_cohort_and_scopes_conversation(
             "workspace_task_file_replace",
             {
                 "path": "router.md",
-                "expected_sha256": read["sha256"],
+                "expected_sha256": patched_read["sha256"],
                 "content": "stale-replacement",
             },
             gastos_session=None,
@@ -417,5 +675,7 @@ def test_prompts_route_task_workspace_to_integrated_confirmation_gate() -> None:
     assert "no pidas una confirmacion conversacional adicional" in system_prompt
     assert "no son ediciones del repositorio" in system_prompt
     assert "primero usa workspace_task_file_read" in system_prompt
+    assert "prefiere workspace_task_file_patch" in system_prompt
+    assert "usa workspace_task_list" in system_prompt
     assert "usa workspace_task_*" in route_prompt
     assert "confirmacion al gate integrado" in route_prompt

@@ -146,8 +146,10 @@ from .readonly_workspace import (
     workspace_list,
     workspace_search,
     workspace_task_file_create,
+    workspace_task_file_patch,
     workspace_task_file_read,
     workspace_task_file_replace,
+    workspace_task_list,
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
@@ -2171,12 +2173,14 @@ def _assistant_system_prompt() -> str:
         "- Antes de crear/regenerar calendario, valida disponibilidad: horarios (inicio/fin) y canchas; si faltan, preguntalos.\n"
         "- Si el usuario dice que canchas no restringen, usa infinite_fields=true.\n"
         "- Para consultas operativas generales, prioriza tournament_ops_query y usa tournament_registration_breakdown para casos especificos por estado.\n"
-        "- workspace_task_file_read, workspace_task_file_create y workspace_task_file_replace operan solamente en el workspace desechable de la conversacion; no son ediciones del repositorio ni acceso al host.\n"
+        "- workspace_task_list, workspace_task_file_read, workspace_task_file_create, workspace_task_file_replace y workspace_task_file_patch operan solamente en el workspace desechable de la conversacion; no son ediciones del repositorio ni acceso al host.\n"
+        "- Para descubrir archivos de la tarea usa workspace_task_list; lista un solo directorio del mismo usuario y conversacion, sin symlinks, secretos ni recursion implicita.\n"
         "- Si el usuario pide crear un archivo nuevo en ese workspace y workspace_task_file_create esta disponible, invoca la tool para preparar la propuesta. El gate integrado pedira la confirmacion explicita antes de crear; no pidas una confirmacion conversacional adicional.\n"
         "- Para cambiar un archivo existente del workspace, primero usa workspace_task_file_read y luego prepara workspace_task_file_replace con el sha256 observado. El gate integrado pedira confirmacion y un SHA obsoleto debe fallar sin modificar el archivo.\n"
+        "- Para un cambio localizado, prefiere workspace_task_file_patch despues de leer: envia el sha256 observado y un old_text exacto que aparezca una sola vez. El gate integrado pedira confirmacion; contexto ausente, ambiguo o SHA obsoleto debe fallar sin modificar el archivo.\n"
         "- Nunca afirmes que un archivo fue creado antes de recibir el resultado confirmado de workspace_task_file_create. Esta tool nunca sobrescribe archivos existentes.\n"
         "- Herramientas read-only: se pueden ejecutar sin confirmacion.\n"
-        "- Herramientas write: SIEMPRE requieren confirmacion explicita del usuario. Finanzas/torneos requieren admin o superadmin; codigo/dev y db_write_universal requieren superadmin; workspace_task_file_create y workspace_task_file_replace requieren pertenecer a su cohorte independiente.\n"
+        "- Herramientas write: SIEMPRE requieren confirmacion explicita del usuario. Finanzas/torneos requieren admin o superadmin; codigo/dev y db_write_universal requieren superadmin; workspace_task_file_create, workspace_task_file_replace y workspace_task_file_patch requieren pertenecer a su cohorte independiente.\n"
         "- Si falta algun parametro (ej. estado, nombre de proveedor, rango de fechas), pide aclaracion.\n"
         "- Idioma por defecto: espanol de Mexico.\n"
         "- Si el usuario escribe en espanol, responde SOLO en espanol. No cambies a ingles, turco, vietnamita ni otro idioma salvo nombres propios, codigo o citas literales.\n"
@@ -2257,6 +2261,7 @@ READ_TOOLS = {
     "workspace_file_read",
     "workspace_list",
     "workspace_search",
+    "workspace_task_list",
     "workspace_task_file_read",
 }
 WRITE_TOOLS = {
@@ -2275,6 +2280,7 @@ WRITE_TOOLS = {
     "dev_file_replace",
     "db_write_universal",
     "workspace_task_file_create",
+    "workspace_task_file_patch",
     "workspace_task_file_replace",
 }
 
@@ -2338,10 +2344,12 @@ WORKSPACE_READ_TOOLS = {
     "workspace_file_read",
     "workspace_list",
     "workspace_search",
+    "workspace_task_list",
     "workspace_task_file_read",
 }
 WORKSPACE_WRITE_TOOLS = {
     "workspace_task_file_create",
+    "workspace_task_file_patch",
     "workspace_task_file_replace",
 }
 
@@ -2785,6 +2793,27 @@ def _tool_defs() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "workspace_task_list",
+                "description": "Lista un directorio dentro del workspace desechable de esta conversacion, sin recursion ni symlinks.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "default": "."},
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "default": 100,
+                        },
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "workspace_task_file_read",
                 "description": "Lee un archivo de texto del workspace desechable de esta conversación.",
                 "parameters": {
@@ -2844,6 +2873,39 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["path", "expected_sha256", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_task_file_patch",
+                "description": "Aplica, con confirmacion explicita, un cambio textual exacto y no ambiguo sobre un archivo existente si su SHA-256 no cambio; nunca crea ni elimina archivos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "expected_sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{64}$",
+                        },
+                        "old_text": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536,
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "maxLength": 65536,
+                        },
+                    },
+                    "required": [
+                        "path",
+                        "expected_sha256",
+                        "old_text",
+                        "new_text",
+                    ],
                 },
             },
         },
@@ -5074,6 +5136,11 @@ async def _confirm_pending_run_with_receipt_validation(
 
 def _verification_domain_for_tool(tool_name: str) -> str:
     normalized_tool = (tool_name or "").strip()
+    if (
+        normalized_tool in WORKSPACE_READ_TOOLS
+        or normalized_tool in WORKSPACE_WRITE_TOOLS
+    ):
+        return "workspace"
     if normalized_tool in DEV_READ_TOOLS or normalized_tool in DEV_WRITE_TOOLS:
         return "code"
     if (
@@ -7671,13 +7738,18 @@ async def _run_read_tool(
     bi_scope: Optional[str] = None,
 ) -> Dict[str, Any]:
     if tool_name in WORKSPACE_READ_TOOLS:
-        if tool_name == "workspace_task_file_read":
+        if tool_name in {"workspace_task_file_read", "workspace_task_list"}:
             if not _workspace_task_mutation_allowed(current_employee_id):
                 raise HTTPException(
                     status_code=403,
                     detail="Task workspace is not enabled for this subject",
                 )
-            return await workspace_task_file_read(
+            handler = (
+                workspace_task_file_read
+                if tool_name == "workspace_task_file_read"
+                else workspace_task_list
+            )
+            return await handler(
                 employee_id=current_employee_id,
                 conversation_id=current_conversation_id,
                 **args,
@@ -7838,11 +7910,11 @@ async def _execute_write_tool(
                 status_code=403,
                 detail="Task workspace is not enabled for this subject",
             )
-        handler = (
-            workspace_task_file_create
-            if tool_name == "workspace_task_file_create"
-            else workspace_task_file_replace
-        )
+        handler = {
+            "workspace_task_file_create": workspace_task_file_create,
+            "workspace_task_file_replace": workspace_task_file_replace,
+            "workspace_task_file_patch": workspace_task_file_patch,
+        }[tool_name]
         try:
             return await handler(
                 employee_id=empleado_id,
@@ -7861,7 +7933,12 @@ async def _execute_write_tool(
             ) from exc
         except ValueError as exc:
             detail = str(exc)
-            status_code = 409 if "changed" in detail.casefold() else 400
+            conflict_markers = ("changed", "context", "ambiguous")
+            status_code = (
+                409
+                if any(marker in detail.casefold() for marker in conflict_markers)
+                else 400
+            )
             raise HTTPException(status_code=status_code, detail=detail) from exc
     if tool_name == "assistant_canonical_action":
         canonical_payload = dict(args.get("payload") or {})
@@ -8202,11 +8279,15 @@ async def _assistant_turn(
     if agent_runtime_enabled and _is_agent_runtime_readonly_only():
         allowed_read_tools = set(READ_TOOLS)
         if not _readonly_workspace_allowed(getattr(current_empleado, "id", None)):
-            allowed_read_tools -= WORKSPACE_READ_TOOLS - {"workspace_task_file_read"}
+            allowed_read_tools -= WORKSPACE_READ_TOOLS - {
+                "workspace_task_file_read",
+                "workspace_task_list",
+            }
         if _workspace_task_mutation_allowed(getattr(current_empleado, "id", None)):
             allowed_read_tools |= WORKSPACE_WRITE_TOOLS
         else:
             allowed_read_tools.discard("workspace_task_file_read")
+            allowed_read_tools.discard("workspace_task_list")
         tool_defs = _tool_defs_filtered(allowed_read_tools)
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
