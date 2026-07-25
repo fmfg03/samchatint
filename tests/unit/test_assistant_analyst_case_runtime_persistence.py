@@ -20,6 +20,7 @@ from samchat.assistant.analyst_case_models import (
 )
 from samchat.assistant.analyst_case_store import AnalystCaseStore
 from samchat.assistant.analyst_case_persistence import (
+    analyst_case_persistence_allowed,
     analyst_case_persistence_enabled,
     persist_analyst_case,
 )
@@ -88,6 +89,14 @@ class _DormantSession:
         raise AssertionError(f"disabled persistence touched session.{name}")
 
 
+@pytest.fixture(autouse=True)
+def persistence_canary_cohort(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS",
+        "emp-1,emp-2",
+    )
+
+
 @pytest.fixture()
 def sync_session() -> Iterator[Session]:
     engine = create_engine("sqlite:///:memory:")
@@ -153,6 +162,77 @@ def test_case_persistence_flag_defaults_and_invalid_values_fail_closed(
         "true",
     )
     assert analyst_case_persistence_enabled() is True
+
+
+@pytest.mark.asyncio
+async def test_enabled_persistence_without_allowlist_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.delenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS",
+        raising=False,
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+
+    persisted = await persist_analyst_case(
+        session=_DormantSession(),
+        conversation_id="conv-1",
+        current_empleado=SimpleNamespace(id="emp-1", rol="finanzas"),
+        question=intent.raw_text,
+        intent=intent,
+        result=result,
+    )
+
+    assert persisted.enabled is True
+    assert persisted.outcome == "not_allowed"
+    assert persisted.case_id is None
+    assert persisted.trace()["operational_writes"] is False
+
+
+@pytest.mark.asyncio
+async def test_non_allowlisted_employee_cannot_persist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    intent, result = await _intent_and_result(
+        question="Explica este contrato con contexto suficiente",
+    )
+
+    persisted = await persist_analyst_case(
+        session=_DormantSession(),
+        conversation_id="conv-1",
+        current_empleado=SimpleNamespace(id="emp-3", rol="finanzas"),
+        question=intent.raw_text,
+        intent=intent,
+        result=result,
+    )
+
+    assert persisted.outcome == "not_allowed"
+    assert persisted.trace()["product_case_write"] is False
+
+
+def test_persistence_cohort_matching_is_case_insensitive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
+        "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS",
+        "ABCDEF00-0000-0000-0000-000000000001",
+    )
+
+    assert analyst_case_persistence_allowed("abcdef00-0000-0000-0000-000000000001")
 
 
 @pytest.mark.asyncio
@@ -260,12 +340,11 @@ async def test_creates_then_reuses_one_complete_case(
     assert created.version_number == 1
     assert created.trace()["product_case_write"] is True
     assert reused.trace()["product_case_write"] is False
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseRecord)
-    ) == 1
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseVersionRecord)
-    ) == 1
+    assert sync_session.scalar(select(func.count()).select_from(AnalystCaseRecord)) == 1
+    assert (
+        sync_session.scalar(select(func.count()).select_from(AnalystCaseVersionRecord))
+        == 1
+    )
     record = sync_session.get(AnalystCaseRecord, created.case_id)
     assert record.user_id == "emp-1"
     assert record.role == "finanzas"
@@ -347,9 +426,7 @@ async def test_identical_analysis_in_another_conversation_creates_new_case(
     assert first.outcome == "created"
     assert second.outcome == "created"
     assert second.case_id != first.case_id
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseRecord)
-    ) == 2
+    assert sync_session.scalar(select(func.count()).select_from(AnalystCaseRecord)) == 2
 
 
 @pytest.mark.asyncio
@@ -423,9 +500,7 @@ async def test_terminal_transition_keeps_successor_identity_stable(
     assert successor.status == "analyzed"
     assert retry.outcome == "reused"
     assert retry.case_id == successor.case_id
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseRecord)
-    ) == 2
+    assert sync_session.scalar(select(func.count()).select_from(AnalystCaseRecord)) == 2
 
 
 @pytest.mark.asyncio
@@ -461,9 +536,7 @@ async def test_missing_owner_or_non_analyst_result_is_skipped(
 
     assert missing_owner.outcome == "skipped"
     assert operational.outcome == "skipped"
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseRecord)
-    ) == 0
+    assert sync_session.scalar(select(func.count()).select_from(AnalystCaseRecord)) == 0
 
 
 @pytest.mark.asyncio
@@ -493,10 +566,9 @@ async def test_failure_rolls_back_savepoint_and_returns_redacted_trace(
     assert "database detail" not in str(persisted.trace())
     assert persisted.trace()["operational_writes"] is False
     assert persisted.trace()["actions_executed"] == []
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseRecord)
-    ) == 0
-    assert sync_session.scalar(
-        select(func.count()).select_from(AnalystCaseVersionRecord)
-    ) == 0
+    assert sync_session.scalar(select(func.count()).select_from(AnalystCaseRecord)) == 0
+    assert (
+        sync_session.scalar(select(func.count()).select_from(AnalystCaseVersionRecord))
+        == 0
+    )
     assert sync_session.scalar(select(text("1"))) == 1

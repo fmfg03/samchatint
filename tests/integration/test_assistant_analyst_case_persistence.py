@@ -144,10 +144,7 @@ async def test_case_can_be_saved_recovered_and_rehydrated(session):
     assert stored.case_id == case.case_id
     assert recovered.case_id == case.case_id
     assert recovered.current_answer == case.current_answer
-    assert (
-        recovered.versions[0].answer_contract
-        == case.versions[0].answer_contract
-    )
+    assert recovered.versions[0].answer_contract == case.versions[0].answer_contract
     assert recovered.suggested_routes[0]["execution_status"] == "not_executed"
     assert recovered.suggested_routes[0]["writes_enabled"] is False
 
@@ -160,6 +157,10 @@ async def test_runtime_persistence_is_idempotent_with_the_real_store(
     monkeypatch.setenv(
         "ASSISTANT_ANALYST_CASE_PERSISTENCE_ENABLED",
         "true",
+    )
+    monkeypatch.setenv(
+        "ASSISTANT_ANALYST_CASE_PERSISTENCE_EMPLOYEE_IDS",
+        "emp-integration",
     )
     question = "Que riesgos ves en este contrato"
     intent = detect_analyst_intent(question)
@@ -258,10 +259,7 @@ async def test_closed_requires_actor_and_preserves_inert_routes(session):
     assert closed.status == "closed"
     assert closed.suggested_routes[0]["execution_status"] == "not_executed"
     assert closed.suggested_routes[0]["writes_enabled"] is False
-    assert (
-        "route_execution"
-        in closed.suggested_routes[0]["blocked_capabilities"]
-    )
+    assert "route_execution" in closed.suggested_routes[0]["blocked_capabilities"]
 
 
 @pytest.mark.asyncio
@@ -297,9 +295,7 @@ def test_migration_creates_only_analyst_tables_in_isolated_sqlite(tmp_path):
         conn.executescript(migration_path.read_text())
         tables = {
             row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
     finally:
         conn.close()
@@ -356,7 +352,7 @@ async def test_list_cases_orders_and_filters_in_isolated_db(session):
     assert [case.case_id for case in store.list_cases(user_id="emp-2")] == [
         second.case_id
     ]
-    assert [
-        case.case_id
-        for case in store.list_cases(status=first.status)
-    ] == [second.case_id, first.case_id]
+    assert [case.case_id for case in store.list_cases(status=first.status)] == [
+        second.case_id,
+        first.case_id,
+    ]
