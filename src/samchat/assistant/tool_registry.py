@@ -33,6 +33,8 @@ def _surface_for_tool(
     tournament_tools: Set[str],
     dev_tools: Set[str],
 ) -> str:
+    if name.startswith("workspace_"):
+        return "workspace"
     if name in dev_tools:
         return "dev"
     if name.startswith("db_"):

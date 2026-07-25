@@ -140,6 +140,12 @@ from .provider_service import (
     normalize_assistant_mode as _provider_normalize_assistant_mode,
 )
 from .rag import get_rag_store
+from .readonly_workspace import (
+    readonly_workspace_allowed as _readonly_workspace_allowed,
+    workspace_file_read,
+    workspace_list,
+    workspace_search,
+)
 from .tool_registry import build_tool_registry as _build_tool_registry
 from .tools import (
     assistant_save_artifact,
@@ -2240,6 +2246,9 @@ READ_TOOLS = {
     "dev_file_read",
     "dev_run_checks",
     "db_read_universal",
+    "workspace_file_read",
+    "workspace_list",
+    "workspace_search",
 }
 WRITE_TOOLS = {
     "assistant_canonical_action",
@@ -2313,6 +2322,11 @@ DEV_READ_TOOLS = {
 DEV_WRITE_TOOLS = {
     "dev_file_write",
     "dev_file_replace",
+}
+WORKSPACE_READ_TOOLS = {
+    "workspace_file_read",
+    "workspace_list",
+    "workspace_search",
 }
 
 
@@ -2749,6 +2763,72 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["vendor_name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_list",
+                "description": "Lista archivos dentro del workspace sandboxed de solo lectura.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "default": "."},
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 200,
+                            "default": 100,
+                        },
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_file_read",
+                "description": "Lee texto dentro del workspace sandboxed; no accede a rutas del host.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "start_line": {"type": "integer", "minimum": 1, "default": 1},
+                        "end_line": {"type": "integer", "minimum": 1, "default": 200},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 50000,
+                            "default": 20000,
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_search",
+                "description": "Busca texto sin ejecutar procesos dentro del workspace sandboxed.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "query": {"type": "string", "minLength": 1},
+                        "path": {"type": "string", "default": "."},
+                        "max_results": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 100,
+                            "default": 50,
+                        },
+                    },
+                    "required": ["query"],
                 },
             },
         },
@@ -7490,9 +7570,22 @@ async def _run_read_tool(
     gastos_session: AsyncSession,
     tournament_key_default: Optional[str],
     current_role: Optional[str] = None,
+    current_employee_id: Optional[str] = None,
     bi_year: Optional[int] = None,
     bi_scope: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if tool_name in WORKSPACE_READ_TOOLS:
+        if not _readonly_workspace_allowed(current_employee_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Readonly workspace is not enabled for this subject",
+            )
+        if tool_name == "workspace_list":
+            return await workspace_list(**args)
+        if tool_name == "workspace_file_read":
+            return await workspace_file_read(**args)
+        return await workspace_search(**args)
+
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(
             str(args.get("action") or "").strip(),
@@ -7958,12 +8051,21 @@ async def _assistant_turn(
     route_prompt = _assistant_route_system_prompt(route_info)
     language_prompt = _assistant_response_language_prompt(raw_message)
     tool_defs = _assistant_tool_defs(route_info)
+    tool_defs = [
+        item
+        for item in tool_defs
+        if str((item.get("function") or {}).get("name") or "")
+        not in WORKSPACE_READ_TOOLS
+    ]
     runtime_activation = _evaluate_runtime_activation(
         employee_id=getattr(current_empleado, "id", None),
     )
     agent_runtime_enabled = runtime_activation.enabled
     if agent_runtime_enabled and _is_agent_runtime_readonly_only():
-        tool_defs = _tool_defs_filtered(READ_TOOLS)
+        allowed_read_tools = set(READ_TOOLS)
+        if not _readonly_workspace_allowed(getattr(current_empleado, "id", None)):
+            allowed_read_tools -= WORKSPACE_READ_TOOLS
+        tool_defs = _tool_defs_filtered(allowed_read_tools)
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
         email=getattr(current_empleado, "email", None),
@@ -8072,6 +8174,10 @@ async def _assistant_turn(
 
         tool_policy_evaluator = _runtime_tool_policy_evaluator
 
+    async def _scoped_run_read_tool(tool_name, args, **kwargs):
+        kwargs["current_employee_id"] = str(getattr(current_empleado, "id", "") or "")
+        return await _run_read_tool(tool_name, args, **kwargs)
+
     for provider in _assistant_provider_order(
         normalized_mode,
         route_info=route_info,
@@ -8120,7 +8226,7 @@ async def _assistant_turn(
                 tool_defs_anthropic=_tool_defs_anthropic,
                 anthropic_text_from_blocks=_anthropic_text_from_blocks,
                 anthropic_message_from_blocks=_anthropic_message_from_blocks,
-                run_read_tool=_run_read_tool,
+                run_read_tool=_scoped_run_read_tool,
                 ensure_citations=_ensure_citations,
                 tool_trace_has_write_intent=_tool_trace_has_write_intent,
                 assistant_response_cache_set=_assistant_response_cache_set,
