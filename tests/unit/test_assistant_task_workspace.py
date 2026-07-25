@@ -189,3 +189,15 @@ def test_task_workspace_write_is_denied_without_independent_flag(
 
     assert decision["decision"] == "deny"
     assert decision["reason"] == "runtime_readonly_write_blocked"
+
+
+def test_prompts_route_task_workspace_to_integrated_confirmation_gate() -> None:
+    system_prompt = assistant_router._assistant_system_prompt()
+    route_prompt = assistant_router._assistant_route_system_prompt(
+        {"route": "code_agentic", "domain": "code"}
+    )
+
+    assert "no pidas una confirmacion conversacional adicional" in system_prompt
+    assert "no son ediciones del repositorio" in system_prompt
+    assert "usa workspace_task_*" in route_prompt
+    assert "confirmacion al gate integrado" in route_prompt
