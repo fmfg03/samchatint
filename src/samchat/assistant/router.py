@@ -147,6 +147,7 @@ from .readonly_workspace import (
     workspace_search,
     workspace_task_file_create,
     workspace_task_file_read,
+    workspace_task_file_replace,
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
@@ -2170,11 +2171,12 @@ def _assistant_system_prompt() -> str:
         "- Antes de crear/regenerar calendario, valida disponibilidad: horarios (inicio/fin) y canchas; si faltan, preguntalos.\n"
         "- Si el usuario dice que canchas no restringen, usa infinite_fields=true.\n"
         "- Para consultas operativas generales, prioriza tournament_ops_query y usa tournament_registration_breakdown para casos especificos por estado.\n"
-        "- workspace_task_file_read y workspace_task_file_create operan solamente en el workspace desechable de la conversacion; no son ediciones del repositorio ni acceso al host.\n"
+        "- workspace_task_file_read, workspace_task_file_create y workspace_task_file_replace operan solamente en el workspace desechable de la conversacion; no son ediciones del repositorio ni acceso al host.\n"
         "- Si el usuario pide crear un archivo nuevo en ese workspace y workspace_task_file_create esta disponible, invoca la tool para preparar la propuesta. El gate integrado pedira la confirmacion explicita antes de crear; no pidas una confirmacion conversacional adicional.\n"
+        "- Para cambiar un archivo existente del workspace, primero usa workspace_task_file_read y luego prepara workspace_task_file_replace con el sha256 observado. El gate integrado pedira confirmacion y un SHA obsoleto debe fallar sin modificar el archivo.\n"
         "- Nunca afirmes que un archivo fue creado antes de recibir el resultado confirmado de workspace_task_file_create. Esta tool nunca sobrescribe archivos existentes.\n"
         "- Herramientas read-only: se pueden ejecutar sin confirmacion.\n"
-        "- Herramientas write: SIEMPRE requieren confirmacion explicita del usuario. Finanzas/torneos requieren admin o superadmin; codigo/dev y db_write_universal requieren superadmin; workspace_task_file_create requiere pertenecer a su cohorte independiente.\n"
+        "- Herramientas write: SIEMPRE requieren confirmacion explicita del usuario. Finanzas/torneos requieren admin o superadmin; codigo/dev y db_write_universal requieren superadmin; workspace_task_file_create y workspace_task_file_replace requieren pertenecer a su cohorte independiente.\n"
         "- Si falta algun parametro (ej. estado, nombre de proveedor, rango de fechas), pide aclaracion.\n"
         "- Idioma por defecto: espanol de Mexico.\n"
         "- Si el usuario escribe en espanol, responde SOLO en espanol. No cambies a ingles, turco, vietnamita ni otro idioma salvo nombres propios, codigo o citas literales.\n"
@@ -2273,6 +2275,7 @@ WRITE_TOOLS = {
     "dev_file_replace",
     "db_write_universal",
     "workspace_task_file_create",
+    "workspace_task_file_replace",
 }
 
 FINANCE_READ_TOOLS = {
@@ -2337,7 +2340,10 @@ WORKSPACE_READ_TOOLS = {
     "workspace_search",
     "workspace_task_file_read",
 }
-WORKSPACE_WRITE_TOOLS = {"workspace_task_file_create"}
+WORKSPACE_WRITE_TOOLS = {
+    "workspace_task_file_create",
+    "workspace_task_file_replace",
+}
 
 
 def _assistant_tool_registry() -> Dict[str, Any]:
@@ -2814,6 +2820,30 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["path", "content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_task_file_replace",
+                "description": "Reemplaza atomicamente, con confirmacion explicita, un archivo de texto existente de esta conversacion si su SHA-256 no cambio; nunca crea archivos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "expected_sha256": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{64}$",
+                        },
+                        "content": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536,
+                        },
+                    },
+                    "required": ["path", "expected_sha256", "content"],
                 },
             },
         },
@@ -4906,7 +4936,11 @@ async def _confirm_pending_run(
         "domain": (
             "code"
             if tool_name in DEV_WRITE_TOOLS
-            else "tournament" if tool_name in TOURNAMENT_WRITE_TOOLS else "finance"
+            else (
+                "tournament"
+                if tool_name in TOURNAMENT_WRITE_TOOLS
+                else "workspace" if tool_name in WORKSPACE_WRITE_TOOLS else "finance"
+            )
         ),
         "reason": "confirmed_write",
         "has_write_intent": bool(tool_name in WRITE_TOOLS),
@@ -7798,17 +7832,37 @@ async def _execute_write_tool(
     empleado_id: uuid.UUID,
     tournament_key_default: Optional[str],
 ) -> Dict[str, Any]:
-    if tool_name == "workspace_task_file_create":
+    if tool_name in WORKSPACE_WRITE_TOOLS:
         if not _workspace_task_mutation_allowed(empleado_id):
             raise HTTPException(
                 status_code=403,
                 detail="Task workspace is not enabled for this subject",
             )
-        return await workspace_task_file_create(
-            employee_id=empleado_id,
-            conversation_id=conversation_id,
-            **args,
+        handler = (
+            workspace_task_file_create
+            if tool_name == "workspace_task_file_create"
+            else workspace_task_file_replace
         )
+        try:
+            return await handler(
+                employee_id=empleado_id,
+                conversation_id=conversation_id,
+                **args,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status_code=404, detail="Task workspace file not found"
+            ) from exc
+        except FileExistsError as exc:
+            raise HTTPException(
+                status_code=409, detail="Task workspace file already exists"
+            ) from exc
+        except ValueError as exc:
+            detail = str(exc)
+            status_code = 409 if "changed" in detail.casefold() else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
     if tool_name == "assistant_canonical_action":
         canonical_payload = dict(args.get("payload") or {})
         canonical_action = str(args.get("action") or "").strip()
