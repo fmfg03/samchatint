@@ -108,6 +108,12 @@ def is_agent_writes_enabled() -> bool:
     ).strip().lower() in TRUE_VALUES
 
 
+def is_task_workspace_mutation_enabled() -> bool:
+    return (
+        os.getenv("ASSISTANT_TASK_WORKSPACE_MUTATIONS_ENABLED") or ""
+    ).strip().lower() in TRUE_VALUES
+
+
 def runtime_readonly_canary_violations() -> tuple[str, ...]:
     """Return privacy-safe reasons the enabled runtime is not a read-only canary."""
     if not is_agent_runtime_enabled():
@@ -396,7 +402,10 @@ def evaluate_runtime_tool_call(
         trace["tool_name"] = (tool_name or "").strip()
     trace["args_keys"] = sorted(str(key) for key in args.keys())
     if spec is not None and spec.operation_type == "write":
-        if is_agent_runtime_readonly_only():
+        workspace_exception = (
+            spec.surface == "workspace" and is_task_workspace_mutation_enabled()
+        )
+        if is_agent_runtime_readonly_only() and not workspace_exception:
             trace.update(
                 {
                     "allowed": False,
@@ -405,7 +414,7 @@ def evaluate_runtime_tool_call(
                     "decision": "deny",
                 }
             )
-        elif not is_agent_writes_enabled():
+        elif not is_agent_writes_enabled() and not workspace_exception:
             trace.update(
                 {
                     "allowed": False,

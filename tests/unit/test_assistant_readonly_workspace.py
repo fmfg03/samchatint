@@ -118,4 +118,9 @@ def test_workspace_tools_are_registered_as_read_only_workspace_surface() -> None
         "workspace_file_read": ("workspace", "read"),
         "workspace_list": ("workspace", "read"),
         "workspace_search": ("workspace", "read"),
+        "workspace_task_file_read": ("workspace", "read"),
     }
+
+    task_write = registry["workspace_task_file_create"]
+    assert (task_write.surface, task_write.operation_type) == ("workspace", "write")
+    assert task_write.requires_confirmation is True

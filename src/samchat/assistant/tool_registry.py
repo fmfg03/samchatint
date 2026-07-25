@@ -65,6 +65,15 @@ def _risk_for_tool(name: str, operation_type: str, surface: str) -> str:
 def _allowed_roles_for_tool(
     name: str, operation_type: str, surface: str
 ) -> tuple[str, ...]:
+    if surface == "workspace":
+        return (
+            "empleado",
+            "user",
+            "coordinador",
+            "finanzas",
+            "admin",
+            "superadmin",
+        )
     if operation_type == READ:
         if surface in {"database", "dev"}:
             return ("admin", "superadmin")
