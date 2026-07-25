@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ DEFAULT_ROOT = Path("/srv/samchat/workspaces/assistant-readonly")
 MAX_FILE_BYTES = 131_072
 MAX_LIST_RESULTS = 200
 MAX_SEARCH_RESULTS = 100
+MAX_TASK_FILE_BYTES = 65_536
 TEXT_EXTENSIONS = {
     ".csv",
     ".json",
@@ -49,6 +51,25 @@ def readonly_workspace_allowed(employee_id: Any) -> bool:
         for value in os.getenv("ASSISTANT_READONLY_WORKSPACE_EMPLOYEE_IDS", "").split(
             ","
         )
+        if value.strip()
+    }
+    return bool(subject and cohort and subject in cohort)
+
+
+def workspace_task_mutations_enabled() -> bool:
+    return (
+        os.getenv("ASSISTANT_TASK_WORKSPACE_MUTATIONS_ENABLED", "").strip().lower()
+        in TRUE_VALUES
+    )
+
+
+def workspace_task_mutation_allowed(employee_id: Any) -> bool:
+    if not workspace_task_mutations_enabled():
+        return False
+    subject = str(employee_id or "").strip().casefold()
+    cohort = {
+        value.strip().casefold()
+        for value in os.getenv("ASSISTANT_TASK_WORKSPACE_EMPLOYEE_IDS", "").split(",")
         if value.strip()
     }
     return bool(subject and cohort and subject in cohort)
@@ -110,6 +131,113 @@ def _validate_text_file(path: Path) -> None:
 
 def _relative(path: Path) -> str:
     return path.relative_to(workspace_root()).as_posix()
+
+
+def _task_base_root() -> Path:
+    configured = os.getenv("ASSISTANT_TASK_WORKSPACE_ROOT", "").strip()
+    if not configured:
+        raise ValueError("Task workspace root is not configured")
+    root = Path(configured)
+    if not root.is_absolute():
+        raise ValueError("Task workspace root must be absolute")
+    resolved = root.resolve(strict=True)
+    if not resolved.is_dir():
+        raise ValueError("Task workspace root is unavailable")
+    return resolved
+
+
+def _task_scope(employee_id: Any, conversation_id: Any, *, create: bool) -> Path:
+    subject = str(employee_id or "").strip().casefold()
+    conversation = str(conversation_id or "").strip().casefold()
+    if not subject or not conversation:
+        raise ValueError("Task workspace identity is incomplete")
+    digest = hashlib.sha256(f"{subject}:{conversation}".encode()).hexdigest()
+    scope = _task_base_root() / digest
+    if create:
+        scope.mkdir(mode=0o700, parents=False, exist_ok=True)
+    if scope.is_symlink():
+        raise ValueError("Task workspace symlinks are blocked")
+    resolved = scope.resolve(strict=True)
+    if not resolved.is_relative_to(_task_base_root()):
+        raise ValueError("Task workspace scope escaped its root")
+    return resolved
+
+
+def _task_path(
+    employee_id: Any,
+    conversation_id: Any,
+    raw_path: str,
+    *,
+    create_scope: bool,
+) -> Path:
+    scope = _task_scope(employee_id, conversation_id, create=create_scope)
+    relative = _validate_relative_path(raw_path)
+    if relative == Path("."):
+        raise ValueError("Task workspace requires a file path")
+    candidate = scope / relative
+    current = scope
+    for part in relative.parts[:-1]:
+        current = current / part
+        if current.exists() and current.is_symlink():
+            raise ValueError("Task workspace symlinks are blocked")
+    return candidate
+
+
+async def workspace_task_file_create(
+    *, employee_id: Any, conversation_id: Any, path: str, content: str
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace mutation is not enabled for this subject")
+    raw = str(content or "")
+    encoded = raw.encode("utf-8")
+    if not encoded or len(encoded) > MAX_TASK_FILE_BYTES:
+        raise ValueError("Task workspace content size is invalid")
+    target = _task_path(employee_id, conversation_id, path, create_scope=True)
+    _validate_text_file_name(target)
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    parent = target.parent.resolve(strict=True)
+    scope = _task_scope(employee_id, conversation_id, create=False)
+    if not parent.is_relative_to(scope) or any(
+        item.is_symlink() for item in [parent, target] if item.exists()
+    ):
+        raise ValueError("Task workspace path escaped its scope")
+    with target.open("x", encoding="utf-8") as handle:
+        handle.write(raw)
+    os.chmod(target, 0o600)
+    return {
+        "path": Path(path).as_posix(),
+        "bytes": len(encoded),
+        "sha256": hashlib.sha256(encoded).hexdigest(),
+        "created": True,
+        "overwritten": False,
+    }
+
+
+def _validate_text_file_name(path: Path) -> None:
+    if _is_sensitive_name(path.name) or path.suffix.casefold() not in TEXT_EXTENSIONS:
+        raise ValueError("Unsupported task workspace file")
+
+
+async def workspace_task_file_read(
+    *, employee_id: Any, conversation_id: Any, path: str, max_chars: int = 20_000
+) -> dict[str, Any]:
+    if not workspace_task_mutation_allowed(employee_id):
+        raise PermissionError("Task workspace is not enabled for this subject")
+    target = _task_path(employee_id, conversation_id, path, create_scope=False)
+    if target.is_symlink():
+        raise ValueError("Task workspace symlinks are blocked")
+    resolved = target.resolve(strict=True)
+    scope = _task_scope(employee_id, conversation_id, create=False)
+    if not resolved.is_relative_to(scope) or not resolved.is_file():
+        raise ValueError("Task workspace file not found")
+    _validate_text_file_name(resolved)
+    if resolved.stat().st_size > MAX_TASK_FILE_BYTES:
+        raise ValueError("Task workspace file exceeds the read limit")
+    limit = max(100, min(int(max_chars or 20_000), 50_000))
+    return {
+        "path": Path(path).as_posix(),
+        "content": resolved.read_text(encoding="utf-8", errors="replace")[:limit],
+    }
 
 
 async def workspace_list(*, path: str = ".", limit: int = 100) -> dict[str, Any]:

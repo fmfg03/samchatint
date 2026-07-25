@@ -145,6 +145,9 @@ from .readonly_workspace import (
     workspace_file_read,
     workspace_list,
     workspace_search,
+    workspace_task_file_create,
+    workspace_task_file_read,
+    workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
 from .tools import (
@@ -2249,6 +2252,7 @@ READ_TOOLS = {
     "workspace_file_read",
     "workspace_list",
     "workspace_search",
+    "workspace_task_file_read",
 }
 WRITE_TOOLS = {
     "assistant_canonical_action",
@@ -2265,6 +2269,7 @@ WRITE_TOOLS = {
     "dev_file_write",
     "dev_file_replace",
     "db_write_universal",
+    "workspace_task_file_create",
 }
 
 FINANCE_READ_TOOLS = {
@@ -2327,7 +2332,9 @@ WORKSPACE_READ_TOOLS = {
     "workspace_file_read",
     "workspace_list",
     "workspace_search",
+    "workspace_task_file_read",
 }
+WORKSPACE_WRITE_TOOLS = {"workspace_task_file_create"}
 
 
 def _assistant_tool_registry() -> Dict[str, Any]:
@@ -2763,6 +2770,47 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["vendor_name"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_task_file_read",
+                "description": "Lee un archivo de texto del workspace desechable de esta conversación.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "max_chars": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 50000,
+                            "default": 20000,
+                        },
+                    },
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "workspace_task_file_create",
+                "description": "Crea, con confirmación explícita, un archivo de texto nuevo en el workspace desechable de esta conversación; nunca sobrescribe.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "path": {"type": "string", "minLength": 1},
+                        "content": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 65536,
+                        },
+                    },
+                    "required": ["path", "content"],
                 },
             },
         },
@@ -3945,6 +3993,16 @@ def _can_confirm_write(
         normalized_tool == "assistant_canonical_action"
         and canonical_action in SELF_SERVICE_RECEIPT_ACTIONS
     ):
+        return _normalize_role(role) in {
+            "empleado",
+            "user",
+            "coordinador",
+            "finanzas",
+            "admin",
+            "super_admin",
+            "superadmin",
+        }
+    if normalized_tool in WORKSPACE_WRITE_TOOLS:
         return _normalize_role(role) in {
             "empleado",
             "user",
@@ -7571,10 +7629,22 @@ async def _run_read_tool(
     tournament_key_default: Optional[str],
     current_role: Optional[str] = None,
     current_employee_id: Optional[str] = None,
+    current_conversation_id: Optional[str] = None,
     bi_year: Optional[int] = None,
     bi_scope: Optional[str] = None,
 ) -> Dict[str, Any]:
     if tool_name in WORKSPACE_READ_TOOLS:
+        if tool_name == "workspace_task_file_read":
+            if not _workspace_task_mutation_allowed(current_employee_id):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Task workspace is not enabled for this subject",
+                )
+            return await workspace_task_file_read(
+                employee_id=current_employee_id,
+                conversation_id=current_conversation_id,
+                **args,
+            )
         if not _readonly_workspace_allowed(current_employee_id):
             raise HTTPException(
                 status_code=403,
@@ -7725,6 +7795,17 @@ async def _execute_write_tool(
     empleado_id: uuid.UUID,
     tournament_key_default: Optional[str],
 ) -> Dict[str, Any]:
+    if tool_name == "workspace_task_file_create":
+        if not _workspace_task_mutation_allowed(empleado_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Task workspace is not enabled for this subject",
+            )
+        return await workspace_task_file_create(
+            employee_id=empleado_id,
+            conversation_id=conversation_id,
+            **args,
+        )
     if tool_name == "assistant_canonical_action":
         canonical_payload = dict(args.get("payload") or {})
         canonical_action = str(args.get("action") or "").strip()
@@ -8055,7 +8136,7 @@ async def _assistant_turn(
         item
         for item in tool_defs
         if str((item.get("function") or {}).get("name") or "")
-        not in WORKSPACE_READ_TOOLS
+        not in (WORKSPACE_READ_TOOLS | WORKSPACE_WRITE_TOOLS)
     ]
     runtime_activation = _evaluate_runtime_activation(
         employee_id=getattr(current_empleado, "id", None),
@@ -8064,7 +8145,11 @@ async def _assistant_turn(
     if agent_runtime_enabled and _is_agent_runtime_readonly_only():
         allowed_read_tools = set(READ_TOOLS)
         if not _readonly_workspace_allowed(getattr(current_empleado, "id", None)):
-            allowed_read_tools -= WORKSPACE_READ_TOOLS
+            allowed_read_tools -= WORKSPACE_READ_TOOLS - {"workspace_task_file_read"}
+        if _workspace_task_mutation_allowed(getattr(current_empleado, "id", None)):
+            allowed_read_tools |= WORKSPACE_WRITE_TOOLS
+        else:
+            allowed_read_tools.discard("workspace_task_file_read")
         tool_defs = _tool_defs_filtered(allowed_read_tools)
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
@@ -8176,6 +8261,7 @@ async def _assistant_turn(
 
     async def _scoped_run_read_tool(tool_name, args, **kwargs):
         kwargs["current_employee_id"] = str(getattr(current_empleado, "id", "") or "")
+        kwargs["current_conversation_id"] = str(conversation.id)
         return await _run_read_tool(tool_name, args, **kwargs)
 
     for provider in _assistant_provider_order(
