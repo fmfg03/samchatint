@@ -521,11 +521,19 @@ def test_create_budget_line_route_creates_concept_with_direction_and_account():
 
 def test_budget_catalog_editor_supports_pasivo_account():
     source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    active_route_source = Path(
+        "src/devnous/gastos/routes/admin_budget_routes.py"
+    ).read_text()
 
     assert "Cuenta Pasivo" in source
+    assert "Cuenta Pasivo" in active_route_source
+    assert "list_budget_concepts" in active_route_source
+    assert "/admin/presupuestos/conceptos/bulk-save" in active_route_source
     assert "pasivo_cuenta_contable_ids: List[str] = Form([])" in source
+    assert 'field_name="pasivo_cuenta_contable_ids"' in active_route_source
     assert 'field_name="pasivo_cuenta_contable_ids"' in source
     assert "DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE" in source
+    assert "DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE" in active_route_source
 
 
 def test_budget_schema_adds_pasivo_account_and_default_backfill():
