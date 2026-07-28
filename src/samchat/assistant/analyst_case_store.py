@@ -179,6 +179,7 @@ class AnalystCaseStore:
         suggested_routes: Optional[List[Dict[str, Any]]] = None,
         caveats: Optional[List[str]] = None,
         answer_contract: Optional[Dict[str, Any]] = None,
+        expected_version_number: Optional[int] = None,
         updated_by: Optional[str] = None,
         closed_by: Optional[str] = None,
         updated_at: Optional[datetime] = None,
@@ -187,6 +188,7 @@ class AnalystCaseStore:
             self.session.query(AnalystCaseRecord)
             .options(selectinload(AnalystCaseRecord.versions))
             .filter(AnalystCaseRecord.case_id == case_id)
+            .with_for_update()
             .one_or_none()
         )
         if record is None:
@@ -220,6 +222,35 @@ class AnalystCaseStore:
             previous_payload,
             next_payload,
         )
+        previous_answer_contract: Dict[str, Any] = {}
+        current_version_number = 0
+        if record.versions:
+            latest_version = max(
+                record.versions,
+                key=lambda item: item.version_number,
+            )
+            current_version_number = int(latest_version.version_number)
+            previous_answer_contract = json_clone(
+                latest_version.answer_contract or {}
+            )
+        if (
+            expected_version_number is not None
+            and current_version_number != expected_version_number
+        ):
+            raise AnalystCaseStoreError(
+                "Stale AnalystCase version: "
+                f"expected {expected_version_number}, found {current_version_number}"
+            )
+        next_answer_contract = (
+            previous_answer_contract
+            if answer_contract is None
+            else json_clone(answer_contract)
+        )
+        if (
+            answer_contract is not None
+            and previous_answer_contract != next_answer_contract
+        ):
+            changed_fields = sorted((*changed_fields, "answer_contract"))
         timestamp = updated_at or utc_now()
         actor = closed_by or updated_by
         if not actor:
@@ -247,7 +278,7 @@ class AnalystCaseStore:
                 next_questions=json_clone(next_payload["next_questions"]),
                 suggested_routes=json_clone(next_payload["suggested_routes"]),
                 caveats=json_clone(next_payload["caveats"]),
-                answer_contract=json_clone(answer_contract or {}),
+                answer_contract=next_answer_contract,
                 changed_fields=changed_fields,
             )
         )

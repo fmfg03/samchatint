@@ -153,6 +153,7 @@ from .readonly_workspace import (
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
+from .tournament_goal_case import build_tournament_goal_shadow
 from .tools import (
     assistant_save_artifact,
     dev_file_read,
@@ -2161,6 +2162,7 @@ def _assistant_system_prompt() -> str:
         "- Si el usuario pide generar la póliza/asiento contable de un gasto, usa accounting.post_expense_accounting por la vía canónica con confirmacion.\n"
         "- Si el usuario pide guardar un reporte generado para reutilizarlo, usa assistant_save_artifact con el markdown del reporte y confirmacion.\n"
         "- Para preguntas operativas del torneo (equipos/jugadores/inscripciones) usa SOLO tools del torneo.\n"
+        "- Si el usuario pide crear o clonar un torneo tomando otro como base, usa tournament_goal_shadow. Esta tool abre o reanuda un caso, muestra plan, borrador, validación y diferencias, pero nunca crea ni modifica el torneo operativo.\n"
         "- Para preguntas sobre expedientes, carpetas por entidad o fase nacional, usa tournament_expediente_snapshot cuando haya tournament_id en contexto; si preguntan por seguimiento/alertas/compromisos de carpetas usa operations.folder_planner_snapshot. Si no hay torneo claro, usa contexto inyectado o pregunta que torneo usar.\n"
         "- Para consultas transversales de BD fuera de tools especificas, usa db_read_universal (solo admin/superadmin).\n"
         "- Para modificaciones transversales de BD fuera de tools especificas, usa db_write_universal (requiere confirmacion superadmin).\n"
@@ -2252,6 +2254,7 @@ READ_TOOLS = {
     "finance_vendor_payments",
     "finance_expense_search",
     "tournament_expediente_snapshot",
+    "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
     "dev_repo_search",
@@ -2319,6 +2322,7 @@ FINANCE_WRITE_TOOLS = {
 }
 TOURNAMENT_READ_TOOLS = {
     "tournament_expediente_snapshot",
+    "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
     "db_read_universal",
@@ -2404,6 +2408,67 @@ def _assistant_tool_defs(route_info: Dict[str, Any]) -> List[Dict[str, Any]]:
         return _tool_defs_filtered(FINANCE_READ_TOOLS | TOURNAMENT_READ_TOOLS)
 
     return _tool_defs()
+
+
+def _is_tournament_goal_shadow_intent(message: str) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(message or "").casefold())
+    text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    has_tournament = any(token in text for token in ("torneo", "tournament"))
+    clone_tokens = (
+        "clonar",
+        "clona",
+        "copiar",
+        "copia",
+        "duplicar",
+        "duplica",
+        "replicar",
+        "replica",
+        "clone",
+        "duplicate",
+    )
+    create_tokens = (
+        "crear",
+        "crea",
+        "hacer",
+        "haz",
+        "generar",
+        "genera",
+        "armar",
+        "arma",
+        "build",
+        "create",
+    )
+    has_clone = any(token in text for token in clone_tokens)
+    has_create = any(
+        token in text
+        for token in create_tokens
+    )
+    has_source = any(
+        token in text
+        for token in (
+            "como base",
+            "tomando como base",
+            "a partir de",
+            "basado en",
+            "desde el torneo",
+            "usando",
+            "plantilla",
+            "igual que",
+            "from tournament",
+            "based on",
+            "template",
+        )
+    )
+    return has_tournament and (has_clone or (has_create and has_source))
+
+
+def _assistant_tool_defs_for_message(
+    route_info: Dict[str, Any],
+    raw_message: str,
+) -> List[Dict[str, Any]]:
+    if _is_tournament_goal_shadow_intent(raw_message):
+        return _tool_defs_filtered({"tournament_goal_shadow"})
+    return _assistant_tool_defs(route_info)
 
 
 def _assistant_route_system_prompt(route_info: Dict[str, Any]) -> str:
@@ -3227,6 +3292,53 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "cfdi_use": {"type": ["string", "null"]},
                     },
                     "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_goal_shadow",
+                "description": "Abre o reanuda un caso read-only para crear un torneo a partir de otro. Devuelve plan, fuente local, borrador inerte, validación y diff; nunca crea ni modifica torneos operativos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "goal": {"type": "string", "minLength": 1},
+                        "source_tournament_id": {"type": "string", "minLength": 1},
+                        "source_tournament_name": {"type": "string", "minLength": 1},
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "maxLength": 80,
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
+                        "expected_case_version": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                        },
+                        "target_name": {"type": ["string", "null"], "maxLength": 200},
+                        "description": {"type": ["string", "null"], "maxLength": 500},
+                        "active": {"type": ["boolean", "null"]},
+                        "display_order": {"type": ["integer", "null"], "minimum": 0},
+                        "account": {"type": ["string", "null"]},
+                        "etapas": {
+                            "type": ["array", "null"],
+                            "items": {"type": "string"},
+                        },
+                        "categorias": {
+                            "type": ["array", "null"],
+                            "items": {"type": "string"},
+                        },
+                        "visibility_departments": {
+                            "type": ["array", "null"],
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": ["goal"],
+                    "oneOf": [
+                        {"required": ["source_tournament_id"]},
+                        {"required": ["source_tournament_name"]},
+                    ],
                 },
             },
         },
@@ -7828,6 +7940,20 @@ async def _run_read_tool(
     if tool_name == "finance_expense_search":
         return await finance_expense_search(gastos_session, **args)
 
+    if tool_name == "tournament_goal_shadow":
+        if not _is_admin(current_role):
+            raise HTTPException(
+                status_code=403,
+                detail="Tournament goal shadow requires admin or superadmin role",
+            )
+        return await build_tournament_goal_shadow(
+            gastos_session,
+            current_employee_id=current_employee_id,
+            current_role=current_role,
+            current_conversation_id=current_conversation_id,
+            **args,
+        )
+
     if tool_name == "tournament_expediente_snapshot":
         try:
             tournament_uuid = uuid.UUID(str(args.get("tournament_id") or ""))
@@ -8265,7 +8391,7 @@ async def _assistant_turn(
     workspace_context: Optional[str] = None
     route_prompt = _assistant_route_system_prompt(route_info)
     language_prompt = _assistant_response_language_prompt(raw_message)
-    tool_defs = _assistant_tool_defs(route_info)
+    tool_defs = _assistant_tool_defs_for_message(route_info, raw_message)
     tool_defs = [
         item
         for item in tool_defs
