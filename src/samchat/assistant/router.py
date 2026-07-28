@@ -153,6 +153,7 @@ from .readonly_workspace import (
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
+from .tournament_draft_case import run_tournament_draft_workbench
 from .tournament_goal_case import build_tournament_goal_shadow
 from .tools import (
     assistant_save_artifact,
@@ -2163,6 +2164,7 @@ def _assistant_system_prompt() -> str:
         "- Si el usuario pide guardar un reporte generado para reutilizarlo, usa assistant_save_artifact con el markdown del reporte y confirmacion.\n"
         "- Para preguntas operativas del torneo (equipos/jugadores/inscripciones) usa SOLO tools del torneo.\n"
         "- Si el usuario pide crear o clonar un torneo tomando otro como base, usa tournament_goal_shadow. Esta tool abre o reanuda un caso, muestra plan, borrador, validación y diferencias, pero nunca crea ni modifica el torneo operativo.\n"
+        "- Para un caso de torneo existente: usa tournament_draft_inspect para mostrar el workbench; tournament_draft_revise para cambiar el borrador; tournament_draft_freeze para congelar una propuesta verificable; y tournament_draft_cancel para abandonarla sin borrar evidencia. Estas tools nunca aprueban ni modifican el torneo operativo.\n"
         "- Para preguntas sobre expedientes, carpetas por entidad o fase nacional, usa tournament_expediente_snapshot cuando haya tournament_id en contexto; si preguntan por seguimiento/alertas/compromisos de carpetas usa operations.folder_planner_snapshot. Si no hay torneo claro, usa contexto inyectado o pregunta que torneo usar.\n"
         "- Para consultas transversales de BD fuera de tools especificas, usa db_read_universal (solo admin/superadmin).\n"
         "- Para modificaciones transversales de BD fuera de tools especificas, usa db_write_universal (requiere confirmacion superadmin).\n"
@@ -2254,6 +2256,10 @@ READ_TOOLS = {
     "finance_vendor_payments",
     "finance_expense_search",
     "tournament_expediente_snapshot",
+    "tournament_draft_inspect",
+    "tournament_draft_revise",
+    "tournament_draft_freeze",
+    "tournament_draft_cancel",
     "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
@@ -2322,6 +2328,10 @@ FINANCE_WRITE_TOOLS = {
 }
 TOURNAMENT_READ_TOOLS = {
     "tournament_expediente_snapshot",
+    "tournament_draft_inspect",
+    "tournament_draft_revise",
+    "tournament_draft_freeze",
+    "tournament_draft_cancel",
     "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
@@ -2462,13 +2472,139 @@ def _is_tournament_goal_shadow_intent(message: str) -> bool:
     return has_tournament and (has_clone or (has_create and has_source))
 
 
+def _tournament_draft_workbench_action(
+    message: str,
+    *,
+    has_active_tournament_case: bool,
+) -> Optional[str]:
+    normalized = unicodedata.normalize("NFKD", str(message or "").casefold())
+    text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    if any(
+        marker in text
+        for marker in (
+            "presupuesto",
+            "calendario",
+            "torneo operativo",
+            "equipos inscritos",
+            "ignora el modo shadow",
+            "solicitud",
+            "transferencia",
+            "cuenta bancaria",
+            "beneficiario",
+            "proveedor",
+            "gasto",
+            "factura",
+            "cfdi",
+            "contrato",
+        )
+    ):
+        return None
+    anaphoric_context = any(
+        marker in text
+        for marker in (
+            "borrador",
+            "propuesta",
+            "este caso",
+            "el caso",
+        )
+    )
+    strong_context = "analyst_case_" in text or (
+        any(marker in text for marker in ("torneo", "tournament"))
+        and anaphoric_context
+    )
+    # The pointer resolves identity only after the user refers to this case;
+    # generic verbs must not hijack unrelated business objects.
+    active_anaphora = has_active_tournament_case and (
+        anaphoric_context or "dejalo" in text
+    )
+    if not (strong_context or active_anaphora):
+        return None
+    if any(token in text for token in ("cancela", "cancelar", "descarta", "abandona")):
+        return "cancel"
+    if any(
+        token in text
+        for token in (
+            "congela",
+            "congelar",
+            "listo para aprobacion",
+            "lista para aprobacion",
+        )
+    ):
+        return "freeze"
+    if any(
+        token in text
+        for token in (
+            "cambia",
+            "cambiar",
+            "ajusta",
+            "ajustar",
+            "corrige",
+            "agrega",
+            "quita",
+            "modifica",
+            "actualiza",
+        )
+    ):
+        return "revise"
+    if any(
+        token in text
+        for token in (
+            "muestra",
+            "muestrame",
+            "ensena",
+            "revisa",
+            "estado",
+            "como va",
+            "diferencias",
+            "archivos",
+            "plan",
+        )
+    ):
+        return "inspect"
+    return None
+
+
 def _assistant_tool_defs_for_message(
     route_info: Dict[str, Any],
     raw_message: str,
+    *,
+    has_active_tournament_case: bool = False,
 ) -> List[Dict[str, Any]]:
+    workbench_action = _tournament_draft_workbench_action(
+        raw_message,
+        has_active_tournament_case=has_active_tournament_case,
+    )
+    if workbench_action:
+        return _tool_defs_filtered({f"tournament_draft_{workbench_action}"})
     if _is_tournament_goal_shadow_intent(raw_message):
         return _tool_defs_filtered({"tournament_goal_shadow"})
-    return _assistant_tool_defs(route_info)
+    return [
+        tool_def
+        for tool_def in _assistant_tool_defs(route_info)
+        if str((tool_def.get("function") or {}).get("name") or "")
+        not in {
+            "tournament_draft_inspect",
+            "tournament_draft_revise",
+            "tournament_draft_freeze",
+            "tournament_draft_cancel",
+        }
+    ]
+
+
+def _assistant_response_cache_allowed_for_message(
+    raw_message: str,
+    *,
+    has_active_tournament_case: bool,
+) -> bool:
+    """Case-bound workbench turns must never use the global response cache."""
+
+    return not _is_tournament_goal_shadow_intent(raw_message) and (
+        _tournament_draft_workbench_action(
+            raw_message,
+            has_active_tournament_case=has_active_tournament_case,
+        )
+        is None
+    )
 
 
 def _assistant_route_system_prompt(route_info: Dict[str, Any]) -> str:
@@ -3292,6 +3428,72 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "cfdi_use": {"type": ["string", "null"]},
                     },
                     "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_draft_inspect",
+                "description": "Mostrar el workbench persistente de un borrador de torneo: plan, fuente, draft, validación, diff, archivos, preguntas y propuesta. No modifica dominio.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_draft_revise",
+                "description": "Crear una nueva versión inerte del borrador de torneo. Requiere la versión observada; no aprueba ni aplica.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "expected_case_version": {"type": "integer", "minimum": 1},
+                        "changes": {"type": "object", "minProperties": 1},
+                    },
+                    "required": ["expected_case_version", "changes"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_draft_freeze",
+                "description": "Congelar una versión válida del borrador como propuesta verificable y lista para solicitar aprobación. No aprueba ni aplica.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "expected_case_version": {"type": "integer", "minimum": 1},
+                        "expected_draft_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                    },
+                    "required": ["expected_case_version", "expected_draft_hash"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_draft_cancel",
+                "description": "Abandonar de forma append-only un borrador de torneo, conservando versiones y evidencia. No elimina datos operativos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "expected_case_version": {"type": "integer", "minimum": 1},
+                        "reason": {"type": ["string", "null"], "maxLength": 1000},
+                    },
+                    "required": ["expected_case_version"],
                 },
             },
         },
@@ -7954,6 +8156,27 @@ async def _run_read_tool(
             **args,
         )
 
+    workbench_actions = {
+        "tournament_draft_inspect": "inspect",
+        "tournament_draft_revise": "revise",
+        "tournament_draft_freeze": "freeze",
+        "tournament_draft_cancel": "cancel",
+    }
+    if tool_name in workbench_actions:
+        if not _is_admin(current_role):
+            raise HTTPException(
+                status_code=403,
+                detail="Tournament draft workbench requires admin or superadmin role",
+            )
+        return await run_tournament_draft_workbench(
+            gastos_session,
+            action=workbench_actions[tool_name],
+            current_role=current_role,
+            current_employee_id=current_employee_id,
+            current_conversation_id=current_conversation_id,
+            **args,
+        )
+
     if tool_name == "tournament_expediente_snapshot":
         try:
             tournament_uuid = uuid.UUID(str(args.get("tournament_id") or ""))
@@ -8324,13 +8547,21 @@ async def _assistant_turn(
     session.add(user_msg)
     await session.commit()
 
+    conversation_metadata = _conversation_metadata_dict(conversation)
+    active_case = conversation_metadata.get("active_tournament_goal_case")
+    has_active_tournament_case = isinstance(active_case, dict) and bool(
+        active_case.get("case_id")
+    )
     response_cache_enabled = os.getenv(
         "ASSISTANT_RESPONSE_CACHE_ENABLED", "1"
     ).strip().lower() not in {
         "0",
         "false",
         "no",
-    }
+    } and _assistant_response_cache_allowed_for_message(
+        raw_message,
+        has_active_tournament_case=has_active_tournament_case,
+    )
     cache_key = _assistant_response_cache_key(
         empleado_id=current_empleado.id,
         raw_message=raw_message,
@@ -8391,7 +8622,11 @@ async def _assistant_turn(
     workspace_context: Optional[str] = None
     route_prompt = _assistant_route_system_prompt(route_info)
     language_prompt = _assistant_response_language_prompt(raw_message)
-    tool_defs = _assistant_tool_defs_for_message(route_info, raw_message)
+    tool_defs = _assistant_tool_defs_for_message(
+        route_info,
+        raw_message,
+        has_active_tournament_case=has_active_tournament_case,
+    )
     tool_defs = [
         item
         for item in tool_defs
@@ -8414,7 +8649,12 @@ async def _assistant_turn(
         else:
             allowed_read_tools.discard("workspace_task_file_read")
             allowed_read_tools.discard("workspace_task_list")
-        tool_defs = _tool_defs_filtered(allowed_read_tools)
+        tool_defs = [
+            item
+            for item in tool_defs
+            if str((item.get("function") or {}).get("name") or "")
+            in allowed_read_tools
+        ]
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
         email=getattr(current_empleado, "email", None),
