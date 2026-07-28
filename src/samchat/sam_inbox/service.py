@@ -6,7 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from devnous.gastos.models import Tournament
+from devnous.gastos.models import Tournament, TournamentOperationsLink
 from devnous.gastos.services.cfdi_matching_service import get_cfdi_matching_overview
 from devnous.gastos.services.documento_payment_service import (
     DocumentoPaymentPermissionError,
@@ -120,10 +120,25 @@ async def _load_active_tournaments(
     return list((await session.execute(stmt)).scalars().all())
 
 
+async def _load_tournament_operations_links(
+    session: AsyncSession, *, tournament_ids: list[Any]
+) -> dict[str, TournamentOperationsLink]:
+    if not tournament_ids:
+        return {}
+    stmt = select(TournamentOperationsLink).where(
+        TournamentOperationsLink.tournament_id.in_(tournament_ids)
+    )
+    links = list((await session.execute(stmt)).scalars().all())
+    return {str(link.tournament_id): link for link in links}
+
+
 async def _load_direction_sources(
     session: AsyncSession, *, year: int
 ) -> dict[str, Any]:
-    from samchat.assistant.router import _build_automatic_alerts, _build_executive_dashboard
+    from samchat.assistant.router import (
+        _build_automatic_alerts,
+        _build_executive_dashboard,
+    )
 
     dashboard = await _build_executive_dashboard(
         session=session,
@@ -178,7 +193,9 @@ def _finance_items_from_platform(platform: dict[str, Any]) -> list[dict[str, Any
     return items
 
 
-def _finance_items_from_pending_payments(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _finance_items_from_pending_payments(
+    payload: dict[str, Any],
+) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for row in list(payload.get("documentos") or []):
         document_id = _safe_str(row.get("documento_id"))
@@ -311,7 +328,9 @@ def _operations_items_from_snapshot(snapshot: dict[str, Any]) -> list[dict[str, 
                 domain="operaciones",
                 module="Operaciones",
                 status="needs_attention",
-                severity=severity if severity in {"high", "medium", "low"} else "medium",
+                severity=(
+                    severity if severity in {"high", "medium", "low"} else "medium"
+                ),
                 title=f"{tournament_name}: {message}",
                 detail=f"Código de riesgo: {code}.",
                 owner_hint="Operaciones",
@@ -340,7 +359,9 @@ def _direction_items_from_alerts(payload: dict[str, Any]) -> list[dict[str, Any]
                 domain="direccion",
                 module="Dirección",
                 status="needs_attention" if severity in {"high", "medium"} else "info",
-                severity=severity if severity in {"high", "medium", "low"} else "medium",
+                severity=(
+                    severity if severity in {"high", "medium", "low"} else "medium"
+                ),
                 title=_safe_str(alert.get("title")) or "Alerta ejecutiva",
                 detail=_safe_str(alert.get("detail")) or "Revisar señal ejecutiva.",
                 href="/admin/finanzas",
@@ -434,9 +455,7 @@ def _filter_items(
         ]
     elif tab in {"operaciones", "finanzas", "direccion"}:
         filtered = [
-            item
-            for item in filtered
-            if _safe_str(item.get("domain")).lower() == tab
+            item for item in filtered if _safe_str(item.get("domain")).lower() == tab
         ]
 
     if severity_norm:
@@ -517,16 +536,53 @@ async def build_sam_inbox_payload(
     operation_items: list[dict[str, Any]] = []
     try:
         tournaments = await _load_active_tournaments(session, limit=3)
+        links_by_tournament_id = await _load_tournament_operations_links(
+            session,
+            tournament_ids=[tournament.id for tournament in tournaments],
+        )
+        skipped_unlinked = 0
+        linked_tournaments = 0
+        tournament_soul_errors: list[dict[str, str]] = []
         for tournament in tournaments:
-            snapshot = await build_tournament_soul_snapshot(
-                tournament_key="all",
-                tournament_slug=str(tournament.id),
-                include_media=False,
-                include_communications=False,
-                limit=120,
+            link = links_by_tournament_id.get(str(tournament.id))
+            tournament_slug = _safe_str(
+                getattr(link, "operations_tournament_slug", None)
             )
-            operation_items.extend(_operations_items_from_snapshot(snapshot))
-        source_health["tournament_soul"] = {"ok": True, "count": len(operation_items)}
+            if not tournament_slug:
+                skipped_unlinked += 1
+                continue
+            linked_tournaments += 1
+            try:
+                snapshot = await build_tournament_soul_snapshot(
+                    tournament_key="all",
+                    tournament_slug=tournament_slug,
+                    include_media=False,
+                    include_communications=False,
+                    limit=120,
+                )
+                operation_items.extend(_operations_items_from_snapshot(snapshot))
+            except Exception as exc:
+                tournament_soul_errors.append(
+                    {
+                        "tournament_id": str(tournament.id),
+                        "tournament_name": _safe_str(getattr(tournament, "name", None)),
+                        "tournament_slug": tournament_slug,
+                        "message": str(exc),
+                    }
+                )
+        health: dict[str, Any] = {
+            "ok": not tournament_soul_errors,
+            "count": len(operation_items),
+            "linked_tournaments": linked_tournaments,
+            "skipped_unlinked": skipped_unlinked,
+        }
+        if tournament_soul_errors:
+            health["message"] = "; ".join(
+                f"{error['tournament_slug']}: {error['message']}"
+                for error in tournament_soul_errors[:3]
+            )
+            health["errors"] = tournament_soul_errors[:10]
+        source_health["tournament_soul"] = health
     except Exception as exc:
         source_health["tournament_soul"] = {"ok": False, "message": str(exc)}
 
