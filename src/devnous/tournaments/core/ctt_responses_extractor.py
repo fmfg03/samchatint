@@ -44,7 +44,7 @@ from .ctt_slot_montage import (
 from .ocr_integrity import clamp_box, normalize_ctt_template_image
 
 DEFAULT_CTT_RESPONSES_MODEL = "gpt-5.6-terra"
-CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v3"
+CTT_RESPONSES_PIPELINE_VERSION = "ctt.responses.v4"
 EXPECTED_FRONT_SLOTS = tuple(range(1, 9))
 EXPECTED_BACK_SLOTS = tuple(range(9, 21))
 
@@ -80,6 +80,18 @@ campos vacios o ilegibles. confidence mide la certeza de cada transcripcion y
 candidates enumera alternativas visibles plausibles cuando exista ambiguedad.
 occupied debe ser true cuando la casilla contiene escritura o una fotografia de
 jugador, aunque algun texto sea ilegible; debe ser false solo si esta vacia.
+""".strip()
+
+PAGE_SEQUENCE_PROMPT_TEMPLATE = """
+Clasifica las {page_count} imagenes fisicas de una cedula de inscripcion CTT.
+No uses el orden de las imagenes para decidir. front es la portada que contiene
+el encabezado del equipo, las tarjetas de director tecnico y auxiliar, y ocho
+casillas de jugadores. back es el reverso de continuacion que contiene doce
+casillas de jugadores y no contiene el encabezado del equipo. Usa unknown si la
+imagen no corresponde claramente a una de esas dos caras o no pertenece a esta
+plantilla. Devuelve exactamente un objeto por imagen, en el mismo orden, con
+physical_page numerado desde 1. template_match debe ser true solo cuando la
+plantilla CTT y la cara indicada sean visibles con claridad.
 """.strip()
 
 
@@ -154,6 +166,31 @@ class CttSlotBatchExtraction(BaseModel):
         numbers = [player.slot for player in self.slots]
         if len(numbers) != len(set(numbers)):
             raise ValueError("duplicate slot numbers in model response")
+        return self
+
+
+class CttPageIdentity(BaseModel):
+    """Model-supplied identity for one physical document page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    physical_page: int = Field(ge=1, le=3)
+    side: Literal["front", "back", "unknown"]
+    template_match: bool
+
+
+class CttPageSequenceExtraction(BaseModel):
+    """Structured classification of the supplied physical page sequence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pages: List[CttPageIdentity]
+
+    @model_validator(mode="after")
+    def reject_duplicate_pages(self) -> "CttPageSequenceExtraction":
+        numbers = [page.physical_page for page in self.pages]
+        if len(numbers) != len(set(numbers)):
+            raise ValueError("duplicate physical page numbers in model response")
         return self
 
 
@@ -364,6 +401,81 @@ class CttResponsesExtractor:
         if not response_id:
             raise CttResponsesProtocolError("OpenAI response did not contain an id")
         return text_format.model_validate(parsed), response_id
+
+    async def _classify_pages(
+        self,
+        page_images: Sequence[Image.Image],
+    ) -> Tuple[CttPageSequenceExtraction, str]:
+        content: List[Dict[str, Any]] = [
+            {
+                "type": "input_text",
+                "text": PAGE_SEQUENCE_PROMPT_TEMPLATE.format(
+                    page_count=len(page_images),
+                ),
+            }
+        ]
+        content.extend(
+            {
+                "type": "input_image",
+                "image_url": _image_data_url(image),
+                "detail": "high",
+            }
+            for image in page_images
+        )
+        response = await self.client.responses.parse(
+            model=self.model,
+            instructions=(
+                "Eres un clasificador de paginas de formularios. Clasifica "
+                "solo por la estructura impresa visible y obedece el esquema."
+            ),
+            input=[{"role": "user", "content": content}],
+            text_format=CttPageSequenceExtraction,
+            store=False,
+            max_output_tokens=1000,
+            metadata={
+                "component": "ctt_registration_page_identity",
+                "schema_version": SCHEMA_VERSION,
+            },
+            timeout=self.timeout_seconds,
+        )
+        parsed = getattr(response, "output_parsed", None)
+        if parsed is None:
+            raise CttResponsesProtocolError(
+                "OpenAI page identity response did not contain parsed "
+                "structured output"
+            )
+        response_id = str(getattr(response, "id", "") or "")
+        if not response_id:
+            raise CttResponsesProtocolError(
+                "OpenAI page identity response did not contain an id"
+            )
+        return CttPageSequenceExtraction.model_validate(parsed), response_id
+
+    @staticmethod
+    def _validate_page_sequence(
+        extraction: CttPageSequenceExtraction,
+        *,
+        page_count: int,
+    ) -> None:
+        expected_numbers = list(range(1, page_count + 1))
+        actual_numbers = [page.physical_page for page in extraction.pages]
+        if actual_numbers != expected_numbers:
+            raise CttResponsesProtocolError(
+                "CTT page identity mismatch: expected physical pages "
+                f"{expected_numbers}, received {actual_numbers}"
+            )
+
+        expected_sides = ["front"] + ["back"] * (page_count - 1)
+        actual_sides = [page.side for page in extraction.pages]
+        invalid_templates = [
+            page.physical_page for page in extraction.pages if not page.template_match
+        ]
+        if actual_sides != expected_sides or invalid_templates:
+            raise CttResponsesProtocolError(
+                "CTT page sequence must be front followed by back pages from "
+                "the expected template; received sides "
+                f"{actual_sides} and template mismatches {invalid_templates}"
+            )
 
     def _team_draft(
         self,
@@ -603,6 +715,14 @@ class CttResponsesExtractor:
                     f"{expected_slots[0]} through {expected_slots[-1]}"
                 )
 
+        page_sequence, page_sequence_response_id = await self._classify_pages(
+            normalized_pages
+        )
+        self._validate_page_sequence(
+            page_sequence,
+            page_count=len(normalized_pages),
+        )
+
         header_crops = _header_crops(normalized_pages[0], pages_layout["front"])
         header, header_response_id = await self._parse(
             prompt=HEADER_PROMPT,
@@ -613,7 +733,7 @@ class CttResponsesExtractor:
         )
 
         raw_pairs: List[Tuple[CttSlotCrop, CttPlayerExtraction]] = []
-        response_ids = [header_response_id]
+        response_ids = [page_sequence_response_id, header_response_id]
         for batch in build_ctt_slot_batches(physical_slots, max_slots=4):
             source_page = batch.slots[0].page
             if any(slot.page != source_page for slot in batch.slots):

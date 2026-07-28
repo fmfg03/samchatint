@@ -9,6 +9,8 @@ import devnous.tournaments.core.ctt_responses_extractor as extractor_module
 from devnous.tournaments.core.ctt_ocr_contract import CttSlotStatus
 from devnous.tournaments.core.ctt_responses_extractor import (
     CttHeaderExtraction,
+    CttPageIdentity,
+    CttPageSequenceExtraction,
     CttPlayerExtraction,
     CttRawField,
     CttResponsesExtractor,
@@ -125,8 +127,20 @@ def _three_page_batches(
 def _responses(
     *,
     batches: Optional[List[CttSlotBatchExtraction]] = None,
+    page_count: int = 2,
+    page_sequence: Optional[CttPageSequenceExtraction] = None,
 ) -> List[Any]:
-    parsed = [_header()] + list(batches or _slot_batches())
+    sequence = page_sequence or CttPageSequenceExtraction(
+        pages=[
+            CttPageIdentity(
+                physical_page=number,
+                side="front" if number == 1 else "back",
+                template_match=True,
+            )
+            for number in range(1, page_count + 1)
+        ]
+    )
+    parsed = [sequence, _header()] + list(batches or _slot_batches())
     return [
         SimpleNamespace(id=f"resp-{index}", output_parsed=value)
         for index, value in enumerate(parsed, 1)
@@ -205,7 +219,7 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
     )
 
     assert result.model == "gpt-4.1-mini"
-    assert result.response_ids == tuple(f"resp-{number}" for number in range(1, 7))
+    assert result.response_ids == tuple(f"resp-{number}" for number in range(1, 8))
     assert result.draft.team.fields.name.normalized_value == "Deportivo Estrellas"
     assert result.draft.team.fields.email.normalized_value == "equipo@example.com"
     assert len(result.draft.slots) == 20
@@ -222,12 +236,20 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
     assert evidence.crop_sha256 and len(evidence.crop_sha256) == 64
 
     calls = client.responses.calls
-    assert len(calls) == 6
-    assert calls[0]["text_format"] is CttHeaderExtraction
+    assert len(calls) == 7
+    assert calls[0]["text_format"] is CttPageSequenceExtraction
+    assert calls[1]["text_format"] is CttHeaderExtraction
     assert all(call["store"] is False for call in calls)
     assert all("temperature" not in call for call in calls)
     assert all(call["metadata"]["schema_version"] for call in calls)
-    for index, call in enumerate(calls):
+    page_content = calls[0]["input"][0]["content"]
+    assert [part["type"] for part in page_content] == [
+        "input_text",
+        "input_image",
+        "input_image",
+    ]
+    assert all(part["detail"] == "high" for part in page_content[1:])
+    for index, call in enumerate(calls[1:]):
         content = call["input"][0]["content"]
         assert [part["type"] for part in content] == [
             "input_text",
@@ -237,8 +259,8 @@ async def test_extract_uses_bounded_structured_responses_and_builds_draft() -> N
         assert content[1]["detail"] == ("high" if index == 0 else "low")
         assert content[2]["detail"] == "high"
         assert content[1]["image_url"].startswith("data:image/jpeg;base64,")
-    assert calls[1]["text_format"] is CttSlotBatchExtraction
-    assert "1, 2, 3, 4" in calls[1]["input"][0]["content"][0]["text"]
+    assert calls[2]["text_format"] is CttSlotBatchExtraction
+    assert "1, 2, 3, 4" in calls[2]["input"][0]["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -263,7 +285,7 @@ async def test_back_copy_is_classified_by_occupancy_and_remapped() -> None:
         second_back_present={9, 12, 16},
         third_back_present=set(range(9, 21)),
     )
-    client = FakeClient(_responses(batches=batches))
+    client = FakeClient(_responses(batches=batches, page_count=3))
 
     result = await CttResponsesExtractor(client).extract(
         _pages() + [Image.new("RGB", (300, 420), "white")],
@@ -272,7 +294,7 @@ async def test_back_copy_is_classified_by_occupancy_and_remapped() -> None:
     )
 
     assert len(result.draft.slots) == 25
-    assert result.response_ids == tuple(f"resp-{number}" for number in range(1, 10))
+    assert result.response_ids == tuple(f"resp-{number}" for number in range(1, 11))
     assert all(slot.occupied for slot in result.draft.slots[8:20])
     assert [slot.occupied for slot in result.draft.slots[20:]] == [
         True,
@@ -312,7 +334,9 @@ async def test_invalid_back_copy_occupancy_fails_closed(
     )
 
     with pytest.raises(CttResponsesProtocolError, match="requires one full page 2"):
-        await CttResponsesExtractor(FakeClient(_responses(batches=batches))).extract(
+        await CttResponsesExtractor(
+            FakeClient(_responses(batches=batches, page_count=3))
+        ).extract(
             _pages() + [Image.new("RGB", (300, 420), "white")],
             _layout(),
             document_sha256=DOCUMENT_HASH,
@@ -333,6 +357,62 @@ async def test_short_single_back_page_cannot_masquerade_as_primary() -> None:
             _layout(),
             document_sha256=DOCUMENT_HASH,
         )
+
+
+@pytest.mark.asyncio
+async def test_two_front_pages_fail_before_field_extraction() -> None:
+    sequence = CttPageSequenceExtraction(
+        pages=[
+            CttPageIdentity(
+                physical_page=1,
+                side="front",
+                template_match=True,
+            ),
+            CttPageIdentity(
+                physical_page=2,
+                side="front",
+                template_match=True,
+            ),
+        ]
+    )
+    client = FakeClient(_responses(page_sequence=sequence))
+
+    with pytest.raises(CttResponsesProtocolError, match="front followed by back"):
+        await CttResponsesExtractor(client).extract(
+            _pages(),
+            _layout(),
+            document_sha256=DOCUMENT_HASH,
+        )
+
+    assert len(client.responses.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_non_template_page_fails_before_field_extraction() -> None:
+    sequence = CttPageSequenceExtraction(
+        pages=[
+            CttPageIdentity(
+                physical_page=1,
+                side="front",
+                template_match=True,
+            ),
+            CttPageIdentity(
+                physical_page=2,
+                side="unknown",
+                template_match=False,
+            ),
+        ]
+    )
+    client = FakeClient(_responses(page_sequence=sequence))
+
+    with pytest.raises(CttResponsesProtocolError, match="template mismatches"):
+        await CttResponsesExtractor(client).extract(
+            _pages(),
+            _layout(),
+            document_sha256=DOCUMENT_HASH,
+        )
+
+    assert len(client.responses.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -359,7 +439,27 @@ async def test_unparsed_or_unidentified_response_fails_closed() -> None:
             document_sha256=DOCUMENT_HASH,
         )
 
-    missing_id = FakeClient([SimpleNamespace(id="", output_parsed=_header())])
+    missing_id = FakeClient(
+        [
+            SimpleNamespace(
+                id="",
+                output_parsed=CttPageSequenceExtraction(
+                    pages=[
+                        CttPageIdentity(
+                            physical_page=1,
+                            side="front",
+                            template_match=True,
+                        ),
+                        CttPageIdentity(
+                            physical_page=2,
+                            side="back",
+                            template_match=True,
+                        ),
+                    ]
+                ),
+            )
+        ]
+    )
     with pytest.raises(CttResponsesProtocolError, match="contain an id"):
         await CttResponsesExtractor(missing_id).extract(
             _pages(),
