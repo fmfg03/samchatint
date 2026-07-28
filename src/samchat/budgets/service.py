@@ -13,7 +13,7 @@ from typing import Any, Optional
 import re
 import unicodedata
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1171,6 +1171,33 @@ async def validate_active_cuenta_contable_id(
             "La cuenta contable seleccionada no existe o está inactiva."
         )
     return clean_id
+
+
+async def resolve_active_cuenta_contable_id_by_code(
+    session: AsyncSession,
+    cuenta_contable_codigo: str,
+) -> str:
+    """Return an active cuenta id by accounting code; raise ValueError otherwise."""
+    clean_code = _safe_str(cuenta_contable_codigo)
+    if not clean_code:
+        raise ValueError("La cuenta contable es obligatoria.")
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                FROM cuentas_contables
+                WHERE codigo = :codigo
+                  AND activo = TRUE
+                LIMIT 1
+                """
+            ),
+            {"codigo": clean_code},
+        )
+    ).mappings().first()
+    if not row:
+        raise ValueError(f"La cuenta contable {clean_code} no existe o está inactiva.")
+    return _safe_str(row.get("id"))
 
 
 DEFAULT_BUDGET_CONCEPT_ACCOUNT_MAPPING = (
@@ -2857,6 +2884,7 @@ async def update_budget_concept(
     active: Optional[bool] = None,
     actor_empleado_id: Optional[str] = None,
     commit: bool = True,
+    concept_key: Optional[str] = None,
 ) -> dict[str, Any]:
     del actor_empleado_id  # reserved for future audit events
     await ensure_budget_schema(session)
@@ -2872,12 +2900,16 @@ async def update_budget_concept(
         updates["tournament_id"] = tournament["tournament_id"]
         updates["tournament_code"] = tournament["tournament_code"]
         updates["tournament_name"] = tournament["tournament_name"]
+    clean_concept_key = _safe_str(concept_key)
     if concept_name is not None:
         clean_name = _safe_str(concept_name)
         current_name = _safe_str(current.get("concept_name"))
-        if clean_name != current_name:
-            concept_key = _normalize_budget_key(clean_name)
-            if not clean_name or not concept_key:
+        resolved_concept_key = clean_concept_key or _normalize_budget_key(clean_name)
+        current_key = _safe_str(current.get("concept_key"))
+        if clean_name != current_name or (
+            clean_concept_key and clean_concept_key != current_key
+        ):
+            if not clean_name or not resolved_concept_key:
                 raise ValueError("El nombre de la partida presupuestal es obligatorio.")
             tournament_code = _safe_str(
                 updates.get("tournament_code") or current.get("tournament_code")
@@ -2897,7 +2929,7 @@ async def update_budget_concept(
                     ),
                     {
                         "tournament_code": tournament_code,
-                        "concept_key": concept_key,
+                        "concept_key": resolved_concept_key,
                         "concept_id": concept_id,
                     },
                 )
@@ -2907,7 +2939,7 @@ async def update_budget_concept(
                     "Ya existe otra partida con ese nombre para el mismo proyecto."
                 )
             updates["concept_name"] = clean_name
-            updates["concept_key"] = concept_key
+            updates["concept_key"] = resolved_concept_key
     if scope_labels is not None:
         stored_metadata = (
             current.get("metadata")
@@ -3015,10 +3047,15 @@ async def bulk_save_budget_concepts(
         concept_name = _safe_str(row.get("concept_name"))
         tournament_id = _safe_str(row.get("tournament_id"))
         sub_proyecto = _safe_str(row.get("sub_proyecto"))
+        concept_key = _safe_str(row.get("concept_key"))
         cuenta_contable_id = row.get("cuenta_contable_id")
         pasivo_cuenta_contable_id = row.get("pasivo_cuenta_contable_id")
         pasivo_cuenta_contable_provided = "pasivo_cuenta_contable_id" in row
+        active_provided = "active" in row
+        active = bool(row.get("active")) if active_provided else True
         if not concept_name and not concept_id:
+            continue
+        if not active and not concept_id:
             continue
         if not concept_name or not tournament_id:
             raise ValueError(
@@ -3043,9 +3080,10 @@ async def bulk_save_budget_concepts(
                 concept_name=concept_name,
                 tournament_id=tournament_id,
                 scope_labels=scope_labels,
-                active=True,
+                active=active,
                 actor_empleado_id=actor_empleado_id,
                 commit=False,
+                concept_key=concept_key or None,
                 **cuenta_kwargs,
             )
             updated += 1
@@ -3061,10 +3099,244 @@ async def bulk_save_budget_concepts(
                 actor_empleado_id=actor_empleado_id,
                 source="admin_ui",
                 commit=False,
+                concept_key=concept_key or None,
             )
             created += 1
     await session.commit()
     return {"created": created, "updated": updated, "total": created + updated}
+
+
+def _budget_catalog_active_value(value: Any) -> bool:
+    raw = _safe_str(value).lower()
+    if raw in {"", "1", "true", "si", "sí", "yes", "y", "activo", "active"}:
+        return True
+    if raw in {"0", "false", "no", "n", "inactivo", "inactive"}:
+        return False
+    raise ValueError(f"Valor activo inválido: {_safe_str(value)}")
+
+
+def _budget_catalog_scope_key_from_metadata(metadata: Any) -> str:
+    payload = metadata if isinstance(metadata, dict) else {}
+    for key in ("applicable_phase_labels", "applicable_subproject_labels"):
+        labels = [
+            _safe_str(label)
+            for label in list(payload.get(key) or [])
+            if _safe_str(label)
+        ]
+        if labels:
+            return _normalize_budget_scope_key(labels[0])
+    return ""
+
+
+def generate_budget_concepts_catalog_xlsx(budget_concepts: list[dict[str, Any]]) -> bytes:
+    """Generate the editable catalog workbook used by admin import/export."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "catalogo"
+    headers = [
+        "id",
+        "partida",
+        "proyecto",
+        "sub_proyecto",
+        "cuenta_contable",
+        "cuenta_pasivo",
+        "activo",
+    ]
+    sheet.append(headers)
+    for concept in sorted(
+        budget_concepts,
+        key=lambda item: (
+            _safe_str(item.get("tournament_name")).lower(),
+            _safe_str(item.get("concept_name")).lower(),
+        ),
+    ):
+        metadata = concept.get("metadata") if isinstance(concept.get("metadata"), dict) else {}
+        sheet.append(
+            [
+                _safe_str(concept.get("id")),
+                _safe_str(concept.get("concept_name")),
+                _safe_str(concept.get("tournament_name")),
+                _budget_catalog_scope_label_for_export(metadata),
+                _safe_str(concept.get("cuenta_contable_codigo")),
+                _safe_str(concept.get("pasivo_cuenta_contable_codigo")),
+                "true" if concept.get("active") else "false",
+            ]
+        )
+    widths = {
+        "A": 38,
+        "B": 32,
+        "C": 30,
+        "D": 28,
+        "E": 18,
+        "F": 18,
+        "G": 12,
+    }
+    for column, width in widths.items():
+        sheet.column_dimensions[column].width = width
+    output = BytesIO()
+    workbook.save(output)
+    return output.getvalue()
+
+
+def _budget_catalog_scope_label_for_export(metadata: dict[str, Any]) -> str:
+    payload = metadata if isinstance(metadata, dict) else {}
+    for key in ("applicable_phase_labels", "applicable_subproject_labels"):
+        labels = [
+            _safe_str(label)
+            for label in list(payload.get(key) or [])
+            if _safe_str(label)
+        ]
+        if labels:
+            return labels[0]
+    return ""
+
+
+async def import_budget_concepts_upload(
+    session: AsyncSession,
+    *,
+    actor_empleado_id: Optional[str],
+    file_bytes: bytes,
+    filename: str,
+) -> dict[str, Any]:
+    """Import editable budget concept catalog rows from CSV/XLSX."""
+    await ensure_budget_schema(session)
+    rows = _load_tabular_upload_rows(file_bytes=file_bytes, filename=filename)
+    if not rows:
+        raise ValueError("El archivo no contiene partidas presupuestales.")
+    normalized_headers = {
+        _normalize_budget_key(key)
+        for key in rows[0].keys()
+        if _safe_str(key)
+    }
+    required_headers = {
+        "partida",
+        "proyecto",
+        "sub_proyecto",
+        "cuenta_contable",
+        "cuenta_pasivo",
+        "activo",
+    }
+    missing_headers = sorted(required_headers - normalized_headers)
+    if missing_headers:
+        raise ValueError(
+            "El archivo no contiene las columnas requeridas: "
+            + ", ".join(missing_headers)
+        )
+
+    tournament_rows = await _load_tournament_rows(session)
+    active_tournament_rows = [
+        row for row in tournament_rows if bool(row.get("active"))
+    ]
+    concepts = await list_budget_concepts(session, active_only=False, limit=5000)
+    concepts_by_id = {
+        _safe_str(item.get("id")): item
+        for item in concepts
+        if _safe_str(item.get("id"))
+    }
+    concepts_by_scope = {
+        (
+            _safe_str(item.get("tournament_id")),
+            _safe_str(item.get("concept_key")),
+            _budget_catalog_scope_key_from_metadata(item.get("metadata")),
+        ): item
+        for item in concepts
+    }
+
+    prepared_rows: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, row in enumerate(rows, start=2):
+        concept_id = _safe_str(_pick_upload_value(row, "id", "concept_id"))
+        partida = _safe_str(_pick_upload_value(row, "partida", "concepto", "concept_name"))
+        proyecto = _safe_str(
+            _pick_upload_value(row, "proyecto", "torneo", "tournament_name")
+        )
+        sub_proyecto = _safe_str(
+            _pick_upload_value(row, "sub_proyecto", "subproyecto", "fase", "phase")
+        )
+        cuenta_codigo = _safe_str(
+            _pick_upload_value(row, "cuenta_contable", "cuenta_contable_codigo")
+        )
+        pasivo_codigo = _safe_str(
+            _pick_upload_value(row, "cuenta_pasivo", "pasivo", "cuenta_pasivo_codigo")
+        )
+        try:
+            active = _budget_catalog_active_value(
+                _pick_upload_value(row, "activo", "active")
+            )
+        except ValueError as exc:
+            errors.append(f"Fila {index}: {exc}")
+            continue
+        if not partida and not concept_id:
+            continue
+        if not partida:
+            errors.append(f"Fila {index}: partida es obligatoria.")
+            continue
+        if not proyecto:
+            errors.append(f"Fila {index}: proyecto es obligatorio.")
+            continue
+        tournament_id = _match_tournament_id(
+            active_tournament_rows,
+            tournament_code=proyecto,
+            tournament_name=proyecto,
+        )
+        if not tournament_id:
+            errors.append(f"Fila {index}: proyecto {proyecto} no existe o está inactivo.")
+            continue
+        cuenta_id = None
+        if cuenta_codigo:
+            try:
+                cuenta_id = await resolve_active_cuenta_contable_id_by_code(
+                    session, cuenta_codigo
+                )
+            except ValueError as exc:
+                errors.append(f"Fila {index}: {exc}")
+                continue
+        pasivo_id = None
+        if pasivo_codigo:
+            try:
+                pasivo_id = await resolve_active_cuenta_contable_id_by_code(
+                    session, pasivo_codigo
+                )
+            except ValueError as exc:
+                errors.append(f"Fila {index}: {exc}")
+                continue
+        if concept_id and concept_id not in concepts_by_id:
+            errors.append(f"Fila {index}: id de partida no encontrado.")
+            continue
+        existing = concepts_by_id.get(concept_id) if concept_id else None
+        if existing is None:
+            scoped_concept_key = _scoped_budget_concept_key(partida, sub_proyecto)
+            existing = concepts_by_scope.get(
+                (
+                    tournament_id,
+                    scoped_concept_key,
+                    _normalize_budget_scope_key(sub_proyecto),
+                )
+            )
+        prepared_rows.append(
+            {
+                "concept_id": _safe_str((existing or {}).get("id")) or concept_id or None,
+                "concept_name": partida,
+                "tournament_id": tournament_id,
+                "sub_proyecto": sub_proyecto,
+                "cuenta_contable_id": cuenta_id,
+                "pasivo_cuenta_contable_id": pasivo_id,
+                "active": active,
+                "concept_key": _scoped_budget_concept_key(partida, sub_proyecto),
+            }
+        )
+
+    if errors:
+        raise ValueError("; ".join(errors[:8]))
+    if not prepared_rows:
+        raise ValueError("No se encontraron registros válidos para importar.")
+    result = await bulk_save_budget_concepts(
+        session,
+        rows=prepared_rows,
+        actor_empleado_id=actor_empleado_id,
+    )
+    result["rows_processed"] = len(prepared_rows)
+    return result
 
 
 async def import_budget_concepts_catalog(

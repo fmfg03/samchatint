@@ -181,6 +181,8 @@ from samchat.budgets.service import (
     ensure_budget_schema,
     hide_budget_concept,
     import_budget_artifact,
+    generate_budget_concepts_catalog_xlsx,
+    import_budget_concepts_upload,
     import_budget_lines_upload,
     list_budget_audit_events,
     list_budget_concepts,
@@ -13333,6 +13335,80 @@ async def admin_presupuestos_hide_concept(
                 **redirect_params,
                 error_msg=_OPERATION_GENERIC_ERROR,
             ),
+            status_code=303,
+        )
+
+
+@router.get("/admin/presupuestos/conceptos/export.xlsx")
+async def admin_presupuestos_export_concepts_xlsx(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+):
+    _require_budget_access(current_empleado, "export")
+    await ensure_budget_schema(session)
+    budget_concepts = await list_budget_concepts(
+        session,
+        active_only=False,
+        limit=5000,
+    )
+    payload = generate_budget_concepts_catalog_xlsx(budget_concepts)
+    headers = {
+        "Content-Disposition": 'attachment; filename="catalogo_presupuestal.xlsx"'
+    }
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers=headers,
+    )
+
+
+@router.post("/admin/presupuestos/conceptos/import")
+async def admin_presupuestos_import_concepts(
+    archivo_catalogo: UploadFile = File(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+):
+    _require_budget_access(current_empleado, "line_update")
+    try:
+        filename = archivo_catalogo.filename or ""
+        if not filename.lower().endswith((".xlsx", ".xlsm", ".csv")):
+            raise ValueError("Debe seleccionar un archivo CSV o XLSX válido.")
+        payload = await archivo_catalogo.read()
+        if not payload:
+            raise ValueError("El archivo de catálogo está vacío.")
+        result = await import_budget_concepts_upload(
+            session,
+            actor_empleado_id=str(current_empleado.id),
+            file_bytes=payload,
+            filename=filename,
+        )
+        msg = (
+            "Catálogo importado: "
+            f"{int(result.get('created') or 0)} creada(s), "
+            f"{int(result.get('updated') or 0)} actualizada(s), "
+            f"{int(result.get('rows_processed') or 0)} fila(s) procesada(s)."
+        )
+        return RedirectResponse(
+            url=_presupuestos_redirect_url(success_msg=msg),
+            status_code=303,
+        )
+    except ValueError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_presupuestos_redirect_url(error_msg=str(exc)[:240]),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error importing budget concepts catalog",
+            extra={
+                "filename": archivo_catalogo.filename or "",
+                "actor_id": str(getattr(current_empleado, "id", "")),
+            },
+        )
+        return RedirectResponse(
+            url=_presupuestos_redirect_url(error_msg=_OPERATION_GENERIC_ERROR),
             status_code=303,
         )
 

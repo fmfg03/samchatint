@@ -536,6 +536,43 @@ def test_budget_catalog_editor_supports_pasivo_account():
     assert "DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE" in active_route_source
 
 
+def test_budget_catalog_import_export_routes_are_wired():
+    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    active_route_source = Path(
+        "src/devnous/gastos/routes/admin_budget_routes.py"
+    ).read_text()
+
+    assert "/admin/presupuestos/conceptos/export.xlsx" in active_route_source
+    assert "/admin/presupuestos/conceptos/import" in active_route_source
+    assert "archivo_catalogo" in active_route_source
+    assert 'access.get("export")' in active_route_source
+    assert 'access.get("line_update")' in active_route_source
+
+    assert '@router.get("/admin/presupuestos/conceptos/export.xlsx")' in source
+    assert '_require_budget_access(current_empleado, "export")' in source
+    assert "generate_budget_concepts_catalog_xlsx" in source
+    assert '@router.post("/admin/presupuestos/conceptos/import")' in source
+    assert "archivo_catalogo: UploadFile = File(...)" in source
+    assert '_require_budget_access(current_empleado, "line_update")' in source
+    assert "import_budget_concepts_upload" in source
+    assert "await session.rollback()" in source
+
+
+def test_budget_catalog_upload_supports_pasivo_and_active_fields():
+    service_source = Path("src/samchat/budgets/service.py").read_text()
+
+    assert "generate_budget_concepts_catalog_xlsx" in service_source
+    assert "import_budget_concepts_upload" in service_source
+    assert '"cuenta_pasivo"' in service_source
+    assert '"activo"' in service_source
+    assert "resolve_active_cuenta_contable_id_by_code" in service_source
+    assert "_budget_catalog_active_value" in service_source
+    assert "required_headers" in service_source
+    assert "El archivo no contiene las columnas requeridas" in service_source
+    assert '"pasivo_cuenta_contable_id": pasivo_id' in service_source
+    assert '"active": active' in service_source
+
+
 def test_budget_schema_adds_pasivo_account_and_default_backfill():
     service_source = Path("src/samchat/budgets/service.py").read_text()
     guard_source = Path("src/devnous/gastos/schema_guard.py").read_text()
