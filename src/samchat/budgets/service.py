@@ -3271,17 +3271,25 @@ async def import_budget_concepts_upload(
         if not partida:
             errors.append(f"Fila {index}: partida es obligatoria.")
             continue
-        if not proyecto:
-            errors.append(f"Fila {index}: proyecto es obligatorio.")
+        if concept_id and concept_id not in concepts_by_id:
+            errors.append(f"Fila {index}: id de partida no encontrado.")
             continue
-        tournament_id = _match_tournament_id(
-            active_tournament_rows,
-            tournament_code=proyecto,
-            tournament_name=proyecto,
-        )
+        existing = concepts_by_id.get(concept_id) if concept_id else None
+        tournament_id = _safe_str((existing or {}).get("tournament_id"))
         if not tournament_id:
-            errors.append(f"Fila {index}: proyecto {proyecto} no existe o está inactivo.")
-            continue
+            if not proyecto:
+                errors.append(f"Fila {index}: proyecto es obligatorio.")
+                continue
+            tournament_id = _match_tournament_id(
+                active_tournament_rows,
+                tournament_code=proyecto,
+                tournament_name=proyecto,
+            )
+            if not tournament_id:
+                errors.append(
+                    f"Fila {index}: proyecto {proyecto} no existe o está inactivo."
+                )
+                continue
         cuenta_id = None
         if cuenta_codigo:
             try:
@@ -3300,10 +3308,6 @@ async def import_budget_concepts_upload(
             except ValueError as exc:
                 errors.append(f"Fila {index}: {exc}")
                 continue
-        if concept_id and concept_id not in concepts_by_id:
-            errors.append(f"Fila {index}: id de partida no encontrado.")
-            continue
-        existing = concepts_by_id.get(concept_id) if concept_id else None
         if existing is None:
             scoped_concept_key = _scoped_budget_concept_key(partida, sub_proyecto)
             existing = concepts_by_scope.get(

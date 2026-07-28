@@ -560,6 +560,10 @@ def test_budget_catalog_import_export_routes_are_wired():
 
 def test_budget_catalog_upload_supports_pasivo_and_active_fields():
     service_source = Path("src/samchat/budgets/service.py").read_text()
+    import_source = service_source[
+        service_source.index("async def import_budget_concepts_upload(") :
+        service_source.index("async def import_budget_concepts_catalog(")
+    ]
 
     assert "generate_budget_concepts_catalog_xlsx" in service_source
     assert "import_budget_concepts_upload" in service_source
@@ -571,6 +575,10 @@ def test_budget_catalog_upload_supports_pasivo_and_active_fields():
     assert "El archivo no contiene las columnas requeridas" in service_source
     assert '"pasivo_cuenta_contable_id": pasivo_id' in service_source
     assert '"active": active' in service_source
+    assert import_source.index("existing = concepts_by_id.get") < import_source.index(
+        "_match_tournament_id"
+    )
+    assert 'tournament_id = _safe_str((existing or {}).get("tournament_id"))' in import_source
 
 
 def test_budget_schema_adds_pasivo_account_and_default_backfill():
