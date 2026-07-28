@@ -360,6 +360,16 @@ class RegistrationIntakeBot:
     async def begin_team_upload(self, *, chat_id: int, user_id: int) -> str:
         """Start a new explicit 1-3 image collection for one team."""
         chat_id = int(chat_id)
+        user_id = int(user_id)
+        existing = self.team_upload_sessions_by_chat.get(chat_id)
+        if existing is not None:
+            if existing.user_id != user_id:
+                return "Esta carga pertenece a otro operador del chat."
+            return (
+                "Ya tienes una carga por equipo activa con "
+                f"{len(existing.pages)} imagen(es). Envía la siguiente imagen, "
+                "procesa el equipo o cancela la carga."
+            )
         closed_note = ""
         if self._active_or_pending_session_id(chat_id):
             closed_note = await self.finish_current_session(
@@ -368,7 +378,7 @@ class RegistrationIntakeBot:
             )
         self.reupload_sessions_by_chat.pop(chat_id, None)
         self.team_upload_sessions_by_chat[chat_id] = TeamUploadSession(
-            user_id=int(user_id)
+            user_id=user_id
         )
         prefix = f"{closed_note}\n\n" if closed_note else ""
         return (
@@ -1009,6 +1019,15 @@ class RegistrationIntakeTelegramAdapter:
     ) -> str:
         parts = command.split()
         normalized = parts[0].lower()
+        if (
+            self.bot.has_team_upload_session(chat_id)
+            and not self.bot.owns_team_upload_session(
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+            and normalized not in {"/start", "/help", "/estado"}
+        ):
+            return "Esta carga pertenece a otro operador del chat."
         if normalized in {"/start", "/help"}:
             return (
                 "Bot de registro de equipos.\n\n"
@@ -1019,6 +1038,14 @@ class RegistrationIntakeTelegramAdapter:
             )
         if normalized == "/subir_equipo":
             return await self.bot.begin_team_upload(
+                chat_id=chat_id,
+                user_id=user_id,
+            )
+        if (
+            normalized in {"/nuevo", "/cancelar"}
+            and self.bot.has_team_upload_session(chat_id)
+        ):
+            return await self.bot.cancel_team_upload(
                 chat_id=chat_id,
                 user_id=user_id,
             )

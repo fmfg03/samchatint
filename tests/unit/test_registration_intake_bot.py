@@ -31,6 +31,7 @@ class _FakeRegistrationBot:
         self.async_session_maker = None
         self.team_upload_active = False
         self.team_upload_page_count = 0
+        self.team_upload_owner_id = 42
 
     async def begin_team_upload(self, *, chat_id: int, user_id: int) -> str:
         self.calls.append(("begin_upload", chat_id, user_id))
@@ -42,7 +43,7 @@ class _FakeRegistrationBot:
         return self.team_upload_active
 
     def owns_team_upload_session(self, *, chat_id: int, user_id: int) -> bool:
-        return self.team_upload_active
+        return self.team_upload_active and user_id == self.team_upload_owner_id
 
     def add_team_upload_page(self, *, chat_id: int, user_id: int, image_bytes: bytes):
         self.calls.append(("add_upload", chat_id, user_id, len(image_bytes)))
@@ -258,6 +259,74 @@ async def test_subir_equipo_starts_guided_upload_session():
 
     assert bot.calls == [("begin_upload", 99, 42)]
     assert adapter.sent[-1]["text"] == "envía la primera imagen"
+
+
+@pytest.mark.asyncio
+async def test_other_operator_cannot_replace_or_cancel_guided_upload_session():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    bot.team_upload_page_count = 1
+    policy = RegistrationBotAccessPolicy(
+        mode="allowlist",
+        allowed_user_ids=[42, 99],
+    )
+    adapter = _TestAdapter(bot, "registration-token", access_policy=policy)
+
+    for command in ("/subir_equipo", "/cancelar", "/nuevo"):
+        await adapter.handle_update(
+            {
+                "message": {
+                    "message_id": 1,
+                    "chat": {"id": 99},
+                    "from": {"id": 99},
+                    "text": command,
+                }
+            }
+        )
+
+    assert bot.calls == []
+    assert bot.team_upload_active is True
+    assert all(
+        item["text"] == "Esta carga pertenece a otro operador del chat."
+        for item in adapter.sent[-3:]
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_cancel_command_discards_only_guided_upload_session():
+    bot = _FakeRegistrationBot()
+    bot.team_upload_active = True
+    policy = RegistrationBotAccessPolicy(mode="allowlist", allowed_user_ids=[42])
+    adapter = _TestAdapter(bot, "registration-token", access_policy=policy)
+
+    await adapter.handle_update(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 99},
+                "from": {"id": 42},
+                "text": "/cancelar",
+            }
+        }
+    )
+
+    assert bot.calls == [("cancel_upload", 99, 42)]
+    assert bot.team_upload_active is False
+
+
+@pytest.mark.asyncio
+async def test_begin_team_upload_is_idempotent_and_preserves_existing_pages():
+    intake = RegistrationIntakeBot.__new__(RegistrationIntakeBot)
+    intake.team_upload_sessions_by_chat = {
+        99: TeamUploadSession(user_id=42, pages=[b"private-page"]),
+    }
+
+    same_owner = await intake.begin_team_upload(chat_id=99, user_id=42)
+    other_owner = await intake.begin_team_upload(chat_id=99, user_id=7)
+
+    assert "1 imagen(es)" in same_owner
+    assert other_owner == "Esta carga pertenece a otro operador del chat."
+    assert intake.team_upload_sessions_by_chat[99].pages == [b"private-page"]
 
 
 @pytest.mark.asyncio
