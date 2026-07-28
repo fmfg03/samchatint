@@ -299,6 +299,40 @@ def _render_presupuestos_catalog_section(
             if str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
         }
     )
+    catalog_export_html = (
+        '<a href="/admin/presupuestos/conceptos/export.xlsx" '
+        'style="display:inline-flex;margin-top:10px;text-decoration:none;'
+        "background:#1d4ed8;color:#fff;border-radius:999px;padding:9px 12px;"
+        'font-size:12px;font-weight:700;">Exportar catálogo</a>'
+        if access.get("export")
+        else '<div style="margin-top:10px;color:#64748b;font-size:12px;">'
+        "Sin permiso para exportar.</div>"
+    )
+    catalog_import_html = (
+        '<form method="POST" action="/admin/presupuestos/conceptos/import" '
+        'enctype="multipart/form-data" style="display:grid;gap:8px;margin-top:10px;">'
+        '<input type="file" name="archivo_catalogo" accept=".csv,.xlsx,.xlsm" required>'
+        '<button type="submit" style="width:max-content;background:#0f766e;color:#fff;'
+        "border:none;border-radius:999px;padding:9px 12px;font-size:12px;"
+        'font-weight:700;cursor:pointer;">Importar catálogo</button></form>'
+        if access.get("line_update")
+        else '<div style="margin-top:10px;color:#64748b;font-size:12px;">'
+        "Sin permiso para importar.</div>"
+    )
+    catalog_tools_html = f"""
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:14px;">
+            <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
+                <div style="font-weight:700;color:#0f172a;">Exportar catálogo</div>
+                <div style="margin-top:6px;font-size:12px;color:#64748b;">Descarga partidas, proyecto, subproyecto, cuenta contable, cuenta pasivo y activo.</div>
+                {catalog_export_html}
+            </div>
+            <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
+                <div style="font-weight:700;color:#0f172a;">Importar catálogo</div>
+                <div style="margin-top:6px;font-size:12px;color:#64748b;">Acepta CSV/XLSX con columnas partida, proyecto, sub_proyecto, cuenta_contable, cuenta_pasivo y activo. Las cuentas y proyectos deben existir.</div>
+                {catalog_import_html}
+            </div>
+        </div>
+    """
     return f"""
     <section class="workspace-card" style="margin-bottom:18px;">
         <div class="workspace-section-title">Catálogo presupuestal</div>
@@ -318,6 +352,7 @@ def _render_presupuestos_catalog_section(
                 <div style="margin-top:6px;color:#475569;">Se preselecciona para partidas nuevas mientras Contabilidad revisa el catálogo.</div>
             </div>
         </div>
+        {catalog_tools_html}
         {catalog_editor_html}
     </section>
     """
