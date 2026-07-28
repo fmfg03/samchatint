@@ -558,6 +558,29 @@ def test_budget_catalog_import_export_routes_are_wired():
     assert "await session.rollback()" in source
 
 
+def test_budget_catalog_tournament_filter_is_wired():
+    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    active_route_source = Path(
+        "src/devnous/gastos/routes/admin_budget_routes.py"
+    ).read_text()
+
+    assert 'catalog_scope: Optional[str] = Query("none")' in active_route_source
+    assert "catalog_tournament_ids: list[str] = Query([])" in active_route_source
+    assert "selected_catalog_tournament_ids" in active_route_source
+    assert "catalog_tournament_ids" in active_route_source
+    assert "Aplicar filtro" in active_route_source
+    assert "Todos" in active_route_source
+    assert "Ninguno" in active_route_source
+    assert "Selecciona torneos para cargar partidas" in active_route_source
+    assert "partidas cargadas de" in active_route_source
+
+    assert "catalog_scope: Optional[str] = None" in source
+    assert "catalog_tournament_ids: Optional[List[str]] = None" in source
+    assert "catalog_tournament_ids: List[str] = Form([])" in source
+    assert "catalog_scope={quote(str(catalog_scope))}" in source
+    assert "catalog_tournament_ids={quote(str(tournament_id))}" in source
+
+
 def test_budget_catalog_upload_supports_pasivo_and_active_fields():
     service_source = Path("src/samchat/budgets/service.py").read_text()
     import_source = service_source[

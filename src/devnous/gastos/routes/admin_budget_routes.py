@@ -6,6 +6,7 @@ import logging
 from datetime import date
 from html import escape as escape_html
 from typing import Any, Optional
+from urllib.parse import quote
 
 from fastapi import Depends, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -113,8 +114,11 @@ def _render_presupuestos_catalog_section(
     catalog_cuentas: list[CuentaContable],
     access: dict[str, bool],
     selected_version: Optional[dict],
+    edition_year: int,
+    catalog_scope: str,
+    selected_catalog_tournament_ids: list[str],
 ) -> str:
-    active_concepts = sorted(
+    all_active_concepts = sorted(
         [item for item in budget_concepts if item.get("active")],
         key=lambda row: (
             str(row.get("tournament_name") or "").lower(),
@@ -136,6 +140,21 @@ def _render_presupuestos_catalog_section(
         if selected_version
         else ""
     )
+    normalized_catalog_scope = str(catalog_scope or "none").strip().lower()
+    if normalized_catalog_scope not in {"all", "none", "selected"}:
+        normalized_catalog_scope = "selected"
+    selected_catalog_tournament_set = {
+        str(item).strip() for item in selected_catalog_tournament_ids if str(item).strip()
+    }
+    catalog_hidden_context += (
+        f'<input type="hidden" name="catalog_scope" '
+        f'value="{escape_html(normalized_catalog_scope, quote=True)}">'
+    )
+    catalog_hidden_context += "".join(
+        '<input type="hidden" name="catalog_tournament_ids" '
+        f'value="{escape_html(item, quote=True)}">'
+        for item in sorted(selected_catalog_tournament_set)
+    )
 
     def _resolve_catalog_tournament_id(concept: dict[str, Any]) -> str:
         concept_tid = str(concept.get("tournament_id") or "").strip()
@@ -149,6 +168,17 @@ def _render_presupuestos_catalog_section(
             if concept_aliases & budget_alias_candidates(tournament.name or ""):
                 return str(tournament.id)
         return ""
+
+    if normalized_catalog_scope == "all":
+        active_concepts = all_active_concepts
+    elif selected_catalog_tournament_set:
+        active_concepts = [
+            item
+            for item in all_active_concepts
+            if _resolve_catalog_tournament_id(item) in selected_catalog_tournament_set
+        ]
+    else:
+        active_concepts = []
 
     def _render_tournament_options(selected_id: str) -> str:
         options = ['<option value="">— Proyecto —</option>']
@@ -256,9 +286,15 @@ def _render_presupuestos_catalog_section(
         """
 
     catalog_rows = "".join(_render_edit_row(item) for item in active_concepts)
-    catalog_rows += _render_edit_row()
-    catalog_rows += _render_edit_row()
+    if normalized_catalog_scope != "none" or selected_catalog_tournament_set:
+        catalog_rows += _render_edit_row()
+        catalog_rows += _render_edit_row()
     readonly_rows = "".join(_render_readonly_row(item) for item in active_concepts)
+    empty_catalog_message = (
+        '<tr><td colspan="6">Selecciona torneos para cargar partidas.</td></tr>'
+        if not active_concepts
+        else ""
+    )
     catalog_editor_html = (
         f"""
         <form method="POST" action="/admin/presupuestos/conceptos/bulk-save" style="margin-top:14px;">
@@ -275,7 +311,7 @@ def _render_presupuestos_catalog_section(
                             <th>Acciones</th>
                         </tr>
                     </thead>
-                    <tbody>{catalog_rows}</tbody>
+                    <tbody>{catalog_rows or empty_catalog_message}</tbody>
                 </table>
             </div>
             <button type="submit" style="margin-top:12px;background:#0f766e;color:#fff;border:none;border-radius:999px;padding:10px 14px;font-weight:700;cursor:pointer;">Guardar catálogo</button>
@@ -287,7 +323,7 @@ def _render_presupuestos_catalog_section(
         <div style="overflow:auto;margin-top:10px;">
             <table>
                 <thead><tr><th>Partida</th><th>Proyecto</th><th>Sub Proyecto</th><th>Cuenta Contable</th><th>Cuenta Pasivo</th></tr></thead>
-                <tbody>{readonly_rows if readonly_rows else '<tr><td colspan="5">Sin partidas activas.</td></tr>'}</tbody>
+                <tbody>{readonly_rows if readonly_rows else '<tr><td colspan="5">Selecciona torneos para cargar partidas.</td></tr>'}</tbody>
             </table>
         </div>
         """
@@ -295,10 +331,51 @@ def _render_presupuestos_catalog_section(
     budget_concepts_tournaments_count = len(
         {
             str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
-            for item in active_concepts
+            for item in all_active_concepts
             if str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
         }
     )
+    filter_base_params = [f"edition_year={int(edition_year)}"]
+    if selected_version and selected_version.get("id"):
+        filter_base_params.append(
+            f'version_id={quote(str(selected_version.get("id") or ""))}'
+        )
+    filter_base_query = "&".join(filter_base_params)
+    all_catalog_url = f"/admin/presupuestos?{filter_base_query}&catalog_scope=all"
+    none_catalog_url = f"/admin/presupuestos?{filter_base_query}&catalog_scope=none"
+    tournament_checkbox_html = "".join(
+        f"""
+        <label style="display:inline-flex;align-items:center;gap:6px;margin:0 8px 8px 0;font-size:12px;color:#334155;">
+            <input type="checkbox" name="catalog_tournament_ids" value="{escape_html(str(tournament.id), quote=True)}"
+                   {"checked" if str(tournament.id) in selected_catalog_tournament_set else ""}>
+            {escape_html(tournament.name or "")}
+        </label>
+        """
+        for tournament in catalog_tournaments
+    )
+    catalog_filter_html = f"""
+        <div style="margin-top:14px;padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+                <div>
+                    <div style="font-weight:700;color:#0f172a;">Filtrar partidas por torneo</div>
+                    <div style="margin-top:6px;font-size:12px;color:#64748b;">{len(active_concepts)} partidas cargadas de {len(all_active_concepts)} activas.</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <a href="{all_catalog_url}" style="text-decoration:none;background:#e2e8f0;color:#0f172a;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:700;">Todos</a>
+                    <a href="{none_catalog_url}" style="text-decoration:none;background:#e2e8f0;color:#0f172a;border-radius:999px;padding:7px 10px;font-size:12px;font-weight:700;">Ninguno</a>
+                </div>
+            </div>
+            <form method="GET" action="/admin/presupuestos" style="margin-top:12px;">
+                <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                {f'<input type="hidden" name="version_id" value="{escape_html(str(selected_version.get("id") or ""), quote=True)}">' if selected_version else ""}
+                <input type="hidden" name="catalog_scope" value="selected">
+                <div style="max-height:170px;overflow:auto;padding:10px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;">
+                    {tournament_checkbox_html or '<div style="color:#64748b;font-size:12px;">Sin torneos activos.</div>'}
+                </div>
+                <button type="submit" style="margin-top:10px;background:#0f766e;color:#fff;border:none;border-radius:999px;padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer;">Aplicar filtro</button>
+            </form>
+        </div>
+    """
     catalog_export_html = (
         '<a href="/admin/presupuestos/conceptos/export.xlsx" '
         'style="display:inline-flex;margin-top:10px;text-decoration:none;'
@@ -311,6 +388,7 @@ def _render_presupuestos_catalog_section(
     catalog_import_html = (
         '<form method="POST" action="/admin/presupuestos/conceptos/import" '
         'enctype="multipart/form-data" style="display:grid;gap:8px;margin-top:10px;">'
+        f"{catalog_hidden_context}"
         '<input type="file" name="archivo_catalogo" accept=".csv,.xlsx,.xlsm" required>'
         '<button type="submit" style="width:max-content;background:#0f766e;color:#fff;'
         "border:none;border-radius:999px;padding:9px 12px;font-size:12px;"
@@ -343,7 +421,7 @@ def _render_presupuestos_catalog_section(
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
             <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
                 <div style="font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:#64748b;">Catálogo activo</div>
-                <div style="margin-top:6px;font-size:24px;font-weight:800;color:#0f172a;">{len(active_concepts)}</div>
+                <div style="margin-top:6px;font-size:24px;font-weight:800;color:#0f172a;">{len(all_active_concepts)}</div>
                 <div style="margin-top:6px;color:#475569;">{budget_concepts_tournaments_count} proyecto(s) con partida cargada.</div>
             </div>
             <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
@@ -352,6 +430,7 @@ def _render_presupuestos_catalog_section(
                 <div style="margin-top:6px;color:#475569;">Se preselecciona para partidas nuevas mientras Contabilidad revisa el catálogo.</div>
             </div>
         </div>
+        {catalog_filter_html}
         {catalog_tools_html}
         {catalog_editor_html}
     </section>
@@ -376,6 +455,8 @@ def register_presupuestos_routes(router) -> None:
         current_empleado=Depends(get_current_empleado),
         edition_year: Optional[int] = Query(None),
         version_id: Optional[str] = Query(None),
+        catalog_scope: Optional[str] = Query("none"),
+        catalog_tournament_ids: list[str] = Query([]),
         success_msg: Optional[str] = Query(None),
         error_msg: Optional[str] = Query(None),
     ):
@@ -430,6 +511,9 @@ def register_presupuestos_routes(router) -> None:
             catalog_cuentas=catalog_cuentas,
             access=access,
             selected_version=selected_version,
+            edition_year=resolved_year,
+            catalog_scope=catalog_scope or "none",
+            selected_catalog_tournament_ids=catalog_tournament_ids,
         )
 
         tournament_rollups: dict[str, dict[str, float]] = {}
