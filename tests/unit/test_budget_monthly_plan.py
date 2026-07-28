@@ -519,6 +519,26 @@ def test_create_budget_line_route_creates_concept_with_direction_and_account():
     assert "line_direction=line_direction" in route_source
 
 
+def test_budget_catalog_editor_supports_pasivo_account():
+    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+
+    assert "Cuenta Pasivo" in source
+    assert "pasivo_cuenta_contable_ids: List[str] = Form([])" in source
+    assert 'field_name="pasivo_cuenta_contable_ids"' in source
+    assert "DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE" in source
+
+
+def test_budget_schema_adds_pasivo_account_and_default_backfill():
+    service_source = Path("src/samchat/budgets/service.py").read_text()
+    guard_source = Path("src/devnous/gastos/schema_guard.py").read_text()
+
+    assert "pasivo_cuenta_contable_id UUID NULL" in service_source
+    assert "ix_budget_concepts_pasivo_cuenta_contable_id" in service_source
+    assert "2120-002-099" in service_source
+    assert 'RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id")' in guard_source
+    assert "budget_concepts_pasivo_default_backfill" in guard_source
+
+
 def test_create_budget_concept_accepts_budget_direction():
     source = Path("src/samchat/budgets/service.py").read_text()
     function_source = source[
