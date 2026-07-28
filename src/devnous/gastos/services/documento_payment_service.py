@@ -15,6 +15,9 @@ from ..models import Aprobacion, Documento, Empleado, Reembolso, Tournament
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
 from .documento_workflow_service import promote_solicitudes_ready_for_payment
 from .documento_semantics import is_employee_reimbursement
+from .employee_debtor_accounting_service import (
+    ensure_debtor_payment_posting_for_document,
+)
 from .expense_service import create_expense_from_data
 
 logger = logging.getLogger(__name__)
@@ -157,6 +160,14 @@ async def register_document_payment(
         if documento.cuenta_gastos_id:
             documento.estado = "pagado"
             documento.pagado_en = datetime.utcnow()
+            beneficiary = documento.beneficiario_empleado
+            if beneficiary is not None:
+                await ensure_debtor_payment_posting_for_document(
+                    session,
+                    documento=documento,
+                    empleado=beneficiary,
+                    fecha_pago=documento.fecha_pago or date.today(),
+                )
             aprobacion = Aprobacion(
                 tipo_entidad="documento",
                 entidad_id=documento.id,
@@ -291,6 +302,13 @@ async def register_document_payment(
     documento.estado = "pagado"
     documento.pagado_en = datetime.utcnow()
     documento.gasto_generado_id = expense.id
+    if has_beneficiario and beneficiario_empleado is not None:
+        await ensure_debtor_payment_posting_for_document(
+            session,
+            documento=documento,
+            empleado=beneficiario_empleado,
+            fecha_pago=fecha_pago,
+        )
 
     # Propagate CFDI capture from the solicitud (if any) to the generated expense so the
     # standard cfdi_uuid_manual → cfdi_report_id linking pipeline can auto-match when the
