@@ -13168,6 +13168,8 @@ def _presupuestos_redirect_url(
     drill_value: Optional[str] = None,
     drill_tournament: Optional[str] = None,
     drill_document: Optional[str] = None,
+    catalog_scope: Optional[str] = None,
+    catalog_tournament_ids: Optional[List[str]] = None,
 ) -> str:
     from .admin_budget_ui import budget_dashboard_url, budget_tournament_detail_url
 
@@ -13180,12 +13182,22 @@ def _presupuestos_redirect_url(
             success_msg=success_msg,
             error_msg=error_msg,
         )
-    return budget_dashboard_url(
+    url = budget_dashboard_url(
         edition_year=edition_year,
         version_id=version_id,
         success_msg=success_msg,
         error_msg=error_msg,
     )
+    extra_params: list[str] = []
+    if catalog_scope not in (None, ""):
+        extra_params.append(f"catalog_scope={quote(str(catalog_scope))}")
+    for tournament_id in catalog_tournament_ids or []:
+        if tournament_id not in (None, ""):
+            extra_params.append(f"catalog_tournament_ids={quote(str(tournament_id))}")
+    if extra_params:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{'&'.join(extra_params)}"
+    return url
 
 
 @router.post("/admin/presupuestos/conceptos/bulk-save")
@@ -13197,6 +13209,8 @@ async def admin_presupuestos_bulk_save_concepts(
     cuenta_contable_ids: List[str] = Form([]),
     pasivo_cuenta_contable_ids: List[str] = Form([]),
     version_id: Optional[str] = Form(None),
+    catalog_scope: Optional[str] = Form(None),
+    catalog_tournament_ids: List[str] = Form([]),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
@@ -13249,6 +13263,8 @@ async def admin_presupuestos_bulk_save_concepts(
         return RedirectResponse(
             url=_presupuestos_redirect_url(
                 version_id=version_id,
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
                 success_msg=msg,
             ),
             status_code=303,
@@ -13258,6 +13274,8 @@ async def admin_presupuestos_bulk_save_concepts(
         return RedirectResponse(
             url=_presupuestos_redirect_url(
                 version_id=version_id,
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
                 error_msg=str(exc)[:180],
             ),
             status_code=303,
@@ -13274,6 +13292,8 @@ async def admin_presupuestos_bulk_save_concepts(
         return RedirectResponse(
             url=_presupuestos_redirect_url(
                 version_id=version_id,
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
                 error_msg=_OPERATION_GENERIC_ERROR,
             ),
             status_code=303,
@@ -13288,6 +13308,8 @@ async def admin_presupuestos_hide_concept(
     drill_value: Optional[str] = Form(None),
     drill_tournament: Optional[str] = Form(None),
     drill_document: Optional[str] = Form(None),
+    catalog_scope: Optional[str] = Form(None),
+    catalog_tournament_ids: List[str] = Form([]),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
@@ -13298,6 +13320,8 @@ async def admin_presupuestos_hide_concept(
         "drill_value": drill_value,
         "drill_tournament": drill_tournament,
         "drill_document": drill_document,
+        "catalog_scope": catalog_scope,
+        "catalog_tournament_ids": catalog_tournament_ids,
     }
     try:
         hidden = await hide_budget_concept(
@@ -13365,6 +13389,8 @@ async def admin_presupuestos_export_concepts_xlsx(
 @router.post("/admin/presupuestos/conceptos/import")
 async def admin_presupuestos_import_concepts(
     archivo_catalogo: UploadFile = File(...),
+    catalog_scope: Optional[str] = Form(None),
+    catalog_tournament_ids: List[str] = Form([]),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ):
@@ -13389,13 +13415,21 @@ async def admin_presupuestos_import_concepts(
             f"{int(result.get('rows_processed') or 0)} fila(s) procesada(s)."
         )
         return RedirectResponse(
-            url=_presupuestos_redirect_url(success_msg=msg),
+            url=_presupuestos_redirect_url(
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
+                success_msg=msg,
+            ),
             status_code=303,
         )
     except ValueError as exc:
         await session.rollback()
         return RedirectResponse(
-            url=_presupuestos_redirect_url(error_msg=str(exc)[:240]),
+            url=_presupuestos_redirect_url(
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
+                error_msg=str(exc)[:240],
+            ),
             status_code=303,
         )
     except Exception:
@@ -13408,7 +13442,11 @@ async def admin_presupuestos_import_concepts(
             },
         )
         return RedirectResponse(
-            url=_presupuestos_redirect_url(error_msg=_OPERATION_GENERIC_ERROR),
+            url=_presupuestos_redirect_url(
+                catalog_scope=catalog_scope,
+                catalog_tournament_ids=catalog_tournament_ids,
+                error_msg=_OPERATION_GENERIC_ERROR,
+            ),
             status_code=303,
         )
 
