@@ -946,6 +946,11 @@ async def test_sync_budget_projects_from_partidas_workbook_aligns_only_workbook_
             },
         ],
     )
+    authority_guard = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "samchat.budgets.service.require_ungoverned_gastos_project",
+        authority_guard,
+    )
 
     report = await sync_budget_projects_from_partidas_workbook(
         _Session(),
@@ -973,6 +978,69 @@ async def test_sync_budget_projects_from_partidas_workbook_aligns_only_workbook_
     assert insert_calls[0]["name"] == "Homeless World Cup México"
     assert insert_calls[0]["display_order"] == 8
     assert "tor-other" not in str(update_calls)
+    assert authority_guard.await_count == 1
+    assert authority_guard.await_args.args[1] == "tor-ctt"
+
+
+@pytest.mark.asyncio
+async def test_sync_budget_projects_refuses_governed_target_before_update_or_commit(
+    monkeypatch,
+) -> None:
+    from devnous.gastos.services.tournament_authority_service import (
+        GovernedGastosProjectError,
+    )
+
+    execute_calls: list[str] = []
+
+    class _ScalarResult:
+        def scalar(self):
+            return 7
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = " ".join(str(statement).split())
+            execute_calls.append(sql)
+            return _ScalarResult()
+
+        async def commit(self):
+            execute_calls.append("COMMIT")
+
+    monkeypatch.setattr(
+        "samchat.budgets.service._load_tournament_rows",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "20000000-0000-0000-0000-000000000055",
+                    "name": "Proyecto gobernado",
+                    "active": True,
+                    "etapas": ["Anterior"],
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "samchat.budgets.service.collect_workbook_project_configs",
+        lambda _path: [{"proyecto": "Proyecto gobernado", "etapas": ["Nueva"]}],
+    )
+    monkeypatch.setattr(
+        "samchat.budgets.service.require_ungoverned_gastos_project",
+        AsyncMock(
+            side_effect=GovernedGastosProjectError(
+                case_id="analyst_case_" + "5" * 32,
+                case_version=4,
+                application_hash="sha256:" + "a" * 64,
+            )
+        ),
+    )
+
+    with pytest.raises(GovernedGastosProjectError):
+        await sync_budget_projects_from_partidas_workbook(
+            _Session(), workbook_path="/tmp/partidas.xlsx"
+        )
+
+    assert not any(sql.startswith("UPDATE tournaments") for sql in execute_calls)
+    assert not any(sql.startswith("INSERT INTO tournaments") for sql in execute_calls)
+    assert "COMMIT" not in execute_calls
 
 
 @pytest.mark.asyncio

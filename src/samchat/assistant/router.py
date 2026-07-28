@@ -2336,7 +2336,6 @@ FINANCE_WRITE_TOOLS = {
     "finance_expense_update",
     "finance_expense_request_cfdi",
     "assistant_save_artifact",
-    "db_write_universal",
 }
 TOURNAMENT_READ_TOOLS = {
     "tournament_expediente_snapshot",
@@ -2358,7 +2357,6 @@ TOURNAMENT_WRITE_TOOLS = {
     "tournament_proposal_approve",
     "tournament_proposal_apply",
     "assistant_save_artifact",
-    "db_write_universal",
 }
 DEV_READ_TOOLS = {
     "dev_repo_search",
@@ -2881,18 +2879,33 @@ DEFAULT_SUPABASE_DB_TABLES = {
 }
 
 DB_FILTER_OPS = {"eq", "ilike", "gt", "gte", "lt", "lte", "in", "is_null"}
+GASTOS_PROJECT_AUTHORITY_TABLES = {
+    "tournaments",
+    "tournament_operations_links",
+    "tournament_concepto_mappings",
+}
+OPERATIONS_LEGACY_LOCAL_AUTHORITY_TABLES = {
+    "copa_telmex_teams",
+    "copa_telmex_players",
+    "copa_telmex_ocr_registrations",
+    "copa_telmex_validation_logs",
+}
+OPERATIONS_TOURNAMENT_AUTHORITY_TABLES = set(DEFAULT_SUPABASE_DB_TABLES)
 DEFAULT_DB_WRITE_DENYLIST_GASTOS = {
     "empleados",
     "assistant_conversations",
     "assistant_messages",
     "assistant_runs",
     "aprobaciones",
-}
-DEFAULT_DB_WRITE_DENYLIST_SUPABASE = {
+} | GASTOS_PROJECT_AUTHORITY_TABLES | OPERATIONS_LEGACY_LOCAL_AUTHORITY_TABLES
+DEFAULT_DB_WRITE_DENYLIST_SUPABASE = OPERATIONS_TOURNAMENT_AUTHORITY_TABLES | {
     "profiles",
     "user_roles",
     "admin_audit_log",
     "role_audit_log",
+    "tournament_contract_drafts",
+    "tournament_operational_commitments",
+    "email_send_log",
 }
 
 _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
@@ -4862,7 +4875,8 @@ def _db_write_denylist(default_tables: set[str], env_var: str) -> set[str]:
         if not re.fullmatch(r"[a-z_][a-z0-9_]*", name):
             continue
         tables.add(name)
-    return tables or set(default_tables)
+    # Deployment configuration may strengthen, but can never weaken, hard denies.
+    return set(default_tables) | tables
 
 
 def _validate_db_write_target(*, data_source: str, table: str) -> None:
@@ -4880,16 +4894,12 @@ def _validate_db_write_target(*, data_source: str, table: str) -> None:
             )
         return
     if src == "supabase":
-        deny = _db_write_denylist(
-            DEFAULT_DB_WRITE_DENYLIST_SUPABASE,
-            "ASSISTANT_DB_WRITE_DENYLIST_SUPABASE",
+        # Universal Supabase mutation is intentionally disabled. Operational
+        # tournament writes must use typed domain services and their permits.
+        raise HTTPException(
+            status_code=403,
+            detail=f"Universal writes are disabled for supabase table: {tbl}",
         )
-        if tbl in deny:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Write blocked for sensitive supabase table: {tbl}",
-            )
-        return
 
 
 def _write_is_high_risk(tool_name: str, tool_args: Dict[str, Any]) -> bool:

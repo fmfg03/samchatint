@@ -68,6 +68,11 @@ jobs:
             "tests/unit/test_assistant_analyst_evidence_quality.py"
             "tests/unit/test_assistant_analyst_workspace.py"
             "tests/integration/test_assistant_analyst_case_persistence.py"
+            "scripts/check_tournament_write_boundaries.py"
+            "tests/unit/gastos/test_tournament_admin_authority_closure.py"
+            "tests/unit/test_assistant_tournament_writer_guard.py"
+            "tests/unit/test_tournament_write_boundary_gate.py"
+            "tests/unit/test_budget_service.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -153,7 +158,16 @@ jobs:
             tests/unit/test_assistant_analyst_live_evidence.py \
             tests/unit/test_assistant_analyst_evidence_quality.py \
             tests/unit/test_assistant_analyst_workspace.py \
-            tests/integration/test_assistant_analyst_case_persistence.py
+            tests/integration/test_assistant_analyst_case_persistence.py \
+            tests/unit/gastos/test_tournament_admin_authority_closure.py \
+            tests/unit/test_assistant_tournament_writer_guard.py \
+            tests/unit/test_tournament_write_boundary_gate.py \
+            tests/unit/test_budget_service.py
+
+      - name: Enforce local gastos-project writer boundary
+        if: steps.detect.outputs.available == 'true'
+        run: |
+          .venv/bin/python scripts/check_tournament_write_boundaries.py .
 
       - name: Check diff hygiene
         if: steps.detect.outputs.available == 'true'

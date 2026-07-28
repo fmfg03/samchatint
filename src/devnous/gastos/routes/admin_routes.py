@@ -86,6 +86,11 @@ from ..services.tournament_project_visibility import (
     parse_form_visibility_areas_from_form,
     render_form_visibility_areas_checkboxes,
 )
+from ..services.tournament_authority_service import (
+    GovernedGastosProjectError,
+    TournamentAuthorityUnavailableError,
+    require_ungoverned_gastos_project,
+)
 from ..services.tocino_client import TocinoAPIError, get_tocino_client
 from ..services.cfdi_expense_link_service import (
     bulk_link_pending_documentos_to_cfdi_reports,
@@ -891,6 +896,10 @@ async def _audit_access_profile_event(
 
 
 router = APIRouter()
+require_tournament_admin = require_permission_factory(
+    ["admin.torneos.manage"],
+    allowed_roles=["admin", "superadmin", "super_admin"],
+)
 _HEALTH_HISTORY_LOCK = Lock()
 _HEALTH_HISTORY: deque[dict[str, Any]] = deque(maxlen=100)
 
@@ -1523,6 +1532,54 @@ async def _ensure_tournaments_admin_schema(session: AsyncSession) -> None:
     )
 
 
+_TOURNAMENT_ADMIN_CSRF_SESSION_KEY = "tournament_admin_csrf"
+
+
+def _tournament_admin_csrf_token(request: Request) -> str:
+    """Return a stable synchronizer token bound to the signed login session."""
+
+    token = str(request.session.get(_TOURNAMENT_ADMIN_CSRF_SESSION_KEY) or "")
+    if not token:
+        token = secrets.token_urlsafe(32)
+        request.session[_TOURNAMENT_ADMIN_CSRF_SESSION_KEY] = token
+    return token
+
+
+def _tournament_admin_csrf_input(request: Request) -> str:
+    token = escape(_tournament_admin_csrf_token(request), quote=True)
+    return f'<input type="hidden" name="_csrf_token" value="{token}">'
+
+
+async def require_tournament_admin_csrf(request: Request) -> None:
+    """Reject tournament form mutations that are not bound to this session."""
+
+    form = await request.form()
+    expected = str(request.session.get(_TOURNAMENT_ADMIN_CSRF_SESSION_KEY) or "")
+    submitted = str(form.get("_csrf_token") or "")
+    if not expected or not submitted or not secrets.compare_digest(expected, submitted):
+        raise HTTPException(status_code=403, detail="Invalid tournament CSRF token")
+
+
+async def _require_legacy_gastos_project_mutable(
+    session: AsyncSession,
+    tournament_id: UUIDType,
+) -> None:
+    try:
+        await require_ungoverned_gastos_project(session, tournament_id)
+    except GovernedGastosProjectError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Governed gastos project must be changed through its assistant case",
+                "case_id": exc.case_id,
+                "case_version": exc.case_version,
+                "application_hash": exc.application_hash,
+            },
+        ) from exc
+    except TournamentAuthorityUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 def _admin_torneos_redirect(
     *,
     success_msg: Optional[str] = None,
@@ -2058,6 +2115,7 @@ async def _probe_tournaments_v2_domain_schema() -> dict[str, Any]:
 
 def _render_tournaments_domain_alignment_page(
     *,
+    request: Request,
     current_empleado: Empleado,
     schema_probe: dict[str, Any],
     mode: str = "dry_run",
@@ -2072,6 +2130,7 @@ def _render_tournaments_domain_alignment_page(
     audit_returncode: Optional[int] = None,
     error_msg: Optional[str] = None,
 ) -> HTMLResponse:
+    csrf_input = _tournament_admin_csrf_input(request)
     root = _repo_root()
     migration_path = (
         root
@@ -2454,6 +2513,7 @@ def _render_tournaments_domain_alignment_page(
                 <section class="card">
                     <h3>Ejecutar Backfill</h3>
                     <form method="POST" action="/admin/torneos/domain-alignment/run" data-loading-title="Ejecutando backfill" data-loading-copy="Estamos sincronizando datos legacy hacia Supabase. Esta operación puede tardar varios minutos.">
+                        {csrf_input}
                         <div class="form-grid">
                             <div>
                                 <label for="scope">Scope</label>
@@ -2520,6 +2580,7 @@ def _render_tournaments_domain_alignment_page(
             <section class="card" style="margin-top:20px;">
                 <h3>Auditar Drift Local vs Supabase</h3>
                 <form method="POST" action="/admin/torneos/domain-alignment/audit" data-loading-title="Ejecutando auditoría" data-loading-copy="Estamos comparando legacy contra Supabase para detectar drift. Esta revisión puede tardar un poco.">
+                    {csrf_input}
                     <div class="form-grid">
                         <div>
                             <label for="audit_scope">Scope</label>
@@ -6812,9 +6873,10 @@ async def admin_finance_link_diot_blockers_cfdi(
 async def admin_tournaments(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = Depends(get_current_empleado),
+    current_empleado: Empleado = Depends(require_tournament_admin),
 ):
     """Admin interface for managing gastos projects and linked tournaments."""
+    csrf_input = _tournament_admin_csrf_input(request)
     try:
         await _ensure_tournaments_admin_schema(session)
     except Exception as exc:
@@ -7097,6 +7159,7 @@ async def admin_tournaments(
                         <h3>Crear proyecto manualmente</h3>
                         <p>Crea un proyecto local en el app de gastos sin depender del catálogo de Torneos.</p>
                         <form method="POST" action="/admin/torneos/create">
+                            {csrf_input}
                             <div class="form-group">
                                 <label for="manual_name">Nombre del proyecto</label>
                                 <input type="text" id="manual_name" name="name" required>
@@ -7132,13 +7195,14 @@ async def admin_tournaments(
                                     <label for="manual_active" style="margin: 0;">Activo y visible</label>
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary">Crear proyecto</button>
+                            <a href="/assistant" class="btn btn-primary" title="Abre un caso gobernado en el asistente">Crear mediante el asistente</a>
                         </form>
                     </div>
                     <div class="creation-card">
                         <h3>Crear proyecto desde torneo existente</h3>
                         <p>Crea un proyecto local usando un torneo ya existente en la app de Torneos y deja la liga guardada desde el inicio.</p>
                         <form method="POST" action="/admin/torneos/create/from-torneo">
+                            {csrf_input}
                             <div class="form-group">
                                 <label for="source_tournament_id">Torneo origen</label>
                                 <select id="source_tournament_id" name="linked_operations_tournament_id" {'disabled' if not operations_tournaments else ''} required>
@@ -7160,7 +7224,7 @@ async def admin_tournaments(
                                     <label for="source_active" style="margin: 0;">Activo y visible</label>
                                 </div>
                             </div>
-                            <button type="submit" class="btn btn-primary" {'disabled' if not operations_tournaments else ''}>Crear desde torneo</button>
+                            <a href="/assistant" class="btn btn-primary" title="Abre un caso gobernado en el asistente">Crear mediante el asistente</a>
                         </form>
                     </div>
                 </div>
@@ -7208,6 +7272,7 @@ async def admin_tournaments(
                         <div class="tournament-actions">
                             <a href="/admin/torneos/edit/{tournament.id}" class="btn btn-secondary btn-small">✏️ Editar</a>
                             <form method="POST" action="/admin/torneos/toggle/{tournament.id}" style="display: inline;">
+                                {csrf_input}
                                 <button type="submit" class="btn btn-secondary btn-small">{'Desactivar' if tournament.active else 'Activar'}</button>
                             </form>
                         </div>
@@ -7216,6 +7281,7 @@ async def admin_tournaments(
                         <div style="font-weight: 600; margin-bottom: 8px; color: #333;">Ligar proyecto</div>
                         {"<div class='helper-text'>No se pudo cargar el catálogo remoto de Torneos en este momento.</div>" if operations_error else f'''
                         <form method="POST" action="/admin/torneos/link/{tournament.id}" class="link-form">
+                            {csrf_input}
                             <select name="linked_operations_tournament_id">
                                 {link_options_html}
                             </select>
@@ -7239,10 +7305,12 @@ async def admin_tournaments(
 
 @router.get("/admin/torneos/domain-alignment", response_class=HTMLResponse)
 async def admin_tournaments_domain_alignment(
-    current_empleado: Empleado = require_admin_finanzas(),
+    request: Request,
+    current_empleado: Empleado = Depends(require_tournament_admin),
 ):
     schema_probe = await _probe_tournaments_v2_domain_schema()
     return _render_tournaments_domain_alignment_page(
+        request=request,
         current_empleado=current_empleado,
         schema_probe=schema_probe,
     )
@@ -7250,11 +7318,13 @@ async def admin_tournaments_domain_alignment(
 
 @router.post("/admin/torneos/domain-alignment/run", response_class=HTMLResponse)
 async def admin_tournaments_domain_alignment_run(
+    request: Request,
     mode: str = Form("dry_run"),
     scope: str = Form(ACTIVE_TOURNAMENT_SCOPE),
     tournament_slug: str = Form(""),
     team_limit: int = Form(0),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
 ):
     requested_mode = (mode or "dry_run").strip().lower()
     normalized_mode = "apply" if requested_mode == "apply" else "dry_run"
@@ -7267,6 +7337,7 @@ async def admin_tournaments_domain_alignment_run(
 
     if normalized_mode == "apply" and not _is_superadmin_role(current_empleado):
         return _render_tournaments_domain_alignment_page(
+            request=request,
             current_empleado=current_empleado,
             schema_probe=schema_probe,
             mode=normalized_mode,
@@ -7308,6 +7379,7 @@ async def admin_tournaments_domain_alignment_run(
             proc.kill()
             await proc.communicate()
             return _render_tournaments_domain_alignment_page(
+                request=request,
                 current_empleado=current_empleado,
                 schema_probe=schema_probe,
                 mode=normalized_mode,
@@ -7331,6 +7403,7 @@ async def admin_tournaments_domain_alignment_run(
                 run_summary = None
     except Exception as exc:
         return _render_tournaments_domain_alignment_page(
+            request=request,
             current_empleado=current_empleado,
             schema_probe=schema_probe,
             mode=normalized_mode,
@@ -7349,6 +7422,7 @@ async def admin_tournaments_domain_alignment_run(
         output_parts.append("(sin salida)")
 
     return _render_tournaments_domain_alignment_page(
+        request=request,
         current_empleado=current_empleado,
         schema_probe=schema_probe,
         mode=normalized_mode,
@@ -7368,10 +7442,12 @@ async def admin_tournaments_domain_alignment_run(
 
 @router.post("/admin/torneos/domain-alignment/audit", response_class=HTMLResponse)
 async def admin_tournaments_domain_alignment_audit(
+    request: Request,
     scope: str = Form(ACTIVE_TOURNAMENT_SCOPE),
     tournament_slug: str = Form(""),
     team_limit: int = Form(0),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
 ):
     scope_value = (
         scope or ACTIVE_TOURNAMENT_SCOPE
@@ -7410,6 +7486,7 @@ async def admin_tournaments_domain_alignment_audit(
             proc.kill()
             await proc.communicate()
             return _render_tournaments_domain_alignment_page(
+                request=request,
                 current_empleado=current_empleado,
                 schema_probe=schema_probe,
                 scope=scope_value,
@@ -7432,6 +7509,7 @@ async def admin_tournaments_domain_alignment_audit(
                 audit_summary = None
     except Exception as exc:
         return _render_tournaments_domain_alignment_page(
+            request=request,
             current_empleado=current_empleado,
             schema_probe=schema_probe,
             scope=scope_value,
@@ -7449,6 +7527,7 @@ async def admin_tournaments_domain_alignment_audit(
         output_parts.append("(sin salida)")
 
     return _render_tournaments_domain_alignment_page(
+        request=request,
         current_empleado=current_empleado,
         schema_probe=schema_probe,
         scope=scope_value,
@@ -7488,9 +7567,15 @@ async def create_tournament(
     etapas: Optional[str] = Form(None),
     categorias: Optional[str] = Form(None),
     active: Optional[str] = Form(None),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
     session: AsyncSession = Depends(get_db_session),
 ):
     """Create a local gastos project/tournament manually."""
+    raise HTTPException(
+        status_code=409,
+        detail="Legacy gastos project creation is quarantined; use the governed assistant case",
+    )
     try:
         await _ensure_tournaments_admin_schema(session)
         form_data = await request.form()
@@ -7543,9 +7628,15 @@ async def create_tournament_from_operations(
     linked_operations_tournament_id: str = Form(...),
     display_order: int = Form(-1),
     active: Optional[str] = Form(None),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
     session: AsyncSession = Depends(get_db_session),
 ):
     """Create a local gastos project from an existing operations tournament."""
+    raise HTTPException(
+        status_code=409,
+        detail="Legacy gastos project creation is quarantined; use the governed assistant case",
+    )
     try:
         await _ensure_tournaments_admin_schema(session)
         form_data = await request.form()
@@ -7620,16 +7711,19 @@ async def create_tournament_from_operations(
 async def link_tournament_to_operations(
     tournament_id: UUIDType,
     linked_operations_tournament_id: Optional[str] = Form(None),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
     session: AsyncSession = Depends(get_db_session),
 ):
     """Link or unlink a local gastos project to an operations tournament."""
     await _ensure_tournaments_admin_schema(session)
     result = await session.execute(
-        select(Tournament).where(Tournament.id == tournament_id)
+        select(Tournament).where(Tournament.id == tournament_id).with_for_update()
     )
     tournament = result.scalar_one_or_none()
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    await _require_legacy_gastos_project_mutable(session, tournament_id)
     link_result = await session.execute(
         select(TournamentOperationsLink).where(
             TournamentOperationsLink.tournament_id == tournament_id
@@ -7682,6 +7776,7 @@ async def link_tournament_to_operations(
 async def edit_tournament_form(
     tournament_id: UUIDType,
     request: Request,
+    current_empleado: Empleado = Depends(require_tournament_admin),
     session: AsyncSession = Depends(get_db_session),
 ):
     """Edit tournament form."""
@@ -7693,6 +7788,8 @@ async def edit_tournament_form(
 
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    await _require_legacy_gastos_project_mutable(session, tournament_id)
+    csrf_input = _tournament_admin_csrf_input(request)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -7801,13 +7898,14 @@ async def edit_tournament_form(
         {_CONFIG_PANEL_BACK_LINK_HTML}
         <h1>✏️ Editar Torneo</h1>
         <form method="POST" action="/admin/torneos/update/{tournament_id}">
+            {csrf_input}
             <div class="form-group">
                 <label>Nombre del Torneo *</label>
-                <input type="text" name="name" value="{tournament.name}" required>
+                <input type="text" name="name" value="{escape(str(tournament.name or ''), quote=True)}" required>
             </div>
             <div class="form-group">
                 <label>Descripción</label>
-                <textarea name="description">{tournament.description or ''}</textarea>
+                <textarea name="description">{escape(str(tournament.description or ''))}</textarea>
             </div>
             <div class="form-group">
                 <label>Orden de Visualización</label>
@@ -7815,7 +7913,7 @@ async def edit_tournament_form(
             </div>
             <div class="form-group">
                 <label>Cuenta Contable</label>
-                <input type="text" name="cuenta_contable_relacionada" value="{tournament.cuenta_contable_relacionada or ''}" placeholder="Ej: 5300-010">
+                <input type="text" name="cuenta_contable_relacionada" value="{escape(str(tournament.cuenta_contable_relacionada or ''), quote=True)}" placeholder="Ej: 5300-010">
                 <small style="color: #666; display: block; margin-top: 5px;">Cuenta contable asociada a este torneo</small>
             </div>
             <div class="form-group">
@@ -7860,6 +7958,8 @@ async def update_tournament(
     cuenta_contable_relacionada: Optional[str] = Form(None),
     etapas: Optional[str] = Form(None),
     categorias: Optional[str] = Form(None),
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
     session: AsyncSession = Depends(get_db_session),
 ):
     """Update a tournament."""
@@ -7877,12 +7977,13 @@ async def update_tournament(
         )
 
         result = await session.execute(
-            select(Tournament).where(Tournament.id == tournament_id)
+            select(Tournament).where(Tournament.id == tournament_id).with_for_update()
         )
         tournament = result.scalar_one_or_none()
 
         if not tournament:
             return _admin_torneos_redirect(error_msg="Torneo no encontrado.")
+        await _require_legacy_gastos_project_mutable(session, tournament_id)
 
         if not normalized_name:
             return _admin_torneos_redirect(
@@ -7940,6 +8041,9 @@ async def update_tournament(
                     "todas las fases/subproyectos."
                 )
         return _admin_torneos_redirect(success_msg=success_msg)
+    except HTTPException:
+        await session.rollback()
+        raise
     except IntegrityError:
         await session.rollback()
         return _admin_torneos_redirect(
@@ -7958,17 +8062,21 @@ async def update_tournament(
 
 @router.post("/admin/torneos/toggle/{tournament_id}")
 async def toggle_tournament(
-    tournament_id: UUIDType, session: AsyncSession = Depends(get_db_session)
+    tournament_id: UUIDType,
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
+    session: AsyncSession = Depends(get_db_session),
 ):
     """Toggle tournament active status."""
     await _ensure_tournaments_admin_schema(session)
     result = await session.execute(
-        select(Tournament).where(Tournament.id == tournament_id)
+        select(Tournament).where(Tournament.id == tournament_id).with_for_update()
     )
     tournament = result.scalar_one_or_none()
 
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    await _require_legacy_gastos_project_mutable(session, tournament_id)
 
     tournament.active = not tournament.active
     await session.commit()
@@ -7992,17 +8100,21 @@ async def toggle_tournament(
 
 @router.post("/admin/torneos/delete/{tournament_id}")
 async def delete_tournament(
-    tournament_id: UUIDType, session: AsyncSession = Depends(get_db_session)
+    tournament_id: UUIDType,
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
+    session: AsyncSession = Depends(get_db_session),
 ):
     """Delete a tournament."""
     await _ensure_tournaments_admin_schema(session)
     result = await session.execute(
-        select(Tournament).where(Tournament.id == tournament_id)
+        select(Tournament).where(Tournament.id == tournament_id).with_for_update()
     )
     tournament = result.scalar_one_or_none()
 
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
+    await _require_legacy_gastos_project_mutable(session, tournament_id)
 
     await session.delete(tournament)
     await session.commit()
