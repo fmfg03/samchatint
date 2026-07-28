@@ -5,19 +5,23 @@ from __future__ import annotations
 import logging
 from datetime import date
 from html import escape as escape_html
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import Depends, File, Form, Query, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from samchat.budgets.service import (
+    DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE,
     attach_cuenta_contable_to_budget_lines,
     build_budget_monthly_actuals,
     build_budget_monthly_plan_rollups,
     build_budget_snapshot,
+    budget_alias_candidates,
     copy_budget_version_forward,
     ensure_budget_schema,
+    list_budget_concepts,
     list_budget_lines,
     list_budget_versions,
     resolve_budget_tournament_context,
@@ -44,6 +48,7 @@ from ..services.cfdi_income_bridge_service import (
     list_psp_cfdi_income_candidates,
     soft_unlink_cfdi_income,
 )
+from ..models import CuentaContable, Tournament
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +91,236 @@ def _select_requested_budget_version(
         ):
             return version
     return None
+
+
+def _budget_catalog_scope_label(metadata: dict[str, Any]) -> str:
+    payload = metadata if isinstance(metadata, dict) else {}
+    for key in ("applicable_phase_labels", "applicable_subproject_labels"):
+        labels = [
+            str(label).strip()
+            for label in list(payload.get(key) or [])
+            if str(label).strip()
+        ]
+        if labels:
+            return labels[0]
+    return ""
+
+
+def _render_presupuestos_catalog_section(
+    *,
+    budget_concepts: list[dict[str, Any]],
+    catalog_tournaments: list[Tournament],
+    catalog_cuentas: list[CuentaContable],
+    access: dict[str, bool],
+    selected_version: Optional[dict],
+) -> str:
+    active_concepts = sorted(
+        [item for item in budget_concepts if item.get("active")],
+        key=lambda row: (
+            str(row.get("tournament_name") or "").lower(),
+            str(row.get("concept_name") or "").lower(),
+        ),
+    )
+    default_pasivo_cuenta_id = next(
+        (
+            str(cuenta.id)
+            for cuenta in catalog_cuentas
+            if str(cuenta.codigo or "").strip()
+            == DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE
+        ),
+        "",
+    )
+    catalog_hidden_context = (
+        f'<input type="hidden" name="version_id" '
+        f'value="{escape_html(str(selected_version.get("id") or ""), quote=True)}">'
+        if selected_version
+        else ""
+    )
+
+    def _resolve_catalog_tournament_id(concept: dict[str, Any]) -> str:
+        concept_tid = str(concept.get("tournament_id") or "").strip()
+        if concept_tid:
+            return concept_tid
+        concept_aliases = budget_alias_candidates(
+            concept.get("tournament_code") or "",
+            concept.get("tournament_name") or "",
+        )
+        for tournament in catalog_tournaments:
+            if concept_aliases & budget_alias_candidates(tournament.name or ""):
+                return str(tournament.id)
+        return ""
+
+    def _render_tournament_options(selected_id: str) -> str:
+        options = ['<option value="">— Proyecto —</option>']
+        selected_clean = str(selected_id or "").strip()
+        for tournament in catalog_tournaments:
+            tournament_id = str(tournament.id)
+            selected_attr = " selected" if tournament_id == selected_clean else ""
+            options.append(
+                f'<option value="{escape_html(tournament_id, quote=True)}"'
+                f"{selected_attr}>{escape_html(tournament.name or '')}</option>"
+            )
+        return "".join(options)
+
+    def _render_cuenta_select(*, selected_id: str = "", field_name: str) -> str:
+        options = ['<option value="">— Sin cuenta —</option>']
+        selected_clean = str(selected_id or "").strip()
+        for cuenta in catalog_cuentas:
+            cuenta_id = str(cuenta.id)
+            selected_attr = " selected" if cuenta_id == selected_clean else ""
+            label = f"{cuenta.codigo} · {cuenta.nombre}"
+            options.append(
+                f'<option value="{escape_html(cuenta_id, quote=True)}"'
+                f"{selected_attr}>{escape_html(label)}</option>"
+            )
+        return (
+            f'<select name="{escape_html(field_name, quote=True)}" '
+            'style="width:100%;padding:8px;border:1px solid #cbd5e1;'
+            f'border-radius:8px;">{"".join(options)}</select>'
+        )
+
+    def _render_edit_row(concept: Optional[dict[str, Any]] = None) -> str:
+        item = concept or {}
+        concept_id = str(item.get("id") or "")
+        tournament_id = _resolve_catalog_tournament_id(item) if item else ""
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        sub_proyecto = _budget_catalog_scope_label(metadata)
+        cuenta_id = str(item.get("cuenta_contable_id") or "")
+        pasivo_id = (
+            str(item.get("pasivo_cuenta_contable_id") or "")
+            or default_pasivo_cuenta_id
+        )
+        hide_form = (
+            f"""
+            <button type="submit"
+                    formaction="/admin/presupuestos/conceptos/{escape_html(concept_id, quote=True)}/hide"
+                    formmethod="POST"
+                    onclick="return confirm('¿Quitar esta partida del catálogo visible?');"
+                    style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:700;cursor:pointer;">
+                Quitar
+            </button>
+            """
+            if concept_id
+            else '<span style="color:#94a3b8;font-size:12px;">Nueva</span>'
+        )
+        return f"""
+        <tr>
+            <td>
+                <input type="hidden" name="concept_ids" value="{escape_html(concept_id, quote=True)}">
+                <input type="text" name="concept_names" value="{escape_html(str(item.get("concept_name") or ""), quote=True)}" placeholder="Partida" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
+            </td>
+            <td>
+                <select name="tournament_ids" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
+                    {_render_tournament_options(tournament_id)}
+                </select>
+            </td>
+            <td>
+                <input type="text" name="sub_proyectos" value="{escape_html(sub_proyecto, quote=True)}" placeholder="Todas" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
+            </td>
+            <td>{_render_cuenta_select(selected_id=cuenta_id, field_name="cuenta_contable_ids")}</td>
+            <td>{_render_cuenta_select(selected_id=pasivo_id, field_name="pasivo_cuenta_contable_ids")}</td>
+            <td>{hide_form}</td>
+        </tr>
+        """
+
+    def _render_readonly_row(item: dict[str, Any]) -> str:
+        tournament_id = _resolve_catalog_tournament_id(item)
+        tournament_label = next(
+            (
+                tournament.name
+                for tournament in catalog_tournaments
+                if str(tournament.id) == tournament_id
+            ),
+            str(item.get("tournament_name") or "—"),
+        )
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        cuenta_label = (
+            f'{item.get("cuenta_contable_codigo")} · {item.get("cuenta_contable_nombre")}'
+            if item.get("cuenta_contable_codigo")
+            else "—"
+        )
+        pasivo_label = (
+            f'{item.get("pasivo_cuenta_contable_codigo")} · '
+            f'{item.get("pasivo_cuenta_contable_nombre")}'
+            if item.get("pasivo_cuenta_contable_codigo")
+            else "—"
+        )
+        return f"""
+        <tr>
+            <td>{escape_html(str(item.get("concept_name") or "—"))}</td>
+            <td>{escape_html(str(tournament_label or "—"))}</td>
+            <td>{escape_html(_budget_catalog_scope_label(metadata) or "Todas")}</td>
+            <td>{escape_html(cuenta_label)}</td>
+            <td>{escape_html(pasivo_label)}</td>
+        </tr>
+        """
+
+    catalog_rows = "".join(_render_edit_row(item) for item in active_concepts)
+    catalog_rows += _render_edit_row()
+    catalog_rows += _render_edit_row()
+    readonly_rows = "".join(_render_readonly_row(item) for item in active_concepts)
+    catalog_editor_html = (
+        f"""
+        <form method="POST" action="/admin/presupuestos/conceptos/bulk-save" style="margin-top:14px;">
+            {catalog_hidden_context}
+            <div style="overflow:auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Partida</th>
+                            <th>Proyecto</th>
+                            <th>Sub Proyecto</th>
+                            <th>Cuenta Contable</th>
+                            <th>Cuenta Pasivo</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>{catalog_rows}</tbody>
+                </table>
+            </div>
+            <button type="submit" style="margin-top:12px;background:#0f766e;color:#fff;border:none;border-radius:999px;padding:10px 14px;font-weight:700;cursor:pointer;">Guardar catálogo</button>
+        </form>
+        """
+        if access.get("line_update")
+        else f"""
+        <div style="margin-top:14px;color:#64748b;font-size:12px;">Sin permiso para editar el catálogo.</div>
+        <div style="overflow:auto;margin-top:10px;">
+            <table>
+                <thead><tr><th>Partida</th><th>Proyecto</th><th>Sub Proyecto</th><th>Cuenta Contable</th><th>Cuenta Pasivo</th></tr></thead>
+                <tbody>{readonly_rows if readonly_rows else '<tr><td colspan="5">Sin partidas activas.</td></tr>'}</tbody>
+            </table>
+        </div>
+        """
+    )
+    budget_concepts_tournaments_count = len(
+        {
+            str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
+            for item in active_concepts
+            if str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
+        }
+    )
+    return f"""
+    <section class="workspace-card" style="margin-bottom:18px;">
+        <div class="workspace-section-title">Catálogo presupuestal</div>
+        <div class="workspace-section-subtitle">
+            Administra las partidas presupuestales por proyecto y subproyecto. Estas partidas alimentan el selector de
+            <a href="/documentos/nueva-solicitud-terceros" style="color:#0f766e;">Solicitud a terceros</a>.
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px;">
+            <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
+                <div style="font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:#64748b;">Catálogo activo</div>
+                <div style="margin-top:6px;font-size:24px;font-weight:800;color:#0f172a;">{len(active_concepts)}</div>
+                <div style="margin-top:6px;color:#475569;">{budget_concepts_tournaments_count} proyecto(s) con partida cargada.</div>
+            </div>
+            <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
+                <div style="font-size:11px;text-transform:uppercase;letter-spacing:.14em;color:#64748b;">Pasivo default</div>
+                <div style="margin-top:6px;font-size:18px;font-weight:800;color:#0f172a;">{escape_html(DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE)}</div>
+                <div style="margin-top:6px;color:#475569;">Se preselecciona para partidas nuevas mientras Contabilidad revisa el catálogo.</div>
+            </div>
+        </div>
+        {catalog_editor_html}
+    </section>
+    """
 
 
 def register_presupuestos_routes(router) -> None:
@@ -137,6 +372,30 @@ def register_presupuestos_routes(router) -> None:
         tournaments = snapshot.get("tournaments", []) if isinstance(snapshot, dict) else []
         summary = snapshot.get("summary", {}) if isinstance(snapshot, dict) else {}
         access = _budget_access_map(current_empleado)
+        budget_concepts = await list_budget_concepts(
+            session,
+            active_only=False,
+            limit=5000,
+        )
+        catalog_tournaments_result = await session.execute(
+            select(Tournament)
+            .where(Tournament.active.is_(True))
+            .order_by(Tournament.display_order.asc(), Tournament.name.asc())
+        )
+        catalog_tournaments = catalog_tournaments_result.scalars().all()
+        catalog_cuentas_result = await session.execute(
+            select(CuentaContable)
+            .where(CuentaContable.activo.is_(True))
+            .order_by(CuentaContable.codigo.asc())
+        )
+        catalog_cuentas = catalog_cuentas_result.scalars().all()
+        catalog_section_html = _render_presupuestos_catalog_section(
+            budget_concepts=budget_concepts,
+            catalog_tournaments=catalog_tournaments,
+            catalog_cuentas=catalog_cuentas,
+            access=access,
+            selected_version=selected_version,
+        )
 
         tournament_rollups: dict[str, dict[str, float]] = {}
         if selected_version:
@@ -294,6 +553,7 @@ def register_presupuestos_routes(router) -> None:
                 <div style="margin-top:14px;">{create_version_form}</div>
                 <div style="margin-top:14px;">{selected_version_edit_form}</div>
             </section>
+            {catalog_section_html}
             <section class="workspace-card">
                 <div class="workspace-section-title">Torneos / proyectos</div>
                 <div class="workspace-section-subtitle">Abre el detalle para capturar plan mensual por partida.</div>
