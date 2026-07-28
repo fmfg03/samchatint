@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import re
 import uuid
@@ -809,11 +810,21 @@ async def run_message_turn_with_pending(
         )
     deterministic_pending = None
     for builder in deterministic_pending_builders:
+        builder_kwargs = {
+            "raw_message": raw_message,
+            "conversation": conversation,
+            "empleado_id": current_empleado.id,
+        }
+        parameters = inspect.signature(builder).parameters
+        if "session" in parameters or any(
+            item.kind == inspect.Parameter.VAR_KEYWORD for item in parameters.values()
+        ):
+            builder_kwargs["session"] = session
         deterministic_pending = builder(
-            raw_message=raw_message,
-            conversation=conversation,
-            empleado_id=current_empleado.id,
+            **builder_kwargs,
         )
+        if inspect.isawaitable(deterministic_pending):
+            deterministic_pending = await deterministic_pending
         if deterministic_pending is not None:
             break
 

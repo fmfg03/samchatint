@@ -43,6 +43,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_, select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.models import (
@@ -153,6 +154,14 @@ from .readonly_workspace import (
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
+from .tournament_application_case import (
+    TournamentApplicationCaseConflictError,
+    TournamentApplicationCaseForbiddenError,
+    TournamentApplicationCaseNotFoundError,
+    apply_tournament_proposal,
+    approve_tournament_proposal,
+    review_tournament_proposal,
+)
 from .tournament_draft_case import run_tournament_draft_workbench
 from .tournament_goal_case import build_tournament_goal_shadow
 from .tools import (
@@ -2260,6 +2269,7 @@ READ_TOOLS = {
     "tournament_draft_revise",
     "tournament_draft_freeze",
     "tournament_draft_cancel",
+    "tournament_proposal_review",
     "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
@@ -2285,6 +2295,8 @@ WRITE_TOOLS = {
     "tournament_schedule_create",
     "tournament_schedule_regenerate_from_rules",
     "tournament_team_register_from_roster",
+    "tournament_proposal_approve",
+    "tournament_proposal_apply",
     "dev_file_write",
     "dev_file_replace",
     "db_write_universal",
@@ -2332,6 +2344,7 @@ TOURNAMENT_READ_TOOLS = {
     "tournament_draft_revise",
     "tournament_draft_freeze",
     "tournament_draft_cancel",
+    "tournament_proposal_review",
     "tournament_goal_shadow",
     "tournament_ops_query",
     "tournament_registration_breakdown",
@@ -2342,6 +2355,8 @@ TOURNAMENT_WRITE_TOOLS = {
     "tournament_schedule_create",
     "tournament_schedule_regenerate_from_rules",
     "tournament_team_register_from_roster",
+    "tournament_proposal_approve",
+    "tournament_proposal_apply",
     "assistant_save_artifact",
     "db_write_universal",
 }
@@ -2449,10 +2464,7 @@ def _is_tournament_goal_shadow_intent(message: str) -> bool:
         "create",
     )
     has_clone = any(token in text for token in clone_tokens)
-    has_create = any(
-        token in text
-        for token in create_tokens
-    )
+    has_create = any(token in text for token in create_tokens)
     has_source = any(
         token in text
         for token in (
@@ -2509,8 +2521,7 @@ def _tournament_draft_workbench_action(
         )
     )
     strong_context = "analyst_case_" in text or (
-        any(marker in text for marker in ("torneo", "tournament"))
-        and anaphoric_context
+        any(marker in text for marker in ("torneo", "tournament")) and anaphoric_context
     )
     # The pointer resolves identity only after the user refers to this case;
     # generic verbs must not hijack unrelated business objects.
@@ -2564,12 +2575,163 @@ def _tournament_draft_workbench_action(
     return None
 
 
+def _tournament_application_action(
+    message: str,
+    *,
+    active_tournament_case_status: Optional[str],
+) -> Optional[str]:
+    normalized = unicodedata.normalize("NFKD", str(message or "").casefold())
+    text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    if any(
+        marker in text
+        for marker in (
+            "factura",
+            "presupuesto",
+            "pago",
+            "proveedor",
+            "solicitud",
+            "transferencia",
+            "calendario",
+            "equipos inscritos",
+        )
+    ):
+        return None
+    status = str(active_tournament_case_status or "").strip().casefold()
+    explicit_case = bool(re.search(r"(?<!\w)analyst_case_[0-9a-f]{32}(?!\w)", text))
+    proposal_context = any(
+        marker in text
+        for marker in (
+            "propuesta",
+            "este caso",
+            "el caso",
+            "caso aprobado",
+            "propuesta aprobada",
+        )
+    )
+    tournament_context = "torneo" in text or "tournament" in text
+    approve_intent = any(
+        token in text for token in ("aprueba", "aprobar", "autoriza", "autorizo")
+    )
+    apply_intent = any(
+        token in text
+        for token in (
+            "aplica",
+            "aplicar",
+            "materializa",
+            "crea el torneo",
+            "crear el torneo",
+        )
+    )
+    review_intent = any(
+        token in text
+        for token in ("revisa", "revisar", "muestra", "muestrame", "ensena")
+    )
+    if review_intent and (explicit_case or proposal_context):
+        if explicit_case or status in {"frozen", "approved", "applied"}:
+            return "review"
+    if approve_intent and (explicit_case or tournament_context or proposal_context):
+        if explicit_case or status == "frozen":
+            return "approve"
+    if apply_intent and (explicit_case or tournament_context or proposal_context):
+        if explicit_case or status == "approved":
+            return "apply"
+    return None
+
+
+async def _build_tournament_application_pending(
+    *,
+    raw_message: str,
+    conversation: AssistantConversation,
+    empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
+) -> Optional[Tuple[str, Dict[str, Any], str]]:
+    if session is None:
+        return None
+    metadata = _conversation_metadata_dict(conversation)
+    pointer = metadata.get("active_tournament_goal_case")
+    active_status = (
+        str(pointer.get("status") or "") if isinstance(pointer, dict) else None
+    )
+    action = _tournament_application_action(
+        raw_message,
+        active_tournament_case_status=active_status,
+    )
+    if action is None:
+        return None
+    if action not in {"approve", "apply"}:
+        return None
+    normalized_message = raw_message.casefold()
+    match = re.search(r"(?<!\w)analyst_case_[0-9a-f]{32}(?!\w)", normalized_message)
+    if "analyst_case_" in normalized_message and match is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid AnalystCase id; refusing active-case fallback",
+        )
+    case_id = match.group(0) if match else None
+    try:
+        review = await review_tournament_proposal(
+            session,
+            case_id=case_id,
+            current_employee_id=str(empleado_id),
+            current_conversation_id=str(conversation.id),
+        )
+    except TournamentApplicationCaseForbiddenError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except TournamentApplicationCaseNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except TournamentApplicationCaseConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    decision = review.get("decision") or {}
+    allowed = bool(decision.get("can_approve" if action == "approve" else "can_apply"))
+    if not allowed:
+        raise HTTPException(
+            status_code=403 if decision.get("current_employee_is_owner") else 409,
+            detail=(
+                "The proposal owner cannot approve or apply this proposal"
+                if decision.get("current_employee_is_owner")
+                else f"Tournament proposal is not ready to {action}"
+            ),
+        )
+    proposal = review.get("proposal") or {}
+    tool_name = f"tournament_proposal_{action}"
+    tool_args: Dict[str, Any] = {
+        "case_id": review["case_id"],
+        "expected_case_version": review["case_version"],
+        "expected_proposal_hash": proposal["proposal_hash"],
+    }
+    if action == "apply":
+        approval = review.get("approval") or {}
+        tool_args["expected_approval_hash"] = approval["approval_hash"]
+    target = proposal.get("target") or {}
+    authoritative_summary = (
+        f"Decisión gobernada: {action.upper()} propuesta de torneo.\n"
+        f"Caso: {review['case_id']} · versión {review['case_version']}\n"
+        f"Destino: {target.get('name') or 'sin nombre'}\n"
+        f"Proposal hash: {proposal.get('proposal_hash')}\n"
+        f"Diferencias verificadas:\n"
+        f"{json.dumps(proposal.get('business_diff') or {}, ensure_ascii=False, indent=2)}\n"
+        "Límite de aplicación: insertar exactamente 1 fila local en tournaments.\n"
+        "No crea calendario, equipos, jugadores, inscripciones, media, "
+        "comunicaciones ni vínculo operativo.\n"
+        "Responde /ok para confirmar o /cancel para abortar."
+    )
+    tool_args["__authoritative_summary"] = authoritative_summary
+    return tool_name, tool_args, authoritative_summary
+
+
 def _assistant_tool_defs_for_message(
     route_info: Dict[str, Any],
     raw_message: str,
     *,
     has_active_tournament_case: bool = False,
+    active_tournament_case_status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    application_action = _tournament_application_action(
+        raw_message,
+        active_tournament_case_status=active_tournament_case_status,
+    )
+    if application_action:
+        return _tool_defs_filtered({f"tournament_proposal_{application_action}"})
     workbench_action = _tournament_draft_workbench_action(
         raw_message,
         has_active_tournament_case=has_active_tournament_case,
@@ -2595,15 +2757,24 @@ def _assistant_response_cache_allowed_for_message(
     raw_message: str,
     *,
     has_active_tournament_case: bool,
+    active_tournament_case_status: Optional[str] = None,
 ) -> bool:
     """Case-bound workbench turns must never use the global response cache."""
 
-    return not _is_tournament_goal_shadow_intent(raw_message) and (
-        _tournament_draft_workbench_action(
+    return (
+        _tournament_application_action(
             raw_message,
-            has_active_tournament_case=has_active_tournament_case,
+            active_tournament_case_status=active_tournament_case_status,
         )
         is None
+        and not _is_tournament_goal_shadow_intent(raw_message)
+        and (
+            _tournament_draft_workbench_action(
+                raw_message,
+                has_active_tournament_case=has_active_tournament_case,
+            )
+            is None
+        )
     )
 
 
@@ -3434,13 +3605,88 @@ def _tool_defs() -> List[Dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "tournament_proposal_review",
+                "description": "Revisar la propuesta congelada, sus diferencias, hashes, autoridad y límite de escritura. No aprueba ni modifica dominio.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_proposal_approve",
+                "description": "Aprobar una propuesta congelada y ligada por hash. Registra autoridad; no crea ni modifica ningún torneo operativo.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
+                        "expected_case_version": {"type": "integer", "minimum": 1},
+                        "expected_proposal_hash": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                        },
+                    },
+                    "required": ["expected_case_version", "expected_proposal_hash"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "tournament_proposal_apply",
+                "description": "Aplicar una propuesta aprobada creando exactamente un torneo local. No crea calendario, equipos, jugadores ni comunicaciones.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
+                        "expected_case_version": {"type": "integer", "minimum": 1},
+                        "expected_proposal_hash": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                        },
+                        "expected_approval_hash": {
+                            "type": "string",
+                            "pattern": "^sha256:[0-9a-f]{64}$",
+                        },
+                    },
+                    "required": [
+                        "expected_case_version",
+                        "expected_proposal_hash",
+                        "expected_approval_hash",
+                    ],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "tournament_draft_inspect",
                 "description": "Mostrar el workbench persistente de un borrador de torneo: plan, fuente, draft, validación, diff, archivos, preguntas y propuesta. No modifica dominio.",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
                     },
                     "required": [],
                 },
@@ -3455,7 +3701,10 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
                         "expected_case_version": {"type": "integer", "minimum": 1},
                         "changes": {"type": "object", "minProperties": 1},
                     },
@@ -3472,9 +3721,15 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
                         "expected_case_version": {"type": "integer", "minimum": 1},
-                        "expected_draft_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                        "expected_draft_hash": {
+                            "type": "string",
+                            "pattern": "^[0-9a-f]{64}$",
+                        },
                     },
                     "required": ["expected_case_version", "expected_draft_hash"],
                 },
@@ -3489,7 +3744,10 @@ def _tool_defs() -> List[Dict[str, Any]]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "case_id": {"type": ["string", "null"], "pattern": "^analyst_case_[0-9a-f]{32}$"},
+                        "case_id": {
+                            "type": ["string", "null"],
+                            "pattern": "^analyst_case_[0-9a-f]{32}$",
+                        },
                         "expected_case_version": {"type": "integer", "minimum": 1},
                         "reason": {"type": ["string", "null"], "maxLength": 1000},
                     },
@@ -4745,6 +5003,7 @@ def _build_expense_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -4854,6 +5113,7 @@ def _build_cfdi_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -4897,6 +5157,7 @@ def _build_link_cfdi_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -4943,6 +5204,7 @@ def _build_bank_link_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -4999,6 +5261,7 @@ def _build_accounting_assign_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -5072,6 +5335,7 @@ def _build_accounting_post_canonical_pending(
     raw_message: str,
     conversation: AssistantConversation,
     empleado_id: uuid.UUID,
+    session: Optional[AsyncSession] = None,
 ) -> Optional[Tuple[str, Dict[str, Any], str]]:
     normalized_message = _normalize_confirmation_message(raw_message)
     if not any(
@@ -5143,6 +5407,8 @@ def _write_requires_verification(tool_name: str, tool_args: Dict[str, Any]) -> b
         "tournament_schedule_create",
         "tournament_schedule_regenerate_from_rules",
         "tournament_team_register_from_roster",
+        "tournament_proposal_approve",
+        "tournament_proposal_apply",
     }
 
 
@@ -5299,6 +5565,52 @@ async def _confirm_pending_run(
         ),
     )
     tool_trace.append({"tool": tool_name, "result": result})
+
+    if tool_name in {"tournament_proposal_approve", "tournament_proposal_apply"}:
+        if tool_name == "tournament_proposal_approve":
+            approval = result.get("approval") or {}
+            answer = (
+                "Aprobación de torneo registrada de forma verificable.\n\n"
+                f"- Caso: {result.get('case_id')}\n"
+                f"- Versión: {result.get('case_version')}\n"
+                f"- Approval hash: {approval.get('approval_hash')}\n"
+                "- Escrituras operativas: ninguna.\n"
+                "La propuesta quedó lista para una confirmación separada de aplicación."
+            )
+        else:
+            application = result.get("application") or {}
+            target = application.get("target") or {}
+            verification = application.get("postcommit_verification") or {}
+            answer = (
+                "Propuesta aplicada como un único torneo local.\n\n"
+                f"- Caso: {result.get('case_id')}\n"
+                f"- Torneo: {target.get('name')} ({target.get('tournament_id')})\n"
+                f"- Application hash: {application.get('application_hash')}\n"
+                f"- Verificación posterior al commit: {verification.get('status')}\n"
+                "No se crearon calendarios, equipos, jugadores, inscripciones, "
+                "media, comunicaciones ni vínculos operativos."
+            )
+        assistant_msg = AssistantMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=answer,
+            tool_name=None,
+            tool_payload=None,
+        )
+        session.add(assistant_msg)
+        run.status = "completed"
+        run.tool_trace = tool_trace
+        run.pending_tool_name = None
+        run.pending_tool_args = None
+        run.assistant_message = answer
+        conversation.updated_at = datetime.utcnow()
+        await session.commit()
+        return MessageResponse(
+            assistant_message=answer,
+            run_id=str(run.id),
+            tool_trace=tool_trace,
+            pending_confirmation=None,
+        )
 
     prompt_user = (
         "La accion fue confirmada y ejecutada.\n"
@@ -8156,6 +8468,20 @@ async def _run_read_tool(
             **args,
         )
 
+    if tool_name == "tournament_proposal_review":
+        try:
+            return await review_tournament_proposal(
+                gastos_session,
+                current_employee_id=current_employee_id,
+                current_conversation_id=current_conversation_id,
+                **args,
+            )
+        except TournamentApplicationCaseForbiddenError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except TournamentApplicationCaseNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TournamentApplicationCaseConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     workbench_actions = {
         "tournament_draft_inspect": "inspect",
         "tournament_draft_revise": "revise",
@@ -8253,6 +8579,55 @@ async def _execute_write_tool(
     empleado_id: uuid.UUID,
     tournament_key_default: Optional[str],
 ) -> Dict[str, Any]:
+    if tool_name in {"tournament_proposal_approve", "tournament_proposal_apply"}:
+        handler = (
+            approve_tournament_proposal
+            if tool_name == "tournament_proposal_approve"
+            else apply_tournament_proposal
+        )
+        try:
+            session_maker = get_expenses_session_maker()
+            async with session_maker() as application_session:
+                await application_session.connection(
+                    execution_options={"isolation_level": "SERIALIZABLE"}
+                )
+                return await handler(
+                    application_session,
+                    current_employee_id=str(empleado_id),
+                    current_conversation_id=str(conversation_id),
+                    **args,
+                )
+        except TournamentApplicationCaseForbiddenError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except TournamentApplicationCaseNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TournamentApplicationCaseConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except DBAPIError as exc:
+            current: Optional[BaseException] = exc
+            seen: set[int] = set()
+            sqlstate = ""
+            while current is not None and id(current) not in seen:
+                seen.add(id(current))
+                sqlstate = str(
+                    getattr(current, "sqlstate", None)
+                    or getattr(current, "pgcode", None)
+                    or ""
+                )
+                if sqlstate:
+                    break
+                current = getattr(current, "orig", None) or getattr(
+                    current, "__cause__", None
+                )
+            if sqlstate == "40001":
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Tournament application conflicted with a concurrent "
+                        "change; review the proposal and retry"
+                    ),
+                ) from exc
+            raise
     if tool_name in WORKSPACE_WRITE_TOOLS:
         if not _workspace_task_mutation_allowed(empleado_id):
             raise HTTPException(
@@ -8561,6 +8936,11 @@ async def _assistant_turn(
     } and _assistant_response_cache_allowed_for_message(
         raw_message,
         has_active_tournament_case=has_active_tournament_case,
+        active_tournament_case_status=(
+            str(active_case.get("status") or "")
+            if isinstance(active_case, dict)
+            else None
+        ),
     )
     cache_key = _assistant_response_cache_key(
         empleado_id=current_empleado.id,
@@ -8626,6 +9006,11 @@ async def _assistant_turn(
         route_info,
         raw_message,
         has_active_tournament_case=has_active_tournament_case,
+        active_tournament_case_status=(
+            str(active_case.get("status") or "")
+            if isinstance(active_case, dict)
+            else None
+        ),
     )
     tool_defs = [
         item
@@ -8652,8 +9037,7 @@ async def _assistant_turn(
         tool_defs = [
             item
             for item in tool_defs
-            if str((item.get("function") or {}).get("name") or "")
-            in allowed_read_tools
+            if str((item.get("function") or {}).get("name") or "") in allowed_read_tools
         ]
     shadow_activation = _evaluate_shadow_activation(
         employee_id=getattr(current_empleado, "id", None),
@@ -9083,13 +9467,17 @@ async def _build_deterministic_pending_response(
 ) -> MessageResponse:
     tool_name, tool_args, assistant_message = deterministic_pending
     run_id = uuid.uuid4()
+    authoritative_summary = str(tool_args.get("__authoritative_summary") or "").strip()
     pending_confirmation = PendingConfirmation(
         run_id=str(run_id),
         tool_name=tool_name,
         tool_args=tool_args,
         summary=(
-            f"El asistente quiere ejecutar: {tool_name} con estos parametros:\n"
-            f"{json.dumps(tool_args, ensure_ascii=False, indent=2)}"
+            authoritative_summary
+            or (
+                f"El asistente quiere ejecutar: {tool_name} con estos parametros:\n"
+                f"{json.dumps(tool_args, ensure_ascii=False, indent=2)}"
+            )
         ),
     )
     session.add(
@@ -12430,6 +12818,7 @@ async def create_message(
             is_explicit_rejection_message=_is_explicit_rejection_message,
             confirm_pending_run=_confirm_pending_run_with_receipt_validation,
             deterministic_pending_builders=[
+                _build_tournament_application_pending,
                 _build_expense_canonical_pending,
                 _build_cfdi_canonical_pending,
                 _build_link_cfdi_canonical_pending,

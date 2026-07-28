@@ -378,7 +378,12 @@ async def run_tournament_draft_workbench(
 
     employee_id = str(current_employee_id or "").strip()
     conversation_id = str(current_conversation_id or "").strip()
-    if not employee_id or not str(current_role or "").strip() or not conversation_id:
+    role = str(current_role or "").strip().casefold()
+    if (
+        not employee_id
+        or role not in {"admin", "super_admin", "superadmin"}
+        or not conversation_id
+    ):
         raise TournamentDraftCaseError("Trusted assistant identity is required")
     normalized_action = str(action or "").strip().casefold()
     if normalized_action not in {"inspect", "revise", "freeze", "cancel"}:
