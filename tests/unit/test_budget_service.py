@@ -627,6 +627,60 @@ async def test_create_budget_concept_persists_scope(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_budget_concept_persists_pasivo_account(monkeypatch) -> None:
+    class _EmptyResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return None
+
+    monkeypatch.setattr("samchat.budgets.service.ensure_budget_schema", AsyncMock())
+    monkeypatch.setattr(
+        "samchat.budgets.service._resolve_tournament_for_budget_concept",
+        AsyncMock(
+            return_value={
+                "tournament_id": "tor-1",
+                "tournament_code": "FB",
+                "tournament_name": "Futbolito Bimbo",
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "samchat.budgets.service.validate_active_cuenta_contable_id",
+        AsyncMock(side_effect=lambda _session, cuenta_id: cuenta_id),
+    )
+    monkeypatch.setattr(
+        "samchat.budgets.service.get_budget_concept",
+        AsyncMock(return_value={"id": "concept-1", "concept_name": "Uniformes"}),
+    )
+
+    execute_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def capture_execute(query, params=None):
+        execute_calls.append((str(query), dict(params or {})))
+        return _EmptyResult()
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=capture_execute)
+    session.commit = AsyncMock()
+
+    await create_budget_concept(
+        session,
+        tournament_id="tor-1",
+        concept_name="Uniformes",
+        cuenta_contable_id="gasto-1",
+        pasivo_cuenta_contable_id="pasivo-1",
+    )
+
+    insert_params = [
+        params for query, params in execute_calls if "INSERT INTO budget_concepts" in query
+    ][0]
+    assert insert_params["cuenta_contable_id"] == "gasto-1"
+    assert insert_params["pasivo_cuenta_contable_id"] == "pasivo-1"
+
+
+@pytest.mark.asyncio
 async def test_bulk_save_budget_concepts_creates_and_updates(monkeypatch) -> None:
     monkeypatch.setattr(
         "samchat.budgets.service.ensure_budget_schema",
@@ -648,12 +702,16 @@ async def test_bulk_save_budget_concepts_creates_and_updates(monkeypatch) -> Non
                 "concept_name": "Hospedaje",
                 "tournament_id": "tor-1",
                 "sub_proyecto": "Estatal",
+                "cuenta_contable_id": "gasto-1",
+                "pasivo_cuenta_contable_id": "pasivo-1",
             },
             {
                 "concept_id": None,
                 "concept_name": "Uniformes",
                 "tournament_id": "tor-1",
                 "sub_proyecto": "",
+                "cuenta_contable_id": "gasto-2",
+                "pasivo_cuenta_contable_id": "pasivo-2",
             },
             {"concept_id": "", "concept_name": "", "tournament_id": "", "sub_proyecto": ""},
         ],
@@ -663,6 +721,11 @@ async def test_bulk_save_budget_concepts_creates_and_updates(monkeypatch) -> Non
     assert result == {"created": 1, "updated": 1, "total": 2}
     update_mock.assert_awaited_once()
     create_mock.assert_awaited_once()
+    update_kwargs = update_mock.await_args.kwargs
+    assert update_kwargs["pasivo_cuenta_contable_id"] == "pasivo-1"
+    assert update_kwargs["pasivo_cuenta_contable_provided"] is True
+    create_kwargs = create_mock.await_args.kwargs
+    assert create_kwargs["pasivo_cuenta_contable_id"] == "pasivo-2"
     session.commit.assert_awaited_once()
 
 
@@ -683,6 +746,51 @@ async def test_update_budget_concept_rejects_missing_record(monkeypatch) -> None
             concept_id="missing",
             concept_name="Hospedaje",
         )
+
+
+@pytest.mark.asyncio
+async def test_update_budget_concept_changes_and_clears_pasivo_account(monkeypatch) -> None:
+    class _EmptyResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return None
+
+    current = {
+        "id": "concept-1",
+        "concept_name": "Uniformes",
+        "tournament_id": "tor-1",
+        "tournament_code": "FB",
+        "metadata": {},
+    }
+    monkeypatch.setattr("samchat.budgets.service.ensure_budget_schema", AsyncMock())
+    monkeypatch.setattr(
+        "samchat.budgets.service.get_budget_concept",
+        AsyncMock(side_effect=[current, {**current, "pasivo_cuenta_contable_id": None}]),
+    )
+
+    execute_calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def capture_execute(query, params=None):
+        execute_calls.append((str(query), dict(params or {})))
+        return _EmptyResult()
+
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=capture_execute)
+    session.commit = AsyncMock()
+
+    await update_budget_concept(
+        session,
+        concept_id="concept-1",
+        pasivo_cuenta_contable_id="",
+        pasivo_cuenta_contable_provided=True,
+    )
+
+    update_params = [
+        params for query, params in execute_calls if "UPDATE budget_concepts" in query
+    ][0]
+    assert update_params["pasivo_cuenta_contable_id"] is None
 
 
 @pytest.mark.asyncio

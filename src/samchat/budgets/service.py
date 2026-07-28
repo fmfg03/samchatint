@@ -45,6 +45,7 @@ _BUDGET_ALLOWED_TRANSITIONS = {
     "closed": set(),
 }
 _BUDGET_LINE_DIRECTION_DEFAULT = "expense"
+DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE = "2120-002-099"
 _BUDGET_LINE_DIRECTIONS = {"expense", "income"}
 _BUDGET_LINE_DIRECTION_ALIASES = {
     "expense": "expense",
@@ -2428,12 +2429,17 @@ async def list_budget_concepts(
                     bc.cuenta_contable_id,
                     cc.codigo AS cuenta_contable_codigo,
                     cc.nombre AS cuenta_contable_nombre,
+                    bc.pasivo_cuenta_contable_id,
+                    pcc.codigo AS pasivo_cuenta_contable_codigo,
+                    pcc.nombre AS pasivo_cuenta_contable_nombre,
                     bc.created_by_empleado_id,
                     bc.created_at,
                     bc.updated_at
                 FROM budget_concepts bc
                 LEFT JOIN cuentas_contables cc
                     ON cc.id = bc.cuenta_contable_id
+                LEFT JOIN cuentas_contables pcc
+                    ON pcc.id = bc.pasivo_cuenta_contable_id
                 {where_clause}
                 ORDER BY bc.tournament_name ASC, bc.concept_name ASC
                 LIMIT :limit
@@ -2458,6 +2464,16 @@ async def list_budget_concepts(
             "cuenta_contable_id": _safe_str(row.get("cuenta_contable_id")) or None,
             "cuenta_contable_codigo": _safe_str(row.get("cuenta_contable_codigo")) or None,
             "cuenta_contable_nombre": _safe_str(row.get("cuenta_contable_nombre")) or None,
+            "pasivo_cuenta_contable_id": _safe_str(row.get("pasivo_cuenta_contable_id"))
+            or None,
+            "pasivo_cuenta_contable_codigo": _safe_str(
+                row.get("pasivo_cuenta_contable_codigo")
+            )
+            or None,
+            "pasivo_cuenta_contable_nombre": _safe_str(
+                row.get("pasivo_cuenta_contable_nombre")
+            )
+            or None,
             "metadata": _merge_budget_concept_metadata(
                 row.get("metadata") if isinstance(row.get("metadata"), dict) else {},
                 _budget_catalog_scope_index().get(
@@ -2728,6 +2744,7 @@ async def create_budget_concept(
     concept_name: str,
     scope_labels: Optional[list[str]] = None,
     cuenta_contable_id: Optional[str] = None,
+    pasivo_cuenta_contable_id: Optional[str] = None,
     budget_direction: Optional[str] = None,
     actor_empleado_id: Optional[str] = None,
     source: str = "admin_ui",
@@ -2781,17 +2798,25 @@ async def create_budget_concept(
         resolved_cuenta_id = await validate_active_cuenta_contable_id(
             session, clean_cuenta
         )
+    resolved_pasivo_id: Optional[str] = None
+    clean_pasivo = _safe_str(pasivo_cuenta_contable_id)
+    if clean_pasivo:
+        resolved_pasivo_id = await validate_active_cuenta_contable_id(
+            session, clean_pasivo
+        )
     await session.execute(
         text(
             """
             INSERT INTO budget_concepts (
                 id, tournament_id, tournament_code, tournament_name,
                 concept_name, concept_key, budget_direction, active, source, metadata,
-                cuenta_contable_id, created_by_empleado_id, created_at, updated_at
+                cuenta_contable_id, pasivo_cuenta_contable_id,
+                created_by_empleado_id, created_at, updated_at
             ) VALUES (
                 :id, :tournament_id, :tournament_code, :tournament_name,
                 :concept_name, :concept_key, :budget_direction, TRUE, :source, CAST(:metadata AS jsonb),
-                :cuenta_contable_id, :created_by_empleado_id, NOW(), NOW()
+                :cuenta_contable_id, :pasivo_cuenta_contable_id,
+                :created_by_empleado_id, NOW(), NOW()
             )
             """
         ),
@@ -2806,6 +2831,7 @@ async def create_budget_concept(
             "source": _safe_str(source) or "admin_ui",
             "metadata": json.dumps(metadata, ensure_ascii=False),
             "cuenta_contable_id": resolved_cuenta_id,
+            "pasivo_cuenta_contable_id": resolved_pasivo_id,
             "created_by_empleado_id": actor_empleado_id,
         },
     )
@@ -2826,6 +2852,8 @@ async def update_budget_concept(
     scope_labels: Optional[list[str]] = None,
     cuenta_contable_id: Optional[str] = None,
     cuenta_contable_provided: bool = False,
+    pasivo_cuenta_contable_id: Optional[str] = None,
+    pasivo_cuenta_contable_provided: bool = False,
     active: Optional[bool] = None,
     actor_empleado_id: Optional[str] = None,
     commit: bool = True,
@@ -2926,6 +2954,14 @@ async def update_budget_concept(
             )
         else:
             updates["cuenta_contable_id"] = None
+    if pasivo_cuenta_contable_provided:
+        clean_pasivo = _safe_str(pasivo_cuenta_contable_id)
+        if clean_pasivo:
+            updates["pasivo_cuenta_contable_id"] = (
+                await validate_active_cuenta_contable_id(session, clean_pasivo)
+            )
+        else:
+            updates["pasivo_cuenta_contable_id"] = None
     if not updates:
         return current
     updates["source"] = "admin_ui"
@@ -2980,6 +3016,8 @@ async def bulk_save_budget_concepts(
         tournament_id = _safe_str(row.get("tournament_id"))
         sub_proyecto = _safe_str(row.get("sub_proyecto"))
         cuenta_contable_id = row.get("cuenta_contable_id")
+        pasivo_cuenta_contable_id = row.get("pasivo_cuenta_contable_id")
+        pasivo_cuenta_contable_provided = "pasivo_cuenta_contable_id" in row
         if not concept_name and not concept_id:
             continue
         if not concept_name or not tournament_id:
@@ -2991,6 +3029,13 @@ async def bulk_save_budget_concepts(
             "cuenta_contable_id": cuenta_contable_id,
             "cuenta_contable_provided": True,
         }
+        if pasivo_cuenta_contable_provided:
+            cuenta_kwargs.update(
+                {
+                    "pasivo_cuenta_contable_id": pasivo_cuenta_contable_id,
+                    "pasivo_cuenta_contable_provided": True,
+                }
+            )
         if concept_id:
             await update_budget_concept(
                 session,
@@ -3011,6 +3056,8 @@ async def bulk_save_budget_concepts(
                 concept_name=concept_name,
                 scope_labels=scope_labels,
                 cuenta_contable_id=_safe_str(cuenta_contable_id) or None,
+                pasivo_cuenta_contable_id=_safe_str(pasivo_cuenta_contable_id)
+                or None,
                 actor_empleado_id=actor_empleado_id,
                 source="admin_ui",
                 commit=False,
@@ -3568,6 +3615,15 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             """
             ALTER TABLE budget_concepts
+            ADD COLUMN IF NOT EXISTS pasivo_cuenta_contable_id UUID NULL
+            REFERENCES cuentas_contables(id) ON DELETE SET NULL
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            ALTER TABLE budget_concepts
             ADD COLUMN IF NOT EXISTS budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense'
             """
         )
@@ -3581,6 +3637,20 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                OR budget_direction NOT IN ('expense', 'income')
             """
         )
+    )
+    await session.execute(
+        text(
+            """
+            UPDATE budget_concepts bc
+            SET pasivo_cuenta_contable_id = cc.id
+            FROM cuentas_contables cc
+            WHERE bc.active = TRUE
+              AND bc.pasivo_cuenta_contable_id IS NULL
+              AND cc.codigo = :default_pasivo_codigo
+              AND cc.activo = TRUE
+            """
+        ),
+        {"default_pasivo_codigo": DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE},
     )
     await session.execute(
         text(
@@ -3778,6 +3848,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_budget_concepts_direction "
             "ON budget_concepts(budget_direction)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_concepts_pasivo_cuenta_contable_id "
+            "ON budget_concepts(pasivo_cuenta_contable_id)"
         )
     )
     await session.execute(
