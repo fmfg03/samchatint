@@ -24,6 +24,7 @@ from samchat.assistant.analyst_case_store import AnalystCaseStore, version_id_fo
 from samchat.assistant.tournament_draft_case import (
     PUBLIC_KEYS,
     TournamentDraftCaseConflictError,
+    TournamentDraftCaseError,
     TournamentDraftCaseForbiddenError,
     run_tournament_draft_workbench,
 )
@@ -363,4 +364,16 @@ async def test_owner_and_kind_are_isolated(
             **_arguments(AsyncStoreAdapter(db_session)),
             action="inspect",
             case_id=CASE_ID,
+        )
+
+
+@pytest.mark.asyncio
+async def test_service_rejects_non_admin_role_before_case_access() -> None:
+    with pytest.raises(TournamentDraftCaseError, match="Trusted assistant identity"):
+        await run_tournament_draft_workbench(
+            object(),
+            action="inspect",
+            current_role="empleado",
+            current_employee_id=OWNER_ID,
+            current_conversation_id=CONVERSATION_ID,
         )
