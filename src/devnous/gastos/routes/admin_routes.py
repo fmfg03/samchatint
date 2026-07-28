@@ -167,6 +167,7 @@ from samchat.budgets.exporter import generate_budget_review_xlsx
 from samchat.budgets.service import (
     build_budget_commitment_expense_preview,
     DEFAULT_BUDGET_ARTIFACT,
+    DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE,
     budget_alias_candidates,
     build_budget_executive_alerts,
     build_budget_executive_comparison,
@@ -11863,6 +11864,15 @@ async def admin_presupuestos_legacy(
         .order_by(CuentaContable.codigo.asc())
     )
     catalog_cuentas = catalog_cuentas_result.scalars().all()
+    default_pasivo_cuenta_id = next(
+        (
+            str(cuenta.id)
+            for cuenta in catalog_cuentas
+            if str(cuenta.codigo or "").strip()
+            == DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE
+        ),
+        "",
+    )
     catalog_etapas_by_tournament: dict[str, list[str]] = {}
     for tournament in catalog_tournaments:
         catalog_etapas_by_tournament[str(tournament.id)] = get_tournament_scope_options(
@@ -11943,7 +11953,9 @@ async def admin_presupuestos_legacy(
             f'title="Configure etapas en Torneos y proyectos">'
         )
 
-    def _render_catalog_cuenta_select(*, selected_id: str = "") -> str:
+    def _render_catalog_cuenta_select(
+        *, selected_id: str = "", field_name: str = "cuenta_contable_ids"
+    ) -> str:
         options = ['<option value="">— Sin cuenta contable —</option>']
         selected_clean = str(selected_id or "").strip()
         for cuenta in catalog_cuentas:
@@ -11954,7 +11966,7 @@ async def admin_presupuestos_legacy(
                 f"{escape(cuenta.codigo)} · {escape(cuenta.nombre)}</option>"
             )
         return (
-            f'<select class="catalog-cuenta" name="cuenta_contable_ids" '
+            f'<select class="catalog-cuenta" name="{escape(field_name)}" '
             f'style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">'
             f'{"".join(options)}</select>'
         )
@@ -11969,6 +11981,9 @@ async def admin_presupuestos_legacy(
         cuenta_contable_id: str = "",
         cuenta_contable_codigo: str = "",
         cuenta_contable_nombre: str = "",
+        pasivo_cuenta_contable_id: str = "",
+        pasivo_cuenta_contable_codigo: str = "",
+        pasivo_cuenta_contable_nombre: str = "",
         readonly: bool = False,
         action_cell_html: str = "",
     ) -> str:
@@ -11987,12 +12002,20 @@ async def admin_presupuestos_legacy(
                 )
             else:
                 cuenta_label = "—"
+            if pasivo_cuenta_contable_codigo:
+                pasivo_label = (
+                    f"{pasivo_cuenta_contable_codigo} · "
+                    f"{pasivo_cuenta_contable_nombre}"
+                ).strip(" ·")
+            else:
+                pasivo_label = "—"
             return f"""
             <tr>
                 <td>{escape(concept_name or "—")}</td>
                 <td>{escape(str(tournament_label) or "—")}</td>
                 <td>{escape(sub_proyecto or "Todas")}</td>
                 <td>{escape(cuenta_label)}</td>
+                <td>{escape(pasivo_label)}</td>
             </tr>
             """
         proyecto_selected = tournament_id or (
@@ -12023,6 +12046,9 @@ async def admin_presupuestos_legacy(
             <td class="catalog-cuenta-cell">
                 {_render_catalog_cuenta_select(selected_id=cuenta_contable_id)}
             </td>
+            <td class="catalog-pasivo-cuenta-cell">
+                {_render_catalog_cuenta_select(selected_id=pasivo_cuenta_contable_id, field_name="pasivo_cuenta_contable_ids")}
+            </td>
             <td style="white-space:nowrap;">{action_cell_html}</td>
         </tr>
         """
@@ -12041,6 +12067,9 @@ async def admin_presupuestos_legacy(
                     tournament_id=_resolve_catalog_tournament_id(item),
                     sub_proyecto=_catalog_sub_proyecto_value(metadata),
                     cuenta_contable_id=str(item.get("cuenta_contable_id") or ""),
+                    pasivo_cuenta_contable_id=str(
+                        item.get("pasivo_cuenta_contable_id") or default_pasivo_cuenta_id
+                    ),
                     action_cell_html=_render_catalog_hide_form(str(item.get("id") or "")),
                 )
             )
@@ -12054,6 +12083,7 @@ async def admin_presupuestos_legacy(
                     if catalog_tournaments
                     else "",
                     sub_proyecto="",
+                    pasivo_cuenta_contable_id=default_pasivo_cuenta_id,
                     action_cell_html="",
                 )
             )
@@ -12072,6 +12102,15 @@ async def admin_presupuestos_legacy(
                     cuenta_contable_id=str(item.get("cuenta_contable_id") or ""),
                     cuenta_contable_codigo=str(item.get("cuenta_contable_codigo") or ""),
                     cuenta_contable_nombre=str(item.get("cuenta_contable_nombre") or ""),
+                    pasivo_cuenta_contable_id=str(
+                        item.get("pasivo_cuenta_contable_id") or ""
+                    ),
+                    pasivo_cuenta_contable_codigo=str(
+                        item.get("pasivo_cuenta_contable_codigo") or ""
+                    ),
+                    pasivo_cuenta_contable_nombre=str(
+                        item.get("pasivo_cuenta_contable_nombre") or ""
+                    ),
                     readonly=True,
                 )
             )
@@ -12098,11 +12137,12 @@ async def admin_presupuestos_legacy(
                                 <th>Proyecto</th>
                                 <th>Sub Proyecto</th>
                                 <th>Cuenta Contable</th>
+                                <th>Cuenta Pasivo</th>
                                 <th>Acciones</th>
                             </tr>
                         </thead>
                         <tbody id="catalog-partidas-body">
-                            {''.join(catalog_editor_rows) or '<tr><td colspan="5">Sin partidas cargadas. Agrega filas nuevas o edita las existentes.</td></tr>'}
+                            {''.join(catalog_editor_rows) or '<tr><td colspan="6">Sin partidas cargadas. Agrega filas nuevas o edita las existentes.</td></tr>'}
                         </tbody>
                     </table>
                 </div>
@@ -12117,7 +12157,7 @@ async def admin_presupuestos_legacy(
                 </div>
             </form>
             <template id="catalog-row-template">
-                {_render_catalog_table_row(row_index=9999, concept_id="", concept_name="", tournament_id=str(catalog_tournaments[0].id) if catalog_tournaments else "", sub_proyecto="", cuenta_contable_id="", action_cell_html="")}
+                {_render_catalog_table_row(row_index=9999, concept_id="", concept_name="", tournament_id=str(catalog_tournaments[0].id) if catalog_tournaments else "", sub_proyecto="", cuenta_contable_id="", pasivo_cuenta_contable_id=default_pasivo_cuenta_id, action_cell_html="")}
             </template>
             <script>
             (function() {{
@@ -12199,10 +12239,11 @@ async def admin_presupuestos_legacy(
                             <th>Proyecto</th>
                             <th>Sub Proyecto</th>
                             <th>Cuenta Contable</th>
+                            <th>Cuenta Pasivo</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {''.join(catalog_editor_rows) or '<tr><td colspan="4">Sin partidas cargadas.</td></tr>'}
+                        {''.join(catalog_editor_rows) or '<tr><td colspan="5">Sin partidas cargadas.</td></tr>'}
                     </tbody>
                 </table>
             </div>
@@ -13152,6 +13193,7 @@ async def admin_presupuestos_bulk_save_concepts(
     tournament_ids: List[str] = Form([]),
     sub_proyectos: List[str] = Form([]),
     cuenta_contable_ids: List[str] = Form([]),
+    pasivo_cuenta_contable_ids: List[str] = Form([]),
     version_id: Optional[str] = Form(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
@@ -13165,6 +13207,7 @@ async def admin_presupuestos_bulk_save_concepts(
             len(tournament_ids),
             len(sub_proyectos),
             len(cuenta_contable_ids),
+            len(pasivo_cuenta_contable_ids),
         )
         for index in range(row_count):
             concept_name = (concept_names[index] if index < len(concept_names) else "").strip()
@@ -13173,6 +13216,11 @@ async def admin_presupuestos_bulk_save_concepts(
             sub_proyecto = (sub_proyectos[index] if index < len(sub_proyectos) else "").strip()
             cuenta_contable_id = (
                 cuenta_contable_ids[index] if index < len(cuenta_contable_ids) else ""
+            ).strip()
+            pasivo_cuenta_contable_id = (
+                pasivo_cuenta_contable_ids[index]
+                if index < len(pasivo_cuenta_contable_ids)
+                else ""
             ).strip()
             if not concept_name and not concept_id:
                 continue
@@ -13183,6 +13231,7 @@ async def admin_presupuestos_bulk_save_concepts(
                     "tournament_id": tournament_id,
                     "sub_proyecto": sub_proyecto,
                     "cuenta_contable_id": cuenta_contable_id or None,
+                    "pasivo_cuenta_contable_id": pasivo_cuenta_contable_id or None,
                 }
             )
         result = await bulk_save_budget_concepts(

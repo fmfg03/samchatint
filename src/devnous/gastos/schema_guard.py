@@ -115,6 +115,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("support_ticket_comments", "ticket_id"),
     RequiredColumn("support_ticket_comments", "body"),
     RequiredColumn("budget_concepts", "budget_direction"),
+    RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id"),
     RequiredColumn("budget_lines", "line_direction"),
     RequiredColumn("access_control_rules", "tool_key"),
     RequiredColumn("access_control_rules", "role_key"),
@@ -231,6 +232,7 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
         "support_ticket_comments", "ix_support_ticket_comments_created_at"
     ),
     RequiredIndex("budget_concepts", "ix_budget_concepts_direction"),
+    RequiredIndex("budget_concepts", "ix_budget_concepts_pasivo_cuenta_contable_id"),
     RequiredIndex("budget_lines", "ix_budget_lines_direction"),
     RequiredIndex("access_control_rules", "ux_access_control_rules_unique"),
     RequiredIndex("access_control_rules", "ix_access_control_rules_tool"),
@@ -322,12 +324,38 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense'",
     ),
     (
+        "budget_concepts_pasivo_cuenta_contable_id_column",
+        "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS pasivo_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_concepts_pasivo_default_backfill",
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('budget_concepts') IS NOT NULL
+               AND to_regclass('cuentas_contables') IS NOT NULL THEN
+                UPDATE budget_concepts bc
+                SET pasivo_cuenta_contable_id = cc.id
+                FROM cuentas_contables cc
+                WHERE bc.active = TRUE
+                  AND bc.pasivo_cuenta_contable_id IS NULL
+                  AND cc.codigo = '2120-002-099'
+                  AND cc.activo = TRUE;
+            END IF;
+        END $$;
+        """,
+    ),
+    (
         "budget_concepts_budget_direction_backfill",
         "UPDATE budget_concepts SET budget_direction = 'expense' WHERE budget_direction IS NULL OR budget_direction NOT IN ('expense', 'income')",
     ),
     (
         "ix_budget_concepts_direction",
         "CREATE INDEX IF NOT EXISTS ix_budget_concepts_direction ON budget_concepts(budget_direction)",
+    ),
+    (
+        "ix_budget_concepts_pasivo_cuenta_contable_id",
+        "CREATE INDEX IF NOT EXISTS ix_budget_concepts_pasivo_cuenta_contable_id ON budget_concepts(pasivo_cuenta_contable_id)",
     ),
     (
         "budget_lines_line_direction_column",

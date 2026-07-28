@@ -1113,6 +1113,12 @@ class BudgetConcept(Base):
         nullable=True,
         index=True,
     )
+    pasivo_cuenta_contable_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_by_empleado_id = Column(
         UUID(as_uuid=True),
         ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
@@ -1125,6 +1131,9 @@ class BudgetConcept(Base):
     tournament = relationship("Tournament", foreign_keys=[tournament_id], lazy="selectin")
     cuenta_contable = relationship(
         "CuentaContable", foreign_keys=[cuenta_contable_id], lazy="selectin"
+    )
+    pasivo_cuenta_contable = relationship(
+        "CuentaContable", foreign_keys=[pasivo_cuenta_contable_id], lazy="selectin"
     )
     created_by_empleado = relationship(
         "Empleado", foreign_keys=[created_by_empleado_id], lazy="selectin"
@@ -1143,6 +1152,11 @@ class BudgetConcept(Base):
             "metadata": self.metadata_json or {},
             "cuenta_contable_id": (
                 str(self.cuenta_contable_id) if self.cuenta_contable_id else None
+            ),
+            "pasivo_cuenta_contable_id": (
+                str(self.pasivo_cuenta_contable_id)
+                if self.pasivo_cuenta_contable_id
+                else None
             ),
             "created_by_empleado_id": (
                 str(self.created_by_empleado_id)
