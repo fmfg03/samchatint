@@ -226,9 +226,52 @@ async def test_update_creates_atomic_immutable_version(session):
     assert updated.versions[0].answer == case.current_answer
     assert updated.versions[1].answer == "Respuesta revisada."
     assert updated.versions[1].changed_fields == [
+        "answer_contract",
         "current_answer",
         "status",
     ]
+
+
+@pytest.mark.asyncio
+async def test_status_only_update_preserves_latest_answer_contract(session):
+    case = await _case()
+    store = AnalystCaseStore(session)
+    stored = store.create_case(case)
+    original_contract = stored.versions[-1].answer_contract
+
+    reviewed = store.update_case(
+        case.case_id,
+        status=CASE_STATUS_REVIEWED,
+        updated_by="reviewer-1",
+        expected_version_number=1,
+    )
+
+    assert reviewed.versions[-1].answer_contract == original_contract
+    assert "answer_contract" not in reviewed.versions[-1].changed_fields
+
+
+@pytest.mark.asyncio
+async def test_stale_expected_version_is_rejected_without_new_version(session):
+    case = await _case()
+    store = AnalystCaseStore(session)
+    store.create_case(case)
+    store.update_case(
+        case.case_id,
+        current_answer="Version two",
+        expected_version_number=1,
+    )
+
+    with pytest.raises(AnalystCaseStoreError, match="Stale AnalystCase version"):
+        store.update_case(
+            case.case_id,
+            current_answer="Stale write",
+            expected_version_number=1,
+        )
+
+    recovered = store.get_case(case.case_id)
+    assert recovered is not None
+    assert len(recovered.versions) == 2
+    assert recovered.current_answer == "Version two"
 
 
 @pytest.mark.asyncio
