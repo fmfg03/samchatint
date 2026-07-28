@@ -92,6 +92,9 @@ def isolated_source(monkeypatch: pytest.MonkeyPatch) -> None:
     async def no_duplicate(*_args: Any, **_kwargs: Any) -> None:
         return None
 
+    async def no_pointer(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
     monkeypatch.setattr(
         "samchat.assistant.tournament_goal_case.inspect_tournament_source",
         fake_inspect,
@@ -99,6 +102,10 @@ def isolated_source(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "samchat.assistant.tournament_goal_case._target_name_finding",
         no_duplicate,
+    )
+    monkeypatch.setattr(
+        "samchat.assistant.tournament_goal_case.set_active_tournament_case_pointer",
+        no_pointer,
     )
 
 

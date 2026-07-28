@@ -65,7 +65,7 @@ def _risk_for_tool(name: str, operation_type: str, surface: str) -> str:
 def _allowed_roles_for_tool(
     name: str, operation_type: str, surface: str
 ) -> tuple[str, ...]:
-    if name == "tournament_goal_shadow":
+    if name == "tournament_goal_shadow" or name.startswith("tournament_draft_"):
         return ("admin", "superadmin")
     if surface == "workspace":
         return (

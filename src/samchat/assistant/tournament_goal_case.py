@@ -32,6 +32,7 @@ from .tournament_goal_shadow import (
     build_tournament_goal_shadow as build_shadow_contract,
 )
 from .tournament_goal_source import inspect_tournament_source
+from .tournament_case_pointer import set_active_tournament_case_pointer
 
 
 class TournamentGoalCaseError(ValueError):
@@ -452,7 +453,16 @@ async def build_tournament_goal_shadow(
             raise TournamentGoalCaseError(str(exc)) from exc
     except AnalystCaseStoreError as exc:
         raise TournamentGoalCaseError(str(exc)) from exc
-    return _public_response(stored)
+    response = _public_response(stored)
+    await set_active_tournament_case_pointer(
+        session,
+        conversation_id=conversation_id,
+        employee_id=employee_id,
+        case_id=stored.case_id,
+        case_version=response["case_version"],
+        status="drafting",
+    )
+    return response
 
 
 __all__ = [
