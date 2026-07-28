@@ -135,6 +135,18 @@ from ..services.customer_success_audit import (
     build_customer_success_audit_report,
     is_superadmin_role,
 )
+from ..services.payment_run_service import (
+    PaymentRunPermissionError,
+    PaymentRunValidationError,
+    can_manage_payment_run,
+    close_payment_run,
+    get_payment_run_closure,
+    list_payment_run_closures,
+    list_payment_run_items,
+    parse_payment_run_date,
+    require_payment_run_access,
+    update_payment_run_fecha_pago,
+)
 from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
 from ..utils.receipt_bytes import (
@@ -985,6 +997,10 @@ def render_admin_navigation(
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
     ]
+    if can_manage_payment_run(current_empleado):
+        finanzas_items.append(
+            ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run")
+        )
     catalogos_items = [
         ("admin.empleados", "/admin/empleados", "Empleados", "empleados"),
         ("admin.perfiles", "/admin/perfiles", "Perfiles", "perfiles"),
@@ -6510,6 +6526,352 @@ async def admin_finance_coi_batch_xlsx(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _payment_run_redirect(
+    *,
+    success_msg: Optional[str] = None,
+    error_msg: Optional[str] = None,
+) -> RedirectResponse:
+    params = []
+    if success_msg:
+        params.append(f"success_msg={quote(success_msg)}")
+    if error_msg:
+        params.append(f"error_msg={quote(error_msg)}")
+    suffix = ("?" + "&".join(params)) if params else ""
+    return RedirectResponse(url=f"/admin/finanzas/payment-run{suffix}", status_code=303)
+
+
+def _payment_run_money(value: Any, currency: str = "MXN") -> str:
+    try:
+        amount = float(value or 0)
+    except Exception:
+        amount = 0.0
+    return f"{currency or 'MXN'} ${amount:,.2f}"
+
+
+def _payment_run_badge(status: str) -> str:
+    normalized = (status or "").strip().lower()
+    color = {
+        "programada": ("#dcfce7", "#166534"),
+        "vencida": ("#fee2e2", "#991b1b"),
+        "cerrada": ("#e0e7ff", "#3730a3"),
+        "pagada": ("#e2e8f0", "#334155"),
+    }.get(normalized, ("#f1f5f9", "#334155"))
+    return (
+        f'<span style="display:inline-flex;padding:5px 9px;border-radius:999px;'
+        f'font-size:11px;font-weight:900;text-transform:uppercase;'
+        f'background:{color[0]};color:{color[1]};">{escape(status or "-")}</span>'
+    )
+
+
+def _render_payment_run_items(rows: list[dict[str, Any]]) -> str:
+    rendered_rows = []
+    for row in rows:
+        documento_id = escape(str(row.get("id") or ""))
+        referencia = escape(str(row.get("numero_referencia") or documento_id))
+        fecha_pago = row.get("fecha_pago")
+        fecha_value = fecha_pago.isoformat() if hasattr(fecha_pago, "isoformat") else ""
+        can_edit = bool(row.get("can_edit_fecha_pago"))
+        can_close = bool(row.get("can_close"))
+        checkbox = (
+            f'<input type="checkbox" form="payment-run-close-form" '
+            f'name="document_ids" value="{documento_id}">'
+            if can_close
+            else '<span style="color:#94a3b8;">-</span>'
+        )
+        if can_edit:
+            fecha_html = f"""
+                <form method="POST" action="/admin/finanzas/payment-run/documentos/{documento_id}/fecha-pago" style="display:flex;gap:8px;align-items:center;">
+                    <input type="date" name="fecha_pago" value="{escape(fecha_value)}" style="min-width:150px;">
+                    <button class="button secondary" type="submit" style="padding:8px 10px;">Guardar</button>
+                </form>
+            """
+        else:
+            fecha_html = escape(fecha_value or "-")
+        closure_id = row.get("closure_id")
+        closure_html = (
+            f'<a href="/admin/finanzas/payment-run/closures/{escape(str(closure_id))}">Ver corte</a>'
+            if closure_id
+            else "-"
+        )
+        rendered_rows.append(
+            f"""
+            <tr>
+                <td>{checkbox}</td>
+                <td><strong>{referencia}</strong><div style="color:#64748b;font-size:12px;">{escape(str(row.get("concepto_pago") or ""))[:120]}</div></td>
+                <td>{escape(str(row.get("solicitante_nombre") or "-"))}</td>
+                <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
+                <td>{fecha_html}</td>
+                <td>{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
+                <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
+                <td>{closure_html}</td>
+            </tr>
+            """
+        )
+    return "".join(rendered_rows) or '<tr><td colspan="8">Sin solicitudes para este filtro.</td></tr>'
+
+
+def _render_payment_run_closures(rows: list[dict[str, Any]]) -> str:
+    rendered_rows = []
+    for row in rows:
+        closure_id = escape(str(row.get("id") or ""))
+        rendered_rows.append(
+            f"""
+            <tr>
+                <td><a href="/admin/finanzas/payment-run/closures/{closure_id}">{closure_id[:8]}</a></td>
+                <td>{escape(str(row.get("closed_at") or "-"))[:19]}</td>
+                <td>{escape(str(row.get("run_date") or "-"))}</td>
+                <td>{int(row.get("item_count") or 0)}</td>
+                <td>{_payment_run_money(row.get("total_amount"))}</td>
+                <td>{escape(str(row.get("closed_by_nombre") or "-"))}</td>
+            </tr>
+            """
+        )
+    return "".join(rendered_rows) or '<tr><td colspan="6">Sin cortes cerrados.</td></tr>'
+
+
+@router.get("/admin/finanzas/payment-run", response_class=HTMLResponse)
+async def admin_finance_payment_run(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    status: str = Query("pendientes"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+) -> HTMLResponse:
+    """Consult, date-edit and operationally close approved SOLICITUD payment runs."""
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+
+    error_msg = (request.query_params.get("error_msg") or "").strip()
+    success_msg = (request.query_params.get("success_msg") or "").strip()
+    try:
+        parsed_from = parse_payment_run_date(date_from) if date_from else None
+        parsed_to = parse_payment_run_date(date_to) if date_to else None
+    except PaymentRunValidationError as exc:
+        parsed_from = None
+        parsed_to = None
+        error_msg = error_msg or exc.message
+
+    rows = await list_payment_run_items(
+        session,
+        status_filter=status,
+        date_from=parsed_from,
+        date_to=parsed_to,
+        query=(q or "").strip() or None,
+    )
+    closures = await list_payment_run_closures(session, limit=20)
+    total_open = sum(float(row.get("monto") or 0) for row in rows if row.get("can_close"))
+    selected_status = escape(status or "pendientes")
+    alerts = ""
+    if success_msg:
+        alerts += f'<div class="alert alert-success">{escape(success_msg)}</div>'
+    if error_msg:
+        alerts += f'<div class="alert alert-error">{escape(error_msg)}</div>'
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Payment Run - Samchat</title>
+        <style>
+            {_admin_workspace_styles("1380px")}
+            .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            input, select, textarea {{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; }}
+            input[type="checkbox"] {{ width:auto; }}
+            .alert {{ border-radius:14px; padding:12px 14px; margin-bottom:14px; font-weight:700; }}
+            .alert-success {{ background:#dcfce7; color:#166534; border:1px solid #86efac; }}
+            .alert-error {{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "payment_run", subtitle="Payment Run: consulta, fecha de pago y cierre operativo.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Payment Run",
+                title="Corte operativo de solicitudes aprobadas",
+                description="Consulta solicitudes aprobadas, ajusta solo fecha_pago y cierra el corte operativo sin registrar pagos ni generar contabilidad.",
+                actions_html=(
+                    '<form method="GET" action="/admin/finanzas/payment-run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Pendientes</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>Cerradas</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option></select></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q or "")}" placeholder="Referencia, solicitante, beneficiario"></div>'
+                    '<button class="button" type="submit">Filtrar</button>'
+                    '</form>'
+                ),
+                side_html=(
+                    '<div class="eyebrow">Vista actual</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{len(rows)} solicitudes</div>'
+                    f'<div style="margin-top:8px;color:#64748b;">Cerrables en filtro: {_payment_run_money(total_open)}</div>'
+                    '<div style="margin-top:12px;"><span style="display:inline-flex;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:900;text-transform:uppercase;background:#ecfeff;color:#155e75;">sin registrar pago</span></div>'
+                ),
+            )}
+            {alerts}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Solicitudes del Payment Run</div>
+                <div class="workspace-section-subtitle">La unica edicion permitida aqui es fecha_pago. Cerrar captura un snapshot operativo y no marca la solicitud como pagada.</div>
+                <div style="overflow:auto;margin-top:14px;">
+                    <table class="payment-table">
+                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Corte</th></tr></thead>
+                        <tbody>{_render_payment_run_items(rows)}</tbody>
+                    </table>
+                </div>
+                <form id="payment-run-close-form" method="POST" action="/admin/finanzas/payment-run/closures" style="margin-top:16px;display:grid;grid-template-columns:minmax(160px,.5fr) minmax(260px,1fr) auto;gap:12px;align-items:end;">
+                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Fecha corte</label><input type="date" name="run_date"></div>
+                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Notas</label><input name="notes" placeholder="Referencia interna opcional"></div>
+                    <button class="button" type="submit" onclick="return confirm('Cerrar el corte operativo seleccionado sin registrar pago?');">Cerrar corte</button>
+                </form>
+            </section>
+            <section class="workspace-card">
+                <div class="workspace-section-title">Cortes recientes</div>
+                <div style="overflow:auto;margin-top:14px;">
+                    <table class="payment-table">
+                        <thead><tr><th>Corte</th><th>Cerrado</th><th>Fecha corte</th><th>Items</th><th>Total</th><th>Cerro</th></tr></thead>
+                        <tbody>{_render_payment_run_closures(closures)}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+
+@router.post("/admin/finanzas/payment-run/documentos/{documento_id}/fecha-pago")
+async def admin_finance_payment_run_update_fecha_pago(
+    request: Request,
+    documento_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    fecha_pago: str = Form(...),
+) -> RedirectResponse:
+    try:
+        require_payment_run_access(current_empleado)
+        documento = await update_payment_run_fecha_pago(
+            session,
+            documento_id=documento_id,
+            fecha_pago=fecha_pago,
+            actor_id=current_empleado.id,
+            request=request,
+        )
+        ref = documento.numero_referencia or str(documento.id)
+        return _payment_run_redirect(success_msg=f"fecha_pago actualizada para {ref}.")
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    except (PaymentRunValidationError, ValueError) as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=getattr(exc, "message", str(exc)))
+
+
+@router.post("/admin/finanzas/payment-run/closures")
+async def admin_finance_payment_run_close(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    document_ids: Optional[List[str]] = Form(None),
+    notes: Optional[str] = Form(None),
+    run_date: Optional[str] = Form(None),
+) -> RedirectResponse:
+    try:
+        require_payment_run_access(current_empleado)
+        result = await close_payment_run(
+            session,
+            document_ids=document_ids or [],
+            actor_id=current_empleado.id,
+            notes=notes,
+            run_date=run_date,
+            request=request,
+        )
+        return _payment_run_redirect(
+            success_msg=(
+                f"Corte cerrado con {result.item_count} solicitudes "
+                f"por {_payment_run_money(result.total_amount)}."
+            )
+        )
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    except (PaymentRunValidationError, ValueError) as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=getattr(exc, "message", str(exc)))
+
+
+@router.get("/admin/finanzas/payment-run/closures/{closure_id}", response_class=HTMLResponse)
+async def admin_finance_payment_run_closure_detail(
+    closure_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> HTMLResponse:
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    closure = await get_payment_run_closure(session, closure_id=closure_id)
+    if not closure:
+        raise HTTPException(status_code=404, detail="Corte no encontrado.")
+    rows = "".join(
+        f"""
+        <tr>
+            <td>{escape(str(item.get("numero_referencia") or item.get("documento_id") or "-"))}</td>
+            <td>{escape(str(item.get("fecha_pago") or "-"))}</td>
+            <td>{_payment_run_money(item.get("monto"), str(item.get("currency") or "MXN"))}</td>
+            <td>{escape(str(item.get("estado_documento") or "-"))}</td>
+            <td>{escape("pagada" if item.get("pagado_en") else "sin pago registrado")}</td>
+        </tr>
+        """
+        for item in closure.get("items", [])
+    )
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Corte Payment Run - Samchat</title>
+        <style>
+            {_admin_workspace_styles("1180px")}
+            .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "payment_run", subtitle="Detalle de corte Payment Run.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Corte Payment Run",
+                title=f"Corte {escape(str(closure.get('id') or ''))[:8]}",
+                description="Snapshot operativo de solicitudes incluidas en el corte. Esta vista no registra pagos.",
+                actions_html='<a class="button secondary" href="/admin/finanzas/payment-run">Volver a Payment Run</a>',
+                side_html=(
+                    '<div class="eyebrow">Resumen</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{int(closure.get("item_count") or 0)} solicitudes</div>'
+                    f'<div style="margin-top:8px;color:#64748b;">Total {_payment_run_money(closure.get("total_amount"))}</div>'
+                    f'<div style="margin-top:8px;color:#64748b;">Cerrado {escape(str(closure.get("closed_at") or "-"))[:19]}</div>'
+                ),
+            )}
+            <section class="workspace-card">
+                <div class="workspace-section-title">Solicitudes incluidas</div>
+                <div style="overflow:auto;margin-top:14px;">
+                    <table class="payment-table">
+                        <thead><tr><th>Solicitud</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
+                        <tbody>{rows or '<tr><td colspan="5">Sin items.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
 
 
 @router.post("/admin/finanzas/payment-run/pay")
