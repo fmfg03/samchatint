@@ -13,6 +13,9 @@ from sqlalchemy.orm import selectinload
 from ..models import Aprobacion, CuentaDeGastos, Documento, Empleado, ExpenseReport
 from ..utils.mexico_city_dates import utc_now
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
+from .employee_debtor_accounting_service import (
+    ensure_debtor_comprobacion_posting_for_informe,
+)
 from .customer_success_audit import (
     AuditRequestContext,
     record_customer_success_audit_event,
@@ -332,6 +335,11 @@ async def transition_documento_workflow(
         documento.estado = "aprobado"
         documento.aprobado_en = now
         assign_fecha_pago_on_solicitud_approval(documento)
+        if documento.tipo == "INFORME":
+            await ensure_debtor_comprobacion_posting_for_informe(
+                session,
+                informe_documento=documento,
+            )
         aprobacion_accion = "aprobar"
 
     elif normalized_action == "reject":

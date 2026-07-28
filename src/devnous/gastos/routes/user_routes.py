@@ -96,6 +96,10 @@ from ..services.access_control_service import (
     visible_tools_for,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.employee_debtor_accounting_service import (
+    build_cuenta_debtor_auxiliary,
+    ensure_debtor_payment_posting_for_document,
+)
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
@@ -9186,6 +9190,79 @@ def format_currency(value, currency: str = "MXN") -> str:
         return f"{symbol}{float(value):,.2f}"
     except (ValueError, TypeError):
         return str(value)
+
+
+def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN") -> str:
+    status = str(aux.get("status") or "pendiente")
+    status_labels = {
+        "saldado": "Saldado",
+        "pendiente": "Pendiente",
+        "sin_subcuenta": "Sin subcuenta de empleado",
+        "diferencia_contable": "Diferencia contable",
+    }
+    status_colors = {
+        "saldado": ("#dcfce7", "#166534"),
+        "pendiente": ("#fef3c7", "#92400e"),
+        "sin_subcuenta": ("#fee2e2", "#991b1b"),
+        "diferencia_contable": ("#fee2e2", "#991b1b"),
+    }
+    bg, fg = status_colors.get(status, ("#f1f5f9", "#334155"))
+    lines = list(aux.get("lines") or [])
+    rows = ""
+    for line in lines:
+        poliza = getattr(line, "poliza", None)
+        fecha = (
+            poliza.fecha_poliza.strftime("%Y-%m-%d")
+            if poliza is not None and poliza.fecha_poliza
+            else "—"
+        )
+        rows += f"""
+            <tr>
+                <td>{escape(fecha)}</td>
+                <td>{escape(str(getattr(poliza, "numero_poliza", "") or "—"))}</td>
+                <td>{escape(str(getattr(poliza, "origen", "") or "—"))}</td>
+                <td>{escape(str(line.cuenta_codigo or "—"))}</td>
+                <td>{escape(str(line.concepto or getattr(poliza, "concepto_resumen", None) or "—"))}</td>
+                <td>{format_currency(line.debe or 0, currency)}</td>
+                <td>{format_currency(line.haber or 0, currency)}</td>
+            </tr>
+        """
+    missing_note = ""
+    if status == "sin_subcuenta":
+        empleado = aux.get("empleado")
+        missing_note = (
+            '<div class="notice warn" style="margin:12px 0;">'
+            "Este empleado no tiene una subcuenta activa bajo "
+            "1170-001-* en el catálogo contable. Contabilidad debe crearla "
+            f"manualmente para {_format_empleado_display_name(empleado)}."
+            "</div>"
+        )
+    return f"""
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Auxiliar de deudores</h2>
+                    <div class="section-note">Movimientos contables automáticos ligados a anticipos, comprobación y liquidación del informe.</div>
+                </div>
+                <span style="display:inline-flex;padding:6px 10px;border-radius:999px;background:{bg};color:{fg};font-weight:800;font-size:12px;">
+                    {escape(status_labels.get(status, status))}
+                </span>
+            </div>
+            {missing_note}
+            <div class="meta-grid" style="margin-top:14px;">
+                <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloque 1170-001</small></div>
+                <div class="meta-card"><span>Debe deudores</span><strong>{format_currency(aux.get("debe") or 0, currency)}</strong><small>Cargos al empleado</small></div>
+                <div class="meta-card"><span>Haber deudores</span><strong>{format_currency(aux.get("haber") or 0, currency)}</strong><small>Comprobaciones/devoluciones</small></div>
+                <div class="meta-card"><span>Saldo contable</span><strong>{format_currency(aux.get("saldo") or 0, currency)}</strong><small>Debe quedar en cero al liquidar</small></div>
+            </div>
+            <div class="table-shell" style="margin-top:14px;">
+                <table>
+                    <thead><tr><th>Fecha</th><th>Póliza</th><th>Origen</th><th>Cuenta</th><th>Concepto</th><th>Debe</th><th>Haber</th></tr></thead>
+                    <tbody>{rows or '<tr><td colspan="7" style="text-align:center;color:#64748b;padding:18px;">Sin movimientos contables de deudores generados todavía.</td></tr>'}</tbody>
+                </table>
+            </div>
+        </section>
+    """
 
 
 def _currency_options(selected: str = "MXN") -> str:
@@ -21078,6 +21155,16 @@ async def registrar_anticipo(
         creado_en=datetime.utcnow()
     )
     session.add(anticipo)
+    await session.flush()
+    anticipo_employee = await session.get(Empleado, documento.empleado_id)
+    if anticipo_employee is not None:
+        await ensure_debtor_payment_posting_for_document(
+            session,
+            documento=documento,
+            empleado=anticipo_employee,
+            fecha_pago=fecha_entrega_dt,
+            require_employee_beneficiary=False,
+        )
 
     await session.commit()
 
@@ -28281,6 +28368,12 @@ async def cuenta_de_gastos_detail(
                 </section>
         """
 
+    debtor_aux = await build_cuenta_debtor_auxiliary(session, cuenta_id=cuenta.id)
+    debtor_aux_html = _render_debtor_auxiliary_section(
+        debtor_aux,
+        currency_for(cuenta),
+    )
+
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -28399,6 +28492,7 @@ async def cuenta_de_gastos_detail(
                         {solicitudes_section_html}
                     </div>
                 </section>
+                {debtor_aux_html}
                 {quick_capture_html}
                 <section class="surface">
                     <div class="section-head">

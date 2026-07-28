@@ -37,6 +37,7 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .amex_expense_service import compute_informe_saldo, employee_paid_sql_condition
+from .employee_debtor_accounting_service import ensure_debtor_settlement_posting
 
 FINANCE_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 
@@ -369,6 +370,12 @@ async def register_cuenta_settlement(
             "active_settlement_exists",
             "Otra liquidación activa acaba de ser registrada. Refresca la pantalla.",
         ) from exc
+
+    await ensure_debtor_settlement_posting(
+        session,
+        reembolso=reembolso,
+        cuenta=cuenta,
+    )
 
     comprobante_b64 = base64.b64encode(raw_bytes).decode("ascii")
     await create_adjunto_record(

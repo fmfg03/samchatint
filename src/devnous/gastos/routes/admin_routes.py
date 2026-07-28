@@ -115,6 +115,10 @@ from ..services.expense_accounting_service import (
     build_expense_accounting_preview,
     resolve_counterpart_account,
 )
+from ..services.employee_debtor_accounting_service import (
+    DEBTOR_ACCOUNT_PREFIX,
+    build_debtors_admin_snapshot,
+)
 from ..services.expense_accounting_cleanup_service import (
     build_cleanup_preview,
     list_unassigned_cfdi_options,
@@ -996,6 +1000,7 @@ def render_admin_navigation(
     ]
     finanzas_items = [
         ("admin.finanzas", "/admin/finanzas", "Finanzas", "finanzas"),
+        ("admin.contabilidad", "/admin/contabilidad/deudores", "Deudores", "deudores"),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
@@ -1297,6 +1302,13 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             .workspace-hero {{ grid-template-columns:1fr; }}
         }}
     """
+
+
+def _admin_money(value: Any) -> str:
+    try:
+        return f"${float(value or 0):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
 
 
 def _render_admin_workspace_hero(
@@ -5466,6 +5478,146 @@ async def admin_sports_platform(
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
                     {''.join(f'<span class="sports-chip">{escape(label)}</span>' for label in ["Action Queue", "One-click Ops Brief", "Mission Control", "Command Center", "Team Journey", "Match Center", "Readiness global", "Ops Copilot", "Public microsite", "Sponsor/Media", "Incident Center", "Venue Ops", "Post-tournament report", "Portal equipos", "Roster inteligente", "Matchday Ops", "Comunicación oficial", "Risk Radar", "Sports CRM", "Fan/Public Layer", "Mobile field app", "AI Ops Assistant"])}
                 </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/contabilidad/deudores", response_class=HTMLResponse)
+async def admin_contabilidad_deudores(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    q: str = Query(""),
+) -> HTMLResponse:
+    """Read-only employee debtor auxiliary over automatic SamChat postings."""
+    now = datetime.utcnow()
+    selected_year = int(year or now.year)
+    selected_month = int(month or now.month)
+    selected_q = (q or "").strip()
+    snapshot = await build_debtors_admin_snapshot(
+        session,
+        year=selected_year,
+        month=selected_month,
+        q=selected_q,
+    )
+    summary = list(snapshot.get("summary") or [])
+    lines = list(snapshot.get("lines") or [])
+    missing_employees = list(snapshot.get("missing_employees") or [])
+    total_debe = sum(float(item.get("debe") or 0) for item in summary)
+    total_haber = sum(float(item.get("haber") or 0) for item in summary)
+    total_saldo = round(total_debe - total_haber, 2)
+    summary_rows = "".join(
+        f"""
+        <tr>
+            <td>{escape(str(item.get("empleado_nombre") or "—"))}</td>
+            <td>{escape(str(item.get("cuenta_codigo") or "Sin subcuenta"))}</td>
+            <td>{_admin_money(item.get("debe"))}</td>
+            <td>{_admin_money(item.get("haber"))}</td>
+            <td>{_admin_money(item.get("saldo"))}</td>
+            <td>{int(item.get("movimientos") or 0)}</td>
+        </tr>
+        """
+        for item in summary
+    )
+    movement_rows = ""
+    for line in lines[:500]:
+        poliza = getattr(line, "poliza", None)
+        raw = line.raw_row_json or {}
+        movement_rows += f"""
+        <tr>
+            <td>{escape(poliza.fecha_poliza.strftime("%Y-%m-%d") if poliza and poliza.fecha_poliza else "—")}</td>
+            <td>{escape(str(getattr(poliza, "numero_poliza", "") or "—"))}</td>
+            <td>{escape(str(raw.get("empleado_nombre") or getattr(poliza, "beneficiario_nombre", None) or "—"))}</td>
+            <td>{escape(str(line.cuenta_codigo or "—"))}</td>
+            <td>{escape(str(line.concepto or getattr(poliza, "concepto_resumen", None) or "—"))}</td>
+            <td>{_admin_money(line.debe)}</td>
+            <td>{_admin_money(line.haber)}</td>
+            <td>{f'<a href="/informes-de-gastos/{escape(str(raw.get("cuenta_gastos_id")))}">Ver informe</a>' if raw.get("cuenta_gastos_id") else "—"}</td>
+        </tr>
+        """
+    missing_rows = "".join(
+        f"""
+        <tr>
+            <td>{escape(str(emp.nombre or "—"))}</td>
+            <td>{escape(str(emp.correo or "—"))}</td>
+            <td>{escape(str(emp.departamento or "—"))}</td>
+            <td><a href="/admin/cuentas-contables">Crear subcuenta {DEBTOR_ACCOUNT_PREFIX}###</a></td>
+        </tr>
+        """
+        for emp in missing_employees
+    )
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Deudores por comprobar - SamChat</title>
+        <style>
+            {_admin_workspace_styles("1480px")}
+            .debtor-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }}
+            .debtor-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .debtor-table th, .debtor-table td {{ text-align:left; padding:11px 12px; border-bottom:1px solid #e2e8f0; vertical-align:top; font-size:13px; }}
+            .debtor-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            input {{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; }}
+            .button {{ display:inline-block; padding:10px 14px; border-radius:12px; background:#0f766e; color:white; border:0; text-decoration:none; font-weight:800; cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0; color:#0f172a; }}
+            .warn {{ background:#fef2f2; color:#991b1b; border:1px solid #fecaca; border-radius:14px; padding:14px; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "deudores", subtitle="Contabilidad: auxiliar de deudores por comprobar.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Contabilidad",
+                title="Deudores por comprobar",
+                description="Consulta automática de anticipos, comprobaciones y liquidaciones contra subcuentas 1170-001 por empleado.",
+                actions_html=(
+                    '<form method="GET" action="/admin/contabilidad/deudores" '
+                    'style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end;">'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Año</label><input name="year" value="{selected_year}" type="number" min="2020" max="2100"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Mes</label><input name="month" value="{selected_month}" type="number" min="1" max="12"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(selected_q)}" placeholder="Empleado, póliza o cuenta"></div>'
+                    '<button class="button" type="submit">Filtrar</button>'
+                    f'<a class="button secondary" href="/admin/contabilidad/deudores">Limpiar</a>'
+                    '</form>'
+                ),
+                side_html=(
+                    '<div class="eyebrow">Periodo</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{selected_month:02d}/{selected_year}</div>'
+                    f'<div style="margin-top:8px;color:#64748b;">{len(summary)} empleados con movimiento · {len(lines)} líneas contables</div>'
+                ),
+            )}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="debtor-grid">
+                    {_sports_card("Debe", _admin_money(total_debe), "Cargos a deudores")}
+                    {_sports_card("Haber", _admin_money(total_haber), "Abonos a deudores")}
+                    {_sports_card("Saldo", _admin_money(total_saldo), "Debe quedar en cero")}
+                    {_sports_card("Sin subcuenta", len(missing_employees), "Requieren alta manual")}
+                </div>
+            </section>
+            {f'<section class="workspace-card warn" style="margin-bottom:18px;"><strong>Empleados sin subcuenta de deudores</strong><div style="margin-top:8px;">Crea manualmente una cuenta activa bajo {DEBTOR_ACCOUNT_PREFIX}### y con el nombre del empleado para habilitar asientos automáticos.</div><table class="debtor-table" style="margin-top:12px;"><thead><tr><th>Empleado</th><th>Correo</th><th>Departamento</th><th>Acción</th></tr></thead><tbody>{missing_rows}</tbody></table></section>' if missing_rows else ''}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Saldo por empleado</div>
+                <div class="workspace-section-subtitle">Agrupado por subcuenta del bloque 1170-001 en el periodo filtrado.</div>
+                <table class="debtor-table" style="margin-top:14px;">
+                    <thead><tr><th>Empleado</th><th>Subcuenta</th><th>Debe</th><th>Haber</th><th>Saldo</th><th>Movimientos</th></tr></thead>
+                    <tbody>{summary_rows or '<tr><td colspan="6">Sin movimientos de deudores para este periodo.</td></tr>'}</tbody>
+                </table>
+            </section>
+            <section class="workspace-card">
+                <div class="workspace-section-title">Movimientos</div>
+                <div class="workspace-section-subtitle">Primeras 500 líneas de pólizas automáticas de deudores.</div>
+                <table class="debtor-table" style="margin-top:14px;">
+                    <thead><tr><th>Fecha</th><th>Póliza</th><th>Empleado</th><th>Cuenta</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Informe</th></tr></thead>
+                    <tbody>{movement_rows or '<tr><td colspan="8">Sin movimientos visibles.</td></tr>'}</tbody>
+                </table>
             </section>
         </div>
     </body>
