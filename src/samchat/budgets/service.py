@@ -17,6 +17,10 @@ from openpyxl import load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from devnous.gastos.services.tournament_authority_service import (
+    require_ungoverned_gastos_project,
+)
+
 
 _ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BUDGET_ARTIFACT = (
@@ -1418,6 +1422,10 @@ async def sync_budget_projects_from_partidas_workbook(
         )
         if tournament_id:
             projects_matched += 1
+            await require_ungoverned_gastos_project(
+                session,
+                tournament_id,
+            )
             current = next(
                 (
                     row

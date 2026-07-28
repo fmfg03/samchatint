@@ -42,11 +42,13 @@ from ..models import (
     Tournament,
 )
 from .expense_service import create_expense_from_data
+from .tournament_authority_service import require_ungoverned_gastos_project
 
 logger = logging.getLogger(__name__)
 
 TRAINING_EXPENSE_ORIGIN = "finance_training"
 TRAINING_EMAIL_DOMAIN = "finance-training.sam.chat"
+FINANCE_TRAINING_TOURNAMENT_PREFIX = "FINTRAIN "
 MANIFEST_VERSION = 1
 DEFAULT_TRAINING_PASSWORD = os.getenv("FINANCE_TRAINING_DEFAULT_PASSWORD", "FinTrain2026!")
 
@@ -245,7 +247,7 @@ async def generate_finance_training_dataset(
     pwd_hash = password_hash or _hash_training_password(DEFAULT_TRAINING_PASSWORD)
 
     # 1) Tournament
-    t_name = f"FINTRAIN {bkey}"
+    t_name = f"{FINANCE_TRAINING_TOURNAMENT_PREFIX}{bkey}"
     torneo = Tournament(
         name=t_name,
         description="Dataset de capacitación finanzas — no usar en producción real",
@@ -928,6 +930,7 @@ async def cleanup_finance_training_dataset(
         )
 
     if m.tournament_id:
+        await require_ungoverned_gastos_project(session, m.tournament_id)
         await session.execute(
             delete(Tournament).where(Tournament.id == uuid.UUID(m.tournament_id))
         )
@@ -1287,6 +1290,8 @@ async def _delete_finance_training_id_sets(
 
     tournament_ids = ids.get("tournament_ids") or []
     if tournament_ids:
+        for tournament_id in tournament_ids:
+            await require_ungoverned_gastos_project(session, tournament_id)
         await session.execute(
             delete(Tournament).where(Tournament.id.in_(tournament_ids))
         )
