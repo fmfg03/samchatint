@@ -1795,6 +1795,72 @@ class Documento(Base):
         }
 
 
+class PaymentRunClosure(Base):
+    """Operational close for approved SOLICITUD payment-run batches."""
+
+    __tablename__ = "payment_run_closures"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    status = Column(String(20), nullable=False, default="closed", index=True)
+    run_date = Column(Date, nullable=True, index=True)
+    total_amount = Column(Numeric(18, 2), nullable=False, default=0)
+    item_count = Column(Integer, nullable=False, default=0)
+    notes = Column(Text, nullable=True)
+    closed_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
+    )
+    closed_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    metadata_json = Column("metadata", JSONB, nullable=True)
+
+    closed_by = relationship(
+        "Empleado", foreign_keys=[closed_by_empleado_id], lazy="selectin"
+    )
+    items = relationship(
+        "PaymentRunClosureItem",
+        back_populates="closure",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class PaymentRunClosureItem(Base):
+    """Document snapshot captured when a payment run is operationally closed."""
+
+    __tablename__ = "payment_run_closure_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    closure_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("payment_run_closures.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    documento_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("documentos.id", onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    numero_referencia = Column(String(200), nullable=True, index=True)
+    fecha_pago = Column(Date, nullable=True, index=True)
+    monto = Column(Numeric(18, 2), nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="MXN")
+    estado_documento = Column(String(50), nullable=True)
+    snapshot_json = Column("snapshot", JSONB, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False, index=True
+    )
+
+    closure = relationship("PaymentRunClosure", back_populates="items", lazy="selectin")
+    documento = relationship("Documento", foreign_keys=[documento_id], lazy="selectin")
+
+
 class Aprobacion(Base):
     """
     Approval tracking for documents or expenses.

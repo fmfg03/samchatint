@@ -237,6 +237,8 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("access_control_rules", "ix_access_control_rules_role_area"),
     RequiredIndex("access_control_audit_logs", "ix_access_control_audit_tool"),
     RequiredIndex("access_control_audit_logs", "ix_access_control_audit_actor"),
+    RequiredIndex("payment_run_closures", "ix_payment_run_closures_closed_at"),
+    RequiredIndex("payment_run_closure_items", "ux_payment_run_closure_items_documento"),
 )
 
 
@@ -417,6 +419,51 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
         """,
+    ),
+    (
+        "create_payment_run_closures_table",
+        """
+        CREATE TABLE IF NOT EXISTS payment_run_closures (
+            id UUID PRIMARY KEY,
+            status VARCHAR(20) NOT NULL DEFAULT 'closed',
+            run_date DATE NULL,
+            total_amount NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            item_count INTEGER NOT NULL DEFAULT 0,
+            notes TEXT NULL,
+            closed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            closed_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+            metadata JSONB NULL
+        )
+        """,
+    ),
+    (
+        "create_payment_run_closure_items_table",
+        """
+        CREATE TABLE IF NOT EXISTS payment_run_closure_items (
+            id UUID PRIMARY KEY,
+            closure_id UUID NOT NULL REFERENCES payment_run_closures(id) ON DELETE CASCADE,
+            documento_id UUID NOT NULL REFERENCES documentos(id) ON DELETE RESTRICT,
+            numero_referencia VARCHAR(200) NULL,
+            fecha_pago DATE NULL,
+            monto NUMERIC(18, 2) NOT NULL DEFAULT 0,
+            currency VARCHAR(3) NOT NULL DEFAULT 'MXN',
+            estado_documento VARCHAR(50) NULL,
+            snapshot JSONB NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "ix_payment_run_closures_closed_at",
+        "CREATE INDEX IF NOT EXISTS ix_payment_run_closures_closed_at ON payment_run_closures(closed_at DESC)",
+    ),
+    (
+        "ix_payment_run_closure_items_closure",
+        "CREATE INDEX IF NOT EXISTS ix_payment_run_closure_items_closure ON payment_run_closure_items(closure_id)",
+    ),
+    (
+        "ux_payment_run_closure_items_documento",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_payment_run_closure_items_documento ON payment_run_closure_items(documento_id)",
     ),
     (
         "create_accounting_close_checklist_items_table",
