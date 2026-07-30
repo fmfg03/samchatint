@@ -205,3 +205,37 @@ def test_budget_profile_presets_do_not_grant_mutation_outside_superadmin() -> No
         token.startswith("budgets.")
         for token in admin_routes._PROFILE_PRESETS["contabilidad"]["permissions"]
     )
+
+
+def test_employee_beneficiary_access_summary_lists_only_permissioned_users() -> None:
+    permitted = {
+        "empleado_nombre": "Bibiana Roman",
+        "empleado_correo": "bibiana@example.com",
+        "empleado_rol": "empleado",
+        "profile_names": ["Solicitudes para empleados terceros"],
+        "permission_payloads": [
+            {"permissions": ["finance.employee_beneficiary.request"], "scopes": []}
+        ],
+    }
+    ordinary = {
+        "empleado_nombre": "Usuario Normal",
+        "empleado_correo": "normal@example.com",
+        "empleado_rol": "empleado",
+        "profile_names": ["Lectura"],
+        "permission_payloads": [{"permissions": ["finance.solicitudes.read"], "scopes": []}],
+    }
+
+    html = admin_routes._render_employee_beneficiary_access_summary(
+        {"emp-1": permitted, "emp-2": ordinary}
+    )
+
+    assert "Bibiana Roman" in html
+    assert "finance.employee_beneficiary.request" in html
+    assert "Usuario Normal" not in html
+
+
+def test_employee_beneficiary_access_summary_explains_empty_state() -> None:
+    html = admin_routes._render_employee_beneficiary_access_summary({})
+
+    assert "Ningun perfil activo" in html
+    assert "Solicitudes para empleados terceros" in html

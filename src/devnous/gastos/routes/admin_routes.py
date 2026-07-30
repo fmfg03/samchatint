@@ -768,6 +768,47 @@ def _build_effective_profile_preview(
     }
 
 
+def _render_employee_beneficiary_access_summary(
+    effective_preview_map: dict[str, dict[str, Any]]
+) -> str:
+    """Render assigned users who can request informes/anticipos for another employee."""
+
+    rows: list[str] = []
+    for empleado_id, preview in sorted(
+        effective_preview_map.items(),
+        key=lambda item: (
+            str(item[1].get("empleado_nombre") or "").lower(),
+            str(item[0]),
+        ),
+    ):
+        effective = preview.get("effective") or _build_effective_profile_preview(
+            empleado_role=preview.get("empleado_rol"),
+            permission_payloads=list(preview.get("permission_payloads") or []),
+        )
+        if not effective.get("highlights", {}).get("employee_beneficiary"):
+            continue
+        profile_names = ", ".join(preview.get("profile_names") or []) or "?"
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(preview.get('empleado_nombre') or ''))}"
+            f'<br><small style="color:#64748b;">{escape(str(preview.get("empleado_correo") or ""))}</small></td>'
+            f"<td><code>{escape(str(empleado_id))}</code></td>"
+            f"<td>{escape(profile_names)}</td>"
+            '<td><span class="pill">finance.employee_beneficiary.request</span></td>'
+            "</tr>"
+        )
+    if not rows:
+        return (
+            '<div style="color:#64748b;">Ningun perfil activo asignado otorga '
+            '<code>finance.employee_beneficiary.request</code>. Si un usuario autorizado no ve el selector, '
+            'asigna el preset <code>Solicitudes para empleados terceros</code>.</div>'
+        )
+    return (
+        '<table><thead><tr><th>Empleado</th><th>ID</th><th>Perfiles</th><th>Capacidad</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def _build_effective_profile_comparison(
     *,
     left_label: str,
@@ -11009,6 +11050,10 @@ async def admin_perfiles(
         </div>
         """
 
+    employee_beneficiary_access_html = _render_employee_beneficiary_access_summary(
+        effective_preview_map
+    )
+
     comparison_html = '<div style="color:#64748b;">Se necesitan al menos dos empleados con perfiles activos para comparar.</div>'
     comparison_options = ""
     sorted_preview_items = sorted(
@@ -11271,6 +11316,12 @@ async def admin_perfiles(
                 <h2>Permisos efectivos por usuario</h2>
                 <p style="color:#475569;">Vista previa del estado efectivo actual por empleado: rol base, union de tokens/scopes activos y superficies relevantes ya habilitadas.</p>
                 <div class="preset-grid">{effective_preview_cards or '<div style="color:#64748b;">Sin asignaciones activas todavía.</div>'}</div>
+            </div>
+
+            <div class="card" style="margin-top:16px;">
+                <h2>Solicitudes para empleados terceros</h2>
+                <p style="color:#475569;">Usuarios con perfil activo que pueden crear anticipos o informes a nombre de otro empleado sin cambiar la ruta de autorizaci?n.</p>
+                {employee_beneficiary_access_html}
             </div>
 
             <div class="card" style="margin-top:16px;">
