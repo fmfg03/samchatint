@@ -67,7 +67,7 @@ PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m py_com
 PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest \
   tests/unit/gastos/test_authorization_profile_board.py \
   tests/unit/gastos/test_authorization_strategy_service.py \
-  tests/unit/gastos/test_sat_sync_operational_contract.py \
+  tests/unit/sat/test_sat_sync_operational_contract.py \
   -q
 
 git diff --check
@@ -112,3 +112,57 @@ If time allows before PR, also run the broader gastos regression subset covering
 - This story does not replace the future formal QA/UAT protocol.
 - This story does not claim live SAT success without FIEL/e.firma.
 - This story does not claim the full Operations/Supabase migration audit is complete.
+
+## Verification result
+
+Status: LOCAL_GATE_PASSED
+Verified at: 2026-07-30
+Verified head before evidence commit: `3e2c66eea`
+
+Commands executed:
+
+```bash
+PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m py_compile \
+  src/devnous/gastos/routes/user_routes.py \
+  src/devnous/gastos/routes/admin_routes.py \
+  src/devnous/gastos/routes/webhook_handler.py \
+  src/devnous/gastos/services/documento_workflow_service.py \
+  src/devnous/gastos/services/authorization_profile_service.py \
+  src/devnous/gastos/services/authorization_strategy_service.py \
+  src/devnous/sat/sat_sync_service.py
+
+PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest \
+  tests/unit/gastos/test_authorization_profile_board.py \
+  tests/unit/gastos/test_authorization_strategy_service.py \
+  tests/unit/sat/test_sat_sync_operational_contract.py \
+  -q
+# Result: 29 passed, 1 warning
+
+PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest \
+  tests/unit/gastos/test_beneficiary_draft_controls.py \
+  tests/unit/gastos/test_informe_beneficiary_selector.py \
+  tests/unit/gastos/test_solicitar_anticipo_route.py \
+  tests/unit/gastos/test_solicitud_terceros_routes.py \
+  tests/unit/gastos/test_cfdi_quick_expense_totals.py \
+  tests/unit/gastos/test_admin_budget_route_safety.py \
+  tests/unit/gastos/test_budget_line_update_authorization.py \
+  tests/unit/gastos/test_no_deducible_project_rules.py \
+  tests/unit/gastos/test_reimbursement_document_semantics.py \
+  tests/unit/gastos/test_employee_provider_registry.py \
+  tests/unit/gastos/test_authorization_profile_board.py \
+  tests/unit/gastos/test_authorization_strategy_service.py \
+  tests/unit/sat/test_sat_sync_operational_contract.py \
+  -q
+# Result: 134 passed, 4 warnings
+
+git diff --check
+# Result: passed
+```
+
+Repository sanity:
+
+- Branch confirmed: `sprint-rqf-056-beneficiary-ops`.
+- GitHub CLI available and authenticated as `fmfg03`.
+- Remote confirmed: `https://github.com/fmfg03/samchatint`.
+- Only known untracked artifacts remain untracked and intentionally excluded.
+
