@@ -24663,8 +24663,121 @@ async def crear_nueva_solicitud_personal(
     )
 
 def _authorization_strategy_badge_html(value: object) -> str:
-    label = str(value or "—").replace("_", " ").strip().title()
+    label = str(value or "--").replace("_", " ").strip().title()
     return f'<span class="status-chip info">{escape(label)}</span>'
+
+
+def _authorization_strategy_text_key(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return " ".join(
+        "".join(ch for ch in normalized if not unicodedata.combining(ch)).split()
+    )
+
+
+def _authorization_strategy_profile_matches_approver(
+    profile: dict[str, Any],
+    approver: dict[str, Any],
+) -> bool:
+    profile_role = _authorization_strategy_text_key(profile.get("role_key"))
+    approver_role = _authorization_strategy_text_key(approver.get("rol"))
+    if profile_role and approver_role and profile_role == approver_role:
+        return True
+
+    matcher = _authorization_strategy_text_key(profile.get("employee_matcher"))
+    approver_name = _authorization_strategy_text_key(approver.get("nombre"))
+    if not matcher or not approver_name:
+        return False
+    return matcher in approver_name or approver_name in matcher
+
+
+def _authorization_strategy_actual_route_preview_html(
+    *,
+    required_roles: list[str],
+    profiles: list[dict[str, Any]],
+    approval_entries: list[dict[str, Any]],
+) -> str:
+    approval_actions = {"aprobar", "aprobado", "auto_aprobar", "auto_aprobado"}
+    actual_approvers = [
+        entry
+        for entry in approval_entries
+        if _authorization_strategy_text_key(entry.get("accion")) in approval_actions
+    ]
+    matched_roles: set[str] = set()
+    for role_key in required_roles:
+        role_profiles = [
+            profile
+            for profile in profiles
+            if str(profile.get("role_key") or "") == str(role_key or "")
+        ]
+        for profile in role_profiles:
+            if any(
+                _authorization_strategy_profile_matches_approver(profile, approver)
+                for approver in actual_approvers
+            ):
+                matched_roles.add(str(role_key))
+                break
+
+    missing_roles = [str(role) for role in required_roles if str(role) not in matched_roles]
+    if not required_roles:
+        status_label = "Sin ruta sugerida"
+        status_note = "La matriz no devolvio roles requeridos para comparar."
+    elif not actual_approvers:
+        status_label = "Pendiente de aprobacion"
+        status_note = "Todavia no hay aprobaciones registradas para comparar contra la matriz."
+    elif missing_roles:
+        status_label = "Diferencia consultiva"
+        status_note = "Faltan roles sugeridos por matriz: " + ", ".join(missing_roles)
+    else:
+        status_label = "Coincide con matriz"
+        status_note = "Las aprobaciones registradas cubren los roles sugeridos visibles."
+
+    actual_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(entry.get("fecha") or "--"))}</td>
+            <td>{escape(str(entry.get("accion") or "--"))}</td>
+            <td>{escape(str(entry.get("nombre") or "--"))}</td>
+            <td>{escape(str(entry.get("rol") or "--"))}</td>
+            <td>{escape(str(entry.get("departamento") or "--"))}</td>
+        </tr>
+        '''
+        for entry in approval_entries
+    )
+    if not actual_rows:
+        actual_rows = '<tr><td colspan="5" style="text-align:center; padding:16px;">No hay aprobaciones registradas todavia.</td></tr>'
+
+    matched_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in sorted(matched_roles)
+    ) or '<span class="status-chip info">Ninguno</span>'
+    missing_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in missing_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+
+    return f'''
+        <div class="notice info" style="margin-top:16px;">
+            <strong>Comparacion consultiva:</strong> {escape(status_label)}<br>
+            <small>{escape(status_note)}</small>
+        </div>
+        <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <strong>Roles cubiertos:</strong> {matched_chips}
+            <strong style="margin-left:12px;">Roles faltantes:</strong> {missing_chips}
+        </div>
+        <div class="table-shell" style="margin-top:16px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Accion</th>
+                        <th>Aprobador registrado</th>
+                        <th>Rol actual</th>
+                        <th>Departamento</th>
+                    </tr>
+                </thead>
+                <tbody>{actual_rows}</tbody>
+            </table>
+        </div>
+    '''
 
 
 async def _render_document_authorization_strategy_evidence(
@@ -24726,28 +24839,60 @@ async def _render_document_authorization_strategy_evidence(
     required_roles = evidence.get("required_role_keys") or []
     if not isinstance(required_roles, list):
         required_roles = []
+    required_roles = [str(role) for role in required_roles if role]
+
+    try:
+        approvals_result = await session.execute(
+            text(
+                """
+                SELECT a.accion, a.fecha, e.nombre, e.rol, e.departamento
+                FROM aprobaciones a
+                LEFT JOIN empleados e ON e.id = a.aprobador_id
+                WHERE a.tipo_entidad = 'documento'
+                  AND a.entidad_id = :documento_id
+                ORDER BY a.fecha ASC
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+        approval_entries = [
+            {
+                "accion": row._mapping.get("accion"),
+                "fecha": format_value(row._mapping.get("fecha")),
+                "nombre": row._mapping.get("nombre"),
+                "rol": row._mapping.get("rol"),
+                "departamento": row._mapping.get("departamento"),
+            }
+            for row in approvals_result.fetchall()
+        ]
+    except Exception:
+        logger.exception(
+            "Failed to load document approvals for authorization preview",
+            extra={"documento_id": str(documento_id)},
+        )
+        approval_entries = []
 
     rule_label = rule.get("label") or rule.get("erogation_label") or rule.get("rule_key") or "Sin regla sugerida"
-    area_label = rule.get("area_label") or inputs.get("area") or inputs.get("area_key") or "—"
-    erogation_label = rule.get("erogation_label") or inputs.get("erogation_type") or inputs.get("erogation_key") or "—"
-    amount_mode = rule.get("amount_mode") or "—"
-    amount_value = rule.get("amount_value") or inputs.get("amount_mxn") or "—"
+    area_label = rule.get("area_label") or inputs.get("area") or inputs.get("area_key") or "--"
+    erogation_label = rule.get("erogation_label") or inputs.get("erogation_type") or inputs.get("erogation_key") or "--"
+    amount_mode = rule.get("amount_mode") or "--"
+    amount_value = rule.get("amount_value") or inputs.get("amount_mxn") or "--"
 
     input_cards = "".join(
         f'''
         <div class="meta-card">
             <span>{escape(label)}</span>
-            <strong>{escape(str(value if value is not None else "—"))}</strong>
+            <strong>{escape(str(value if value is not None else "--"))}</strong>
             <small>{escape(note)}</small>
         </div>
         '''
         for label, value, note in [
-            ("Área", inputs.get("area") or inputs.get("area_key") or "—", "Origen operativo inferido."),
-            ("Tipo de erogación", inputs.get("erogation_type") or inputs.get("erogation_key") or "—", "Clasificación usada para la matriz."),
-            ("Monto MXN", inputs.get("amount_mxn") or "—", "Base de rango de autorización."),
-            ("Factura", "Sí" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
-            ("Presupuesto", "Sí" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
-            ("Urgente", "Sí" if inputs.get("is_urgent") else "No", "Excepción operativa de prioridad."),
+            ("Area", inputs.get("area") or inputs.get("area_key") or "--", "Origen operativo inferido."),
+            ("Tipo de erogacion", inputs.get("erogation_type") or inputs.get("erogation_key") or "--", "Clasificacion usada para la matriz."),
+            ("Monto MXN", inputs.get("amount_mxn") or "--", "Base de rango de autorizacion."),
+            ("Factura", "Si" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
+            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
+            ("Urgente", "Si" if inputs.get("is_urgent") else "No", "Excepcion operativa de prioridad."),
         ]
     )
 
@@ -24758,10 +24903,10 @@ async def _render_document_authorization_strategy_evidence(
     profile_rows = "".join(
         f'''
         <tr>
-            <td>{escape(str(profile.get("profile_name") or profile.get("name") or "—"))}</td>
-            <td>{escape(str(profile.get("role_key") or "—"))}</td>
-            <td>{"Primera autorización" if profile.get("can_first_approve") else "—"}</td>
-            <td>{"Segunda autorización" if profile.get("can_second_approve") else "—"}</td>
+            <td>{escape(str(profile.get("profile_name") or profile.get("name") or "--"))}</td>
+            <td>{escape(str(profile.get("role_key") or "--"))}</td>
+            <td>{"Primera autorizacion" if profile.get("can_first_approve") else "--"}</td>
+            <td>{"Segunda autorizacion" if profile.get("can_second_approve") else "--"}</td>
         </tr>
         '''
         for profile in profiles
@@ -24770,6 +24915,11 @@ async def _render_document_authorization_strategy_evidence(
     if not profile_rows:
         profile_rows = '<tr><td colspan="4" style="text-align:center; padding:16px;">No hay perfiles configurados para esta ruta sugerida.</td></tr>'
 
+    route_preview_html = _authorization_strategy_actual_route_preview_html(
+        required_roles=required_roles,
+        profiles=[profile for profile in profiles if isinstance(profile, dict)],
+        approval_entries=approval_entries,
+    )
     created_display = format_value(selected_created_at)
     return f'''
         <section class="surface">
@@ -24777,15 +24927,15 @@ async def _render_document_authorization_strategy_evidence(
                 <div>
                     <h2>Ruta de autorizacion sugerida</h2>
                     <div class="section-note">
-                        Evidencia consultiva capturada al enviar el documento; todavía no bloquea ni sustituye el flujo actual.
+                        Evidencia consultiva capturada al enviar el documento; no bloquea ni sustituye el flujo actual.
                     </div>
                 </div>
                 <div class="status-chip info">Advisory</div>
             </div>
             <div class="notice info">
                 <strong>Regla sugerida:</strong> {escape(str(rule_label))}<br>
-                <strong>Área:</strong> {escape(str(area_label))} ·
-                <strong>Tipo:</strong> {escape(str(erogation_label))} ·
+                <strong>Area:</strong> {escape(str(area_label))} -
+                <strong>Tipo:</strong> {escape(str(erogation_label))} -
                 <strong>Rango:</strong> {escape(str(amount_mode))} {escape(str(amount_value))}
                 {f'<br><small>Registrada: {created_display}</small>' if created_display else ''}
             </div>
@@ -24808,6 +24958,7 @@ async def _render_document_authorization_strategy_evidence(
                     <tbody>{profile_rows}</tbody>
                 </table>
             </div>
+            {route_preview_html}
         </section>
     '''
 

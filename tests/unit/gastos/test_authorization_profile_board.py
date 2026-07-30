@@ -109,3 +109,15 @@ def test_document_detail_renders_authorization_strategy_evidence_panel():
     assert "authorization_strategy_html = await _render_document_authorization_strategy_evidence" in source
     assert "{authorization_strategy_html}" in source
     assert "no bloquea ni sustituye el flujo actual" in source
+
+
+def test_document_detail_compares_authorization_strategy_with_actual_route():
+    source = Path(user_routes.__file__).read_text()
+
+    assert "_authorization_strategy_actual_route_preview_html" in source
+    assert "Comparacion consultiva" in source
+    assert "Roles cubiertos" in source
+    assert "Roles faltantes" in source
+    assert "FROM aprobaciones a" in source
+    assert "Coincide con matriz" in source
+    assert "Diferencia consultiva" in source
