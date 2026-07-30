@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from devnous.gastos.routes import user_routes
+from devnous.gastos.routes.solicitud_transferencia_ui import render_cfdi_quick_expense_autofill_script
 from devnous.gastos.services.documento_service import SolicitudValidationError
 
 
@@ -597,3 +598,12 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
     assert "normalize('NFD')" in html
     assert ".replace(/[^a-z0-9]+/g, ' ')" in html
     assert "matchProveedor" in html
+
+
+def test_quick_expense_cfdi_autofill_keeps_xml_total_as_authority():
+    script = render_cfdi_quick_expense_autofill_script()
+
+    assert "if (total && payload.total)" in script
+    assert "total.value = payload.total" in script
+    assert "&& (!subtotal || !subtotal.value)" not in script
+    assert script.count("formData.append(sourceInput.name, sourceInput.files[0]);") == 1

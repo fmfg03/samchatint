@@ -12494,9 +12494,9 @@ def _solicitud_transferencia_list_actions_html(
     """Actions shown from the solicitudes list without bypassing workflow rules."""
     detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
     can_cancel_draft = (
-        documento.tipo == "SOLICITUD"
-        and documento.estado == "borrador"
-        and documento.empleado_id == current_empleado.id
+        getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
+        and getattr(documento, "estado", None) == "borrador"
+        and getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
     )
     if not can_cancel_draft:
         return detail_link
