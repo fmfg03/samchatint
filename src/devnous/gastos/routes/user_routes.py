@@ -8560,13 +8560,42 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS = {
     "jlopez@plataformasports.com",  # Juan Pablo
 }
 
+_THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES = {
+    "alicia edith zuniga salazar",
+    "bibiana raquel roman arguelles",
+    "carlos lozano",
+    "roberto martinez",
+    "benjamin jimenez",
+    "juan pablo lopez",
+    "juan pablo lopez romero",
+}
+
+
+def _normalize_employee_identity_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _third_party_requester_name_matches(nombre: str) -> bool:
+    if not nombre:
+        return False
+    return any(
+        nombre == allowed or nombre.startswith(f"{allowed} ")
+        for allowed in _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES
+    )
+
 
 def _can_request_for_other_employee(empleado: Empleado) -> bool:
     empleado_id = str(getattr(empleado, "id", "") or "")
     correo = (getattr(empleado, "correo", "") or "").strip().lower()
+    nombre = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
     return bool(
         empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
         or correo in _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS
+        or _third_party_requester_name_matches(nombre)
     )
 
 
