@@ -35,7 +35,7 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | RQF-056O - Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
 | RQF-057A - Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
 | RQF-057B - Telegram notification recipients audit | CLOSED_COMMITTED | this commit | Production config and DB audit confirmed Odilon/Benjamin Telegram readiness and timing; Odilon approval -> Finance alert was wired into the approve branch without changing authorization semantics. Evidence: `docs/sprints/rqf-057b-telegram-notifications-audit.md`. |
-| RQF-057C - Regional operator beneficiaries | BACKLOG / customer delta | none | Extend authorized third-party Anticipos/Informes beyond employees to Operadores Regionales without breaking requester ownership, approval routing, beneficiary banking/fiscal validation, or employee-only semantics. |
+| RQF-057C - Regional operator beneficiaries | CLOSED_LOCAL_PENDING_COMMIT | pending commit | Authorized third-party users can select active Operadores Regionales in Anticipos and Informes; requester ownership/approval routing stays unchanged; Anticipos swaps to the operator bank account; Informes persist operator beneficiary on cuenta/document. Evidence: `docs/sprints/rqf-057c-regional-operator-beneficiaries.md`. |
 | RQF-057D - Solicitudes search by proveedor | BACKLOG / customer delta | existing search has concept/reference; provider filter observed earlier | In Referencia solicitudes view, add provider search box/filter alongside Concepto and Referencia; align with customer Buscador tab. |
 | RQF-057E - No deducibles accounting rule | BACKLOG / customer delta | none | If a Solicitud de Transferencia or Informe line is not linked to factura/CFDI, route accounting impact to Gastos No Deducibles according to project-specific rule from ReglaNoDeducibles tab. |
 | RQF-057F - SAT massive download and reconciliation | BACKLOG / customer delta | none | Confirm automatic SAT download still runs daily at 23:00 and 09:00; separate Emitidos/Recibidos; add SAT vs Solicitudes reconciliation view. |
@@ -100,7 +100,7 @@ These items are now part of the master plan, but are not claimed as closed by RQ
 
 ## Next work order
 
-1. Continue customer Excel delta in order: RQF-057C Regional operator beneficiaries, RQF-057D Solicitudes provider search, RQF-057E No deducibles accounting rule, RQF-057F SAT download/reconciliation, RQF-057G Authorization strategy matrix progressive enforcement/preview.
+1. Continue customer Excel delta in order: RQF-057D Solicitudes provider search, RQF-057E No deducibles accounting rule, RQF-057F SAT download/reconciliation. Keep RQF-057G Authorization strategy matrix paused at advisory/board scope unless the customer asks to resume it.
 2. Keep RQF-056O Tocino/facturacion status/errors parked unless support pressure makes it urgent again.
 3. Sprint close only after broader tests + push + PR + review gate + final merge.
 

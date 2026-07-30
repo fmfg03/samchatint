@@ -325,7 +325,8 @@ def test_solicitar_anticipo_source_separates_employee_beneficiary_from_bank_acco
 
     assert "Paso 2" in rendered_literals
     assert "Cuenta bancaria del beneficiario" in rendered_literals
-    assert "La cuenta debe pertenecer al empleado beneficiario" in rendered_literals
+    assert "La cuenta debe pertenecer al empleado u operador regional beneficiario" in rendered_literals
+    assert "beneficiario_operador_id_anticipo" in rendered_literals
 
 
 class _QueryParams(dict):
@@ -380,6 +381,7 @@ async def test_solicitar_anticipo_form_shows_full_active_employee_list_for_autho
     monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
     monkeypatch.setattr(user_routes, "_html_empleado_bank_account_options", fake_bank_options)
+    monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", AsyncMock(return_value=[]))
     monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
     monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
 
@@ -400,6 +402,71 @@ async def test_solicitar_anticipo_form_shows_full_active_employee_list_for_autho
     assert f'<option value="{bibiana.id}" selected>Bibiana Roman</option>' in html
     assert "Cuenta bancaria del beneficiario" in html
     assert bank_called["empleado"] is bibiana
+
+@pytest.mark.asyncio
+async def test_solicitar_anticipo_form_allows_regional_operator_for_authorized_user(monkeypatch):
+    requester = SimpleNamespace(
+        id=UUID(next(iter(user_routes._THIRD_PARTY_EMPLOYEE_REQUESTER_IDS))),
+        nombre="Alicia",
+        correo="azuniga@plataformasports.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    operator = SimpleNamespace(
+        id=uuid4(),
+        nombre="Operador Regional Centro",
+        banco="BBVA",
+        cuenta_bancaria="1234567890",
+        cuenta_clabe="012345678901234567",
+        entidad_region="Centro",
+    )
+    torneo = SimpleNamespace(id=uuid4(), name="Proyecto Demo")
+    bank_called = {}
+
+    async def fake_resolve_employee(_session, raw_id, *, default):
+        return default
+
+    async def fake_active_empleados(_session, current_empleado):
+        return [current_empleado]
+
+    async def fake_tournaments(*_args, **_kwargs):
+        return [torneo]
+
+    async def fake_resolve_operator(_session, raw_id):
+        return operator if str(raw_id) == str(operator.id) else None
+
+    async def fake_active_operators(_session):
+        return [operator]
+
+    async def fake_bank_options(_session, empleado, *, selected_id=None):
+        bank_called["empleado"] = empleado
+        return '<option value="bank-self">Cuenta propia</option>'
+
+    monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve_employee)
+    monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
+    monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(user_routes, "_resolve_active_regional_operator_beneficiary", fake_resolve_operator)
+    monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", fake_active_operators)
+    monkeypatch.setattr(user_routes, "_html_empleado_bank_account_options", fake_bank_options)
+    monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
+    monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
+
+    html = await user_routes.solicitar_anticipo_form(
+        request=SimpleNamespace(
+            query_params=_QueryParams({"beneficiario_operador_id": str(operator.id)})
+        ),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert 'name="beneficiario_operador_id"' in html
+    assert 'id="beneficiario_operador_id_anticipo"' in html
+    assert "Operador Regional Centro" in html
+    assert "BBVA" in html
+    assert str(operator.id) in html
+    assert "Cuenta propia" not in html
+    assert bank_called == {}
+
 
 
 @pytest.mark.asyncio

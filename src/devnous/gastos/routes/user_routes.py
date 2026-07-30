@@ -9149,6 +9149,108 @@ def _empty_informe_cancel_error(
         return "El informe tiene archivos vinculados y no puede cancelarse como vacío."
     return None
 
+async def _active_regional_operator_beneficiaries(
+    session: AsyncSession,
+) -> List[ProveedorCliente]:
+    result = await session.execute(
+        select(ProveedorCliente)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "operadores_regionales",
+        )
+        .order_by(ProveedorCliente.nombre.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _resolve_active_regional_operator_beneficiary(
+    session: AsyncSession,
+    raw_id: Optional[str],
+) -> Optional[ProveedorCliente]:
+    value = (raw_id or "").strip()
+    if not value:
+        return None
+    try:
+        operator_id = UUIDType(value)
+    except (TypeError, ValueError):
+        return None
+    result = await session.execute(
+        select(ProveedorCliente).where(
+            ProveedorCliente.id == operator_id,
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "operadores_regionales",
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _html_regional_operator_options(
+    operators: List[ProveedorCliente], selected_id: Optional[UUIDType]
+) -> str:
+    selected = str(selected_id or "")
+    options = '<option value="">-- Sin operador regional --</option>'
+    for operator in operators:
+        raw_account = (operator.cuenta_bancaria or "") or (operator.cuenta_clabe or "")
+        last4 = raw_account[-4:] if raw_account and len(raw_account) >= 4 else ""
+        label = operator.nombre or str(operator.id)
+        if operator.entidad_region:
+            label += f" - {operator.entidad_region}"
+        if last4:
+            label += f" (...{last4})"
+        options += (
+            f'<option value="{operator.id}"'
+            f' data-nombre="{escape(operator.nombre or "")}"'
+            f' data-banco="{escape(operator.banco or "")}"'
+            f' data-cuenta="{escape(operator.cuenta_bancaria or "")}"'
+            f' data-cuenta-clabe="{escape(operator.cuenta_clabe or "")}"'
+            f'{" selected" if str(operator.id) == selected else ""}>'
+            f'{escape(label)}</option>'
+        )
+    return options
+
+
+def _regional_operator_beneficiary_control_html(
+    *,
+    requester: Empleado,
+    selected_operator: Optional[ProveedorCliente],
+    options_html: str,
+    select_id: str,
+) -> str:
+    if not _can_request_for_other_employee(requester):
+        return ""
+    selected_note = ""
+    if selected_operator is not None:
+        selected_note = f'<small>Operador seleccionado: {escape(selected_operator.nombre or "")}</small>'
+    return f'''
+        <div class="regional-operator-beneficiary-control" style="border:1px solid #fed7aa;background:#fff7ed;border-radius:12px;padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;">
+            <div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>
+            <label for="{select_id}" style="display:block;font-weight:700;">Usar operador regional en lugar de empleado</label>
+            <select name="beneficiario_operador_id" id="{select_id}">{options_html}</select>
+            <small>Si seleccionas un operador regional, el documento queda a nombre del operador; solicitante y aprobacion siguen siendo del usuario autenticado.</small>
+            {selected_note}
+        </div>
+    '''
+
+
+def _html_single_proveedor_bank_account_options(
+    proveedor: ProveedorCliente,
+) -> str:
+    banco = escape(proveedor.banco or "")
+    cuenta = escape(proveedor.cuenta_bancaria or "")
+    clabe = escape(proveedor.cuenta_clabe or "")
+    raw_account = (proveedor.cuenta_bancaria or "") or (proveedor.cuenta_clabe or "")
+    last4 = raw_account[-4:] if raw_account and len(raw_account) >= 4 else ""
+    label = escape(proveedor.nombre or str(proveedor.id))
+    if banco:
+        label += f" - {banco}"
+    if last4:
+        label += f" (...{escape(last4)})"
+    return (
+        f'<option value="{proveedor.id}" data-banco="{banco}" '
+        f'data-cuenta="{cuenta}" data-cuenta-clabe="{clabe}" '
+        f'data-ultimos4="{escape(last4)}" selected>{label}</option>'
+    )
+
 
 async def _active_beneficiary_empleados(
     session: AsyncSession, requester: Empleado
@@ -9250,6 +9352,7 @@ def _solicitar_anticipo_form_url(
     edicion: str = "",
     budget_concept_id: str = "",
     beneficiario_empleado_id: str = "",
+    beneficiario_operador_id: str = "",
 ) -> str:
     """Build redirect URL back to Solicitar Anticipo with optional preserved fields."""
     url = "/gastos-terceros/solicitar-anticipo"
@@ -9275,6 +9378,10 @@ def _solicitar_anticipo_form_url(
     if beneficiario_empleado_id:
         extra.append(
             f"beneficiario_empleado_id={quote(str(beneficiario_empleado_id))}"
+        )
+    if beneficiario_operador_id:
+        extra.append(
+            f"beneficiario_operador_id={quote(str(beneficiario_operador_id))}"
         )
     if not extra:
         return url
@@ -13303,6 +13410,7 @@ async def solicitar_anticipo_form(
     preserve_beneficiario = request.query_params.get(
         "beneficiario_empleado_id", ""
     )
+    preserve_operador = request.query_params.get("beneficiario_operador_id", "")
     preserve_concepto = request.query_params.get("concepto_pago", "")
     preserve_monto = request.query_params.get("monto_solicitado", "")
     preserve_proveedor = request.query_params.get("proveedor_cliente_id", "")
@@ -13372,11 +13480,33 @@ async def solicitar_anticipo_form(
             "su propiedad y su aprobación permanecen a nombre de quien solicita."
         ),
     )
-    bank_account_options = await _html_empleado_bank_account_options(
-        session,
-        beneficiario,
-        selected_id=preserve_proveedor or None,
-    )
+    regional_operator: Optional[ProveedorCliente] = None
+    regional_operator_control = ""
+    if _can_request_for_other_employee(current_empleado):
+        regional_operator = await _resolve_active_regional_operator_beneficiary(
+            session,
+            preserve_operador,
+        )
+        regional_operators = await _active_regional_operator_beneficiaries(session)
+        regional_operator_control = _regional_operator_beneficiary_control_html(
+            requester=current_empleado,
+            selected_operator=regional_operator,
+            options_html=_html_regional_operator_options(
+                regional_operators,
+                regional_operator.id if regional_operator else None,
+            ),
+            select_id="beneficiario_operador_id_anticipo",
+        )
+    if regional_operator is not None:
+        bank_account_options = _html_single_proveedor_bank_account_options(
+            regional_operator
+        )
+    else:
+        bank_account_options = await _html_empleado_bank_account_options(
+            session,
+            beneficiario,
+            selected_id=preserve_proveedor or None,
+        )
 
     if empleado_allocates_referencia_operaciones(current_empleado):
         ro_display_value = escape(
@@ -13439,15 +13569,16 @@ async def solicitar_anticipo_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
+                                {regional_operator_control}
                                 {beneficiary_employee_control}
                                 <div id="st_preview_beneficiario" style="margin-top:8px;font-size:12px;color:#475569;">Beneficiario seleccionado: {escape(beneficiario.nombre or "")}</div>
                                 <div style="border:1px solid #d1fae5;background:#ecfdf5;border-radius:12px;padding:12px 14px;margin-top:12px;display:grid;gap:8px;">
                                     <div><span style="display:inline-block;background:#047857;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Paso 2</span> <strong>Cuenta bancaria del beneficiario</strong></div>
-                                    <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:0;">Elige la cuenta registrada para ese empleado</label>
+                                    <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:0;">Elige la cuenta registrada para ese beneficiario</label>
                                     <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
                                         {bank_account_options}
                                     </select>
-                                    <small>La cuenta debe pertenecer al empleado beneficiario seleccionado arriba.</small>
+                                    <small>La cuenta debe pertenecer al empleado u operador regional beneficiario seleccionado arriba.</small>
                                 </div>
                             </div>''',
                         )}
@@ -13551,6 +13682,38 @@ async def solicitar_anticipo_form(
                 }});
             }})();
         </script>
+        <script>
+            (function() {{
+                var operatorSelect = document.getElementById("beneficiario_operador_id_anticipo");
+                var employeeSelect = document.getElementById("beneficiario_empleado_id");
+                var accountSelect = document.getElementById("proveedor_cliente_id");
+                var beneficiaryPreview = document.getElementById("st_preview_beneficiario");
+                if (!operatorSelect || !accountSelect) return;
+                function applyRegionalOperator() {{
+                    if (!operatorSelect.value) {{
+                        if (employeeSelect && employeeSelect.tagName === "SELECT") {{
+                            employeeSelect.dispatchEvent(new Event("change"));
+                        }}
+                        return;
+                    }}
+                    var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                    var option = document.createElement("option");
+                    option.value = operatorSelect.value;
+                    option.dataset.banco = selected.dataset.banco || "";
+                    option.dataset.cuenta = selected.dataset.cuenta || "";
+                    option.dataset.cuentaClabe = selected.dataset.cuentaClabe || "";
+                    option.dataset.ultimos4 = "";
+                    option.textContent = selected.textContent || selected.dataset.nombre || "Operador regional";
+                    option.selected = true;
+                    accountSelect.innerHTML = "";
+                    accountSelect.appendChild(option);
+                    if (beneficiaryPreview) beneficiaryPreview.textContent = "Operador regional: " + option.textContent;
+                    accountSelect.dispatchEvent(new Event("change"));
+                }}
+                operatorSelect.addEventListener("change", applyRegionalOperator);
+                applyRegionalOperator();
+            }})();
+        </script>
         {_render_auto_number_formatter_script([
             {
                 "displayId": "monto_solicitado_display",
@@ -13613,6 +13776,9 @@ async def solicitar_anticipo_submit(
     beneficiario_empleado_id_raw = (
         form_data.get("beneficiario_empleado_id") or ""
     ).strip()
+    beneficiario_operador_id_raw = (
+        form_data.get("beneficiario_operador_id") or ""
+    ).strip()
     categorias_raw = _form_list(form_data, "categorias")
     edicion_raw = form_data.get("edicion")
     currency_raw = form_data.get("currency")
@@ -13626,21 +13792,43 @@ async def solicitar_anticipo_submit(
         currency=(currency_raw or "MXN"),
         edicion=str(edicion_raw or ""),
         beneficiario_empleado_id=beneficiario_empleado_id_raw,
+        beneficiario_operador_id=beneficiario_operador_id_raw,
     )
+
+    beneficiario_operador = None
+    if beneficiario_operador_id_raw:
+        if not _can_request_for_other_employee(current_empleado):
+            return RedirectResponse(
+                url=_solicitar_anticipo_form_url(
+                    error_msg="No tienes permiso para solicitar anticipos a operadores regionales.",
+                    **preserve,
+                ),
+                status_code=303,
+            )
+        beneficiario_operador = await _resolve_active_regional_operator_beneficiary(
+            session, beneficiario_operador_id_raw
+        )
+        if beneficiario_operador is None:
+            return RedirectResponse(
+                url=_solicitar_anticipo_form_url(
+                    error_msg="Seleccione un operador regional activo.", **preserve
+                ),
+                status_code=303,
+            )
 
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         beneficiario_empleado_id_raw,
         default=current_empleado,
     )
-    if beneficiario is None:
+    if beneficiario is None and beneficiario_operador is None:
         return RedirectResponse(
             url=_solicitar_anticipo_form_url(
                 error_msg="Seleccione un beneficiario activo.", **preserve
             ),
             status_code=303,
         )
-    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+    if beneficiario is not None and not _beneficiary_selection_allowed(current_empleado, beneficiario):
         return RedirectResponse(
             url=_solicitar_anticipo_form_url(
                 error_msg=(
@@ -13679,13 +13867,13 @@ async def solicitar_anticipo_submit(
         )
     assert currency is not None
 
-    selected_proveedor = None
-    if proveedor_cliente_id_raw:
+    selected_proveedor = beneficiario_operador
+    if selected_proveedor is None and proveedor_cliente_id_raw:
         try:
             proveedor_uuid = UUIDType(proveedor_cliente_id_raw)
         except (ValueError, TypeError):
             proveedor_uuid = None
-        if proveedor_uuid is not None:
+        if proveedor_uuid is not None and beneficiario is not None:
             matches = await _get_matching_bank_accounts_for_empleado(
                 session=session, empleado=beneficiario
             )
@@ -13728,6 +13916,7 @@ async def solicitar_anticipo_submit(
             session,
             empleado=current_empleado,
             beneficiario=beneficiario,
+            beneficiario_operador=beneficiario_operador,
             nombre=None,
             tipo_cuenta=tipo_ok,
             torneo_id=torneo_uuid,
@@ -27051,7 +27240,8 @@ async def _create_cuenta_de_gastos_with_informe(
     *,
     empleado: Empleado,
     beneficiario: Optional[Empleado],
-    nombre: Optional[str],
+    beneficiario_operador: Optional[ProveedorCliente] = None,
+    nombre: Optional[str] = None,
     tipo_cuenta: str,
     torneo_id: UUIDType,
     fase: Optional[str],
@@ -27079,7 +27269,8 @@ async def _create_cuenta_de_gastos_with_informe(
     try:
         cuenta = CuentaDeGastos(
             empleado_id=empleado.id,
-            beneficiario_empleado_id=(beneficiario or empleado).id,
+            beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
+            beneficiario_proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
             referencia_base=referencia_base_final,
             nombre=nombre,
             estado="abierta",
@@ -27097,7 +27288,8 @@ async def _create_cuenta_de_gastos_with_informe(
         )
         informe = Documento(
             empleado_id=empleado.id,
-            beneficiario_empleado_id=(beneficiario or empleado).id,
+            beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
+            proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -27327,6 +27519,7 @@ async def crear_cuenta_de_gastos_form(
     preserve_beneficiario = request.query_params.get(
         "beneficiario_empleado_id", ""
     )
+    preserve_operador = request.query_params.get("beneficiario_operador_id", "")
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         preserve_beneficiario,
@@ -27352,6 +27545,23 @@ async def crear_cuenta_de_gastos_form(
             "El responsable, propietario y aprobador continúan siendo los del usuario que lo crea."
         ),
     )
+    regional_operator: Optional[ProveedorCliente] = None
+    regional_operator_control = ""
+    if _can_request_for_other_employee(current_empleado):
+        regional_operator = await _resolve_active_regional_operator_beneficiary(
+            session,
+            preserve_operador,
+        )
+        regional_operators = await _active_regional_operator_beneficiaries(session)
+        regional_operator_control = _regional_operator_beneficiary_control_html(
+            requester=current_empleado,
+            selected_operator=regional_operator,
+            options_html=_html_regional_operator_options(
+                regional_operators,
+                regional_operator.id if regional_operator else None,
+            ),
+            select_id="beneficiario_operador_id_informe",
+        )
     preserve_uuid = None
     if preserve_torneo_id:
         try:
@@ -27435,6 +27645,7 @@ async def crear_cuenta_de_gastos_form(
             <form method="POST" action="/informes-de-gastos/crear" id="form-crear-cuenta">
                 <div class="form-group">
                     <label>Beneficiario del informe</label>
+                    {regional_operator_control}
                     {beneficiary_employee_control}
                 </div>
                 <div class="form-group">
@@ -27538,23 +27749,55 @@ async def crear_cuenta_de_gastos_submit(
     beneficiario_empleado_id_raw = (
         form_data.get("beneficiario_empleado_id") or ""
     ).strip()
+    beneficiario_operador_id_raw = (
+        form_data.get("beneficiario_operador_id") or ""
+    ).strip()
+    beneficiario_operador: Optional[ProveedorCliente] = None
+    if beneficiario_operador_id_raw:
+        if not _can_request_for_other_employee(current_empleado):
+            return RedirectResponse(
+                url=_append_query_params(
+                    "/informes-de-gastos/crear",
+                    {
+                        "error_msg": "No tienes permiso para crear informes a operadores regionales.",
+                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    },
+                ),
+                status_code=303,
+            )
+        beneficiario_operador = await _resolve_active_regional_operator_beneficiary(
+            session,
+            beneficiario_operador_id_raw,
+        )
+        if beneficiario_operador is None:
+            return RedirectResponse(
+                url=_append_query_params(
+                    "/informes-de-gastos/crear",
+                    {
+                        "error_msg": "Seleccione un operador regional activo.",
+                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    },
+                ),
+                status_code=303,
+            )
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         beneficiario_empleado_id_raw,
         default=current_empleado,
     )
-    if beneficiario is None:
+    if beneficiario is None and beneficiario_operador is None:
         return RedirectResponse(
             url=_append_query_params(
                 "/informes-de-gastos/crear",
                 {
                     "error_msg": "Seleccione un beneficiario activo.",
                     "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                    "beneficiario_operador_id": beneficiario_operador_id_raw,
                 },
             ),
             status_code=303,
         )
-    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+    if beneficiario is not None and not _beneficiary_selection_allowed(current_empleado, beneficiario):
         return RedirectResponse(
             url=_append_query_params(
                 "/informes-de-gastos/crear",
@@ -27563,6 +27806,7 @@ async def crear_cuenta_de_gastos_submit(
                         "No tienes permiso para crear un informe a nombre de otro empleado."
                     ),
                     "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                    "beneficiario_operador_id": beneficiario_operador_id_raw,
                 },
             ),
             status_code=303,
@@ -27593,6 +27837,11 @@ async def crear_cuenta_de_gastos_submit(
                 "&beneficiario_empleado_id="
                 f"{quote(beneficiario_empleado_id_raw)}"
             )
+        if beneficiario_operador_id_raw:
+            base += (
+                "&beneficiario_operador_id="
+                f"{quote(beneficiario_operador_id_raw)}"
+            )
         return RedirectResponse(url=base, status_code=303)
 
     assert tipo_ok is not None and torneo_id_uuid is not None
@@ -27614,6 +27863,7 @@ async def crear_cuenta_de_gastos_submit(
         session,
         empleado=current_empleado,
         beneficiario=beneficiario,
+        beneficiario_operador=beneficiario_operador,
         nombre=nombre_val,
         tipo_cuenta=tipo_ok,
         torneo_id=torneo_id_uuid,

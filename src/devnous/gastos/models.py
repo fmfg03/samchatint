@@ -1586,7 +1586,11 @@ class ProveedorCliente(Base):
     )
 
     # Relationships
-    documentos = relationship("Documento", back_populates="proveedor_cliente")
+    documentos = relationship(
+        "Documento",
+        back_populates="proveedor_cliente",
+        foreign_keys="Documento.proveedor_cliente_id",
+    )
     empleado = relationship("Empleado", foreign_keys=[empleado_id], lazy="selectin")
 
     def __repr__(self):
@@ -1659,6 +1663,12 @@ class Documento(Base):
         nullable=True,
         index=True,
     )
+    beneficiario_proveedor_cliente_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proveedores_clientes.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     notas = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     enviado_en = Column(DateTime(timezone=True), nullable=True)
@@ -1720,7 +1730,10 @@ class Documento(Base):
     )
     torneo = relationship("Tournament", foreign_keys=[torneo_id])
     proveedor_cliente = relationship(
-        "ProveedorCliente", back_populates="documentos", lazy="selectin"
+        "ProveedorCliente",
+        back_populates="documentos",
+        foreign_keys=[proveedor_cliente_id],
+        lazy="selectin",
     )
     budget_concept = relationship(
         "BudgetConcept", foreign_keys=[budget_concept_id], lazy="selectin"
@@ -2149,6 +2162,12 @@ class CuentaDeGastos(Base):
         nullable=True,
         index=True,
     )
+    beneficiario_proveedor_cliente_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proveedores_clientes.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     referencia_base = Column(Text, nullable=False, index=True)
     nombre = Column(
         Text, nullable=True
@@ -2184,6 +2203,11 @@ class CuentaDeGastos(Base):
     beneficiario_empleado = relationship(
         "Empleado", foreign_keys=[beneficiario_empleado_id], lazy="selectin"
     )
+    beneficiario_proveedor_cliente = relationship(
+        "ProveedorCliente",
+        foreign_keys=[beneficiario_proveedor_cliente_id],
+        lazy="selectin",
+    )
     torneo = relationship("Tournament", foreign_keys=[torneo_id], lazy="selectin")
     documentos = relationship(
         "Documento", back_populates="cuenta_gastos", lazy="selectin"
@@ -2214,6 +2238,11 @@ class CuentaDeGastos(Base):
             "beneficiario_empleado_id": (
                 str(self.beneficiario_empleado_id)
                 if self.beneficiario_empleado_id
+                else None
+            ),
+            "beneficiario_proveedor_cliente_id": (
+                str(self.beneficiario_proveedor_cliente_id)
+                if self.beneficiario_proveedor_cliente_id
                 else None
             ),
             "referencia_base": self.referencia_base,
