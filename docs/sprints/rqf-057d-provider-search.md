@@ -10,10 +10,10 @@ Customer request: in the Solicitudes de Transferencia view by Referencia, add a 
 
 ## Finding
 
-The functionality was already present in `/gastos-terceros`:
+The functionality existed in `/gastos-terceros`, but the UI placement was not explicit enough for the customer screenshot. This cut makes the query filters visible as a dedicated bar above the table:
 
 - `terceros-search-ref` filters by Referencia Operaciones.
-- `terceros-search-proveedor` filters by Proveedor/Cliente.
+- `terceros-search-proveedor` is labeled `Por Proveedor`.
 - `terceros-search-concepto` filters by Concepto.
 - Each row includes `data-proveedor` for client-side filtering.
 - The filter normalizes accents and punctuation before comparison, so provider searches are forgiving.
@@ -28,6 +28,8 @@ PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest
 ```
 
 Result: `1 passed`.
+
+UI correction commit keeps this as a consultation/list filter, not a field inside the Solicitud capture form.
 
 ## Files inspected
 

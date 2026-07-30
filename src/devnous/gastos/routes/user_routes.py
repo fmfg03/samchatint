@@ -13300,19 +13300,19 @@ async def gastos_terceros(
                             <h2>Resumen de solicitudes</h2>
                             <div class="section-note">Consulta montos, proveedor, fecha objetivo y estado sin salir al detalle salvo cuando haya una acción pendiente.</div>
                         </div>
-                        <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                            <div style="min-width: 180px;">
-                                <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
-                                <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
-                            <div style="min-width: 220px;">
-                                <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Proveedor/Cliente</label>
-                                <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
-                            <div style="min-width: 220px;">
-                                <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
-                                <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
+                    </div>
+                    <div class="terceros-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
+                        <div>
+                            <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
+                            <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Proveedor</label>
+                            <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
+                            <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
