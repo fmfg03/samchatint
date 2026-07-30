@@ -26,8 +26,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | --- | --- | --- | --- |
 | RQF-056G - Selector de beneficiario en Informes de Gastos | CLOSED_COMMITTED | `2a664d00e`, plus prerequisite selector/access commits | Route-level unit coverage verifies authorized selector, unauthorized self-lock, submit ownership, beneficiary propagation, and requester-approver preservation. Live browser/UAT still belongs to sprint QA gate. |
 | RQF-056H - Selector de beneficiario en Anticipos with full authorized list | CLOSED_COMMITTED | `117617173`, plus prerequisite selector/access commits | Unit coverage verifies Juan Pablo display-name authorization, full active employee selector rendering, self-lock for unauthorized users, beneficiary-scoped bank account API, and 403 for unpermitted beneficiary account lookup. Live browser/UAT remains in sprint QA gate. |
-| RQF-056I - Cancelar / eliminar borradores incompletos | CLOSED_COMMITTED | `34c239a80`, pending I close commit | Empty informe draft cancellation now allows owner, finance, or superadmin only; route tests verify finance cleanup, non-owner 403, linked solicitudes block without commit, and utility matrix blocks non-draft/non-empty reports. Solicitud draft cancellation remains workflow-governed by requester ownership. |
-| RQF-056J - Materialidades verificables antes de guardar | NOT CLOSED | Existing code appeared present; no dedicated close commit | Need inspect UI/tests against requirements: preview/thumbnail, filename, remove, multiple files, no CFDI breakage. |
+| RQF-056I - Cancelar / eliminar borradores incompletos | CLOSED_COMMITTED | `4145edfc4`, plus `34c239a80` | Empty informe draft cancellation now allows owner, finance, or superadmin only; route tests verify finance cleanup, non-owner 403, linked solicitudes block without commit, and utility matrix blocks non-draft/non-empty reports. Solicitud draft cancellation remains workflow-governed by requester ownership. |
+| RQF-056J - Materialidades verificables antes de guardar | CLOSED_COMMITTED | pending J close commit | Existing materialidades picker is now covered: one-at-a-time add, multi-file hidden submission, visible empty/list state, filename/size/mime, image thumbnail, PDF preview link, remove button, and separation from CFDI XML/PDF controls. |
 | RQF-056K - Correccion definitiva de totales CFDI XML/PDF | PARTIAL | `6e4112f48` | Need test with real problematic CFDI fixture, robust Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message. |
 | RQF-056L - Presupuestos visibility/editing | PARTIAL / strong unit coverage | `a1185e079` | Need verify directors definition and UI hiding/POST 403/frozen versions across full routes. |
 | RQF-056M - Telegram proyecto y etapa | NOT CLOSED | Existing implementation observed; no close commit | Need tests proving Telegram includes proyecto/fase and buttons still work. |
@@ -56,6 +56,7 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | `2a664d00e` | RQF-056G close informe beneficiary selector contract |
 | `fa1497d0c` | RQF-056G update ledger after informe selector closure |
 | `117617173` | RQF-056H close anticipo beneficiary selector contract |
+| `4145edfc4` | RQF-056I close draft cancellation policy |
 
 ## Current untracked artifacts intentionally left untracked
 
@@ -65,8 +66,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 
 ## Next work order
 
-1. Continue RQF-056J materiality preview/verification: thumbnail/preview, filename, remove, multiple files, and no CFDI XML/PDF regression.
-2. Continue RQF-056K CFDI totals after J.
+1. Continue RQF-056K CFDI totals: real problematic fixture, Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message.
+2. Continue RQF-056L budget visibility/mutation route verification after K.
 3. Continue through I, J, K, L, M, N, O in order.
 4. Start RQF-057A only after RQF-056O is actually closed.
 5. Sprint close only after broader tests + push + PR + review gate + final merge.
