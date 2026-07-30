@@ -30,8 +30,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | RQF-056J - Materialidades verificables antes de guardar | CLOSED_COMMITTED | `36e2853d2` | Existing materialidades picker is now covered: one-at-a-time add, multi-file hidden submission, visible empty/list state, filename/size/mime, image thumbnail, PDF preview link, remove button, and separation from CFDI XML/PDF controls. |
 | RQF-056K - Correccion definitiva de totales CFDI XML/PDF | CLOSED_COMMITTED | `1fa60c1ee`, plus `6e4112f48` | Synthetic CFDI fixture reproduces the $128 case without customer data; tests verify XML Total authority, SubTotal + net taxes, inconsistency rejection for $124, and retenciones netting. Real customer XML was intentionally not committed. |
 | RQF-056L - Presupuestos visibility/editing | CLOSED_COMMITTED | `3b46acdfc`, plus `a1185e079` | Tests verify only superadmin mutates, Directores/Alicia/superadmin view, named operations users cannot view or mutate even with budget tokens, budget nav hiding, operations analytics policy, frozen monthly plan rejection, and POST direct 403 before mutation/form-read. |
-| RQF-056M - Telegram proyecto y etapa | CLOSED_COMMITTED | pending M close commit | Existing Telegram message builder is now covered for SOLICITUD and INFORME: Proyecto and Etapa/subproyecto render in message text, action hint remains present, and approval/rejection callback keyboard data remains unchanged. |
-| RQF-056N - Reimbursement semantics employee != provider | NOT CLOSED | Existing implementation/test observed | Need align documents + screens + Telegram, not just one helper/test. |
+| RQF-056M - Telegram proyecto y etapa | CLOSED_COMMITTED | `7e5734ec9` | Existing Telegram message builder is now covered for SOLICITUD and INFORME: Proyecto and Etapa/subproyecto render in message text, action hint remains present, and approval/rejection callback keyboard data remains unchanged. |
+| RQF-056N - Reimbursement semantics employee != provider | CLOSED_COMMITTED | pending N close commit | Telegram, pending-payment rows, payment service, and document detail semantics now identify employee reimbursements separately from proveedores; document detail prefers employee beneficiary while preserving provider bank-account data. |
 | RQF-056O - Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
 | RQF-057A - Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
 | RQF-057B - Telegram notification recipients audit | BACKLOG / customer delta | none | Confirm Odilon is configured for Anticipos and Informes de Gastos approvals; confirm Benjamin is configured for Solicitudes de Transferencia, Anticipos, and Informes, and document exactly when each notification fires. |
@@ -66,6 +66,7 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | `36e2853d2` | RQF-056J close materiality preview contract |
 | `1fa60c1ee` | RQF-056K close CFDI quick expense total contract |
 | `3b46acdfc` | RQF-056L close budget authorization route contract |
+| `7e5734ec9` | RQF-056M close Telegram project phase contract |
 
 
 ## Customer Excel delta captured on 2026-07-30
@@ -99,8 +100,8 @@ These items are now part of the master plan, but are not claimed as closed by RQ
 
 ## Next work order
 
-1. Continue RQF-056N reimbursement semantics: align documents + screens + Telegram so employee reimbursements never display the employee as proveedor.
-2. Continue RQF-056O Tocino/facturacion status/errors after N.
+1. Continue RQF-056O Tocino/facturacion status/errors: safe retry, status visibility, Telegram relevant status notifications, and minimal non-secret payload logging.
+2. Start RQF-057A operations wiring audit after O.
 3. Continue RQF-056O Tocino/facturacion status/errors after N.
 4. Start RQF-057A operations wiring audit after RQF-056O.
 5. Then sequence the new customer delta stages RQF-057B through RQF-057G, unless Telegram recipient audit (057B) is folded into M as same-surface work.

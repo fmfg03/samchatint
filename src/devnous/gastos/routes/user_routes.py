@@ -25024,7 +25024,23 @@ async def ver_documento(
         st_banco = ""
         st_cuenta = ""
         st_cuenta_clabe = ""
-        if documento.proveedor_cliente_id and documento.proveedor_cliente:
+        if is_employee_reimbursement(documento):
+            st_beneficiario = (
+                documento.beneficiario_empleado.nombre
+                if documento.beneficiario_empleado
+                else ""
+            )
+            if documento.proveedor_cliente:
+                st_banco = documento.proveedor_cliente.banco or ""
+                st_cuenta = mask_cuenta_display(
+                    documento.proveedor_cliente.cuenta_bancaria,
+                    ultimos4=cuenta_last4(
+                        documento.proveedor_cliente.cuenta_clabe,
+                        documento.proveedor_cliente.cuenta_bancaria,
+                    ),
+                )
+                st_cuenta_clabe = documento.proveedor_cliente.cuenta_clabe or ""
+        elif documento.proveedor_cliente_id and documento.proveedor_cliente:
             st_beneficiario = documento.proveedor_cliente.nombre or ""
             st_banco = documento.proveedor_cliente.banco or ""
             st_cuenta = mask_cuenta_display(

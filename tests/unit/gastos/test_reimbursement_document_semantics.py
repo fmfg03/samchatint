@@ -1,8 +1,10 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 from devnous.gastos.models import Documento
+from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram as tg
 from devnous.gastos.services.documento_semantics import (
     effective_account_beneficiary_id,
@@ -175,3 +177,17 @@ def test_telegram_informe_includes_project_phase_from_context() -> None:
     assert "*Proyecto* Gastos Administrativos - Operaciones" in text
     assert "*Etapa / subproyecto* Articulos varios" in text
     assert "*Monto gastado* $500.00 MXN" in text
+
+
+def test_document_detail_source_prefers_employee_beneficiary_for_reimbursement() -> None:
+    source = Path(user_routes.__file__).read_text()
+    detail_block_start = source.index('solicitud_transferencia_html = ""')
+    detail_block_end = source.index('st_monto = documento.monto_solicitado', detail_block_start)
+    detail_block = source[detail_block_start:detail_block_end]
+
+    assert 'if is_employee_reimbursement(documento):' in detail_block
+    assert 'documento.beneficiario_empleado.nombre' in detail_block
+    assert 'elif documento.proveedor_cliente_id and documento.proveedor_cliente:' in detail_block
+    assert detail_block.index('if is_employee_reimbursement(documento):') < detail_block.index(
+        'elif documento.proveedor_cliente_id and documento.proveedor_cliente:'
+    )
