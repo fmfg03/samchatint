@@ -1,4 +1,4 @@
-from samchat.assistant.request_intent import detect_request_intent
+from samchat.assistant.request_intent import detect_request_intent, is_owner_ai_conceptual_request
 from samchat.assistant.request_router import route_request
 
 
@@ -64,3 +64,11 @@ def test_report_payment_risk_request_stays_operational() -> None:
 
     assert intent.domain == "payments"
     assert intent.intent == "list_pending"
+
+def test_owner_ai_folder_definition_is_not_deterministic_tournament_status():
+    text = "Que debe contener una carpeta por entidad para cualquier torneo?"
+
+    assert is_owner_ai_conceptual_request(text) is True
+    intent = detect_request_intent(text)
+
+    assert intent.domain == "unknown"

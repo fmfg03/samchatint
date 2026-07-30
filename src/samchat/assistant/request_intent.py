@@ -102,6 +102,38 @@ def _has_document_context(text: str) -> bool:
     )
 
 
+
+
+def is_owner_ai_conceptual_request(text: str) -> bool:
+    normalized = normalize_request_text(text)
+    owner_terms = (
+        "carpeta por entidad",
+        "carpeta de la entidad",
+        "carpeta de entidad",
+        "carpeta de fase nacional",
+        "fase nacional",
+        "camas noche",
+        "camas-noche",
+        "box lunch",
+        "activacion de marcas",
+        "visitantes involucrados",
+        "fotografias",
+        "necesidades de ai",
+        "necesidades del dueno",
+        "necesidades del dueño",
+    )
+    conceptual_terms = (
+        "que debe contener",
+        "que datos",
+        "como debe responder",
+        "que puede hacer",
+        "sin cambiar datos",
+        "sin cambiar nada",
+    )
+    return any(term in normalized for term in owner_terms) and any(
+        term in normalized for term in conceptual_terms
+    )
+
 def _intent(
     *,
     raw_text: str,
@@ -212,15 +244,18 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             slots={**slots, "metric": "payment", "output": "table"},
         )
 
-    if any(
-        token in normalized
-        for token in (
-            "torneo",
-            "equipos",
-            "equipo",
-            "jugadores",
-            "jugador",
-            "registro",
+    if (
+        not is_owner_ai_conceptual_request(raw_text)
+        and any(
+            token in normalized
+            for token in (
+                "torneo",
+                "equipos",
+                "equipo",
+                "jugadores",
+                "jugador",
+                "registro",
+            )
         )
     ):
         missing: List[str] = []

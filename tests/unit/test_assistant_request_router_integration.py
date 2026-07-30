@@ -44,6 +44,7 @@ async def _run_message(
     *,
     finance_rows_provider=None,
     executor=None,
+    assistant_turn=_provider_must_not_be_called,
 ):
     return await run_message_turn_with_pending(
         raw_message=raw_message,
@@ -63,7 +64,7 @@ async def _run_message(
         confirm_pending_run=_provider_must_not_be_called,
         deterministic_pending_builders=[],
         build_deterministic_pending_response=_provider_must_not_be_called,
-        assistant_turn=_provider_must_not_be_called,
+        assistant_turn=assistant_turn,
         maybe_append_export_prompt=_maybe_append_export_prompt,
         document_action_router_executor=executor,
         finance_rows_provider=finance_rows_provider,
@@ -213,3 +214,30 @@ async def test_capability_question_does_not_execute_pending_payment_query(
     trace = response.tool_trace[0]["capability_negotiation"]
     assert trace["operational_tools_called"] == 0
     assert trace["writes_attempted"] is False
+
+@pytest.mark.asyncio
+async def test_owner_ai_folder_definition_does_not_bypass_provider_as_tournament_status():
+    calls = []
+
+    async def provider(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            assistant_message="Respuesta desde contexto canonico del dueño",
+            run_id="run-owner-ai",
+            tool_trace=[{"provider_called": True}],
+            pending_confirmation=None,
+        )
+
+    response = await _run_message(
+        "Que debe contener una carpeta por entidad para cualquier torneo?",
+        assistant_turn=provider,
+    )
+
+    assert calls
+    assert "contexto canonico" in response.assistant_message
+    assert not any(
+        (step.get("request_intelligence_live_wiring") or {}).get("canonical_action")
+        == "operations.tournament_soul_snapshot"
+        for step in response.tool_trace
+        if isinstance(step, dict)
+    )
