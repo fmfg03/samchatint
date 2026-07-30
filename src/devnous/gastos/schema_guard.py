@@ -58,6 +58,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("empleados", "password_hash"),
     RequiredColumn("empleados", "aprobador_id"),
     RequiredColumn("documentos", "beneficiario_empleado_id"),
+    RequiredColumn("documentos", "beneficiario_proveedor_cliente_id"),
     RequiredColumn("documentos", "fecha_pago"),
     RequiredColumn("documentos", "concepto_pago"),
     RequiredColumn("documentos", "numero_factura"),
@@ -1469,6 +1470,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "cuentas_de_gastos_beneficiario_proveedor_cliente_id_index",
         "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_proveedor_cliente_id ON cuentas_de_gastos (beneficiario_proveedor_cliente_id)",
+    ),
+    (
+        "documentos_beneficiario_proveedor_cliente_id_column",
+        "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS beneficiario_proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "documentos_beneficiario_proveedor_cliente_id_index",
+        "CREATE INDEX IF NOT EXISTS ix_documentos_beneficiario_proveedor_cliente_id ON documentos (beneficiario_proveedor_cliente_id)",
     ),
     (
         "documentos_estado_check_rechazado",
