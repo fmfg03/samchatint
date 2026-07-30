@@ -8551,9 +8551,23 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS = {
     "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo
 }
 
+_THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS = {
+    "azuniga@plataformasports.com",  # Alicia
+    "broman@plataformasports.com",  # Bibiana
+    "clozano@plataformasports.com",  # Carlos
+    "rmartinez@plataformasports.com",  # Roberto
+    "bjimenez@plataformasports.com",  # Benjamin
+    "jlopez@plataformasports.com",  # Juan Pablo
+}
+
 
 def _can_request_for_other_employee(empleado: Empleado) -> bool:
-    return str(getattr(empleado, "id", "")) in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
+    empleado_id = str(getattr(empleado, "id", "") or "")
+    correo = (getattr(empleado, "correo", "") or "").strip().lower()
+    return bool(
+        empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
+        or correo in _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS
+    )
 
 
 def _beneficiary_selection_allowed(

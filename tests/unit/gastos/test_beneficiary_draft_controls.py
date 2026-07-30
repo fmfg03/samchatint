@@ -28,6 +28,32 @@ def test_only_allowlisted_requesters_can_choose_another_employee() -> None:
     )
 
 
+def test_named_requesters_can_choose_another_employee_by_corporate_email() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="JLOPEZ@PLATAFORMASPORTS.COM ",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+def test_unlisted_email_cannot_choose_another_employee_even_with_similar_name() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="juanpablo@example.com",
+        rol="superadmin",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert not user_routes._can_request_for_other_employee(requester)
+    assert not user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
 def test_authorized_requester_sees_explicit_employee_selector() -> None:
     requester = _authorized_requester()
     beneficiary = SimpleNamespace(
