@@ -744,6 +744,7 @@ def _build_effective_profile_preview(
         or _has_prefix("operations"),
         "budgets": role_norm in _BUDGET_SUPER_ROLES
         or _has_prefix("budgets", "executive"),
+        "employee_beneficiary": _has_prefix("finance.employee_beneficiary"),
     }
     enabled_surfaces = [
         label
@@ -751,6 +752,7 @@ def _build_effective_profile_preview(
             ("Telegram", highlights["telegram"]),
             ("Operaciones", highlights["operations"]),
             ("Presupuestos", highlights["budgets"]),
+            ("Beneficiarios empleado", highlights["employee_beneficiary"]),
         )
         if is_enabled
     ]

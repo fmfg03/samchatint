@@ -168,6 +168,21 @@ def test_named_operations_users_cannot_view_or_modify_budgets_even_with_tokens()
             admin_routes._require_budget_access(empleado, "read")
 
 
+
+
+def test_employee_beneficiary_effective_profile_preview_is_visible() -> None:
+    preview = admin_routes._build_effective_profile_preview(
+        empleado_role="empleado",
+        permission_payloads=[
+            {"permissions": ["finance.employee_beneficiary.request"], "scopes": []}
+        ],
+    )
+
+    assert preview["highlights"]["employee_beneficiary"] is True
+    assert "Beneficiarios empleado" in preview["enabled_surfaces"]
+    assert preview["highlights"]["budgets"] is False
+
+
 def test_employee_beneficiary_preset_grants_only_third_party_request_token() -> None:
     preset = admin_routes._PROFILE_PRESETS["solicitudes_beneficiario_empleado"]
 
