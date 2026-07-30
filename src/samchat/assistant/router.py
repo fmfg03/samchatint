@@ -47,6 +47,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.models import (
+    AssistantArtifact,
     AssistantConversation,
     AssistantMessage,
     AssistantRun,
@@ -140,6 +141,7 @@ from .provider_service import matches_policy_target as _provider_matches_policy_
 from .provider_service import (
     normalize_assistant_mode as _provider_normalize_assistant_mode,
 )
+from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .rag import get_rag_store
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
@@ -923,6 +925,7 @@ async def _retrieve_memory_snippets(
         return []
 
     predicates = []
+    artifact_predicates = []
     for token in tokens:
         like = f"%{token}%"
         predicates.extend(
@@ -931,6 +934,27 @@ async def _retrieve_memory_snippets(
                 AssistantConversation.title.ilike(like),
             ]
         )
+        artifact_predicates.append(AssistantArtifact.content.ilike(like))
+
+    artifact_stmt = (
+        select(AssistantArtifact, AssistantConversation)
+        .join(
+            AssistantConversation,
+            AssistantConversation.id == AssistantArtifact.conversation_id,
+        )
+        .where(
+            AssistantConversation.empleado_id == empleado_id,
+            AssistantConversation.archived.is_(False),
+            AssistantArtifact.artifact_type == CASE_MEMORY_ARTIFACT_TYPE,
+            or_(*artifact_predicates),
+        )
+        .order_by(AssistantArtifact.created_at.desc())
+        .limit(max(5, min(top_k * 4, 30)))
+    )
+    if conversation_id:
+        artifact_stmt = artifact_stmt.where(AssistantConversation.id != conversation_id)
+
+    artifact_rows = (await session.execute(artifact_stmt)).all()
 
     stmt = (
         select(AssistantMessage, AssistantConversation)
@@ -955,6 +979,14 @@ async def _retrieve_memory_snippets(
     scope_norm = _scope_from_module_key(module_key_norm)
     tournament_key_norm = str(tournament_key or "").strip().lower()
     scored: List[Dict[str, Any]] = []
+    artifact_snippets = score_case_memory_artifacts(
+        artifacts=[artifact for artifact, _conv in artifact_rows],
+        tokens=tokens,
+        module_key=module_key_norm,
+        tournament_key=tournament_key_norm,
+        memory_weight=_memory_weight(),
+    )
+    scored.extend(artifact_snippets)
 
     for msg, conv in rows:
         metadata = _conversation_metadata_dict(conv)
@@ -2891,13 +2923,17 @@ OPERATIONS_LEGACY_LOCAL_AUTHORITY_TABLES = {
     "copa_telmex_validation_logs",
 }
 OPERATIONS_TOURNAMENT_AUTHORITY_TABLES = set(DEFAULT_SUPABASE_DB_TABLES)
-DEFAULT_DB_WRITE_DENYLIST_GASTOS = {
-    "empleados",
-    "assistant_conversations",
-    "assistant_messages",
-    "assistant_runs",
-    "aprobaciones",
-} | GASTOS_PROJECT_AUTHORITY_TABLES | OPERATIONS_LEGACY_LOCAL_AUTHORITY_TABLES
+DEFAULT_DB_WRITE_DENYLIST_GASTOS = (
+    {
+        "empleados",
+        "assistant_conversations",
+        "assistant_messages",
+        "assistant_runs",
+        "aprobaciones",
+    }
+    | GASTOS_PROJECT_AUTHORITY_TABLES
+    | OPERATIONS_LEGACY_LOCAL_AUTHORITY_TABLES
+)
 DEFAULT_DB_WRITE_DENYLIST_SUPABASE = OPERATIONS_TOURNAMENT_AUTHORITY_TABLES | {
     "profiles",
     "user_roles",
