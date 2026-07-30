@@ -1771,22 +1771,24 @@ async def admin_health(
                 )
             except TocinoAPIError as exc:
                 status = int(exc.status_code or 0)
-                if status in (400, 422):
+                if getattr(exc, "category", "") == "validation_error":
                     tocino_status.update(
                         {
                             "reachable": True,
                             "auth_ok": True,
                             "http_status": status,
+                            "category": exc.category,
                             "message": "Tocino reachable and authenticated (validation error expected).",
                         }
                     )
-                elif status in (401, 403):
+                elif getattr(exc, "category", "") == "auth_error":
                     tocino_status.update(
                         {
                             "reachable": True,
                             "auth_ok": False,
                             "http_status": status,
-                            "message": f"Tocino auth rejected request: {exc}",
+                            "category": exc.category,
+                            "message": exc.user_message,
                         }
                     )
                 else:
@@ -1795,7 +1797,8 @@ async def admin_health(
                             "reachable": status > 0,
                             "auth_ok": False,
                             "http_status": status if status > 0 else None,
-                            "message": f"Tocino probe error: {exc}",
+                            "category": getattr(exc, "category", "unknown_error"),
+                            "message": getattr(exc, "user_message", str(exc)),
                         }
                     )
         except Exception as exc:

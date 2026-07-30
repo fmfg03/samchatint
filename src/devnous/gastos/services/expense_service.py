@@ -484,10 +484,18 @@ async def trigger_cfdi_generation(
             return None
 
     except TocinoAPIError as e:
-        logger.error(f"Tocino API error for expense {expense.id}: {e}", exc_info=True)
-        # Update expense with error state
+        logger.error(
+            f"Tocino API error for expense {expense.id}: {e}",
+            exc_info=True,
+            extra={
+                "tocino_status_code": e.status_code,
+                "tocino_error_category": getattr(e, "category", "unknown_error"),
+                "tocino_retryable": getattr(e, "retryable", False),
+            },
+        )
+        # Update expense with error state using an operator-friendly, non-secret message.
         expense.estado_factura = "error"
-        expense.mensaje_error = f"Error de Tocino API: {str(e)}"
+        expense.mensaje_error = getattr(e, "user_message", None) or f"Error de Tocino API: {str(e)}"
         session.add(expense)
         await session.commit()
         return None

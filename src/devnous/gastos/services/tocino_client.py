@@ -22,13 +22,77 @@ logger = logging.getLogger(__name__)
 TICKETS_SUBMIT_PATH = "/api/external/tickets/"
 
 
-class TocinoAPIError(Exception):
-    """Raised when Tocino API responds with an error status code."""
+TOCINO_ERROR_MISSING_CONFIG = "missing_config"
+TOCINO_ERROR_AUTH = "auth_error"
+TOCINO_ERROR_VALIDATION = "validation_error"
+TOCINO_ERROR_RATE_LIMITED = "rate_limited"
+TOCINO_ERROR_API_UNAVAILABLE = "api_unavailable"
+TOCINO_ERROR_BAD_RESPONSE = "bad_response"
+TOCINO_ERROR_UNKNOWN = "unknown_error"
 
-    def __init__(self, message: str, status_code: int, response_text: Optional[str] = None) -> None:
+
+class TocinoAPIError(Exception):
+    """Raised when Tocino cannot accept or process a request.
+
+    ``category`` is intentionally coarse and stable so routes/workers can tell
+    credentials problems apart from upstream downtime without parsing messages.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int,
+        response_text: Optional[str] = None,
+        category: Optional[str] = None,
+        user_message: Optional[str] = None,
+        retryable: Optional[bool] = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.response_text = response_text
+        self.category = category or classify_tocino_status(status_code)
+        self.user_message = user_message or tocino_user_message(self.category, message)
+        self.retryable = bool(retryable) if retryable is not None else self.category in {
+            TOCINO_ERROR_API_UNAVAILABLE,
+            TOCINO_ERROR_RATE_LIMITED,
+        }
+
+
+def classify_tocino_status(status_code: int) -> str:
+    """Return a stable operational category for a Tocino HTTP/status failure."""
+
+    status = int(status_code or 0)
+    if status == 0:
+        return TOCINO_ERROR_API_UNAVAILABLE
+    if status in (401, 403):
+        return TOCINO_ERROR_AUTH
+    if status == 429:
+        return TOCINO_ERROR_RATE_LIMITED
+    if status in (400, 404, 409, 422):
+        return TOCINO_ERROR_VALIDATION
+    if 500 <= status <= 599:
+        return TOCINO_ERROR_API_UNAVAILABLE
+    return TOCINO_ERROR_UNKNOWN
+
+
+def tocino_user_message(category: str, detail: str = "") -> str:
+    """Spanish operator-facing message for Tocino failures without secrets."""
+
+    clean_detail = str(detail or "").strip()
+    suffix = f" Detalle: {clean_detail}" if clean_detail else ""
+    if category == TOCINO_ERROR_MISSING_CONFIG:
+        return "Facturaci?n Tocino no est? configurada en el servidor."
+    if category == TOCINO_ERROR_AUTH:
+        return "Tocino rechaz? las credenciales configuradas; revisa TOCINO_API_KEY."
+    if category == TOCINO_ERROR_VALIDATION:
+        return "Tocino recibi? la solicitud pero rechaz? los datos enviados." + suffix
+    if category == TOCINO_ERROR_RATE_LIMITED:
+        return "Tocino est? limitando temporalmente las solicitudes; intenta de nuevo en unos minutos."
+    if category == TOCINO_ERROR_API_UNAVAILABLE:
+        return "Tocino no respondi? correctamente; parece ca?da o intermitencia del servicio."
+    if category == TOCINO_ERROR_BAD_RESPONSE:
+        return "Tocino respondi? con un formato inesperado." + suffix
+    return "No se pudo completar la solicitud con Tocino." + suffix
 
 
 @dataclass
@@ -80,7 +144,11 @@ class TocinoClient:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
         except requests.RequestException as exc:
             logger.exception("Network error while calling Tocino API")
-            raise TocinoAPIError(str(exc), status_code=0) from exc
+            raise TocinoAPIError(
+                str(exc),
+                status_code=0,
+                category=TOCINO_ERROR_API_UNAVAILABLE,
+            ) from exc
 
         logger.info(
             "Received response from Tocino",
@@ -113,7 +181,13 @@ class TocinoClient:
             extra={"status_code": response.status_code, "error_message": message},
         )
 
-        raise TocinoAPIError(message=message, status_code=response.status_code, response_text=response.text)
+        category = classify_tocino_status(response.status_code)
+        raise TocinoAPIError(
+            message=message,
+            status_code=response.status_code,
+            response_text=response.text,
+            category=category,
+        )
 
     def check_invoice_status(self, ticket_id: str) -> Dict[str, Any]:
         """Check the status of a ticket by ticket_id.
@@ -147,7 +221,13 @@ class TocinoClient:
                 data = response.json()
             except ValueError:
                 logger.warning("Tocino status response is not valid JSON")
-                raise TocinoAPIError("Invalid JSON response", status_code=response.status_code, response_text=response.text)
+                raise TocinoAPIError(
+                    "Invalid JSON response",
+                    status_code=response.status_code,
+                    response_text=response.text,
+                    category=TOCINO_ERROR_BAD_RESPONSE,
+                    retryable=response.status_code >= 500,
+                )
 
             logger.info("Received invoice status", extra={
                 "ticket_id": ticket_id,
@@ -160,11 +240,20 @@ class TocinoClient:
             else:
                 message = data.get("detail") or data.get("message") or data.get("error") or str(data)
                 logger.error("Tocino status check failed", extra={"status_code": response.status_code, "error_message": message})
-                raise TocinoAPIError(message=message, status_code=response.status_code, response_text=str(data))
+                raise TocinoAPIError(
+                    message=message,
+                    status_code=response.status_code,
+                    response_text=str(data),
+                    category=classify_tocino_status(response.status_code),
+                )
 
         except requests.RequestException as exc:
             logger.error("Error checking invoice status", extra={"ticket_id": ticket_id, "error": str(exc)})
-            raise TocinoAPIError(str(exc), status_code=0) from exc
+            raise TocinoAPIError(
+                str(exc),
+                status_code=0,
+                category=TOCINO_ERROR_API_UNAVAILABLE,
+            ) from exc
 
 
 def get_tocino_client(api_key: str = None, base_url: str = None) -> TocinoClient:
