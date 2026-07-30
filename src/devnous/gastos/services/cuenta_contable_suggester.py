@@ -21,6 +21,8 @@ from uuid import UUID
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .expense_accounting_service import _no_deducible_account_code_for_project
+
 logger = logging.getLogger(__name__)
 
 
@@ -214,6 +216,7 @@ class CuentaContableSuggester:
         fase_torneo: Optional[str] = None,
         empleado_id: Optional[UUID] = None,
         budget_concept_id: Optional[UUID] = None,
+        has_cfdi: Optional[bool] = None,
         use_llm: bool = True,
         llm_confidence_threshold: float = 0.7,
     ) -> Optional[CuentaContableSuggestion]:
@@ -226,6 +229,19 @@ class CuentaContableSuggester:
             await self._load_cuentas_contables()
 
         suggestion: Optional[CuentaContableSuggestion] = None
+
+        no_deducible_suggestion = await self._apply_no_deducible_project_rule(
+            proyecto=proyecto,
+            budget_concept_id=budget_concept_id,
+            has_cfdi=has_cfdi,
+        )
+        if no_deducible_suggestion:
+            logger.debug(
+                "No-deducible project suggestion for expense %s: %s",
+                expense_id,
+                no_deducible_suggestion.cuenta_codigo,
+            )
+            return no_deducible_suggestion
 
         partida_suggestion = await self._apply_partida_catalog_rule(
             budget_concept_id=budget_concept_id,
@@ -356,6 +372,7 @@ class CuentaContableSuggester:
                 fase_torneo=exp.get('fase_torneo'),
                 empleado_id=exp.get('empleado_id'),
                 budget_concept_id=exp.get('budget_concept_id'),
+                has_cfdi=exp.get('has_cfdi'),
                 use_llm=use_llm,
                 llm_confidence_threshold=llm_confidence_threshold,
             )
@@ -415,6 +432,60 @@ class CuentaContableSuggester:
         for cuenta in self._cuentas_cache:
             if cuenta.codigo == codigo:
                 return cuenta
+        return None
+
+    async def _apply_no_deducible_project_rule(
+        self,
+        proyecto: Optional[str],
+        budget_concept_id: Optional[UUID],
+        has_cfdi: Optional[bool],
+    ) -> Optional[CuentaContableSuggestion]:
+        """Suggest the project-specific non-deductible account when CFDI is missing."""
+        if has_cfdi is not False:
+            return None
+        if not self._cuentas_cache:
+            return None
+
+        project_names: List[str] = []
+        if proyecto:
+            project_names.append(str(proyecto))
+
+        from devnous.gastos.models import BudgetConcept, Tournament
+
+        if budget_concept_id:
+            result = await self.session.execute(
+                select(BudgetConcept).where(BudgetConcept.id == budget_concept_id)
+            )
+            concept = result.scalar_one_or_none()
+            if concept is not None and concept.tournament_name:
+                project_names.append(str(concept.tournament_name))
+
+        if proyecto and self._is_valid_uuid(str(proyecto)):
+            result = await self.session.execute(
+                select(Tournament).where(Tournament.id == UUID(str(proyecto)))
+            )
+            tournament = result.scalar_one_or_none()
+            if tournament is not None and tournament.name:
+                project_names.append(str(tournament.name))
+
+        for project_name in project_names:
+            cuenta_codigo = _no_deducible_account_code_for_project(project_name)
+            if not cuenta_codigo:
+                continue
+            cuenta = self._find_cuenta_by_codigo(cuenta_codigo)
+            if cuenta is None:
+                continue
+            return CuentaContableSuggestion(
+                cuenta_contable_id=cuenta.id,
+                cuenta_codigo=cuenta.codigo,
+                cuenta_nombre=cuenta.nombre or "",
+                confidence_score=0.96,
+                reason=(
+                    f"Regla No Deducibles: proyecto '{project_name}' sin CFDI "
+                    f"-> {cuenta.codigo}"
+                ),
+                tier="no_deducible_project",
+            )
         return None
 
     async def _apply_torneo_proyecto_rule(

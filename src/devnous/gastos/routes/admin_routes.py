@@ -21275,6 +21275,7 @@ async def gastos_sin_cuenta_contable(
                         gasto.budget_concept_id
                         or (effective_concept.id if effective_concept else None)
                     ),
+                    "has_cfdi": bool(gasto.cfdi_report_id),
                 }
             )
         suggestions = await suggester.get_suggestions_batch(
