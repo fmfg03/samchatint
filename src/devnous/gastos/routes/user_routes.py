@@ -84,6 +84,12 @@ from ..services.amex_expense_service import (
     set_company_amex_status,
     sum_paid_solicitud_amounts,
 )
+from ..services.authorization_profile_service import (
+    copy_authorization_profile,
+    list_authorization_profiles,
+    summarize_profile_rules,
+    update_authorization_profile_rules,
+)
 from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
@@ -1433,6 +1439,225 @@ async def control_accesos_save_rule(
         suffix = f"&tool_key={quote(return_tool_key or tool_key)}"
         return RedirectResponse(
             url=f"/admin/control-accesos?error_msg={quote(str(exc))}{suffix}",
+            status_code=303,
+        )
+
+
+@router.get("/admin/estrategias-autorizacion", response_class=HTMLResponse)
+async def estrategias_autorizacion_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_control_accesos_superadmin(current_empleado)
+    profiles = await list_authorization_profiles(session)
+    selected_profile_id = (request.query_params.get("profile_id") or "").strip()
+    selected_profile = None
+    for profile in profiles:
+        if str(profile.id) == selected_profile_id:
+            selected_profile = profile
+            break
+    if selected_profile is None and profiles:
+        selected_profile = profiles[0]
+
+    success_msg = request.query_params.get("success_msg", "")
+    error_msg = request.query_params.get("error_msg", "")
+
+    profile_cards = ""
+    for profile in profiles:
+        summary = summarize_profile_rules(profile.rules)
+        selected = selected_profile is not None and profile.id == selected_profile.id
+        profile_cards += f"""
+            <a class="profile-card {'selected' if selected else ''}" href="/admin/estrategias-autorizacion?profile_id={profile.id}">
+                <div class="profile-title">{escape(profile.name)}</div>
+                <div class="muted">{escape(profile.role_key)} · {escape(profile.employee_matcher or '')}</div>
+                <div class="profile-stats">
+                    <span>{summary['enabled']} activas</span>
+                    <span>{summary['first']} primera</span>
+                    <span>{summary['second']} segunda</span>
+                    <span>{summary['exceptions']} excepciones</span>
+                </div>
+            </a>
+        """
+
+    rules_rows = ""
+    copy_form = ""
+    selected_title = "Selecciona un perfil"
+    if selected_profile is not None:
+        selected_title = selected_profile.name
+        copy_form = f"""
+            <form method="POST" action="/admin/estrategias-autorizacion/perfiles/{selected_profile.id}/copiar" class="copy-form">
+                <label>Copiar este perfil como</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input name="new_name" value="Copia de {escape(selected_profile.name)}" aria-label="Nuevo nombre de perfil">
+                    <button class="button secondary" type="submit">Copiar perfil</button>
+                </div>
+            </form>
+        """
+        for rule in selected_profile.rules:
+            rule_key = str(rule.get("rule_key") or "")
+            amount_mode = str(rule.get("amount_mode") or "any")
+            amount_value = str(rule.get("amount_value") or "")
+            amount_label = "Cualquier monto"
+            if amount_mode == "max":
+                amount_label = f"Hasta ${escape(amount_value)}"
+            elif amount_mode == "gt":
+                amount_label = f"Mayor a ${escape(amount_value)}"
+            flags = []
+            if rule.get("requires_no_invoice"):
+                flags.append("sin factura / no deducible")
+            if rule.get("requires_unbudgeted"):
+                flags.append("no presupuestado")
+            if rule.get("requires_budget_excess"):
+                flags.append("excede presupuesto")
+            if rule.get("requires_urgent"):
+                flags.append("urgente")
+            if rule.get("requires_pending_advance_review"):
+                flags.append("anticipo pendiente")
+            flags_html = "".join(f'<span class="chip">{escape(flag)}</span>' for flag in flags) or '<span class="muted">Sin excepcion especial</span>'
+            rules_rows += f"""
+                <tr>
+                    <td>
+                        <strong>{escape(str(rule.get('erogation_label') or rule_key))}</strong>
+                        <br><span class="muted">{escape(str(rule.get('area_key') or ''))} · {escape(rule_key)}</span>
+                        <div class="chips">{flags_html}</div>
+                    </td>
+                    <td>{escape(amount_label)}</td>
+                    <td class="switches">
+                        <label><input type="checkbox" name="enabled_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('enabled') else ''}> Activa</label>
+                        <label><input type="checkbox" name="first_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('can_first_approve') else ''}> Autoriza</label>
+                        <label><input type="checkbox" name="second_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('can_second_approve') else ''}> Segunda autorización</label>
+                    </td>
+                </tr>
+            """
+    if not rules_rows:
+        rules_rows = '<tr><td colspan="3" class="muted">No hay reglas en este perfil.</td></tr>'
+
+    selected_id = str(selected_profile.id) if selected_profile is not None else ""
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Estrategias de autorizacion</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {_workspace_shell_styles("1420px")}
+            .card {{ background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:18px;margin-bottom:16px; }}
+            .layout {{ display:grid;grid-template-columns:360px 1fr;gap:18px;align-items:start; }}
+            .profile-card {{ display:block;text-decoration:none;color:#0f172a;border:1px solid #dbe2ea;border-radius:14px;padding:14px;margin-bottom:10px;background:#fff; }}
+            .profile-card.selected {{ border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12); }}
+            .profile-title {{ font-weight:900;font-size:16px;margin-bottom:4px; }}
+            .profile-stats {{ display:flex;flex-wrap:wrap;gap:6px;margin-top:10px; }}
+            .profile-stats span,.chip {{ background:#e2e8f0;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;color:#334155; }}
+            .chips {{ display:flex;gap:6px;flex-wrap:wrap;margin-top:8px; }}
+            label {{ display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;text-transform:uppercase; }}
+            input {{ box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff; }}
+            table {{ width:100%;border-collapse:collapse;background:#fff; }}
+            th,td {{ border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top; }}
+            th {{ background:#f8fafc;font-size:12px;text-transform:uppercase;color:#475569; }}
+            .button {{ display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:#0f172a;color:#fff;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0;color:#0f172a; }}
+            .switches label {{ text-transform:none;font-size:13px;color:#0f172a;margin:0 0 8px; }}
+            .switches input {{ width:auto;margin-right:6px; }}
+            .muted {{ color:#64748b;font-size:12px; }}
+            .notice {{ padding:12px 14px;border-radius:12px;margin-bottom:14px;font-weight:700; }}
+            .notice.ok {{ background:#dcfce7;color:#166534; }}
+            .notice.error {{ background:#fee2e2;color:#991b1b; }}
+            .copy-form {{ border:1px dashed #cbd5e1;border-radius:14px;padding:12px;background:#f8fafc;margin:12px 0; }}
+            @media (max-width: 980px) {{ .layout {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "admin")}
+            <section class="card">
+                <div class="eyebrow">Configuracion</div>
+                <h1 style="margin:4px 0 8px;">Estrategias de autorizacion</h1>
+                <p class="muted" style="margin:0;">Perfiles copiables por persona/rol operativo. Este tablero es advisory: prepara la matriz sin cambiar aun el enforcement de aprobaciones.</p>
+            </section>
+            {f'<div class="notice ok">{escape(success_msg)}</div>' if success_msg else ''}
+            {f'<div class="notice error">{escape(error_msg)}</div>' if error_msg else ''}
+            <div class="layout">
+                <section class="card">
+                    <div class="eyebrow">Perfiles</div>
+                    <h2 style="margin:4px 0 12px;">Autorizadores</h2>
+                    {profile_cards or '<div class="muted">No hay perfiles.</div>'}
+                </section>
+                <section class="card">
+                    <div class="eyebrow">Detalle</div>
+                    <h2 style="margin:4px 0 12px;">{escape(selected_title)}</h2>
+                    {copy_form}
+                    <form method="POST" action="/admin/estrategias-autorizacion/perfiles/{escape(selected_id)}/reglas">
+                        <table>
+                            <thead><tr><th>Regla</th><th>Rango</th><th>Switches</th></tr></thead>
+                            <tbody>{rules_rows}</tbody>
+                        </table>
+                        <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+                            <button class="button" type="submit" {'disabled' if not selected_id else ''}>Guardar switches</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/admin/estrategias-autorizacion/perfiles/{profile_id}/copiar")
+async def estrategias_autorizacion_copy_profile(
+    profile_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    new_name: str = Form(...),
+) -> RedirectResponse:
+    _require_control_accesos_superadmin(current_empleado)
+    try:
+        profile = await copy_authorization_profile(
+            session,
+            source_profile_id=profile_id,
+            new_name=new_name,
+            actor_id=current_empleado.id,
+        )
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={profile.id}&success_msg=Perfil%20copiado",
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?error_msg={quote(str(exc))}",
+            status_code=303,
+        )
+
+
+@router.post("/admin/estrategias-autorizacion/perfiles/{profile_id}/reglas")
+async def estrategias_autorizacion_save_rules(
+    profile_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    enabled_rule_keys: List[str] = Form(default=[]),
+    first_rule_keys: List[str] = Form(default=[]),
+    second_rule_keys: List[str] = Form(default=[]),
+) -> RedirectResponse:
+    _require_control_accesos_superadmin(current_empleado)
+    try:
+        await update_authorization_profile_rules(
+            session,
+            profile_id=profile_id,
+            enabled_rule_keys=set(enabled_rule_keys or []),
+            first_rule_keys=set(first_rule_keys or []),
+            second_rule_keys=set(second_rule_keys or []),
+        )
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&success_msg=Switches%20guardados",
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&error_msg={quote(str(exc))}",
             status_code=303,
         )
 
@@ -12369,6 +12594,7 @@ async def panel(
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
+        ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
     ], visible_tool_keys)
     configuracion_section = ""
     if configuracion_cards:
