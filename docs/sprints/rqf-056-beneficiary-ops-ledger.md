@@ -29,6 +29,7 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 | RQF-056L | `a1185e079` | done | Tightened budget visibility and mutation policy. |
 | RQF-056O | `6bb02b772` | done | Classified Tocino failures: auth, validation, rate limit, upstream unavailable, bad response. |
 | RQF-056P | `38bfdeca6` | done | Added explicit `finance.employee_beneficiary.request` profile capability for employee-beneficiary requests. |
+| RQF-056R | `21c1d6d25` | done | Clarified employee beneficiary selection UI with Step 1 employee and Step 2 bank account separation. |
 
 ## Verified but not changed in this sprint branch
 
@@ -51,11 +52,7 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 
 ## Open sprint backlog / next likely cuts
 
-1. UI clarity for employee beneficiary selection in:
-   - `/informes-de-gastos/crear`
-   - `/gastos-terceros/solicitar-anticipo`
-   Make the employee selector visually unambiguous and distinct from bank-account selection.
-2. Confirm live profile assignments for Alicia, Bibiana, Carlos, Roberto, Benjam?n and Juan Pablo include either:
+1. Confirm live profile assignments for Alicia, Bibiana, Carlos, Roberto, Benjam?n and Juan Pablo include either:
    - matching allowlist identity, or
    - `finance.employee_beneficiary.request`.
 3. Continue customer Excel plan items without losing QA/release plan context.
