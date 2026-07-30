@@ -814,11 +814,9 @@ async def sat_cfdi_sync(
     lock distinct from Tocino sync. Optional query/body ``mode``:
     ``auto`` | ``daily_forward`` | ``june_2026_backfill``.
 
-    Crontab (America/Mexico_City, daily 06:00)::
+    Crontab (America/Mexico_City, daily 09:00 and 23:00)::
 
-        0 6 * * * curl -sf -X POST \\
-          -H \"X-SAT-Sync-Secret: $SAT_SYNC_SECRET\" \\
-          \"https://sam.chat/ingress/sat-cfdi-sync?mode=auto\"
+        0 9,23 * * * /root/samchat/scripts/run_sat_cfdi_sync.sh
 
     Production requires SAT_USE_PRODUCTION=true so live SAT endpoints are used.
     """
@@ -905,7 +903,12 @@ async def sat_cfdi_open_jobs(
     x_sat_sync_secret: Optional[str] = Header(None, alias="X-SAT-Sync-Secret"),
     session: AsyncSession = Depends(get_db_session),
 ) -> Dict[str, Any]:
-    """Lightweight hourly cron: reclaim stuck solicitudes and verify open jobs only."""
+    """Lightweight hourly cron: reclaim stuck solicitudes and verify open jobs only.
+
+    Crontab (America/Mexico_City, hourly)::
+
+        15 * * * * /root/samchat/scripts/run_sat_open_jobs.sh
+    """
     from devnous.sat.sat_handler import sat_production_enabled
 
     sync_secret = os.getenv("SAT_SYNC_SECRET")

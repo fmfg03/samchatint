@@ -20021,9 +20021,11 @@ async def admin_sat_dashboard(
                             <div class="eyebrow">Sync programado</div>
                             <h2>Backfill junio 2026 y sync diario</h2>
                             <div class="section-note">
-                                Sync completo 2×/día vía <code>POST /ingress/sat-cfdi-sync</code>.
-                                Open jobs cada hora vía <code>POST /ingress/sat-cfdi-open-jobs</code>
-                                (<code>scripts/run_sat_open_jobs.sh</code>).
+                                Sync completo 2×/día (09:00 y 23:00 CDMX) vía
+                                <code>scripts/run_sat_cfdi_sync.sh</code> →
+                                <code>POST /ingress/sat-cfdi-sync</code>.
+                                Open jobs cada hora vía <code>scripts/run_sat_open_jobs.sh</code> →
+                                <code>POST /ingress/sat-cfdi-open-jobs</code>.
                                 RFC activo: <code>{escape(coverage_rfc or "—")}</code>.
                             </div>
                         </div>
