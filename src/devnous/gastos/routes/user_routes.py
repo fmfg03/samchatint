@@ -12488,6 +12488,31 @@ async def gastos_personales(
     return RedirectResponse(url="/gastos-empleado", status_code=302)
 
 
+def _solicitud_transferencia_list_actions_html(
+    documento: Documento, current_empleado: Empleado
+) -> str:
+    """Actions shown from the solicitudes list without bypassing workflow rules."""
+    detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
+    can_cancel_draft = (
+        documento.tipo == "SOLICITUD"
+        and documento.estado == "borrador"
+        and documento.empleado_id == current_empleado.id
+    )
+    if not can_cancel_draft:
+        return detail_link
+    return (
+        '<div class="inline-actions" style="gap:6px;align-items:center;">'
+        f'{detail_link}'
+        f'<form method="POST" action="/documentos/{documento.id}/cancelar" '
+        'class="inline-form" style="display:inline;">'
+        '<input type="hidden" name="next" value="/gastos-terceros">'
+        '<input type="hidden" name="comentario" value="Borrador cancelado desde la bandeja de solicitudes.">'
+        '<button type="submit" class="button danger" '
+        'onclick="return confirm(\'?Cancelar esta solicitud en borrador? Se conservar? el registro de auditor?a.\')">'
+        'Cancelar borrador</button></form></div>'
+    )
+
+
 @router.get("/gastos-terceros", response_class=HTMLResponse)
 async def gastos_terceros(
     request: Request,
@@ -12586,10 +12611,9 @@ async def gastos_terceros(
         # Link to documento detail
         doc_link = f'<a href="/documentos/{doc.id}" class="text-link">{ref_display}</a>'
 
-        # Registrar pago link (if estado='aprobado' and role allows)
-        registrar_pago_link = '<span class="section-note">Sin acción</span>'
-        if doc.estado == 'aprobado' and current_empleado.rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
-            registrar_pago_link = f'<a href="/documentos/{doc.id}" class="button secondary">Ver detalle</a>'
+        registrar_pago_link = _solicitud_transferencia_list_actions_html(
+            doc, current_empleado
+        )
 
         archivos_terc = html_documento_archivos_cell(
             doc.id, terceros_adj_meta.get(doc.id, [])
