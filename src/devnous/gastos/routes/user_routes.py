@@ -1442,6 +1442,220 @@ async def control_accesos_save_rule(
             status_code=303,
         )
 
+@router.get("/admin/estrategias-autorizacion/warnings", response_class=HTMLResponse)
+async def authorization_strategy_warnings_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    role_norm = (current_empleado.rol or "").strip().lower()
+    if role_norm not in {"finanzas", "admin", "superadmin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    query = (request.query_params.get("q") or "").strip()
+    missing_role = (request.query_params.get("missing_role") or "").strip()
+    try:
+        limit = int(request.query_params.get("limit") or "100")
+    except ValueError:
+        limit = 100
+    limit = max(10, min(limit, 250))
+
+    where_parts = [
+        "e.action = 'documento.approved'",
+        "e.metadata_json -> 'authorization_route_warning' IS NOT NULL",
+    ]
+    params: dict[str, Any] = {"limit": limit}
+    if query:
+        where_parts.append(
+            """
+            (
+                COALESCE(e.documento_referencia, '') ILIKE :query
+                OR COALESCE(d.numero_referencia, '') ILIKE :query
+                OR COALESCE(emp.nombre, '') ILIKE :query
+                OR COALESCE(d.concepto_pago, '') ILIKE :query
+            )
+            """
+        )
+        params["query"] = f"%{query}%"
+    if missing_role:
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements_text(e.metadata_json -> 'authorization_route_warning' -> 'missing_role_keys') r(role_key) WHERE r.role_key = :missing_role)"
+        )
+        params["missing_role"] = missing_role
+
+    where_sql = " AND ".join(where_parts)
+    query_error_msg = ""
+    try:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT
+                    e.id,
+                    e.created_at,
+                    e.documento_id,
+                    COALESCE(d.numero_referencia, e.documento_referencia) AS documento_referencia,
+                    d.tipo AS documento_tipo,
+                    d.estado AS documento_estado,
+                    d.monto_solicitado,
+                    d.monto_total,
+                    d.currency,
+                    emp.nombre AS solicitante,
+                    e.metadata_json -> 'authorization_route_warning' AS warning
+                FROM customer_success_audit_events e
+                LEFT JOIN documentos d ON d.id = e.documento_id
+                LEFT JOIN empleados emp ON emp.id = d.empleado_id
+                WHERE {where_sql}
+                ORDER BY e.created_at DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        )
+        rows = result.fetchall()
+    except Exception:
+        logger.exception("Failed to load authorization warnings dashboard")
+        rows = []
+        query_error_msg = "No se pudo leer la auditoria de warnings; revise que el esquema de auditoria exista."
+
+    role_counts: Counter[str] = Counter()
+    table_rows = ""
+    for row in rows:
+        data = row._mapping
+        warning = data.get("warning") or {}
+        if isinstance(warning, str):
+            try:
+                warning = json.loads(warning)
+            except json.JSONDecodeError:
+                warning = {}
+        if not isinstance(warning, dict):
+            warning = {}
+        missing_roles = [str(role) for role in (warning.get("missing_role_keys") or [])]
+        matched_roles = [str(role) for role in (warning.get("matched_role_keys") or [])]
+        required_roles = [str(role) for role in (warning.get("required_role_keys") or [])]
+        for role in missing_roles:
+            role_counts[role] += 1
+        amount = data.get("monto_solicitado") or data.get("monto_total") or 0
+        currency = data.get("currency") or "MXN"
+        documento_id = data.get("documento_id")
+        doc_link = (
+            f'<a href="/documentos/{documento_id}" class="text-link">{escape(str(data.get("documento_referencia") or documento_id or "--"))}</a>'
+            if documento_id
+            else escape(str(data.get("documento_referencia") or "--"))
+        )
+        table_rows += f'''
+            <tr>
+                <td>{format_value(data.get("created_at"))}</td>
+                <td>{doc_link}<br><span class="muted">{escape(str(data.get("documento_tipo") or "--"))} - {escape(str(data.get("documento_estado") or "--"))}</span></td>
+                <td>{escape(str(data.get("solicitante") or "--"))}</td>
+                <td>{format_currency(amount, currency)}</td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in required_roles) or "--"}</div></td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in matched_roles) or "--"}</div></td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in missing_roles) or "--"}</div></td>
+                <td>{escape(str(warning.get("message") or "--"))}</td>
+            </tr>
+        '''
+    if not table_rows:
+        table_rows = '<tr><td colspan="8" style="text-align:center;padding:22px;">Sin warnings de autorizacion para los filtros actuales.</td></tr>'
+
+    role_options = "".join(
+        f'<option value="{escape(role)}" {"selected" if role == missing_role else ""}>{escape(role)} ({count})</option>'
+        for role, count in sorted(role_counts.items())
+    )
+    summary_cards = f'''
+        <section class="meta-grid" style="margin-bottom:16px;">
+            <div class="meta-card"><span>Warnings visibles</span><strong>{len(rows)}</strong><small>Ultimos eventos aprobados con discrepancia.</small></div>
+            <div class="meta-card"><span>Roles faltantes distintos</span><strong>{len(role_counts)}</strong><small>Segun metadata auditada.</small></div>
+            <div class="meta-card"><span>Modo</span><strong>Read-only</strong><small>No cambia aprobaciones ni documentos.</small></div>
+        </section>
+    '''
+
+    html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Warnings de autorizacion</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {_workspace_shell_styles("1420px")}
+            .card {{ background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:18px;margin-bottom:16px; }}
+            .filters {{ display:grid;grid-template-columns:1fr 260px 120px auto;gap:10px;align-items:end; }}
+            label {{ display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;text-transform:uppercase; }}
+            input,select {{ width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff; }}
+            table {{ width:100%;border-collapse:collapse;background:#fff; }}
+            th,td {{ border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top; }}
+            th {{ background:#f8fafc;font-size:12px;text-transform:uppercase;color:#475569; }}
+            .button {{ display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:#0f172a;color:#fff;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0;color:#0f172a; }}
+            .muted {{ color:#64748b;font-size:12px; }}
+            .chips {{ display:flex;gap:6px;flex-wrap:wrap; }}
+            @media (max-width: 900px) {{ .filters {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "admin")}
+            <section class="card">
+                <div class="eyebrow">Gobierno de autorizaciones</div>
+                <h1 style="margin:4px 0 8px;">Warnings de autorizacion</h1>
+                <p class="muted" style="margin:0;">Discrepancias auditadas entre la ruta real aprobada y la matriz consultiva. Este tablero es solo lectura.</p>
+                <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <a class="button secondary" href="/admin/estrategias-autorizacion">Estrategias</a>
+                    <a class="button secondary" href="/panel">Panel</a>
+                </div>
+            </section>
+            {summary_cards}
+            {f'<section class="card"><div class="notice warning">{escape(query_error_msg)}</div></section>' if query_error_msg else ''}
+            <section class="card">
+                <form method="GET" action="/admin/estrategias-autorizacion/warnings" class="filters">
+                    <div>
+                        <label>Buscar</label>
+                        <input name="q" value="{escape(query)}" placeholder="Referencia, solicitante o concepto">
+                    </div>
+                    <div>
+                        <label>Rol faltante</label>
+                        <select name="missing_role">
+                            <option value="">Todos</option>
+                            {role_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label>Limite</label>
+                        <input name="limit" type="number" min="10" max="250" value="{limit}">
+                    </div>
+                    <button class="button" type="submit">Filtrar</button>
+                </form>
+            </section>
+            <section class="card">
+                <div class="section-head">
+                    <div>
+                        <h2>Discrepancias auditadas</h2>
+                        <div class="section-note">Cada fila viene de un evento <code>documento.approved</code> con <code>authorization_route_warning</code>.</div>
+                    </div>
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Documento</th>
+                                <th>Solicitante</th>
+                                <th>Monto</th>
+                                <th>Requeridos</th>
+                                <th>Cubiertos</th>
+                                <th>Faltantes</th>
+                                <th>Mensaje</th>
+                            </tr>
+                        </thead>
+                        <tbody>{table_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    '''
+    return html
+
 
 @router.get("/admin/estrategias-autorizacion", response_class=HTMLResponse)
 async def estrategias_autorizacion_page(
@@ -12595,6 +12809,7 @@ async def panel(
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
         ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
+        ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
     ], visible_tool_keys)
     configuracion_section = ""
     if configuracion_cards:

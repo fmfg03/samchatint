@@ -157,3 +157,20 @@ def test_document_detail_renders_soft_authorization_warning_panel():
     assert "authorization_route_warning" in source
     assert "metadata_json ? 'authorization_route_warning'" in source
     assert "{authorization_route_warning_html}" in source
+
+
+def test_authorization_warnings_dashboard_is_registered_read_only():
+    source = Path(user_routes.__file__).read_text()
+    access_source = Path(
+        "/root/samchat/src/devnous/gastos/services/access_control_service.py"
+    ).read_text()
+
+    assert '@router.get("/admin/estrategias-autorizacion/warnings"' in source
+    assert "authorization_strategy_warnings_page" in source
+    assert "Warnings de autorizacion" in source
+    assert "authorization_route_warning" in source
+    assert "documento.approved" in source
+    assert "configuracion.authorization_warnings" in source
+    assert "configuracion.authorization_warnings" in access_source
+    assert "FINANCE_ADMIN_ROLES" in access_source
+    assert '("ver",)' in access_source
