@@ -1,4 +1,8 @@
-from samchat.assistant.request_intent import detect_request_intent, is_owner_ai_conceptual_request
+from samchat.assistant.request_intent import (
+    detect_request_intent,
+    is_owner_ai_conceptual_request,
+    is_owner_ai_context_request,
+)
 from samchat.assistant.request_router import route_request
 
 
@@ -72,3 +76,11 @@ def test_owner_ai_folder_definition_is_not_deterministic_tournament_status():
     intent = detect_request_intent(text)
 
     assert intent.domain == "unknown"
+
+def test_owner_ai_specific_need_is_context_request():
+    assert is_owner_ai_context_request(
+        "Cuando y donde se entregan uniformes de fase estatal para Veracruz?"
+    )
+    assert is_owner_ai_context_request(
+        "Dime hoteles contratados y camas-noche para la fase nacional de basquet."
+    )

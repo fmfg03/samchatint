@@ -511,3 +511,24 @@ def test_owner_ai_folder_creation_keeps_authority_path():
     assert route["domain"] in {"tournament", "mixed"}
     assert route["rag_only"] is False
     assert route["has_write_intent"] is True
+
+def test_owner_ai_specific_read_questions_are_rag_only_until_tools_are_wired():
+    route = _assistant_classify_request(
+        "Dime hoteles contratados y camas-noche para la fase nacional de basquet."
+    )
+
+    assert route["route"] == "lookup_sql"
+    assert route["domain"] == "generic"
+    assert route["rag_only"] is True
+    assert _assistant_tool_defs_for_message(route, "hoteles camas-noche fase nacional") == []
+
+
+def test_owner_ai_plan_without_changes_is_rag_only():
+    route = _assistant_classify_request(
+        "Haz un plan para construir todas las carpetas del torneo sin cambiar datos todavia."
+    )
+
+    assert route["route"] == "lookup_sql"
+    assert route["domain"] == "generic"
+    assert route["rag_only"] is True
+    assert route["has_write_intent"] is False

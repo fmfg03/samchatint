@@ -143,7 +143,10 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .rag import get_rag_store
-from .request_intent import is_owner_ai_conceptual_request
+from .request_intent import (
+    is_owner_ai_conceptual_request,
+    is_owner_ai_context_request,
+)
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -2064,13 +2067,23 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         "carpeta de la entidad",
         "carpeta de entidad",
         "carpeta de fase nacional",
+        "carpetas del torneo",
         "fase nacional",
+        "fase estatal",
+        "entrega de uniformes",
+        "uniformes de fase estatal",
         "camas noche",
         "camas-noche",
         "box lunch",
+        "servicios medicos",
+        "servicios médico",
+        "accidentes con traslado",
         "activacion de marcas",
         "activación de marcas",
+        "activaciones de marca",
         "visitantes involucrados",
+        "evidencia fotografica",
+        "evidencia fotográfica",
         "fotografias",
         "fotografías",
         "necesidades de ai",
@@ -2116,7 +2129,28 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
     if owner_ai_conceptual_hits:
         reasons.append(f"owner_ai_conceptual={owner_ai_conceptual_hits[:3]}")
 
-    owner_ai_rag_only = bool(owner_ai_context_hits and owner_ai_conceptual_hits)
+    owner_ai_context = bool(owner_ai_context_hits or is_owner_ai_context_request(raw_message))
+    owner_ai_no_mutation = bool(
+        owner_ai_context
+        and any(
+            phrase in text
+            for phrase in (
+                "sin cambiar datos",
+                "sin cambiar nada",
+                "no cambies datos",
+                "no modifiques datos",
+            )
+        )
+    )
+    if owner_ai_no_mutation:
+        write_hits = []
+        code_change_hits = []
+    owner_ai_rag_only = bool(
+        owner_ai_context
+        and not write_hits
+        and not code_hits
+        and not code_change_hits
+    )
     rag_only = bool(
         owner_ai_rag_only
         or (

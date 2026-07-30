@@ -104,24 +104,41 @@ def _has_document_context(text: str) -> bool:
 
 
 
+OWNER_AI_CONTEXT_TERMS = (
+    "carpeta por entidad",
+    "carpeta de la entidad",
+    "carpeta de entidad",
+    "carpetas del torneo",
+    "carpetas de torneo",
+    "carpeta de fase nacional",
+    "fase nacional",
+    "fase estatal",
+    "entrega de uniformes",
+    "uniformes de fase estatal",
+    "camas noche",
+    "camas-noche",
+    "box lunch",
+    "servicios medicos",
+    "servicios medico",
+    "accidentes con traslado",
+    "activacion de marcas",
+    "activaciones de marca",
+    "visitantes involucrados",
+    "evidencia fotografica",
+    "fotografias",
+    "necesidades de ai",
+    "necesidades del dueno",
+    "necesidades del dueño",
+)
+
+
+def is_owner_ai_context_request(text: str) -> bool:
+    normalized = normalize_request_text(text)
+    return any(term in normalized for term in OWNER_AI_CONTEXT_TERMS)
+
+
 def is_owner_ai_conceptual_request(text: str) -> bool:
     normalized = normalize_request_text(text)
-    owner_terms = (
-        "carpeta por entidad",
-        "carpeta de la entidad",
-        "carpeta de entidad",
-        "carpeta de fase nacional",
-        "fase nacional",
-        "camas noche",
-        "camas-noche",
-        "box lunch",
-        "activacion de marcas",
-        "visitantes involucrados",
-        "fotografias",
-        "necesidades de ai",
-        "necesidades del dueno",
-        "necesidades del dueño",
-    )
     conceptual_terms = (
         "que debe contener",
         "que datos",
@@ -130,7 +147,7 @@ def is_owner_ai_conceptual_request(text: str) -> bool:
         "sin cambiar datos",
         "sin cambiar nada",
     )
-    return any(term in normalized for term in owner_terms) and any(
+    return is_owner_ai_context_request(text) and any(
         term in normalized for term in conceptual_terms
     )
 
