@@ -2044,7 +2044,39 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         "release qa",
         "qa release",
     )
+    owner_ai_context_keywords = (
+        "carpeta por entidad",
+        "carpeta de la entidad",
+        "carpeta de entidad",
+        "carpeta de fase nacional",
+        "fase nacional",
+        "camas noche",
+        "camas-noche",
+        "box lunch",
+        "activacion de marcas",
+        "activación de marcas",
+        "visitantes involucrados",
+        "fotografias",
+        "fotografías",
+        "necesidades de ai",
+        "necesidades del dueño",
+        "necesidades del dueno",
+    )
+    owner_ai_conceptual_keywords = (
+        "que debe contener",
+        "qué debe contener",
+        "que datos",
+        "qué datos",
+        "como debe responder",
+        "cómo debe responder",
+        "que puede hacer",
+        "qué puede hacer",
+        "sin cambiar datos",
+        "sin cambiar nada",
+    )
     product_context_hits = _keyword_hits(text, product_context_keywords)
+    owner_ai_context_hits = _keyword_hits(text, owner_ai_context_keywords)
+    owner_ai_conceptual_hits = _keyword_hits(text, owner_ai_conceptual_keywords)
 
     if finance_hits:
         reasons.append(f"finance={finance_hits[:3]}")
@@ -2064,18 +2096,28 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         reasons.append(f"code_change={code_change_hits[:3]}")
     if product_context_hits:
         reasons.append(f"product_context={product_context_hits[:3]}")
+    if owner_ai_context_hits:
+        reasons.append(f"owner_ai_context={owner_ai_context_hits[:3]}")
+    if owner_ai_conceptual_hits:
+        reasons.append(f"owner_ai_conceptual={owner_ai_conceptual_hits[:3]}")
 
+    owner_ai_rag_only = bool(owner_ai_context_hits and owner_ai_conceptual_hits)
     rag_only = bool(
-        product_context_hits
-        and not finance_hits
-        and not tournament_hits
-        and not code_hits
-        and not code_change_hits
-        and not write_hits
+        owner_ai_rag_only
+        or (
+            product_context_hits
+            and not finance_hits
+            and not tournament_hits
+            and not code_hits
+            and not code_change_hits
+            and not write_hits
+        )
     )
 
     domain = "generic"
-    if code_hits:
+    if rag_only:
+        domain = "generic"
+    elif code_hits:
         domain = "code"
     elif finance_hits and tournament_hits:
         domain = "mixed"

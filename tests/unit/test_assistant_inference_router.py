@@ -490,3 +490,24 @@ def test_business_questions_do_not_become_rag_only():
     assert route["domain"] == "finance"
     assert route["rag_only"] is False
     assert _assistant_tool_defs_for_message(route, "regla no deducibles factura")
+
+def test_owner_ai_folder_definition_questions_are_rag_only():
+    route = _assistant_classify_request(
+        "Que debe contener una carpeta por entidad para cualquier torneo?"
+    )
+
+    assert route["route"] == "lookup_sql"
+    assert route["domain"] == "generic"
+    assert route["rag_only"] is True
+    assert "owner_ai_context" in route["reason"]
+    assert _assistant_tool_defs_for_message(route, "carpeta por entidad torneo") == []
+
+
+def test_owner_ai_folder_creation_keeps_authority_path():
+    route = _assistant_classify_request(
+        "Crea la carpeta de la entidad Jalisco para el torneo de beisbol 2026"
+    )
+
+    assert route["domain"] in {"tournament", "mixed"}
+    assert route["rag_only"] is False
+    assert route["has_write_intent"] is True
