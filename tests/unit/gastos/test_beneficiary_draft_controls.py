@@ -41,10 +41,41 @@ def test_named_requesters_can_choose_another_employee_by_corporate_email() -> No
     assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
 
 
+def test_named_requesters_can_choose_another_employee_by_canonical_name() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo López Romero",
+        correo="juanpablo@example.com",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+def test_name_matching_is_normalized_but_not_role_based() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Alicia Edith Zúñiga Salazar",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    impostor = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo",
+        correo="personal@example.com",
+        rol="superadmin",
+    )
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert not user_routes._can_request_for_other_employee(impostor)
+
+
 def test_unlisted_email_cannot_choose_another_employee_even_with_similar_name() -> None:
     requester = SimpleNamespace(
         id=uuid4(),
-        nombre="Juan Pablo Lopez",
+        nombre="Juan Pablo",
         correo="juanpablo@example.com",
         rol="superadmin",
     )
