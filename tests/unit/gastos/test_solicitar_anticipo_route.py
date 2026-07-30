@@ -317,3 +317,12 @@ async def test_solicitar_anticipo_submit_rolls_back_on_unexpected_solicitud_erro
         "Revise%20los%20datos%20capturados%20e%20intente%20nuevamente."
     )
     session.rollback.assert_awaited_once()
+
+
+def test_solicitar_anticipo_source_separates_employee_beneficiary_from_bank_account() -> None:
+    source = user_routes.solicitar_anticipo_form.__code__.co_consts
+    rendered_literals = "\n".join(str(value) for value in source if isinstance(value, str))
+
+    assert "Paso 2" in rendered_literals
+    assert "Cuenta bancaria del beneficiario" in rendered_literals
+    assert "La cuenta debe pertenecer al empleado beneficiario" in rendered_literals

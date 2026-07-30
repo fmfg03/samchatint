@@ -196,6 +196,8 @@ def test_authorized_requester_sees_explicit_employee_selector() -> None:
     assert '<select' in html
     assert "Alicia" in html and "Bibiana" in html
     assert "Empleado beneficiario" in html
+    assert "Paso 1" in html
+    assert "Elige" in html and "recurso" in html
 
 
 def test_ordinary_requester_is_locked_to_self() -> None:
@@ -216,7 +218,7 @@ def test_ordinary_requester_is_locked_to_self() -> None:
 
     assert '<input type="hidden" name="beneficiario_empleado_id"' in html
     assert "Carlos Solicitante" in html
-    assert "solamente puede solicitar para sí mismo" in html
+    assert "solamente puede solicitar" in html and "si mismo" in html
     assert "<select" not in html
     assert "Otra persona" not in html
 

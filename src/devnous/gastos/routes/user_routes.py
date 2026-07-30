@@ -8648,22 +8648,35 @@ def _beneficiary_employee_control_html(
     beneficiary_name = escape(
         beneficiary.nombre or beneficiary.correo or str(beneficiary.id)
     )
+    control_style = (
+        "border:1px solid #c7d2fe;background:#eef2ff;border-radius:12px;"
+        "padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;"
+    )
+    badge_style = (
+        "display:inline-block;background:#1d4ed8;color:white;border-radius:999px;"
+        "padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;"
+    )
     if _can_request_for_other_employee(requester):
         return (
-            f'<label for="{select_id}" style="display:block;font-weight:700;'
-            'margin-bottom:6px;">Empleado beneficiario</label>'
+            f'<div class="employee-beneficiary-control" style="{control_style}">'
+            f'<div><span style="{badge_style}">Paso 1</span> '
+            '<strong>Empleado beneficiario</strong></div>'
+            f'<label for="{select_id}" style="display:block;font-weight:700;">'
+            'Elige quien recibira el recurso</label>'
             f'<select name="beneficiario_empleado_id" id="{select_id}" required '
-            f'style="margin-bottom:8px;">{options_html}</select>'
+            f'style="margin-bottom:2px;">{options_html}</select>'
             f'<small>{escape(help_text)}</small>'
+            '</div>'
         )
     return (
-        f'<input type="hidden" name="beneficiario_empleado_id" '
-        f'value="{beneficiary.id}">'
-        '<span style="display:block;font-weight:700;">'
-        f'{beneficiary_name}</span>'
-        '<small>Este usuario solamente puede solicitar para sí mismo.</small>'
+        f'<div class="employee-beneficiary-control locked" style="{control_style}">'
+        f'<input type="hidden" name="beneficiario_empleado_id" value="{beneficiary.id}">'
+        f'<div><span style="{badge_style}">Beneficiario</span> '
+        '<strong>Empleado beneficiario</strong></div>'
+        f'<span style="display:block;font-weight:800;">{beneficiary_name}</span>'
+        '<small>Este usuario solamente puede solicitar para si mismo.</small>'
+        '</div>'
     )
-
 
 def _can_cancel_empty_informe_draft(
     actor: Empleado, cuenta: CuentaDeGastos
@@ -12987,11 +13000,14 @@ async def solicitar_anticipo_form(
                             f'''<div>
                                 {beneficiary_employee_control}
                                 <div id="st_preview_beneficiario" style="margin-top:8px;font-size:12px;color:#475569;">Beneficiario seleccionado: {escape(beneficiario.nombre or "")}</div>
-                                <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:12px 0 6px;">Cuenta bancaria del beneficiario</label>
-                                <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
-                                    {bank_account_options}
-                                </select>
-                                <small>Después de elegir al empleado, selecciona una cuenta bancaria registrada a su nombre.</small>
+                                <div style="border:1px solid #d1fae5;background:#ecfdf5;border-radius:12px;padding:12px 14px;margin-top:12px;display:grid;gap:8px;">
+                                    <div><span style="display:inline-block;background:#047857;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Paso 2</span> <strong>Cuenta bancaria del beneficiario</strong></div>
+                                    <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:0;">Elige la cuenta registrada para ese empleado</label>
+                                    <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
+                                        {bank_account_options}
+                                    </select>
+                                    <small>La cuenta debe pertenecer al empleado beneficiario seleccionado arriba.</small>
+                                </div>
                             </div>''',
                         )}
                         {render_st_doc_row(
