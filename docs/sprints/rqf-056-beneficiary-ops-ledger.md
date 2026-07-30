@@ -31,6 +31,7 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 | RQF-056P | `38bfdeca6` | done | Added explicit `finance.employee_beneficiary.request` profile capability for employee-beneficiary requests. |
 | RQF-056R | `21c1d6d25` | done | Clarified employee beneficiary selection UI with Step 1 employee and Step 2 bank account separation. |
 | RQF-056T | `afbc9b421` | done | Surfaced employee-beneficiary profile access in effective profile previews. |
+| RQF-056V | `b8328dcf5` | done | Added admin profile summary for users with employee-beneficiary request access. |
 
 ## Verified but not changed in this sprint branch
 
@@ -53,11 +54,9 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 
 ## Open sprint backlog / next likely cuts
 
-1. Confirm live profile assignments for Alicia, Bibiana, Carlos, Roberto, Benjam?n and Juan Pablo include either:
-   - matching allowlist identity, or
-   - `finance.employee_beneficiary.request`.
-3. Continue customer Excel plan items without losing QA/release plan context.
-4. At sprint close:
+1. Employee-beneficiary profile access is visible in `/admin/perfiles` summary; assign `solicitudes_beneficiario_empleado` if an allowlisted operator still cannot see the selector.
+2. Continue customer Excel plan items without losing QA/release plan context.
+3. At sprint close:
    - run broader automated suite;
    - push branch;
    - open PR;
