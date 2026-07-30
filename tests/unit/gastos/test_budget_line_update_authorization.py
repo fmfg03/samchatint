@@ -1,4 +1,6 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -239,3 +241,52 @@ def test_employee_beneficiary_access_summary_explains_empty_state() -> None:
 
     assert "Ningun perfil activo" in html
     assert "Solicitudes para empleados terceros" in html
+
+
+@pytest.mark.asyncio
+async def test_budget_create_line_post_rejects_non_superadmin_before_mutation(monkeypatch) -> None:
+    create_line = AsyncMock()
+    monkeypatch.setattr(admin_routes, "create_budget_line", create_line)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_routes.admin_presupuestos_create_line(
+            version_id=uuid4(),
+            concept_name="Hospedaje",
+            budget_amount=1000,
+            session=SimpleNamespace(),
+            current_empleado=SimpleNamespace(
+                id=uuid4(),
+                rol="admin",
+                departamento="Direccion",
+                correo="director@example.com",
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+    create_line.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_budget_update_line_post_rejects_operations_user_before_reading_form(monkeypatch) -> None:
+    update_line = AsyncMock()
+    request = SimpleNamespace(form=AsyncMock(side_effect=AssertionError("form should not be read")))
+    monkeypatch.setattr(admin_routes, "update_budget_line", update_line)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await admin_routes.admin_presupuestos_update_line(
+            request=request,
+            line_id=uuid4(),
+            version_id=str(uuid4()),
+            session=SimpleNamespace(),
+            current_empleado=SimpleNamespace(
+                id=uuid4(),
+                rol="empleado",
+                departamento="Operaciones",
+                correo="bibiana@example.com",
+                permissions={"budgets.read", "budgets.line.update", "budgets.*"},
+            ),
+        )
+
+    assert exc_info.value.status_code == 403
+    request.form.assert_not_awaited()
+    update_line.assert_not_awaited()
