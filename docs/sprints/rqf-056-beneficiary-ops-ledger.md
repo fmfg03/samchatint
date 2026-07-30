@@ -100,6 +100,7 @@ These items are now part of the master plan, but are not claimed as closed by RQ
 
 ## Next work order
 
+0. RQF-058 Sprint Close Candidate approved: run sanity/tests, preserve external-pending boundaries, then push/PR/review/merge only after evidence is recorded. Evidence: `docs/sprints/rqf-058-sprint-close-candidate.md`.
 1. RQF-057F is locally closed pending external SAT/FIEL credentials and cron installation. Continue customer Excel delta with the next unresolved scope: SAT reconciliation UAT/deepening if requested, or RQF-057G authorization strategy hardening when the customer resumes it.
 2. Keep RQF-056O Tocino/facturacion status/errors parked unless support pressure makes it urgent again.
 3. Sprint close only after broader tests + push + PR + review gate + final merge.
