@@ -24,16 +24,16 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 
 | Stage | Status | Evidence / commits | Remaining closure gap |
 | --- | --- | --- | --- |
-| RQF-056G ? Selector de beneficiario en Informes de Gastos | PARTIAL / needs E2E verification | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, profile visibility commits | Need verify actual form route and live authorized users; confirm close still goes to requester approver with focused route/service test. |
-| RQF-056H ? Selector de beneficiario en Anticipos with full authorized list | PARTIAL / likely implemented, needs live/data verification | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, `b8328dcf5` | Need verify authorized users see all active employees and bank accounts refresh to selected beneficiary in route/E2E tests. |
-| RQF-056I ? Cancelar / eliminar borradores incompletos | PARTIAL | `34c239a80`; existing empty informe cancellation verified in code | Need complete policy tests for finanzas/superadmin cleanup and ensure no sent/approved/paid/movement document can be removed. |
-| RQF-056J ? Materialidades verificables antes de guardar | NOT CLOSED | Existing code appeared present; no dedicated close commit | Need inspect UI/tests against requirements: preview/thumbnail, filename, remove, multiple files, no CFDI breakage. |
-| RQF-056K ? Correcci?n definitiva de totales CFDI XML/PDF | PARTIAL | `6e4112f48` | Need test with real problematic CFDI fixture, robust Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message. |
-| RQF-056L ? Presupuestos visibility/editing | PARTIAL / strong unit coverage | `a1185e079` | Need verify directors definition and UI hiding/POST 403/frozen versions across full routes. |
-| RQF-056M ? Telegram proyecto y etapa | NOT CLOSED | Existing implementation observed; no close commit | Need tests proving Telegram includes proyecto/fase and buttons still work. |
-| RQF-056N ? Reimbursement semantics employee != provider | NOT CLOSED | Existing implementation/test observed | Need align documents + screens + Telegram, not just one helper/test. |
-| RQF-056O ? Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
-| RQF-057A ? Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
+| RQF-056G - Selector de beneficiario en Informes de Gastos | CLOSED_COMMITTED | `2a664d00e`, plus prerequisite selector/access commits | Route-level unit coverage verifies authorized selector, unauthorized self-lock, submit ownership, beneficiary propagation, and requester-approver preservation. Live browser/UAT still belongs to sprint QA gate. |
+| RQF-056H - Selector de beneficiario en Anticipos with full authorized list | NEXT | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, `b8328dcf5` | Need verify authorized users see all active employees and bank accounts refresh to selected beneficiary in route/E2E tests. |
+| RQF-056I - Cancelar / eliminar borradores incompletos | PARTIAL | `34c239a80`; existing empty informe cancellation verified in code | Need complete policy tests for finanzas/superadmin cleanup and ensure no sent/approved/paid/movement document can be removed. |
+| RQF-056J - Materialidades verificables antes de guardar | NOT CLOSED | Existing code appeared present; no dedicated close commit | Need inspect UI/tests against requirements: preview/thumbnail, filename, remove, multiple files, no CFDI breakage. |
+| RQF-056K - Correccion definitiva de totales CFDI XML/PDF | PARTIAL | `6e4112f48` | Need test with real problematic CFDI fixture, robust Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message. |
+| RQF-056L - Presupuestos visibility/editing | PARTIAL / strong unit coverage | `a1185e079` | Need verify directors definition and UI hiding/POST 403/frozen versions across full routes. |
+| RQF-056M - Telegram proyecto y etapa | NOT CLOSED | Existing implementation observed; no close commit | Need tests proving Telegram includes proyecto/fase and buttons still work. |
+| RQF-056N - Reimbursement semantics employee != provider | NOT CLOSED | Existing implementation/test observed | Need align documents + screens + Telegram, not just one helper/test. |
+| RQF-056O - Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
+| RQF-057A - Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
 
 ## Commits currently on sprint branch
 
@@ -52,6 +52,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | `1b5e279ba` | RQF-056U update ledger for profile access visibility |
 | `b8328dcf5` | RQF-056V expose employee beneficiary access summary |
 | `1d32f9206` | RQF-056W update ledger for access summary |
+| `ae5e6c8d5` | RQF-056X correct sprint ledger against stage plan |
+| `2a664d00e` | RQF-056G close informe beneficiary selector contract |
 
 ## Current untracked artifacts intentionally left untracked
 
@@ -61,8 +63,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 
 ## Next work order
 
-1. Close RQF-056G with concrete tests for Informe beneficiary selector and requester-approver preservation.
-2. Close RQF-056H with concrete tests for Anticipo authorized full employee list and beneficiary bank-account refresh.
+1. Close RQF-056H with concrete tests for Anticipo authorized full employee list and beneficiary bank-account refresh.
+2. Continue RQF-056I cancellation policy closure after H.
 3. Continue through I, J, K, L, M, N, O in order.
 4. Start RQF-057A only after RQF-056O is actually closed.
 5. Sprint close only after broader tests + push + PR + review gate + final merge.
