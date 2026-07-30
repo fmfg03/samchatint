@@ -26645,73 +26645,35 @@ async def crear_cuenta_de_gastos_submit(
         )
     assert currency is not None
 
-    try:
-        referencia_base_final: Optional[str] = None
-        for _ in range(25):
-            referencia_base_try = generate_referencia_base()
-            existing = await session.execute(
-                select(CuentaDeGastos).where(
-                    CuentaDeGastos.empleado_id == current_empleado.id,
-                    CuentaDeGastos.referencia_base == referencia_base_try,
-                )
-            )
-            if existing.scalar_one_or_none():
-                continue
-            referencia_base_final = referencia_base_try
-            break
-        if referencia_base_final is None:
-            return RedirectResponse(
-                url=_append_error_params(
-                    "/informes-de-gastos/crear",
-                    error_msg="No se pudo generar una referencia interna única. Intente de nuevo.",
-                ),
-                status_code=303,
-            )
-
-        cuenta = CuentaDeGastos(
-            empleado_id=current_empleado.id,
-            beneficiario_empleado_id=beneficiario.id,
-            referencia_base=referencia_base_final,
-            nombre=nombre_val,
-            estado="abierta",
-            tipo_cuenta=tipo_ok,
-            torneo_id=torneo_id_uuid,
-            fase=fase_final,
-            categorias=categorias,
-            edicion=edicion,
-            currency=currency,
-        )
-        session.add(cuenta)
-        await session.flush()
-        ro_informe = await allocate_referencia_operaciones_for_empleado(
-            session, current_empleado
-        )
-        informe = Documento(
-            empleado_id=current_empleado.id,
-            beneficiario_empleado_id=beneficiario.id,
-            tipo="INFORME",
-            numero_referencia=f"I-{referencia_base_final}",
-            estado="borrador",
-            referencia_base=referencia_base_final,
-            referencia_operaciones=ro_informe,
-            cuenta_gastos_id=cuenta.id,
-            categorias=categorias,
-            edicion=edicion,
-            currency=currency,
-        )
-        session.add(informe)
-        await session.commit()
+    cuenta, create_error = await _create_cuenta_de_gastos_with_informe(
+        session,
+        empleado=current_empleado,
+        beneficiario=beneficiario,
+        nombre=nombre_val,
+        tipo_cuenta=tipo_ok,
+        torneo_id=torneo_id_uuid,
+        fase=fase_final,
+        categorias=categorias,
+        edicion=edicion,
+        currency=currency,
+    )
+    if create_error or cuenta is None:
         return RedirectResponse(
-            url=_append_success_params(
-                f"/informes-de-gastos/{cuenta.id}",
-                success="creada",
-                msg="Informe creado. Agregue gastos desde Mis Gastos o cree solicitudes aquí.",
+            url=_append_error_params(
+                "/informes-de-gastos/crear",
+                error_msg=create_error or "No se pudo crear el informe de gastos.",
             ),
-            status_code=303
+            status_code=303,
         )
-    except (ProgrammingError, OperationalError):
-        await session.rollback()
-        return _schema_outdated_html_response()
+
+    return RedirectResponse(
+        url=_append_success_params(
+            f"/informes-de-gastos/{cuenta.id}",
+            success="creada",
+            msg="Informe creado. Agregue gastos desde Mis Gastos o cree solicitudes aqui.",
+        ),
+        status_code=303,
+    )
 
 
 @router.post("/informes-de-gastos/adjuntar-gastos")
