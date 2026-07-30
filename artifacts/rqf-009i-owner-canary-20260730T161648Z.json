@@ -1,0 +1,359 @@
+{
+  "run_id": "rqf-009i-owner-canary-20260730T161648Z",
+  "release_cwd": "/srv/samchat/releases/gastos-prod-02206139e-assistant009i",
+  "commit": "02206139e",
+  "mode": "calidad",
+  "total": 10,
+  "pass": 6,
+  "fail": 4,
+  "results": [
+    {
+      "id": "AI-OWNER-002",
+      "prompt": "Que debe contener una carpeta por entidad para cualquier torneo?",
+      "kind": "conceptual",
+      "conversation_id": "687851a2-4374-4e99-8f86-f44c2d8bcb54",
+      "http_status": "ok",
+      "latency_seconds": 8.854,
+      "run_id": "d3c35e7d-f6e7-4f10-993a-7dac90cf5027",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "tournament=['torneo']; owner_ai_context=['carpeta por entidad']; owner_ai_conceptual=['que debe contener']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_tournament_snapshot_for_canon",
+        "owner_canon_retrieved"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "Una carpeta por entidad para cualquier torneo debe contener los siguientes elementos:\n\n### **Operaciones**\n1. **Nombre de la entidad**  \n2. **Plataforma Sports**  \n3. **Monto de gastos incurridos en cada visita**  \n\n### **Finanzas**\n1. **Nombre de la entidad**  \n2. **Encargado de Plataforma Sports**  \n3. **Encargado en la entidad**  \n4. **Teléfono y correo electrónico del encargado**  \n5. **Fecha de nacimiento del encargado**  \n6. **Pareja del encargado**  \n7. **Equipos esperados**  \n8. **Equipos reales participantes**  \n9. **Categoria y genero**  \n10. **Jugadores por categoria, edad y genero**  \n11. **Equipos que superan cada ronda**  \n12. **Fase estatal**  \n13. **Cuotas de arbitrajes y transportes**  \n14. **Equipos que pasan a fase nacional**  \n15. **Entrega de uniformes**  \n16. **Viajes ida y vuelta al nacional**  \n17. **Clasificación final**  \n18. **Primera ayuda al operador**  \n19. **Pagos sucesivos al operador**  \n20. **Uniformes, balones, equipamiento y utilera**  \n21. **Visitas de responsables AZ y CL**  \n22. **Gastos de cada visita**  \n\n### **Marketing**\n1. **Visitantes del patrocinador**  \n2. **Fotografías**  \n\n### **Otras**\n1. **Servicios medicos en sede**  \n2. **Acciden"
+    },
+    {
+      "id": "AI-OWNER-014",
+      "prompt": "Que datos operativos debe tener la carpeta de fase nacional?",
+      "kind": "conceptual",
+      "conversation_id": "36cf7c8f-0b75-4fa2-b81a-378db2467d13",
+      "http_status": "ok",
+      "latency_seconds": 6.545,
+      "run_id": "984b62cf-bec7-4874-8ad5-00826dd0134d",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "tournament=['fase nacional']; owner_ai_context=['carpeta de fase nacional', 'fase nacional']; owner_ai_conceptual=['que datos']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_tournament_snapshot_for_canon",
+        "owner_canon_retrieved"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "La carpeta de fase nacional debe incluir los siguientes datos operativos:\n\n1. **Nombre del torneo**  \n2. **Categoria y genero**  \n3. **Fecha de inicio y finalización**  \n4. **Duración del torneo**  \n5. **Host del torneo**  \n6. **Equipo o entidad principal**  \n7. **Fase estatal**  \n8. **Cuotas de arbitrajes y transportes**  \n9. **Equipo que pasa a fase nacional**  \n10. **Entregas de uniformes**  \n11. **Viajes ida y vuelta al nacional**  \n12. **Clasificación final**  \n13. **Primera ayuda al operador**  \n14. **Pagos sucesivos al operador**  \n15. **Uniformes, balones, equipamiento y utilera**  \n16. **Visitas de responsables AZ y CL**  \n17. **Gastos de cada visita**  \n18. **Servicios medicos en sede**  \n19. **Accidentes con traslado**  \n20. **Viajes del personal de PS a finales**  \n21. **Pagos a hoteles**  \n22. **Anticipos y liquidaciones**  \n23. **Proveedores diversos de finales**  \n24. **Medicos, ambulancias y material de curación**  \n25. **Seguros**  \n26. **Mercadotecnia**  \n27. **Activación de marcas**  \n28. **Visitantes del patrocinador**  \n29. **Fotografías**  \n\nEstos datos son esenciales para la gestión operativa, financiera y de evidencia en la carpeta de fase nacional.\n\nFuentes"
+    },
+    {
+      "id": "AI-OWNER-026",
+      "prompt": "Si faltan datos para la carpeta de una entidad, como debe responder SamChat?",
+      "kind": "conceptual",
+      "conversation_id": "740611a9-f913-4dff-8463-bfe6dc348e1e",
+      "http_status": "ok",
+      "latency_seconds": 3.112,
+      "run_id": "ccdc6388-1ac0-416b-86e1-a4c7453e7de0",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "product_context=['samchat']; owner_ai_conceptual=['como debe responder']"
+      },
+      "sources": [
+        "memory:conversation:65016bcd-aa54-4ac7-af93-1652c7e54ad7:message:88a56622-c220-46a1-a70e-00040cfc0aa7",
+        "memory:conversation:65016bcd-aa54-4ac7-af93-1652c7e54ad7:message:0361b8fe-8a0b-4988-9853-940269c5174e",
+        "memory:conversation:90c6d797-06a7-4c27-a86e-ab844275d962:message:d38f3dee-d630-4ba8-93fe-5c6409542336",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_tournament_snapshot_for_canon",
+        "owner_canon_retrieved"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "SamChat debe informar al usuario de la situación y solicitar la información necesaria. No se puede crear o completar la carpeta sin los datos completos. El proceso debe seguir las reglas de autenticación y validación de datos antes de ejecutar cualquier herramienta o acción.\n\nFuentes:\n- memory:conversation:65016bcd-aa54-4ac7-af93-1652c7e54ad7:message:88a56622-c220-46a1-a70e-00040cfc0aa7 (score=1.194)\n- memory:conversation:65016bcd-aa54-4ac7-af93-1652c7e54ad7:message:0361b8fe-8a0b-4988-9853-940269c5174e (score=0.9607)\n- memory:conversation:90c6d797-06a7-4c27-a86e-ab844275d962:message:d38f3dee-d630-4ba8-93fe-5c6409542336 (score=0.844)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0 (score=0.7988)"
+    },
+    {
+      "id": "AI-OWNER-027",
+      "prompt": "Haz un plan para construir todas las carpetas del torneo sin cambiar datos todavia.",
+      "kind": "plan",
+      "conversation_id": "f47ff5f9-e891-4418-9742-ca7ae819e4fa",
+      "http_status": "ok",
+      "latency_seconds": 5.631,
+      "run_id": "5b78716c-bf9a-448b-ba60-7cae84ef0418",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "tournament=['torneo']; code_change=['cambiar']; owner_ai_context=['carpetas del torneo']; owner_ai_conceptual=['sin cambiar datos']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_tournament_snapshot_for_canon",
+        "owner_canon_retrieved"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "```json\n{\n  \"plan\": {\n    \"objective\": \"Crear todas las carpetas del torneo sin modificar datos existentes\",\n    \"steps\": [\n      {\n        \"action\": \"identificar_entidades\",\n        \"description\": \"Determinar las entidades participantes del torneo y validar su información\"\n      },\n      {\n        \"action\": \"crear_carpeta_operaciones\",\n        \"description\": \"Generar una carpeta operativa para cada entidad participante\"\n      },\n      {\n        \"action\": \"crear_carpeta_finanzas\",\n        \"description\": \"Crear una carpeta financiera para cada entidad participante\"\n      },\n      {\n        \"action\": \"crear_carpeta_evidencia\",\n        \"description\": \"Registrar evidencia de cada visita y actividad operativa\"\n      },\n      {\n        \"action\": \"asignar_estado_contable\",\n        \"description\": \"Clasificar gastos en las carpetas contables\"\n      },\n      {\n        \"action\": \"generar_reporte\",\n        \"description\": \"Preparar un reporte final de todas las carpetas del torneo\"\n      }\n    ],\n    \"tools_used\": [\n      \"tournament_draft_inspect\",\n      \"tournament_draft_revise\",\n      \"tournament_draft_freeze\",\n      \"tournament_draft_cancel\",\n      \"finance_expense_create\",\n      \"accountin"
+    },
+    {
+      "id": "AI-OWNER-030",
+      "prompt": "Que puede hacer hoy el asistente para el dueno y que todavia falta cablear?",
+      "kind": "conceptual",
+      "conversation_id": "277e920a-0a39-4d45-bafd-89dbe65d027b",
+      "http_status": "ok",
+      "latency_seconds": 5.924,
+      "run_id": "d9adb04f-ccf8-4f7f-9118-f74762fa590f",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "product_context=['asistente']; owner_ai_conceptual=['que puede hacer']"
+      },
+      "sources": [
+        "memory:conversation:90c6d797-06a7-4c27-a86e-ab844275d962:message:5bbe5424-ab1e-4bd7-8d21-1f144dd679bb",
+        "memory:conversation:90c6d797-06a7-4c27-a86e-ab844275d962:message:d38f3dee-d630-4ba8-93fe-5c6409542336",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/sprints/rqf-057g-authorization-strategy-matrix.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/sprints/rqf-057g-authorization-strategy-matrix.md::#1",
+        "memory:conversation:8307d25b-0d3d-4bba-be1d-9bcdfd381620:message:ee545379-15f3-46bd-8839-1778c36f60a3"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_tournament_snapshot_for_canon",
+        "owner_canon_retrieved"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "El asistente puede realizar las siguientes acciones para el dueno de la plataforma:\n\n1. **Crear gastos** desde contexto operativo (si hay datos disponibles).\n2. **Crear solicitudes de pago** desde compromisos operativos (si hay compromisos identificados).\n3. **Ligar gastos a CFDI** (si se tiene un CFDI identificado).\n4. **Registrar pagos de solicitudes aprobadas** y generar el gasto asociado.\n5. **Crear o clonar torneos** basados en otros torneos existentes.\n6. **Gestionar calendarios de juegos** y registros de equipos/jugadores.\n7. **Crear o modificar registros de equipos/jugadores** a partir de listas de rosters.\n8. **Gestionar carpetas de expedientes** y alertas de torneos.\n9. **Crear o modificar registros de entidades** (como equipos, jugadores, etc.).\n10. **Gestionar operaciones de entidad** (como encargados, teléfono, correo, fecha de nacimiento, pareja, etc.).\n\n**Falta cablear:**\n- Equipos o jugadores ligados aún no están registrados.\n- Datos de entidades (como encargados, teléfono, correo, fecha de nacimiento, pareja) aún no están completos.\n- No hay torneos registrados aún.\n\nFuentes:\n- memory:conversation:90c6d797-06a7-4c27-a86e-ab844275d962:message:5bbe5424-ab1e-4bd7-8d21"
+    },
+    {
+      "id": "AI-OWNER-007",
+      "prompt": "Cuando y donde se entregan uniformes de fase estatal para Veracruz?",
+      "kind": "live_missing",
+      "conversation_id": "a507b146-fa4b-41ee-b264-215793b57694",
+      "http_status": "ok",
+      "latency_seconds": 3.401,
+      "run_id": "1557d83d-df94-4af1-8ede-b415d371a991",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "finance=['uniformes']; tournament=['fase estatal']; owner_ai_context=['fase estatal', 'uniformes de fase estatal']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_invalid_snapshot_dependency"
+      ],
+      "forbidden": [],
+      "grade": "FAIL",
+      "answer_excerpt": "La entrega de uniformes de fase estatal para el torneo de la Liga Telmex Telcel 2026 se realiza en las sedes de los equipos participantes, generalmente en las canchas de los equipos. Los uniformes se entregan durante las visitas de responsables de Plataforma Sports a los equipos, ya sea en las canchas de los equipos o en las sedes de los equipos. La fecha exacta de entrega varía según la fase del torneo y las condiciones operativas.\n\nFuentes:\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1 (score=0.8349)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3 (score=0.5659)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0 (score=0.5137)"
+    },
+    {
+      "id": "AI-OWNER-015",
+      "prompt": "Dime hoteles contratados y camas-noche para la fase nacional de basquet.",
+      "kind": "live_missing",
+      "conversation_id": "8918209f-2cf3-4d94-8d48-784dfb26cb66",
+      "http_status": "ok",
+      "latency_seconds": 5.653,
+      "run_id": "280422be-d927-4469-920b-496a87f254d7",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "tournament=['fase nacional']; owner_ai_context=['fase nacional', 'camas-noche']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_invalid_snapshot_dependency"
+      ],
+      "forbidden": [],
+      "grade": "FAIL",
+      "answer_excerpt": "Hoteles contratados y camas-noche para la fase nacional de basquet:\n\n- **Canchas**: Se han contratado canchas para el torneo.\n- **Servicios medicos en sede**: Se han contratado servicios medicos en sede.\n- **Accidentes con traslado**: Se han contratado servicios de accidentes con traslado.\n- **Viajes del personal de PS a finales**: Se han contratado viajes del personal de PS a finales.\n- **Pagos a hoteles**: Se han pagado pagos a hoteles.\n- **Anticipos y liquidaciones**: Se han realizado anticipos y liquidaciones.\n- **Proveedores diversos de finales**: Se han contratado proveedores diversos de finales.\n- **Medicos, ambulancias y material de curacion**: Se han contratado medicos, ambulancias y material de curacion.\n- **Seguros**: Se han contratado seguros.\n- **Mercadotecnia**: Se han contratado mercadotecnia.\n- **Activacion de marcas**: Se han activado marcas.\n- **Visitas de responsables AZ y CL**: Se han realizado visitas de responsables AZ y CL.\n- **Gastos de cada visita**: Se han realizado gastos de cada visita.\n\nSi necesitas información específica sobre un hotel o una cama-noche, por favor proporciona más detalles.\n\nFuentes:\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assi"
+    },
+    {
+      "id": "AI-OWNER-018",
+      "prompt": "Dame descripcion de servicios medicos en sede y accidentes con traslado.",
+      "kind": "live_missing",
+      "conversation_id": "89cf00f5-b035-48f2-ab36-49628dfba065",
+      "http_status": "ok",
+      "latency_seconds": 3.17,
+      "run_id": "63882192-4731-481f-98db-f7c4d092fb98",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "tournament=['sede']; owner_ai_context=['servicios medicos', 'accidentes con traslado']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_invalid_snapshot_dependency"
+      ],
+      "forbidden": [],
+      "grade": "FAIL",
+      "answer_excerpt": "Servicios medicos en sede: incluyen medicinas, equipos de salud, servicios de atención médica y otros servicios relacionados con la salud en la sede del torneo.\n\nAccidentes con traslado: son incidentes que ocurren durante el transporte de personas o equipos entre diferentes ubicaciones, como desde la sede del torneo hasta otros lugares, y requieren atención médica o servicios de emergencia.\n\nFuentes:\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3 (score=1.1258)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1 (score=0.6238)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0 (score=0.582)"
+    },
+    {
+      "id": "AI-OWNER-023",
+      "prompt": "Que proveedores asistieron fisicamente a activaciones de marca?",
+      "kind": "live_missing",
+      "conversation_id": "8ec126ff-f35e-4770-9262-7d545b0550b0",
+      "http_status": "ok",
+      "latency_seconds": 2.479,
+      "run_id": "a440ef32-23c0-48d8-8f70-4073e37ccbab",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "finance=['proveedores']; owner_ai_context=['activaciones de marca']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "no_invalid_snapshot_dependency"
+      ],
+      "forbidden": [],
+      "grade": "FAIL",
+      "answer_excerpt": "El proveedor principal asistió a la activación de marca fue **Telmex Telcel**. Este proveedor se encargó de la instalación de la marca en el estadio y de la organización de la actividad.\n\nFuentes:\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1 (score=0.6778)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3 (score=0.6143)"
+    },
+    {
+      "id": "AI-OWNER-024",
+      "prompt": "Dime nombres de visitantes involucrados con patrocinadores y evidencia fotografica.",
+      "kind": "live_missing",
+      "conversation_id": "71a4b167-cd0e-44bb-9368-dcd6f899d1c9",
+      "http_status": "ok",
+      "latency_seconds": 3.172,
+      "run_id": "91f577c0-421a-496b-ac84-82488eaf62d5",
+      "pending_confirmation": null,
+      "tool_count": 8,
+      "provider": {
+        "provider": "ollama",
+        "model": "qwen3:1.7b"
+      },
+      "route": {
+        "route": "lookup_sql",
+        "domain": "generic",
+        "rag_only": true,
+        "reason": "owner_ai_context=['visitantes involucrados', 'evidencia fotografica']"
+      },
+      "sources": [
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1",
+        "doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0"
+      ],
+      "checks": [
+        "no_pending_confirmation",
+        "no_writes",
+        "names_missing_or_uncertain_data",
+        "no_invalid_snapshot_dependency"
+      ],
+      "forbidden": [],
+      "grade": "PASS",
+      "answer_excerpt": "La evidencia fotografica de visitantes involucrados con patrocinadores se encuentra en la carpeta de fase nacional del torneo. Para obtener más información, se requiere identificar el nombre del patrocinador, el nombre del visitante y la fecha de la visita. Si no se tienen datos específicos, se puede solicitar la información mediante el uso de la herramienta `tournament_expediente_snapshot` para obtener un resumen del expediente operativo.\n\nFuentes:\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#3 (score=0.7595)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#1 (score=0.5648)\n- doc:/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md#/srv/samchat/releases/gastos-prod-02206139e-assistant009i/docs/assistant/owner-ai-needs.md::#0 (score=0.5027)"
+    }
+  ]
+}

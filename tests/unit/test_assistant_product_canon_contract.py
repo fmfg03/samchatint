@@ -70,3 +70,11 @@ def test_owner_ai_eval_set_has_minimum_realistic_prompts() -> None:
     assert "entity folders" in text or "carpeta de la entidad" in text
     assert "national phase" in text or "fase nacional" in text
     assert "marketing" in text.lower()
+
+def test_owner_ai_canon_only_rule_prevents_requirement_as_fact() -> None:
+    router_text = _read_doc("src/samchat/assistant/router.py")
+
+    assert "Contexto recuperado (CANON_ONLY)" in router_text
+    assert "no evidencia viva" in router_text
+    assert "requerido" in router_text
+    assert "hecho ocurrido" in router_text

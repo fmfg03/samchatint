@@ -1219,7 +1219,21 @@ async def _build_hybrid_retrieval(
     max_ctx_chars = int(os.getenv("ASSISTANT_RAG_CONTEXT_CHARS", "4000"))
     selected = combined[: max(1, min(max_ctx_items, 12))]
 
-    lines = ["Contexto recuperado (hibrido RAG+SQL+MEMORY):"]
+    if canon_only:
+        lines = [
+            "Contexto recuperado (CANON_ONLY):",
+            (
+                "Regla de uso: este contexto describe requisitos/canon del producto, "
+                "no evidencia viva. Si el usuario pide un dato concreto (fechas, "
+                "lugares, hoteles, camas-noche, proveedores, visitantes, accidentes, "
+                "pagos o fotografias) y el contexto no trae el valor exacto, responde "
+                "que no hay evidencia disponible en el contexto recuperado y nombra "
+                "que fuente/herramienta faltaria consultar. No conviertas un campo "
+                "requerido en un hecho ocurrido."
+            ),
+        ]
+    else:
+        lines = ["Contexto recuperado (hibrido RAG+SQL+MEMORY):"]
     used_sources: List[Dict[str, Any]] = []
     acc_chars = 0
     for i, r in enumerate(selected, start=1):
