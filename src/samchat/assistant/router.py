@@ -143,6 +143,7 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .rag import get_rag_store
+from .request_intent import is_owner_ai_conceptual_request
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -1103,13 +1104,16 @@ async def _build_hybrid_retrieval(
     domain: Optional[str] = None,
     tournament_key: Optional[str] = None,
     client: Any = None,
+    canon_only: bool = False,
 ) -> Dict[str, Any]:
     _bump_metric("retrieval_requests", 1)
+    canon_only = bool(canon_only or is_owner_ai_conceptual_request(query))
     cache_ttl = int(os.getenv("ASSISTANT_RAG_CACHE_TTL_SEC", "300"))
+    cache_module_key = f"{module_key or ''}:canon_only" if canon_only else module_key
     key = _cache_key_for_query(
         query,
         empleado_id=empleado_id,
-        module_key=module_key,
+        module_key=cache_module_key,
         tournament_key=tournament_key,
     )
     now = time.time()
@@ -1145,22 +1149,32 @@ async def _build_hybrid_retrieval(
             scope=retrieval_scope,
         )
     ]
+    if canon_only:
+        rag_results = [
+            row
+            for row in rag_results
+            if "/docs/assistant/" in str(row.get("source") or "")
+        ]
     if rag_results:
         _bump_metric("doc_hits", len(rag_results))
 
-    sql_results = await _retrieve_sql_snippets(session=session, query=query, top_k=4)
-    if sql_results:
-        _bump_metric("sql_hits", len(sql_results))
+    if canon_only:
+        sql_results: List[Dict[str, Any]] = []
+        memory_results: List[Dict[str, Any]] = []
+    else:
+        sql_results = await _retrieve_sql_snippets(session=session, query=query, top_k=4)
+        if sql_results:
+            _bump_metric("sql_hits", len(sql_results))
 
-    memory_results = await _retrieve_memory_snippets(
-        session=session,
-        empleado_id=empleado_id,
-        conversation_id=conversation_id,
-        module_key=module_key,
-        tournament_key=tournament_key,
-        query=query,
-        top_k=4,
-    )
+        memory_results = await _retrieve_memory_snippets(
+            session=session,
+            empleado_id=empleado_id,
+            conversation_id=conversation_id,
+            module_key=module_key,
+            tournament_key=tournament_key,
+            query=query,
+            top_k=4,
+        )
 
     combined: List[Dict[str, Any]] = []
     for r in rag_results:
@@ -1218,6 +1232,7 @@ async def _build_hybrid_retrieval(
     context = "\n\n".join(lines) if used_sources else ""
     trace = {
         "weights": weights,
+        "canon_only": canon_only,
         "doc_results": [
             {
                 "source": r.get("source"),
@@ -9219,6 +9234,7 @@ async def _assistant_turn(
                 module_key=module_key_default,
                 domain=route_info.get("domain"),
                 tournament_key=tournament_key_default,
+                canon_only=bool(route_info.get("rag_only") and "owner_ai_context" in str(route_info.get("reason") or "")),
             )
             retrieval_context = retrieval.get("context") or None
             retrieval_sources = retrieval.get("sources") or []
@@ -13274,6 +13290,7 @@ async def rag_config_update(
     _record_rag_config_change(event)
     return {
         "weights": weights,
+        "canon_only": canon_only,
         "updated": True,
         "config_path": str(_RAG_CONFIG_PATH),
         "latest_change": event,

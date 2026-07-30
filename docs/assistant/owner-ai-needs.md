@@ -12,17 +12,21 @@ For every tournament, SamChat must be able to assemble a folder per participatin
 
 This requirement reinforces the product canon: SamChat is an operational assistant that inspects context, uses tools, creates artifacts, tracks missing evidence, and prepares auditable outputs.
 
-## Original Spanish vocabulary
+## Per-entity Spanish vocabulary
 
-Use these owner terms as retrieval anchors for Spanish user requests:
+Use these owner terms as retrieval anchors for Spanish user requests about the per-tournament entity folder only:
 
 - carpeta por entidad;
+- carpeta de la entidad;
 - torneo;
-- operaciones;
-- finanzas;
+- operaciones de entidad;
+- finanzas de entidad;
 - nombre de la entidad;
 - encargado de Plataforma Sports;
 - encargado en la entidad;
+- telefono y correo electronico del encargado;
+- fecha de nacimiento del encargado;
+- pareja del encargado;
 - equipos esperados;
 - equipos reales participantes;
 - categoria y genero;
@@ -30,29 +34,15 @@ Use these owner terms as retrieval anchors for Spanish user requests:
 - equipos que superan cada ronda;
 - fase estatal;
 - cuotas de arbitrajes y transportes;
-- fase nacional;
+- equipos que pasan a fase nacional;
 - entrega de uniformes;
 - viajes ida y vuelta al nacional;
 - clasificacion final;
 - primera ayuda al operador;
-- pagos sucesivos;
+- pagos sucesivos al operador;
 - uniformes, balones, equipamiento y utilera;
 - visitas de responsables AZ y CL;
-- gastos de cada visita;
-- hoteles contratados y camas-noche;
-- desayunos, comidas, box lunch y cenas;
-- unidad deportiva;
-- canchas;
-- servicios medicos;
-- accidentes con traslado;
-- pagos a hoteles;
-- anticipos y liquidaciones;
-- proveedores diversos;
-- seguros;
-- mercadotecnia;
-- activacion de marcas;
-- visitantes del patrocinador;
-- fotografias.
+- gastos de cada visita.
 
 ## Per-tournament entity folder
 
@@ -88,6 +78,29 @@ Each entity folder should contain:
 2. Cost of uniforms, balls, equipment, and supplies delivered to the entity.
 3. Reports/results of visits made by entity owners/responsibles, including AZ and CL when applicable.
 4. Amount of expenses incurred in each visit.
+
+## National phase Spanish vocabulary
+
+Use these owner terms as retrieval anchors for Spanish user requests about national-phase folders only:
+
+- carpeta de fase nacional;
+- fase nacional;
+- hoteles contratados y camas-noche;
+- desayunos, comidas, box lunch y cenas;
+- unidad deportiva;
+- canchas;
+- servicios medicos en sede;
+- accidentes con traslado;
+- viajes del personal de PS a finales;
+- pagos a hoteles;
+- anticipos y liquidaciones;
+- proveedores diversos de finales;
+- medicos, ambulancias y material de curacion;
+- seguros;
+- mercadotecnia;
+- activacion de marcas;
+- visitantes del patrocinador;
+- fotografias.
 
 ## National phase folder
 

@@ -105,3 +105,10 @@ def test_rag_search_owner_folder_terms_beat_generic_authorization_neighbor(
     assert results
     assert results[0]["source"].endswith("owner-ai-needs.md")
     assert results[0]["lexical_score"] > results[1]["lexical_score"]
+
+def test_owner_ai_conceptual_retrieval_can_be_canon_only():
+    from samchat.assistant.request_intent import is_owner_ai_conceptual_request
+
+    assert is_owner_ai_conceptual_request(
+        "Que debe contener una carpeta por entidad para cualquier torneo?"
+    )
