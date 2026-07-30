@@ -144,3 +144,40 @@ async def test_monthly_plan_rejects_frozen_version_before_mutation(monkeypatch) 
         )
 
     assert session.calls == 1
+
+
+def test_named_operations_users_cannot_view_or_modify_budgets_even_with_tokens() -> None:
+    for nombre, correo in [
+        ("Bibiana Raquel Roman Arguelles", "bibiana@example.com"),
+        ("Carlos Lozano", "carlos@example.com"),
+        ("Roberto Martinez", "roberto@example.com"),
+    ]:
+        empleado = SimpleNamespace(
+            nombre=nombre,
+            rol="empleado",
+            departamento="Operaciones",
+            correo=correo,
+            permissions={"budgets.read", "budgets.line.update", "budgets.*"},
+        )
+
+        access = admin_routes._budget_access_map(empleado)
+
+        assert access["read"] is False
+        assert access["line_update"] is False
+        with pytest.raises(HTTPException):
+            admin_routes._require_budget_access(empleado, "read")
+
+
+def test_budget_profile_presets_do_not_grant_mutation_outside_superadmin() -> None:
+    assert not any(
+        token.startswith("budgets.line.update") or token.startswith("budgets.version.update")
+        for token in admin_routes._PROFILE_PRESETS["c_suite"]["permissions"]
+    )
+    assert not any(
+        token.startswith("budgets.")
+        for token in admin_routes._PROFILE_PRESETS["finanzas"]["permissions"]
+    )
+    assert not any(
+        token.startswith("budgets.")
+        for token in admin_routes._PROFILE_PRESETS["contabilidad"]["permissions"]
+    )
