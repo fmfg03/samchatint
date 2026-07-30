@@ -30,6 +30,7 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 | RQF-056O | `6bb02b772` | done | Classified Tocino failures: auth, validation, rate limit, upstream unavailable, bad response. |
 | RQF-056P | `38bfdeca6` | done | Added explicit `finance.employee_beneficiary.request` profile capability for employee-beneficiary requests. |
 | RQF-056R | `21c1d6d25` | done | Clarified employee beneficiary selection UI with Step 1 employee and Step 2 bank account separation. |
+| RQF-056T | `afbc9b421` | done | Surfaced employee-beneficiary profile access in effective profile previews. |
 
 ## Verified but not changed in this sprint branch
 
