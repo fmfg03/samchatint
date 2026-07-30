@@ -45,7 +45,7 @@ def test_tournament_goal_shadow_is_exposed_only_as_read_only_tournament_tool() -
     assert spec.allowed_roles == ("admin", "superadmin")
 
 
-def test_tournament_goal_shadow_schema_requires_goal_and_exactly_one_source() -> None:
+def test_tournament_goal_shadow_schema_is_provider_compatible_and_backend_validated() -> None:
     parameters = _tool_definition()["function"]["parameters"]
 
     assert parameters["type"] == "object"
@@ -53,11 +53,9 @@ def test_tournament_goal_shadow_schema_requires_goal_and_exactly_one_source() ->
     assert set(parameters["required"]) == {"goal"}
     assert parameters["properties"]["goal"]["minLength"] == 1
 
-    source_choices = parameters.get("oneOf")
-    assert source_choices == [
-        {"required": ["source_tournament_id"]},
-        {"required": ["source_tournament_name"]},
-    ]
+    assert "oneOf" not in parameters
+    assert "allOf" not in parameters
+    assert "anyOf" not in parameters
 
     properties = set(parameters["properties"])
     assert {"goal", "source_tournament_id", "source_tournament_name"} <= properties

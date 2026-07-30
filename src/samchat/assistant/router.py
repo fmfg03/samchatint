@@ -3807,11 +3807,10 @@ def _tool_defs() -> List[Dict[str, Any]]:
                             "items": {"type": "string"},
                         },
                     },
+                    # Keep the provider-facing schema Anthropic-compatible: top-level
+                    # oneOf/allOf/anyOf are rejected by the tools API. The backend
+                    # still validates that a source id or name can resolve safely.
                     "required": ["goal"],
-                    "oneOf": [
-                        {"required": ["source_tournament_id"]},
-                        {"required": ["source_tournament_name"]},
-                    ],
                 },
             },
         },
