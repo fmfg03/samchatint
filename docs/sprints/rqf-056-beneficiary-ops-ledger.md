@@ -31,10 +31,10 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | RQF-056K - Correccion definitiva de totales CFDI XML/PDF | CLOSED_COMMITTED | `1fa60c1ee`, plus `6e4112f48` | Synthetic CFDI fixture reproduces the $128 case without customer data; tests verify XML Total authority, SubTotal + net taxes, inconsistency rejection for $124, and retenciones netting. Real customer XML was intentionally not committed. |
 | RQF-056L - Presupuestos visibility/editing | CLOSED_COMMITTED | `3b46acdfc`, plus `a1185e079` | Tests verify only superadmin mutates, Directores/Alicia/superadmin view, named operations users cannot view or mutate even with budget tokens, budget nav hiding, operations analytics policy, frozen monthly plan rejection, and POST direct 403 before mutation/form-read. |
 | RQF-056M - Telegram proyecto y etapa | CLOSED_COMMITTED | `7e5734ec9` | Existing Telegram message builder is now covered for SOLICITUD and INFORME: Proyecto and Etapa/subproyecto render in message text, action hint remains present, and approval/rejection callback keyboard data remains unchanged. |
-| RQF-056N - Reimbursement semantics employee != provider | CLOSED_COMMITTED | pending N close commit | Telegram, pending-payment rows, payment service, and document detail semantics now identify employee reimbursements separately from proveedores; document detail prefers employee beneficiary while preserving provider bank-account data. |
+| RQF-056N - Reimbursement semantics employee != provider | CLOSED_COMMITTED | `db6010750` | Telegram, pending-payment rows, payment service, and document detail semantics now identify employee reimbursements separately from proveedores; document detail prefers employee beneficiary while preserving provider bank-account data. |
 | RQF-056O - Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
 | RQF-057A - Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
-| RQF-057B - Telegram notification recipients audit | BACKLOG / customer delta | none | Confirm Odilon is configured for Anticipos and Informes de Gastos approvals; confirm Benjamin is configured for Solicitudes de Transferencia, Anticipos, and Informes, and document exactly when each notification fires. |
+| RQF-057B - Telegram notification recipients audit | CLOSED_COMMITTED | this commit | Production config and DB audit confirmed Odilon/Benjamin Telegram readiness and timing; Odilon approval -> Finance alert was wired into the approve branch without changing authorization semantics. Evidence: `docs/sprints/rqf-057b-telegram-notifications-audit.md`. |
 | RQF-057C - Regional operator beneficiaries | BACKLOG / customer delta | none | Extend authorized third-party Anticipos/Informes beyond employees to Operadores Regionales without breaking requester ownership, approval routing, beneficiary banking/fiscal validation, or employee-only semantics. |
 | RQF-057D - Solicitudes search by proveedor | BACKLOG / customer delta | existing search has concept/reference; provider filter observed earlier | In Referencia solicitudes view, add provider search box/filter alongside Concepto and Referencia; align with customer Buscador tab. |
 | RQF-057E - No deducibles accounting rule | BACKLOG / customer delta | none | If a Solicitud de Transferencia or Informe line is not linked to factura/CFDI, route accounting impact to Gastos No Deducibles according to project-specific rule from ReglaNoDeducibles tab. |
@@ -100,12 +100,9 @@ These items are now part of the master plan, but are not claimed as closed by RQ
 
 ## Next work order
 
-1. Continue RQF-056O Tocino/facturacion status/errors: safe retry, status visibility, Telegram relevant status notifications, and minimal non-secret payload logging.
-2. Start RQF-057A operations wiring audit after O.
-3. Continue RQF-056O Tocino/facturacion status/errors after N.
-4. Start RQF-057A operations wiring audit after RQF-056O.
-5. Then sequence the new customer delta stages RQF-057B through RQF-057G, unless Telegram recipient audit (057B) is folded into M as same-surface work.
-6. Sprint close only after broader tests + push + PR + review gate + final merge.
+1. Continue customer Excel delta in order: RQF-057C Regional operator beneficiaries, RQF-057D Solicitudes provider search, RQF-057E No deducibles accounting rule, RQF-057F SAT download/reconciliation, RQF-057G Authorization strategy matrix.
+2. Keep RQF-056O Tocino/facturacion status/errors parked unless support pressure makes it urgent again.
+3. Sprint close only after broader tests + push + PR + review gate + final merge.
 
 ## QA/release plan context to preserve
 

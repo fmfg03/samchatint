@@ -191,3 +191,16 @@ def test_document_detail_source_prefers_employee_beneficiary_for_reimbursement()
     assert detail_block.index('if is_employee_reimbursement(documento):') < detail_block.index(
         'elif documento.proveedor_cliente_id and documento.proveedor_cliente:'
     )
+
+
+def test_telegram_workflow_approval_triggers_odilon_finance_alert() -> None:
+    source = Path(tg.__file__).read_text()
+    workflow_start = source.index("async def run_document_workflow_telegram_notifications")
+    workflow_end = source.index("def _sum_active_expense_amounts", workflow_start)
+    workflow_block = source[workflow_start:workflow_end]
+    approve_start = workflow_block.index('elif normalized == "approve":')
+    reject_start = workflow_block.index('elif normalized == "reject":')
+    approve_block = workflow_block[approve_start:reject_start]
+
+    assert "notify_requester_decision" in approve_block
+    assert "notify_finance_when_odilon_approves(session, documento, actor)" in approve_block
