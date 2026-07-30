@@ -1,44 +1,57 @@
-# RQF-056 Beneficiary/Ops Sprint Ledger
+# RQF-056 / RQF-057A Client Excel Sprint Ledger
 
 Branch: `sprint-rqf-056-beneficiary-ops`
 Base: `18a8e2e617c92056ec3f4f82cc8538cafd8c2a63` (`origin/main`, after RQF-056F)
 Workflow: commit per phase; push/PR/merge only at sprint close.
+Plan master: customer Excel + ordered stages G through O, then RQF-057A operations audit.
 
 ## Sprint guardrails
 
 - Do not merge this branch into `main` until the sprint close gate.
 - Preserve existing authorization ownership:
   - Solicitudes and informes belong to the requester/solicitante.
-  - Approval routes to the requester?s approver, not the beneficiary?s approver.
+  - Approval routes to the requester approver, not the beneficiary approver.
   - Bank account selection must belong to the selected beneficiary.
 - Third-party employee beneficiary capability is limited to explicit allowlist or explicit profile permission.
 - Budget visibility/mutation must remain restricted:
   - mutate: superadmin only.
   - view: superadmin, directors, Alicia.
   - Bibiana, Carlos, Roberto and other operations users do not see budgets unless policy changes explicitly.
-- Employee reimbursements must not render the employee as a provider in approval messages.
+- Employee reimbursements must not render the employee as a provider.
 - Keep generated/customer artifacts untracked unless deliberately promoted.
 
-## Committed phases on sprint branch
+## Ordered sprint stages and real status
 
-| Phase | Commit | Status | Notes |
+| Stage | Status | Evidence / commits | Remaining closure gap |
 | --- | --- | --- | --- |
-| RQF-056G/H | `4a0a970b5` | done | Hardened third-party beneficiary selectors and name matching. |
-| RQF-056I | `34c239a80` | done | Exposed draft solicitud cancellation from the solicitudes list. |
-| RQF-056K | `6e4112f48` | done | Preserved authoritative CFDI XML total in quick expense autofill (`128` vs computed `124`). |
-| RQF-056L | `a1185e079` | done | Tightened budget visibility and mutation policy. |
-| RQF-056O | `6bb02b772` | done | Classified Tocino failures: auth, validation, rate limit, upstream unavailable, bad response. |
-| RQF-056P | `38bfdeca6` | done | Added explicit `finance.employee_beneficiary.request` profile capability for employee-beneficiary requests. |
-| RQF-056R | `21c1d6d25` | done | Clarified employee beneficiary selection UI with Step 1 employee and Step 2 bank account separation. |
-| RQF-056T | `afbc9b421` | done | Surfaced employee-beneficiary profile access in effective profile previews. |
-| RQF-056V | `b8328dcf5` | done | Added admin profile summary for users with employee-beneficiary request access. |
+| RQF-056G ? Selector de beneficiario en Informes de Gastos | PARTIAL / needs E2E verification | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, profile visibility commits | Need verify actual form route and live authorized users; confirm close still goes to requester approver with focused route/service test. |
+| RQF-056H ? Selector de beneficiario en Anticipos with full authorized list | PARTIAL / likely implemented, needs live/data verification | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, `b8328dcf5` | Need verify authorized users see all active employees and bank accounts refresh to selected beneficiary in route/E2E tests. |
+| RQF-056I ? Cancelar / eliminar borradores incompletos | PARTIAL | `34c239a80`; existing empty informe cancellation verified in code | Need complete policy tests for finanzas/superadmin cleanup and ensure no sent/approved/paid/movement document can be removed. |
+| RQF-056J ? Materialidades verificables antes de guardar | NOT CLOSED | Existing code appeared present; no dedicated close commit | Need inspect UI/tests against requirements: preview/thumbnail, filename, remove, multiple files, no CFDI breakage. |
+| RQF-056K ? Correcci?n definitiva de totales CFDI XML/PDF | PARTIAL | `6e4112f48` | Need test with real problematic CFDI fixture, robust Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message. |
+| RQF-056L ? Presupuestos visibility/editing | PARTIAL / strong unit coverage | `a1185e079` | Need verify directors definition and UI hiding/POST 403/frozen versions across full routes. |
+| RQF-056M ? Telegram proyecto y etapa | NOT CLOSED | Existing implementation observed; no close commit | Need tests proving Telegram includes proyecto/fase and buttons still work. |
+| RQF-056N ? Reimbursement semantics employee != provider | NOT CLOSED | Existing implementation/test observed | Need align documents + screens + Telegram, not just one helper/test. |
+| RQF-056O ? Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
+| RQF-057A ? Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
 
-## Verified but not changed in this sprint branch
+## Commits currently on sprint branch
 
-- RQF-056J: Materialidades preview before submit already exists.
-- RQF-056M: Telegram approval messages already include proyecto and etapa/subproyecto.
-- RQF-056N: Employee reimbursement semantics already omit provider and separate requester/beneficiary.
-- Empty draft informe cancellation already exists in list/detail views and uses soft cancellation + audit.
+| Commit | Note |
+| --- | --- |
+| `4a0a970b5` | RQF-056G-H harden third-party beneficiary selectors |
+| `34c239a80` | RQF-056I expose draft solicitud cancellation |
+| `6e4112f48` | RQF-056K preserve CFDI XML total in quick expense autofill |
+| `a1185e079` | RQF-056L tighten budget visibility and mutation policy |
+| `6bb02b772` | RQF-056O classify Tocino submission failures |
+| `38bfdeca6` | RQF-056P add permissioned employee beneficiary requests |
+| `467a5e947` | RQF-056Q preserve sprint ledger |
+| `21c1d6d25` | RQF-056R clarify employee beneficiary selection UI |
+| `1223cb74f` | RQF-056S update sprint ledger after beneficiary UI cut |
+| `afbc9b421` | RQF-056T surface employee beneficiary profile access |
+| `1b5e279ba` | RQF-056U update ledger for profile access visibility |
+| `b8328dcf5` | RQF-056V expose employee beneficiary access summary |
+| `1d32f9206` | RQF-056W update ledger for access summary |
 
 ## Current untracked artifacts intentionally left untracked
 
@@ -46,21 +59,13 @@ Workflow: commit per phase; push/PR/merge only at sprint close.
 - `Estrategia de Autorizaci?n.xlsx`
 - `branch-prune-manifest-20260730T015022Z.tsv`
 
-## Recent focal validation
+## Next work order
 
-- `tests/unit/gastos/test_tocino_client_errors.py`: 6 passed.
-- Beneficiary/budget focal set: 35 passed.
-- Sprint regression focal set: 53 passed.
-
-## Open sprint backlog / next likely cuts
-
-1. Employee-beneficiary profile access is visible in `/admin/perfiles` summary; assign `solicitudes_beneficiario_empleado` if an allowlisted operator still cannot see the selector.
-2. Continue customer Excel plan items without losing QA/release plan context.
-3. At sprint close:
-   - run broader automated suite;
-   - push branch;
-   - open PR;
-   - merge only after review gate.
+1. Close RQF-056G with concrete tests for Informe beneficiary selector and requester-approver preservation.
+2. Close RQF-056H with concrete tests for Anticipo authorized full employee list and beneficiary bank-account refresh.
+3. Continue through I, J, K, L, M, N, O in order.
+4. Start RQF-057A only after RQF-056O is actually closed.
+5. Sprint close only after broader tests + push + PR + review gate + final merge.
 
 ## QA/release plan context to preserve
 
