@@ -24780,6 +24780,94 @@ def _authorization_strategy_actual_route_preview_html(
     '''
 
 
+async def _render_document_authorization_pre_send_preview(
+    session: AsyncSession,
+    documento: Documento,
+    *,
+    can_send_documento: bool,
+) -> str:
+    """Preview the advisory authorization route before a draft is sent."""
+    if not can_send_documento:
+        return ""
+    try:
+        from ..services.authorization_profile_service import (
+            build_document_authorization_evidence,
+        )
+
+        preview_result = await session.execute(
+            select(Documento)
+            .options(selectinload(Documento.empleado))
+            .where(Documento.id == documento.id)
+        )
+        preview_documento = preview_result.scalar_one_or_none() or documento
+        evidence = await build_document_authorization_evidence(
+            session, preview_documento
+        )
+    except Exception:
+        logger.exception(
+            "Failed to build pre-send authorization strategy preview",
+            extra={"documento_id": str(getattr(documento, "id", ""))},
+        )
+        return ""
+
+    rule = evidence.get("rule") or {}
+    if not isinstance(rule, dict):
+        rule = {}
+    inputs = evidence.get("inputs") or {}
+    if not isinstance(inputs, dict):
+        inputs = {}
+    profiles = evidence.get("matching_profiles") or []
+    if not isinstance(profiles, list):
+        profiles = []
+    required_roles = evidence.get("required_role_keys") or []
+    if not isinstance(required_roles, list):
+        required_roles = []
+    required_roles = [str(role) for role in required_roles if role]
+
+    rule_label = rule.get("erogation_label") or rule.get("key") or "Sin regla sugerida"
+    role_chips = "".join(
+        _authorization_strategy_badge_html(role_key) for role_key in required_roles
+    ) or '<span class="status-chip info">Sin roles requeridos</span>'
+    profile_chips = "".join(
+        _authorization_strategy_badge_html(
+            profile.get("name") or profile.get("profile_name") or profile.get("role_key")
+        )
+        for profile in profiles
+        if isinstance(profile, dict)
+    ) or '<span class="status-chip info">Sin perfiles candidatos</span>'
+    fallback = evidence.get("fallback_reason") or ""
+    fallback_html = (
+        f'<div class="notice warning" style="margin-top:12px;"><strong>Fallback:</strong> {escape(str(fallback))}</div>'
+        if fallback
+        else ""
+    )
+
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Preview de autorizacion al enviar</h2>
+                    <div class="section-note">
+                        Vista previa consultiva de la matriz antes de mandar el documento; no bloquea el envio.
+                    </div>
+                </div>
+                <div class="status-chip info">Preview</div>
+            </div>
+            <div class="notice info">
+                <strong>Si se envia ahora:</strong> la matriz sugeriria {escape(str(rule_label))}.<br>
+                <small>Area: {escape(str(inputs.get("area") or "--"))} - Tipo: {escape(str(inputs.get("erogation_type") or "--"))} - Monto MXN: {escape(str(inputs.get("amount_mxn") or "--"))}</small>
+            </div>
+            {fallback_html}
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles sugeridos:</strong> {role_chips}
+            </div>
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Perfiles candidatos:</strong> {profile_chips}
+            </div>
+        </section>
+    '''
+
+
 async def _render_document_authorization_strategy_evidence(
     session: AsyncSession,
     documento_id: UUIDType,
@@ -25548,6 +25636,10 @@ async def ver_documento(
         session, documento_id
     )
 
+    authorization_pre_send_preview_html = await _render_document_authorization_pre_send_preview(
+        session, documento, can_send_documento=can_send_documento
+    )
+
     solicitud_transferencia_html = ""
     if documento.tipo == "SOLICITUD":
         st_beneficiario = ""
@@ -25945,6 +26037,7 @@ async def ver_documento(
                 {solicitud_withdraw_html}
                 {archivos_adjuntos_html}
                 {authorization_strategy_html}
+                {authorization_pre_send_preview_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>

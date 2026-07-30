@@ -121,3 +121,14 @@ def test_document_detail_compares_authorization_strategy_with_actual_route():
     assert "FROM aprobaciones a" in source
     assert "Coincide con matriz" in source
     assert "Diferencia consultiva" in source
+
+
+def test_document_detail_previews_authorization_strategy_before_send():
+    source = Path(user_routes.__file__).read_text()
+
+    assert "_render_document_authorization_pre_send_preview" in source
+    assert "Preview de autorizacion al enviar" in source
+    assert "build_document_authorization_evidence" in source
+    assert "can_send_documento=can_send_documento" in source
+    assert "{authorization_pre_send_preview_html}" in source
+    assert "no bloquea el envio" in source
