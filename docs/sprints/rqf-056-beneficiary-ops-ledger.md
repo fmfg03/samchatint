@@ -29,11 +29,17 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | RQF-056I - Cancelar / eliminar borradores incompletos | CLOSED_COMMITTED | `4145edfc4`, plus `34c239a80` | Empty informe draft cancellation now allows owner, finance, or superadmin only; route tests verify finance cleanup, non-owner 403, linked solicitudes block without commit, and utility matrix blocks non-draft/non-empty reports. Solicitud draft cancellation remains workflow-governed by requester ownership. |
 | RQF-056J - Materialidades verificables antes de guardar | CLOSED_COMMITTED | `36e2853d2` | Existing materialidades picker is now covered: one-at-a-time add, multi-file hidden submission, visible empty/list state, filename/size/mime, image thumbnail, PDF preview link, remove button, and separation from CFDI XML/PDF controls. |
 | RQF-056K - Correccion definitiva de totales CFDI XML/PDF | CLOSED_COMMITTED | `1fa60c1ee`, plus `6e4112f48` | Synthetic CFDI fixture reproduces the $128 case without customer data; tests verify XML Total authority, SubTotal + net taxes, inconsistency rejection for $124, and retenciones netting. Real customer XML was intentionally not committed. |
-| RQF-056L - Presupuestos visibility/editing | CLOSED_COMMITTED | `a1185e079`, pending L close commit | Tests verify only superadmin mutates, Directores/Alicia/superadmin view, named operations users cannot view or mutate even with budget tokens, budget nav hiding, operations analytics policy, frozen monthly plan rejection, and POST direct 403 before mutation/form-read. |
+| RQF-056L - Presupuestos visibility/editing | CLOSED_COMMITTED | `3b46acdfc`, plus `a1185e079` | Tests verify only superadmin mutates, Directores/Alicia/superadmin view, named operations users cannot view or mutate even with budget tokens, budget nav hiding, operations analytics policy, frozen monthly plan rejection, and POST direct 403 before mutation/form-read. |
 | RQF-056M - Telegram proyecto y etapa | NOT CLOSED | Existing implementation observed; no close commit | Need tests proving Telegram includes proyecto/fase and buttons still work. |
 | RQF-056N - Reimbursement semantics employee != provider | NOT CLOSED | Existing implementation/test observed | Need align documents + screens + Telegram, not just one helper/test. |
 | RQF-056O - Tocino/facturacion status/errors | PARTIAL | `6bb02b772` | Need safe retry, status visible, Telegram relevant status notifications, minimal non-secret payload logging. |
 | RQF-057A - Operaciones end-to-end wiring audit | NOT STARTED | none | Need map bot -> teams -> players -> documents -> tournaments -> calendars -> incidents; identify Supabase/local/dead/duplicate/partial; prioritized migration stages. |
+| RQF-057B - Telegram notification recipients audit | BACKLOG / customer delta | none | Confirm Odilon is configured for Anticipos and Informes de Gastos approvals; confirm Benjamin is configured for Solicitudes de Transferencia, Anticipos, and Informes, and document exactly when each notification fires. |
+| RQF-057C - Regional operator beneficiaries | BACKLOG / customer delta | none | Extend authorized third-party Anticipos/Informes beyond employees to Operadores Regionales without breaking requester ownership, approval routing, beneficiary banking/fiscal validation, or employee-only semantics. |
+| RQF-057D - Solicitudes search by proveedor | BACKLOG / customer delta | existing search has concept/reference; provider filter observed earlier | In Referencia solicitudes view, add provider search box/filter alongside Concepto and Referencia; align with customer Buscador tab. |
+| RQF-057E - No deducibles accounting rule | BACKLOG / customer delta | none | If a Solicitud de Transferencia or Informe line is not linked to factura/CFDI, route accounting impact to Gastos No Deducibles according to project-specific rule from ReglaNoDeducibles tab. |
+| RQF-057F - SAT massive download and reconciliation | BACKLOG / customer delta | none | Confirm automatic SAT download still runs daily at 23:00 and 09:00; separate Emitidos/Recibidos; add SAT vs Solicitudes reconciliation view. |
+| RQF-057G - Authorization strategy matrix | BACKLOG / customer delta | customer Excel `Estrategia de Autorizacion.xlsx` remains untracked | Build tablero to register authorization strategies from business matrix; rules apply to Solicitudes de Transferencia, Anticipos, and Informes de Gastos. |
 
 ## Commits currently on sprint branch
 
@@ -59,6 +65,31 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | `4145edfc4` | RQF-056I close draft cancellation policy |
 | `36e2853d2` | RQF-056J close materiality preview contract |
 | `1fa60c1ee` | RQF-056K close CFDI quick expense total contract |
+| `3b46acdfc` | RQF-056L close budget authorization route contract |
+
+
+## Customer Excel delta captured on 2026-07-30
+
+These items are now part of the master plan, but are not claimed as closed by RQF-056G through RQF-056L:
+
+1. Telegram notifications
+   - Verify Odilon receives approval notifications for Anticipos and Informes de Gastos.
+   - Verify Benjamin receives notifications for Solicitudes de Transferencia, Anticipos, and Informes de Gastos.
+   - Document the exact event/timing that triggers each notification.
+2. Anticipos and Informes for Operadores Regionales
+   - Operations users authorized for third-party requests must also be able to request for Regional Operators.
+   - This requires a separate beneficiary class from employees unless existing data proves operators are modeled as employees.
+3. Solicitudes de Transferencia provider search
+   - In the solicitudes-by-reference view, add provider search alongside Concepto and Referencia.
+4. No deducibles rule
+   - When a Solicitud or Informe line is not linked to a factura/CFDI, affect the project-specific Gastos No Deducibles account.
+5. SAT massive download
+   - Confirm scheduled automatic downloads at 23:00 and 09:00.
+   - Split Emitidos and Recibidos.
+   - Add SAT vs Solicitudes reconciliation view.
+6. Estrategia de Autorizacion
+   - Add board/configuration for authorization strategies according to the business matrix.
+   - Applies to all Solicitudes de Transferencia, Anticipos, and Informes de Gastos.
 
 ## Current untracked artifacts intentionally left untracked
 
@@ -70,9 +101,10 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 
 1. Continue RQF-056M Telegram proyecto/etapa: message includes project and fase/subproject without breaking approval buttons.
 2. Continue RQF-056N reimbursement semantics after M.
-3. Continue through I, J, K, L, M, N, O in order.
-4. Start RQF-057A only after RQF-056O is actually closed.
-5. Sprint close only after broader tests + push + PR + review gate + final merge.
+3. Continue RQF-056O Tocino/facturacion status/errors after N.
+4. Start RQF-057A operations wiring audit after RQF-056O.
+5. Then sequence the new customer delta stages RQF-057B through RQF-057G, unless Telegram recipient audit (057B) is folded into M as same-surface work.
+6. Sprint close only after broader tests + push + PR + review gate + final merge.
 
 ## QA/release plan context to preserve
 
