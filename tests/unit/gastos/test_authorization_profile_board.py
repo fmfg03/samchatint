@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services.authorization_profile_service import (
@@ -51,3 +52,49 @@ def test_authorization_profile_board_routes_and_nav_are_registered():
     assert "update_authorization_profile_rules" in source
     assert "Estrategias de autorizacion" in source
     assert "configuracion.estrategias_autorizacion" in source
+
+
+def test_document_authorization_input_inference_for_no_invoice_solicitud():
+    from devnous.gastos.services.authorization_profile_service import (
+        infer_document_authorization_inputs,
+    )
+
+    documento = SimpleNamespace(
+        tipo="SOLICITUD",
+        empleado=SimpleNamespace(departamento="Operaciones"),
+        monto_solicitado="1500.00",
+        monto_total=None,
+        cfdi_report_id=None,
+        cfdi_uuid_manual=None,
+        numero_factura=None,
+        pago_urgente=False,
+        budget_concept_id=None,
+        concepto_pago="Compra de material",
+        notas="",
+        numero_referencia="S-1",
+    )
+
+    inputs = infer_document_authorization_inputs(documento)
+
+    assert inputs["area"] == "Operaciones"
+    assert inputs["erogation_type"] == "no_deductible"
+    assert inputs["has_invoice"] is False
+    assert inputs["amount_mxn"] == "1500.00"
+
+
+def test_document_workflow_send_persists_authorization_strategy_evidence():
+    source = Path(
+        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+    send_block_start = source.index(
+        'if normalized_action == "send":',
+        source.index("authorization_strategy_evidence"),
+    )
+    audit_block_start = source.index(
+        "await record_customer_success_audit_event", send_block_start
+    )
+    block = source[send_block_start:audit_block_start]
+
+    assert "build_document_authorization_evidence" in block
+    assert 'audit_metadata["authorization_strategy"]' in source
+    assert "metadata=audit_metadata" in source

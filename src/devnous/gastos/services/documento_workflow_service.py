@@ -139,8 +139,7 @@ async def promote_solicitudes_ready_for_payment(
 ) -> int:
     """Promote enviado solicitudes when their linked informe is approved."""
     result = await session.execute(
-        select(Documento)
-        .where(
+        select(Documento).where(
             Documento.tipo == "SOLICITUD",
             Documento.estado == "enviado",
             Documento.cuenta_gastos_id.isnot(None),
@@ -374,9 +373,7 @@ async def transition_documento_workflow(
                 "Solo las solicitudes pueden retirarse desde este flujo.",
             )
         if documento.empleado_id != actor.id:
-            raise DocumentoWorkflowPermissionError(
-                "owner_mismatch", "Access denied"
-            )
+            raise DocumentoWorkflowPermissionError("owner_mismatch", "Access denied")
         if documento.estado != "enviado":
             raise DocumentoWorkflowValidationError(
                 "invalid_estado",
@@ -430,6 +427,31 @@ async def transition_documento_workflow(
         "cancel": "documento.cancelled",
         "withdraw": "documento.withdrawn",
     }
+    authorization_strategy_evidence = None
+    if normalized_action == "send":
+        try:
+            from .authorization_profile_service import (
+                build_document_authorization_evidence,
+            )
+
+            authorization_strategy_evidence = (
+                await build_document_authorization_evidence(session, documento)
+            )
+        except Exception:
+            logger.exception(
+                "Failed to build advisory authorization strategy evidence",
+                extra={"documento_id": str(documento.id)},
+            )
+    audit_metadata = {
+        "documento_tipo": documento.tipo,
+        "documento_estado": documento.estado,
+        "aprobacion_id": str(aprobacion.id),
+        "comentario": comentario_normalizado,
+        "auto_approved": auto_aprobacion is not None,
+    }
+    if authorization_strategy_evidence is not None:
+        audit_metadata["authorization_strategy"] = authorization_strategy_evidence
+
     await record_customer_success_audit_event(
         session,
         action=action_labels.get(normalized_action, f"documento.{normalized_action}"),
@@ -445,13 +467,7 @@ async def transition_documento_workflow(
             f"{actor.nombre} ejecutó {normalized_action} sobre "
             f"{documento.numero_referencia}"
         ),
-        metadata={
-            "documento_tipo": documento.tipo,
-            "documento_estado": documento.estado,
-            "aprobacion_id": str(aprobacion.id),
-            "comentario": comentario_normalizado,
-            "auto_approved": auto_aprobacion is not None,
-        },
+        metadata=audit_metadata,
         commit=True,
     )
 

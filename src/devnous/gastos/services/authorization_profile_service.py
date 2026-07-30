@@ -326,3 +326,144 @@ async def update_authorization_profile_rules(
         },
     )
     await session.commit()
+
+
+def infer_document_authorization_inputs(documento: object) -> dict[str, Any]:
+    """Infer resolver inputs from the current Documento shape.
+
+    This deliberately stays conservative: when the document lacks enough context,
+    the resolver will return a fallback decision instead of blocking workflow.
+    """
+    owner = getattr(documento, "empleado", None)
+    area = getattr(owner, "departamento", "") or ""
+    amount = (
+        getattr(documento, "monto_solicitado", None)
+        or getattr(documento, "monto_total", None)
+        or 0
+    )
+    has_invoice = bool(
+        getattr(documento, "cfdi_report_id", None)
+        or getattr(documento, "cfdi_uuid_manual", None)
+        or getattr(documento, "numero_factura", None)
+    )
+    tipo = str(getattr(documento, "tipo", "") or "").upper()
+    concepto = " ".join(
+        str(getattr(documento, attr, "") or "")
+        for attr in ("concepto_pago", "notas", "numero_referencia")
+    ).lower()
+
+    if not has_invoice:
+        erogation_type = "no_deductible"
+    elif bool(getattr(documento, "pago_urgente", False)):
+        erogation_type = "urgent_exception"
+    elif tipo == "INFORME":
+        if "reembolso" in concepto or "torneo" in concepto:
+            erogation_type = "tournament_reimbursement"
+        else:
+            erogation_type = "travel_expense_report"
+    elif tipo == "SOLICITUD":
+        if "anticipo" in concepto:
+            erogation_type = "tournament_advance"
+        else:
+            erogation_type = "supplier_transfer"
+    else:
+        erogation_type = "unknown"
+
+    return {
+        "area": area,
+        "erogation_type": erogation_type,
+        "amount_mxn": str(amount),
+        "requester_area": area,
+        "has_invoice": has_invoice,
+        "is_urgent": bool(getattr(documento, "pago_urgente", False)),
+        "is_budgeted": bool(getattr(documento, "budget_concept_id", None)),
+        "exceeds_budget": False,
+        "has_pending_advance": False,
+    }
+
+
+async def matching_authorization_profiles_for_decision(
+    session: AsyncSession,
+    *,
+    rule_key: str,
+    required_role_keys: Iterable[str],
+) -> list[dict[str, Any]]:
+    await seed_default_authorization_profiles(session)
+    roles = list(dict.fromkeys(str(role) for role in required_role_keys if role))
+    if not roles:
+        return []
+    result = await session.execute(
+        text(
+            """
+            SELECT id, profile_key, name, role_key, employee_matcher, rules
+            FROM authorization_profiles
+            WHERE active = TRUE AND role_key = ANY(:roles)
+            ORDER BY name
+            """
+        ),
+        {"roles": roles},
+    )
+    matches: list[dict[str, Any]] = []
+    for row in result.fetchall():
+        rules = row.rules or []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("rule_key") != rule_key or not rule.get("enabled"):
+                continue
+            matches.append(
+                {
+                    "profile_id": str(row.id),
+                    "profile_key": row.profile_key,
+                    "name": row.name,
+                    "role_key": row.role_key,
+                    "employee_matcher": row.employee_matcher,
+                    "can_first_approve": bool(rule.get("can_first_approve")),
+                    "can_second_approve": bool(rule.get("can_second_approve")),
+                }
+            )
+            break
+    return matches
+
+
+async def build_document_authorization_evidence(
+    session: AsyncSession,
+    documento: object,
+) -> dict[str, Any]:
+    from .authorization_strategy_service import resolve_authorization_strategy
+
+    inputs = infer_document_authorization_inputs(documento)
+    decision = resolve_authorization_strategy(**inputs)
+    evidence: dict[str, Any] = {
+        "mode": "advisory",
+        "inputs": inputs,
+        "fallback_reason": decision.fallback_reason,
+        "required_role_keys": decision.required_role_keys,
+        "applies_alternate_for_other_area": decision.applies_alternate_for_other_area,
+    }
+    if decision.rule is not None:
+        evidence["rule"] = {
+            "key": decision.rule.key,
+            "area_key": decision.rule.area_key,
+            "erogation_key": decision.rule.erogation_key,
+            "erogation_label": decision.rule.erogation_label,
+            "amount_mode": decision.rule.amount_mode,
+            "amount_value": (
+                str(decision.rule.amount_value)
+                if decision.rule.amount_value is not None
+                else None
+            ),
+            "first_approver_role": decision.rule.first_approver_role,
+            "second_approver_roles": list(decision.rule.second_approver_roles),
+        }
+        evidence["matching_profiles"] = (
+            await matching_authorization_profiles_for_decision(
+                session,
+                rule_key=decision.rule.key,
+                required_role_keys=decision.required_role_keys,
+            )
+        )
+    else:
+        evidence["rule"] = None
+        evidence["matching_profiles"] = []
+    return evidence
