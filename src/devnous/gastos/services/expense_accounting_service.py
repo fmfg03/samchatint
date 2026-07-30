@@ -5,7 +5,9 @@ Helpers to resolve expense counterpart accounts and tax-side posting hints.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional, Tuple
+import re
+import unicodedata
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import select
@@ -30,6 +32,114 @@ _RESTAURANT_KEYWORDS = (
     "bar",
     "consumo",
 )
+
+
+_NO_DEDUCIBLE_ACCOUNT_BY_PROJECT = {
+    "copa telmex telcel de futbol": "5300-010-030",
+    "liga telmex telcel de beisbol": "5300-012-030",
+    "de la calle a la cancha": "5300-018-015",
+    "la merced": "5300-020-005",
+    "futbolito bimbo": "5300-019-010",
+    "becarios telmex mexico siglo xxi": "5300-015-001",
+    "homeless world cup mexico": "5300-016-033",
+    "otros proyectos": "5300-015-001",
+    "gestion rrss y transmisiones": "5300-010-030",
+    "gestion de patrocinios": "5300-010-030",
+    "promocion de negocios": "5100-015-001",
+    "gastos administrativos direccion general": "5100-015-001",
+    "gastos administrativos administracion y finanzas": "5200-015-001",
+    "gastos administrativos operaciones": "5300-015-001",
+}
+
+
+def _normalize_project_rule_key(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return " ".join(text.split())
+
+
+def _project_rule_candidates_for_expense(expense: ExpenseReport) -> Iterable[str]:
+    seen = set()
+
+    def emit(value: Any):
+        raw = str(value or "").strip()
+        if raw and raw not in seen:
+            seen.add(raw)
+            return raw
+        return None
+
+    direct = emit(getattr(expense, "proyecto", None))
+    if direct:
+        yield direct
+
+    for source in (
+        getattr(expense, "budget_concept", None),
+        getattr(getattr(expense, "cuenta_gastos", None), "torneo", None),
+        getattr(expense, "documento", None),
+        getattr(expense, "informe_documento", None),
+        getattr(expense, "solicitud_documento", None),
+    ):
+        if source is None:
+            continue
+        if getattr(source, "tournament_name", None):
+            value = emit(getattr(source, "tournament_name", None))
+            if value:
+                yield value
+        torneo = getattr(source, "torneo", None)
+        if torneo is not None:
+            value = emit(getattr(torneo, "name", None))
+            if value:
+                yield value
+        budget_concept = getattr(source, "budget_concept", None)
+        if budget_concept is not None:
+            value = emit(getattr(budget_concept, "tournament_name", None))
+            if value:
+                yield value
+        value = emit(getattr(source, "proyecto_otro", None))
+        if value:
+            yield value
+
+
+def _no_deducible_account_code_for_project(project_name: Any) -> Optional[str]:
+    candidate = _normalize_project_rule_key(project_name)
+    if not candidate:
+        return None
+    exact = _NO_DEDUCIBLE_ACCOUNT_BY_PROJECT.get(candidate)
+    if exact:
+        return exact
+    for project_key, account_code in _NO_DEDUCIBLE_ACCOUNT_BY_PROJECT.items():
+        if (
+            candidate.startswith(project_key + " ")
+            or project_key.startswith(candidate + " ")
+        ):
+            return account_code
+    return None
+
+
+async def _resolve_project_no_deducible_account(
+    session: AsyncSession,
+    accounts: List[CuentaContable],
+    expense: ExpenseReport,
+) -> Optional[CuentaContable]:
+    for project_name in _project_rule_candidates_for_expense(expense):
+        account_code = _no_deducible_account_code_for_project(project_name)
+        if not account_code:
+            continue
+        for account in accounts:
+            if (
+                str(getattr(account, "codigo", "") or "").strip() == account_code
+                and bool(getattr(account, "activo", True))
+            ):
+                return account
+        explicit = await _resolve_cuenta_by_id_or_code(
+            session,
+            cuenta_codigo=account_code,
+        )
+        if explicit:
+            return explicit
+    return None
 
 
 def _money(value: Any) -> float:
@@ -473,6 +583,14 @@ async def _resolve_no_deducible_account(
         explicit = await _resolve_cuenta_by_id_or_code(session, cuenta_codigo=env_code)
         if explicit:
             return explicit
+
+    project_account = await _resolve_project_no_deducible_account(
+        session,
+        accounts,
+        expense,
+    )
+    if project_account:
+        return project_account
 
     expense_account = getattr(expense, "cuenta_contable", None)
     expense_code = str(getattr(expense_account, "codigo", "") or "")
