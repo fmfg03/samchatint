@@ -2031,6 +2031,20 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
     aggregation_hits = _keyword_hits(text, aggregation_keywords)
     write_hits = _keyword_hits(text, write_keywords)
     code_change_hits = _keyword_hits(text, code_change_keywords)
+    product_context_keywords = (
+        "samchat",
+        "asistente",
+        "canon",
+        "producto",
+        "claude code",
+        "dashboard con chat",
+        "interfaz principal",
+        "metodologia de la fabrica",
+        "metodolog?a de la f?brica",
+        "release qa",
+        "qa release",
+    )
+    product_context_hits = _keyword_hits(text, product_context_keywords)
 
     if finance_hits:
         reasons.append(f"finance={finance_hits[:3]}")
@@ -2048,6 +2062,17 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         reasons.append(f"write={write_hits[:3]}")
     if code_change_hits:
         reasons.append(f"code_change={code_change_hits[:3]}")
+    if product_context_hits:
+        reasons.append(f"product_context={product_context_hits[:3]}")
+
+    rag_only = bool(
+        product_context_hits
+        and not finance_hits
+        and not tournament_hits
+        and not code_hits
+        and not code_change_hits
+        and not write_hits
+    )
 
     domain = "generic"
     if code_hits:
@@ -2060,7 +2085,9 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         domain = "tournament"
 
     route = "lookup_sql"
-    if code_hits:
+    if rag_only:
+        route = "lookup_sql"
+    elif code_hits:
         route = "code_agentic"
     elif write_hits and domain in {"finance", "tournament", "mixed"}:
         route = "agentic_write"
@@ -2092,6 +2119,7 @@ def _assistant_classify_request(raw_message: str) -> Dict[str, Any]:
         "has_finance_strategy_intent": bool(finance_strategy_hits),
         "delegate_to_hermes": delegate_to_hermes,
         "hermes_profile": hermes_profile,
+        "rag_only": rag_only,
     }
 
 
@@ -2756,6 +2784,8 @@ def _assistant_tool_defs_for_message(
     has_active_tournament_case: bool = False,
     active_tournament_case_status: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
+    if route_info.get("rag_only"):
+        return []
     application_action = _tournament_application_action(
         raw_message,
         active_tournament_case_status=active_tournament_case_status,

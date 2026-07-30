@@ -6,6 +6,7 @@ from samchat.assistant.router import (
     _assistant_model,
     _assistant_provider_order,
     _assistant_tool_defs,
+    _assistant_tool_defs_for_message,
     _assistant_verify_sensitive_operation,
     _conversation_external_session_id,
     _conversation_module_key,
@@ -59,35 +60,57 @@ def test_assistant_provider_order_honors_explicit_ollama_override(monkeypatch):
 
 
 def test_assistant_provider_order_can_force_local_only_by_module(monkeypatch):
-    monkeypatch.setenv("ASSISTANT_LLM_PROVIDER_MODULE_LOCAL_ONLY", "assistant.general,operations.rag")
+    monkeypatch.setenv(
+        "ASSISTANT_LLM_PROVIDER_MODULE_LOCAL_ONLY", "assistant.general,operations.rag"
+    )
     order = _assistant_provider_order(
         "calidad",
-        route_info={"route": "reporting", "domain": "generic", "module_key": "assistant.general"},
+        route_info={
+            "route": "reporting",
+            "domain": "generic",
+            "module_key": "assistant.general",
+        },
         capability="chat",
     )
     assert order == ["ollama"]
 
 
-def test_assistant_provider_order_blocks_remote_without_explicit_escalation(monkeypatch):
+def test_assistant_provider_order_blocks_remote_without_explicit_escalation(
+    monkeypatch,
+):
     monkeypatch.delenv("ASSISTANT_LLM_PROVIDER", raising=False)
     monkeypatch.delenv("ASSISTANT_LLM_PROVIDER_HIGH", raising=False)
     monkeypatch.setenv("ASSISTANT_REMOTE_ESCALATION_MODE", "explicit")
-    monkeypatch.setenv("ASSISTANT_REMOTE_ESCALATION_ROUTES", "code_agentic,agentic_write")
+    monkeypatch.setenv(
+        "ASSISTANT_REMOTE_ESCALATION_ROUTES", "code_agentic,agentic_write"
+    )
     order = _assistant_provider_order(
         "calidad",
-        route_info={"route": "reporting", "domain": "finance", "module_key": "finance.general"},
+        route_info={
+            "route": "reporting",
+            "domain": "finance",
+            "module_key": "finance.general",
+        },
         capability="chat",
     )
     assert order == ["ollama"]
 
 
-def test_assistant_provider_order_allows_remote_for_explicit_high_risk_routes(monkeypatch):
+def test_assistant_provider_order_allows_remote_for_explicit_high_risk_routes(
+    monkeypatch,
+):
     monkeypatch.setenv("ASSISTANT_LLM_PROVIDER_HIGH", "ollama_first")
     monkeypatch.setenv("ASSISTANT_REMOTE_ESCALATION_MODE", "explicit")
-    monkeypatch.setenv("ASSISTANT_REMOTE_ESCALATION_ROUTES", "code_agentic,agentic_write")
+    monkeypatch.setenv(
+        "ASSISTANT_REMOTE_ESCALATION_ROUTES", "code_agentic,agentic_write"
+    )
     order = _assistant_provider_order(
         "calidad",
-        route_info={"route": "code_agentic", "domain": "code", "module_key": "platform.panel"},
+        route_info={
+            "route": "code_agentic",
+            "domain": "code",
+            "module_key": "platform.panel",
+        },
         capability="chat",
     )
     assert order[:3] == ["ollama", "anthropic", "openai"]
@@ -100,7 +123,11 @@ def test_route_remote_first_overrides_module_local_first(monkeypatch):
     monkeypatch.setenv("ASSISTANT_REMOTE_ESCALATION_ROUTES", "agentic_write")
     order = _assistant_provider_order(
         "calidad",
-        route_info={"route": "agentic_write", "domain": "finance", "module_key": "finance.general"},
+        route_info={
+            "route": "agentic_write",
+            "domain": "finance",
+            "module_key": "finance.general",
+        },
         capability="chat",
     )
     assert order[:3] == ["anthropic", "openai", "ollama"]
@@ -125,14 +152,23 @@ def test_ollama_model_defaults_to_local_qwen():
 def test_ollama_model_can_route_by_request_type(monkeypatch):
     monkeypatch.setenv("OLLAMA_ASSISTANT_MODEL_LOOKUP", "qwen3:1.7b")
     monkeypatch.setenv("OLLAMA_ASSISTANT_MODEL_REPORTING", "qwen3:8b")
-    assert _assistant_model("ollama", "ahorro", route_info={"route": "lookup_sql"}) == "qwen3:1.7b"
-    assert _assistant_model("ollama", "balanceado", route_info={"route": "reporting"}) == "qwen3:8b"
+    assert (
+        _assistant_model("ollama", "ahorro", route_info={"route": "lookup_sql"})
+        == "qwen3:1.7b"
+    )
+    assert (
+        _assistant_model("ollama", "balanceado", route_info={"route": "reporting"})
+        == "qwen3:8b"
+    )
 
 
 def test_ollama_model_uses_light_code_model_for_analysis(monkeypatch):
     monkeypatch.setenv("OLLAMA_ASSISTANT_MODEL_CODE_LIGHT", "qwen3:4b")
     monkeypatch.setenv("OLLAMA_ASSISTANT_MODEL_CODE", "qwen3:8b")
-    assert _assistant_model("ollama", "calidad", route_info={"route": "code_agentic"}) == "qwen3:4b"
+    assert (
+        _assistant_model("ollama", "calidad", route_info={"route": "code_agentic"})
+        == "qwen3:4b"
+    )
 
 
 def test_ollama_model_uses_heavy_code_model_for_changes_or_tools(monkeypatch):
@@ -209,9 +245,7 @@ def test_assistant_classifier_detects_accounting_write_intent():
 
 
 def test_assistant_classifier_detects_poliza_generation_as_write():
-    route = _assistant_classify_request(
-        "Genera la póliza contable del gasto REF-123."
-    )
+    route = _assistant_classify_request("Genera la póliza contable del gasto REF-123.")
     assert route["route"] == "agentic_write"
     assert route["domain"] == "finance"
     assert route["has_write_intent"] is True
@@ -219,8 +253,7 @@ def test_assistant_classifier_detects_poliza_generation_as_write():
 
 def test_sanitize_ollama_content_strips_thinking_traces():
     raw = (
-        'Estoy razonando internamente.\n</think>\n\n'
-        "Respuesta final para el usuario."
+        "Estoy razonando internamente.\n</think>\n\n" "Respuesta final para el usuario."
     )
     assert _sanitize_ollama_content(raw) == "Respuesta final para el usuario."
 
@@ -280,9 +313,7 @@ def test_hermes_finance_strategy_profile_forces_anthropic():
 
 
 def test_hermes_finance_strategy_profile_prompt_mentions_strategy_scope():
-    prompt = _assistant_hermes_profile_prompt(
-        {"hermes_profile": "finance_strategy"}
-    )
+    prompt = _assistant_hermes_profile_prompt({"hermes_profile": "finance_strategy"})
     assert prompt is not None
     assert "estrategia contable, fiscal y financiera" in prompt.lower()
     assert "no ejecutes escrituras" in prompt.lower()
@@ -322,7 +353,10 @@ def test_source_scope_detects_finance_and_tournament_sources():
         )
         == "tournament"
     )
-    assert _source_scope("/root/samchat/docs/integrations/hermes_samchat_assistant.md") == "generic"
+    assert (
+        _source_scope("/root/samchat/docs/integrations/hermes_samchat_assistant.md")
+        == "generic"
+    )
 
 
 def test_source_matches_scope_rejects_cross_domain_sources():
@@ -347,13 +381,21 @@ def test_source_matches_scope_rejects_cross_domain_sources():
 
 
 def test_memory_text_overlap_score_prefers_matching_terms():
-    assert _memory_text_overlap_score(["proveedor", "pagos"], "Pagos del proveedor ACME") > 0.5
+    assert (
+        _memory_text_overlap_score(["proveedor", "pagos"], "Pagos del proveedor ACME")
+        > 0.5
+    )
     assert _memory_text_overlap_score(["nomina"], "calendario de torneos") == 0.0
 
 
 def test_write_requires_verification_for_sensitive_writes():
     assert _write_requires_verification("dev_file_write", {}) is True
-    assert _write_requires_verification("db_write_universal", {"action": "update", "max_affected": 5}) is True
+    assert (
+        _write_requires_verification(
+            "db_write_universal", {"action": "update", "max_affected": 5}
+        )
+        is True
+    )
     assert _write_requires_verification("finance_expense_post_accounting", {}) is True
     assert _write_requires_verification("finance_expense_create", {}) is False
     assert _write_requires_verification("assistant_save_artifact", {}) is False
@@ -404,8 +446,12 @@ def test_assistant_verify_sensitive_operation_uses_structured_parser(monkeypatch
             "meta": {"source": "test"},
         }
 
-    monkeypatch.setattr("samchat.assistant.router._history_messages", fake_history_messages)
-    monkeypatch.setattr("samchat.assistant.router._assistant_text_response", fake_text_response)
+    monkeypatch.setattr(
+        "samchat.assistant.router._history_messages", fake_history_messages
+    )
+    monkeypatch.setattr(
+        "samchat.assistant.router._assistant_text_response", fake_text_response
+    )
 
     verification = asyncio.run(
         _assistant_verify_sensitive_operation(
@@ -423,3 +469,24 @@ def test_assistant_verify_sensitive_operation_uses_structured_parser(monkeypatch
     assert verification["provider"] == "anthropic"
     assert verification["model"] == "test-model"
     assert verification["warnings"] == ["audit trail ok"]
+
+
+def test_product_canon_questions_are_rag_only():
+    route = _assistant_classify_request(
+        "?SamChat es un dashboard con chat o un asistente tipo Claude Code?"
+    )
+
+    assert route["route"] == "lookup_sql"
+    assert route["domain"] == "generic"
+    assert route["rag_only"] is True
+    assert _assistant_tool_defs_for_message(route, "?Qu? es SamChat?") == []
+
+
+def test_business_questions_do_not_become_rag_only():
+    route = _assistant_classify_request(
+        "Explica la regla de no deducibles para una factura de gastos por proyecto"
+    )
+
+    assert route["domain"] == "finance"
+    assert route["rag_only"] is False
+    assert _assistant_tool_defs_for_message(route, "regla no deducibles factura")

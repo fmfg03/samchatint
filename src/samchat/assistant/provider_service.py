@@ -177,6 +177,20 @@ def assistant_contextual_pref(route_info: Optional[Dict[str, Any]]) -> Optional[
         return "ollama_first"
     if matches_policy_target(module_key, module_local_first):
         return "ollama_first"
+
+    # Product-quality default: short lookup/clarification turns should not be
+    # forced through a remote provider just because the global provider default
+    # is remote-only. They are latency-sensitive and read-only by design; keep
+    # remote fallback available unless the operator explicitly configured route
+    # local-only above.
+    local_fast_routes = csv_items(
+        os.getenv(
+            "ASSISTANT_LLM_PROVIDER_LOCAL_FAST_ROUTES",
+            "lookup_sql,needs_clarification",
+        )
+    )
+    if route and route in local_fast_routes:
+        return "ollama_first"
     return None
 
 
