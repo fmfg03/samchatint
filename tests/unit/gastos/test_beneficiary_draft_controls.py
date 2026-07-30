@@ -54,6 +54,32 @@ def test_named_requesters_can_choose_another_employee_by_canonical_name() -> Non
     assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
 
 
+def test_named_requesters_can_choose_another_employee_by_short_canonical_name() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Benjamin Jimenez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+def test_named_requesters_can_choose_another_employee_when_db_name_omits_second_surname() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
 def test_name_matching_is_normalized_but_not_role_based() -> None:
     requester = SimpleNamespace(
         id=uuid4(),
@@ -83,6 +109,44 @@ def test_unlisted_email_cannot_choose_another_employee_even_with_similar_name() 
 
     assert not user_routes._can_request_for_other_employee(requester)
     assert not user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+
+
+@pytest.mark.asyncio
+async def test_active_beneficiary_empleados_returns_only_self_for_unlisted_requester() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Normal",
+        correo="normal@example.com",
+        rol="empleado",
+    )
+    session = SimpleNamespace(execute=AsyncMock())
+
+    empleados = await user_routes._active_beneficiary_empleados(session, requester)
+
+    assert empleados == [requester]
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_active_beneficiary_empleados_loads_all_active_for_authorized_requester() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    bibiana = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    result = Mock()
+    result.scalars.return_value.all.return_value = [requester, bibiana]
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    empleados = await user_routes._active_beneficiary_empleados(session, requester)
+
+    assert empleados == [requester, bibiana]
+    session.execute.assert_awaited_once()
 
 
 def test_authorized_requester_sees_explicit_employee_selector() -> None:

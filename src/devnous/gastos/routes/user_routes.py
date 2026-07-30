@@ -8582,10 +8582,16 @@ def _normalize_employee_identity_text(value: Any) -> str:
 def _third_party_requester_name_matches(nombre: str) -> bool:
     if not nombre:
         return False
-    return any(
-        nombre == allowed or nombre.startswith(f"{allowed} ")
-        for allowed in _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES
-    )
+    normalized = _normalize_employee_identity_text(nombre)
+    for allowed_raw in _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES:
+        allowed = _normalize_employee_identity_text(allowed_raw)
+        if normalized == allowed:
+            return True
+        if normalized.startswith(f"{allowed} "):
+            return True
+        if len(normalized.split()) >= 3 and allowed.startswith(f"{normalized} "):
+            return True
+    return False
 
 
 def _can_request_for_other_employee(empleado: Empleado) -> bool:
