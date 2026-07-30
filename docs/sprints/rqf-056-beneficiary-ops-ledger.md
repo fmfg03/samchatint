@@ -25,7 +25,7 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | Stage | Status | Evidence / commits | Remaining closure gap |
 | --- | --- | --- | --- |
 | RQF-056G - Selector de beneficiario en Informes de Gastos | CLOSED_COMMITTED | `2a664d00e`, plus prerequisite selector/access commits | Route-level unit coverage verifies authorized selector, unauthorized self-lock, submit ownership, beneficiary propagation, and requester-approver preservation. Live browser/UAT still belongs to sprint QA gate. |
-| RQF-056H - Selector de beneficiario en Anticipos with full authorized list | NEXT | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, `b8328dcf5` | Need verify authorized users see all active employees and bank accounts refresh to selected beneficiary in route/E2E tests. |
+| RQF-056H - Selector de beneficiario en Anticipos with full authorized list | CLOSED_COMMITTED | `4a0a970b5`, `38bfdeca6`, `21c1d6d25`, `b8328dcf5`, pending H close commit | Unit coverage verifies Juan Pablo display-name authorization, full active employee selector rendering, self-lock for unauthorized users, beneficiary-scoped bank account API, and 403 for unpermitted beneficiary account lookup. Live browser/UAT remains in sprint QA gate. |
 | RQF-056I - Cancelar / eliminar borradores incompletos | PARTIAL | `34c239a80`; existing empty informe cancellation verified in code | Need complete policy tests for finanzas/superadmin cleanup and ensure no sent/approved/paid/movement document can be removed. |
 | RQF-056J - Materialidades verificables antes de guardar | NOT CLOSED | Existing code appeared present; no dedicated close commit | Need inspect UI/tests against requirements: preview/thumbnail, filename, remove, multiple files, no CFDI breakage. |
 | RQF-056K - Correccion definitiva de totales CFDI XML/PDF | PARTIAL | `6e4112f48` | Need test with real problematic CFDI fixture, robust Total/SubTotal/Descuento/Impuestos/Retenciones validation, and clear inconsistency message. |
@@ -63,8 +63,8 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 
 ## Next work order
 
-1. Close RQF-056H with concrete tests for Anticipo authorized full employee list and beneficiary bank-account refresh.
-2. Continue RQF-056I cancellation policy closure after H.
+1. Continue RQF-056I cancellation policy closure: requester empty drafts, finance/superadmin cleanup, and hard blocks for sent/approved/paid/movement documents.
+2. Continue RQF-056J materiality preview/verification after I.
 3. Continue through I, J, K, L, M, N, O in order.
 4. Start RQF-057A only after RQF-056O is actually closed.
 5. Sprint close only after broader tests + push + PR + review gate + final merge.
