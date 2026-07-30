@@ -340,8 +340,11 @@ class LocalRAGStore:
                     # Exact business terms, names, and policy phrases matter.  Embeddings
                     # are useful for semantic recall, but a strong lexical hit must not be
                     # buried behind a semantically-near but operationally-wrong document.
-                    lexical_boost = min(1.0, lexical_score * 3.0)
-                    score = max(vector_score + lexical_boost, lexical_score * 3.0)
+                    lexical_boost = min(1.0, lexical_score * 2.5)
+                    score = max(
+                        (vector_score * 0.65) + lexical_boost,
+                        lexical_score * 3.5,
+                    )
                     threshold = min(min_score, lexical_min_score)
                 else:
                     score = lexical_score
@@ -387,10 +390,16 @@ def _lexical_similarity(q: str, text: str) -> float:
     if not q_tokens or not t_tokens:
         return 0.0
     inter = len(q_tokens.intersection(t_tokens))
-    denom = len(q_tokens.union(t_tokens))
-    if denom <= 0:
+    union_denom = len(q_tokens.union(t_tokens))
+    if union_denom <= 0:
         return 0.0
-    return float(inter / denom)
+    jaccard = float(inter / union_denom)
+    query_coverage = float(inter / len(q_tokens))
+    # Business questions are often short and documents are long.  Jaccard alone
+    # dilutes exact user terms in long canon documents, so retain a bounded
+    # query-coverage signal while keeping the score below vector dominance unless
+    # many query terms are explicitly present.
+    return max(jaccard, query_coverage * 0.35)
 
 
 def _tokenize(s: str) -> List[str]:

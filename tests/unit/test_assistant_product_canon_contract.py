@@ -47,3 +47,26 @@ def test_context_corpus_defines_context_layers_and_gates() -> None:
 
 def test_quality_roadmap_keeps_canary_readonly() -> None:
     text = _read_doc("docs/assistant/rqf-assistant-009-quality-roadmap.md")
+
+
+def test_owner_ai_needs_are_versioned_as_assistant_requirements() -> None:
+    text = _read_doc("docs/assistant/owner-ai-needs.md")
+
+    assert "Per-tournament entity folder" in text
+    assert "National phase folder" in text
+    assert "Operations" in text or "### Operations" in text
+    assert "Finance" in text or "### Finance" in text
+    assert "Marketing" in text or "### Marketing" in text
+    assert "incomplete but evidence-backed folder" in text
+
+
+def test_owner_ai_eval_set_has_minimum_realistic_prompts() -> None:
+    text = _read_doc("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+
+    prompt_count = text.count("| AI-OWNER-")
+    assert prompt_count >= 30
+    assert "Expected sources" in text
+    assert "Forbidden behaviors" in text
+    assert "entity folders" in text or "carpeta de la entidad" in text
+    assert "national phase" in text or "fase nacional" in text
+    assert "marketing" in text.lower()

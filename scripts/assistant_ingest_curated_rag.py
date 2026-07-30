@@ -11,7 +11,10 @@ from samchat.assistant.rag import LocalRAGStore
 
 
 CURATED_RAG_PATHS: tuple[str, ...] = (
-    "docs/assistant",
+    "docs/assistant/product-canon.md",
+    "docs/assistant/context-corpus.md",
+    "docs/assistant/owner-ai-needs.md",
+    "docs/assistant/rqf-assistant-009-quality-roadmap.md",
     "docs/operations/OPERATIONS_REFERENCE.md",
     "docs/operations/ORCHESTRATION_INTEGRATION_GUIDE.md",
     "docs/operations/REG003_REGISTRATION_GOVERNANCE.md",
@@ -62,6 +65,11 @@ DENYLIST_SUFFIXES: tuple[str, ...] = (
     ".db",
 )
 
+DENYLIST_NAME_PARTS: tuple[str, ...] = (
+    "evaluation-set",
+    "eval-set",
+)
+
 
 def _is_safe_curated_path(path: Path, *, root: Path) -> bool:
     try:
@@ -70,7 +78,12 @@ def _is_safe_curated_path(path: Path, *, root: Path) -> bool:
     except ValueError:
         return False
     lowered_parts = {part.lower() for part in resolved.parts}
+    if resolved.is_dir():
+        return False
     if any(part in lowered_parts for part in DENYLIST_PARTS):
+        return False
+    lowered_name = resolved.name.lower()
+    if any(part in lowered_name for part in DENYLIST_NAME_PARTS):
         return False
     if resolved.suffix.lower() in DENYLIST_SUFFIXES:
         return False

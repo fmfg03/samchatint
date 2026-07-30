@@ -48,7 +48,8 @@ Close when:
 
 Close when:
 
-- at least 25 realistic prompts cover expenses, CFDI, payments, authorizations, tournaments, operations, and release QA;
+- owner AI needs are versioned under `docs/assistant/owner-ai-needs.md`;
+- at least 25 realistic prompts cover entity folders, national phase folders, expenses, CFDI, payments, authorizations, tournaments, operations, marketing evidence, and release QA;
 - each prompt has expected context sources and forbidden behaviors;
 - canary quality is reported with pass/fail evidence;
 - provider timeouts are tracked as product-quality failures even when safely controlled.

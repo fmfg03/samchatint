@@ -14,6 +14,7 @@ Use versioned documents for rules that change slowly.
 Initial sources:
 
 - `docs/assistant/product-canon.md`
+- `docs/assistant/owner-ai-needs.md`
 - authorization strategy and approval matrix documentation;
 - expense, advance, reimbursement, and payment-request rules;
 - non-deductible expense policy;
