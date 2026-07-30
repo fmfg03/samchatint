@@ -1,8 +1,10 @@
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
 
 from devnous.gastos.models import Documento
+from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram as tg
 from devnous.gastos.services.documento_semantics import (
     effective_account_beneficiary_id,
@@ -93,3 +95,112 @@ def test_reimbursement_telegram_omits_provider_and_separates_requester():
     assert "*Solicitante* Alicia Zuñiga" in text
     assert "Proveedor" not in text
     assert "Cuenta adaptadora de Alicia" not in text
+
+
+def test_telegram_solicitud_includes_project_phase_and_keeps_approval_keyboard() -> None:
+    documento_id = uuid4()
+    provider = MagicMock()
+    provider.nombre = "HK DISENO SA DE CV"
+    empleado = MagicMock()
+    empleado.nombre = "Alicia Zuniga"
+
+    documento = MagicMock(spec=Documento)
+    documento.id = documento_id
+    documento.numero_referencia = "S-26000051"
+    documento.tipo = "SOLICITUD"
+    documento.estado = "enviado"
+    documento.empleado = empleado
+    documento.proveedor_cliente = provider
+    documento.beneficiario_empleado = None
+    documento.beneficiario_empleado_id = None
+    documento.cuenta_gastos_id = None
+    documento.concepto_pago = "Estampado de playeras"
+    documento.notas = "Fase Nacional"
+    documento.referencia_operaciones = "10"
+    documento.enviado_en = None
+    documento.aprobado_en = None
+
+    text = tg.format_documento_resumen_es(
+        documento,
+        context={
+            "solicitante": "Alicia Zuniga",
+            "proyecto": "Copa Telmex 2026",
+            "etapa": "Fase Nacional",
+            "monto_line": "$1,397.22 MXN",
+            "referencia_operaciones": "10",
+        },
+        include_actions_hint=True,
+    )
+    keyboard = tg.approval_inline_keyboard(documento_id)
+
+    assert "*Proyecto* Copa Telmex 2026" in text
+    assert "*Etapa / subproyecto* Fase Nacional" in text
+    assert "Usa los botones de abajo" in text
+    assert keyboard["inline_keyboard"][0][0]["text"].endswith("Aprobar")
+    assert keyboard["inline_keyboard"][0][1]["text"].endswith("Rechazar")
+    assert keyboard["inline_keyboard"][0][0]["callback_data"] == f"{tg.CB_APPROVE}{documento_id}"
+    assert keyboard["inline_keyboard"][0][1]["callback_data"] == f"{tg.CB_REJECT}{documento_id}"
+
+
+def test_telegram_informe_includes_project_phase_from_context() -> None:
+    beneficiary = MagicMock()
+    beneficiary.nombre = "Bibiana Roman"
+    empleado = MagicMock()
+    empleado.nombre = "Bibiana Roman"
+
+    documento = MagicMock(spec=Documento)
+    documento.numero_referencia = "I-793655"
+    documento.tipo = "INFORME"
+    documento.estado = "abierta"
+    documento.empleado = empleado
+    documento.proveedor_cliente = None
+    documento.beneficiario_empleado = beneficiary
+    documento.beneficiario_empleado_id = uuid4()
+    documento.cuenta_gastos_id = uuid4()
+    documento.concepto_pago = None
+    documento.notas = "Compra de articulos de papeleria"
+    documento.enviado_en = None
+    documento.aprobado_en = None
+
+    text = tg.format_documento_resumen_es(
+        documento,
+        context={
+            "solicitante": "Bibiana Roman",
+            "proyecto": "Gastos Administrativos - Operaciones",
+            "etapa": "Articulos varios",
+            "monto_solicitado": "$0.00 MXN",
+            "monto_gastado": "$500.00 MXN",
+            "saldo_line": "$500.00 MXN - A favor del empleado - Reembolso pendiente",
+        },
+    )
+
+    assert "*Proyecto* Gastos Administrativos - Operaciones" in text
+    assert "*Etapa / subproyecto* Articulos varios" in text
+    assert "*Monto gastado* $500.00 MXN" in text
+
+
+def test_document_detail_source_prefers_employee_beneficiary_for_reimbursement() -> None:
+    source = Path(user_routes.__file__).read_text()
+    detail_block_start = source.index('solicitud_transferencia_html = ""')
+    detail_block_end = source.index('st_monto = documento.monto_solicitado', detail_block_start)
+    detail_block = source[detail_block_start:detail_block_end]
+
+    assert 'if is_employee_reimbursement(documento):' in detail_block
+    assert 'documento.beneficiario_empleado.nombre' in detail_block
+    assert 'elif documento.proveedor_cliente_id and documento.proveedor_cliente:' in detail_block
+    assert detail_block.index('if is_employee_reimbursement(documento):') < detail_block.index(
+        'elif documento.proveedor_cliente_id and documento.proveedor_cliente:'
+    )
+
+
+def test_telegram_workflow_approval_triggers_odilon_finance_alert() -> None:
+    source = Path(tg.__file__).read_text()
+    workflow_start = source.index("async def run_document_workflow_telegram_notifications")
+    workflow_end = source.index("def _sum_active_expense_amounts", workflow_start)
+    workflow_block = source[workflow_start:workflow_end]
+    approve_start = workflow_block.index('elif normalized == "approve":')
+    reject_start = workflow_block.index('elif normalized == "reject":')
+    approve_block = workflow_block[approve_start:reject_start]
+
+    assert "notify_requester_decision" in approve_block
+    assert "notify_finance_when_odilon_approves(session, documento, actor)" in approve_block

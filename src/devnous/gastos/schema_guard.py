@@ -77,6 +77,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("cuentas_de_gastos", "edicion"),
     RequiredColumn("cuentas_de_gastos", "currency"),
     RequiredColumn("cuentas_de_gastos", "beneficiario_empleado_id"),
+    RequiredColumn("cuentas_de_gastos", "beneficiario_proveedor_cliente_id"),
     RequiredColumn("tournaments", "etapas"),
     RequiredColumn("tournaments", "categorias"),
     RequiredColumn("access_profiles", "id"),
@@ -1460,6 +1461,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "cuentas_de_gastos_beneficiario_empleado_id_index",
         "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_empleado_id ON cuentas_de_gastos (beneficiario_empleado_id)",
+    ),
+    (
+        "cuentas_de_gastos_beneficiario_proveedor_cliente_id_column",
+        "ALTER TABLE IF EXISTS cuentas_de_gastos ADD COLUMN IF NOT EXISTS beneficiario_proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "cuentas_de_gastos_beneficiario_proveedor_cliente_id_index",
+        "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_proveedor_cliente_id ON cuentas_de_gastos (beneficiario_proveedor_cliente_id)",
     ),
     (
         "documentos_estado_check_rechazado",

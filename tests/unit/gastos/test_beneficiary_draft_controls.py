@@ -54,6 +54,32 @@ def test_named_requesters_can_choose_another_employee_by_canonical_name() -> Non
     assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
 
 
+def test_named_requesters_can_choose_another_employee_by_short_canonical_name() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Benjamin Jimenez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+def test_named_requesters_can_choose_another_employee_when_db_name_omits_second_surname() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
 def test_name_matching_is_normalized_but_not_role_based() -> None:
     requester = SimpleNamespace(
         id=uuid4(),
@@ -72,6 +98,34 @@ def test_name_matching_is_normalized_but_not_role_based() -> None:
     assert not user_routes._can_request_for_other_employee(impostor)
 
 
+def test_permissioned_requester_can_choose_another_employee() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Operativo",
+        correo="operativo@example.com",
+        rol="empleado",
+        permissions={"finance.employee_beneficiary.request"},
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+def test_permission_wildcard_requester_can_choose_another_employee() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Operativo",
+        correo="operativo@example.com",
+        rol="empleado",
+        permissions={"finance.employee_beneficiary.*"},
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    assert user_routes._can_request_for_other_employee(requester)
+    assert user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
 def test_unlisted_email_cannot_choose_another_employee_even_with_similar_name() -> None:
     requester = SimpleNamespace(
         id=uuid4(),
@@ -83,6 +137,44 @@ def test_unlisted_email_cannot_choose_another_employee_even_with_similar_name() 
 
     assert not user_routes._can_request_for_other_employee(requester)
     assert not user_routes._beneficiary_selection_allowed(requester, beneficiary)
+
+
+
+
+@pytest.mark.asyncio
+async def test_active_beneficiary_empleados_returns_only_self_for_unlisted_requester() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Normal",
+        correo="normal@example.com",
+        rol="empleado",
+    )
+    session = SimpleNamespace(execute=AsyncMock())
+
+    empleados = await user_routes._active_beneficiary_empleados(session, requester)
+
+    assert empleados == [requester]
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_active_beneficiary_empleados_loads_all_active_for_authorized_requester() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        correo="personal@example.com",
+        rol="empleado",
+    )
+    bibiana = SimpleNamespace(id=uuid4(), nombre="Bibiana")
+
+    result = Mock()
+    result.scalars.return_value.all.return_value = [requester, bibiana]
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+
+    empleados = await user_routes._active_beneficiary_empleados(session, requester)
+
+    assert empleados == [requester, bibiana]
+    session.execute.assert_awaited_once()
 
 
 def test_authorized_requester_sees_explicit_employee_selector() -> None:
@@ -104,6 +196,8 @@ def test_authorized_requester_sees_explicit_employee_selector() -> None:
     assert '<select' in html
     assert "Alicia" in html and "Bibiana" in html
     assert "Empleado beneficiario" in html
+    assert "Paso 1" in html
+    assert "Elige" in html and "recurso" in html
 
 
 def test_ordinary_requester_is_locked_to_self() -> None:
@@ -124,9 +218,43 @@ def test_ordinary_requester_is_locked_to_self() -> None:
 
     assert '<input type="hidden" name="beneficiario_empleado_id"' in html
     assert "Carlos Solicitante" in html
-    assert "solamente puede solicitar para sí mismo" in html
+    assert "solamente puede solicitar" in html and "si mismo" in html
     assert "<select" not in html
     assert "Otra persona" not in html
+
+
+def test_solicitud_list_actions_show_cancel_for_owner_draft() -> None:
+    owner_id = uuid4()
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="borrador",
+        empleado_id=owner_id,
+    )
+    actor = SimpleNamespace(id=owner_id, rol="empleado")
+
+    html = user_routes._solicitud_transferencia_list_actions_html(documento, actor)
+
+    assert "Ver detalle" in html
+    assert "Cancelar borrador" in html
+    assert f'/documentos/{documento.id}/cancelar' in html
+    assert 'name="next" value="/gastos-terceros"' in html
+
+
+def test_solicitud_list_actions_do_not_show_cancel_for_other_user_or_sent() -> None:
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="enviado",
+        empleado_id=uuid4(),
+    )
+    actor = SimpleNamespace(id=uuid4(), rol="superadmin")
+
+    html = user_routes._solicitud_transferencia_list_actions_html(documento, actor)
+
+    assert "Ver detalle" in html
+    assert "Cancelar borrador" not in html
+    assert "/cancelar" not in html
 
 
 def test_empty_draft_cancellation_belongs_to_owner_with_superadmin_recovery() -> None:
@@ -138,6 +266,9 @@ def test_empty_draft_cancellation_belongs_to_owner_with_superadmin_recovery() ->
     )
     assert not user_routes._can_cancel_empty_informe_draft(
         SimpleNamespace(id=uuid4(), rol="empleado"), cuenta
+    )
+    assert user_routes._can_cancel_empty_informe_draft(
+        SimpleNamespace(id=uuid4(), rol="finanzas"), cuenta
     )
     assert user_routes._can_cancel_empty_informe_draft(
         SimpleNamespace(id=uuid4(), rol="superadmin"), cuenta
@@ -289,3 +420,129 @@ async def test_cancel_empty_draft_commits_before_best_effort_audit_rollback(
     assert events == ["business_commit", "audit_attempt", "audit_rollback"]
     assert cuenta.estado == "cerrada"
     assert informe.estado == "rechazado"
+
+
+@pytest.mark.asyncio
+async def test_cancel_empty_draft_route_allows_finance_cleanup(monkeypatch) -> None:
+    owner_id = uuid4()
+    finance_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=owner_id,
+        beneficiario_empleado_id=None,
+        estado="abierta",
+        closed_at=None,
+    )
+    informe = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta.id,
+        tipo="INFORME",
+        estado="borrador",
+        numero_referencia="I-FIN",
+    )
+
+    class ScalarResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalar_one(self):
+            return self.value
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                ScalarResult(cuenta),
+                ScalarResult(informe),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+            ]
+        ),
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        user_routes,
+        "record_customer_success_audit_event",
+        AsyncMock(),
+    )
+
+    response = await user_routes.cancelar_informe_vacio_borrador(
+        cuenta_id=cuenta.id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=finance_id, rol="finanzas"),
+    )
+
+    assert response.status_code == 303
+    assert cuenta.estado == "cerrada"
+    assert informe.estado == "rechazado"
+    session.commit.assert_awaited_once()
+    aprobacion = session.add.call_args.args[0]
+    assert aprobacion.aprobador_id == finance_id
+    assert "usuario autorizado" in aprobacion.comentario
+
+
+@pytest.mark.asyncio
+async def test_cancel_empty_draft_route_rejects_linked_solicitudes_without_committing() -> None:
+    owner_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=owner_id,
+        beneficiario_empleado_id=None,
+        estado="abierta",
+        closed_at=None,
+    )
+    informe = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta.id,
+        tipo="INFORME",
+        estado="borrador",
+        numero_referencia="I-BLOCK",
+    )
+
+    class ScalarResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalar_one(self):
+            return self.value
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                ScalarResult(cuenta),
+                ScalarResult(informe),
+                ScalarResult(0),
+                ScalarResult(1),
+                ScalarResult(0),
+                ScalarResult(0),
+            ]
+        ),
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    response = await user_routes.cancelar_informe_vacio_borrador(
+        cuenta_id=cuenta.id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=owner_id, rol="empleado"),
+    )
+
+    assert response.status_code == 303
+    assert "solicitudes" in response.headers["location"]
+    assert cuenta.estado == "abierta"
+    assert informe.estado == "borrador"
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()

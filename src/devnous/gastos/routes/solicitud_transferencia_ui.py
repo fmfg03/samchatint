@@ -1105,11 +1105,7 @@ def render_cfdi_quick_expense_autofill_script(
                 ) {{
                     impuestosYRetenciones.value = payload.impuestos_y_retenciones;
                 }}
-                if (
-                    total
-                    && payload.total
-                    && (!subtotal || !subtotal.value)
-                ) {{
+                if (total && payload.total) {{
                     total.value = payload.total;
                 }} else {{
                     updateTotal();

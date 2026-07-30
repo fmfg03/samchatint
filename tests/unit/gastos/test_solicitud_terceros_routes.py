@@ -7,6 +7,11 @@ from uuid import uuid4
 import pytest
 
 from devnous.gastos.routes import user_routes
+from devnous.gastos.routes.solicitud_transferencia_ui import (
+    render_cfdi_quick_expense_autofill_script,
+    render_materialidades_file_picker_html,
+    render_materialidades_file_picker_script,
+)
 from devnous.gastos.services.documento_service import SolicitudValidationError
 
 
@@ -592,8 +597,53 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
         current_empleado=empleado,
     )
 
+    assert 'class="terceros-filter-bar"' in html
     assert 'id="terceros-search-proveedor"' in html
+    assert "Por Proveedor" in html
     assert 'data-proveedor="hk diseno, s.a. de c.v."' in html
     assert "normalize('NFD')" in html
     assert ".replace(/[^a-z0-9]+/g, ' ')" in html
     assert "matchProveedor" in html
+
+
+def test_quick_expense_cfdi_autofill_keeps_xml_total_as_authority():
+    script = render_cfdi_quick_expense_autofill_script()
+
+    assert "if (total && payload.total)" in script
+    assert "total.value = payload.total" in script
+    assert "&& (!subtotal || !subtotal.value)" not in script
+    assert script.count("formData.append(sourceInput.name, sourceInput.files[0]);") == 1
+
+
+def test_materialidades_picker_contract_keeps_files_verifiable_before_submit() -> None:
+    html = render_materialidades_file_picker_html()
+    script = render_materialidades_file_picker_script()
+    combined = html + script
+
+    assert 'id="archivos_generales_picker"' in html
+    assert 'name="archivos_generales"' in html
+    assert 'multiple' in html
+    assert 'hidden' in html
+    assert 'id="archivos_generales_list"' in html
+    assert 'id="archivos_generales_empty"' in html
+    assert 'Seleccione un archivo a la vez' in html
+    assert 'Puede agregar varios antes de guardar' in html
+    assert 'Toque la miniatura para verla completa' in html
+    assert 'image/*' in html
+    assert 'application/pdf' in html
+
+    assert 'const selectedFiles = []' in script
+    assert 'new DataTransfer()' in script
+    assert 'URL.createObjectURL(file)' in script
+    assert 'st-materialidades-thumbnail' in script
+    assert "previewLink.target = '_blank'" in script
+    assert "previewLink.textContent = 'Abrir PDF'" in script
+    assert 'st-materialidades-name' in script
+    assert 'formatFileSize(file.size)' in script
+    assert "removeBtn.textContent = 'Quitar'" in script
+    assert 'selectedFiles.splice(index, 1)' in script
+    assert 'syncHiddenInput()' in script
+
+    assert 'archivo_pdf_preview_frame' not in combined
+    assert 'name="archivo_xml"' not in combined
+    assert 'name="archivo_pdf"' not in combined

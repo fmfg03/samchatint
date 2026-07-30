@@ -84,6 +84,12 @@ from ..services.amex_expense_service import (
     set_company_amex_status,
     sum_paid_solicitud_amounts,
 )
+from ..services.authorization_profile_service import (
+    copy_authorization_profile,
+    list_authorization_profiles,
+    summarize_profile_rules,
+    update_authorization_profile_rules,
+)
 from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
@@ -1433,6 +1439,439 @@ async def control_accesos_save_rule(
         suffix = f"&tool_key={quote(return_tool_key or tool_key)}"
         return RedirectResponse(
             url=f"/admin/control-accesos?error_msg={quote(str(exc))}{suffix}",
+            status_code=303,
+        )
+
+@router.get("/admin/estrategias-autorizacion/warnings", response_class=HTMLResponse)
+async def authorization_strategy_warnings_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    role_norm = (current_empleado.rol or "").strip().lower()
+    if role_norm not in {"finanzas", "admin", "superadmin", "super_admin"}:
+        raise HTTPException(status_code=403, detail="No autorizado")
+
+    query = (request.query_params.get("q") or "").strip()
+    missing_role = (request.query_params.get("missing_role") or "").strip()
+    try:
+        limit = int(request.query_params.get("limit") or "100")
+    except ValueError:
+        limit = 100
+    limit = max(10, min(limit, 250))
+
+    where_parts = [
+        "e.action = 'documento.approved'",
+        "e.metadata_json -> 'authorization_route_warning' IS NOT NULL",
+    ]
+    params: dict[str, Any] = {"limit": limit}
+    if query:
+        where_parts.append(
+            """
+            (
+                COALESCE(e.documento_referencia, '') ILIKE :query
+                OR COALESCE(d.numero_referencia, '') ILIKE :query
+                OR COALESCE(emp.nombre, '') ILIKE :query
+                OR COALESCE(d.concepto_pago, '') ILIKE :query
+            )
+            """
+        )
+        params["query"] = f"%{query}%"
+    if missing_role:
+        where_parts.append(
+            "EXISTS (SELECT 1 FROM jsonb_array_elements_text(e.metadata_json -> 'authorization_route_warning' -> 'missing_role_keys') r(role_key) WHERE r.role_key = :missing_role)"
+        )
+        params["missing_role"] = missing_role
+
+    where_sql = " AND ".join(where_parts)
+    query_error_msg = ""
+    try:
+        result = await session.execute(
+            text(
+                f"""
+                SELECT
+                    e.id,
+                    e.created_at,
+                    e.documento_id,
+                    COALESCE(d.numero_referencia, e.documento_referencia) AS documento_referencia,
+                    d.tipo AS documento_tipo,
+                    d.estado AS documento_estado,
+                    d.monto_solicitado,
+                    d.monto_total,
+                    d.currency,
+                    emp.nombre AS solicitante,
+                    e.metadata_json -> 'authorization_route_warning' AS warning
+                FROM customer_success_audit_events e
+                LEFT JOIN documentos d ON d.id = e.documento_id
+                LEFT JOIN empleados emp ON emp.id = d.empleado_id
+                WHERE {where_sql}
+                ORDER BY e.created_at DESC
+                LIMIT :limit
+                """
+            ),
+            params,
+        )
+        rows = result.fetchall()
+    except Exception:
+        logger.exception("Failed to load authorization warnings dashboard")
+        rows = []
+        query_error_msg = "No se pudo leer la auditoria de warnings; revise que el esquema de auditoria exista."
+
+    role_counts: Counter[str] = Counter()
+    table_rows = ""
+    for row in rows:
+        data = row._mapping
+        warning = data.get("warning") or {}
+        if isinstance(warning, str):
+            try:
+                warning = json.loads(warning)
+            except json.JSONDecodeError:
+                warning = {}
+        if not isinstance(warning, dict):
+            warning = {}
+        missing_roles = [str(role) for role in (warning.get("missing_role_keys") or [])]
+        matched_roles = [str(role) for role in (warning.get("matched_role_keys") or [])]
+        required_roles = [str(role) for role in (warning.get("required_role_keys") or [])]
+        for role in missing_roles:
+            role_counts[role] += 1
+        amount = data.get("monto_solicitado") or data.get("monto_total") or 0
+        currency = data.get("currency") or "MXN"
+        documento_id = data.get("documento_id")
+        doc_link = (
+            f'<a href="/documentos/{documento_id}" class="text-link">{escape(str(data.get("documento_referencia") or documento_id or "--"))}</a>'
+            if documento_id
+            else escape(str(data.get("documento_referencia") or "--"))
+        )
+        table_rows += f'''
+            <tr>
+                <td>{format_value(data.get("created_at"))}</td>
+                <td>{doc_link}<br><span class="muted">{escape(str(data.get("documento_tipo") or "--"))} - {escape(str(data.get("documento_estado") or "--"))}</span></td>
+                <td>{escape(str(data.get("solicitante") or "--"))}</td>
+                <td>{format_currency(amount, currency)}</td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in required_roles) or "--"}</div></td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in matched_roles) or "--"}</div></td>
+                <td><div class="chips">{"".join(_authorization_strategy_badge_html(role) for role in missing_roles) or "--"}</div></td>
+                <td>{escape(str(warning.get("message") or "--"))}</td>
+            </tr>
+        '''
+    if not table_rows:
+        table_rows = '<tr><td colspan="8" style="text-align:center;padding:22px;">Sin warnings de autorizacion para los filtros actuales.</td></tr>'
+
+    role_options = "".join(
+        f'<option value="{escape(role)}" {"selected" if role == missing_role else ""}>{escape(role)} ({count})</option>'
+        for role, count in sorted(role_counts.items())
+    )
+    summary_cards = f'''
+        <section class="meta-grid" style="margin-bottom:16px;">
+            <div class="meta-card"><span>Warnings visibles</span><strong>{len(rows)}</strong><small>Ultimos eventos aprobados con discrepancia.</small></div>
+            <div class="meta-card"><span>Roles faltantes distintos</span><strong>{len(role_counts)}</strong><small>Segun metadata auditada.</small></div>
+            <div class="meta-card"><span>Modo</span><strong>Read-only</strong><small>No cambia aprobaciones ni documentos.</small></div>
+        </section>
+    '''
+
+    html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Warnings de autorizacion</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {_workspace_shell_styles("1420px")}
+            .card {{ background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:18px;margin-bottom:16px; }}
+            .filters {{ display:grid;grid-template-columns:1fr 260px 120px auto;gap:10px;align-items:end; }}
+            label {{ display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;text-transform:uppercase; }}
+            input,select {{ width:100%;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff; }}
+            table {{ width:100%;border-collapse:collapse;background:#fff; }}
+            th,td {{ border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top; }}
+            th {{ background:#f8fafc;font-size:12px;text-transform:uppercase;color:#475569; }}
+            .button {{ display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:#0f172a;color:#fff;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0;color:#0f172a; }}
+            .muted {{ color:#64748b;font-size:12px; }}
+            .chips {{ display:flex;gap:6px;flex-wrap:wrap; }}
+            @media (max-width: 900px) {{ .filters {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "admin")}
+            <section class="card">
+                <div class="eyebrow">Gobierno de autorizaciones</div>
+                <h1 style="margin:4px 0 8px;">Warnings de autorizacion</h1>
+                <p class="muted" style="margin:0;">Discrepancias auditadas entre la ruta real aprobada y la matriz consultiva. Este tablero es solo lectura.</p>
+                <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+                    <a class="button secondary" href="/admin/estrategias-autorizacion">Estrategias</a>
+                    <a class="button secondary" href="/panel">Panel</a>
+                </div>
+            </section>
+            {summary_cards}
+            {f'<section class="card"><div class="notice warning">{escape(query_error_msg)}</div></section>' if query_error_msg else ''}
+            <section class="card">
+                <form method="GET" action="/admin/estrategias-autorizacion/warnings" class="filters">
+                    <div>
+                        <label>Buscar</label>
+                        <input name="q" value="{escape(query)}" placeholder="Referencia, solicitante o concepto">
+                    </div>
+                    <div>
+                        <label>Rol faltante</label>
+                        <select name="missing_role">
+                            <option value="">Todos</option>
+                            {role_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label>Limite</label>
+                        <input name="limit" type="number" min="10" max="250" value="{limit}">
+                    </div>
+                    <button class="button" type="submit">Filtrar</button>
+                </form>
+            </section>
+            <section class="card">
+                <div class="section-head">
+                    <div>
+                        <h2>Discrepancias auditadas</h2>
+                        <div class="section-note">Cada fila viene de un evento <code>documento.approved</code> con <code>authorization_route_warning</code>.</div>
+                    </div>
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Documento</th>
+                                <th>Solicitante</th>
+                                <th>Monto</th>
+                                <th>Requeridos</th>
+                                <th>Cubiertos</th>
+                                <th>Faltantes</th>
+                                <th>Mensaje</th>
+                            </tr>
+                        </thead>
+                        <tbody>{table_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    '''
+    return html
+
+
+@router.get("/admin/estrategias-autorizacion", response_class=HTMLResponse)
+async def estrategias_autorizacion_page(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_control_accesos_superadmin(current_empleado)
+    profiles = await list_authorization_profiles(session)
+    selected_profile_id = (request.query_params.get("profile_id") or "").strip()
+    selected_profile = None
+    for profile in profiles:
+        if str(profile.id) == selected_profile_id:
+            selected_profile = profile
+            break
+    if selected_profile is None and profiles:
+        selected_profile = profiles[0]
+
+    success_msg = request.query_params.get("success_msg", "")
+    error_msg = request.query_params.get("error_msg", "")
+
+    profile_cards = ""
+    for profile in profiles:
+        summary = summarize_profile_rules(profile.rules)
+        selected = selected_profile is not None and profile.id == selected_profile.id
+        profile_cards += f"""
+            <a class="profile-card {'selected' if selected else ''}" href="/admin/estrategias-autorizacion?profile_id={profile.id}">
+                <div class="profile-title">{escape(profile.name)}</div>
+                <div class="muted">{escape(profile.role_key)} · {escape(profile.employee_matcher or '')}</div>
+                <div class="profile-stats">
+                    <span>{summary['enabled']} activas</span>
+                    <span>{summary['first']} primera</span>
+                    <span>{summary['second']} segunda</span>
+                    <span>{summary['exceptions']} excepciones</span>
+                </div>
+            </a>
+        """
+
+    rules_rows = ""
+    copy_form = ""
+    selected_title = "Selecciona un perfil"
+    if selected_profile is not None:
+        selected_title = selected_profile.name
+        copy_form = f"""
+            <form method="POST" action="/admin/estrategias-autorizacion/perfiles/{selected_profile.id}/copiar" class="copy-form">
+                <label>Copiar este perfil como</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <input name="new_name" value="Copia de {escape(selected_profile.name)}" aria-label="Nuevo nombre de perfil">
+                    <button class="button secondary" type="submit">Copiar perfil</button>
+                </div>
+            </form>
+        """
+        for rule in selected_profile.rules:
+            rule_key = str(rule.get("rule_key") or "")
+            amount_mode = str(rule.get("amount_mode") or "any")
+            amount_value = str(rule.get("amount_value") or "")
+            amount_label = "Cualquier monto"
+            if amount_mode == "max":
+                amount_label = f"Hasta ${escape(amount_value)}"
+            elif amount_mode == "gt":
+                amount_label = f"Mayor a ${escape(amount_value)}"
+            flags = []
+            if rule.get("requires_no_invoice"):
+                flags.append("sin factura / no deducible")
+            if rule.get("requires_unbudgeted"):
+                flags.append("no presupuestado")
+            if rule.get("requires_budget_excess"):
+                flags.append("excede presupuesto")
+            if rule.get("requires_urgent"):
+                flags.append("urgente")
+            if rule.get("requires_pending_advance_review"):
+                flags.append("anticipo pendiente")
+            flags_html = "".join(f'<span class="chip">{escape(flag)}</span>' for flag in flags) or '<span class="muted">Sin excepcion especial</span>'
+            rules_rows += f"""
+                <tr>
+                    <td>
+                        <strong>{escape(str(rule.get('erogation_label') or rule_key))}</strong>
+                        <br><span class="muted">{escape(str(rule.get('area_key') or ''))} · {escape(rule_key)}</span>
+                        <div class="chips">{flags_html}</div>
+                    </td>
+                    <td>{escape(amount_label)}</td>
+                    <td class="switches">
+                        <label><input type="checkbox" name="enabled_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('enabled') else ''}> Activa</label>
+                        <label><input type="checkbox" name="first_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('can_first_approve') else ''}> Autoriza</label>
+                        <label><input type="checkbox" name="second_rule_keys" value="{escape(rule_key)}" {'checked' if rule.get('can_second_approve') else ''}> Segunda autorización</label>
+                    </td>
+                </tr>
+            """
+    if not rules_rows:
+        rules_rows = '<tr><td colspan="3" class="muted">No hay reglas en este perfil.</td></tr>'
+
+    selected_id = str(selected_profile.id) if selected_profile is not None else ""
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Estrategias de autorizacion</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            {_workspace_shell_styles("1420px")}
+            .card {{ background:#fff;border:1px solid #dbe2ea;border-radius:16px;padding:18px;margin-bottom:16px; }}
+            .layout {{ display:grid;grid-template-columns:360px 1fr;gap:18px;align-items:start; }}
+            .profile-card {{ display:block;text-decoration:none;color:#0f172a;border:1px solid #dbe2ea;border-radius:14px;padding:14px;margin-bottom:10px;background:#fff; }}
+            .profile-card.selected {{ border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.12); }}
+            .profile-title {{ font-weight:900;font-size:16px;margin-bottom:4px; }}
+            .profile-stats {{ display:flex;flex-wrap:wrap;gap:6px;margin-top:10px; }}
+            .profile-stats span,.chip {{ background:#e2e8f0;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;color:#334155; }}
+            .chips {{ display:flex;gap:6px;flex-wrap:wrap;margin-top:8px; }}
+            label {{ display:block;font-size:12px;font-weight:800;color:#475569;margin-bottom:6px;text-transform:uppercase; }}
+            input {{ box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;background:#fff; }}
+            table {{ width:100%;border-collapse:collapse;background:#fff; }}
+            th,td {{ border-bottom:1px solid #e2e8f0;padding:10px;text-align:left;vertical-align:top; }}
+            th {{ background:#f8fafc;font-size:12px;text-transform:uppercase;color:#475569; }}
+            .button {{ display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:10px;background:#0f172a;color:#fff;padding:11px 14px;font-weight:800;text-decoration:none;cursor:pointer; }}
+            .button.secondary {{ background:#e2e8f0;color:#0f172a; }}
+            .switches label {{ text-transform:none;font-size:13px;color:#0f172a;margin:0 0 8px; }}
+            .switches input {{ width:auto;margin-right:6px; }}
+            .muted {{ color:#64748b;font-size:12px; }}
+            .notice {{ padding:12px 14px;border-radius:12px;margin-bottom:14px;font-weight:700; }}
+            .notice.ok {{ background:#dcfce7;color:#166534; }}
+            .notice.error {{ background:#fee2e2;color:#991b1b; }}
+            .copy-form {{ border:1px dashed #cbd5e1;border-radius:14px;padding:12px;background:#f8fafc;margin:12px 0; }}
+            @media (max-width: 980px) {{ .layout {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "admin")}
+            <section class="card">
+                <div class="eyebrow">Configuracion</div>
+                <h1 style="margin:4px 0 8px;">Estrategias de autorizacion</h1>
+                <p class="muted" style="margin:0;">Perfiles copiables por persona/rol operativo. Este tablero es advisory: prepara la matriz sin cambiar aun el enforcement de aprobaciones.</p>
+            </section>
+            {f'<div class="notice ok">{escape(success_msg)}</div>' if success_msg else ''}
+            {f'<div class="notice error">{escape(error_msg)}</div>' if error_msg else ''}
+            <div class="layout">
+                <section class="card">
+                    <div class="eyebrow">Perfiles</div>
+                    <h2 style="margin:4px 0 12px;">Autorizadores</h2>
+                    {profile_cards or '<div class="muted">No hay perfiles.</div>'}
+                </section>
+                <section class="card">
+                    <div class="eyebrow">Detalle</div>
+                    <h2 style="margin:4px 0 12px;">{escape(selected_title)}</h2>
+                    {copy_form}
+                    <form method="POST" action="/admin/estrategias-autorizacion/perfiles/{escape(selected_id)}/reglas">
+                        <table>
+                            <thead><tr><th>Regla</th><th>Rango</th><th>Switches</th></tr></thead>
+                            <tbody>{rules_rows}</tbody>
+                        </table>
+                        <div style="display:flex;justify-content:flex-end;margin-top:14px;">
+                            <button class="button" type="submit" {'disabled' if not selected_id else ''}>Guardar switches</button>
+                        </div>
+                    </form>
+                </section>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/admin/estrategias-autorizacion/perfiles/{profile_id}/copiar")
+async def estrategias_autorizacion_copy_profile(
+    profile_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    new_name: str = Form(...),
+) -> RedirectResponse:
+    _require_control_accesos_superadmin(current_empleado)
+    try:
+        profile = await copy_authorization_profile(
+            session,
+            source_profile_id=profile_id,
+            new_name=new_name,
+            actor_id=current_empleado.id,
+        )
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={profile.id}&success_msg=Perfil%20copiado",
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?error_msg={quote(str(exc))}",
+            status_code=303,
+        )
+
+
+@router.post("/admin/estrategias-autorizacion/perfiles/{profile_id}/reglas")
+async def estrategias_autorizacion_save_rules(
+    profile_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    enabled_rule_keys: List[str] = Form(default=[]),
+    first_rule_keys: List[str] = Form(default=[]),
+    second_rule_keys: List[str] = Form(default=[]),
+) -> RedirectResponse:
+    _require_control_accesos_superadmin(current_empleado)
+    try:
+        await update_authorization_profile_rules(
+            session,
+            profile_id=profile_id,
+            enabled_rule_keys=set(enabled_rule_keys or []),
+            first_rule_keys=set(first_rule_keys or []),
+            second_rule_keys=set(second_rule_keys or []),
+        )
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&success_msg=Switches%20guardados",
+            status_code=303,
+        )
+    except Exception as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&error_msg={quote(str(exc))}",
             status_code=303,
         )
 
@@ -8570,6 +9009,11 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES = {
     "juan pablo lopez romero",
 }
 
+_THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
+    "finance.employee_beneficiary.request",
+    "finance.employee_beneficiary.*",
+}
+
 
 def _normalize_employee_identity_text(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
@@ -8582,9 +9026,31 @@ def _normalize_employee_identity_text(value: Any) -> str:
 def _third_party_requester_name_matches(nombre: str) -> bool:
     if not nombre:
         return False
+    normalized = _normalize_employee_identity_text(nombre)
+    for allowed_raw in _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES:
+        allowed = _normalize_employee_identity_text(allowed_raw)
+        if normalized == allowed:
+            return True
+        if normalized.startswith(f"{allowed} "):
+            return True
+        if len(normalized.split()) >= 3 and allowed.startswith(f"{normalized} "):
+            return True
+    return False
+
+
+def _has_explicit_third_party_employee_request_permission(empleado: Empleado) -> bool:
+    """Check assigned profile tokens without role/superadmin escalation."""
+
+    permissions = {
+        str(token or "").strip().lower()
+        for token in (getattr(empleado, "permissions", set()) or set())
+        if str(token or "").strip()
+    }
+    if "*" in permissions:
+        return True
     return any(
-        nombre == allowed or nombre.startswith(f"{allowed} ")
-        for allowed in _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES
+        permission in permissions
+        for permission in _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS
     )
 
 
@@ -8596,6 +9062,7 @@ def _can_request_for_other_employee(empleado: Empleado) -> bool:
         empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
         or correo in _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS
         or _third_party_requester_name_matches(nombre)
+        or _has_explicit_third_party_employee_request_permission(empleado)
     )
 
 
@@ -8620,31 +9087,44 @@ def _beneficiary_employee_control_html(
     beneficiary_name = escape(
         beneficiary.nombre or beneficiary.correo or str(beneficiary.id)
     )
+    control_style = (
+        "border:1px solid #c7d2fe;background:#eef2ff;border-radius:12px;"
+        "padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;"
+    )
+    badge_style = (
+        "display:inline-block;background:#1d4ed8;color:white;border-radius:999px;"
+        "padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;"
+    )
     if _can_request_for_other_employee(requester):
         return (
-            f'<label for="{select_id}" style="display:block;font-weight:700;'
-            'margin-bottom:6px;">Empleado beneficiario</label>'
+            f'<div class="employee-beneficiary-control" style="{control_style}">'
+            f'<div><span style="{badge_style}">Paso 1</span> '
+            '<strong>Empleado beneficiario</strong></div>'
+            f'<label for="{select_id}" style="display:block;font-weight:700;">'
+            'Elige quien recibira el recurso</label>'
             f'<select name="beneficiario_empleado_id" id="{select_id}" required '
-            f'style="margin-bottom:8px;">{options_html}</select>'
+            f'style="margin-bottom:2px;">{options_html}</select>'
             f'<small>{escape(help_text)}</small>'
+            '</div>'
         )
     return (
-        f'<input type="hidden" name="beneficiario_empleado_id" '
-        f'value="{beneficiary.id}">'
-        '<span style="display:block;font-weight:700;">'
-        f'{beneficiary_name}</span>'
-        '<small>Este usuario solamente puede solicitar para sí mismo.</small>'
+        f'<div class="employee-beneficiary-control locked" style="{control_style}">'
+        f'<input type="hidden" name="beneficiario_empleado_id" value="{beneficiary.id}">'
+        f'<div><span style="{badge_style}">Beneficiario</span> '
+        '<strong>Empleado beneficiario</strong></div>'
+        f'<span style="display:block;font-weight:800;">{beneficiary_name}</span>'
+        '<small>Este usuario solamente puede solicitar para si mismo.</small>'
+        '</div>'
     )
-
 
 def _can_cancel_empty_informe_draft(
     actor: Empleado, cuenta: CuentaDeGastos
 ) -> bool:
-    """Only the requester/owner or a superadmin can cancel an empty draft."""
+    """Only the requester/owner, finance, or superadmin can cancel an empty draft."""
     role = (getattr(actor, "rol", None) or "").strip().lower()
     return bool(
         getattr(cuenta, "empleado_id", None) == getattr(actor, "id", None)
-        or role in {"superadmin", "super_admin"}
+        or role in {"finanzas", "superadmin", "super_admin"}
     )
 
 
@@ -8668,6 +9148,108 @@ def _empty_informe_cancel_error(
     if attachment_count:
         return "El informe tiene archivos vinculados y no puede cancelarse como vacío."
     return None
+
+async def _active_regional_operator_beneficiaries(
+    session: AsyncSession,
+) -> List[ProveedorCliente]:
+    result = await session.execute(
+        select(ProveedorCliente)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "operadores_regionales",
+        )
+        .order_by(ProveedorCliente.nombre.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _resolve_active_regional_operator_beneficiary(
+    session: AsyncSession,
+    raw_id: Optional[str],
+) -> Optional[ProveedorCliente]:
+    value = (raw_id or "").strip()
+    if not value:
+        return None
+    try:
+        operator_id = UUIDType(value)
+    except (TypeError, ValueError):
+        return None
+    result = await session.execute(
+        select(ProveedorCliente).where(
+            ProveedorCliente.id == operator_id,
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "operadores_regionales",
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+def _html_regional_operator_options(
+    operators: List[ProveedorCliente], selected_id: Optional[UUIDType]
+) -> str:
+    selected = str(selected_id or "")
+    options = '<option value="">-- Sin operador regional --</option>'
+    for operator in operators:
+        raw_account = (operator.cuenta_bancaria or "") or (operator.cuenta_clabe or "")
+        last4 = raw_account[-4:] if raw_account and len(raw_account) >= 4 else ""
+        label = operator.nombre or str(operator.id)
+        if operator.entidad_region:
+            label += f" - {operator.entidad_region}"
+        if last4:
+            label += f" (...{last4})"
+        options += (
+            f'<option value="{operator.id}"'
+            f' data-nombre="{escape(operator.nombre or "")}"'
+            f' data-banco="{escape(operator.banco or "")}"'
+            f' data-cuenta="{escape(operator.cuenta_bancaria or "")}"'
+            f' data-cuenta-clabe="{escape(operator.cuenta_clabe or "")}"'
+            f'{" selected" if str(operator.id) == selected else ""}>'
+            f'{escape(label)}</option>'
+        )
+    return options
+
+
+def _regional_operator_beneficiary_control_html(
+    *,
+    requester: Empleado,
+    selected_operator: Optional[ProveedorCliente],
+    options_html: str,
+    select_id: str,
+) -> str:
+    if not _can_request_for_other_employee(requester):
+        return ""
+    selected_note = ""
+    if selected_operator is not None:
+        selected_note = f'<small>Operador seleccionado: {escape(selected_operator.nombre or "")}</small>'
+    return f'''
+        <div class="regional-operator-beneficiary-control" style="border:1px solid #fed7aa;background:#fff7ed;border-radius:12px;padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;">
+            <div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>
+            <label for="{select_id}" style="display:block;font-weight:700;">Usar operador regional en lugar de empleado</label>
+            <select name="beneficiario_operador_id" id="{select_id}">{options_html}</select>
+            <small>Si seleccionas un operador regional, el documento queda a nombre del operador; solicitante y aprobacion siguen siendo del usuario autenticado.</small>
+            {selected_note}
+        </div>
+    '''
+
+
+def _html_single_proveedor_bank_account_options(
+    proveedor: ProveedorCliente,
+) -> str:
+    banco = escape(proveedor.banco or "")
+    cuenta = escape(proveedor.cuenta_bancaria or "")
+    clabe = escape(proveedor.cuenta_clabe or "")
+    raw_account = (proveedor.cuenta_bancaria or "") or (proveedor.cuenta_clabe or "")
+    last4 = raw_account[-4:] if raw_account and len(raw_account) >= 4 else ""
+    label = escape(proveedor.nombre or str(proveedor.id))
+    if banco:
+        label += f" - {banco}"
+    if last4:
+        label += f" (...{escape(last4)})"
+    return (
+        f'<option value="{proveedor.id}" data-banco="{banco}" '
+        f'data-cuenta="{cuenta}" data-cuenta-clabe="{clabe}" '
+        f'data-ultimos4="{escape(last4)}" selected>{label}</option>'
+    )
 
 
 async def _active_beneficiary_empleados(
@@ -8770,6 +9352,7 @@ def _solicitar_anticipo_form_url(
     edicion: str = "",
     budget_concept_id: str = "",
     beneficiario_empleado_id: str = "",
+    beneficiario_operador_id: str = "",
 ) -> str:
     """Build redirect URL back to Solicitar Anticipo with optional preserved fields."""
     url = "/gastos-terceros/solicitar-anticipo"
@@ -8795,6 +9378,10 @@ def _solicitar_anticipo_form_url(
     if beneficiario_empleado_id:
         extra.append(
             f"beneficiario_empleado_id={quote(str(beneficiario_empleado_id))}"
+        )
+    if beneficiario_operador_id:
+        extra.append(
+            f"beneficiario_operador_id={quote(str(beneficiario_operador_id))}"
         )
     if not extra:
         return url
@@ -12328,6 +12915,8 @@ async def panel(
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
+        ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
+        ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
     ], visible_tool_keys)
     configuracion_section = ""
     if configuracion_cards:
@@ -12482,6 +13071,31 @@ async def gastos_personales(
     return RedirectResponse(url="/gastos-empleado", status_code=302)
 
 
+def _solicitud_transferencia_list_actions_html(
+    documento: Documento, current_empleado: Empleado
+) -> str:
+    """Actions shown from the solicitudes list without bypassing workflow rules."""
+    detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
+    can_cancel_draft = (
+        getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
+        and getattr(documento, "estado", None) == "borrador"
+        and getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+    )
+    if not can_cancel_draft:
+        return detail_link
+    return (
+        '<div class="inline-actions" style="gap:6px;align-items:center;">'
+        f'{detail_link}'
+        f'<form method="POST" action="/documentos/{documento.id}/cancelar" '
+        'class="inline-form" style="display:inline;">'
+        '<input type="hidden" name="next" value="/gastos-terceros">'
+        '<input type="hidden" name="comentario" value="Borrador cancelado desde la bandeja de solicitudes.">'
+        '<button type="submit" class="button danger" '
+        'onclick="return confirm(\'?Cancelar esta solicitud en borrador? Se conservar? el registro de auditor?a.\')">'
+        'Cancelar borrador</button></form></div>'
+    )
+
+
 @router.get("/gastos-terceros", response_class=HTMLResponse)
 async def gastos_terceros(
     request: Request,
@@ -12580,10 +13194,9 @@ async def gastos_terceros(
         # Link to documento detail
         doc_link = f'<a href="/documentos/{doc.id}" class="text-link">{ref_display}</a>'
 
-        # Registrar pago link (if estado='aprobado' and role allows)
-        registrar_pago_link = '<span class="section-note">Sin acción</span>'
-        if doc.estado == 'aprobado' and current_empleado.rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
-            registrar_pago_link = f'<a href="/documentos/{doc.id}" class="button secondary">Ver detalle</a>'
+        registrar_pago_link = _solicitud_transferencia_list_actions_html(
+            doc, current_empleado
+        )
 
         archivos_terc = html_documento_archivos_cell(
             doc.id, terceros_adj_meta.get(doc.id, [])
@@ -12687,19 +13300,19 @@ async def gastos_terceros(
                             <h2>Resumen de solicitudes</h2>
                             <div class="section-note">Consulta montos, proveedor, fecha objetivo y estado sin salir al detalle salvo cuando haya una acción pendiente.</div>
                         </div>
-                        <div style="display:flex; gap:12px; flex-wrap:wrap;">
-                            <div style="min-width: 180px;">
-                                <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
-                                <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
-                            <div style="min-width: 220px;">
-                                <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Proveedor/Cliente</label>
-                                <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
-                            <div style="min-width: 220px;">
-                                <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
-                                <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
-                            </div>
+                    </div>
+                    <div class="terceros-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
+                        <div>
+                            <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
+                            <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Proveedor</label>
+                            <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
+                            <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
@@ -12797,6 +13410,7 @@ async def solicitar_anticipo_form(
     preserve_beneficiario = request.query_params.get(
         "beneficiario_empleado_id", ""
     )
+    preserve_operador = request.query_params.get("beneficiario_operador_id", "")
     preserve_concepto = request.query_params.get("concepto_pago", "")
     preserve_monto = request.query_params.get("monto_solicitado", "")
     preserve_proveedor = request.query_params.get("proveedor_cliente_id", "")
@@ -12866,11 +13480,33 @@ async def solicitar_anticipo_form(
             "su propiedad y su aprobación permanecen a nombre de quien solicita."
         ),
     )
-    bank_account_options = await _html_empleado_bank_account_options(
-        session,
-        beneficiario,
-        selected_id=preserve_proveedor or None,
-    )
+    regional_operator: Optional[ProveedorCliente] = None
+    regional_operator_control = ""
+    if _can_request_for_other_employee(current_empleado):
+        regional_operator = await _resolve_active_regional_operator_beneficiary(
+            session,
+            preserve_operador,
+        )
+        regional_operators = await _active_regional_operator_beneficiaries(session)
+        regional_operator_control = _regional_operator_beneficiary_control_html(
+            requester=current_empleado,
+            selected_operator=regional_operator,
+            options_html=_html_regional_operator_options(
+                regional_operators,
+                regional_operator.id if regional_operator else None,
+            ),
+            select_id="beneficiario_operador_id_anticipo",
+        )
+    if regional_operator is not None:
+        bank_account_options = _html_single_proveedor_bank_account_options(
+            regional_operator
+        )
+    else:
+        bank_account_options = await _html_empleado_bank_account_options(
+            session,
+            beneficiario,
+            selected_id=preserve_proveedor or None,
+        )
 
     if empleado_allocates_referencia_operaciones(current_empleado):
         ro_display_value = escape(
@@ -12933,13 +13569,17 @@ async def solicitar_anticipo_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
+                                {regional_operator_control}
                                 {beneficiary_employee_control}
                                 <div id="st_preview_beneficiario" style="margin-top:8px;font-size:12px;color:#475569;">Beneficiario seleccionado: {escape(beneficiario.nombre or "")}</div>
-                                <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:12px 0 6px;">Cuenta bancaria del beneficiario</label>
-                                <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
-                                    {bank_account_options}
-                                </select>
-                                <small>Después de elegir al empleado, selecciona una cuenta bancaria registrada a su nombre.</small>
+                                <div style="border:1px solid #d1fae5;background:#ecfdf5;border-radius:12px;padding:12px 14px;margin-top:12px;display:grid;gap:8px;">
+                                    <div><span style="display:inline-block;background:#047857;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Paso 2</span> <strong>Cuenta bancaria del beneficiario</strong></div>
+                                    <label for="proveedor_cliente_id" style="display:block;font-weight:700;margin:0;">Elige la cuenta registrada para ese beneficiario</label>
+                                    <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
+                                        {bank_account_options}
+                                    </select>
+                                    <small>La cuenta debe pertenecer al empleado u operador regional beneficiario seleccionado arriba.</small>
+                                </div>
                             </div>''',
                         )}
                         {render_st_doc_row(
@@ -13042,6 +13682,38 @@ async def solicitar_anticipo_form(
                 }});
             }})();
         </script>
+        <script>
+            (function() {{
+                var operatorSelect = document.getElementById("beneficiario_operador_id_anticipo");
+                var employeeSelect = document.getElementById("beneficiario_empleado_id");
+                var accountSelect = document.getElementById("proveedor_cliente_id");
+                var beneficiaryPreview = document.getElementById("st_preview_beneficiario");
+                if (!operatorSelect || !accountSelect) return;
+                function applyRegionalOperator() {{
+                    if (!operatorSelect.value) {{
+                        if (employeeSelect && employeeSelect.tagName === "SELECT") {{
+                            employeeSelect.dispatchEvent(new Event("change"));
+                        }}
+                        return;
+                    }}
+                    var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                    var option = document.createElement("option");
+                    option.value = operatorSelect.value;
+                    option.dataset.banco = selected.dataset.banco || "";
+                    option.dataset.cuenta = selected.dataset.cuenta || "";
+                    option.dataset.cuentaClabe = selected.dataset.cuentaClabe || "";
+                    option.dataset.ultimos4 = "";
+                    option.textContent = selected.textContent || selected.dataset.nombre || "Operador regional";
+                    option.selected = true;
+                    accountSelect.innerHTML = "";
+                    accountSelect.appendChild(option);
+                    if (beneficiaryPreview) beneficiaryPreview.textContent = "Operador regional: " + option.textContent;
+                    accountSelect.dispatchEvent(new Event("change"));
+                }}
+                operatorSelect.addEventListener("change", applyRegionalOperator);
+                applyRegionalOperator();
+            }})();
+        </script>
         {_render_auto_number_formatter_script([
             {
                 "displayId": "monto_solicitado_display",
@@ -13104,6 +13776,9 @@ async def solicitar_anticipo_submit(
     beneficiario_empleado_id_raw = (
         form_data.get("beneficiario_empleado_id") or ""
     ).strip()
+    beneficiario_operador_id_raw = (
+        form_data.get("beneficiario_operador_id") or ""
+    ).strip()
     categorias_raw = _form_list(form_data, "categorias")
     edicion_raw = form_data.get("edicion")
     currency_raw = form_data.get("currency")
@@ -13117,21 +13792,43 @@ async def solicitar_anticipo_submit(
         currency=(currency_raw or "MXN"),
         edicion=str(edicion_raw or ""),
         beneficiario_empleado_id=beneficiario_empleado_id_raw,
+        beneficiario_operador_id=beneficiario_operador_id_raw,
     )
+
+    beneficiario_operador = None
+    if beneficiario_operador_id_raw:
+        if not _can_request_for_other_employee(current_empleado):
+            return RedirectResponse(
+                url=_solicitar_anticipo_form_url(
+                    error_msg="No tienes permiso para solicitar anticipos a operadores regionales.",
+                    **preserve,
+                ),
+                status_code=303,
+            )
+        beneficiario_operador = await _resolve_active_regional_operator_beneficiary(
+            session, beneficiario_operador_id_raw
+        )
+        if beneficiario_operador is None:
+            return RedirectResponse(
+                url=_solicitar_anticipo_form_url(
+                    error_msg="Seleccione un operador regional activo.", **preserve
+                ),
+                status_code=303,
+            )
 
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         beneficiario_empleado_id_raw,
         default=current_empleado,
     )
-    if beneficiario is None:
+    if beneficiario is None and beneficiario_operador is None:
         return RedirectResponse(
             url=_solicitar_anticipo_form_url(
                 error_msg="Seleccione un beneficiario activo.", **preserve
             ),
             status_code=303,
         )
-    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+    if beneficiario is not None and not _beneficiary_selection_allowed(current_empleado, beneficiario):
         return RedirectResponse(
             url=_solicitar_anticipo_form_url(
                 error_msg=(
@@ -13170,13 +13867,13 @@ async def solicitar_anticipo_submit(
         )
     assert currency is not None
 
-    selected_proveedor = None
-    if proveedor_cliente_id_raw:
+    selected_proveedor = beneficiario_operador
+    if selected_proveedor is None and proveedor_cliente_id_raw:
         try:
             proveedor_uuid = UUIDType(proveedor_cliente_id_raw)
         except (ValueError, TypeError):
             proveedor_uuid = None
-        if proveedor_uuid is not None:
+        if proveedor_uuid is not None and beneficiario is not None:
             matches = await _get_matching_bank_accounts_for_empleado(
                 session=session, empleado=beneficiario
             )
@@ -13219,6 +13916,7 @@ async def solicitar_anticipo_submit(
             session,
             empleado=current_empleado,
             beneficiario=beneficiario,
+            beneficiario_operador=beneficiario_operador,
             nombre=None,
             tipo_cuenta=tipo_ok,
             torneo_id=torneo_uuid,
@@ -24368,6 +25066,499 @@ async def crear_nueva_solicitud_personal(
         status_code=303
     )
 
+def _authorization_strategy_badge_html(value: object) -> str:
+    label = str(value or "--").replace("_", " ").strip().title()
+    return f'<span class="status-chip info">{escape(label)}</span>'
+
+
+def _authorization_strategy_text_key(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return " ".join(
+        "".join(ch for ch in normalized if not unicodedata.combining(ch)).split()
+    )
+
+
+def _authorization_strategy_profile_matches_approver(
+    profile: dict[str, Any],
+    approver: dict[str, Any],
+) -> bool:
+    profile_role = _authorization_strategy_text_key(profile.get("role_key"))
+    approver_role = _authorization_strategy_text_key(approver.get("rol"))
+    if profile_role and approver_role and profile_role == approver_role:
+        return True
+
+    matcher = _authorization_strategy_text_key(profile.get("employee_matcher"))
+    approver_name = _authorization_strategy_text_key(approver.get("nombre"))
+    if not matcher or not approver_name:
+        return False
+    return matcher in approver_name or approver_name in matcher
+
+
+def _authorization_strategy_actual_route_preview_html(
+    *,
+    required_roles: list[str],
+    profiles: list[dict[str, Any]],
+    approval_entries: list[dict[str, Any]],
+) -> str:
+    approval_actions = {"aprobar", "aprobado", "auto_aprobar", "auto_aprobado"}
+    actual_approvers = [
+        entry
+        for entry in approval_entries
+        if _authorization_strategy_text_key(entry.get("accion")) in approval_actions
+    ]
+    matched_roles: set[str] = set()
+    for role_key in required_roles:
+        role_profiles = [
+            profile
+            for profile in profiles
+            if str(profile.get("role_key") or "") == str(role_key or "")
+        ]
+        for profile in role_profiles:
+            if any(
+                _authorization_strategy_profile_matches_approver(profile, approver)
+                for approver in actual_approvers
+            ):
+                matched_roles.add(str(role_key))
+                break
+
+    missing_roles = [str(role) for role in required_roles if str(role) not in matched_roles]
+    if not required_roles:
+        status_label = "Sin ruta sugerida"
+        status_note = "La matriz no devolvio roles requeridos para comparar."
+    elif not actual_approvers:
+        status_label = "Pendiente de aprobacion"
+        status_note = "Todavia no hay aprobaciones registradas para comparar contra la matriz."
+    elif missing_roles:
+        status_label = "Diferencia consultiva"
+        status_note = "Faltan roles sugeridos por matriz: " + ", ".join(missing_roles)
+    else:
+        status_label = "Coincide con matriz"
+        status_note = "Las aprobaciones registradas cubren los roles sugeridos visibles."
+
+    actual_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(entry.get("fecha") or "--"))}</td>
+            <td>{escape(str(entry.get("accion") or "--"))}</td>
+            <td>{escape(str(entry.get("nombre") or "--"))}</td>
+            <td>{escape(str(entry.get("rol") or "--"))}</td>
+            <td>{escape(str(entry.get("departamento") or "--"))}</td>
+        </tr>
+        '''
+        for entry in approval_entries
+    )
+    if not actual_rows:
+        actual_rows = '<tr><td colspan="5" style="text-align:center; padding:16px;">No hay aprobaciones registradas todavia.</td></tr>'
+
+    matched_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in sorted(matched_roles)
+    ) or '<span class="status-chip info">Ninguno</span>'
+    missing_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in missing_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+
+    return f'''
+        <div class="notice info" style="margin-top:16px;">
+            <strong>Comparacion consultiva:</strong> {escape(status_label)}<br>
+            <small>{escape(status_note)}</small>
+        </div>
+        <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <strong>Roles cubiertos:</strong> {matched_chips}
+            <strong style="margin-left:12px;">Roles faltantes:</strong> {missing_chips}
+        </div>
+        <div class="table-shell" style="margin-top:16px;">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Fecha</th>
+                        <th>Accion</th>
+                        <th>Aprobador registrado</th>
+                        <th>Rol actual</th>
+                        <th>Departamento</th>
+                    </tr>
+                </thead>
+                <tbody>{actual_rows}</tbody>
+            </table>
+        </div>
+    '''
+
+async def _render_document_authorization_route_warning(
+    session: AsyncSession,
+    documento_id: UUIDType,
+) -> str:
+    """Render the latest persisted soft authorization-route warning, if any."""
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT metadata_json, created_at
+                FROM customer_success_audit_events
+                WHERE documento_id = :documento_id
+                  AND action = 'documento.approved'
+                  AND metadata_json ? 'authorization_route_warning'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load soft authorization route warning",
+            extra={"documento_id": str(documento_id)},
+        )
+        return ""
+
+    row = result.fetchone()
+    if row is None:
+        return ""
+    metadata = row._mapping.get("metadata_json") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    warning = metadata.get("authorization_route_warning") if isinstance(metadata, dict) else None
+    if not isinstance(warning, dict):
+        return ""
+
+    missing_roles = warning.get("missing_role_keys") or []
+    matched_roles = warning.get("matched_role_keys") or []
+    required_roles = warning.get("required_role_keys") or []
+    approvers = warning.get("actual_approvers") or []
+
+    missing_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in missing_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+    matched_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in matched_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+    required_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in required_roles
+    ) or '<span class="status-chip info">Sin ruta</span>'
+    approver_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(approver.get("fecha") or "--"))}</td>
+            <td>{escape(str(approver.get("nombre") or "--"))}</td>
+            <td>{escape(str(approver.get("rol") or "--"))}</td>
+            <td>{escape(str(approver.get("departamento") or "--"))}</td>
+        </tr>
+        '''
+        for approver in approvers
+        if isinstance(approver, dict)
+    ) or '<tr><td colspan="4" style="text-align:center; padding:16px;">Sin aprobadores registrados en el warning.</td></tr>'
+
+    created_display = format_value(row._mapping.get("created_at"))
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Warning suave de autorizacion</h2>
+                    <div class="section-note">
+                        Diferencia registrada en auditoria. No bloqueo la operacion, pero queda trazable para revision.
+                    </div>
+                </div>
+                <div class="status-chip warning">Soft warning</div>
+            </div>
+            <div class="notice warning">
+                <strong>Ruta real incompleta contra matriz consultiva.</strong><br>
+                <small>{escape(str(warning.get("message") or "Actual approvals do not cover all advisory matrix roles."))}</small>
+                {f'<br><small>Registrado: {created_display}</small>' if created_display else ''}
+            </div>
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles requeridos:</strong> {required_chips}
+                <strong style="margin-left:12px;">Cubiertos:</strong> {matched_chips}
+                <strong style="margin-left:12px;">Faltantes:</strong> {missing_chips}
+            </div>
+            <div class="table-shell" style="margin-top:16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Aprobador registrado</th>
+                            <th>Rol</th>
+                            <th>Departamento</th>
+                        </tr>
+                    </thead>
+                    <tbody>{approver_rows}</tbody>
+                </table>
+            </div>
+        </section>
+    '''
+
+
+async def _render_document_authorization_pre_send_preview(
+    session: AsyncSession,
+    documento: Documento,
+    *,
+    can_send_documento: bool,
+) -> str:
+    """Preview the advisory authorization route before a draft is sent."""
+    if not can_send_documento:
+        return ""
+    try:
+        from ..services.authorization_profile_service import (
+            build_document_authorization_evidence,
+        )
+
+        preview_result = await session.execute(
+            select(Documento)
+            .options(selectinload(Documento.empleado))
+            .where(Documento.id == documento.id)
+        )
+        preview_documento = preview_result.scalar_one_or_none() or documento
+        evidence = await build_document_authorization_evidence(
+            session, preview_documento
+        )
+    except Exception:
+        logger.exception(
+            "Failed to build pre-send authorization strategy preview",
+            extra={"documento_id": str(getattr(documento, "id", ""))},
+        )
+        return ""
+
+    rule = evidence.get("rule") or {}
+    if not isinstance(rule, dict):
+        rule = {}
+    inputs = evidence.get("inputs") or {}
+    if not isinstance(inputs, dict):
+        inputs = {}
+    profiles = evidence.get("matching_profiles") or []
+    if not isinstance(profiles, list):
+        profiles = []
+    required_roles = evidence.get("required_role_keys") or []
+    if not isinstance(required_roles, list):
+        required_roles = []
+    required_roles = [str(role) for role in required_roles if role]
+
+    rule_label = rule.get("erogation_label") or rule.get("key") or "Sin regla sugerida"
+    role_chips = "".join(
+        _authorization_strategy_badge_html(role_key) for role_key in required_roles
+    ) or '<span class="status-chip info">Sin roles requeridos</span>'
+    profile_chips = "".join(
+        _authorization_strategy_badge_html(
+            profile.get("name") or profile.get("profile_name") or profile.get("role_key")
+        )
+        for profile in profiles
+        if isinstance(profile, dict)
+    ) or '<span class="status-chip info">Sin perfiles candidatos</span>'
+    fallback = evidence.get("fallback_reason") or ""
+    fallback_html = (
+        f'<div class="notice warning" style="margin-top:12px;"><strong>Fallback:</strong> {escape(str(fallback))}</div>'
+        if fallback
+        else ""
+    )
+
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Preview de autorizacion al enviar</h2>
+                    <div class="section-note">
+                        Vista previa consultiva de la matriz antes de mandar el documento; no bloquea el envio.
+                    </div>
+                </div>
+                <div class="status-chip info">Preview</div>
+            </div>
+            <div class="notice info">
+                <strong>Si se envia ahora:</strong> la matriz sugeriria {escape(str(rule_label))}.<br>
+                <small>Area: {escape(str(inputs.get("area") or "--"))} - Tipo: {escape(str(inputs.get("erogation_type") or "--"))} - Monto MXN: {escape(str(inputs.get("amount_mxn") or "--"))}</small>
+            </div>
+            {fallback_html}
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles sugeridos:</strong> {role_chips}
+            </div>
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Perfiles candidatos:</strong> {profile_chips}
+            </div>
+        </section>
+    '''
+
+
+async def _render_document_authorization_strategy_evidence(
+    session: AsyncSession,
+    documento_id: UUIDType,
+) -> str:
+    """Render latest advisory authorization-strategy evidence for document detail."""
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT metadata_json, created_at
+                FROM customer_success_audit_events
+                WHERE documento_id = :documento_id
+                  AND action = 'documento.sent'
+                ORDER BY created_at DESC
+                LIMIT 10
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load advisory authorization strategy evidence",
+            extra={"documento_id": str(documento_id)},
+        )
+        return ""
+
+    selected_metadata = None
+    selected_created_at = None
+    for metadata_json, created_at in result.all():
+        metadata = metadata_json or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if isinstance(metadata, dict) and metadata.get("authorization_strategy"):
+            selected_metadata = metadata
+            selected_created_at = created_at
+            break
+
+    if not selected_metadata:
+        return ""
+
+    evidence = selected_metadata.get("authorization_strategy") or {}
+    if not isinstance(evidence, dict):
+        return ""
+
+    inputs = evidence.get("inputs") or {}
+    if not isinstance(inputs, dict):
+        inputs = {}
+    rule = evidence.get("matched_rule") or evidence.get("rule") or {}
+    if not isinstance(rule, dict):
+        rule = {}
+    profiles = evidence.get("matching_profiles") or []
+    if not isinstance(profiles, list):
+        profiles = []
+    required_roles = evidence.get("required_role_keys") or []
+    if not isinstance(required_roles, list):
+        required_roles = []
+    required_roles = [str(role) for role in required_roles if role]
+
+    try:
+        approvals_result = await session.execute(
+            text(
+                """
+                SELECT a.accion, a.fecha, e.nombre, e.rol, e.departamento
+                FROM aprobaciones a
+                LEFT JOIN empleados e ON e.id = a.aprobador_id
+                WHERE a.tipo_entidad = 'documento'
+                  AND a.entidad_id = :documento_id
+                ORDER BY a.fecha ASC
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+        approval_entries = [
+            {
+                "accion": row._mapping.get("accion"),
+                "fecha": format_value(row._mapping.get("fecha")),
+                "nombre": row._mapping.get("nombre"),
+                "rol": row._mapping.get("rol"),
+                "departamento": row._mapping.get("departamento"),
+            }
+            for row in approvals_result.fetchall()
+        ]
+    except Exception:
+        logger.exception(
+            "Failed to load document approvals for authorization preview",
+            extra={"documento_id": str(documento_id)},
+        )
+        approval_entries = []
+
+    rule_label = rule.get("label") or rule.get("erogation_label") or rule.get("rule_key") or "Sin regla sugerida"
+    area_label = rule.get("area_label") or inputs.get("area") or inputs.get("area_key") or "--"
+    erogation_label = rule.get("erogation_label") or inputs.get("erogation_type") or inputs.get("erogation_key") or "--"
+    amount_mode = rule.get("amount_mode") or "--"
+    amount_value = rule.get("amount_value") or inputs.get("amount_mxn") or "--"
+
+    input_cards = "".join(
+        f'''
+        <div class="meta-card">
+            <span>{escape(label)}</span>
+            <strong>{escape(str(value if value is not None else "--"))}</strong>
+            <small>{escape(note)}</small>
+        </div>
+        '''
+        for label, value, note in [
+            ("Area", inputs.get("area") or inputs.get("area_key") or "--", "Origen operativo inferido."),
+            ("Tipo de erogacion", inputs.get("erogation_type") or inputs.get("erogation_key") or "--", "Clasificacion usada para la matriz."),
+            ("Monto MXN", inputs.get("amount_mxn") or "--", "Base de rango de autorizacion."),
+            ("Factura", "Si" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
+            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
+            ("Urgente", "Si" if inputs.get("is_urgent") else "No", "Excepcion operativa de prioridad."),
+        ]
+    )
+
+    role_chips = "".join(
+        _authorization_strategy_badge_html(role_key) for role_key in required_roles
+    ) or '<span class="status-chip info">Sin roles requeridos</span>'
+
+    profile_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(profile.get("profile_name") or profile.get("name") or "--"))}</td>
+            <td>{escape(str(profile.get("role_key") or "--"))}</td>
+            <td>{"Primera autorizacion" if profile.get("can_first_approve") else "--"}</td>
+            <td>{"Segunda autorizacion" if profile.get("can_second_approve") else "--"}</td>
+        </tr>
+        '''
+        for profile in profiles
+        if isinstance(profile, dict)
+    )
+    if not profile_rows:
+        profile_rows = '<tr><td colspan="4" style="text-align:center; padding:16px;">No hay perfiles configurados para esta ruta sugerida.</td></tr>'
+
+    route_preview_html = _authorization_strategy_actual_route_preview_html(
+        required_roles=required_roles,
+        profiles=[profile for profile in profiles if isinstance(profile, dict)],
+        approval_entries=approval_entries,
+    )
+    created_display = format_value(selected_created_at)
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Ruta de autorizacion sugerida</h2>
+                    <div class="section-note">
+                        Evidencia consultiva capturada al enviar el documento; no bloquea ni sustituye el flujo actual.
+                    </div>
+                </div>
+                <div class="status-chip info">Advisory</div>
+            </div>
+            <div class="notice info">
+                <strong>Regla sugerida:</strong> {escape(str(rule_label))}<br>
+                <strong>Area:</strong> {escape(str(area_label))} -
+                <strong>Tipo:</strong> {escape(str(erogation_label))} -
+                <strong>Rango:</strong> {escape(str(amount_mode))} {escape(str(amount_value))}
+                {f'<br><small>Registrada: {created_display}</small>' if created_display else ''}
+            </div>
+            <div class="meta-grid" style="margin-top:16px;">
+                {input_cards}
+            </div>
+            <div style="margin-top:16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles requeridos:</strong> {role_chips}
+            </div>
+            <div class="table-shell" style="margin-top:16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Perfil</th>
+                            <th>Rol</th>
+                            <th>Primera</th>
+                            <th>Segunda</th>
+                        </tr>
+                    </thead>
+                    <tbody>{profile_rows}</tbody>
+                </table>
+            </div>
+            {route_preview_html}
+        </section>
+    '''
+
 
 @router.get("/documentos/{documento_id}", response_class=HTMLResponse, response_model=None)
 async def ver_documento(
@@ -24950,13 +26141,41 @@ async def ver_documento(
         </section>
     """
 
+    authorization_strategy_html = await _render_document_authorization_strategy_evidence(
+        session, documento_id
+    )
+
+    authorization_route_warning_html = await _render_document_authorization_route_warning(
+        session, documento_id
+    )
+
+    authorization_pre_send_preview_html = await _render_document_authorization_pre_send_preview(
+        session, documento, can_send_documento=can_send_documento
+    )
+
     solicitud_transferencia_html = ""
     if documento.tipo == "SOLICITUD":
         st_beneficiario = ""
         st_banco = ""
         st_cuenta = ""
         st_cuenta_clabe = ""
-        if documento.proveedor_cliente_id and documento.proveedor_cliente:
+        if is_employee_reimbursement(documento):
+            st_beneficiario = (
+                documento.beneficiario_empleado.nombre
+                if documento.beneficiario_empleado
+                else ""
+            )
+            if documento.proveedor_cliente:
+                st_banco = documento.proveedor_cliente.banco or ""
+                st_cuenta = mask_cuenta_display(
+                    documento.proveedor_cliente.cuenta_bancaria,
+                    ultimos4=cuenta_last4(
+                        documento.proveedor_cliente.cuenta_clabe,
+                        documento.proveedor_cliente.cuenta_bancaria,
+                    ),
+                )
+                st_cuenta_clabe = documento.proveedor_cliente.cuenta_clabe or ""
+        elif documento.proveedor_cliente_id and documento.proveedor_cliente:
             st_beneficiario = documento.proveedor_cliente.nombre or ""
             st_banco = documento.proveedor_cliente.banco or ""
             st_cuenta = mask_cuenta_display(
@@ -25330,6 +26549,9 @@ async def ver_documento(
                 {comprobante_pago_html}
                 {solicitud_withdraw_html}
                 {archivos_adjuntos_html}
+                {authorization_strategy_html}
+                {authorization_route_warning_html}
+                {authorization_pre_send_preview_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
@@ -26018,7 +27240,8 @@ async def _create_cuenta_de_gastos_with_informe(
     *,
     empleado: Empleado,
     beneficiario: Optional[Empleado],
-    nombre: Optional[str],
+    beneficiario_operador: Optional[ProveedorCliente] = None,
+    nombre: Optional[str] = None,
     tipo_cuenta: str,
     torneo_id: UUIDType,
     fase: Optional[str],
@@ -26046,7 +27269,8 @@ async def _create_cuenta_de_gastos_with_informe(
     try:
         cuenta = CuentaDeGastos(
             empleado_id=empleado.id,
-            beneficiario_empleado_id=(beneficiario or empleado).id,
+            beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
+            beneficiario_proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
             referencia_base=referencia_base_final,
             nombre=nombre,
             estado="abierta",
@@ -26064,7 +27288,8 @@ async def _create_cuenta_de_gastos_with_informe(
         )
         informe = Documento(
             empleado_id=empleado.id,
-            beneficiario_empleado_id=(beneficiario or empleado).id,
+            beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
+            proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -26294,6 +27519,7 @@ async def crear_cuenta_de_gastos_form(
     preserve_beneficiario = request.query_params.get(
         "beneficiario_empleado_id", ""
     )
+    preserve_operador = request.query_params.get("beneficiario_operador_id", "")
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         preserve_beneficiario,
@@ -26319,6 +27545,23 @@ async def crear_cuenta_de_gastos_form(
             "El responsable, propietario y aprobador continúan siendo los del usuario que lo crea."
         ),
     )
+    regional_operator: Optional[ProveedorCliente] = None
+    regional_operator_control = ""
+    if _can_request_for_other_employee(current_empleado):
+        regional_operator = await _resolve_active_regional_operator_beneficiary(
+            session,
+            preserve_operador,
+        )
+        regional_operators = await _active_regional_operator_beneficiaries(session)
+        regional_operator_control = _regional_operator_beneficiary_control_html(
+            requester=current_empleado,
+            selected_operator=regional_operator,
+            options_html=_html_regional_operator_options(
+                regional_operators,
+                regional_operator.id if regional_operator else None,
+            ),
+            select_id="beneficiario_operador_id_informe",
+        )
     preserve_uuid = None
     if preserve_torneo_id:
         try:
@@ -26402,6 +27645,7 @@ async def crear_cuenta_de_gastos_form(
             <form method="POST" action="/informes-de-gastos/crear" id="form-crear-cuenta">
                 <div class="form-group">
                     <label>Beneficiario del informe</label>
+                    {regional_operator_control}
                     {beneficiary_employee_control}
                 </div>
                 <div class="form-group">
@@ -26505,23 +27749,55 @@ async def crear_cuenta_de_gastos_submit(
     beneficiario_empleado_id_raw = (
         form_data.get("beneficiario_empleado_id") or ""
     ).strip()
+    beneficiario_operador_id_raw = (
+        form_data.get("beneficiario_operador_id") or ""
+    ).strip()
+    beneficiario_operador: Optional[ProveedorCliente] = None
+    if beneficiario_operador_id_raw:
+        if not _can_request_for_other_employee(current_empleado):
+            return RedirectResponse(
+                url=_append_query_params(
+                    "/informes-de-gastos/crear",
+                    {
+                        "error_msg": "No tienes permiso para crear informes a operadores regionales.",
+                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    },
+                ),
+                status_code=303,
+            )
+        beneficiario_operador = await _resolve_active_regional_operator_beneficiary(
+            session,
+            beneficiario_operador_id_raw,
+        )
+        if beneficiario_operador is None:
+            return RedirectResponse(
+                url=_append_query_params(
+                    "/informes-de-gastos/crear",
+                    {
+                        "error_msg": "Seleccione un operador regional activo.",
+                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    },
+                ),
+                status_code=303,
+            )
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         beneficiario_empleado_id_raw,
         default=current_empleado,
     )
-    if beneficiario is None:
+    if beneficiario is None and beneficiario_operador is None:
         return RedirectResponse(
             url=_append_query_params(
                 "/informes-de-gastos/crear",
                 {
                     "error_msg": "Seleccione un beneficiario activo.",
                     "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                    "beneficiario_operador_id": beneficiario_operador_id_raw,
                 },
             ),
             status_code=303,
         )
-    if not _beneficiary_selection_allowed(current_empleado, beneficiario):
+    if beneficiario is not None and not _beneficiary_selection_allowed(current_empleado, beneficiario):
         return RedirectResponse(
             url=_append_query_params(
                 "/informes-de-gastos/crear",
@@ -26530,6 +27806,7 @@ async def crear_cuenta_de_gastos_submit(
                         "No tienes permiso para crear un informe a nombre de otro empleado."
                     ),
                     "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+                    "beneficiario_operador_id": beneficiario_operador_id_raw,
                 },
             ),
             status_code=303,
@@ -26560,6 +27837,11 @@ async def crear_cuenta_de_gastos_submit(
                 "&beneficiario_empleado_id="
                 f"{quote(beneficiario_empleado_id_raw)}"
             )
+        if beneficiario_operador_id_raw:
+            base += (
+                "&beneficiario_operador_id="
+                f"{quote(beneficiario_operador_id_raw)}"
+            )
         return RedirectResponse(url=base, status_code=303)
 
     assert tipo_ok is not None and torneo_id_uuid is not None
@@ -26577,73 +27859,36 @@ async def crear_cuenta_de_gastos_submit(
         )
     assert currency is not None
 
-    try:
-        referencia_base_final: Optional[str] = None
-        for _ in range(25):
-            referencia_base_try = generate_referencia_base()
-            existing = await session.execute(
-                select(CuentaDeGastos).where(
-                    CuentaDeGastos.empleado_id == current_empleado.id,
-                    CuentaDeGastos.referencia_base == referencia_base_try,
-                )
-            )
-            if existing.scalar_one_or_none():
-                continue
-            referencia_base_final = referencia_base_try
-            break
-        if referencia_base_final is None:
-            return RedirectResponse(
-                url=_append_error_params(
-                    "/informes-de-gastos/crear",
-                    error_msg="No se pudo generar una referencia interna única. Intente de nuevo.",
-                ),
-                status_code=303,
-            )
-
-        cuenta = CuentaDeGastos(
-            empleado_id=current_empleado.id,
-            beneficiario_empleado_id=beneficiario.id,
-            referencia_base=referencia_base_final,
-            nombre=nombre_val,
-            estado="abierta",
-            tipo_cuenta=tipo_ok,
-            torneo_id=torneo_id_uuid,
-            fase=fase_final,
-            categorias=categorias,
-            edicion=edicion,
-            currency=currency,
-        )
-        session.add(cuenta)
-        await session.flush()
-        ro_informe = await allocate_referencia_operaciones_for_empleado(
-            session, current_empleado
-        )
-        informe = Documento(
-            empleado_id=current_empleado.id,
-            beneficiario_empleado_id=beneficiario.id,
-            tipo="INFORME",
-            numero_referencia=f"I-{referencia_base_final}",
-            estado="borrador",
-            referencia_base=referencia_base_final,
-            referencia_operaciones=ro_informe,
-            cuenta_gastos_id=cuenta.id,
-            categorias=categorias,
-            edicion=edicion,
-            currency=currency,
-        )
-        session.add(informe)
-        await session.commit()
+    cuenta, create_error = await _create_cuenta_de_gastos_with_informe(
+        session,
+        empleado=current_empleado,
+        beneficiario=beneficiario,
+        beneficiario_operador=beneficiario_operador,
+        nombre=nombre_val,
+        tipo_cuenta=tipo_ok,
+        torneo_id=torneo_id_uuid,
+        fase=fase_final,
+        categorias=categorias,
+        edicion=edicion,
+        currency=currency,
+    )
+    if create_error or cuenta is None:
         return RedirectResponse(
-            url=_append_success_params(
-                f"/informes-de-gastos/{cuenta.id}",
-                success="creada",
-                msg="Informe creado. Agregue gastos desde Mis Gastos o cree solicitudes aquí.",
+            url=_append_error_params(
+                "/informes-de-gastos/crear",
+                error_msg=create_error or "No se pudo crear el informe de gastos.",
             ),
-            status_code=303
+            status_code=303,
         )
-    except (ProgrammingError, OperationalError):
-        await session.rollback()
-        return _schema_outdated_html_response()
+
+    return RedirectResponse(
+        url=_append_success_params(
+            f"/informes-de-gastos/{cuenta.id}",
+            success="creada",
+            msg="Informe creado. Agregue gastos desde Mis Gastos o cree solicitudes aqui.",
+        ),
+        status_code=303,
+    )
 
 
 @router.post("/informes-de-gastos/adjuntar-gastos")
@@ -27272,7 +28517,7 @@ async def cancelar_informe_vacio_borrador(
     if not _can_cancel_empty_informe_draft(current_empleado, cuenta):
         raise HTTPException(
             status_code=403,
-            detail="Solo el solicitante o un superadmin puede cancelar este borrador.",
+            detail="Solo el solicitante, finanzas o un superadmin puede cancelar este borrador.",
         )
 
     informe_result = await session.execute(
@@ -27362,7 +28607,7 @@ async def cancelar_informe_vacio_borrador(
             entidad_id=informe_doc.id,
             aprobador_id=current_empleado.id,
             accion="cancelar",
-            comentario="Borrador vacío cancelado por el solicitante.",
+            comentario="Borrador vacio cancelado por usuario autorizado.",
             fecha=cancelled_at,
         )
     )

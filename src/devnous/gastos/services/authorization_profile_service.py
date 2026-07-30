@@ -1,0 +1,667 @@
+"""Persistent authorization profile board.
+
+Profiles are the UI-friendly layer over the authorization strategy matrix: a
+person-like profile (Perfil Odilon, Perfil Luis Angel, etc.) contains editable
+rule switches copied from the canonical resolver. This stage is advisory and
+keeps enforcement out of the live workflow.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+import os
+from typing import Any, Iterable, Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .authorization_strategy_service import (
+    APPROVER_ROLES,
+    AUTHORIZATION_STRATEGY_RULES,
+    AuthorizationStrategyRule,
+)
+
+
+@dataclass(frozen=True)
+class AuthorizationProfile:
+    id: UUID
+    profile_key: str
+    name: str
+    role_key: str
+    employee_matcher: str
+    active: bool
+    rules: tuple[dict[str, Any], ...]
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+PROFILE_DEFINITIONS: tuple[tuple[str, str, str, str], ...] = (
+    ("perfil_odilon", "Perfil Odilon", "director_operaciones", "odilon trujillo"),
+    ("perfil_luis_angel", "Perfil Luis Angel", "dayf", "luis angel orozco"),
+    ("perfil_olof", "Perfil Olof", "dgoat", "olof"),
+    ("perfil_benjamin", "Perfil Benjamin", "gerente_ayf", "benjamin jimenez"),
+    ("perfil_dg", "Perfil DG", "dg", "federico gonzalez"),
+)
+
+
+def _profile_rule_from_strategy(
+    rule: AuthorizationStrategyRule,
+    *,
+    role_key: str,
+) -> Optional[dict[str, Any]]:
+    is_first = rule.first_approver_role == role_key
+    is_second = role_key in rule.second_approver_roles
+    if not is_first and not is_second:
+        return None
+    return {
+        "rule_key": rule.key,
+        "enabled": True,
+        "area_key": rule.area_key,
+        "erogation_key": rule.erogation_key,
+        "erogation_label": rule.erogation_label,
+        "amount_mode": rule.amount_mode,
+        "amount_value": str(rule.amount_value) if rule.amount_value is not None else "",
+        "can_first_approve": is_first,
+        "can_second_approve": is_second,
+        "requires_pending_advance_review": rule.requires_pending_advance_review,
+        "requires_no_invoice": rule.requires_no_invoice,
+        "requires_unbudgeted": rule.requires_unbudgeted,
+        "requires_budget_excess": rule.requires_budget_excess,
+        "requires_urgent": rule.requires_urgent,
+        "conditions": list(rule.conditions),
+    }
+
+
+def default_profile_rules(role_key: str) -> tuple[dict[str, Any], ...]:
+    rows = [
+        row
+        for rule in AUTHORIZATION_STRATEGY_RULES
+        if (row := _profile_rule_from_strategy(rule, role_key=role_key)) is not None
+    ]
+    return tuple(rows)
+
+
+async def ensure_authorization_profiles_schema(session: AsyncSession) -> None:
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS authorization_profiles (
+                id UUID PRIMARY KEY,
+                profile_key VARCHAR(120) NOT NULL UNIQUE,
+                name VARCHAR(160) NOT NULL,
+                role_key VARCHAR(80) NOT NULL,
+                employee_matcher VARCHAR(200) NULL,
+                rules JSONB NOT NULL DEFAULT '[]'::jsonb,
+                active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_authorization_profiles_profile_key ON authorization_profiles(profile_key)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_authorization_profiles_active ON authorization_profiles(active)"
+        )
+    )
+
+
+async def seed_default_authorization_profiles(
+    session: AsyncSession,
+    *,
+    actor_id: Any = None,
+) -> None:
+    await ensure_authorization_profiles_schema(session)
+    for profile_key, name, role_key, matcher in PROFILE_DEFINITIONS:
+        rules = list(default_profile_rules(role_key))
+        await session.execute(
+            text(
+                """
+                INSERT INTO authorization_profiles (
+                    id, profile_key, name, role_key, employee_matcher, rules,
+                    active, created_by_empleado_id, created_at, updated_at
+                )
+                VALUES (
+                    :id, :profile_key, :name, :role_key, :matcher,
+                    CAST(:rules_json AS jsonb), TRUE, :actor_id, NOW(), NOW()
+                )
+                ON CONFLICT (profile_key) DO NOTHING
+                """
+            ),
+            {
+                "id": uuid4(),
+                "profile_key": profile_key,
+                "name": name,
+                "role_key": role_key,
+                "matcher": matcher,
+                "rules_json": __import__("json").dumps(rules),
+                "actor_id": actor_id,
+            },
+        )
+
+
+def _row_to_profile(row: Any) -> AuthorizationProfile:
+    raw_rules = row.rules if hasattr(row, "rules") else row[5]
+    if raw_rules is None:
+        rules = ()
+    elif isinstance(raw_rules, str):
+        rules = tuple(__import__("json").loads(raw_rules))
+    else:
+        rules = tuple(raw_rules)
+    return AuthorizationProfile(
+        id=row.id if hasattr(row, "id") else row[0],
+        profile_key=row.profile_key if hasattr(row, "profile_key") else row[1],
+        name=row.name if hasattr(row, "name") else row[2],
+        role_key=row.role_key if hasattr(row, "role_key") else row[3],
+        employee_matcher=(
+            row.employee_matcher if hasattr(row, "employee_matcher") else row[4]
+        ),
+        active=bool(row.active if hasattr(row, "active") else row[6]),
+        rules=rules,
+        created_at=getattr(row, "created_at", None),
+        updated_at=getattr(row, "updated_at", None),
+    )
+
+
+async def list_authorization_profiles(
+    session: AsyncSession,
+) -> list[AuthorizationProfile]:
+    await seed_default_authorization_profiles(session)
+    result = await session.execute(
+        text(
+            """
+            SELECT id, profile_key, name, role_key, employee_matcher, rules, active,
+                   created_at, updated_at
+            FROM authorization_profiles
+            ORDER BY name
+            """
+        )
+    )
+    return [_row_to_profile(row) for row in result.fetchall()]
+
+
+async def get_authorization_profile(
+    session: AsyncSession,
+    profile_id: UUID | str,
+) -> Optional[AuthorizationProfile]:
+    await seed_default_authorization_profiles(session)
+    result = await session.execute(
+        text(
+            """
+            SELECT id, profile_key, name, role_key, employee_matcher, rules, active,
+                   created_at, updated_at
+            FROM authorization_profiles
+            WHERE id = :profile_id
+            """
+        ),
+        {"profile_id": str(profile_id)},
+    )
+    row = result.fetchone()
+    return _row_to_profile(row) if row else None
+
+
+def summarize_profile_rules(rules: Iterable[dict[str, Any]]) -> dict[str, int]:
+    enabled = 0
+    first = 0
+    second = 0
+    exceptions = 0
+    total = 0
+    for rule in rules:
+        total += 1
+        if rule.get("enabled"):
+            enabled += 1
+        if rule.get("can_first_approve"):
+            first += 1
+        if rule.get("can_second_approve"):
+            second += 1
+        if any(
+            rule.get(flag)
+            for flag in (
+                "requires_no_invoice",
+                "requires_unbudgeted",
+                "requires_budget_excess",
+                "requires_urgent",
+                "requires_pending_advance_review",
+            )
+        ):
+            exceptions += 1
+    return {
+        "total": total,
+        "enabled": enabled,
+        "first": first,
+        "second": second,
+        "exceptions": exceptions,
+    }
+
+
+async def copy_authorization_profile(
+    session: AsyncSession,
+    *,
+    source_profile_id: UUID | str,
+    new_name: str,
+    actor_id: Any = None,
+) -> AuthorizationProfile:
+    source = await get_authorization_profile(session, source_profile_id)
+    if source is None:
+        raise ValueError("Perfil origen no encontrado")
+    base_key = "perfil_" + "_".join(new_name.lower().strip().split())
+    key = base_key[:100] or f"perfil_{uuid4().hex[:8]}"
+    suffix = 2
+    while True:
+        existing = await session.execute(
+            text("SELECT 1 FROM authorization_profiles WHERE profile_key = :key"),
+            {"key": key},
+        )
+        if existing.fetchone() is None:
+            break
+        key = f"{base_key[:92]}_{suffix}"
+        suffix += 1
+    new_id = uuid4()
+    await session.execute(
+        text(
+            """
+            INSERT INTO authorization_profiles (
+                id, profile_key, name, role_key, employee_matcher, rules,
+                active, created_by_empleado_id, created_at, updated_at
+            ) VALUES (
+                :id, :profile_key, :name, :role_key, :matcher,
+                CAST(:rules_json AS jsonb), TRUE, :actor_id, NOW(), NOW()
+            )
+            """
+        ),
+        {
+            "id": new_id,
+            "profile_key": key,
+            "name": new_name.strip() or f"Copia de {source.name}",
+            "role_key": source.role_key,
+            "matcher": source.employee_matcher,
+            "rules_json": __import__("json").dumps(list(source.rules)),
+            "actor_id": actor_id,
+        },
+    )
+    await session.commit()
+    profile = await get_authorization_profile(session, new_id)
+    if profile is None:
+        raise ValueError("No se pudo crear la copia")
+    return profile
+
+
+async def update_authorization_profile_rules(
+    session: AsyncSession,
+    *,
+    profile_id: UUID | str,
+    enabled_rule_keys: set[str],
+    first_rule_keys: set[str],
+    second_rule_keys: set[str],
+) -> None:
+    profile = await get_authorization_profile(session, profile_id)
+    if profile is None:
+        raise ValueError("Perfil no encontrado")
+    updated: list[dict[str, Any]] = []
+    for rule in profile.rules:
+        next_rule = dict(rule)
+        rule_key = str(next_rule.get("rule_key") or "")
+        next_rule["enabled"] = rule_key in enabled_rule_keys
+        next_rule["can_first_approve"] = rule_key in first_rule_keys
+        next_rule["can_second_approve"] = rule_key in second_rule_keys
+        updated.append(next_rule)
+    await session.execute(
+        text(
+            """
+            UPDATE authorization_profiles
+            SET rules = CAST(:rules_json AS jsonb), updated_at = NOW()
+            WHERE id = :profile_id
+            """
+        ),
+        {
+            "profile_id": str(profile_id),
+            "rules_json": __import__("json").dumps(updated),
+        },
+    )
+    await session.commit()
+
+
+def infer_document_authorization_inputs(documento: object) -> dict[str, Any]:
+    """Infer resolver inputs from the current Documento shape.
+
+    This deliberately stays conservative: when the document lacks enough context,
+    the resolver will return a fallback decision instead of blocking workflow.
+    """
+    owner = getattr(documento, "empleado", None)
+    area = getattr(owner, "departamento", "") or ""
+    amount = (
+        getattr(documento, "monto_solicitado", None)
+        or getattr(documento, "monto_total", None)
+        or 0
+    )
+    has_invoice = bool(
+        getattr(documento, "cfdi_report_id", None)
+        or getattr(documento, "cfdi_uuid_manual", None)
+        or getattr(documento, "numero_factura", None)
+    )
+    tipo = str(getattr(documento, "tipo", "") or "").upper()
+    concepto = " ".join(
+        str(getattr(documento, attr, "") or "")
+        for attr in ("concepto_pago", "notas", "numero_referencia")
+    ).lower()
+
+    if not has_invoice:
+        erogation_type = "no_deductible"
+    elif bool(getattr(documento, "pago_urgente", False)):
+        erogation_type = "urgent_exception"
+    elif tipo == "INFORME":
+        if "reembolso" in concepto or "torneo" in concepto:
+            erogation_type = "tournament_reimbursement"
+        else:
+            erogation_type = "travel_expense_report"
+    elif tipo == "SOLICITUD":
+        if "anticipo" in concepto:
+            erogation_type = "tournament_advance"
+        else:
+            erogation_type = "supplier_transfer"
+    else:
+        erogation_type = "unknown"
+
+    return {
+        "area": area,
+        "erogation_type": erogation_type,
+        "amount_mxn": str(amount),
+        "requester_area": area,
+        "has_invoice": has_invoice,
+        "is_urgent": bool(getattr(documento, "pago_urgente", False)),
+        "is_budgeted": bool(getattr(documento, "budget_concept_id", None)),
+        "exceeds_budget": False,
+        "has_pending_advance": False,
+    }
+
+
+async def matching_authorization_profiles_for_decision(
+    session: AsyncSession,
+    *,
+    rule_key: str,
+    required_role_keys: Iterable[str],
+) -> list[dict[str, Any]]:
+    await seed_default_authorization_profiles(session)
+    roles = list(dict.fromkeys(str(role) for role in required_role_keys if role))
+    if not roles:
+        return []
+    result = await session.execute(
+        text(
+            """
+            SELECT id, profile_key, name, role_key, employee_matcher, rules
+            FROM authorization_profiles
+            WHERE active = TRUE AND role_key = ANY(:roles)
+            ORDER BY name
+            """
+        ),
+        {"roles": roles},
+    )
+    matches: list[dict[str, Any]] = []
+    for row in result.fetchall():
+        rules = row.rules or []
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("rule_key") != rule_key or not rule.get("enabled"):
+                continue
+            matches.append(
+                {
+                    "profile_id": str(row.id),
+                    "profile_key": row.profile_key,
+                    "name": row.name,
+                    "role_key": row.role_key,
+                    "employee_matcher": row.employee_matcher,
+                    "can_first_approve": bool(rule.get("can_first_approve")),
+                    "can_second_approve": bool(rule.get("can_second_approve")),
+                }
+            )
+            break
+    return matches
+
+
+async def build_document_authorization_evidence(
+    session: AsyncSession,
+    documento: object,
+) -> dict[str, Any]:
+    from .authorization_strategy_service import resolve_authorization_strategy
+
+    inputs = infer_document_authorization_inputs(documento)
+    decision = resolve_authorization_strategy(**inputs)
+    evidence: dict[str, Any] = {
+        "mode": "advisory",
+        "inputs": inputs,
+        "fallback_reason": decision.fallback_reason,
+        "required_role_keys": decision.required_role_keys,
+        "applies_alternate_for_other_area": decision.applies_alternate_for_other_area,
+    }
+    if decision.rule is not None:
+        evidence["rule"] = {
+            "key": decision.rule.key,
+            "area_key": decision.rule.area_key,
+            "erogation_key": decision.rule.erogation_key,
+            "erogation_label": decision.rule.erogation_label,
+            "amount_mode": decision.rule.amount_mode,
+            "amount_value": (
+                str(decision.rule.amount_value)
+                if decision.rule.amount_value is not None
+                else None
+            ),
+            "first_approver_role": decision.rule.first_approver_role,
+            "second_approver_roles": list(decision.rule.second_approver_roles),
+        }
+        evidence["matching_profiles"] = (
+            await matching_authorization_profiles_for_decision(
+                session,
+                rule_key=decision.rule.key,
+                required_role_keys=decision.required_role_keys,
+            )
+        )
+    else:
+        evidence["rule"] = None
+        evidence["matching_profiles"] = []
+    return evidence
+
+
+def _authorization_profile_text_key(value: object) -> str:
+    import unicodedata
+
+    raw = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return " ".join(
+        "".join(ch for ch in normalized if not unicodedata.combining(ch)).split()
+    )
+
+
+def _authorization_profile_matches_approver(
+    profile: dict[str, Any],
+    approver: dict[str, Any],
+) -> bool:
+    profile_role = _authorization_profile_text_key(profile.get("role_key"))
+    approver_role = _authorization_profile_text_key(approver.get("rol"))
+    if profile_role and approver_role and profile_role == approver_role:
+        return True
+
+    matcher = _authorization_profile_text_key(profile.get("employee_matcher"))
+    approver_name = _authorization_profile_text_key(approver.get("nombre"))
+    if not matcher or not approver_name:
+        return False
+    return matcher in approver_name or approver_name in matcher
+
+
+TRUE_ENV_VALUES = {"1", "true", "yes", "on", "enabled", "enforced"}
+
+
+def authorization_strategy_enforcement_enabled() -> bool:
+    """Return whether the authorization matrix should block mismatched approvals.
+
+    The default is intentionally advisory/off. Plataforma can turn this on only
+    after UAT by setting either environment variable to a true-like value.
+    """
+    raw = (
+        os.getenv("SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT")
+        or os.getenv("AUTHORIZATION_STRATEGY_ENFORCEMENT")
+        or ""
+    )
+    return raw.strip().lower() in TRUE_ENV_VALUES
+
+
+def authorization_strategy_actor_matches_required_profile(
+    *,
+    actor: object,
+    profiles: Iterable[dict[str, Any]],
+    required_role_keys: Iterable[str],
+) -> tuple[str, ...]:
+    """Return matrix role keys covered by the current actor.
+
+    Matching honors both role_key and employee_matcher so copied UI profiles can
+    represent real people without hard-coding employee IDs into the matrix.
+    """
+    approver = {
+        "nombre": getattr(actor, "nombre", None),
+        "rol": getattr(actor, "rol", None),
+        "departamento": getattr(actor, "departamento", None),
+    }
+    required = [str(role) for role in required_role_keys if role]
+    matched: set[str] = set()
+    for role_key in required:
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            if str(profile.get("role_key") or "") != role_key:
+                continue
+            if _authorization_profile_matches_approver(profile, approver):
+                matched.add(role_key)
+                break
+    return tuple(role for role in required if role in matched)
+
+
+async def build_authorization_route_hard_block(
+    session: AsyncSession,
+    documento: object,
+    actor: object,
+) -> Optional[dict[str, Any]]:
+    """Return blocking details when enforcement is enabled and actor mismatches.
+
+    Missing/fallback rules stay advisory to avoid false positives while the
+    customer finishes validating the matrix. Once a rule resolves and active
+    profiles exist, an approver outside the required profile set is blocked.
+    """
+    if not authorization_strategy_enforcement_enabled():
+        return None
+
+    evidence = await build_document_authorization_evidence(session, documento)
+    required_roles = [
+        str(role) for role in (evidence.get("required_role_keys") or []) if role
+    ]
+    profiles = [
+        profile
+        for profile in (evidence.get("matching_profiles") or [])
+        if isinstance(profile, dict)
+    ]
+    if not required_roles or not profiles:
+        return None
+
+    matched_roles = authorization_strategy_actor_matches_required_profile(
+        actor=actor,
+        profiles=profiles,
+        required_role_keys=required_roles,
+    )
+    if matched_roles:
+        return None
+
+    return {
+        "mode": "hard_enforcement",
+        "block_type": "authorization_strategy_actor_mismatch",
+        "message": "El aprobador no coincide con la estrategia de autorización configurada.",
+        "required_role_keys": required_roles,
+        "matched_role_keys": list(matched_roles),
+        "authorization_strategy": evidence,
+    }
+
+
+async def build_authorization_route_soft_warning(
+    session: AsyncSession,
+    documento: object,
+) -> Optional[dict[str, Any]]:
+    """Return a non-blocking authorization-route warning for audit metadata."""
+    evidence = await build_document_authorization_evidence(session, documento)
+    required_roles = [
+        str(role) for role in (evidence.get("required_role_keys") or []) if role
+    ]
+    if not required_roles:
+        return None
+
+    result = await session.execute(
+        text(
+            """
+            SELECT a.accion, a.fecha, e.nombre, e.rol, e.departamento
+            FROM aprobaciones a
+            LEFT JOIN empleados e ON e.id = a.aprobador_id
+            WHERE a.tipo_entidad = 'documento'
+              AND a.entidad_id = :documento_id
+            ORDER BY a.fecha ASC
+            """
+        ),
+        {"documento_id": str(getattr(documento, "id"))},
+    )
+    approval_actions = {"aprobar", "aprobado", "auto_aprobar", "auto_aprobado"}
+    approvers = []
+    for row in result.fetchall():
+        mapping = row._mapping
+        if _authorization_profile_text_key(mapping.get("accion")) not in approval_actions:
+            continue
+        approvers.append(
+            {
+                "accion": mapping.get("accion"),
+                "fecha": mapping.get("fecha").isoformat() if mapping.get("fecha") else None,
+                "nombre": mapping.get("nombre"),
+                "rol": mapping.get("rol"),
+                "departamento": mapping.get("departamento"),
+            }
+        )
+
+    if not approvers:
+        return None
+
+    profiles = [
+        profile
+        for profile in (evidence.get("matching_profiles") or [])
+        if isinstance(profile, dict)
+    ]
+    matched_roles: set[str] = set()
+    for role_key in required_roles:
+        role_profiles = [
+            profile
+            for profile in profiles
+            if str(profile.get("role_key") or "") == str(role_key)
+        ]
+        for profile in role_profiles:
+            if any(
+                _authorization_profile_matches_approver(profile, approver)
+                for approver in approvers
+            ):
+                matched_roles.add(str(role_key))
+                break
+
+    missing_roles = [role for role in required_roles if role not in matched_roles]
+    if not missing_roles:
+        return None
+
+    return {
+        "mode": "soft_warning",
+        "warning_type": "authorization_route_mismatch",
+        "message": "Actual approvals do not cover all advisory matrix roles.",
+        "missing_role_keys": missing_roles,
+        "matched_role_keys": sorted(matched_roles),
+        "required_role_keys": required_roles,
+        "actual_approvers": approvers,
+        "authorization_strategy": evidence,
+    }

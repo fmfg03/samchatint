@@ -219,6 +219,13 @@ async def run_document_workflow_telegram_notifications(
             await notify_requester_decision(
                 session, documento, approved=True, actor=actor
             )
+            try:
+                await notify_finance_when_odilon_approves(session, documento, actor)
+            except Exception:
+                logger.exception(
+                    "Temporary Odilon approval Telegram alert failed",
+                    extra={"documento_id": documento_id},
+                )
         elif normalized == "reject":
             await notify_requester_decision(
                 session, documento, approved=False, actor=actor, comentario=comentario

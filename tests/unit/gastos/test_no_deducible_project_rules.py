@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 
 from devnous.gastos.services.cuenta_contable_suggester import CuentaContableSuggester
+from devnous.gastos.services import documento_payment_service
 from devnous.gastos.services.expense_accounting_service import (
     _no_deducible_account_code_for_project,
     _resolve_project_no_deducible_account,
@@ -80,3 +81,62 @@ async def test_accounting_service_resolves_project_specific_no_deductible_accoun
     resolved = await _resolve_project_no_deducible_account(session, [cuenta], expense)
 
     assert resolved is cuenta
+
+
+@pytest.mark.asyncio
+async def test_solicitud_payment_applies_project_no_deducible_when_cfdi_is_unlinked(monkeypatch):
+    account = _account("5300-016-033", "GASTOS NO DEDUCIBLES HWC")
+    expense = SimpleNamespace(
+        id=uuid4(),
+        proyecto="Homeless World Cup México",
+        cuenta_contable_id=None,
+    )
+    documento = SimpleNamespace(tipo="SOLICITUD", cfdi_report_id=None)
+    added = []
+    session = SimpleNamespace(add=lambda obj: added.append(obj))
+
+    async def fake_resolve(_session, _accounts, _expense):
+        assert _expense is expense
+        return account
+
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_resolve_project_no_deducible_account",
+        fake_resolve,
+    )
+
+    resolved = await documento_payment_service._apply_no_deducible_account_for_unlinked_solicitud(
+        session,
+        documento=documento,
+        expense=expense,
+    )
+
+    assert resolved is account
+    assert expense.cuenta_contable_id == account.id
+    assert added == [expense]
+
+
+@pytest.mark.asyncio
+async def test_solicitud_payment_does_not_override_when_cfdi_is_linked(monkeypatch):
+    expense = SimpleNamespace(id=uuid4(), proyecto="La Merced", cuenta_contable_id=uuid4())
+    documento = SimpleNamespace(tipo="SOLICITUD", cfdi_report_id=uuid4())
+    session = SimpleNamespace(add=lambda _obj: None)
+
+    async def fail_resolve(*_args, **_kwargs):
+        raise AssertionError("no deducible resolver should not run when CFDI is linked")
+
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_resolve_project_no_deducible_account",
+        fail_resolve,
+    )
+
+    original_account_id = expense.cuenta_contable_id
+    resolved = await documento_payment_service._apply_no_deducible_account_for_unlinked_solicitud(
+        session,
+        documento=documento,
+        expense=expense,
+    )
+
+    assert resolved is None
+    assert expense.cuenta_contable_id == original_account_id

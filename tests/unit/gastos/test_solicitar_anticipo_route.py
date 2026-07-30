@@ -317,3 +317,273 @@ async def test_solicitar_anticipo_submit_rolls_back_on_unexpected_solicitud_erro
         "Revise%20los%20datos%20capturados%20e%20intente%20nuevamente."
     )
     session.rollback.assert_awaited_once()
+
+
+def test_solicitar_anticipo_source_separates_employee_beneficiary_from_bank_account() -> None:
+    source = user_routes.solicitar_anticipo_form.__code__.co_consts
+    rendered_literals = "\n".join(str(value) for value in source if isinstance(value, str))
+
+    assert "Paso 2" in rendered_literals
+    assert "Cuenta bancaria del beneficiario" in rendered_literals
+    assert "La cuenta debe pertenecer al empleado u operador regional beneficiario" in rendered_literals
+    assert "beneficiario_operador_id_anticipo" in rendered_literals
+
+
+class _QueryParams(dict):
+    def getlist(self, key):
+        value = self.get(key, [])
+        if isinstance(value, list):
+            return value
+        return [value]
+
+
+def test_can_request_for_other_employee_matches_juan_pablo_by_display_name() -> None:
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo L\u00f3pez",
+        correo="juan.pablo@example.com",
+        rol="empleado",
+        permissions=set(),
+    )
+
+    assert user_routes._can_request_for_other_employee(requester) is True
+
+
+@pytest.mark.asyncio
+async def test_solicitar_anticipo_form_shows_full_active_employee_list_for_authorized_user(monkeypatch):
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo L\u00f3pez",
+        correo="juan.pablo@example.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    bibiana = SimpleNamespace(id=uuid4(), nombre="Bibiana Roman", correo="bibiana@example.com")
+    carlos = SimpleNamespace(id=uuid4(), nombre="Carlos Lozano", correo="carlos@example.com")
+    torneo = SimpleNamespace(id=uuid4(), name="Proyecto Demo")
+    bank_called = {}
+
+    async def fake_resolve(_session, raw_id, *, default):
+        return bibiana if str(raw_id) == str(bibiana.id) else default
+
+    async def fake_active_empleados(_session, current_empleado):
+        return [requester, bibiana, carlos]
+
+    async def fake_tournaments(*_args, **_kwargs):
+        return [torneo]
+
+    async def fake_bank_options(_session, empleado, *, selected_id=None):
+        bank_called["empleado"] = empleado
+        bank_called["selected_id"] = selected_id
+        return '<option value="bank-1">Cuenta beneficiario</option>'
+
+    monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve)
+    monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
+    monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(user_routes, "_html_empleado_bank_account_options", fake_bank_options)
+    monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", AsyncMock(return_value=[]))
+    monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
+    monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
+
+    html = await user_routes.solicitar_anticipo_form(
+        request=SimpleNamespace(
+            query_params=_QueryParams({"beneficiario_empleado_id": str(bibiana.id)})
+        ),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert 'name="beneficiario_empleado_id"' in html
+    assert 'id="beneficiario_empleado_id"' in html
+    assert "Empleado beneficiario" in html
+    assert "Juan Pablo L\u00f3pez" in html
+    assert "Bibiana Roman" in html
+    assert "Carlos Lozano" in html
+    assert f'<option value="{bibiana.id}" selected>Bibiana Roman</option>' in html
+    assert "Cuenta bancaria del beneficiario" in html
+    assert bank_called["empleado"] is bibiana
+
+@pytest.mark.asyncio
+async def test_solicitar_anticipo_form_allows_regional_operator_for_authorized_user(monkeypatch):
+    requester = SimpleNamespace(
+        id=UUID(next(iter(user_routes._THIRD_PARTY_EMPLOYEE_REQUESTER_IDS))),
+        nombre="Alicia",
+        correo="azuniga@plataformasports.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    operator = SimpleNamespace(
+        id=uuid4(),
+        nombre="Operador Regional Centro",
+        banco="BBVA",
+        cuenta_bancaria="1234567890",
+        cuenta_clabe="012345678901234567",
+        entidad_region="Centro",
+    )
+    torneo = SimpleNamespace(id=uuid4(), name="Proyecto Demo")
+    bank_called = {}
+
+    async def fake_resolve_employee(_session, raw_id, *, default):
+        return default
+
+    async def fake_active_empleados(_session, current_empleado):
+        return [current_empleado]
+
+    async def fake_tournaments(*_args, **_kwargs):
+        return [torneo]
+
+    async def fake_resolve_operator(_session, raw_id):
+        return operator if str(raw_id) == str(operator.id) else None
+
+    async def fake_active_operators(_session):
+        return [operator]
+
+    async def fake_bank_options(_session, empleado, *, selected_id=None):
+        bank_called["empleado"] = empleado
+        return '<option value="bank-self">Cuenta propia</option>'
+
+    monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve_employee)
+    monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
+    monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(user_routes, "_resolve_active_regional_operator_beneficiary", fake_resolve_operator)
+    monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", fake_active_operators)
+    monkeypatch.setattr(user_routes, "_html_empleado_bank_account_options", fake_bank_options)
+    monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
+    monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
+
+    html = await user_routes.solicitar_anticipo_form(
+        request=SimpleNamespace(
+            query_params=_QueryParams({"beneficiario_operador_id": str(operator.id)})
+        ),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert 'name="beneficiario_operador_id"' in html
+    assert 'id="beneficiario_operador_id_anticipo"' in html
+    assert "Operador Regional Centro" in html
+    assert "BBVA" in html
+    assert str(operator.id) in html
+    assert "Cuenta propia" not in html
+    assert bank_called == {}
+
+
+
+@pytest.mark.asyncio
+async def test_solicitar_anticipo_form_locks_beneficiary_to_self_for_unauthorized_user(monkeypatch):
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Normal",
+        correo="normal@example.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    other = SimpleNamespace(id=uuid4(), nombre="Otro Empleado", correo="otro@example.com")
+    torneo = SimpleNamespace(id=uuid4(), name="Proyecto Demo")
+
+    async def fake_resolve(*_args, **_kwargs):
+        return other
+
+    async def fake_active_empleados(_session, current_empleado):
+        return [current_empleado]
+
+    async def fake_tournaments(*_args, **_kwargs):
+        return [torneo]
+
+    async def fake_bank_options(_session, empleado, *, selected_id=None):
+        return '<option value="bank-self">Cuenta propia</option>'
+
+    monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve)
+    monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
+    monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(user_routes, "_html_empleado_bank_account_options", fake_bank_options)
+    monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
+    monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
+
+    html = await user_routes.solicitar_anticipo_form(
+        request=SimpleNamespace(
+            query_params=_QueryParams({"beneficiario_empleado_id": str(other.id)})
+        ),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert '<input type="hidden" name="beneficiario_empleado_id"' in html
+    assert str(requester.id) in html
+    assert "Usuario Normal" in html
+    assert "Otro Empleado" not in html
+    assert "solamente puede solicitar" in html
+
+
+@pytest.mark.asyncio
+async def test_employee_bank_accounts_api_uses_selected_beneficiary_for_authorized_requester(monkeypatch):
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo L\u00f3pez",
+        correo="juan.pablo@example.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana Roman", correo="bibiana@example.com")
+    account = SimpleNamespace(
+        id=uuid4(),
+        nombre="Bibiana Roman",
+        banco="Santander",
+        cuenta_bancaria="1234567890",
+        cuenta_clabe="012345678901234567",
+    )
+    called = {}
+
+    class Result:
+        def scalar_one_or_none(self):
+            return beneficiary
+
+    async def fake_execute(_query):
+        return Result()
+
+    async def fake_matches(session, empleado):
+        called["empleado"] = empleado
+        return [(account, 1.0)]
+
+    monkeypatch.setattr(user_routes, "_get_matching_bank_accounts_for_empleado", fake_matches)
+
+    response = await user_routes.employee_bank_accounts_for_beneficiary(
+        beneficiario_id=beneficiary.id,
+        session=SimpleNamespace(execute=fake_execute),
+        current_empleado=requester,
+    )
+
+    assert response.status_code == 200
+    assert called["empleado"] is beneficiary
+    body = response.body.decode("utf-8")
+    assert "Bibiana Roman" in body
+    assert "Santander" in body
+    assert str(account.id) in body
+
+
+@pytest.mark.asyncio
+async def test_employee_bank_accounts_api_rejects_unpermitted_other_beneficiary(monkeypatch):
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="Usuario Normal",
+        correo="normal@example.com",
+        rol="empleado",
+        permissions=set(),
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana Roman", correo="bibiana@example.com")
+
+    class Result:
+        def scalar_one_or_none(self):
+            return beneficiary
+
+    async def fake_execute(_query):
+        return Result()
+
+    with pytest.raises(user_routes.HTTPException) as exc:
+        await user_routes.employee_bank_accounts_for_beneficiary(
+            beneficiario_id=beneficiary.id,
+            session=SimpleNamespace(execute=fake_execute),
+            current_empleado=requester,
+        )
+
+    assert exc.value.status_code == 403

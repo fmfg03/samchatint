@@ -429,6 +429,14 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "budgets.audit.read",
         ],
     },
+    "solicitudes_beneficiario_empleado": {
+        "label": "Solicitudes para empleados terceros",
+        "base_role": "empleado",
+        "description": "Permite crear anticipos e informes a nombre de otro empleado activo sin cambiar la bandeja de autorizaci?n del solicitante.",
+        "permissions": [
+            "finance.employee_beneficiary.request",
+        ],
+    },
     "finanzas": {
         "label": "Finanzas",
         "base_role": "finanzas",
@@ -439,11 +447,6 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "finance.payments.*",
             "finance.reimbursements.*",
             "executive.reports.read",
-            "budgets.read",
-            "budgets.version.read",
-            "budgets.line.read",
-            "budgets.audit.read",
-            "budgets.export",
         ],
     },
     "contabilidad": {
@@ -457,10 +460,6 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "finance.solicitudes.read",
             "finance.payments.read",
             "executive.reports.read",
-            "budgets.read",
-            "budgets.version.read",
-            "budgets.line.read",
-            "budgets.audit.read",
         ],
     },
     "c_suite": {
@@ -472,16 +471,9 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "executive.planner.*",
             "executive.alerts.*",
             "budgets.read",
-            "budgets.update",
-            "budgets.approve",
-            "budgets.freeze",
             "budgets.export",
             "budgets.version.read",
-            "budgets.version.update",
-            "budgets.version.approve",
-            "budgets.version.manage",
             "budgets.line.read",
-            "budgets.line.update",
             "budgets.audit.read",
             "finance.solicitudes.read",
             "finance.payments.read",
@@ -513,10 +505,6 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "accounting.accounts.read",
             "accounting.entries.read",
             "executive.reports.read",
-            "budgets.read",
-            "budgets.version.read",
-            "budgets.line.read",
-            "budgets.audit.read",
             "marketing.media.read",
             "communications.email.read",
             "communications.whatsapp.read",
@@ -756,6 +744,7 @@ def _build_effective_profile_preview(
         or _has_prefix("operations"),
         "budgets": role_norm in _BUDGET_SUPER_ROLES
         or _has_prefix("budgets", "executive"),
+        "employee_beneficiary": _has_prefix("finance.employee_beneficiary"),
     }
     enabled_surfaces = [
         label
@@ -763,6 +752,7 @@ def _build_effective_profile_preview(
             ("Telegram", highlights["telegram"]),
             ("Operaciones", highlights["operations"]),
             ("Presupuestos", highlights["budgets"]),
+            ("Beneficiarios empleado", highlights["employee_beneficiary"]),
         )
         if is_enabled
     ]
@@ -776,6 +766,47 @@ def _build_effective_profile_preview(
         "enabled_surfaces": enabled_surfaces,
         "highlights": highlights,
     }
+
+
+def _render_employee_beneficiary_access_summary(
+    effective_preview_map: dict[str, dict[str, Any]]
+) -> str:
+    """Render assigned users who can request informes/anticipos for another employee."""
+
+    rows: list[str] = []
+    for empleado_id, preview in sorted(
+        effective_preview_map.items(),
+        key=lambda item: (
+            str(item[1].get("empleado_nombre") or "").lower(),
+            str(item[0]),
+        ),
+    ):
+        effective = preview.get("effective") or _build_effective_profile_preview(
+            empleado_role=preview.get("empleado_rol"),
+            permission_payloads=list(preview.get("permission_payloads") or []),
+        )
+        if not effective.get("highlights", {}).get("employee_beneficiary"):
+            continue
+        profile_names = ", ".join(preview.get("profile_names") or []) or "?"
+        rows.append(
+            "<tr>"
+            f"<td>{escape(str(preview.get('empleado_nombre') or ''))}"
+            f'<br><small style="color:#64748b;">{escape(str(preview.get("empleado_correo") or ""))}</small></td>'
+            f"<td><code>{escape(str(empleado_id))}</code></td>"
+            f"<td>{escape(profile_names)}</td>"
+            '<td><span class="pill">finance.employee_beneficiary.request</span></td>'
+            "</tr>"
+        )
+    if not rows:
+        return (
+            '<div style="color:#64748b;">Ningun perfil activo asignado otorga '
+            '<code>finance.employee_beneficiary.request</code>. Si un usuario autorizado no ve el selector, '
+            'asigna el preset <code>Solicitudes para empleados terceros</code>.</div>'
+        )
+    return (
+        '<table><thead><tr><th>Empleado</th><th>ID</th><th>Perfiles</th><th>Capacidad</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
 
 
 def _build_effective_profile_comparison(
@@ -1791,22 +1822,24 @@ async def admin_health(
                 )
             except TocinoAPIError as exc:
                 status = int(exc.status_code or 0)
-                if status in (400, 422):
+                if getattr(exc, "category", "") == "validation_error":
                     tocino_status.update(
                         {
                             "reachable": True,
                             "auth_ok": True,
                             "http_status": status,
+                            "category": exc.category,
                             "message": "Tocino reachable and authenticated (validation error expected).",
                         }
                     )
-                elif status in (401, 403):
+                elif getattr(exc, "category", "") == "auth_error":
                     tocino_status.update(
                         {
                             "reachable": True,
                             "auth_ok": False,
                             "http_status": status,
-                            "message": f"Tocino auth rejected request: {exc}",
+                            "category": exc.category,
+                            "message": exc.user_message,
                         }
                     )
                 else:
@@ -1815,7 +1848,8 @@ async def admin_health(
                             "reachable": status > 0,
                             "auth_ok": False,
                             "http_status": status if status > 0 else None,
-                            "message": f"Tocino probe error: {exc}",
+                            "category": getattr(exc, "category", "unknown_error"),
+                            "message": getattr(exc, "user_message", str(exc)),
                         }
                     )
         except Exception as exc:
@@ -11016,6 +11050,10 @@ async def admin_perfiles(
         </div>
         """
 
+    employee_beneficiary_access_html = _render_employee_beneficiary_access_summary(
+        effective_preview_map
+    )
+
     comparison_html = '<div style="color:#64748b;">Se necesitan al menos dos empleados con perfiles activos para comparar.</div>'
     comparison_options = ""
     sorted_preview_items = sorted(
@@ -11278,6 +11316,12 @@ async def admin_perfiles(
                 <h2>Permisos efectivos por usuario</h2>
                 <p style="color:#475569;">Vista previa del estado efectivo actual por empleado: rol base, union de tokens/scopes activos y superficies relevantes ya habilitadas.</p>
                 <div class="preset-grid">{effective_preview_cards or '<div style="color:#64748b;">Sin asignaciones activas todavía.</div>'}</div>
+            </div>
+
+            <div class="card" style="margin-top:16px;">
+                <h2>Solicitudes para empleados terceros</h2>
+                <p style="color:#475569;">Usuarios con perfil activo que pueden crear anticipos o informes a nombre de otro empleado sin cambiar la ruta de autorizaci?n.</p>
+                {employee_beneficiary_access_html}
             </div>
 
             <div class="card" style="margin-top:16px;">
@@ -19977,9 +20021,11 @@ async def admin_sat_dashboard(
                             <div class="eyebrow">Sync programado</div>
                             <h2>Backfill junio 2026 y sync diario</h2>
                             <div class="section-note">
-                                Sync completo 2×/día vía <code>POST /ingress/sat-cfdi-sync</code>.
-                                Open jobs cada hora vía <code>POST /ingress/sat-cfdi-open-jobs</code>
-                                (<code>scripts/run_sat_open_jobs.sh</code>).
+                                Sync completo 2×/día (09:00 y 23:00 CDMX) vía
+                                <code>scripts/run_sat_cfdi_sync.sh</code> →
+                                <code>POST /ingress/sat-cfdi-sync</code>.
+                                Open jobs cada hora vía <code>scripts/run_sat_open_jobs.sh</code> →
+                                <code>POST /ingress/sat-cfdi-open-jobs</code>.
                                 RFC activo: <code>{escape(coverage_rfc or "—")}</code>.
                             </div>
                         </div>
