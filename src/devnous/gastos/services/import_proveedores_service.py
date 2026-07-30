@@ -18,7 +18,7 @@ from typing import Dict, List, Optional, Tuple
 from openpyxl import load_workbook
 
 
-VALID_TIPOS = {"proveedor", "cliente", "operadores_regionales"}
+VALID_TIPOS = {"proveedor", "cliente", "operadores_regionales", "empleado"}
 
 
 @dataclass

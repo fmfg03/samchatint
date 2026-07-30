@@ -1,3 +1,5 @@
+import csv
+import io
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -5,6 +7,7 @@ from uuid import uuid4
 import pytest
 
 from devnous.gastos.routes import admin_routes, user_routes
+from devnous.gastos.services.import_proveedores_service import parse_proveedores_clientes_upload
 
 
 def _scalar_result(value):
@@ -95,3 +98,32 @@ async def test_legacy_account_matching_remains_as_compatibility_fallback():
 
     assert matches == [(legacy_account, 1.0)]
     assert session.execute.await_count == 2
+
+
+def test_bulk_provider_registry_import_accepts_employee_category():
+    csv_body = (
+        "tipo,nombre,rfc,banco,cuenta_clabe,cuenta_bancaria,entidad_region,activo\n"
+        "empleado,Bibiana Raquel Roman Arguelles,,Santander,123456789012345678,1731,CDMX,true\n"
+    )
+
+    rows = parse_proveedores_clientes_upload("empleados.csv", csv_body.encode("utf-8"))
+
+    assert len(rows) == 1
+    assert rows[0].tipo == "empleado"
+    assert rows[0].nombre == "Bibiana Raquel Roman Arguelles"
+    assert rows[0].banco == "Santander"
+    assert rows[0].cuenta_clabe == "123456789012345678"
+
+
+@pytest.mark.asyncio
+async def test_bulk_provider_registry_template_documents_employee_category():
+    response = await admin_routes.descargar_plantilla_proveedores_clientes(
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(id=uuid4()),
+    )
+
+    decoded = response.body.decode("utf-8-sig")
+    rows = list(csv.DictReader(io.StringIO(decoded)))
+
+    assert any(row["tipo"] == "empleado" for row in rows)
+    assert "empleado" in decoded

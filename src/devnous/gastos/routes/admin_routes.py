@@ -17330,7 +17330,7 @@ async def admin_proveedores_clientes(
                         </div>
                         <div class="form-group">
                             <label for="nombre">Nombre *</label>
-                            <input type="text" id="nombre" name="nombre" required placeholder="Nombre del proveedor/cliente">
+                            <input type="text" id="nombre" name="nombre" required placeholder="Nombre del proveedor/cliente/empleado">
                         </div>
                     </div>
                     <div class="form-row">
@@ -18171,7 +18171,7 @@ async def carga_masiva_proveedores_clientes_form(
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Carga Masiva de Proveedores/Clientes - Copa Telmex</title>
+        <title>Carga Masiva de Proveedores/Clientes/Empleados - Copa Telmex</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
@@ -18315,8 +18315,8 @@ async def carga_masiva_proveedores_clientes_form(
     <body>
         <div class="container">
             {_CONFIG_PANEL_BACK_LINK_HTML}
-            <h1>📥 Carga Masiva de Proveedores/Clientes</h1>
-            <p class="subtitle">Importar proveedores y clientes desde archivo CSV o XLSX tipo RFC</p>
+            <h1>📥 Carga Masiva de Proveedores/Clientes/Empleados</h1>
+            <p class="subtitle">Importar proveedores, clientes, operadores regionales y empleados desde archivo CSV o XLSX tipo RFC</p>
 
             {f'<div class="alert alert-success">✅ {escape(success_msg)}</div>' if success_msg else ''}
             {f'<div class="alert alert-error">❌ {escape(error_msg)}</div>' if error_msg else ''}
@@ -18338,12 +18338,12 @@ async def carga_masiva_proveedores_clientes_form(
                                 <td><span class="code">tipo</span></td>
                                 <td>✅ Sí</td>
                                 <td>Tipo de registro</td>
-                                <td>proveedor, cliente, operadores_regionales</td>
+                                <td>proveedor, cliente, operadores_regionales, empleado</td>
                             </tr>
                             <tr>
                                 <td><span class="code">nombre</span></td>
                                 <td>✅ Sí</td>
-                                <td>Nombre del proveedor/cliente</td>
+                                <td>Nombre del proveedor/cliente/empleado</td>
                                 <td>Acme Corporation S.A. de C.V.</td>
                             </tr>
                             <tr>
@@ -18408,7 +18408,7 @@ async def carga_masiva_proveedores_clientes_form(
                 <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px;">
                     <h3 style="margin-top: 0; color: #856404;">⚠️ Reglas de Validación</h3>
                     <ul>
-                        <li><strong>tipo</strong>: Debe ser "proveedor", "cliente" o "operadores_regionales" (Operadores Regionales)</li>
+                        <li><strong>tipo</strong>: Debe ser "proveedor", "cliente", "operadores_regionales" (Operadores Regionales) o "empleado"</li>
                         <li><strong>nombre</strong>: No puede estar vacío</li>
                         <li><strong>cuenta_clabe</strong>: Si se proporciona, debe tener exactamente 18 dígitos numéricos</li>
                         <li><strong>cuenta_bancaria</strong>: Se almacena como texto tal cual (número de cuenta bancaria para transferencias)</li>
@@ -18433,7 +18433,7 @@ async def carga_masiva_proveedores_clientes_form(
                 </div>
 
                 <div style="margin-top: 30px;">
-                    <button type="submit" class="btn btn-primary">📤 Importar Proveedores/Clientes</button>
+                    <button type="submit" class="btn btn-primary">📤 Importar Proveedores/Clientes/Empleados</button>
                     <a href="/admin/proveedores-clientes" class="btn btn-secondary">⬅️ Volver</a>
                 </div>
             </form>
@@ -18474,6 +18474,16 @@ async def descargar_plantilla_proveedores_clientes(
             "true",
         ],
         ["cliente", "Cliente Ejemplo S.A.", "", "", "", "", "", "true"],
+        [
+            "empleado",
+            "Empleado Ejemplo",
+            "",
+            "Santander",
+            "012345678901234568",
+            "1234567890",
+            "CDMX",
+            "true",
+        ],
         [
             "operadores_regionales",
             "Operador Regional Norte",
