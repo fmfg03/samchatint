@@ -268,6 +268,9 @@ def test_empty_draft_cancellation_belongs_to_owner_with_superadmin_recovery() ->
         SimpleNamespace(id=uuid4(), rol="empleado"), cuenta
     )
     assert user_routes._can_cancel_empty_informe_draft(
+        SimpleNamespace(id=uuid4(), rol="finanzas"), cuenta
+    )
+    assert user_routes._can_cancel_empty_informe_draft(
         SimpleNamespace(id=uuid4(), rol="superadmin"), cuenta
     )
 
@@ -417,3 +420,129 @@ async def test_cancel_empty_draft_commits_before_best_effort_audit_rollback(
     assert events == ["business_commit", "audit_attempt", "audit_rollback"]
     assert cuenta.estado == "cerrada"
     assert informe.estado == "rechazado"
+
+
+@pytest.mark.asyncio
+async def test_cancel_empty_draft_route_allows_finance_cleanup(monkeypatch) -> None:
+    owner_id = uuid4()
+    finance_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=owner_id,
+        beneficiario_empleado_id=None,
+        estado="abierta",
+        closed_at=None,
+    )
+    informe = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta.id,
+        tipo="INFORME",
+        estado="borrador",
+        numero_referencia="I-FIN",
+    )
+
+    class ScalarResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalar_one(self):
+            return self.value
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                ScalarResult(cuenta),
+                ScalarResult(informe),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+                ScalarResult(0),
+            ]
+        ),
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    monkeypatch.setattr(
+        user_routes,
+        "record_customer_success_audit_event",
+        AsyncMock(),
+    )
+
+    response = await user_routes.cancelar_informe_vacio_borrador(
+        cuenta_id=cuenta.id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=finance_id, rol="finanzas"),
+    )
+
+    assert response.status_code == 303
+    assert cuenta.estado == "cerrada"
+    assert informe.estado == "rechazado"
+    session.commit.assert_awaited_once()
+    aprobacion = session.add.call_args.args[0]
+    assert aprobacion.aprobador_id == finance_id
+    assert "usuario autorizado" in aprobacion.comentario
+
+
+@pytest.mark.asyncio
+async def test_cancel_empty_draft_route_rejects_linked_solicitudes_without_committing() -> None:
+    owner_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=uuid4(),
+        empleado_id=owner_id,
+        beneficiario_empleado_id=None,
+        estado="abierta",
+        closed_at=None,
+    )
+    informe = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta.id,
+        tipo="INFORME",
+        estado="borrador",
+        numero_referencia="I-BLOCK",
+    )
+
+    class ScalarResult:
+        def __init__(self, value):
+            self.value = value
+
+        def scalar_one_or_none(self):
+            return self.value
+
+        def scalar_one(self):
+            return self.value
+
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[
+                ScalarResult(cuenta),
+                ScalarResult(informe),
+                ScalarResult(0),
+                ScalarResult(1),
+                ScalarResult(0),
+                ScalarResult(0),
+            ]
+        ),
+        add=Mock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+
+    response = await user_routes.cancelar_informe_vacio_borrador(
+        cuenta_id=cuenta.id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=owner_id, rol="empleado"),
+    )
+
+    assert response.status_code == 303
+    assert "solicitudes" in response.headers["location"]
+    assert cuenta.estado == "abierta"
+    assert informe.estado == "borrador"
+    session.commit.assert_not_awaited()
+    session.add.assert_not_called()

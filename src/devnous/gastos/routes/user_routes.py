@@ -8681,11 +8681,11 @@ def _beneficiary_employee_control_html(
 def _can_cancel_empty_informe_draft(
     actor: Empleado, cuenta: CuentaDeGastos
 ) -> bool:
-    """Only the requester/owner or a superadmin can cancel an empty draft."""
+    """Only the requester/owner, finance, or superadmin can cancel an empty draft."""
     role = (getattr(actor, "rol", None) or "").strip().lower()
     return bool(
         getattr(cuenta, "empleado_id", None) == getattr(actor, "id", None)
-        or role in {"superadmin", "super_admin"}
+        or role in {"finanzas", "superadmin", "super_admin"}
     )
 
 
@@ -27302,7 +27302,7 @@ async def cancelar_informe_vacio_borrador(
     if not _can_cancel_empty_informe_draft(current_empleado, cuenta):
         raise HTTPException(
             status_code=403,
-            detail="Solo el solicitante o un superadmin puede cancelar este borrador.",
+            detail="Solo el solicitante, finanzas o un superadmin puede cancelar este borrador.",
         )
 
     informe_result = await session.execute(
@@ -27392,7 +27392,7 @@ async def cancelar_informe_vacio_borrador(
             entidad_id=informe_doc.id,
             aprobador_id=current_empleado.id,
             accion="cancelar",
-            comentario="Borrador vacío cancelado por el solicitante.",
+            comentario="Borrador vacio cancelado por usuario autorizado.",
             fecha=cancelled_at,
         )
     )
