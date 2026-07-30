@@ -332,16 +332,30 @@ class LocalRAGStore:
             scored: List[Dict[str, Any]] = []
             for c in chunks:
                 emb = c.get("embedding")
+                text = str(c.get("text") or "")
+                lexical_score = _lexical_similarity(q, text)
+                vector_score: Optional[float] = None
                 if q_vec and isinstance(emb, list) and emb:
-                    score = _cosine_similarity(q_vec, emb)
-                    threshold = min_score
+                    vector_score = _cosine_similarity(q_vec, emb)
+                    # Exact business terms, names, and policy phrases matter.  Embeddings
+                    # are useful for semantic recall, but a strong lexical hit must not be
+                    # buried behind a semantically-near but operationally-wrong document.
+                    lexical_boost = min(1.0, lexical_score * 3.0)
+                    score = max(vector_score + lexical_boost, lexical_score * 3.0)
+                    threshold = min(min_score, lexical_min_score)
                 else:
-                    score = _lexical_similarity(q, str(c.get("text") or ""))
+                    score = lexical_score
                     threshold = lexical_min_score
                 if score >= threshold:
                     scored.append(
                         {
                             "score": round(score, 4),
+                            "vector_score": (
+                                round(vector_score, 4)
+                                if vector_score is not None
+                                else None
+                            ),
+                            "lexical_score": round(lexical_score, 4),
                             "chunk_id": c.get("chunk_id"),
                             "source": c.get("source"),
                             "text": c.get("text"),

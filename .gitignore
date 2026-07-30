@@ -23,3 +23,5 @@ docs-generated/
 
 # Common secret files
 *.secrets.env
+# Generated assistant RAG indexes
+data/assistant_rag_index.json
