@@ -98,3 +98,14 @@ def test_document_workflow_send_persists_authorization_strategy_evidence():
     assert "build_document_authorization_evidence" in block
     assert 'audit_metadata["authorization_strategy"]' in source
     assert "metadata=audit_metadata" in source
+
+
+def test_document_detail_renders_authorization_strategy_evidence_panel():
+    source = Path(user_routes.__file__).read_text()
+
+    assert "_render_document_authorization_strategy_evidence" in source
+    assert "Ruta de autorizacion sugerida" in source
+    assert "customer_success_audit_events" in source
+    assert "authorization_strategy_html = await _render_document_authorization_strategy_evidence" in source
+    assert "{authorization_strategy_html}" in source
+    assert "no bloquea ni sustituye el flujo actual" in source

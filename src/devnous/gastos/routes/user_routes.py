@@ -24662,6 +24662,155 @@ async def crear_nueva_solicitud_personal(
         status_code=303
     )
 
+def _authorization_strategy_badge_html(value: object) -> str:
+    label = str(value or "—").replace("_", " ").strip().title()
+    return f'<span class="status-chip info">{escape(label)}</span>'
+
+
+async def _render_document_authorization_strategy_evidence(
+    session: AsyncSession,
+    documento_id: UUIDType,
+) -> str:
+    """Render latest advisory authorization-strategy evidence for document detail."""
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT metadata_json, created_at
+                FROM customer_success_audit_events
+                WHERE documento_id = :documento_id
+                  AND action = 'documento.sent'
+                ORDER BY created_at DESC
+                LIMIT 10
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load advisory authorization strategy evidence",
+            extra={"documento_id": str(documento_id)},
+        )
+        return ""
+
+    selected_metadata = None
+    selected_created_at = None
+    for metadata_json, created_at in result.all():
+        metadata = metadata_json or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except json.JSONDecodeError:
+                metadata = {}
+        if isinstance(metadata, dict) and metadata.get("authorization_strategy"):
+            selected_metadata = metadata
+            selected_created_at = created_at
+            break
+
+    if not selected_metadata:
+        return ""
+
+    evidence = selected_metadata.get("authorization_strategy") or {}
+    if not isinstance(evidence, dict):
+        return ""
+
+    inputs = evidence.get("inputs") or {}
+    if not isinstance(inputs, dict):
+        inputs = {}
+    rule = evidence.get("matched_rule") or evidence.get("rule") or {}
+    if not isinstance(rule, dict):
+        rule = {}
+    profiles = evidence.get("matching_profiles") or []
+    if not isinstance(profiles, list):
+        profiles = []
+    required_roles = evidence.get("required_role_keys") or []
+    if not isinstance(required_roles, list):
+        required_roles = []
+
+    rule_label = rule.get("label") or rule.get("erogation_label") or rule.get("rule_key") or "Sin regla sugerida"
+    area_label = rule.get("area_label") or inputs.get("area") or inputs.get("area_key") or "—"
+    erogation_label = rule.get("erogation_label") or inputs.get("erogation_type") or inputs.get("erogation_key") or "—"
+    amount_mode = rule.get("amount_mode") or "—"
+    amount_value = rule.get("amount_value") or inputs.get("amount_mxn") or "—"
+
+    input_cards = "".join(
+        f'''
+        <div class="meta-card">
+            <span>{escape(label)}</span>
+            <strong>{escape(str(value if value is not None else "—"))}</strong>
+            <small>{escape(note)}</small>
+        </div>
+        '''
+        for label, value, note in [
+            ("Área", inputs.get("area") or inputs.get("area_key") or "—", "Origen operativo inferido."),
+            ("Tipo de erogación", inputs.get("erogation_type") or inputs.get("erogation_key") or "—", "Clasificación usada para la matriz."),
+            ("Monto MXN", inputs.get("amount_mxn") or "—", "Base de rango de autorización."),
+            ("Factura", "Sí" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
+            ("Presupuesto", "Sí" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
+            ("Urgente", "Sí" if inputs.get("is_urgent") else "No", "Excepción operativa de prioridad."),
+        ]
+    )
+
+    role_chips = "".join(
+        _authorization_strategy_badge_html(role_key) for role_key in required_roles
+    ) or '<span class="status-chip info">Sin roles requeridos</span>'
+
+    profile_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(profile.get("profile_name") or profile.get("name") or "—"))}</td>
+            <td>{escape(str(profile.get("role_key") or "—"))}</td>
+            <td>{"Primera autorización" if profile.get("can_first_approve") else "—"}</td>
+            <td>{"Segunda autorización" if profile.get("can_second_approve") else "—"}</td>
+        </tr>
+        '''
+        for profile in profiles
+        if isinstance(profile, dict)
+    )
+    if not profile_rows:
+        profile_rows = '<tr><td colspan="4" style="text-align:center; padding:16px;">No hay perfiles configurados para esta ruta sugerida.</td></tr>'
+
+    created_display = format_value(selected_created_at)
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Ruta de autorizacion sugerida</h2>
+                    <div class="section-note">
+                        Evidencia consultiva capturada al enviar el documento; todavía no bloquea ni sustituye el flujo actual.
+                    </div>
+                </div>
+                <div class="status-chip info">Advisory</div>
+            </div>
+            <div class="notice info">
+                <strong>Regla sugerida:</strong> {escape(str(rule_label))}<br>
+                <strong>Área:</strong> {escape(str(area_label))} ·
+                <strong>Tipo:</strong> {escape(str(erogation_label))} ·
+                <strong>Rango:</strong> {escape(str(amount_mode))} {escape(str(amount_value))}
+                {f'<br><small>Registrada: {created_display}</small>' if created_display else ''}
+            </div>
+            <div class="meta-grid" style="margin-top:16px;">
+                {input_cards}
+            </div>
+            <div style="margin-top:16px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles requeridos:</strong> {role_chips}
+            </div>
+            <div class="table-shell" style="margin-top:16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Perfil</th>
+                            <th>Rol</th>
+                            <th>Primera</th>
+                            <th>Segunda</th>
+                        </tr>
+                    </thead>
+                    <tbody>{profile_rows}</tbody>
+                </table>
+            </div>
+        </section>
+    '''
+
 
 @router.get("/documentos/{documento_id}", response_class=HTMLResponse, response_model=None)
 async def ver_documento(
@@ -25244,6 +25393,10 @@ async def ver_documento(
         </section>
     """
 
+    authorization_strategy_html = await _render_document_authorization_strategy_evidence(
+        session, documento_id
+    )
+
     solicitud_transferencia_html = ""
     if documento.tipo == "SOLICITUD":
         st_beneficiario = ""
@@ -25640,6 +25793,7 @@ async def ver_documento(
                 {comprobante_pago_html}
                 {solicitud_withdraw_html}
                 {archivos_adjuntos_html}
+                {authorization_strategy_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
