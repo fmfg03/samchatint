@@ -521,7 +521,7 @@ def render_st_fecha_pago_field(
         display_text = "—"
         helper = (
             "Se calculará al aprobar según política de pagos "
-            "(pagos los viernes y el último día hábil del mes)."
+            "(pagos los lunes y el último día hábil del mes)."
         )
         preview_html = ""
         if show_preview_hint and preview_value is not None:

@@ -29,17 +29,6 @@ def previous_business_day(d: date) -> date:
     return prev
 
 
-def friday_of_iso_week(d: date) -> date:
-    """Return the Friday of the ISO week (Mon–Sun) containing *d*."""
-    monday = d - timedelta(days=d.weekday())
-    return monday + timedelta(days=4)
-
-
-def next_friday_on_or_after(d: date) -> date:
-    """Return the next Friday on or after *d* (including *d* when it is Friday)."""
-    days_ahead = (4 - d.weekday()) % 7
-    return d + timedelta(days=days_ahead)
-
 
 def _to_cdmx_datetime(approved_at: datetime) -> datetime:
     dt = approved_at
@@ -59,23 +48,23 @@ def _qualifies_for_month_end_payment(cdmx_dt: datetime) -> bool:
     return cdmx_dt <= _end_of_day_cdmx(deadline_day)
 
 
-def _friday_payment_date(cdmx_dt: datetime) -> date:
+def _weekly_monday_payment_date(cdmx_dt: datetime) -> date:
     approval_date = cdmx_dt.date()
     monday = approval_date - timedelta(days=approval_date.weekday())
     wednesday = monday + timedelta(days=2)
-    friday_this_week = monday + timedelta(days=4)
+    next_monday = monday + timedelta(days=7)
     if cdmx_dt <= _end_of_day_cdmx(wednesday):
-        return friday_this_week
-    return friday_this_week + timedelta(days=7)
+        return next_monday
+    return next_monday + timedelta(days=7)
 
 
 def compute_fecha_pago(approved_at: datetime) -> date:
     """Map approval timestamp to payment date per client policy (CDMX cutoffs).
 
-    When both the Friday run and the month-end run qualify, use the earliest date.
+    When both the weekly Monday run and the month-end run qualify, use the earliest date.
     """
     cdmx_dt = _to_cdmx_datetime(approved_at)
-    candidates = [_friday_payment_date(cdmx_dt)]
+    candidates = [_weekly_monday_payment_date(cdmx_dt)]
     if _qualifies_for_month_end_payment(cdmx_dt):
         candidates.append(last_business_day_of_month(cdmx_dt.date()))
     return min(candidates)

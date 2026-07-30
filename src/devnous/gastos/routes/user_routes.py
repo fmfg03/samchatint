@@ -12502,7 +12502,12 @@ async def gastos_terceros(
         ref_display = escape(doc.numero_referencia) if doc.numero_referencia else "(Sin referencia)"
         ro_terc_raw = (doc.referencia_operaciones or "").strip()
         ro_terc_display = escape(ro_terc_raw) if ro_terc_raw else "—"
-        proveedor_nombre = escape(doc.proveedor_cliente.nombre) if doc.proveedor_cliente and doc.proveedor_cliente.nombre else "—"
+        proveedor_raw = (
+            doc.proveedor_cliente.nombre
+            if doc.proveedor_cliente and doc.proveedor_cliente.nombre
+            else ""
+        )
+        proveedor_nombre = escape(proveedor_raw) if proveedor_raw else "\u2014"
         solicitante_nombre = escape(doc.empleado.nombre) if doc.empleado and doc.empleado.nombre else "—"
         aprobador_nombre = escape(aprobador_by_doc.get(doc.id, "—"))
         monto_value = float(doc.monto_solicitado or 0)
@@ -12513,6 +12518,7 @@ async def gastos_terceros(
         concepto_display = escape(concepto_raw) if concepto_raw else "—"
         ref_ops_attr = escape(ro_terc_raw.lower())
         concepto_attr = escape(concepto_raw.lower())
+        proveedor_attr = escape(proveedor_raw.lower())
         estado_display = escape(doc.estado.upper())
         badge_class = "muted"
         if doc.estado == 'aprobado':
@@ -12541,7 +12547,7 @@ async def gastos_terceros(
         )
 
         rows_html += f"""
-        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}">
+        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-proveedor="{proveedor_attr}">
             <td>{doc_link}</td>
             <td style="white-space: nowrap;">{ro_terc_display}</td>
             <td>{solicitante_nombre}</td>
@@ -12644,6 +12650,10 @@ async def gastos_terceros(
                                 <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                             </div>
                             <div style="min-width: 220px;">
+                                <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Proveedor/Cliente</label>
+                                <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                            </div>
+                            <div style="min-width: 220px;">
                                 <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
                                 <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                             </div>
@@ -12677,21 +12687,34 @@ async def gastos_terceros(
                 <script>
                     (function() {{
                         var refInput = document.getElementById('terceros-search-ref');
+                        var proveedorInput = document.getElementById('terceros-search-proveedor');
                         var conInput = document.getElementById('terceros-search-concepto');
                         var table = document.getElementById('terceros-table');
-                        if (!table || (!refInput && !conInput)) return;
+                        if (!table || (!refInput && !proveedorInput && !conInput)) return;
                         var noMatches = document.getElementById('terceros-no-matches');
                         var rows = table.querySelectorAll('tbody tr[data-ref-ops]');
+                        function normalizeText(value) {{
+                            return (value || '')
+                                .toString()
+                                .normalize('NFD')
+                                .replace(/[\u0300-\u036f]/g, '')
+                                .toLowerCase()
+                                .replace(/[^a-z0-9]+/g, ' ')
+                                .trim();
+                        }}
                         function applyFilter() {{
-                            var qRef = (refInput && refInput.value || '').trim().toLowerCase();
-                            var qCon = (conInput && conInput.value || '').trim().toLowerCase();
+                            var qRef = normalizeText(refInput && refInput.value);
+                            var qProveedor = normalizeText(proveedorInput && proveedorInput.value);
+                            var qCon = normalizeText(conInput && conInput.value);
                             var visible = 0;
                             rows.forEach(function(row) {{
-                                var ref = (row.getAttribute('data-ref-ops') || '').toLowerCase();
-                                var con = (row.getAttribute('data-concepto') || '').toLowerCase();
+                                var ref = normalizeText(row.getAttribute('data-ref-ops'));
+                                var proveedor = normalizeText(row.getAttribute('data-proveedor'));
+                                var con = normalizeText(row.getAttribute('data-concepto'));
                                 var matchRef = !qRef || ref === qRef;
+                                var matchProveedor = !qProveedor || proveedor.indexOf(qProveedor) !== -1;
                                 var matchCon = !qCon || con.indexOf(qCon) !== -1;
-                                var match = matchRef && matchCon;
+                                var match = matchRef && matchProveedor && matchCon;
                                 row.style.display = match ? '' : 'none';
                                 if (match) visible++;
                             }});
@@ -12700,6 +12723,7 @@ async def gastos_terceros(
                             }}
                         }}
                         if (refInput) refInput.addEventListener('input', applyFilter);
+                        if (proveedorInput) proveedorInput.addEventListener('input', applyFilter);
                         if (conInput) conInput.addEventListener('input', applyFilter);
                     }})();
                 </script>
