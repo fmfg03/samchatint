@@ -18,6 +18,7 @@ from .documento_semantics import is_employee_reimbursement
 from .employee_debtor_accounting_service import (
     ensure_debtor_payment_posting_for_document,
 )
+from .expense_accounting_service import _resolve_project_no_deducible_account
 from .expense_service import create_expense_from_data
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,41 @@ async def _load_documento_basic(
 
 async def _load_actor(session: AsyncSession, actor_id: UUID) -> Optional[Empleado]:
     return await session.get(Empleado, actor_id)
+
+
+async def _apply_no_deducible_account_for_unlinked_solicitud(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    expense: Any,
+) -> Any | None:
+    """Assign project-specific non-deductible account while a SOLICITUD lacks CFDI.
+
+    Customer Excel rule: when a transfer request is not linked to a factura/CFDI,
+    its accounting impact must go to the project's Gastos No Deducibles account.
+    The project account matrix is owned by expense_accounting_service.
+    """
+    if getattr(documento, "tipo", None) != "SOLICITUD":
+        return None
+    if getattr(documento, "cfdi_report_id", None):
+        return None
+
+    account = await _resolve_project_no_deducible_account(
+        session,
+        [],
+        expense,
+    )
+    if account is None:
+        return None
+
+    expense.cuenta_contable_id = account.id
+    try:
+        expense.cuenta_contable = account
+    except Exception:
+        # Plain test doubles may not expose SQLAlchemy relationship assignment.
+        pass
+    session.add(expense)
+    return account
 
 
 def _schedule_solicitud_paid_telegram_notifications(
@@ -322,6 +358,12 @@ async def register_document_payment(
         )
         if expense.cfdi_report_id and not documento.cfdi_report_id:
             documento.cfdi_report_id = expense.cfdi_report_id
+
+    await _apply_no_deducible_account_for_unlinked_solicitud(
+        session,
+        documento=documento,
+        expense=expense,
+    )
 
     aprobacion = Aprobacion(
         tipo_entidad="documento",
