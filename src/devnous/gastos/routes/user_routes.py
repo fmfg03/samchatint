@@ -8570,6 +8570,11 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_NAMES = {
     "juan pablo lopez romero",
 }
 
+_THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
+    "finance.employee_beneficiary.request",
+    "finance.employee_beneficiary.*",
+}
+
 
 def _normalize_employee_identity_text(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
@@ -8594,6 +8599,22 @@ def _third_party_requester_name_matches(nombre: str) -> bool:
     return False
 
 
+def _has_explicit_third_party_employee_request_permission(empleado: Empleado) -> bool:
+    """Check assigned profile tokens without role/superadmin escalation."""
+
+    permissions = {
+        str(token or "").strip().lower()
+        for token in (getattr(empleado, "permissions", set()) or set())
+        if str(token or "").strip()
+    }
+    if "*" in permissions:
+        return True
+    return any(
+        permission in permissions
+        for permission in _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS
+    )
+
+
 def _can_request_for_other_employee(empleado: Empleado) -> bool:
     empleado_id = str(getattr(empleado, "id", "") or "")
     correo = (getattr(empleado, "correo", "") or "").strip().lower()
@@ -8602,6 +8623,7 @@ def _can_request_for_other_employee(empleado: Empleado) -> bool:
         empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
         or correo in _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS
         or _third_party_requester_name_matches(nombre)
+        or _has_explicit_third_party_employee_request_permission(empleado)
     )
 
 

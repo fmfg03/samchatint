@@ -429,6 +429,14 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "budgets.audit.read",
         ],
     },
+    "solicitudes_beneficiario_empleado": {
+        "label": "Solicitudes para empleados terceros",
+        "base_role": "empleado",
+        "description": "Permite crear anticipos e informes a nombre de otro empleado activo sin cambiar la bandeja de autorizaci?n del solicitante.",
+        "permissions": [
+            "finance.employee_beneficiary.request",
+        ],
+    },
     "finanzas": {
         "label": "Finanzas",
         "base_role": "finanzas",

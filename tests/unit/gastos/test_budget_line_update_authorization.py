@@ -168,6 +168,15 @@ def test_named_operations_users_cannot_view_or_modify_budgets_even_with_tokens()
             admin_routes._require_budget_access(empleado, "read")
 
 
+def test_employee_beneficiary_preset_grants_only_third_party_request_token() -> None:
+    preset = admin_routes._PROFILE_PRESETS["solicitudes_beneficiario_empleado"]
+
+    assert preset["base_role"] == "empleado"
+    assert preset["permissions"] == ["finance.employee_beneficiary.request"]
+    assert not any(token.startswith("budgets") for token in preset["permissions"])
+    assert not any(token.startswith("admin") for token in preset["permissions"])
+
+
 def test_budget_profile_presets_do_not_grant_mutation_outside_superadmin() -> None:
     assert not any(
         token.startswith("budgets.line.update") or token.startswith("budgets.version.update")
