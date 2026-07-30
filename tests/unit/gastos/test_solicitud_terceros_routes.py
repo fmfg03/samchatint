@@ -554,3 +554,46 @@ async def test_terceros_submit_hides_unexpected_upload_read_error(monkeypatch) -
     assert "error=unexpected_create_error" in response.headers["location"]
     session.rollback.assert_awaited_once()
     assert logged
+
+
+@pytest.mark.asyncio
+async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> None:
+    doc_id = uuid4()
+    doc = SimpleNamespace(
+        id=doc_id,
+        numero_referencia="S-26000054",
+        referencia_operaciones="12",
+        proveedor_cliente=SimpleNamespace(nombre="HK DISENO, S.A. DE C.V."),
+        empleado=SimpleNamespace(nombre="ALICIA EDITH ZUNIGA SALAZAR"),
+        monto_solicitado=8700,
+        currency="MXN",
+        fecha_pago=None,
+        concepto_pago="PRIMER APOYO DE ACUERDO A CONVENIO",
+        estado="enviado",
+    )
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_args: "")
+    monkeypatch.setattr(user_routes, "fetch_documento_adjuntos_meta_batch", AsyncMock(return_value={doc_id: []}))
+    monkeypatch.setattr(user_routes, "fetch_documento_aprobador_display_batch", AsyncMock(return_value={doc_id: "JOSE ODILON"}))
+    monkeypatch.setattr(user_routes, "empleado_list_view_department_scope", lambda *_args: None)
+    monkeypatch.setattr(user_routes, "has_permission", lambda *_args, **_kwargs: False)
+
+    session = AsyncMock()
+    session.execute = AsyncMock(return_value=_scalars_result([doc]))
+    empleado = SimpleNamespace(
+        id=uuid4(),
+        nombre="Ana Operaciones",
+        departamento="Operaciones",
+        rol="finanzas",
+    )
+
+    html = await user_routes.gastos_terceros(
+        request=SimpleNamespace(query_params={}),
+        session=session,
+        current_empleado=empleado,
+    )
+
+    assert 'id="terceros-search-proveedor"' in html
+    assert 'data-proveedor="hk diseno, s.a. de c.v."' in html
+    assert "normalize('NFD')" in html
+    assert ".replace(/[^a-z0-9]+/g, ' ')" in html
+    assert "matchProveedor" in html
