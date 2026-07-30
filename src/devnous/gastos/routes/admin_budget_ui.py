@@ -356,16 +356,28 @@ def _render_matrix_cuenta_search_script(cuentas_contables: list[dict[str, Any]])
                     hideResults();
                 }}
 
+                function normalizeCuentaSearchText(value) {{
+                    return (value || "")
+                        .toString()
+                        .toLowerCase()
+                        .normalize("NFD")
+                        .replace(/[\u0300-\u036f]/g, "")
+                        .replace(/[^a-z0-9]+/g, " ")
+                        .trim()
+                        .replace(/\\s+/g, " ");
+                }}
+
                 searchInput.addEventListener("input", function() {{
-                    const query = (searchInput.value || "").toLowerCase().trim();
+                    const query = normalizeCuentaSearchText(searchInput.value);
                     if (query.length < 1) {{
                         hideResults();
                         return;
                     }}
                     const filtered = cuentasContables.filter(function(c) {{
-                        return (c.codigo || "").toLowerCase().includes(query)
-                            || (c.nombre || "").toLowerCase().includes(query)
-                            || (c.tipo || "").toLowerCase().includes(query);
+                        const searchableText = normalizeCuentaSearchText(
+                            (c.codigo || "") + " " + (c.nombre || "") + " " + (c.tipo || "")
+                        );
+                        return searchableText.includes(query);
                     }}).slice(0, 50);
                     if (filtered.length === 0) {{
                         resultsDiv.innerHTML = '<div style="padding:10px;color:#94a3b8;">No se encontraron cuentas</div>';

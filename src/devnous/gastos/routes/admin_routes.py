@@ -22139,6 +22139,17 @@ async def gastos_sin_cuenta_contable(
                 window.location.reload();
             }});
 
+            function normalizeCuentaSearchText(value) {{
+                return (value || '')
+                    .toString()
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '')
+                    .replace(/[^a-z0-9]+/g, ' ')
+                    .trim()
+                    .replace(/\\s+/g, ' ');
+            }}
+
             // Setup search functionality for all rows
             document.querySelectorAll('.account-search').forEach(searchInput => {{
                 const gastoId = searchInput.getAttribute('data-gasto-id');
@@ -22147,7 +22158,7 @@ async def gastos_sin_cuenta_contable(
                 const hiddenInput = searchInput.parentElement.querySelector('input[type="hidden"]');
 
                 searchInput.addEventListener('input', function() {{
-                    const query = this.value.toLowerCase().trim();
+                    const query = normalizeCuentaSearchText(this.value);
 
                     // Reset styling when user types
                     this.style.borderColor = '#ddd';
@@ -22158,11 +22169,12 @@ async def gastos_sin_cuenta_contable(
                         return;
                     }}
 
-                    const filtered = cuentasContables.filter(c =>
-                        c.codigo.toLowerCase().includes(query) ||
-                        c.nombre.toLowerCase().includes(query) ||
-                        c.tipo.toLowerCase().includes(query)
-                    );
+                    const filtered = cuentasContables.filter(c => {{
+                        const searchableText = normalizeCuentaSearchText(
+                            (c.codigo || '') + ' ' + (c.nombre || '') + ' ' + (c.tipo || '')
+                        );
+                        return searchableText.includes(query);
+                    }});
 
                     if (filtered.length === 0) {{
                         resultsDiv.innerHTML = '<div style="padding: 10px; color: #999;">No se encontraron cuentas</div>';
