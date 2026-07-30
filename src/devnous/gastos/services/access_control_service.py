@@ -328,6 +328,15 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
         SUPERADMIN_ROLES,
         ("ver", "editar", "administrar"),
     ),
+    AccessTool(
+        "configuracion.estrategias_autorizacion",
+        "Estrategias de autorizacion",
+        "Configuracion",
+        "Matriz de autorizacion por area, erogacion, monto y condicion.",
+        ("/admin/estrategias-autorizacion",),
+        SUPERADMIN_ROLES,
+        ("ver", "editar", "administrar"),
+    ),
 )
 
 TOOLS_BY_KEY = {tool.key: tool for tool in ACCESS_TOOLS}

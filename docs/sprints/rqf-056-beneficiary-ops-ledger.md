@@ -39,7 +39,7 @@ Plan master: customer Excel + ordered stages G through O, then RQF-057A operatio
 | RQF-057D - Solicitudes search by proveedor | BACKLOG / customer delta | existing search has concept/reference; provider filter observed earlier | In Referencia solicitudes view, add provider search box/filter alongside Concepto and Referencia; align with customer Buscador tab. |
 | RQF-057E - No deducibles accounting rule | BACKLOG / customer delta | none | If a Solicitud de Transferencia or Informe line is not linked to factura/CFDI, route accounting impact to Gastos No Deducibles according to project-specific rule from ReglaNoDeducibles tab. |
 | RQF-057F - SAT massive download and reconciliation | BACKLOG / customer delta | none | Confirm automatic SAT download still runs daily at 23:00 and 09:00; separate Emitidos/Recibidos; add SAT vs Solicitudes reconciliation view. |
-| RQF-057G - Authorization strategy matrix | BACKLOG / customer delta | customer Excel `Estrategia de Autorizacion.xlsx` remains untracked | Build tablero to register authorization strategies from business matrix; rules apply to Solicitudes de Transferencia, Anticipos, and Informes de Gastos. |
+| RQF-057G - Authorization strategy matrix | PARTIAL_LOCAL_PENDING_COMMIT | this commit | Foundation resolver created from customer matrix and Francisco role mapping; future board registered in Control de accesos as configuracion.estrategias_autorizacion; enforcement/UI still pending. Evidence: docs/sprints/rqf-057g-authorization-strategy-matrix.md. |
 
 ## Commits currently on sprint branch
 
@@ -100,7 +100,7 @@ These items are now part of the master plan, but are not claimed as closed by RQ
 
 ## Next work order
 
-1. Continue customer Excel delta in order: RQF-057C Regional operator beneficiaries, RQF-057D Solicitudes provider search, RQF-057E No deducibles accounting rule, RQF-057F SAT download/reconciliation, RQF-057G Authorization strategy matrix.
+1. Continue customer Excel delta in order: RQF-057C Regional operator beneficiaries, RQF-057D Solicitudes provider search, RQF-057E No deducibles accounting rule, RQF-057F SAT download/reconciliation, RQF-057G Authorization strategy matrix enforcement/UI.
 2. Keep RQF-056O Tocino/facturacion status/errors parked unless support pressure makes it urgent again.
 3. Sprint close only after broader tests + push + PR + review gate + final merge.
 
