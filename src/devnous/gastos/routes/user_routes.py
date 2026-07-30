@@ -24779,6 +24779,111 @@ def _authorization_strategy_actual_route_preview_html(
         </div>
     '''
 
+async def _render_document_authorization_route_warning(
+    session: AsyncSession,
+    documento_id: UUIDType,
+) -> str:
+    """Render the latest persisted soft authorization-route warning, if any."""
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT metadata_json, created_at
+                FROM customer_success_audit_events
+                WHERE documento_id = :documento_id
+                  AND action = 'documento.approved'
+                  AND metadata_json ? 'authorization_route_warning'
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+    except Exception:
+        logger.exception(
+            "Failed to load soft authorization route warning",
+            extra={"documento_id": str(documento_id)},
+        )
+        return ""
+
+    row = result.fetchone()
+    if row is None:
+        return ""
+    metadata = row._mapping.get("metadata_json") or {}
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            metadata = {}
+    warning = metadata.get("authorization_route_warning") if isinstance(metadata, dict) else None
+    if not isinstance(warning, dict):
+        return ""
+
+    missing_roles = warning.get("missing_role_keys") or []
+    matched_roles = warning.get("matched_role_keys") or []
+    required_roles = warning.get("required_role_keys") or []
+    approvers = warning.get("actual_approvers") or []
+
+    missing_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in missing_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+    matched_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in matched_roles
+    ) or '<span class="status-chip info">Ninguno</span>'
+    required_chips = "".join(
+        _authorization_strategy_badge_html(role) for role in required_roles
+    ) or '<span class="status-chip info">Sin ruta</span>'
+    approver_rows = "".join(
+        f'''
+        <tr>
+            <td>{escape(str(approver.get("fecha") or "--"))}</td>
+            <td>{escape(str(approver.get("nombre") or "--"))}</td>
+            <td>{escape(str(approver.get("rol") or "--"))}</td>
+            <td>{escape(str(approver.get("departamento") or "--"))}</td>
+        </tr>
+        '''
+        for approver in approvers
+        if isinstance(approver, dict)
+    ) or '<tr><td colspan="4" style="text-align:center; padding:16px;">Sin aprobadores registrados en el warning.</td></tr>'
+
+    created_display = format_value(row._mapping.get("created_at"))
+    return f'''
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Warning suave de autorizacion</h2>
+                    <div class="section-note">
+                        Diferencia registrada en auditoria. No bloqueo la operacion, pero queda trazable para revision.
+                    </div>
+                </div>
+                <div class="status-chip warning">Soft warning</div>
+            </div>
+            <div class="notice warning">
+                <strong>Ruta real incompleta contra matriz consultiva.</strong><br>
+                <small>{escape(str(warning.get("message") or "Actual approvals do not cover all advisory matrix roles."))}</small>
+                {f'<br><small>Registrado: {created_display}</small>' if created_display else ''}
+            </div>
+            <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+                <strong>Roles requeridos:</strong> {required_chips}
+                <strong style="margin-left:12px;">Cubiertos:</strong> {matched_chips}
+                <strong style="margin-left:12px;">Faltantes:</strong> {missing_chips}
+            </div>
+            <div class="table-shell" style="margin-top:16px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Fecha</th>
+                            <th>Aprobador registrado</th>
+                            <th>Rol</th>
+                            <th>Departamento</th>
+                        </tr>
+                    </thead>
+                    <tbody>{approver_rows}</tbody>
+                </table>
+            </div>
+        </section>
+    '''
+
 
 async def _render_document_authorization_pre_send_preview(
     session: AsyncSession,
@@ -25636,6 +25741,10 @@ async def ver_documento(
         session, documento_id
     )
 
+    authorization_route_warning_html = await _render_document_authorization_route_warning(
+        session, documento_id
+    )
+
     authorization_pre_send_preview_html = await _render_document_authorization_pre_send_preview(
         session, documento, can_send_documento=can_send_documento
     )
@@ -26037,6 +26146,7 @@ async def ver_documento(
                 {solicitud_withdraw_html}
                 {archivos_adjuntos_html}
                 {authorization_strategy_html}
+                {authorization_route_warning_html}
                 {authorization_pre_send_preview_html}
                 <section class="surface">
                     <div class="section-head">

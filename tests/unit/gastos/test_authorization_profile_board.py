@@ -132,3 +132,28 @@ def test_document_detail_previews_authorization_strategy_before_send():
     assert "can_send_documento=can_send_documento" in source
     assert "{authorization_pre_send_preview_html}" in source
     assert "no bloquea el envio" in source
+
+
+def test_document_workflow_approval_persists_soft_authorization_warning():
+    source = Path(
+        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+    profile_source = Path(
+        "/root/samchat/src/devnous/gastos/services/authorization_profile_service.py"
+    ).read_text()
+
+    assert "build_authorization_route_soft_warning" in profile_source
+    assert "authorization_route_mismatch" in profile_source
+    assert 'if normalized_action == "approve":' in source
+    assert "build_authorization_route_soft_warning" in source
+    assert 'audit_metadata["authorization_route_warning"]' in source
+
+
+def test_document_detail_renders_soft_authorization_warning_panel():
+    source = Path(user_routes.__file__).read_text()
+
+    assert "_render_document_authorization_route_warning" in source
+    assert "Warning suave de autorizacion" in source
+    assert "authorization_route_warning" in source
+    assert "metadata_json ? 'authorization_route_warning'" in source
+    assert "{authorization_route_warning_html}" in source

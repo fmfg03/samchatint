@@ -452,6 +452,24 @@ async def transition_documento_workflow(
     if authorization_strategy_evidence is not None:
         audit_metadata["authorization_strategy"] = authorization_strategy_evidence
 
+    authorization_route_warning = None
+    if normalized_action == "approve":
+        try:
+            from .authorization_profile_service import (
+                build_authorization_route_soft_warning,
+            )
+
+            authorization_route_warning = await build_authorization_route_soft_warning(
+                session, documento
+            )
+        except Exception:
+            logger.exception(
+                "Failed to build soft authorization route warning",
+                extra={"documento_id": str(documento.id)},
+            )
+    if authorization_route_warning is not None:
+        audit_metadata["authorization_route_warning"] = authorization_route_warning
+
     await record_customer_success_audit_event(
         session,
         action=action_labels.get(normalized_action, f"documento.{normalized_action}"),

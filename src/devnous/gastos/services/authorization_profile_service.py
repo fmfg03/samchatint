@@ -467,3 +467,109 @@ async def build_document_authorization_evidence(
         evidence["rule"] = None
         evidence["matching_profiles"] = []
     return evidence
+
+
+def _authorization_profile_text_key(value: object) -> str:
+    import unicodedata
+
+    raw = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return " ".join(
+        "".join(ch for ch in normalized if not unicodedata.combining(ch)).split()
+    )
+
+
+def _authorization_profile_matches_approver(
+    profile: dict[str, Any],
+    approver: dict[str, Any],
+) -> bool:
+    profile_role = _authorization_profile_text_key(profile.get("role_key"))
+    approver_role = _authorization_profile_text_key(approver.get("rol"))
+    if profile_role and approver_role and profile_role == approver_role:
+        return True
+
+    matcher = _authorization_profile_text_key(profile.get("employee_matcher"))
+    approver_name = _authorization_profile_text_key(approver.get("nombre"))
+    if not matcher or not approver_name:
+        return False
+    return matcher in approver_name or approver_name in matcher
+
+
+async def build_authorization_route_soft_warning(
+    session: AsyncSession,
+    documento: object,
+) -> Optional[dict[str, Any]]:
+    """Return a non-blocking authorization-route warning for audit metadata."""
+    evidence = await build_document_authorization_evidence(session, documento)
+    required_roles = [
+        str(role) for role in (evidence.get("required_role_keys") or []) if role
+    ]
+    if not required_roles:
+        return None
+
+    result = await session.execute(
+        text(
+            """
+            SELECT a.accion, a.fecha, e.nombre, e.rol, e.departamento
+            FROM aprobaciones a
+            LEFT JOIN empleados e ON e.id = a.aprobador_id
+            WHERE a.tipo_entidad = 'documento'
+              AND a.entidad_id = :documento_id
+            ORDER BY a.fecha ASC
+            """
+        ),
+        {"documento_id": str(getattr(documento, "id"))},
+    )
+    approval_actions = {"aprobar", "aprobado", "auto_aprobar", "auto_aprobado"}
+    approvers = []
+    for row in result.fetchall():
+        mapping = row._mapping
+        if _authorization_profile_text_key(mapping.get("accion")) not in approval_actions:
+            continue
+        approvers.append(
+            {
+                "accion": mapping.get("accion"),
+                "fecha": mapping.get("fecha").isoformat() if mapping.get("fecha") else None,
+                "nombre": mapping.get("nombre"),
+                "rol": mapping.get("rol"),
+                "departamento": mapping.get("departamento"),
+            }
+        )
+
+    if not approvers:
+        return None
+
+    profiles = [
+        profile
+        for profile in (evidence.get("matching_profiles") or [])
+        if isinstance(profile, dict)
+    ]
+    matched_roles: set[str] = set()
+    for role_key in required_roles:
+        role_profiles = [
+            profile
+            for profile in profiles
+            if str(profile.get("role_key") or "") == str(role_key)
+        ]
+        for profile in role_profiles:
+            if any(
+                _authorization_profile_matches_approver(profile, approver)
+                for approver in approvers
+            ):
+                matched_roles.add(str(role_key))
+                break
+
+    missing_roles = [role for role in required_roles if role not in matched_roles]
+    if not missing_roles:
+        return None
+
+    return {
+        "mode": "soft_warning",
+        "warning_type": "authorization_route_mismatch",
+        "message": "Actual approvals do not cover all advisory matrix roles.",
+        "missing_role_keys": missing_roles,
+        "matched_role_keys": sorted(matched_roles),
+        "required_role_keys": required_roles,
+        "actual_approvers": approvers,
+        "authorization_strategy": evidence,
+    }
