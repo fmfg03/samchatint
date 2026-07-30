@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
 
@@ -493,6 +494,97 @@ def _authorization_profile_matches_approver(
     if not matcher or not approver_name:
         return False
     return matcher in approver_name or approver_name in matcher
+
+
+TRUE_ENV_VALUES = {"1", "true", "yes", "on", "enabled", "enforced"}
+
+
+def authorization_strategy_enforcement_enabled() -> bool:
+    """Return whether the authorization matrix should block mismatched approvals.
+
+    The default is intentionally advisory/off. Plataforma can turn this on only
+    after UAT by setting either environment variable to a true-like value.
+    """
+    raw = (
+        os.getenv("SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT")
+        or os.getenv("AUTHORIZATION_STRATEGY_ENFORCEMENT")
+        or ""
+    )
+    return raw.strip().lower() in TRUE_ENV_VALUES
+
+
+def authorization_strategy_actor_matches_required_profile(
+    *,
+    actor: object,
+    profiles: Iterable[dict[str, Any]],
+    required_role_keys: Iterable[str],
+) -> tuple[str, ...]:
+    """Return matrix role keys covered by the current actor.
+
+    Matching honors both role_key and employee_matcher so copied UI profiles can
+    represent real people without hard-coding employee IDs into the matrix.
+    """
+    approver = {
+        "nombre": getattr(actor, "nombre", None),
+        "rol": getattr(actor, "rol", None),
+        "departamento": getattr(actor, "departamento", None),
+    }
+    required = [str(role) for role in required_role_keys if role]
+    matched: set[str] = set()
+    for role_key in required:
+        for profile in profiles:
+            if not isinstance(profile, dict):
+                continue
+            if str(profile.get("role_key") or "") != role_key:
+                continue
+            if _authorization_profile_matches_approver(profile, approver):
+                matched.add(role_key)
+                break
+    return tuple(role for role in required if role in matched)
+
+
+async def build_authorization_route_hard_block(
+    session: AsyncSession,
+    documento: object,
+    actor: object,
+) -> Optional[dict[str, Any]]:
+    """Return blocking details when enforcement is enabled and actor mismatches.
+
+    Missing/fallback rules stay advisory to avoid false positives while the
+    customer finishes validating the matrix. Once a rule resolves and active
+    profiles exist, an approver outside the required profile set is blocked.
+    """
+    if not authorization_strategy_enforcement_enabled():
+        return None
+
+    evidence = await build_document_authorization_evidence(session, documento)
+    required_roles = [
+        str(role) for role in (evidence.get("required_role_keys") or []) if role
+    ]
+    profiles = [
+        profile
+        for profile in (evidence.get("matching_profiles") or [])
+        if isinstance(profile, dict)
+    ]
+    if not required_roles or not profiles:
+        return None
+
+    matched_roles = authorization_strategy_actor_matches_required_profile(
+        actor=actor,
+        profiles=profiles,
+        required_role_keys=required_roles,
+    )
+    if matched_roles:
+        return None
+
+    return {
+        "mode": "hard_enforcement",
+        "block_type": "authorization_strategy_actor_mismatch",
+        "message": "El aprobador no coincide con la estrategia de autorización configurada.",
+        "required_role_keys": required_roles,
+        "matched_role_keys": list(matched_roles),
+        "authorization_strategy": evidence,
+    }
 
 
 async def build_authorization_route_soft_warning(

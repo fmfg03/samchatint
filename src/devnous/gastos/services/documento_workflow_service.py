@@ -331,6 +331,25 @@ async def transition_documento_workflow(
                     "El documento tipo INFORME debe tener al menos un gasto activo "
                     "antes de poder aprobarse.",
                 )
+        try:
+            from .authorization_profile_service import (
+                build_authorization_route_hard_block,
+            )
+
+            authorization_route_block = await build_authorization_route_hard_block(
+                session, documento, actor
+            )
+        except Exception:
+            logger.exception(
+                "Failed to evaluate hard authorization strategy enforcement",
+                extra={"documento_id": str(documento.id)},
+            )
+            authorization_route_block = None
+        if authorization_route_block is not None:
+            raise DocumentoWorkflowValidationError(
+                "authorization_strategy_required",
+                str(authorization_route_block.get("message") or "Ruta de autorización inválida."),
+            )
         documento.estado = "aprobado"
         documento.aprobado_en = now
         assign_fecha_pago_on_solicitud_approval(documento)

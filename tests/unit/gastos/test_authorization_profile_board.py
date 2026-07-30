@@ -174,3 +174,68 @@ def test_authorization_warnings_dashboard_is_registered_read_only():
     assert "configuracion.authorization_warnings" in access_source
     assert "FINANCE_ADMIN_ROLES" in access_source
     assert '("ver",)' in access_source
+
+
+def test_authorization_strategy_enforcement_is_off_by_default(monkeypatch):
+    from devnous.gastos.services.authorization_profile_service import (
+        authorization_strategy_enforcement_enabled,
+    )
+
+    monkeypatch.delenv("SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT", raising=False)
+    monkeypatch.delenv("AUTHORIZATION_STRATEGY_ENFORCEMENT", raising=False)
+
+    assert authorization_strategy_enforcement_enabled() is False
+
+
+def test_authorization_strategy_enforcement_accepts_explicit_switch(monkeypatch):
+    from devnous.gastos.services.authorization_profile_service import (
+        authorization_strategy_enforcement_enabled,
+    )
+
+    monkeypatch.setenv("SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT", "enabled")
+
+    assert authorization_strategy_enforcement_enabled() is True
+
+
+def test_authorization_strategy_actor_profile_matching_uses_copied_profile_matcher():
+    from devnous.gastos.services.authorization_profile_service import (
+        authorization_strategy_actor_matches_required_profile,
+    )
+
+    actor = SimpleNamespace(
+        nombre="José Odilon Trujillo Macedo",
+        rol="finanzas",
+        departamento="Operaciones",
+    )
+    profiles = [
+        {
+            "name": "Perfil Odilon",
+            "role_key": "director_operaciones",
+            "employee_matcher": "odilon trujillo",
+        }
+    ]
+
+    assert authorization_strategy_actor_matches_required_profile(
+        actor=actor,
+        profiles=profiles,
+        required_role_keys=("director_operaciones",),
+    ) == ("director_operaciones",)
+
+
+def test_document_workflow_has_feature_flagged_authorization_enforcement():
+    source = Path(
+        "/root/samchat/src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+    profile_source = Path(
+        "/root/samchat/src/devnous/gastos/services/authorization_profile_service.py"
+    ).read_text()
+
+    assert "SAMCHAT_AUTHORIZATION_STRATEGY_ENFORCEMENT" in profile_source
+    assert "build_authorization_route_hard_block" in profile_source
+    assert "build_authorization_route_hard_block" in source
+    assert "authorization_strategy_required" in source
+    assert "documento.estado = \"aprobado\"" in source
+    assert source.index("authorization_strategy_required") < source.index(
+        "documento.estado = \"aprobado\"",
+        source.index("authorization_strategy_required"),
+    )
