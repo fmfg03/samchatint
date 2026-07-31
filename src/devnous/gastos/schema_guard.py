@@ -2477,6 +2477,7 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             cuenta_clabe TEXT NULL,
             cuenta_bancaria TEXT NULL,
             entidad_region TEXT NULL,
+            participant_is_minor BOOLEAN NULL,
             notas TEXT NULL,
             status VARCHAR(50) NOT NULL DEFAULT 'pendiente_area',
             area_decision_comment TEXT NULL,
@@ -2493,6 +2494,10 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         """,
     ),
     (
+        "add_beneficiary_onboarding_participant_is_minor",
+        "ALTER TABLE beneficiary_onboarding_requests ADD COLUMN IF NOT EXISTS participant_is_minor BOOLEAN NULL",
+    ),
+    (
         "ix_beneficiary_onboarding_requested_by",
         "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_requested_by ON beneficiary_onboarding_requests(requested_by_empleado_id)",
     ),
@@ -2507,6 +2512,31 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "ix_beneficiary_onboarding_clabe",
         "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_clabe ON beneficiary_onboarding_requests(cuenta_clabe)",
+    ),
+    (
+        "create_beneficiary_onboarding_attachments_table",
+        """
+        CREATE TABLE IF NOT EXISTS beneficiary_onboarding_attachments (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            request_id UUID NOT NULL REFERENCES beneficiary_onboarding_requests(id) ON UPDATE CASCADE ON DELETE CASCADE,
+            categoria VARCHAR(80) NOT NULL,
+            ruta_archivo TEXT NOT NULL,
+            tipo_archivo VARCHAR(100) NULL,
+            nombre_archivo VARCHAR(500) NULL,
+            mime_type VARCHAR(200) NULL,
+            subido_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_beneficiary_onboarding_attachment_categoria
+                CHECK (categoria IN ('ine_participante','ine_tutor','credencial_participante','caratula_estado_cuenta'))
+        )
+        """,
+    ),
+    (
+        "ix_beneficiary_onboarding_attachments_request",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_attachments_request ON beneficiary_onboarding_attachments(request_id)",
+    ),
+    (
+        "ix_beneficiary_onboarding_attachments_categoria",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_attachments_categoria ON beneficiary_onboarding_attachments(categoria)",
     ),
     (
         "create_sat_sync_state_table",

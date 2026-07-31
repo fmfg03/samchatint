@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
@@ -13,10 +14,12 @@ from sqlalchemy.orm import selectinload
 
 from ..models import (
     Aprobacion,
+    BeneficiaryOnboardingAttachment,
     BeneficiaryOnboardingRequest,
     Empleado,
     ProveedorCliente,
 )
+from ..utils.receipt_bytes import MAX_SOLICITUD_ATTACHMENT_BYTES
 from .telegram_outbox_service import deliver_telegram_notification
 
 
@@ -32,6 +35,20 @@ BENEFICIARY_TARGET_TYPE_LABELS = {
     "empleado": "Empleado",
     "operadores_regionales": "Operador Regional",
     "participante_torneo": "Participante de Torneos",
+}
+
+BENEFICIARY_ATTACHMENT_LABELS = {
+    "ine_participante": "INE del participante",
+    "ine_tutor": "INE del tutor",
+    "credencial_participante": "Credencial del torneo o escolar",
+    "caratula_estado_cuenta": "Carátula del estado de cuenta",
+}
+
+VALID_BENEFICIARY_ATTACHMENT_CATEGORIES = set(BENEFICIARY_ATTACHMENT_LABELS)
+
+ALLOWED_BENEFICIARY_ATTACHMENT_MIME_PREFIXES = ("image/",)
+ALLOWED_BENEFICIARY_ATTACHMENT_MIME_TYPES = {
+    "application/pdf",
 }
 
 FINAL_REVIEWER_EMAILS = {
@@ -58,7 +75,16 @@ class BeneficiaryOnboardingInput:
     entidad_region: Optional[str] = None
     empleado_id: Optional[UUID] = None
     torneo_id: Optional[UUID] = None
+    participant_is_minor: Optional[bool] = None
     notas: Optional[str] = None
+
+
+@dataclass(slots=True)
+class BeneficiaryOnboardingAttachmentInput:
+    categoria: str
+    filename: str
+    mime_type: str
+    raw_bytes: bytes
 
 
 def normalize_beneficiary_target_type(value: str) -> str:
@@ -83,6 +109,96 @@ def normalize_clabe(value: Optional[str]) -> Optional[str]:
             "La cuenta CLABE debe tener exactamente 18 dígitos.",
         )
     return clean
+
+
+def normalize_beneficiary_attachment_category(value: str) -> str:
+    category = (value or "").strip().lower()
+    if category not in VALID_BENEFICIARY_ATTACHMENT_CATEGORIES:
+        raise BeneficiaryOnboardingError(
+            "invalid_attachment_category",
+            "Tipo de archivo de alta inválido.",
+        )
+    return category
+
+
+def required_attachment_categories(
+    *,
+    target_tipo: str,
+    participant_is_minor: Optional[bool],
+) -> set[str]:
+    required = {"caratula_estado_cuenta"}
+    if target_tipo == "participante_torneo":
+        if participant_is_minor is None:
+            raise BeneficiaryOnboardingError(
+                "missing_participant_age",
+                "Indique si el participante es mayor o menor de edad.",
+            )
+        if participant_is_minor:
+            required.update({"ine_tutor", "credencial_participante"})
+        else:
+            required.add("ine_participante")
+    return required
+
+
+def _validate_attachment_input(
+    attachment: BeneficiaryOnboardingAttachmentInput,
+) -> BeneficiaryOnboardingAttachmentInput:
+    category = normalize_beneficiary_attachment_category(attachment.categoria)
+    filename = normalize_optional_text(attachment.filename) or "adjunto"
+    raw = attachment.raw_bytes or b""
+    if not raw:
+        raise BeneficiaryOnboardingError(
+            "empty_attachment",
+            f"El archivo {BENEFICIARY_ATTACHMENT_LABELS[category]} está vacío.",
+        )
+    if len(raw) > MAX_SOLICITUD_ATTACHMENT_BYTES:
+        raise BeneficiaryOnboardingError(
+            "attachment_too_large",
+            "Cada archivo debe pesar máximo 15 MB.",
+        )
+    mime_type = (attachment.mime_type or "").split(";", 1)[0].strip().lower()
+    if not mime_type:
+        mime_type = "application/octet-stream"
+    is_allowed = mime_type in ALLOWED_BENEFICIARY_ATTACHMENT_MIME_TYPES or any(
+        mime_type.startswith(prefix)
+        for prefix in ALLOWED_BENEFICIARY_ATTACHMENT_MIME_PREFIXES
+    )
+    if not is_allowed:
+        raise BeneficiaryOnboardingError(
+            "invalid_attachment_type",
+            "Los documentos de alta deben ser PDF o imagen.",
+        )
+    return BeneficiaryOnboardingAttachmentInput(
+        categoria=category,
+        filename=filename,
+        mime_type=mime_type,
+        raw_bytes=raw,
+    )
+
+
+def validate_required_attachments(
+    *,
+    target_tipo: str,
+    participant_is_minor: Optional[bool],
+    attachments: list[BeneficiaryOnboardingAttachmentInput],
+) -> list[BeneficiaryOnboardingAttachmentInput]:
+    validated = [_validate_attachment_input(item) for item in attachments]
+    present = {item.categoria for item in validated}
+    required = required_attachment_categories(
+        target_tipo=target_tipo,
+        participant_is_minor=participant_is_minor,
+    )
+    missing = required - present
+    if missing:
+        labels = ", ".join(
+            BENEFICIARY_ATTACHMENT_LABELS[category]
+            for category in sorted(missing)
+        )
+        raise BeneficiaryOnboardingError(
+            "missing_required_attachment",
+            f"Faltan documentos obligatorios: {labels}.",
+        )
+    return validated
 
 
 def is_final_beneficiary_reviewer(empleado: Empleado) -> bool:
@@ -116,6 +232,7 @@ async def _load_onboarding_request(
             selectinload(BeneficiaryOnboardingRequest.area_approver),
             selectinload(BeneficiaryOnboardingRequest.final_approved_by),
             selectinload(BeneficiaryOnboardingRequest.created_proveedor_cliente),
+            selectinload(BeneficiaryOnboardingRequest.attachments),
         )
         .where(BeneficiaryOnboardingRequest.id == request_id)
     )
@@ -134,6 +251,7 @@ async def list_beneficiary_onboarding_requests(
             selectinload(BeneficiaryOnboardingRequest.requested_by),
             selectinload(BeneficiaryOnboardingRequest.area_approver),
             selectinload(BeneficiaryOnboardingRequest.created_proveedor_cliente),
+            selectinload(BeneficiaryOnboardingRequest.attachments),
         )
         .order_by(BeneficiaryOnboardingRequest.creado_en.desc())
         .limit(200)
@@ -224,6 +342,36 @@ def _onboarding_summary(request: BeneficiaryOnboardingRequest) -> str:
     return "\n".join(lines)
 
 
+def _create_attachment_model(
+    request_id: UUID,
+    attachment: BeneficiaryOnboardingAttachmentInput,
+) -> BeneficiaryOnboardingAttachment:
+    return BeneficiaryOnboardingAttachment(
+        request_id=request_id,
+        categoria=attachment.categoria,
+        ruta_archivo=base64.b64encode(attachment.raw_bytes).decode("ascii"),
+        tipo_archivo=attachment.mime_type,
+        mime_type=attachment.mime_type,
+        nombre_archivo=attachment.filename,
+    )
+
+
+def can_access_beneficiary_onboarding_request(
+    actor: Empleado,
+    request: BeneficiaryOnboardingRequest,
+) -> bool:
+    role = (getattr(actor, "rol", "") or "").strip().lower()
+    if role in {"finanzas", "admin", "superadmin", "super_admin"}:
+        return True
+    if is_final_beneficiary_reviewer(actor):
+        return True
+    actor_id = getattr(actor, "id", None)
+    return actor_id in {
+        request.requested_by_empleado_id,
+        request.area_approver_id,
+    }
+
+
 async def _notify_employee(
     session: AsyncSession,
     *,
@@ -254,6 +402,7 @@ async def create_beneficiary_onboarding_request(
     *,
     requester: Empleado,
     payload: BeneficiaryOnboardingInput,
+    attachments: Optional[list[BeneficiaryOnboardingAttachmentInput]] = None,
 ) -> BeneficiaryOnboardingRequest:
     if not can_create_beneficiary_onboarding_request(requester):
         raise BeneficiaryOnboardingError(
@@ -276,6 +425,16 @@ async def create_beneficiary_onboarding_request(
             "missing_area_approver",
             "El solicitante no tiene aprobador de área configurado.",
         )
+    participant_is_minor = (
+        bool(payload.participant_is_minor)
+        if target_tipo == "participante_torneo"
+        else None
+    )
+    validated_attachments = validate_required_attachments(
+        target_tipo=target_tipo,
+        participant_is_minor=participant_is_minor,
+        attachments=list(attachments or []),
+    )
     await _ensure_no_active_duplicate(
         session,
         target_tipo=target_tipo,
@@ -296,11 +455,14 @@ async def create_beneficiary_onboarding_request(
         entidad_region=normalize_optional_text(payload.entidad_region),
         empleado_id=payload.empleado_id,
         torneo_id=payload.torneo_id,
+        participant_is_minor=participant_is_minor,
         notas=normalize_optional_text(payload.notas),
         status="pendiente_area",
     )
     session.add(request)
     await session.flush()
+    for attachment in validated_attachments:
+        session.add(_create_attachment_model(request.id, attachment))
     session.add(
         Aprobacion(
             tipo_entidad="beneficiary_onboarding",

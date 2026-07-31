@@ -33,7 +33,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload, undefer
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -138,12 +138,15 @@ from ..services.documento_workflow_service import (
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
 from ..services.beneficiary_onboarding_service import (
+    BENEFICIARY_ATTACHMENT_LABELS,
     BENEFICIARY_TARGET_TYPE_LABELS,
+    BeneficiaryOnboardingAttachmentInput,
     BeneficiaryOnboardingError,
     BeneficiaryOnboardingInput,
     approve_beneficiary_onboarding_area,
     approve_beneficiary_onboarding_final,
     can_create_beneficiary_onboarding_request,
+    can_access_beneficiary_onboarding_request,
     is_final_beneficiary_reviewer,
     list_beneficiary_onboarding_requests,
     reject_beneficiary_onboarding_area,
@@ -12139,6 +12142,32 @@ def _beneficiary_onboarding_status_label(status: str) -> str:
     }.get(status or "", status or "—")
 
 
+def _beneficiary_onboarding_attachment_links(
+    item: BeneficiaryOnboardingRequest,
+) -> str:
+    attachments = list(getattr(item, "attachments", []) or [])
+    if not attachments:
+        return "—"
+    links = []
+    for attachment in sorted(
+        attachments,
+        key=lambda value: (
+            BENEFICIARY_ATTACHMENT_LABELS.get(value.categoria, value.categoria),
+            value.nombre_archivo or "",
+        ),
+    ):
+        label = BENEFICIARY_ATTACHMENT_LABELS.get(
+            attachment.categoria,
+            attachment.categoria,
+        )
+        name = attachment.nombre_archivo or label
+        links.append(
+            f'<a href="/beneficiarios/altas/{item.id}/adjuntos/{attachment.id}" '
+            f'target="_blank" rel="noopener">{escape(label)}: {escape(name)}</a>'
+        )
+    return "<br>".join(links)
+
+
 def _beneficiary_onboarding_rows(
     requests: List[BeneficiaryOnboardingRequest],
     *,
@@ -12184,14 +12213,45 @@ def _beneficiary_onboarding_rows(
                 <td>{escape(requested_by)}</td>
                 <td>{escape(item.banco or "—")}</td>
                 <td>{escape(item.cuenta_clabe or item.cuenta_bancaria or "—")}</td>
+                <td>{_beneficiary_onboarding_attachment_links(item)}</td>
                 <td>{escape(_beneficiary_onboarding_status_label(item.status))}</td>
                 <td>{action_html}</td>
             </tr>
             """
         )
     if not rows:
-        return '<tr><td colspan="7">Sin solicitudes.</td></tr>'
+        return '<tr><td colspan="8">Sin solicitudes.</td></tr>'
     return "".join(rows)
+
+
+async def _beneficiary_onboarding_upload_inputs(
+    *,
+    ine_participante: Optional[UploadFile],
+    ine_tutor: Optional[UploadFile],
+    credencial_participante: Optional[UploadFile],
+    caratula_estado_cuenta: Optional[UploadFile],
+) -> list[BeneficiaryOnboardingAttachmentInput]:
+    uploads = [
+        ("ine_participante", ine_participante),
+        ("ine_tutor", ine_tutor),
+        ("credencial_participante", credencial_participante),
+        ("caratula_estado_cuenta", caratula_estado_cuenta),
+    ]
+    attachments: list[BeneficiaryOnboardingAttachmentInput] = []
+    for category, upload in uploads:
+        if upload is None or not upload.filename:
+            continue
+        raw = await upload.read()
+        content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+        attachments.append(
+            BeneficiaryOnboardingAttachmentInput(
+                categoria=category,
+                filename=upload.filename or BENEFICIARY_ATTACHMENT_LABELS[category],
+                mime_type=content_type or resolve_media_type(upload.filename, raw),
+                raw_bytes=raw,
+            )
+        )
+    return attachments
 
 
 def _beneficiary_onboarding_page(
@@ -12240,6 +12300,7 @@ def _beneficiary_onboarding_page(
                             <th>Solicitante</th>
                             <th>Banco</th>
                             <th>Cuenta</th>
+                            <th>Archivos</th>
                             <th>Estado</th>
                             <th>Acciones</th>
                         </tr>
@@ -12286,6 +12347,10 @@ async def beneficiary_onboarding_new_form(
             label {{ display:block; font-weight:700; margin-bottom:6px; }}
             input, select, textarea {{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box; }}
             textarea {{ min-height:88px; }}
+            .attachment-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }}
+            .attachment-card {{ border:1px solid #e2e8f0; border-radius:6px; padding:12px; background:#f8fafc; }}
+            .attachment-card small {{ display:block; margin-top:6px; color:#64748b; }}
+            .participant-only, .minor-only, .adult-only {{ display:none; }}
         </style>
     </head>
     <body>
@@ -12294,7 +12359,7 @@ async def beneficiary_onboarding_new_form(
             <section class="surface">
                 <h1 style="margin-top:0;">Solicitar alta de beneficiario</h1>
                 {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
-                <form method="POST" action="/beneficiarios/altas/nueva">
+                <form method="POST" action="/beneficiarios/altas/nueva" enctype="multipart/form-data">
                     <div class="form-group">
                         <label for="target_tipo">Tipo *</label>
                         <select name="target_tipo" id="target_tipo" required>
@@ -12343,6 +12408,39 @@ async def beneficiary_onboarding_new_form(
                             {torneo_options}
                         </select>
                     </div>
+                    <div class="form-group participant-only">
+                        <label for="participant_age_group">Edad del participante</label>
+                        <select name="participant_age_group" id="participant_age_group">
+                            <option value="">Seleccione...</option>
+                            <option value="adult">Mayor de edad</option>
+                            <option value="minor">Menor de edad</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Documentos</label>
+                        <div class="attachment-grid">
+                            <div class="attachment-card adult-only">
+                                <label for="ine_participante">INE del participante</label>
+                                <input type="file" name="ine_participante" id="ine_participante" accept=".pdf,image/*,application/pdf">
+                                <small>Requerida si el participante es mayor de edad.</small>
+                            </div>
+                            <div class="attachment-card minor-only">
+                                <label for="ine_tutor">INE del tutor</label>
+                                <input type="file" name="ine_tutor" id="ine_tutor" accept=".pdf,image/*,application/pdf">
+                                <small>Requerida si el participante es menor de edad.</small>
+                            </div>
+                            <div class="attachment-card minor-only">
+                                <label for="credencial_participante">Credencial del torneo o escolar</label>
+                                <input type="file" name="credencial_participante" id="credencial_participante" accept=".pdf,image/*,application/pdf">
+                                <small>Requerida si el participante es menor de edad.</small>
+                            </div>
+                            <div class="attachment-card">
+                                <label for="caratula_estado_cuenta">Carátula del estado de cuenta *</label>
+                                <input type="file" name="caratula_estado_cuenta" id="caratula_estado_cuenta" accept=".pdf,image/*,application/pdf" required>
+                                <small>Requerida para cualquier alta con cuenta destino.</small>
+                            </div>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label for="notas">Notas</label>
                         <textarea name="notas" id="notas"></textarea>
@@ -12352,6 +12450,27 @@ async def beneficiary_onboarding_new_form(
                 </form>
             </section>
         </div>
+        <script>
+            const tipoSelect = document.getElementById('target_tipo');
+            const ageSelect = document.getElementById('participant_age_group');
+            const participantOnly = Array.from(document.querySelectorAll('.participant-only'));
+            const minorOnly = Array.from(document.querySelectorAll('.minor-only'));
+            const adultOnly = Array.from(document.querySelectorAll('.adult-only'));
+            function setVisible(nodes, visible) {{
+                nodes.forEach(node => node.style.display = visible ? 'block' : 'none');
+            }}
+            function syncParticipantDocuments() {{
+                const isParticipant = tipoSelect.value === 'participante_torneo';
+                const isMinor = ageSelect.value === 'minor';
+                const isAdult = ageSelect.value === 'adult';
+                setVisible(participantOnly, isParticipant);
+                setVisible(minorOnly, isParticipant && isMinor);
+                setVisible(adultOnly, isParticipant && isAdult);
+            }}
+            tipoSelect.addEventListener('change', syncParticipantDocuments);
+            ageSelect.addEventListener('change', syncParticipantDocuments);
+            syncParticipantDocuments();
+        </script>
     </body>
     </html>
     """
@@ -12370,11 +12489,29 @@ async def beneficiary_onboarding_create(
     entidad_region: Optional[str] = Form(None),
     empleado_id: Optional[str] = Form(None),
     torneo_id: Optional[str] = Form(None),
+    participant_age_group: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
+    ine_participante: Optional[UploadFile] = File(None),
+    ine_tutor: Optional[UploadFile] = File(None),
+    credencial_participante: Optional[UploadFile] = File(None),
+    caratula_estado_cuenta: Optional[UploadFile] = File(None),
 ) -> RedirectResponse:
     try:
         empleado_uuid = UUIDType(empleado_id) if (empleado_id or "").strip() else None
         torneo_uuid = UUIDType(torneo_id) if (torneo_id or "").strip() else None
+        age_group = (participant_age_group or "").strip().lower()
+        participant_is_minor = None
+        if (target_tipo or "").strip().lower() == "participante_torneo":
+            if age_group == "minor":
+                participant_is_minor = True
+            elif age_group == "adult":
+                participant_is_minor = False
+        attachments = await _beneficiary_onboarding_upload_inputs(
+            ine_participante=ine_participante,
+            ine_tutor=ine_tutor,
+            credencial_participante=credencial_participante,
+            caratula_estado_cuenta=caratula_estado_cuenta,
+        )
         request = await create_beneficiary_onboarding_request(
             session,
             requester=current_empleado,
@@ -12388,8 +12525,10 @@ async def beneficiary_onboarding_create(
                 entidad_region=entidad_region,
                 empleado_id=empleado_uuid,
                 torneo_id=torneo_uuid,
+                participant_is_minor=participant_is_minor,
                 notas=notas,
             ),
+            attachments=attachments,
         )
     except (ValueError, TypeError):
         return RedirectResponse(
@@ -12518,6 +12657,58 @@ async def beneficiary_onboarding_final_action(
     return RedirectResponse(
         url="/beneficiarios/altas/revision-final?msg=" + quote(msg),
         status_code=303,
+    )
+
+
+@router.get("/beneficiarios/altas/{request_id}/adjuntos/{attachment_id}", response_model=None)
+async def beneficiary_onboarding_attachment_download(
+    request_id: UUIDType,
+    attachment_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> Response:
+    result = await session.execute(
+        select(BeneficiaryOnboardingRequest)
+        .options(selectinload(BeneficiaryOnboardingRequest.attachments))
+        .where(BeneficiaryOnboardingRequest.id == request_id)
+    )
+    onboarding_request = result.scalar_one_or_none()
+    if onboarding_request is None:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if not can_access_beneficiary_onboarding_request(
+        current_empleado,
+        onboarding_request,
+    ):
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    attachment = next(
+        (
+            item
+            for item in list(onboarding_request.attachments or [])
+            if item.id == attachment_id
+        ),
+        None,
+    )
+    if attachment is None:
+        raise HTTPException(status_code=404, detail="Adjunto no encontrado")
+    try:
+        raw, media_type, filename = await load_adjunto_payload_bytes(
+            attachment.ruta_archivo,
+            mime_hint=attachment.mime_type or attachment.tipo_archivo,
+            nombre_archivo=attachment.nombre_archivo,
+        )
+    except ReceiptDecodeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    label = BENEFICIARY_ATTACHMENT_LABELS.get(
+        attachment.categoria,
+        "alta-beneficiario",
+    )
+    archivo_nombre = filename or f"{label}-{str(request_id)[:8]}"
+    media_type = resolve_media_type(archivo_nombre, raw)
+    media_type, disposition = comprobante_response_headers(archivo_nombre, media_type)
+    return Response(
+        content=raw,
+        media_type=media_type,
+        headers={"Content-Disposition": disposition},
     )
 
 

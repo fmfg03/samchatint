@@ -1,11 +1,20 @@
 from types import SimpleNamespace
+from pathlib import Path
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from devnous.gastos.models import Aprobacion, ProveedorCliente
+from devnous.gastos.models import (
+    Aprobacion,
+    BeneficiaryOnboardingAttachment,
+    BeneficiaryOnboardingRequest,
+    ProveedorCliente,
+)
 from devnous.gastos.services import beneficiary_onboarding_service as svc
+
+
+USER_ROUTES_SOURCE = Path("src/devnous/gastos/routes/user_routes.py")
 
 
 def test_final_beneficiary_reviewer_is_email_scoped() -> None:
@@ -28,6 +37,149 @@ def test_normalize_clabe_rejects_invalid_length() -> None:
         svc.normalize_clabe("123")
 
     assert exc.value.code == "invalid_clabe"
+
+
+def test_onboarding_form_exposes_required_attachment_fields() -> None:
+    source = USER_ROUTES_SOURCE.read_text()
+
+    assert 'enctype="multipart/form-data"' in source
+    assert 'name="ine_participante"' in source
+    assert 'name="ine_tutor"' in source
+    assert 'name="credencial_participante"' in source
+    assert 'name="caratula_estado_cuenta"' in source
+    assert 'name="participant_age_group"' in source
+
+
+def test_onboarding_attachment_download_route_exists() -> None:
+    source = USER_ROUTES_SOURCE.read_text()
+
+    assert '"/beneficiarios/altas/{request_id}/adjuntos/{attachment_id}"' in source
+    assert "can_access_beneficiary_onboarding_request" in source
+
+
+def _attachment(category: str) -> svc.BeneficiaryOnboardingAttachmentInput:
+    return svc.BeneficiaryOnboardingAttachmentInput(
+        categoria=category,
+        filename=f"{category}.pdf",
+        mime_type="application/pdf",
+        raw_bytes=b"pdf-bytes",
+    )
+
+
+def test_participant_adult_requires_ine_and_bank_statement() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="participante_torneo",
+            participant_is_minor=False,
+            attachments=[_attachment("caratula_estado_cuenta")],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "INE del participante" in exc.value.message
+
+    validated = svc.validate_required_attachments(
+        target_tipo="participante_torneo",
+        participant_is_minor=False,
+        attachments=[
+            _attachment("ine_participante"),
+            _attachment("caratula_estado_cuenta"),
+        ],
+    )
+    assert {item.categoria for item in validated} == {
+        "ine_participante",
+        "caratula_estado_cuenta",
+    }
+
+
+def test_participant_minor_requires_tutor_credential_and_bank_statement() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="participante_torneo",
+            participant_is_minor=True,
+            attachments=[
+                _attachment("ine_tutor"),
+                _attachment("caratula_estado_cuenta"),
+            ],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "Credencial del torneo o escolar" in exc.value.message
+
+
+def test_non_participant_requires_only_bank_statement() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="proveedor",
+            participant_is_minor=None,
+            attachments=[],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "Carátula del estado de cuenta" in exc.value.message
+
+    validated = svc.validate_required_attachments(
+        target_tipo="proveedor",
+        participant_is_minor=None,
+        attachments=[_attachment("caratula_estado_cuenta")],
+    )
+    assert [item.categoria for item in validated] == ["caratula_estado_cuenta"]
+
+
+@pytest.mark.asyncio
+async def test_create_request_persists_required_attachments(monkeypatch):
+    requester_id = uuid4()
+    approver_id = uuid4()
+    requester = SimpleNamespace(
+        id=requester_id,
+        rol="empleado",
+        departamento="Operaciones",
+        correo="azuniga@plataformasports.com",
+        aprobador_id=approver_id,
+    )
+    monkeypatch.setattr(svc, "_ensure_no_active_duplicate", AsyncMock())
+    monkeypatch.setattr(svc, "_notify_employee", AsyncMock())
+    added = []
+
+    async def fake_flush():
+        for obj in added:
+            if isinstance(obj, BeneficiaryOnboardingRequest) and obj.id is None:
+                obj.id = uuid4()
+            if isinstance(obj, BeneficiaryOnboardingAttachment) and obj.id is None:
+                obj.id = uuid4()
+
+    session = SimpleNamespace(
+        add=lambda obj: added.append(obj),
+        get=AsyncMock(return_value=SimpleNamespace(id=approver_id)),
+        flush=AsyncMock(side_effect=fake_flush),
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+
+    result = await svc.create_beneficiary_onboarding_request(
+        session,
+        requester=requester,
+        payload=svc.BeneficiaryOnboardingInput(
+            target_tipo="participante_torneo",
+            nombre="Participante Bimbo",
+            cuenta_clabe="123456789012345678",
+            participant_is_minor=True,
+        ),
+        attachments=[
+            _attachment("ine_tutor"),
+            _attachment("credencial_participante"),
+            _attachment("caratula_estado_cuenta"),
+        ],
+    )
+
+    persisted = [
+        item for item in added if isinstance(item, BeneficiaryOnboardingAttachment)
+    ]
+    assert result.participant_is_minor is True
+    assert {item.categoria for item in persisted} == {
+        "ine_tutor",
+        "credencial_participante",
+        "caratula_estado_cuenta",
+    }
 
 
 @pytest.mark.asyncio

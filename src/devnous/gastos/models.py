@@ -1665,6 +1665,7 @@ class BeneficiaryOnboardingRequest(Base):
     cuenta_clabe = Column(Text, nullable=True, index=True)
     cuenta_bancaria = Column(Text, nullable=True)
     entidad_region = Column(Text, nullable=True)
+    participant_is_minor = Column(Boolean, nullable=True)
     notas = Column(Text, nullable=True)
     status = Column(String(50), nullable=False, default="pendiente_area", index=True)
     area_decision_comment = Column(Text, nullable=True)
@@ -1693,11 +1694,53 @@ class BeneficiaryOnboardingRequest(Base):
     )
     empleado = relationship("Empleado", foreign_keys=[empleado_id], lazy="selectin")
     torneo = relationship("Tournament", foreign_keys=[torneo_id], lazy="selectin")
+    attachments = relationship(
+        "BeneficiaryOnboardingAttachment",
+        back_populates="request",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return (
             "<BeneficiaryOnboardingRequest("
             f"id={self.id}, tipo='{self.target_tipo}', status='{self.status}')>"
+        )
+
+
+class BeneficiaryOnboardingAttachment(Base):
+    """Attachment for controlled beneficiary onboarding requests."""
+
+    __tablename__ = "beneficiary_onboarding_attachments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    request_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "beneficiary_onboarding_requests.id",
+            onupdate="CASCADE",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+    categoria = Column(String(80), nullable=False, index=True)
+    ruta_archivo = Column(Text, nullable=False)
+    tipo_archivo = Column(String(100), nullable=True)
+    nombre_archivo = Column(String(500), nullable=True)
+    mime_type = Column(String(200), nullable=True)
+    subido_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+    request = relationship(
+        "BeneficiaryOnboardingRequest",
+        back_populates="attachments",
+        lazy="selectin",
+    )
+
+    def __repr__(self):
+        return (
+            "<BeneficiaryOnboardingAttachment("
+            f"id={self.id}, request_id={self.request_id}, categoria='{self.categoria}')>"
         )
 
 
