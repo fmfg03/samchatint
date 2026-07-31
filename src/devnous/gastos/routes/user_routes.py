@@ -9252,6 +9252,38 @@ def _html_single_proveedor_bank_account_options(
     )
 
 
+async def _resolve_selected_beneficiary_bank_account(
+    session: AsyncSession,
+    *,
+    beneficiario: Empleado,
+    raw_id: str,
+) -> Optional[ProveedorCliente]:
+    value = (raw_id or "").strip()
+    if not value:
+        return None
+    try:
+        proveedor_uuid = UUIDType(value)
+    except (ValueError, TypeError):
+        return None
+
+    matches = await _get_matching_bank_accounts_for_empleado(
+        session=session, empleado=beneficiario
+    )
+    allowed_ids = {prov.id for prov, _ in matches}
+    if proveedor_uuid not in allowed_ids:
+        return None
+
+    proveedor_result = await session.execute(
+        select(ProveedorCliente).where(
+            and_(
+                ProveedorCliente.id == proveedor_uuid,
+                ProveedorCliente.activo == True,
+            )
+        )
+    )
+    return proveedor_result.scalar_one_or_none()
+
+
 async def _active_beneficiary_empleados(
     session: AsyncSession, requester: Empleado
 ) -> List[Empleado]:
@@ -9612,10 +9644,9 @@ async def _validate_solicitud_terceros_fase(
 ) -> Tuple[Optional[str], Optional[str]]:
     """Validate optional fase for standalone solicitud a terceros."""
     torneo_raw = (torneo_id_raw or "").strip()
-    fase_st = (fase_raw or "").strip()
-    if not fase_st:
-        return None, None
     if torneo_raw == "__otro__" or not torneo_raw:
+        if not (fase_raw or "").strip():
+            return None, None
         return (
             "Fase/Subproyecto no aplica cuando el proyecto es manual.",
             None,
@@ -9640,10 +9671,15 @@ async def _validate_solicitud_terceros_fase(
     if raw_etapas and isinstance(raw_etapas, list):
         allowed = [str(x).strip() for x in raw_etapas if x is not None and str(x).strip()]
     if not allowed:
+        if not (fase_raw or "").strip():
+            return None, None
         return (
             "Este torneo/proyecto no tiene fases configuradas; deje Fase/Subproyecto vacío.",
             None,
         )
+    fase_st = (fase_raw or "").strip()
+    if not fase_st:
+        return "Debe seleccionar una Fase/Subproyecto para el proyecto.", None
     if fase_st not in allowed:
         return (
             "La fase no corresponde al torneo/proyecto seleccionado.",
@@ -13917,6 +13953,9 @@ async def solicitar_anticipo_submit(
             empleado=current_empleado,
             beneficiario=beneficiario,
             beneficiario_operador=beneficiario_operador,
+            beneficiario_cuenta_bancaria=(
+                None if beneficiario_operador else selected_proveedor
+            ),
             nombre=None,
             tipo_cuenta=tipo_ok,
             torneo_id=torneo_uuid,
@@ -14631,6 +14670,16 @@ async def nuevo_gasto_form(
                     budgetConceptSelect.required = false;
                     return;
                 }}
+                if (!fase) {{
+                    const placeholder = document.createElement('option');
+                    placeholder.value = '';
+                    placeholder.textContent = '— Seleccione primero una fase —';
+                    placeholder.selected = true;
+                    budgetConceptSelect.appendChild(placeholder);
+                    budgetConceptSelect.disabled = true;
+                    budgetConceptSelect.required = false;
+                    return;
+                }}
                 const loading = document.createElement('option');
                 loading.value = '';
                 loading.textContent = 'Cargando partidas...';
@@ -14662,9 +14711,6 @@ async def nuevo_gasto_form(
                             const opt = document.createElement('option');
                             opt.value = item.id;
                             let label = item.label || '';
-                            if (item.cuenta_contable_codigo) {{
-                                label += ' (' + item.cuenta_contable_codigo + ')';
-                            }}
                             opt.textContent = label;
                             opt.dataset.label = label;
                             budgetConceptSelect.appendChild(opt);
@@ -27036,7 +27082,7 @@ def _filter_budget_concepts_for_fase(
     fase: Optional[str],
 ) -> List[Dict[str, Any]]:
     if not (fase or "").strip():
-        return concepts
+        return []
     return [
         concept
         for concept in concepts
@@ -27134,7 +27180,7 @@ def _render_budget_concept_sync_script(
             function itemMatchesPhase(item) {{
                 if (!phaseSelect) return true;
                 var selectedKey = normalizeScopeKey(phaseSelect.value || "");
-                if (!selectedKey) return true;
+                if (!selectedKey) return false;
                 if (item.global) return true;
                 var keys = Array.isArray(item.applicable_keys) ? item.applicable_keys : [];
                 return keys.indexOf(selectedKey) >= 0 || keys.indexOf("fase_" + selectedKey) >= 0;
@@ -27151,9 +27197,6 @@ def _render_budget_concept_sync_script(
                     var option = document.createElement("option");
                     option.value = item.id;
                     var label = item.label || "";
-                    if (item.cuenta_contable_codigo) {{
-                        label += " (" + item.cuenta_contable_codigo + ")";
-                    }}
                     option.textContent = label;
                     option.selected = item.id === selectedId;
                     conceptSelect.appendChild(option);
@@ -27165,6 +27208,10 @@ def _render_budget_concept_sync_script(
                 var tournamentId = (tournamentSelect.value || "").trim();
                 var fase = phaseSelect ? (phaseSelect.value || "").trim() : "";
                 if (!tournamentId || !uuidRegex.test(tournamentId)) {{
+                    renderConceptOptions([]);
+                    return;
+                }}
+                if (phaseSelect && !fase) {{
                     renderConceptOptions([]);
                     return;
                 }}
@@ -27384,6 +27431,7 @@ async def _create_cuenta_de_gastos_with_informe(
     empleado: Empleado,
     beneficiario: Optional[Empleado],
     beneficiario_operador: Optional[ProveedorCliente] = None,
+    beneficiario_cuenta_bancaria: Optional[ProveedorCliente] = None,
     nombre: Optional[str] = None,
     tipo_cuenta: str,
     torneo_id: UUIDType,
@@ -27410,10 +27458,13 @@ async def _create_cuenta_de_gastos_with_informe(
         return None, "No se pudo generar una referencia interna única. Intente de nuevo."
 
     try:
+        beneficiario_proveedor = beneficiario_operador or beneficiario_cuenta_bancaria
         cuenta = CuentaDeGastos(
             empleado_id=empleado.id,
             beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
-            beneficiario_proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
+            beneficiario_proveedor_cliente_id=(
+                beneficiario_proveedor.id if beneficiario_proveedor else None
+            ),
             referencia_base=referencia_base_final,
             nombre=nombre,
             estado="abierta",
@@ -27432,7 +27483,12 @@ async def _create_cuenta_de_gastos_with_informe(
         informe = Documento(
             empleado_id=empleado.id,
             beneficiario_empleado_id=(None if beneficiario_operador else (beneficiario or empleado).id),
-            proveedor_cliente_id=(beneficiario_operador.id if beneficiario_operador else None),
+            proveedor_cliente_id=(
+                beneficiario_proveedor.id if beneficiario_proveedor else None
+            ),
+            beneficiario_proveedor_cliente_id=(
+                beneficiario_proveedor.id if beneficiario_proveedor else None
+            ),
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -27663,6 +27719,7 @@ async def crear_cuenta_de_gastos_form(
         "beneficiario_empleado_id", ""
     )
     preserve_operador = request.query_params.get("beneficiario_operador_id", "")
+    preserve_proveedor = request.query_params.get("proveedor_cliente_id", "")
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         preserve_beneficiario,
@@ -27704,6 +27761,16 @@ async def crear_cuenta_de_gastos_form(
                 regional_operator.id if regional_operator else None,
             ),
             select_id="beneficiario_operador_id_informe",
+        )
+    if regional_operator is not None:
+        bank_account_options = _html_single_proveedor_bank_account_options(
+            regional_operator
+        )
+    else:
+        bank_account_options = await _html_empleado_bank_account_options(
+            session,
+            beneficiario,
+            selected_id=preserve_proveedor or None,
         )
     preserve_uuid = None
     if preserve_torneo_id:
@@ -27791,6 +27858,13 @@ async def crear_cuenta_de_gastos_form(
                     {regional_operator_control}
                     {beneficiary_employee_control}
                 </div>
+                <div class="form-group" id="informe-bank-account-group">
+                    <label for="proveedor_cliente_id">Cuenta bancaria del beneficiario *</label>
+                    <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
+                        {bank_account_options}
+                    </select>
+                    <small>La cuenta debe pertenecer al empleado u operador regional seleccionado.</small>
+                </div>
                 <div class="form-group">
                     <label for="nombre">Motivo del gasto</label>
                     <input type="text" name="nombre" id="nombre" value="{escape(preserve_nombre)}" placeholder="Ej: Viaje Nacional 2026">
@@ -27862,6 +27936,81 @@ async def crear_cuenta_de_gastos_form(
                 document.getElementById("torneo_id_crear").addEventListener("change", repopulateFaseCrear);
                 repopulateFaseCrear();
             </script>
+            <script>
+                (function() {{
+                    var operatorSelect = document.getElementById("beneficiario_operador_id_informe");
+                    var employeeSelect = document.getElementById("beneficiario_empleado_id");
+                    var accountSelect = document.getElementById("proveedor_cliente_id");
+                    if (!accountSelect) return;
+
+                    function setEmployeeDisabled(disabled) {{
+                        if (!employeeSelect || employeeSelect.tagName !== "SELECT") return;
+                        employeeSelect.disabled = disabled;
+                        employeeSelect.required = !disabled;
+                    }}
+
+                    function regionalAccountOption(selected) {{
+                        var option = document.createElement("option");
+                        option.value = operatorSelect.value;
+                        option.dataset.banco = selected.dataset.banco || "";
+                        option.dataset.cuenta = selected.dataset.cuenta || "";
+                        option.dataset.cuentaClabe = selected.dataset.cuentaClabe || "";
+                        option.dataset.ultimos4 = "";
+                        option.textContent = selected.textContent || selected.dataset.nombre || "Operador regional";
+                        option.selected = true;
+                        return option;
+                    }}
+
+                    async function loadEmployeeAccounts() {{
+                        if (!employeeSelect || employeeSelect.tagName !== "SELECT" || !employeeSelect.value) return;
+                        accountSelect.innerHTML = '<option value="" selected disabled>Cargando cuentas...</option>';
+                        try {{
+                            var response = await fetch("/api/empleados/" + encodeURIComponent(employeeSelect.value) + "/cuentas-bancarias");
+                            if (!response.ok) throw new Error("No se pudieron consultar las cuentas");
+                            var payload = await response.json();
+                            accountSelect.innerHTML = '<option value="" selected disabled>Seleccione cuenta bancaria</option>';
+                            (payload.cuentas || []).forEach(function(account) {{
+                                var option = document.createElement("option");
+                                option.value = account.id;
+                                option.dataset.banco = account.banco || "";
+                                option.dataset.cuenta = account.cuenta || "";
+                                option.dataset.cuentaClabe = account.cuenta_clabe || "";
+                                var raw = account.cuenta || account.cuenta_clabe || "";
+                                var last4 = raw.length >= 4 ? raw.slice(-4) : "";
+                                option.dataset.ultimos4 = last4;
+                                option.textContent = account.nombre + (account.banco ? " - " + account.banco : "") + (last4 ? " (..." + last4 + ")" : "");
+                                accountSelect.appendChild(option);
+                            }});
+                        }} catch (error) {{
+                            accountSelect.innerHTML = '<option value="" selected disabled>Sin cuentas disponibles</option>';
+                        }}
+                    }}
+
+                    function applyBeneficiaryMode() {{
+                        if (operatorSelect && operatorSelect.value) {{
+                            var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                            setEmployeeDisabled(true);
+                            accountSelect.innerHTML = "";
+                            accountSelect.appendChild(regionalAccountOption(selected));
+                            return;
+                        }}
+                        setEmployeeDisabled(false);
+                    }}
+
+                    if (employeeSelect && employeeSelect.tagName === "SELECT") {{
+                        employeeSelect.addEventListener("change", function() {{
+                            if (!operatorSelect || !operatorSelect.value) loadEmployeeAccounts();
+                        }});
+                    }}
+                    if (operatorSelect) {{
+                        operatorSelect.addEventListener("change", function() {{
+                            applyBeneficiaryMode();
+                            if (!operatorSelect.value) loadEmployeeAccounts();
+                        }});
+                    }}
+                    applyBeneficiaryMode();
+                }})();
+            </script>
             {_render_category_sync_script(category_map=tournament_categories_crear, tournament_select_id="torneo_id_crear", category_select_id="categorias_crear")}
         </div>
     </body>
@@ -27895,6 +28044,25 @@ async def crear_cuenta_de_gastos_submit(
     beneficiario_operador_id_raw = (
         form_data.get("beneficiario_operador_id") or ""
     ).strip()
+    proveedor_cliente_id_raw = (form_data.get("proveedor_cliente_id") or "").strip()
+    preserve_beneficiary_params = {
+        "beneficiario_empleado_id": beneficiario_empleado_id_raw,
+        "beneficiario_operador_id": beneficiario_operador_id_raw,
+        "proveedor_cliente_id": proveedor_cliente_id_raw,
+    }
+    if beneficiario_empleado_id_raw and beneficiario_operador_id_raw:
+        return RedirectResponse(
+            url=_append_query_params(
+                "/informes-de-gastos/crear",
+                {
+                    "error_msg": (
+                        "Seleccione beneficiario empleado u operador regional, no ambos."
+                    ),
+                    **preserve_beneficiary_params,
+                },
+            ),
+            status_code=303,
+        )
     beneficiario_operador: Optional[ProveedorCliente] = None
     if beneficiario_operador_id_raw:
         if not _can_request_for_other_employee(current_empleado):
@@ -27903,7 +28071,7 @@ async def crear_cuenta_de_gastos_submit(
                     "/informes-de-gastos/crear",
                     {
                         "error_msg": "No tienes permiso para crear informes a operadores regionales.",
-                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                        **preserve_beneficiary_params,
                     },
                 ),
                 status_code=303,
@@ -27918,24 +28086,25 @@ async def crear_cuenta_de_gastos_submit(
                     "/informes-de-gastos/crear",
                     {
                         "error_msg": "Seleccione un operador regional activo.",
-                        "beneficiario_operador_id": beneficiario_operador_id_raw,
+                        **preserve_beneficiary_params,
                     },
                 ),
                 status_code=303,
             )
-    beneficiario = await _resolve_active_beneficiary_empleado(
-        session,
-        beneficiario_empleado_id_raw,
-        default=current_empleado,
-    )
+    beneficiario = None
+    if beneficiario_operador is None:
+        beneficiario = await _resolve_active_beneficiary_empleado(
+            session,
+            beneficiario_empleado_id_raw,
+            default=current_empleado,
+        )
     if beneficiario is None and beneficiario_operador is None:
         return RedirectResponse(
             url=_append_query_params(
                 "/informes-de-gastos/crear",
                 {
                     "error_msg": "Seleccione un beneficiario activo.",
-                    "beneficiario_empleado_id": beneficiario_empleado_id_raw,
-                    "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    **preserve_beneficiary_params,
                 },
             ),
             status_code=303,
@@ -27948,12 +28117,29 @@ async def crear_cuenta_de_gastos_submit(
                     "error_msg": (
                         "No tienes permiso para crear un informe a nombre de otro empleado."
                     ),
-                    "beneficiario_empleado_id": beneficiario_empleado_id_raw,
-                    "beneficiario_operador_id": beneficiario_operador_id_raw,
+                    **preserve_beneficiary_params,
                 },
             ),
             status_code=303,
         )
+    beneficiario_cuenta_bancaria = None
+    if beneficiario_operador is None and beneficiario is not None:
+        beneficiario_cuenta_bancaria = await _resolve_selected_beneficiary_bank_account(
+            session,
+            beneficiario=beneficiario,
+            raw_id=proveedor_cliente_id_raw,
+        )
+        if beneficiario_cuenta_bancaria is None:
+            return RedirectResponse(
+                url=_append_query_params(
+                    "/informes-de-gastos/crear",
+                    {
+                        "error_msg": "Seleccione una cuenta bancaria válida del beneficiario.",
+                        **preserve_beneficiary_params,
+                    },
+                ),
+                status_code=303,
+            )
 
     err, tipo_ok, torneo_id_uuid, fase_final = await _validate_cuenta_informe_proyecto_fields(
         session,
@@ -27985,6 +28171,8 @@ async def crear_cuenta_de_gastos_submit(
                 "&beneficiario_operador_id="
                 f"{quote(beneficiario_operador_id_raw)}"
             )
+        if proveedor_cliente_id_raw:
+            base += f"&proveedor_cliente_id={quote(proveedor_cliente_id_raw)}"
         return RedirectResponse(url=base, status_code=303)
 
     assert tipo_ok is not None and torneo_id_uuid is not None
@@ -28007,6 +28195,7 @@ async def crear_cuenta_de_gastos_submit(
         empleado=current_empleado,
         beneficiario=beneficiario,
         beneficiario_operador=beneficiario_operador,
+        beneficiario_cuenta_bancaria=beneficiario_cuenta_bancaria,
         nombre=nombre_val,
         tipo_cuenta=tipo_ok,
         torneo_id=torneo_id_uuid,

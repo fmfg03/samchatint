@@ -40,6 +40,72 @@ def _documento_stub(documento_id):
     )
 
 
+def test_budget_concept_filter_requires_selected_fase() -> None:
+    concepts = [
+        {"id": "global", "label": "Hospedaje", "applicable_keys": [], "global": True},
+        {
+            "id": "fase-estatal",
+            "label": "Renta de sede",
+            "applicable_keys": ["estatal", "fase_estatal"],
+            "global": False,
+        },
+    ]
+
+    assert user_routes._filter_budget_concepts_for_fase(concepts, "") == []
+    filtered = user_routes._filter_budget_concepts_for_fase(concepts, "Estatal")
+    assert [item["id"] for item in filtered] == ["global", "fase-estatal"]
+
+
+def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> None:
+    html = user_routes._render_budget_concept_sync_script(
+        concept_map={
+            "tournament-1": [
+                {
+                    "id": "concept-1",
+                    "label": "Hospedaje",
+                    "cuenta_contable_codigo": "6000-001",
+                    "applicable_keys": ["estatal"],
+                    "global": False,
+                }
+            ]
+        },
+        tournament_select_id="torneo_id",
+        concept_select_id="budget_concept_id",
+        selected_id=None,
+        required=True,
+        phase_select_id="fase_id",
+    )
+
+    assert 'if (phaseSelect && !fase)' in html
+    assert 'label += " (" + item.cuenta_contable_codigo + ")"' not in html
+
+
+@pytest.mark.asyncio
+async def test_validate_solicitud_terceros_fase_requires_phase_when_tournament_has_etapas(
+    monkeypatch,
+) -> None:
+    tournament_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(
+            id=tournament_id,
+            active=True,
+            etapas=["Estatal", "Nacional"],
+        )
+    )
+    monkeypatch.setattr(user_routes, "visibility_validation_error", lambda *_args: None)
+
+    error, fase = await user_routes._validate_solicitud_terceros_fase(
+        session,
+        empleado=SimpleNamespace(id=uuid4()),
+        torneo_id_raw=str(tournament_id),
+        fase_raw="",
+    )
+
+    assert error == "Debe seleccionar una Fase/Subproyecto para el proyecto."
+    assert fase is None
+
+
 @pytest.fixture(autouse=True)
 def _disable_customer_success_audit(monkeypatch):
     monkeypatch.setattr(

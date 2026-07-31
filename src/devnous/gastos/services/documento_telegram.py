@@ -386,15 +386,25 @@ def beneficiario_label(documento: Documento) -> str:
     return "—"
 
 
+def _safe_loaded_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Read an ORM attribute without letting deferred/lazy-load failures abort notification."""
+    if obj is None:
+        return default
+    try:
+        return getattr(obj, name, default)
+    except Exception:
+        return default
+
+
 def _project_and_phase_labels(documento: Documento) -> Tuple[str, str]:
     """Resolve project and phase from the document, falling back to its expense account."""
-    cuenta = getattr(documento, "cuenta_gastos", None)
-    torneo = getattr(documento, "torneo", None)
+    cuenta = _safe_loaded_attr(documento, "cuenta_gastos")
+    torneo = _safe_loaded_attr(documento, "torneo")
     if torneo is None and cuenta is not None:
-        torneo = getattr(cuenta, "torneo", None)
+        torneo = _safe_loaded_attr(cuenta, "torneo")
 
-    torneo_name = getattr(torneo, "name", None) if torneo is not None else None
-    proyecto_otro = getattr(documento, "proyecto_otro", None)
+    torneo_name = _safe_loaded_attr(torneo, "name") if torneo is not None else None
+    proyecto_otro = _safe_loaded_attr(documento, "proyecto_otro")
     project = (
         torneo_name.strip()
         if isinstance(torneo_name, str) and torneo_name.strip()
@@ -405,9 +415,9 @@ def _project_and_phase_labels(documento: Documento) -> Tuple[str, str]:
         )
     )
 
-    phase = getattr(documento, "fase", None)
+    phase = _safe_loaded_attr(documento, "fase")
     if not isinstance(phase, str) or not phase.strip():
-        phase = getattr(cuenta, "fase", None) if cuenta is not None else None
+        phase = _safe_loaded_attr(cuenta, "fase") if cuenta is not None else None
     phase_label = phase.strip() if isinstance(phase, str) and phase.strip() else "—"
     return project, phase_label
 

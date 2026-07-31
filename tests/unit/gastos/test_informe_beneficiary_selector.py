@@ -46,6 +46,11 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
     monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
     monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        user_routes,
+        "_html_empleado_bank_account_options",
+        AsyncMock(return_value='<option value="bank-1" selected>Cuenta gastos</option>'),
+    )
     monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
     monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
 
@@ -61,6 +66,8 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
     assert 'id="beneficiario_empleado_id"' in html
     assert "Empleado beneficiario" in html
     assert "Bibiana Roman" in html
+    assert 'name="proveedor_cliente_id"' in html
+    assert "Cuenta bancaria del beneficiario" in html
     assert "El responsable" in html and "aprobador" in html
 
 @pytest.mark.asyncio
@@ -111,6 +118,8 @@ async def test_crear_informe_form_allows_regional_operator_for_authorized_user(m
     assert 'id="beneficiario_operador_id_informe"' in html
     assert "Operador regional beneficiario" in html
     assert "Operador Regional Norte" in html
+    assert 'name="proveedor_cliente_id"' in html
+    assert "Santander" in html
     assert "solicitante y aprobacion siguen siendo" in html
 
 
@@ -167,7 +176,33 @@ async def test_crear_informe_submit_preserves_requester_owner_and_selected_regio
     assert response.headers["location"].startswith(f"/informes-de-gastos/{cuenta_id}?")
     assert captured["empleado"] is requester
     assert captured["beneficiario_operador"] is operator
-    assert captured["beneficiario"] is requester
+    assert captured["beneficiario"] is None
+
+
+@pytest.mark.asyncio
+async def test_crear_informe_submit_rejects_employee_and_regional_operator_together():
+    requester = _authorized_requester()
+    operator_id = uuid4()
+    beneficiary_id = uuid4()
+    provider_id = uuid4()
+
+    async def async_form():
+        return {
+            "beneficiario_empleado_id": str(beneficiary_id),
+            "beneficiario_operador_id": str(operator_id),
+            "proveedor_cliente_id": str(provider_id),
+        }
+
+    response = await user_routes.crear_cuenta_de_gastos_submit(
+        request=SimpleNamespace(form=async_form),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/informes-de-gastos/crear?")
+    assert "no%20ambos" in response.headers["location"]
 
 
 
@@ -189,6 +224,11 @@ async def test_crear_informe_form_locks_beneficiary_to_self_for_unauthorized_use
     monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve)
     monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(
+        user_routes,
+        "_html_empleado_bank_account_options",
+        AsyncMock(return_value='<option value="bank-1" selected>Cuenta gastos</option>'),
+    )
     monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
     monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
 
@@ -211,6 +251,7 @@ async def test_crear_informe_form_locks_beneficiary_to_self_for_unauthorized_use
 async def test_crear_informe_submit_preserves_requester_owner_and_selected_beneficiary(monkeypatch):
     requester = _authorized_requester()
     beneficiary = SimpleNamespace(id=uuid4(), nombre="Bibiana Roman", correo="bibiana@example.com")
+    provider = SimpleNamespace(id=uuid4(), nombre="Cuenta gastos Bibiana")
     torneo_id = uuid4()
     cuenta_id = uuid4()
     captured = {}
@@ -228,7 +269,15 @@ async def test_crear_informe_submit_preserves_requester_owner_and_selected_benef
         captured.update(kwargs)
         return SimpleNamespace(id=cuenta_id), None
 
+    async def fake_resolve_bank_account(*_args, **_kwargs):
+        return provider
+
     monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve)
+    monkeypatch.setattr(
+        user_routes,
+        "_resolve_selected_beneficiary_bank_account",
+        fake_resolve_bank_account,
+    )
     monkeypatch.setattr(user_routes, "_validate_cuenta_informe_proyecto_fields", fake_validate)
     monkeypatch.setattr(user_routes, "_validate_expense_metadata_for_tournament", fake_metadata)
     monkeypatch.setattr(user_routes, "_create_cuenta_de_gastos_with_informe", fake_create)
@@ -243,6 +292,7 @@ async def test_crear_informe_submit_preserves_requester_owner_and_selected_benef
             "edicion": "2026",
             "currency": "MXN",
             "beneficiario_empleado_id": str(beneficiary.id),
+            "proveedor_cliente_id": str(provider.id),
         }
 
     response = await user_routes.crear_cuenta_de_gastos_submit(
@@ -256,6 +306,7 @@ async def test_crear_informe_submit_preserves_requester_owner_and_selected_benef
     assert response.headers["location"].startswith(f"/informes-de-gastos/{cuenta_id}?")
     assert captured["empleado"] is requester
     assert captured["beneficiario"] is beneficiary
+    assert captured["beneficiario_cuenta_bancaria"] is provider
     assert captured["tipo_cuenta"] == "local"
     assert captured["fase"] == "Nacional"
     assert captured["categorias"] == ["Varonil"]

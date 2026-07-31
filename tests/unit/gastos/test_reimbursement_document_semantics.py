@@ -179,6 +179,27 @@ def test_telegram_informe_includes_project_phase_from_context() -> None:
     assert "*Monto gastado* $500.00 MXN" in text
 
 
+def test_project_and_phase_labels_tolerates_deferred_attribute_failures() -> None:
+    class DeferredDocumento:
+        @property
+        def cuenta_gastos(self):
+            raise RuntimeError("deferred relationship unavailable")
+
+        @property
+        def torneo(self):
+            raise RuntimeError("deferred relationship unavailable")
+
+        @property
+        def proyecto_otro(self):
+            raise RuntimeError("deferred column unavailable")
+
+        @property
+        def fase(self):
+            raise RuntimeError("deferred column unavailable")
+
+    assert tg._project_and_phase_labels(DeferredDocumento()) == ("—", "—")
+
+
 def test_document_detail_source_prefers_employee_beneficiary_for_reimbursement() -> None:
     source = Path(user_routes.__file__).read_text()
     detail_block_start = source.index('solicitud_transferencia_html = ""')

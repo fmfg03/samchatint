@@ -8756,7 +8756,9 @@ async def get_tournament_partidas_presupuestales_api(
         limit=5000,
     )
     clean_fase = str(fase or "").strip()
-    if clean_fase:
+    if not clean_fase:
+        concepts = []
+    else:
         concepts = [
             item for item in concepts if budget_concept_matches_fase(item, clean_fase)
         ]
