@@ -25,6 +25,9 @@ NOTIFICATION_TYPE_LABELS: Dict[str, str] = {
     "solicitud_paid_requester": "Solicitud pagada (solicitante)",
     "solicitud_paid_approver": "Solicitud pagada (aprobador)",
     "finance_odilon_approve": "Odilon aprobó (finanzas)",
+    "beneficiary_onboarding_area_review": "Alta de beneficiario (área)",
+    "beneficiary_onboarding_final_review": "Alta de beneficiario (revisión final)",
+    "beneficiary_onboarding_decision": "Alta de beneficiario (decisión)",
 }
 
 OUTBOX_CONSOLE_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})

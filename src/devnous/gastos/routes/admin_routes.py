@@ -17289,6 +17289,10 @@ async def admin_proveedores_clientes(
                 background: #e2d9f3;
                 color: #432874;
             }}
+            .badge-participante-torneo {{
+                background: #dcfce7;
+                color: #166534;
+            }}
             .nav-links {{
                 margin-bottom: 20px;
             }}
@@ -17343,6 +17347,7 @@ async def admin_proveedores_clientes(
                                 <option value="cliente" {'selected' if tipo_filter == 'cliente' else ''}>Cliente</option>
                                 <option value="operadores_regionales" {'selected' if tipo_filter == 'operadores_regionales' else ''}>Operadores Regionales</option>
                                 <option value="empleado" {'selected' if tipo_filter == 'empleado' else ''}>Empleado</option>
+                                <option value="participante_torneo" {'selected' if tipo_filter == 'participante_torneo' else ''}>Participante de Torneos</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -17372,6 +17377,7 @@ async def admin_proveedores_clientes(
                                 <option value="cliente">Cliente</option>
                                 <option value="operadores_regionales">Operadores Regionales</option>
                                 <option value="empleado">Empleado</option>
+                                <option value="participante_torneo">Participante de Torneos</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -17461,12 +17467,22 @@ async def admin_proveedores_clientes(
                 tipo_class = "badge-cliente"
             elif prov.tipo == "empleado":
                 tipo_class = "badge-empleado"
+            elif prov.tipo == "participante_torneo":
+                tipo_class = "badge-participante-torneo"
             else:
                 tipo_class = "badge-operadores-regionales"
             tipo_display = (
                 "Operadores Regionales"
                 if prov.tipo == "operadores_regionales"
-                else ("Empleado" if prov.tipo == "empleado" else prov.tipo.capitalize())
+                else (
+                    "Empleado"
+                    if prov.tipo == "empleado"
+                    else (
+                        "Participante de Torneos"
+                        if prov.tipo == "participante_torneo"
+                        else prov.tipo.capitalize()
+                    )
+                )
             )
             status_class = "badge-active" if prov.activo else "badge-inactive"
             status_text = "Activo" if prov.activo else "Inactivo"
@@ -17620,7 +17636,7 @@ async def create_proveedor_cliente(
                 status_code=400,
             )
 
-        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado"]:
+        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado", "participante_torneo"]:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -17935,6 +17951,7 @@ async def edit_proveedor_cliente_form(
                             <option value="cliente" {'selected' if prov.tipo == 'cliente' else ''}>Cliente</option>
                             <option value="operadores_regionales" {'selected' if prov.tipo == 'operadores_regionales' else ''}>Operadores Regionales</option>
                             <option value="empleado" {'selected' if prov.tipo == 'empleado' else ''}>Empleado</option>
+                            <option value="participante_torneo" {'selected' if prov.tipo == 'participante_torneo' else ''}>Participante de Torneos</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -18072,7 +18089,7 @@ async def update_proveedor_cliente(
                 status_code=400,
             )
 
-        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado"]:
+        if tipo not in ["proveedor", "cliente", "operadores_regionales", "empleado", "participante_torneo"]:
             return HTMLResponse(
                 content="""
                 <!DOCTYPE html>
@@ -18362,7 +18379,7 @@ async def carga_masiva_proveedores_clientes_form(
         <div class="container">
             {_CONFIG_PANEL_BACK_LINK_HTML}
             <h1>📥 Carga Masiva de Proveedores/Clientes/Empleados</h1>
-            <p class="subtitle">Importar proveedores, clientes, operadores regionales y empleados desde archivo CSV o XLSX tipo RFC</p>
+            <p class="subtitle">Importar proveedores, clientes, operadores regionales, empleados y participantes de torneos desde archivo CSV o XLSX tipo RFC</p>
 
             {f'<div class="alert alert-success">✅ {escape(success_msg)}</div>' if success_msg else ''}
             {f'<div class="alert alert-error">❌ {escape(error_msg)}</div>' if error_msg else ''}
@@ -18384,7 +18401,7 @@ async def carga_masiva_proveedores_clientes_form(
                                 <td><span class="code">tipo</span></td>
                                 <td>✅ Sí</td>
                                 <td>Tipo de registro</td>
-                                <td>proveedor, cliente, operadores_regionales, empleado</td>
+                                <td>proveedor, cliente, operadores_regionales, empleado, participante_torneo</td>
                             </tr>
                             <tr>
                                 <td><span class="code">nombre</span></td>

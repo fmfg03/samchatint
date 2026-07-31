@@ -33,7 +33,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload, undefer
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -137,6 +137,19 @@ from ..services.documento_workflow_service import (
 )
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
+from ..services.beneficiary_onboarding_service import (
+    BENEFICIARY_TARGET_TYPE_LABELS,
+    BeneficiaryOnboardingError,
+    BeneficiaryOnboardingInput,
+    approve_beneficiary_onboarding_area,
+    approve_beneficiary_onboarding_final,
+    can_create_beneficiary_onboarding_request,
+    is_final_beneficiary_reviewer,
+    list_beneficiary_onboarding_requests,
+    reject_beneficiary_onboarding_area,
+    reject_beneficiary_onboarding_final,
+    create_beneficiary_onboarding_request,
+)
 from ..services.documento_payment_service import (
     DocumentoPaymentPermissionError,
     DocumentoPaymentValidationError,
@@ -12116,6 +12129,398 @@ async def panel_mi_telegram_post(
     return RedirectResponse(url="/panel/mi-telegram?ok=1", status_code=303)
 
 
+def _beneficiary_onboarding_status_label(status: str) -> str:
+    return {
+        "pendiente_area": "Pendiente autorizacion area",
+        "rechazada_area": "Rechazada por area",
+        "pendiente_revision_final": "Pendiente palomita final",
+        "rechazada_final": "Rechazada final",
+        "aprobada_registrada": "Aprobada y registrada",
+    }.get(status or "", status or "—")
+
+
+def _beneficiary_onboarding_rows(
+    requests: List[BeneficiaryOnboardingRequest],
+    *,
+    actions: str,
+) -> str:
+    rows = []
+    for item in requests:
+        requested_by = getattr(item.requested_by, "nombre", None) or "—"
+        tipo = BENEFICIARY_TARGET_TYPE_LABELS.get(item.target_tipo, item.target_tipo)
+        created = (
+            f'<a href="/admin/proveedores-clientes?search={quote(item.nombre or "")}">Ver padrón</a>'
+            if item.created_proveedor_cliente_id
+            else "—"
+        )
+        action_html = ""
+        if actions == "area" and item.status == "pendiente_area":
+            action_html = f"""
+                <form method="POST" action="/beneficiarios/altas/{item.id}/area/aprobar" style="display:inline;">
+                    <button type="submit" class="button primary">Aprobar</button>
+                </form>
+                <form method="POST" action="/beneficiarios/altas/{item.id}/area/rechazar" style="display:inline;">
+                    <input type="hidden" name="comentario" value="Rechazada desde bandeja de area">
+                    <button type="submit" class="button secondary">Rechazar</button>
+                </form>
+            """
+        elif actions == "final" and item.status == "pendiente_revision_final":
+            action_html = f"""
+                <form method="POST" action="/beneficiarios/altas/{item.id}/final/aprobar" style="display:inline;">
+                    <button type="submit" class="button primary">Palomita</button>
+                </form>
+                <form method="POST" action="/beneficiarios/altas/{item.id}/final/rechazar" style="display:inline;">
+                    <input type="hidden" name="comentario" value="Rechazada en revision final">
+                    <button type="submit" class="button secondary">Rechazar</button>
+                </form>
+            """
+        else:
+            action_html = created
+        rows.append(
+            f"""
+            <tr>
+                <td>{escape(item.nombre or "—")}</td>
+                <td>{escape(tipo)}</td>
+                <td>{escape(requested_by)}</td>
+                <td>{escape(item.banco or "—")}</td>
+                <td>{escape(item.cuenta_clabe or item.cuenta_bancaria or "—")}</td>
+                <td>{escape(_beneficiary_onboarding_status_label(item.status))}</td>
+                <td>{action_html}</td>
+            </tr>
+            """
+        )
+    if not rows:
+        return '<tr><td colspan="7">Sin solicitudes.</td></tr>'
+    return "".join(rows)
+
+
+def _beneficiary_onboarding_page(
+    *,
+    current_empleado: Empleado,
+    title: str,
+    requests: List[BeneficiaryOnboardingRequest],
+    actions: str,
+    message: str = "",
+) -> str:
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{escape(title)} - SamChat</title>
+        <style>
+            {_workspace_shell_styles("1200px")}
+            table {{ width:100%; border-collapse:collapse; }}
+            th, td {{ padding:10px 12px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; }}
+            th {{ background:#f8fafc; color:#334155; }}
+            form {{ margin:0 6px 6px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            <section class="surface">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
+                    <div>
+                        <h1 style="margin:0;">{escape(title)}</h1>
+                        <p class="section-note">Altas controladas para padrón de beneficiarios y cuentas destino.</p>
+                    </div>
+                    <div class="inline-actions">
+                        <a href="/beneficiarios/altas/nueva" class="button primary">Nueva alta</a>
+                        <a href="/beneficiarios/altas" class="button secondary">Mis solicitudes</a>
+                        <a href="/beneficiarios/altas/area" class="button secondary">Autorización área</a>
+                        <a href="/beneficiarios/altas/revision-final" class="button secondary">Palomita final</a>
+                    </div>
+                </div>
+                {f'<div class="notice ok">{escape(message)}</div>' if message else ''}
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Tipo</th>
+                            <th>Solicitante</th>
+                            <th>Banco</th>
+                            <th>Cuenta</th>
+                            <th>Estado</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>{_beneficiary_onboarding_rows(requests, actions=actions)}</tbody>
+                </table>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@router.get("/beneficiarios/altas/nueva", response_class=HTMLResponse)
+async def beneficiary_onboarding_new_form(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    if not can_create_beneficiary_onboarding_request(current_empleado):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    empleados_result = await session.execute(
+        select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre.asc())
+    )
+    empleados = empleados_result.scalars().all()
+    empleado_options = "".join(
+        f'<option value="{empleado.id}">{escape(empleado.nombre or "")}</option>'
+        for empleado in empleados
+    )
+    torneos = await fetch_active_tournaments_for_empleado(session, current_empleado)
+    torneo_options = "".join(
+        f'<option value="{torneo.id}">{escape(torneo.name or "")}</option>'
+        for torneo in torneos
+    )
+    error_msg = request.query_params.get("error_msg", "")
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Nueva alta de beneficiario - SamChat</title>
+        <style>
+            {_workspace_shell_styles("900px")}
+            .form-group {{ margin-bottom:16px; }}
+            label {{ display:block; font-weight:700; margin-bottom:6px; }}
+            input, select, textarea {{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:6px; box-sizing:border-box; }}
+            textarea {{ min-height:88px; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            <section class="surface">
+                <h1 style="margin-top:0;">Solicitar alta de beneficiario</h1>
+                {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+                <form method="POST" action="/beneficiarios/altas/nueva">
+                    <div class="form-group">
+                        <label for="target_tipo">Tipo *</label>
+                        <select name="target_tipo" id="target_tipo" required>
+                            <option value="">Seleccione...</option>
+                            <option value="proveedor">Proveedor</option>
+                            <option value="empleado">Empleado</option>
+                            <option value="operadores_regionales">Operador Regional</option>
+                            <option value="participante_torneo">Participante de Torneos</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="nombre">Nombre *</label>
+                        <input type="text" name="nombre" id="nombre" required>
+                    </div>
+                    <div class="form-group" id="empleado_group">
+                        <label for="empleado_id">Empleado relacionado</label>
+                        <select name="empleado_id" id="empleado_id">
+                            <option value="">Sin empleado relacionado</option>
+                            {empleado_options}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="rfc">RFC</label>
+                        <input type="text" name="rfc" id="rfc">
+                    </div>
+                    <div class="form-group">
+                        <label for="banco">Banco</label>
+                        <input type="text" name="banco" id="banco">
+                    </div>
+                    <div class="form-group">
+                        <label for="cuenta_clabe">CLABE</label>
+                        <input type="text" name="cuenta_clabe" id="cuenta_clabe" maxlength="18">
+                    </div>
+                    <div class="form-group">
+                        <label for="cuenta_bancaria">Cuenta bancaria</label>
+                        <input type="text" name="cuenta_bancaria" id="cuenta_bancaria">
+                    </div>
+                    <div class="form-group">
+                        <label for="entidad_region">Entidad / Región</label>
+                        <input type="text" name="entidad_region" id="entidad_region">
+                    </div>
+                    <div class="form-group">
+                        <label for="torneo_id">Torneo relacionado</label>
+                        <select name="torneo_id" id="torneo_id">
+                            <option value="">Sin torneo relacionado</option>
+                            {torneo_options}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="notas">Notas</label>
+                        <textarea name="notas" id="notas"></textarea>
+                    </div>
+                    <button type="submit" class="button primary">Enviar a autorización</button>
+                    <a href="/beneficiarios/altas" class="button secondary">Cancelar</a>
+                </form>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@router.post("/beneficiarios/altas/nueva")
+async def beneficiary_onboarding_create(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    target_tipo: str = Form(...),
+    nombre: str = Form(...),
+    rfc: Optional[str] = Form(None),
+    banco: Optional[str] = Form(None),
+    cuenta_clabe: Optional[str] = Form(None),
+    cuenta_bancaria: Optional[str] = Form(None),
+    entidad_region: Optional[str] = Form(None),
+    empleado_id: Optional[str] = Form(None),
+    torneo_id: Optional[str] = Form(None),
+    notas: Optional[str] = Form(None),
+) -> RedirectResponse:
+    try:
+        empleado_uuid = UUIDType(empleado_id) if (empleado_id or "").strip() else None
+        torneo_uuid = UUIDType(torneo_id) if (torneo_id or "").strip() else None
+        request = await create_beneficiary_onboarding_request(
+            session,
+            requester=current_empleado,
+            payload=BeneficiaryOnboardingInput(
+                target_tipo=target_tipo,
+                nombre=nombre,
+                rfc=rfc,
+                banco=banco,
+                cuenta_clabe=cuenta_clabe,
+                cuenta_bancaria=cuenta_bancaria,
+                entidad_region=entidad_region,
+                empleado_id=empleado_uuid,
+                torneo_id=torneo_uuid,
+                notas=notas,
+            ),
+        )
+    except (ValueError, TypeError):
+        return RedirectResponse(
+            url="/beneficiarios/altas/nueva?error_msg=" + quote("Empleado o torneo inválido."),
+            status_code=303,
+        )
+    except BeneficiaryOnboardingError as exc:
+        return RedirectResponse(
+            url="/beneficiarios/altas/nueva?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/beneficiarios/altas?msg={quote('Solicitud enviada a autorización de área.')}",
+        status_code=303,
+    )
+
+
+@router.get("/beneficiarios/altas", response_class=HTMLResponse)
+async def beneficiary_onboarding_mine(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    requests = await list_beneficiary_onboarding_requests(
+        session, actor=current_empleado, scope="mine"
+    )
+    return _beneficiary_onboarding_page(
+        current_empleado=current_empleado,
+        title="Mis solicitudes de alta",
+        requests=requests,
+        actions="mine",
+        message=request.query_params.get("msg", ""),
+    )
+
+
+@router.get("/beneficiarios/altas/area", response_class=HTMLResponse)
+async def beneficiary_onboarding_area_queue(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    requests = await list_beneficiary_onboarding_requests(
+        session, actor=current_empleado, scope="area"
+    )
+    return _beneficiary_onboarding_page(
+        current_empleado=current_empleado,
+        title="Autorización de altas de beneficiario",
+        requests=requests,
+        actions="area",
+        message=request.query_params.get("msg", ""),
+    )
+
+
+@router.post("/beneficiarios/altas/{request_id}/area/{action}")
+async def beneficiary_onboarding_area_action(
+    request_id: UUIDType,
+    action: str,
+    comentario: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    try:
+        if action == "aprobar":
+            await approve_beneficiary_onboarding_area(
+                session, request_id=request_id, actor=current_empleado, comment=comentario
+            )
+            msg = "Solicitud aprobada por área y enviada a revisión final."
+        elif action == "rechazar":
+            await reject_beneficiary_onboarding_area(
+                session, request_id=request_id, actor=current_empleado, comment=comentario
+            )
+            msg = "Solicitud rechazada por área."
+        else:
+            raise BeneficiaryOnboardingError("invalid_action", "Acción inválida.")
+    except BeneficiaryOnboardingError as exc:
+        msg = exc.message
+    return RedirectResponse(
+        url="/beneficiarios/altas/area?msg=" + quote(msg),
+        status_code=303,
+    )
+
+
+@router.get("/beneficiarios/altas/revision-final", response_class=HTMLResponse)
+async def beneficiary_onboarding_final_queue(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    if not is_final_beneficiary_reviewer(current_empleado):
+        raise HTTPException(status_code=403, detail="No autorizado")
+    requests = await list_beneficiary_onboarding_requests(
+        session, actor=current_empleado, scope="final"
+    )
+    return _beneficiary_onboarding_page(
+        current_empleado=current_empleado,
+        title="Palomita final de altas de beneficiario",
+        requests=requests,
+        actions="final",
+        message=request.query_params.get("msg", ""),
+    )
+
+
+@router.post("/beneficiarios/altas/{request_id}/final/{action}")
+async def beneficiary_onboarding_final_action(
+    request_id: UUIDType,
+    action: str,
+    comentario: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    try:
+        if action == "aprobar":
+            await approve_beneficiary_onboarding_final(
+                session, request_id=request_id, actor=current_empleado, comment=comentario
+            )
+            msg = "Alta aprobada y registrada en el padrón."
+        elif action == "rechazar":
+            await reject_beneficiary_onboarding_final(
+                session, request_id=request_id, actor=current_empleado, comment=comentario
+            )
+            msg = "Solicitud rechazada en revisión final."
+        else:
+            raise BeneficiaryOnboardingError("invalid_action", "Acción inválida.")
+    except BeneficiaryOnboardingError as exc:
+        msg = exc.message
+    return RedirectResponse(
+        url="/beneficiarios/altas/revision-final?msg=" + quote(msg),
+        status_code=303,
+    )
+
+
 @router.post("/panel/cambiar-contrasena")
 async def panel_cambiar_contrasena_post(
     request: Request,
@@ -12881,6 +13286,7 @@ async def panel(
                 {build_link_cards(filter_cards_by_tools([
                     ("gastos.informes", "/informes-de-gastos", "Informe de Gastos", "Administra solicitudes e informes."),
                     ("gastos.solicitudes", "/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
+                    ("gastos.solicitudes", "/beneficiarios/altas", "Alta de beneficiarios", "Solicita y da seguimiento a nuevas cuentas destino."),
                 ], visible_tool_keys), "tone-blue")}
             </div>
         </section>

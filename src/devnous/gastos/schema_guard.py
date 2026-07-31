@@ -2460,6 +2460,55 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "CREATE INDEX IF NOT EXISTS ix_telegram_notification_outbox_next_retry_at ON telegram_notification_outbox(next_retry_at)",
     ),
     (
+        "create_beneficiary_onboarding_requests_table",
+        """
+        CREATE TABLE IF NOT EXISTS beneficiary_onboarding_requests (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            requested_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            area_approver_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            final_approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            created_proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            torneo_id UUID NULL REFERENCES tournaments(id) ON UPDATE CASCADE ON DELETE SET NULL,
+            target_tipo VARCHAR(50) NOT NULL,
+            nombre TEXT NOT NULL,
+            rfc TEXT NULL,
+            banco TEXT NULL,
+            cuenta_clabe TEXT NULL,
+            cuenta_bancaria TEXT NULL,
+            entidad_region TEXT NULL,
+            notas TEXT NULL,
+            status VARCHAR(50) NOT NULL DEFAULT 'pendiente_area',
+            area_decision_comment TEXT NULL,
+            final_decision_comment TEXT NULL,
+            creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            area_decided_at TIMESTAMPTZ NULL,
+            final_decided_at TIMESTAMPTZ NULL,
+            CONSTRAINT ck_beneficiary_onboarding_target_tipo
+                CHECK (target_tipo IN ('proveedor','empleado','operadores_regionales','participante_torneo')),
+            CONSTRAINT ck_beneficiary_onboarding_status
+                CHECK (status IN ('pendiente_area','rechazada_area','pendiente_revision_final','rechazada_final','aprobada_registrada'))
+        )
+        """,
+    ),
+    (
+        "ix_beneficiary_onboarding_requested_by",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_requested_by ON beneficiary_onboarding_requests(requested_by_empleado_id)",
+    ),
+    (
+        "ix_beneficiary_onboarding_area_approver",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_area_approver ON beneficiary_onboarding_requests(area_approver_id)",
+    ),
+    (
+        "ix_beneficiary_onboarding_status",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_status ON beneficiary_onboarding_requests(status)",
+    ),
+    (
+        "ix_beneficiary_onboarding_clabe",
+        "CREATE INDEX IF NOT EXISTS ix_beneficiary_onboarding_clabe ON beneficiary_onboarding_requests(cuenta_clabe)",
+    ),
+    (
         "create_sat_sync_state_table",
         """
         CREATE TABLE IF NOT EXISTS sat_sync_state (

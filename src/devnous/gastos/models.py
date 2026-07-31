@@ -1616,6 +1616,91 @@ class ProveedorCliente(Base):
         }
 
 
+class BeneficiaryOnboardingRequest(Base):
+    """Controlled request to add a beneficiary/payment destination to the registry."""
+
+    __tablename__ = "beneficiary_onboarding_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    requested_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    area_approver_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    final_approved_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_proveedor_cliente_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proveedores_clientes.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    torneo_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tournaments.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    target_tipo = Column(String(50), nullable=False, index=True)
+    nombre = Column(Text, nullable=False)
+    rfc = Column(Text, nullable=True)
+    banco = Column(Text, nullable=True)
+    cuenta_clabe = Column(Text, nullable=True, index=True)
+    cuenta_bancaria = Column(Text, nullable=True)
+    entidad_region = Column(Text, nullable=True)
+    notas = Column(Text, nullable=True)
+    status = Column(String(50), nullable=False, default="pendiente_area", index=True)
+    area_decision_comment = Column(Text, nullable=True)
+    final_decision_comment = Column(Text, nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    actualizado_en = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+    area_decided_at = Column(DateTime(timezone=True), nullable=True)
+    final_decided_at = Column(DateTime(timezone=True), nullable=True)
+
+    requested_by = relationship(
+        "Empleado", foreign_keys=[requested_by_empleado_id], lazy="selectin"
+    )
+    area_approver = relationship(
+        "Empleado", foreign_keys=[area_approver_id], lazy="selectin"
+    )
+    final_approved_by = relationship(
+        "Empleado", foreign_keys=[final_approved_by_empleado_id], lazy="selectin"
+    )
+    created_proveedor_cliente = relationship(
+        "ProveedorCliente", foreign_keys=[created_proveedor_cliente_id], lazy="selectin"
+    )
+    empleado = relationship("Empleado", foreign_keys=[empleado_id], lazy="selectin")
+    torneo = relationship("Tournament", foreign_keys=[torneo_id], lazy="selectin")
+
+    def __repr__(self):
+        return (
+            "<BeneficiaryOnboardingRequest("
+            f"id={self.id}, tipo='{self.target_tipo}', status='{self.status}')>"
+        )
+
+
 class Documento(Base):
     """
     Document model for grouping expenses under a single reference number.
