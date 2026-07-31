@@ -140,6 +140,7 @@ from ..services.documento_telegram import ensure_finance_pending_payment_notific
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
     BENEFICIARY_TARGET_TYPE_LABELS,
+    PROVIDER_PERSON_TYPE_LABELS,
     BeneficiaryOnboardingAttachmentInput,
     BeneficiaryOnboardingError,
     BeneficiaryOnboardingInput,
@@ -12177,6 +12178,12 @@ def _beneficiary_onboarding_rows(
     for item in requests:
         requested_by = getattr(item.requested_by, "nombre", None) or "—"
         tipo = BENEFICIARY_TARGET_TYPE_LABELS.get(item.target_tipo, item.target_tipo)
+        provider_person_type = getattr(item, "provider_person_type", None)
+        if provider_person_type:
+            tipo = (
+                f"{tipo} / "
+                f"{PROVIDER_PERSON_TYPE_LABELS.get(provider_person_type, provider_person_type)}"
+            )
         created = (
             f'<a href="/admin/proveedores-clientes?search={quote(item.nombre or "")}">Ver padrón</a>'
             if item.created_proveedor_cliente_id
@@ -12226,16 +12233,35 @@ def _beneficiary_onboarding_rows(
 
 async def _beneficiary_onboarding_upload_inputs(
     *,
+    constancia_situacion_fiscal: Optional[UploadFile],
+    comprobante_domicilio_fiscal_comercial: Optional[UploadFile],
+    ine_apoderado_legal: Optional[UploadFile],
+    contrato_convenio_plataforma: Optional[UploadFile],
+    ine_titular_constancia: Optional[UploadFile],
+    ine_colaborador_externo: Optional[UploadFile],
+    contrato_plataforma: Optional[UploadFile],
     ine_participante: Optional[UploadFile],
     ine_tutor: Optional[UploadFile],
     credencial_participante: Optional[UploadFile],
     caratula_estado_cuenta: Optional[UploadFile],
+    expediente_atencion_medica: Optional[UploadFile],
 ) -> list[BeneficiaryOnboardingAttachmentInput]:
     uploads = [
+        ("constancia_situacion_fiscal", constancia_situacion_fiscal),
+        (
+            "comprobante_domicilio_fiscal_comercial",
+            comprobante_domicilio_fiscal_comercial,
+        ),
+        ("ine_apoderado_legal", ine_apoderado_legal),
+        ("contrato_convenio_plataforma", contrato_convenio_plataforma),
+        ("ine_titular_constancia", ine_titular_constancia),
+        ("ine_colaborador_externo", ine_colaborador_externo),
+        ("contrato_plataforma", contrato_plataforma),
         ("ine_participante", ine_participante),
         ("ine_tutor", ine_tutor),
         ("credencial_participante", credencial_participante),
         ("caratula_estado_cuenta", caratula_estado_cuenta),
+        ("expediente_atencion_medica", expediente_atencion_medica),
     ]
     attachments: list[BeneficiaryOnboardingAttachmentInput] = []
     for category, upload in uploads:
@@ -12350,7 +12376,8 @@ async def beneficiary_onboarding_new_form(
             .attachment-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; }}
             .attachment-card {{ border:1px solid #e2e8f0; border-radius:6px; padding:12px; background:#f8fafc; }}
             .attachment-card small {{ display:block; margin-top:6px; color:#64748b; }}
-            .participant-only, .minor-only, .adult-only {{ display:none; }}
+            .provider-only, .provider-moral-only, .provider-fisica-only,
+            .operator-only, .participant-only, .minor-only, .adult-only {{ display:none; }}
         </style>
     </head>
     <body>
@@ -12368,6 +12395,14 @@ async def beneficiary_onboarding_new_form(
                             <option value="empleado">Empleado</option>
                             <option value="operadores_regionales">Operador Regional</option>
                             <option value="participante_torneo">Participante de Torneos</option>
+                        </select>
+                    </div>
+                    <div class="form-group provider-only">
+                        <label for="provider_person_type">Tipo de proveedor *</label>
+                        <select name="provider_person_type" id="provider_person_type">
+                            <option value="">Seleccione...</option>
+                            <option value="persona_moral">Persona Moral</option>
+                            <option value="persona_fisica">Persona Física</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -12419,6 +12454,38 @@ async def beneficiary_onboarding_new_form(
                     <div class="form-group">
                         <label>Documentos</label>
                         <div class="attachment-grid">
+                            <div class="attachment-card provider-only">
+                                <label for="constancia_situacion_fiscal">Constancia de Situación Fiscal</label>
+                                <input type="file" name="constancia_situacion_fiscal" id="constancia_situacion_fiscal" accept=".pdf,image/*,application/pdf">
+                                <small>Emitida en el mes de la solicitud de alta.</small>
+                            </div>
+                            <div class="attachment-card provider-only">
+                                <label for="comprobante_domicilio_fiscal_comercial">Comprobante de Domicilio Fiscal y Comercial</label>
+                                <input type="file" name="comprobante_domicilio_fiscal_comercial" id="comprobante_domicilio_fiscal_comercial" accept=".pdf,image/*,application/pdf">
+                                <small>No mayor a tres meses.</small>
+                            </div>
+                            <div class="attachment-card provider-moral-only">
+                                <label for="ine_apoderado_legal">INE del apoderado legal</label>
+                                <input type="file" name="ine_apoderado_legal" id="ine_apoderado_legal" accept=".pdf,image/*,application/pdf">
+                                <small>Requerida para proveedor Persona Moral.</small>
+                            </div>
+                            <div class="attachment-card provider-fisica-only">
+                                <label for="ine_titular_constancia">INE del titular de la constancia fiscal</label>
+                                <input type="file" name="ine_titular_constancia" id="ine_titular_constancia" accept=".pdf,image/*,application/pdf">
+                                <small>Requerida para proveedor Persona Física.</small>
+                            </div>
+                            <div class="attachment-card provider-only">
+                                <label for="contrato_convenio_plataforma">Contrato o convenio con Plataforma Sports</label>
+                                <input type="file" name="contrato_convenio_plataforma" id="contrato_convenio_plataforma" accept=".pdf,image/*,application/pdf">
+                            </div>
+                            <div class="attachment-card operator-only">
+                                <label for="ine_colaborador_externo">INE del colaborador externo</label>
+                                <input type="file" name="ine_colaborador_externo" id="ine_colaborador_externo" accept=".pdf,image/*,application/pdf">
+                            </div>
+                            <div class="attachment-card operator-only">
+                                <label for="contrato_plataforma">Contrato con Plataforma Sports</label>
+                                <input type="file" name="contrato_plataforma" id="contrato_plataforma" accept=".pdf,image/*,application/pdf">
+                            </div>
                             <div class="attachment-card adult-only">
                                 <label for="ine_participante">INE del participante</label>
                                 <input type="file" name="ine_participante" id="ine_participante" accept=".pdf,image/*,application/pdf">
@@ -12429,15 +12496,20 @@ async def beneficiary_onboarding_new_form(
                                 <input type="file" name="ine_tutor" id="ine_tutor" accept=".pdf,image/*,application/pdf">
                                 <small>Requerida si el participante es menor de edad.</small>
                             </div>
-                            <div class="attachment-card minor-only">
+                            <div class="attachment-card participant-only">
                                 <label for="credencial_participante">Credencial del torneo o escolar</label>
                                 <input type="file" name="credencial_participante" id="credencial_participante" accept=".pdf,image/*,application/pdf">
-                                <small>Requerida si el participante es menor de edad.</small>
+                                <small>Requerida para casos de atención médica.</small>
+                            </div>
+                            <div class="attachment-card participant-only">
+                                <label for="expediente_atencion_medica">Expediente del caso de atención médica</label>
+                                <input type="file" name="expediente_atencion_medica" id="expediente_atencion_medica" accept=".pdf,image/*,application/pdf">
+                                <small>Requerido para participantes de torneos.</small>
                             </div>
                             <div class="attachment-card">
                                 <label for="caratula_estado_cuenta">Carátula del estado de cuenta *</label>
-                                <input type="file" name="caratula_estado_cuenta" id="caratula_estado_cuenta" accept=".pdf,image/*,application/pdf" required>
-                                <small>Requerida para cualquier alta con cuenta destino.</small>
+                                <input type="file" name="caratula_estado_cuenta" id="caratula_estado_cuenta" accept=".pdf,image/*,application/pdf">
+                                <small>Debe mostrar RFC y CLABE para proveedores; CLABE para operadores y participantes.</small>
                             </div>
                         </div>
                     </div>
@@ -12452,7 +12524,12 @@ async def beneficiary_onboarding_new_form(
         </div>
         <script>
             const tipoSelect = document.getElementById('target_tipo');
+            const providerTypeSelect = document.getElementById('provider_person_type');
             const ageSelect = document.getElementById('participant_age_group');
+            const providerOnly = Array.from(document.querySelectorAll('.provider-only'));
+            const providerMoralOnly = Array.from(document.querySelectorAll('.provider-moral-only'));
+            const providerFisicaOnly = Array.from(document.querySelectorAll('.provider-fisica-only'));
+            const operatorOnly = Array.from(document.querySelectorAll('.operator-only'));
             const participantOnly = Array.from(document.querySelectorAll('.participant-only'));
             const minorOnly = Array.from(document.querySelectorAll('.minor-only'));
             const adultOnly = Array.from(document.querySelectorAll('.adult-only'));
@@ -12460,14 +12537,23 @@ async def beneficiary_onboarding_new_form(
                 nodes.forEach(node => node.style.display = visible ? 'block' : 'none');
             }}
             function syncParticipantDocuments() {{
+                const isProvider = tipoSelect.value === 'proveedor';
+                const isProviderMoral = isProvider && providerTypeSelect.value === 'persona_moral';
+                const isProviderFisica = isProvider && providerTypeSelect.value === 'persona_fisica';
+                const isOperator = tipoSelect.value === 'operadores_regionales';
                 const isParticipant = tipoSelect.value === 'participante_torneo';
                 const isMinor = ageSelect.value === 'minor';
                 const isAdult = ageSelect.value === 'adult';
+                setVisible(providerOnly, isProvider);
+                setVisible(providerMoralOnly, isProviderMoral);
+                setVisible(providerFisicaOnly, isProviderFisica);
+                setVisible(operatorOnly, isOperator);
                 setVisible(participantOnly, isParticipant);
                 setVisible(minorOnly, isParticipant && isMinor);
                 setVisible(adultOnly, isParticipant && isAdult);
             }}
             tipoSelect.addEventListener('change', syncParticipantDocuments);
+            providerTypeSelect.addEventListener('change', syncParticipantDocuments);
             ageSelect.addEventListener('change', syncParticipantDocuments);
             syncParticipantDocuments();
         </script>
@@ -12489,12 +12575,21 @@ async def beneficiary_onboarding_create(
     entidad_region: Optional[str] = Form(None),
     empleado_id: Optional[str] = Form(None),
     torneo_id: Optional[str] = Form(None),
+    provider_person_type: Optional[str] = Form(None),
     participant_age_group: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
+    constancia_situacion_fiscal: Optional[UploadFile] = File(None),
+    comprobante_domicilio_fiscal_comercial: Optional[UploadFile] = File(None),
+    ine_apoderado_legal: Optional[UploadFile] = File(None),
+    contrato_convenio_plataforma: Optional[UploadFile] = File(None),
+    ine_titular_constancia: Optional[UploadFile] = File(None),
+    ine_colaborador_externo: Optional[UploadFile] = File(None),
+    contrato_plataforma: Optional[UploadFile] = File(None),
     ine_participante: Optional[UploadFile] = File(None),
     ine_tutor: Optional[UploadFile] = File(None),
     credencial_participante: Optional[UploadFile] = File(None),
     caratula_estado_cuenta: Optional[UploadFile] = File(None),
+    expediente_atencion_medica: Optional[UploadFile] = File(None),
 ) -> RedirectResponse:
     try:
         empleado_uuid = UUIDType(empleado_id) if (empleado_id or "").strip() else None
@@ -12507,10 +12602,20 @@ async def beneficiary_onboarding_create(
             elif age_group == "adult":
                 participant_is_minor = False
         attachments = await _beneficiary_onboarding_upload_inputs(
+            constancia_situacion_fiscal=constancia_situacion_fiscal,
+            comprobante_domicilio_fiscal_comercial=(
+                comprobante_domicilio_fiscal_comercial
+            ),
+            ine_apoderado_legal=ine_apoderado_legal,
+            contrato_convenio_plataforma=contrato_convenio_plataforma,
+            ine_titular_constancia=ine_titular_constancia,
+            ine_colaborador_externo=ine_colaborador_externo,
+            contrato_plataforma=contrato_plataforma,
             ine_participante=ine_participante,
             ine_tutor=ine_tutor,
             credencial_participante=credencial_participante,
             caratula_estado_cuenta=caratula_estado_cuenta,
+            expediente_atencion_medica=expediente_atencion_medica,
         )
         request = await create_beneficiary_onboarding_request(
             session,
@@ -12525,6 +12630,7 @@ async def beneficiary_onboarding_create(
                 entidad_region=entidad_region,
                 empleado_id=empleado_uuid,
                 torneo_id=torneo_uuid,
+                provider_person_type=provider_person_type,
                 participant_is_minor=participant_is_minor,
                 notas=notas,
             ),

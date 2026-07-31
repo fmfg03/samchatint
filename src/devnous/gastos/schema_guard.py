@@ -2477,6 +2477,7 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             cuenta_clabe TEXT NULL,
             cuenta_bancaria TEXT NULL,
             entidad_region TEXT NULL,
+            provider_person_type VARCHAR(50) NULL,
             participant_is_minor BOOLEAN NULL,
             notas TEXT NULL,
             status VARCHAR(50) NOT NULL DEFAULT 'pendiente_area',
@@ -2492,6 +2493,10 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                 CHECK (status IN ('pendiente_area','rechazada_area','pendiente_revision_final','rechazada_final','aprobada_registrada'))
         )
         """,
+    ),
+    (
+        "add_beneficiary_onboarding_provider_person_type",
+        "ALTER TABLE beneficiary_onboarding_requests ADD COLUMN IF NOT EXISTS provider_person_type VARCHAR(50) NULL",
     ),
     (
         "add_beneficiary_onboarding_participant_is_minor",
@@ -2526,8 +2531,69 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             mime_type VARCHAR(200) NULL,
             subido_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             CONSTRAINT ck_beneficiary_onboarding_attachment_categoria
-                CHECK (categoria IN ('ine_participante','ine_tutor','credencial_participante','caratula_estado_cuenta'))
+                CHECK (categoria IN (
+                    'constancia_situacion_fiscal',
+                    'comprobante_domicilio_fiscal_comercial',
+                    'caratula_estado_cuenta',
+                    'ine_apoderado_legal',
+                    'contrato_convenio_plataforma',
+                    'ine_titular_constancia',
+                    'ine_colaborador_externo',
+                    'contrato_plataforma',
+                    'ine_participante',
+                    'ine_tutor',
+                    'credencial_participante',
+                    'expediente_atencion_medica'
+                ))
         )
+        """,
+    ),
+    (
+        "refresh_beneficiary_onboarding_attachment_category_constraint",
+        """
+        DO $$
+        DECLARE
+            current_def TEXT;
+        BEGIN
+            IF EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public'
+                  AND table_name = 'beneficiary_onboarding_attachments'
+            ) THEN
+                SELECT pg_get_constraintdef(oid)
+                INTO current_def
+                FROM pg_constraint
+                WHERE conrelid = 'beneficiary_onboarding_attachments'::regclass
+                  AND conname = 'ck_beneficiary_onboarding_attachment_categoria';
+
+                IF current_def IS NOT NULL
+                   AND position('expediente_atencion_medica' in current_def) = 0 THEN
+                    ALTER TABLE beneficiary_onboarding_attachments
+                        DROP CONSTRAINT ck_beneficiary_onboarding_attachment_categoria;
+                END IF;
+
+                IF current_def IS NULL
+                   OR position('expediente_atencion_medica' in current_def) = 0 THEN
+                    ALTER TABLE beneficiary_onboarding_attachments
+                        ADD CONSTRAINT ck_beneficiary_onboarding_attachment_categoria
+                        CHECK (categoria IN (
+                            'constancia_situacion_fiscal',
+                            'comprobante_domicilio_fiscal_comercial',
+                            'caratula_estado_cuenta',
+                            'ine_apoderado_legal',
+                            'contrato_convenio_plataforma',
+                            'ine_titular_constancia',
+                            'ine_colaborador_externo',
+                            'contrato_plataforma',
+                            'ine_participante',
+                            'ine_tutor',
+                            'credencial_participante',
+                            'expediente_atencion_medica'
+                        ));
+                END IF;
+            END IF;
+        END $$;
         """,
     ),
     (

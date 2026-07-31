@@ -37,11 +37,31 @@ BENEFICIARY_TARGET_TYPE_LABELS = {
     "participante_torneo": "Participante de Torneos",
 }
 
+VALID_PROVIDER_PERSON_TYPES = {
+    "persona_moral",
+    "persona_fisica",
+}
+
+PROVIDER_PERSON_TYPE_LABELS = {
+    "persona_moral": "Persona Moral",
+    "persona_fisica": "Persona Física",
+}
+
 BENEFICIARY_ATTACHMENT_LABELS = {
+    "constancia_situacion_fiscal": "Constancia de Situación Fiscal",
+    "comprobante_domicilio_fiscal_comercial": (
+        "Comprobante de Domicilio Fiscal y Comercial"
+    ),
+    "caratula_estado_cuenta": "Carátula del estado de cuenta",
+    "ine_apoderado_legal": "INE del apoderado legal",
+    "contrato_convenio_plataforma": "Contrato o convenio con Plataforma Sports",
+    "ine_titular_constancia": "INE del titular de la constancia fiscal",
+    "ine_colaborador_externo": "INE del colaborador externo",
+    "contrato_plataforma": "Contrato con Plataforma Sports",
     "ine_participante": "INE del participante",
     "ine_tutor": "INE del tutor",
     "credencial_participante": "Credencial del torneo o escolar",
-    "caratula_estado_cuenta": "Carátula del estado de cuenta",
+    "expediente_atencion_medica": "Expediente del caso de atención médica",
 }
 
 VALID_BENEFICIARY_ATTACHMENT_CATEGORIES = set(BENEFICIARY_ATTACHMENT_LABELS)
@@ -75,6 +95,7 @@ class BeneficiaryOnboardingInput:
     entidad_region: Optional[str] = None
     empleado_id: Optional[UUID] = None
     torneo_id: Optional[UUID] = None
+    provider_person_type: Optional[str] = None
     participant_is_minor: Optional[bool] = None
     notas: Optional[str] = None
 
@@ -92,6 +113,20 @@ def normalize_beneficiary_target_type(value: str) -> str:
     if target not in VALID_BENEFICIARY_TARGET_TYPES:
         raise BeneficiaryOnboardingError("invalid_type", "Tipo de alta inválido.")
     return target
+
+
+def normalize_provider_person_type(
+    target_tipo: str, value: Optional[str]
+) -> Optional[str]:
+    clean = (value or "").strip().lower()
+    if target_tipo != "proveedor":
+        return None
+    if clean not in VALID_PROVIDER_PERSON_TYPES:
+        raise BeneficiaryOnboardingError(
+            "missing_provider_person_type",
+            "Indique si el proveedor es Persona Moral o Persona Física.",
+        )
+    return clean
 
 
 def normalize_optional_text(value: Optional[str]) -> Optional[str]:
@@ -125,19 +160,47 @@ def required_attachment_categories(
     *,
     target_tipo: str,
     participant_is_minor: Optional[bool],
+    provider_person_type: Optional[str] = None,
 ) -> set[str]:
-    required = {"caratula_estado_cuenta"}
+    if target_tipo == "proveedor":
+        person_type = normalize_provider_person_type(
+            target_tipo,
+            provider_person_type,
+        )
+        required = {
+            "constancia_situacion_fiscal",
+            "comprobante_domicilio_fiscal_comercial",
+            "caratula_estado_cuenta",
+            "contrato_convenio_plataforma",
+        }
+        if person_type == "persona_moral":
+            required.add("ine_apoderado_legal")
+        else:
+            required.add("ine_titular_constancia")
+        return required
+    if target_tipo == "operadores_regionales":
+        return {
+            "ine_colaborador_externo",
+            "caratula_estado_cuenta",
+            "contrato_plataforma",
+        }
     if target_tipo == "participante_torneo":
         if participant_is_minor is None:
             raise BeneficiaryOnboardingError(
                 "missing_participant_age",
                 "Indique si el participante es mayor o menor de edad.",
             )
+        required = {
+            "credencial_participante",
+            "caratula_estado_cuenta",
+            "expediente_atencion_medica",
+        }
         if participant_is_minor:
-            required.update({"ine_tutor", "credencial_participante"})
+            required.add("ine_tutor")
         else:
             required.add("ine_participante")
-    return required
+        return required
+    return {"caratula_estado_cuenta"}
 
 
 def _validate_attachment_input(
@@ -180,12 +243,14 @@ def validate_required_attachments(
     *,
     target_tipo: str,
     participant_is_minor: Optional[bool],
+    provider_person_type: Optional[str] = None,
     attachments: list[BeneficiaryOnboardingAttachmentInput],
 ) -> list[BeneficiaryOnboardingAttachmentInput]:
     validated = [_validate_attachment_input(item) for item in attachments]
     present = {item.categoria for item in validated}
     required = required_attachment_categories(
         target_tipo=target_tipo,
+        provider_person_type=provider_person_type,
         participant_is_minor=participant_is_minor,
     )
     missing = required - present
@@ -337,6 +402,15 @@ def _onboarding_summary(request: BeneficiaryOnboardingRequest) -> str:
         f"RFC: {request.rfc or '-'}",
         f"Entidad/Region: {request.entidad_region or '-'}",
     ]
+    provider_person_type = getattr(request, "provider_person_type", None)
+    if provider_person_type:
+        lines.insert(
+            1,
+            "Subtipo proveedor: "
+            + PROVIDER_PERSON_TYPE_LABELS.get(
+                provider_person_type, provider_person_type
+            ),
+        )
     if request.notas:
         lines.append(f"Notas: {request.notas}")
     return "\n".join(lines)
@@ -430,8 +504,12 @@ async def create_beneficiary_onboarding_request(
         if target_tipo == "participante_torneo"
         else None
     )
+    provider_person_type = normalize_provider_person_type(
+        target_tipo, payload.provider_person_type
+    )
     validated_attachments = validate_required_attachments(
         target_tipo=target_tipo,
+        provider_person_type=provider_person_type,
         participant_is_minor=participant_is_minor,
         attachments=list(attachments or []),
     )
@@ -453,6 +531,7 @@ async def create_beneficiary_onboarding_request(
         cuenta_clabe=cuenta_clabe,
         cuenta_bancaria=cuenta_bancaria,
         entidad_region=normalize_optional_text(payload.entidad_region),
+        provider_person_type=provider_person_type,
         empleado_id=payload.empleado_id,
         torneo_id=payload.torneo_id,
         participant_is_minor=participant_is_minor,

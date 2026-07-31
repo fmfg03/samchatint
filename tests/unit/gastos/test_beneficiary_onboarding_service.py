@@ -48,6 +48,15 @@ def test_onboarding_form_exposes_required_attachment_fields() -> None:
     assert 'name="credencial_participante"' in source
     assert 'name="caratula_estado_cuenta"' in source
     assert 'name="participant_age_group"' in source
+    assert 'name="provider_person_type"' in source
+    assert 'name="constancia_situacion_fiscal"' in source
+    assert 'name="comprobante_domicilio_fiscal_comercial"' in source
+    assert 'name="ine_apoderado_legal"' in source
+    assert 'name="ine_titular_constancia"' in source
+    assert 'name="ine_colaborador_externo"' in source
+    assert 'name="contrato_convenio_plataforma"' in source
+    assert 'name="contrato_plataforma"' in source
+    assert 'name="expediente_atencion_medica"' in source
 
 
 def test_onboarding_attachment_download_route_exists() -> None:
@@ -66,7 +75,104 @@ def _attachment(category: str) -> svc.BeneficiaryOnboardingAttachmentInput:
     )
 
 
-def test_participant_adult_requires_ine_and_bank_statement() -> None:
+def test_provider_moral_requires_full_tax_bank_and_contract_package() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="proveedor",
+            provider_person_type="persona_moral",
+            participant_is_minor=None,
+            attachments=[
+                _attachment("constancia_situacion_fiscal"),
+                _attachment("comprobante_domicilio_fiscal_comercial"),
+                _attachment("caratula_estado_cuenta"),
+                _attachment("contrato_convenio_plataforma"),
+            ],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "INE del apoderado legal" in exc.value.message
+
+    validated = svc.validate_required_attachments(
+        target_tipo="proveedor",
+        provider_person_type="persona_moral",
+        participant_is_minor=None,
+        attachments=[
+            _attachment("constancia_situacion_fiscal"),
+            _attachment("comprobante_domicilio_fiscal_comercial"),
+            _attachment("caratula_estado_cuenta"),
+            _attachment("ine_apoderado_legal"),
+            _attachment("contrato_convenio_plataforma"),
+        ],
+    )
+    assert {item.categoria for item in validated} == {
+        "constancia_situacion_fiscal",
+        "comprobante_domicilio_fiscal_comercial",
+        "caratula_estado_cuenta",
+        "ine_apoderado_legal",
+        "contrato_convenio_plataforma",
+    }
+
+
+def test_provider_fisica_requires_owner_ine_package() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="proveedor",
+            provider_person_type="persona_fisica",
+            participant_is_minor=None,
+            attachments=[
+                _attachment("constancia_situacion_fiscal"),
+                _attachment("comprobante_domicilio_fiscal_comercial"),
+                _attachment("caratula_estado_cuenta"),
+                _attachment("contrato_convenio_plataforma"),
+            ],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "INE del titular de la constancia fiscal" in exc.value.message
+
+
+def test_provider_requires_person_type() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="proveedor",
+            participant_is_minor=None,
+            attachments=[_attachment("caratula_estado_cuenta")],
+        )
+
+    assert exc.value.code == "missing_provider_person_type"
+
+
+def test_operator_requires_ine_bank_statement_and_contract() -> None:
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        svc.validate_required_attachments(
+            target_tipo="operadores_regionales",
+            participant_is_minor=None,
+            attachments=[
+                _attachment("ine_colaborador_externo"),
+                _attachment("caratula_estado_cuenta"),
+            ],
+        )
+
+    assert exc.value.code == "missing_required_attachment"
+    assert "Contrato con Plataforma Sports" in exc.value.message
+
+    validated = svc.validate_required_attachments(
+        target_tipo="operadores_regionales",
+        participant_is_minor=None,
+        attachments=[
+            _attachment("ine_colaborador_externo"),
+            _attachment("caratula_estado_cuenta"),
+            _attachment("contrato_plataforma"),
+        ],
+    )
+    assert {item.categoria for item in validated} == {
+        "ine_colaborador_externo",
+        "caratula_estado_cuenta",
+        "contrato_plataforma",
+    }
+
+
+def test_participant_adult_requires_ine_credential_bank_statement_and_case_file() -> None:
     with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
         svc.validate_required_attachments(
             target_tipo="participante_torneo",
@@ -82,16 +188,20 @@ def test_participant_adult_requires_ine_and_bank_statement() -> None:
         participant_is_minor=False,
         attachments=[
             _attachment("ine_participante"),
+            _attachment("credencial_participante"),
             _attachment("caratula_estado_cuenta"),
+            _attachment("expediente_atencion_medica"),
         ],
     )
     assert {item.categoria for item in validated} == {
         "ine_participante",
+        "credencial_participante",
         "caratula_estado_cuenta",
+        "expediente_atencion_medica",
     }
 
 
-def test_participant_minor_requires_tutor_credential_and_bank_statement() -> None:
+def test_participant_minor_requires_tutor_credential_bank_statement_and_case_file() -> None:
     with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
         svc.validate_required_attachments(
             target_tipo="participante_torneo",
@@ -106,10 +216,10 @@ def test_participant_minor_requires_tutor_credential_and_bank_statement() -> Non
     assert "Credencial del torneo o escolar" in exc.value.message
 
 
-def test_non_participant_requires_only_bank_statement() -> None:
+def test_employee_requires_only_bank_statement() -> None:
     with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
         svc.validate_required_attachments(
-            target_tipo="proveedor",
+            target_tipo="empleado",
             participant_is_minor=None,
             attachments=[],
         )
@@ -118,7 +228,7 @@ def test_non_participant_requires_only_bank_statement() -> None:
     assert "Carátula del estado de cuenta" in exc.value.message
 
     validated = svc.validate_required_attachments(
-        target_tipo="proveedor",
+        target_tipo="empleado",
         participant_is_minor=None,
         attachments=[_attachment("caratula_estado_cuenta")],
     )
@@ -168,6 +278,7 @@ async def test_create_request_persists_required_attachments(monkeypatch):
             _attachment("ine_tutor"),
             _attachment("credencial_participante"),
             _attachment("caratula_estado_cuenta"),
+            _attachment("expediente_atencion_medica"),
         ],
     )
 
@@ -179,6 +290,7 @@ async def test_create_request_persists_required_attachments(monkeypatch):
         "ine_tutor",
         "credencial_participante",
         "caratula_estado_cuenta",
+        "expediente_atencion_medica",
     }
 
 

@@ -1665,6 +1665,7 @@ class BeneficiaryOnboardingRequest(Base):
     cuenta_clabe = Column(Text, nullable=True, index=True)
     cuenta_bancaria = Column(Text, nullable=True)
     entidad_region = Column(Text, nullable=True)
+    provider_person_type = Column(String(50), nullable=True)
     participant_is_minor = Column(Boolean, nullable=True)
     notas = Column(Text, nullable=True)
     status = Column(String(50), nullable=False, default="pendiente_area", index=True)
