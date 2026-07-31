@@ -528,6 +528,35 @@ def register_presupuestos_routes(router) -> None:
             catalog_scope=catalog_scope or "none",
             selected_catalog_tournament_ids=catalog_tournament_ids,
         )
+        selected_catalog_tournament_set = {
+            str(item).strip()
+            for item in (catalog_tournament_ids or [])
+            if str(item).strip()
+        }
+        normalized_catalog_scope = str(catalog_scope or "none").strip().lower()
+        if (
+            normalized_catalog_scope == "selected"
+            and selected_catalog_tournament_set
+        ):
+            selected_tournament_aliases: set[str] = set()
+            for tournament in catalog_tournaments:
+                if str(tournament.id) in selected_catalog_tournament_set:
+                    selected_tournament_aliases.update(
+                        budget_alias_candidates(tournament.name or "")
+                    )
+            tournaments = [
+                item
+                for item in tournaments
+                if str(item.get("tournament_id") or "").strip()
+                in selected_catalog_tournament_set
+                or bool(
+                    budget_alias_candidates(
+                        item.get("tournament_code") or "",
+                        item.get("tournament_name") or "",
+                    )
+                    & selected_tournament_aliases
+                )
+            ]
 
         tournament_rollups: dict[str, dict[str, float]] = {}
         if selected_version:
@@ -925,7 +954,6 @@ def register_presupuestos_routes(router) -> None:
                 phase_labels=[],
                 line_direction="income",
                 show_phase_field=False,
-                section_id="presupuesto-ingresos",
                 cuentas_contables=cuentas_contables,
             )
 
@@ -998,10 +1026,10 @@ def register_presupuestos_routes(router) -> None:
                 {matrix_filters_html}
                 {gastos_matrix_html}
             </section>
-            {create_income_line_form}
             <section class="workspace-card" id="presupuesto-ingresos">
                 <div class="workspace-section-title">Ingresos</div>
                 <div class="workspace-section-subtitle">Captura ingreso esperado; ingreso real se alimenta con CFDI PSP vinculados.</div>
+                {create_income_line_form}
                 {income_import_html}
                 {cfdi_income_panel}
                 {matrix_filters_html}

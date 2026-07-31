@@ -159,6 +159,8 @@ def test_render_add_tournament_line_form_uses_phase_select_and_fetch():
     )
 
     assert "Agregar partida al torneo" in html
+    assert "Agregar partida de ingreso" not in html
+    assert "Ej. Hospedaje" in html
     assert 'id="add-line-phase"' in html
     assert 'name="phase"' in html
     assert 'name="line_direction" value="expense"' in html
@@ -214,8 +216,10 @@ def test_render_add_tournament_line_form_income_variant_has_no_phase_field():
         ],
     )
 
-    assert 'id="presupuesto-ingresos"' in html
-    assert "Agregar partida al torneo" in html
+    assert 'id="presupuesto-ingresos"' not in html
+    assert "Agregar partida de ingreso" in html
+    assert "Agregar partida al torneo" not in html
+    assert "Ej. Inscripción, patrocinio, recuperación" in html
     assert 'name="line_direction" value="income"' in html
     assert 'name="cuenta_contable_id"' in html
     assert "4100-001" in html
@@ -325,6 +329,23 @@ def test_render_cfdi_income_bridge_panel_uses_searchable_line_inputs_without_pha
     assert "visibleLines" not in html
     assert "Sin partidas de ingreso disponibles" in html
     assert "Selecciona una opción de la lista." in html
+    assert "Primero agrega o importa partidas de ingreso" not in html
+
+
+def test_render_cfdi_income_bridge_panel_explains_missing_income_lines():
+    from devnous.gastos.routes.admin_budget_ui import render_cfdi_income_bridge_panel
+
+    html = render_cfdi_income_bridge_panel(
+        tournament_key="copatest",
+        edition_year=2026,
+        lines=[],
+        candidates=[],
+        links=[],
+        can_edit=True,
+    )
+
+    assert "Primero agrega o importa partidas de ingreso" in html
+    assert "Sin partidas de ingreso disponibles" in html
 
 
 def test_render_budget_partida_matrix_includes_editable_cuenta_search():
@@ -583,6 +604,8 @@ def test_budget_catalog_tournament_filter_is_wired():
     assert "Ninguno" in active_route_source
     assert "Selecciona torneos para cargar partidas" in active_route_source
     assert "partidas cargadas de" in active_route_source
+    assert "selected_tournament_aliases" in active_route_source
+    assert "tournaments = [" in active_route_source
 
     assert "catalog_scope: Optional[str] = None" in source
     assert "catalog_tournament_ids: Optional[List[str]] = None" in source

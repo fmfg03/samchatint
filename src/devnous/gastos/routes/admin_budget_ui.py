@@ -731,6 +731,15 @@ def render_cfdi_income_bridge_panel(
         if can_edit
         else "Sin permiso para vincular ingresos."
     )
+    no_income_lines_notice = (
+        """
+        <div style="margin-top:12px;padding:12px;border:1px solid #fde68a;border-radius:10px;background:#fffbeb;color:#92400e;font-size:13px;font-weight:700;">
+            Primero agrega o importa partidas de ingreso para poder vincular CFDI.
+        </div>
+        """
+        if not line_items
+        else ""
+    )
     return f"""
     <section class="workspace-card" style="margin-bottom:18px;">
         <div class="workspace-section-title">CFDI PSP vinculados a ingreso real</div>
@@ -738,6 +747,7 @@ def render_cfdi_income_bridge_panel(
             {escape(edit_note)}
             No borra el CFDI; solo deja de contar como ingreso real.
         </div>
+        {no_income_lines_notice}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px;">
             <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/link" style="display:grid;gap:10px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;">
                 <div style="font-weight:800;color:#0f172a;">Vincular CFDI existente</div>
@@ -920,6 +930,13 @@ def render_add_tournament_line_form(
     cuenta_options = _render_cuenta_contable_select_options(cuentas_contables or [])
     tournament_id_clean = str(tournament_id or "").strip()
     direction_clean = "income" if str(line_direction or "").strip().lower() == "income" else "expense"
+    is_income = direction_clean == "income"
+    section_title = "Agregar partida de ingreso" if is_income else "Agregar partida al torneo"
+    concept_placeholder = (
+        "Ej. Inscripción, patrocinio, recuperación"
+        if is_income
+        else "Ej. Hospedaje"
+    )
     fetch_script = ""
     if show_phase_field and tournament_id_clean:
         fetch_script = f"""
@@ -1010,7 +1027,7 @@ def render_add_tournament_line_form(
 
     return f"""
     <section class="workspace-card"{section_id_attr} style="margin-bottom:18px;">
-        <div class="workspace-section-title">Agregar partida al torneo</div>
+        <div class="workspace-section-title">{section_title}</div>
         <div class="workspace-section-subtitle">
             Captura una nueva partida presupuestal para
             <strong>{escape(tournament_name or tournament_key)}</strong>.
@@ -1037,7 +1054,7 @@ def render_add_tournament_line_form(
                         type="text"
                         name="concept_name"
                         required
-                        placeholder="Ej. Hospedaje"
+                        placeholder="{concept_placeholder}"
                         style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;font-size:14px;"
                     >
                 </div>
