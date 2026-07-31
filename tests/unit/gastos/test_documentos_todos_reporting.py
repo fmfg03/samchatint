@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from types import SimpleNamespace
+from uuid import uuid4
+
+from devnous.gastos.routes import user_routes
+from devnous.gastos.services.documento_semantics import (
+    EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+)
+
+
+def _doc(**overrides):
+    values = {
+        "id": uuid4(),
+        "tipo": "SOLICITUD",
+        "numero_referencia": "S-26000123",
+        "estado": "aprobado",
+        "empleado": SimpleNamespace(nombre="Odilon Reportero"),
+        "beneficiario_empleado": None,
+        "beneficiario_empleado_id": None,
+        "proveedor_cliente": None,
+        "proveedor_cliente_id": None,
+        "concepto_pago": "Hospedaje regional",
+        "referencia_pago": "RP-001",
+        "referencia_operaciones": "456",
+        "monto_solicitado": Decimal("1000.00"),
+        "monto_total": Decimal("1160.00"),
+        "currency": "MXN",
+        "creado_en": datetime(2026, 7, 31, 12, 0, 0),
+        "enviado_en": None,
+        "aprobado_en": None,
+        "pagado_en": None,
+        "cuenta_gastos_id": None,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_documentos_todos_reporting_values_for_provider_solicitud():
+    documento = _doc(
+        proveedor_cliente_id=uuid4(),
+        proveedor_cliente=SimpleNamespace(nombre="Federal Express"),
+    )
+
+    row = user_routes._documentos_todos_reporting_row_values(
+        documento, aprobador_nombre="Finanzas"
+    )
+
+    assert row["tipo_documento"] == "SOLICITUD"
+    assert row["tipo_solicitud"] == "Terceros"
+    assert row["solicitante"] == "Odilon Reportero"
+    assert row["beneficiario"] == "Federal Express"
+    assert row["proveedor"] == "Federal Express"
+    assert row["concepto"] == "Hospedaje regional"
+    assert row["referencia_pago"] == "RP-001"
+    assert row["referencia_operaciones"] == "456"
+    assert row["monto_solicitado"] == "$1,000.00"
+    assert row["monto_total"] == "$1,160.00"
+    assert row["currency"] == "MXN"
+    assert row["situacion"] == "Abierta"
+    assert row["aprobador"] == "Finanzas"
+
+
+def test_documentos_todos_reporting_values_for_employee_beneficiary():
+    documento = _doc(
+        beneficiario_empleado_id=uuid4(),
+        beneficiario_empleado=SimpleNamespace(nombre="Alicia Beneficiaria"),
+        proveedor_cliente_id=uuid4(),
+        proveedor_cliente=SimpleNamespace(nombre="Cuenta bancaria Alicia"),
+    )
+
+    row = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row["tipo_solicitud"] == "Personal / empleado"
+    assert row["beneficiario"] == "Alicia Beneficiaria"
+    assert row["proveedor"] == "Cuenta bancaria Alicia"
+
+
+def test_documentos_todos_reporting_values_for_employee_reimbursement():
+    documento = _doc(
+        cuenta_gastos_id=uuid4(),
+        beneficiario_empleado_id=uuid4(),
+        beneficiario_empleado=SimpleNamespace(nombre="Alicia Beneficiaria"),
+        concepto_pago=f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX} I-26000001",
+    )
+
+    assert user_routes._documentos_todos_reporting_type(documento) == (
+        "Reembolso empleado"
+    )
+
+
+def test_documentos_todos_reporting_values_for_informe():
+    documento = _doc(tipo="INFORME", numero_referencia="I-26000001")
+
+    row = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row["tipo_solicitud"] == "Informe de gastos"
+
+
+def test_documentos_todos_reporting_situation_marks_closed_states():
+    assert (
+        user_routes._documentos_todos_reporting_situation(_doc(estado="pagado"))
+        == "Cerrada"
+    )
+    assert (
+        user_routes._documentos_todos_reporting_situation(_doc(estado="rechazado"))
+        == "Cerrada"
+    )
+    assert (
+        user_routes._documentos_todos_reporting_situation(_doc(estado="enviado"))
+        == "Abierta"
+    )
+
+
+def test_documentos_todos_filter_form_preserves_q_field():
+    source = "src/devnous/gastos/routes/user_routes.py"
+    text = open(source, encoding="utf-8").read()
+
+    assert 'name="q"' in text
+    assert 'value="{escape(q_value)}"' in text
+    assert 'name="situacion"' in text
+    assert "Abiertas" in text
+    assert "Cerradas" in text
+    assert "Referencia, proveedor, beneficiario, concepto" in text

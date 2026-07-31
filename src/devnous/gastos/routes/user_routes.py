@@ -31,7 +31,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResp
 from sqlalchemy import select, func, and_, or_, text
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, undefer
+from sqlalchemy.orm import aliased, selectinload, undefer
 
 from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto
 from ..expense_metadata import (
@@ -20449,6 +20449,88 @@ async def historial_aprobador(
     return html
 
 
+def _documentos_todos_reporting_type(documento: Documento) -> str:
+    doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
+    if doc_type == "INFORME":
+        return "Informe de gastos"
+    if doc_type == "SOLICITUD" and is_employee_reimbursement(documento):
+        return "Reembolso empleado"
+    if doc_type == "SOLICITUD" and getattr(documento, "beneficiario_empleado_id", None):
+        return "Personal / empleado"
+    if doc_type == "SOLICITUD" and getattr(documento, "proveedor_cliente_id", None):
+        return "Terceros"
+    if doc_type == "SOLICITUD":
+        return "Solicitud"
+    return doc_type or "Documento"
+
+
+def _documentos_todos_party_values(documento: Documento) -> dict[str, str]:
+    solicitante = getattr(documento, "empleado", None)
+    beneficiario_empleado = getattr(documento, "beneficiario_empleado", None)
+    proveedor = getattr(documento, "proveedor_cliente", None)
+    beneficiario_nombre = (
+        getattr(beneficiario_empleado, "nombre", None)
+        or getattr(proveedor, "nombre", None)
+        or "—"
+    )
+    proveedor_nombre = getattr(proveedor, "nombre", None) or "—"
+    return {
+        "solicitante": getattr(solicitante, "nombre", None) or "N/A",
+        "beneficiario": beneficiario_nombre,
+        "proveedor": proveedor_nombre,
+    }
+
+
+def _documentos_todos_reporting_situation(documento: Documento) -> str:
+    estado = (getattr(documento, "estado", None) or "").strip().lower()
+    return "Cerrada" if estado in {"pagado", "rechazado", "cerrado"} else "Abierta"
+
+
+def _documentos_todos_reporting_row_values(
+    documento: Documento, *, aprobador_nombre: str = "—"
+) -> dict[str, Any]:
+    parties = _documentos_todos_party_values(documento)
+    currency = currency_for(documento)
+    return {
+        "id": str(documento.id),
+        "numero_referencia": getattr(documento, "numero_referencia", None) or "—",
+        "tipo_documento": getattr(documento, "tipo", None) or "—",
+        "tipo_solicitud": _documentos_todos_reporting_type(documento),
+        "solicitante": parties["solicitante"],
+        "beneficiario": parties["beneficiario"],
+        "proveedor": parties["proveedor"],
+        "aprobador": aprobador_nombre or "—",
+        "concepto": getattr(documento, "concepto_pago", None) or "—",
+        "referencia_pago": getattr(documento, "referencia_pago", None) or "—",
+        "referencia_operaciones": (
+            getattr(documento, "referencia_operaciones", None) or "—"
+        ),
+        "monto_solicitado": format_currency(
+            getattr(documento, "monto_solicitado", None), currency
+        ),
+        "monto_total": format_currency(getattr(documento, "monto_total", None), currency),
+        "currency": currency,
+        "situacion": _documentos_todos_reporting_situation(documento),
+        "estado": getattr(documento, "estado", None) or "—",
+        "creado": format_value(getattr(documento, "creado_en", None)),
+        "enviado": (
+            format_value(getattr(documento, "enviado_en", None))
+            if getattr(documento, "enviado_en", None)
+            else "-"
+        ),
+        "aprobado": (
+            format_value(getattr(documento, "aprobado_en", None))
+            if getattr(documento, "aprobado_en", None)
+            else "-"
+        ),
+        "pagado": (
+            format_value(getattr(documento, "pagado_en", None))
+            if getattr(documento, "pagado_en", None)
+            else "-"
+        ),
+    }
+
+
 @router.get("/documentos/todos", response_class=HTMLResponse)
 async def documentos_todos(
     request: Request,
@@ -20457,6 +20539,8 @@ async def documentos_todos(
     estado: Optional[str] = None,
     tipo: Optional[str] = None,
     empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
+    situacion: Optional[str] = None,
 ) -> str:
     """
     Global view of all documentos with optional filters.
@@ -20464,7 +20548,7 @@ async def documentos_todos(
     Access control:
     - Coordinador, finanzas, or admin can access (plus superadmin)
     - Admin/coordinador in Operaciones or Mercadotecnia see only their departamento in this list
-    - Supports filtering by estado, tipo, and empleado_nombre
+    - Supports filtering by estado, tipo, situacion, empleado_nombre, and reporting search
     """
 
     # Check role
@@ -20473,15 +20557,30 @@ async def documentos_todos(
 
     # Build base query
     query = select(Documento).options(
-        selectinload(Documento.empleado).selectinload(Empleado.aprobador)
+        selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.proveedor_cliente),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
-    needs_empleado_join = bool(empleado_nombre and empleado_nombre.strip()) or bool(
-        scope_dept
+    q_value = (q or "").strip()
+    needs_empleado_join = (
+        bool(empleado_nombre and empleado_nombre.strip())
+        or bool(scope_dept)
+        or bool(q_value)
     )
     if needs_empleado_join:
         query = query.join(Empleado, Documento.empleado_id == Empleado.id)
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    if q_value:
+        query = query.outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        ).outerjoin(
+            proveedor_alias,
+            Documento.proveedor_cliente_id == proveedor_alias.id,
+        )
 
     # Apply filters
     filters = []
@@ -20491,8 +20590,26 @@ async def documentos_todos(
         filters.append(Documento.estado == estado.strip())
     if tipo and tipo.strip():
         filters.append(Documento.tipo == tipo.strip())
+    situacion_value = (situacion or "").strip().lower()
+    if situacion_value == "abiertas":
+        filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
+    elif situacion_value == "cerradas":
+        filters.append(Documento.estado.in_(["pagado", "rechazado", "cerrado"]))
     if empleado_nombre and empleado_nombre.strip():
         filters.append(Empleado.nombre.ilike(f'%{empleado_nombre.strip()}%'))
+    if q_value:
+        q_filter = f"%{q_value}%"
+        filters.append(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                Documento.referencia_pago.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Empleado.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+            )
+        )
 
     if filters:
         query = query.where(and_(*filters))
@@ -20507,19 +20624,15 @@ async def documentos_todos(
     # Build rows HTML
     rows_html = ""
     for documento in documentos:
-        # Format dates
-        creado_str = format_value(documento.creado_en)
-        enviado_str = format_value(documento.enviado_en) if documento.enviado_en else "-"
-        aprobado_str = format_value(documento.aprobado_en) if documento.aprobado_en else "-"
-        pagado_str = format_value(documento.pagado_en) if documento.pagado_en else "-"
-
-        # Get solicitante and aprobador names
-        solicitante_nombre = documento.empleado.nombre if documento.empleado else "N/A"
         aprobador_nombre = aprobador_by_doc.get(documento.id, "—")
+        row_values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_nombre,
+        )
 
         # Link to documento detail with next parameter
         next_url = quote("/documentos/todos")
-        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
 
         # Shortened ID (first 8 chars)
         doc_id_short = str(documento.id)[:8]
@@ -20528,15 +20641,24 @@ async def documentos_todos(
         <tr>
             <td>{doc_link}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
-            <td>{solicitante_nombre}</td>
-            <td>{aprobador_nombre}</td>
-            <td>{documento.tipo}</td>
-            <td>{documento.estado}</td>
-            <td>{format_currency(documento.monto_total)}</td>
-            <td>{creado_str}</td>
-            <td>{enviado_str}</td>
-            <td>{aprobado_str}</td>
-            <td>{pagado_str}</td>
+            <td>{escape(row_values["tipo_documento"])}</td>
+            <td>{escape(row_values["tipo_solicitud"])}</td>
+            <td>{escape(row_values["solicitante"])}</td>
+            <td>{escape(row_values["beneficiario"])}</td>
+            <td>{escape(row_values["proveedor"])}</td>
+            <td>{escape(row_values["aprobador"])}</td>
+            <td>{escape(row_values["concepto"])}</td>
+            <td>{escape(row_values["referencia_pago"])}</td>
+            <td>{escape(row_values["referencia_operaciones"])}</td>
+            <td>{row_values["monto_solicitado"]}</td>
+            <td>{row_values["monto_total"]}</td>
+            <td>{escape(row_values["currency"])}</td>
+            <td>{escape(row_values["situacion"])}</td>
+            <td>{escape(row_values["estado"])}</td>
+            <td>{row_values["creado"]}</td>
+            <td>{row_values["enviado"]}</td>
+            <td>{row_values["aprobado"]}</td>
+            <td>{row_values["pagado"]}</td>
         </tr>
         """
 
@@ -20546,10 +20668,14 @@ async def documentos_todos(
         <div class="section-head" style="margin-bottom:12px;">
             <div>
                 <h2>Filtros</h2>
-                <div class="section-note">Reduce la vista global por estado, tipo o empleado.</div>
+                <div class="section-note">Reduce la vista consolidada por referencia, estado, tipo, solicitante, beneficiario, proveedor o concepto.</div>
             </div>
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: end;">
+            <div>
+                <label for="q" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Búsqueda:</label>
+                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Referencia, proveedor, beneficiario, concepto...">
+            </div>
             <div>
                 <label for="estado" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Estado:</label>
                 <select name="estado" id="estado">
@@ -20570,8 +20696,16 @@ async def documentos_todos(
                 </select>
             </div>
             <div>
+                <label for="situacion" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Situación:</label>
+                <select name="situacion" id="situacion">
+                    <option value="">Todas</option>
+                    <option value="abiertas" {'selected' if situacion_value == 'abiertas' else ''}>Abiertas</option>
+                    <option value="cerradas" {'selected' if situacion_value == 'cerradas' else ''}>Cerradas</option>
+                </select>
+            </div>
+            <div>
                 <label for="empleado_nombre" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Empleado:</label>
-                <input type="text" name="empleado_nombre" id="empleado_nombre" value="{empleado_nombre or ''}" placeholder="Buscar por nombre...">
+                <input type="text" name="empleado_nombre" id="empleado_nombre" value="{escape(empleado_nombre or '')}" placeholder="Buscar por nombre...">
             </div>
             <div>
                 <div class="hero-actions" style="margin-top:0;">
@@ -20606,7 +20740,7 @@ async def documentos_todos(
             {_render_workspace_hero(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
-                description="Vista global para finanzas y administración. Parte de filtros amplios y baja al detalle cuando ya tengas el universo acotado.",
+                description="Vista consolidada de reportería para finanzas y administración, con tipo de solicitud, solicitante, beneficiario, proveedor, referencias y montos en una sola tabla.",
                 actions_html='<a href="/panel" class="button secondary">Volver a Panel</a>',
                 side_html=todos_side_html,
             )}
@@ -20626,11 +20760,20 @@ async def documentos_todos(
                         <tr>
                             <th>Número de Referencia</th>
                             <th>ID Interno</th>
-                            <th>Solicitante</th>
-                            <th>Aprobador</th>
                             <th>Tipo</th>
+                            <th>Tipo solicitud</th>
+                            <th>Solicitante</th>
+                            <th>Beneficiario</th>
+                            <th>Proveedor</th>
+                            <th>Aprobador</th>
+                            <th>Concepto</th>
+                            <th>Referencia pago</th>
+                            <th>Referencia operaciones</th>
+                            <th>Monto solicitado</th>
+                            <th>Monto total</th>
+                            <th>Moneda</th>
+                            <th>Situación</th>
                             <th>Estado</th>
-                            <th>Monto Total</th>
                             <th>Creado</th>
                             <th>Enviado</th>
                             <th>Aprobado</th>
