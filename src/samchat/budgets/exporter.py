@@ -53,6 +53,191 @@ def _write_table(
     return start_row + len(rows) + 2
 
 
+def generate_budget_income_xlsx(
+    *,
+    lines: list[dict[str, Any]],
+    plan_map: dict[str, dict[int, dict[str, Any]]],
+    actuals_map: dict[str, dict[int, dict[str, Any]]],
+    links: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+    selected_version: dict[str, Any] | None,
+    tournament_context: dict[str, Any],
+    edition_year: int,
+) -> bytes:
+    """Build the income-budget mirror export for a tournament detail page."""
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Ingresos"
+
+    ws["A1"] = "Presupuesto de ingresos"
+    ws["A1"].font = Font(size=18, bold=True)
+    generated_at = (
+        datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    )
+    ws["A2"] = f"Generado: {generated_at}"
+    ws["A3"] = f"Anio: {int(edition_year)}"
+    ws["A4"] = f"Torneo: {_safe_text(tournament_context.get('tournament_name'))}"
+    if selected_version:
+        ws["A5"] = f"Version: {_safe_text(selected_version.get('version_name'))}"
+        ws["A6"] = f"Estatus: {_safe_text(selected_version.get('status'))}"
+
+    summary_rows: list[list[Any]] = []
+    monthly_rows: list[list[Any]] = []
+    month_labels = [
+        "Ene",
+        "Feb",
+        "Mar",
+        "Abr",
+        "May",
+        "Jun",
+        "Jul",
+        "Ago",
+        "Sep",
+        "Oct",
+        "Nov",
+        "Dic",
+    ]
+    for line in lines:
+        line_id = _safe_text(line.get("id"))
+        concept_id = _safe_text(line.get("budget_concept_id"))
+        actual_key = concept_id or "__unassigned__"
+        plan = plan_map.get(line_id, {})
+        actuals = actuals_map.get(actual_key, actuals_map.get("__unassigned__", {}))
+        expected_total = sum(
+            _safe_float(plan.get(month, {}).get("expected_income_amount"))
+            for month in range(1, 13)
+        )
+        real_total = sum(
+            _safe_float(actuals.get(month, {}).get("real_income"))
+            for month in range(1, 13)
+        )
+        variance = round(real_total - expected_total, 2)
+        compliance = (
+            round((real_total / expected_total) * 100, 2) if expected_total else 0.0
+        )
+        summary_rows.append(
+            [
+                _safe_text(line.get("tournament_code")),
+                _safe_text(line.get("tournament_name")),
+                _safe_text(line.get("phase")),
+                _safe_text(line.get("concept_name")),
+                _safe_text(
+                    line.get("account_code_final") or line.get("account_code_suggested")
+                ),
+                _safe_float(line.get("budget_amount")),
+                expected_total,
+                real_total,
+                variance,
+                compliance,
+            ]
+        )
+        for month in range(1, 13):
+            expected = _safe_float(plan.get(month, {}).get("expected_income_amount"))
+            real = _safe_float(actuals.get(month, {}).get("real_income"))
+            monthly_rows.append(
+                [
+                    _safe_text(line.get("tournament_code")),
+                    _safe_text(line.get("tournament_name")),
+                    _safe_text(line.get("phase")),
+                    _safe_text(line.get("concept_name")),
+                    month,
+                    month_labels[month - 1],
+                    expected,
+                    real,
+                    round(real - expected, 2),
+                    round((real / expected) * 100, 2) if expected else 0.0,
+                ]
+            )
+
+    _write_table(
+        ws,
+        [
+            "Codigo torneo",
+            "Torneo",
+            "Fase",
+            "Partida ingreso",
+            "Cuenta contable",
+            "Monto anual",
+            "Ingreso esperado",
+            "Ingreso real CFDI",
+            "Variacion",
+            "% cumplimiento",
+        ],
+        summary_rows,
+        start_row=8,
+    )
+
+    ws_monthly = wb.create_sheet("Mensual")
+    _write_table(
+        ws_monthly,
+        [
+            "Codigo torneo",
+            "Torneo",
+            "Fase",
+            "Partida ingreso",
+            "Mes",
+            "Etiqueta",
+            "Ingreso esperado",
+            "Ingreso real CFDI",
+            "Variacion",
+            "% cumplimiento",
+        ],
+        monthly_rows,
+    )
+
+    ws_links = wb.create_sheet("CFDI vinculados")
+    _write_table(
+        ws_links,
+        [
+            "UUID CFDI",
+            "RFC emisor",
+            "Emisor",
+            "RFC receptor",
+            "Partida ingreso",
+            "Fase",
+            "Monto",
+            "Fecha ingreso",
+            "Estado",
+        ],
+        [
+            [
+                _safe_text(item.get("cfdi_uuid")),
+                _safe_text(item.get("emisor_rfc")),
+                _safe_text(item.get("emisor_nombre")),
+                _safe_text(item.get("receptor_rfc")),
+                _safe_text(item.get("concept_name")),
+                _safe_text(item.get("phase") or "General"),
+                _safe_float(item.get("amount")),
+                _safe_text(item.get("income_date"))[:10],
+                "Desvinculado" if item.get("unlinked_at") else "Activo",
+            ]
+            for item in links
+        ],
+    )
+
+    ws_pending = wb.create_sheet("CFDI sin clasificar")
+    _write_table(
+        ws_pending,
+        ["UUID CFDI", "Fecha", "RFC emisor", "Emisor", "RFC receptor", "Total"],
+        [
+            [
+                _safe_text(item.get("cfdi_uuid")),
+                _safe_text(item.get("fecha"))[:10],
+                _safe_text(item.get("emisor_rfc")),
+                _safe_text(item.get("emisor_nombre")),
+                _safe_text(item.get("receptor_rfc")),
+                _safe_float(item.get("total")),
+            ]
+            for item in candidates
+        ],
+    )
+
+    stream = io.BytesIO()
+    wb.save(stream)
+    return stream.getvalue()
+
+
 def generate_budget_review_xlsx(
     *,
     snapshot: dict[str, Any],

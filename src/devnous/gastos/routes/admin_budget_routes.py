@@ -9,7 +9,7 @@ from typing import Any, Optional
 from urllib.parse import quote
 
 from fastapi import Depends, File, Form, Query, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,12 +22,15 @@ from samchat.budgets.service import (
     budget_alias_candidates,
     copy_budget_version_forward,
     ensure_budget_schema,
+    import_budget_lines_upload,
+    list_monthly_plan_for_lines,
     list_budget_concepts,
     list_budget_lines,
     list_budget_versions,
     resolve_budget_tournament_context,
     resolve_definitive_budget_version,
 )
+from samchat.budgets.exporter import generate_budget_income_xlsx
 
 from .admin_budget_ui import (
     budget_dashboard_url,
@@ -86,10 +89,9 @@ def _select_requested_budget_version(
             version_year = int(version.get("edition_year") or 0)
         except (TypeError, ValueError):
             continue
-        if (
-            str(version.get("id") or "") == str(requested_version_id)
-            and version_year == int(edition_year)
-        ):
+        if str(version.get("id") or "") == str(
+            requested_version_id
+        ) and version_year == int(edition_year):
             return version
     return None
 
@@ -144,7 +146,9 @@ def _render_presupuestos_catalog_section(
     if normalized_catalog_scope not in {"all", "none", "selected"}:
         normalized_catalog_scope = "selected"
     selected_catalog_tournament_set = {
-        str(item).strip() for item in selected_catalog_tournament_ids if str(item).strip()
+        str(item).strip()
+        for item in selected_catalog_tournament_ids
+        if str(item).strip()
     }
     catalog_hidden_context += (
         f'<input type="hidden" name="catalog_scope" '
@@ -213,12 +217,13 @@ def _render_presupuestos_catalog_section(
         item = concept or {}
         concept_id = str(item.get("id") or "")
         tournament_id = _resolve_catalog_tournament_id(item) if item else ""
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        metadata = (
+            item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        )
         sub_proyecto = _budget_catalog_scope_label(metadata)
         cuenta_id = str(item.get("cuenta_contable_id") or "")
         pasivo_id = (
-            str(item.get("pasivo_cuenta_contable_id") or "")
-            or default_pasivo_cuenta_id
+            str(item.get("pasivo_cuenta_contable_id") or "") or default_pasivo_cuenta_id
         )
         hide_form = (
             f"""
@@ -263,7 +268,9 @@ def _render_presupuestos_catalog_section(
             ),
             str(item.get("tournament_name") or "—"),
         )
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        metadata = (
+            item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        )
         cuenta_label = (
             f'{item.get("cuenta_contable_codigo")} · {item.get("cuenta_contable_nombre")}'
             if item.get("cuenta_contable_codigo")
@@ -330,9 +337,13 @@ def _render_presupuestos_catalog_section(
     )
     budget_concepts_tournaments_count = len(
         {
-            str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
+            str(
+                item.get("tournament_name") or item.get("tournament_code") or ""
+            ).strip()
             for item in all_active_concepts
-            if str(item.get("tournament_name") or item.get("tournament_code") or "").strip()
+            if str(
+                item.get("tournament_name") or item.get("tournament_code") or ""
+            ).strip()
         }
     )
     filter_base_params = [f"edition_year={int(edition_year)}"]
@@ -485,7 +496,9 @@ def register_presupuestos_routes(router) -> None:
             edition_year=resolved_year,
             version_id=selected_version["id"] if selected_version else None,
         )
-        tournaments = snapshot.get("tournaments", []) if isinstance(snapshot, dict) else []
+        tournaments = (
+            snapshot.get("tournaments", []) if isinstance(snapshot, dict) else []
+        )
         summary = snapshot.get("summary", {}) if isinstance(snapshot, dict) else {}
         access = _budget_access_map(current_empleado)
         budget_concepts = await list_budget_concepts(
@@ -519,7 +532,9 @@ def register_presupuestos_routes(router) -> None:
         tournament_rollups: dict[str, dict[str, float]] = {}
         if selected_version:
             for item in tournaments:
-                rollup_key = str(item.get("tournament_id") or item.get("tournament_code") or "")
+                rollup_key = str(
+                    item.get("tournament_id") or item.get("tournament_code") or ""
+                )
                 rollups = await build_budget_monthly_plan_rollups(
                     session,
                     version_id=selected_version["id"],
@@ -546,7 +561,10 @@ def register_presupuestos_routes(router) -> None:
 
         year_options = "".join(
             f'<option value="{year}" {"selected" if year == resolved_year else ""}>{year}</option>'
-            for year in sorted({int(v.get("edition_year") or 0) for v in all_versions} or {resolved_year})
+            for year in sorted(
+                {int(v.get("edition_year") or 0) for v in all_versions}
+                or {resolved_year}
+            )
         )
         version_options = "".join(
             f'<option value="{item["id"]}" {"selected" if selected_version and item["id"] == selected_version["id"] else ""}>'
@@ -555,8 +573,16 @@ def register_presupuestos_routes(router) -> None:
         )
         status_actions = {
             "draft": [("submitted", "Enviar aprobación"), ("closed", "Cerrar")],
-            "submitted": [("approved", "Aprobar"), ("draft", "Regresar a draft"), ("closed", "Cerrar")],
-            "approved": [("frozen", "Congelar"), ("reforecast", "Mandar a reforecast"), ("closed", "Cerrar")],
+            "submitted": [
+                ("approved", "Aprobar"),
+                ("draft", "Regresar a draft"),
+                ("closed", "Cerrar"),
+            ],
+            "approved": [
+                ("frozen", "Congelar"),
+                ("reforecast", "Mandar a reforecast"),
+                ("closed", "Cerrar"),
+            ],
             "frozen": [("reforecast", "Reforecast"), ("closed", "Cerrar")],
             "reforecast": [
                 ("submitted", "Reenviar"),
@@ -572,7 +598,9 @@ def register_presupuestos_routes(router) -> None:
                 f'<a href="{budget_dashboard_url(edition_year=resolved_year, version_id=str(row.get("id") or ""))}" '
                 f'style="text-decoration:none;background:#e2e8f0;color:#0f172a;border-radius:999px;padding:6px 10px;font-size:11px;font-weight:700;">Abrir</a>'
             ]
-            for next_status, label in status_actions.get(str(row.get("status") or ""), []):
+            for next_status, label in status_actions.get(
+                str(row.get("status") or ""), []
+            ):
                 can_transition = False
                 if next_status == "approved":
                     can_transition = access.get("approve", False)
@@ -684,7 +712,9 @@ def register_presupuestos_routes(router) -> None:
         """
         return HTMLResponse(content=html)
 
-    @router.get("/admin/presupuestos/torneo/{tournament_key}", response_class=HTMLResponse)
+    @router.get(
+        "/admin/presupuestos/torneo/{tournament_key}", response_class=HTMLResponse
+    )
     async def admin_presupuestos_tournament_detail(
         tournament_key: str,
         session: AsyncSession = Depends(get_db_session),
@@ -749,9 +779,7 @@ def register_presupuestos_routes(router) -> None:
             session, expense_lines + income_lines
         )
         expense_line_ids = {line["id"] for line in expense_lines}
-        expense_lines = [
-            line for line in lines if line.get("id") in expense_line_ids
-        ]
+        expense_lines = [line for line in lines if line.get("id") in expense_line_ids]
         income_lines = [
             line for line in lines if line.get("id") not in expense_line_ids
         ]
@@ -785,13 +813,10 @@ def register_presupuestos_routes(router) -> None:
         filtered_income_lines = filter_budget_lines_by_phase(
             income_lines, selected_phase_filter
         )
-        from samchat.budgets.service import list_monthly_plan_for_lines
-
         plan_map = await list_monthly_plan_for_lines(
             session,
             line_ids=[
-                line["id"]
-                for line in (filtered_expense_lines + filtered_income_lines)
+                line["id"] for line in (filtered_expense_lines + filtered_income_lines)
             ],
         )
         actuals_map = await build_budget_monthly_actuals(
@@ -815,12 +840,16 @@ def register_presupuestos_routes(router) -> None:
         from ..models import CuentaContable
 
         cuentas_rows = (
-            await session.execute(
-                select(CuentaContable)
-                .where(CuentaContable.activo.is_(True))
-                .order_by(CuentaContable.codigo)
+            (
+                await session.execute(
+                    select(CuentaContable)
+                    .where(CuentaContable.activo.is_(True))
+                    .order_by(CuentaContable.codigo)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         cuentas_contables = [
             {
                 "id": str(cuenta.id),
@@ -915,6 +944,29 @@ def register_presupuestos_routes(router) -> None:
             ),
             can_edit=bool(access.get("line_update")),
         )
+        income_export_url = (
+            f"/admin/presupuestos/torneo/{quote(str(tournament_key))}/ingresos/export.xlsx"
+            f"?edition_year={int(resolved_year)}&version_id={quote(str(selected_version['id']))}"
+        )
+        income_import_html = ""
+        if access.get("line_update"):
+            income_import_html = f"""
+                <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/ingresos/import" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0;">
+                    <input type="hidden" name="edition_year" value="{int(resolved_year)}">
+                    <input type="hidden" name="version_id" value="{escape_html(str(selected_version['id']), quote=True)}">
+                    <label style="display:grid;gap:4px;font-size:12px;font-weight:700;color:#475569;">
+                        Importar ingresos
+                        <input type="file" name="archivo_presupuesto" accept=".xlsx,.xlsm,.csv" required>
+                    </label>
+                    <button type="submit" class="button">Cargar ingresos</button>
+                    <a class="button secondary" href="{income_export_url}">Descargar ingresos</a>
+                </form>
+            """
+        else:
+            income_import_html = (
+                f'<div style="margin:12px 0;"><a class="button secondary" '
+                f'href="{income_export_url}">Descargar ingresos</a></div>'
+            )
 
         success_html = _render_budget_status_message(success_msg, is_error=False)
         error_html = _render_budget_status_message(error_msg, is_error=True)
@@ -947,9 +999,10 @@ def register_presupuestos_routes(router) -> None:
                 {gastos_matrix_html}
             </section>
             {create_income_line_form}
-            <section class="workspace-card">
+            <section class="workspace-card" id="presupuesto-ingresos">
                 <div class="workspace-section-title">Ingresos</div>
                 <div class="workspace-section-subtitle">Captura ingreso esperado; ingreso real se alimenta con CFDI PSP vinculados.</div>
+                {income_import_html}
                 {cfdi_income_panel}
                 {matrix_filters_html}
                 {ingresos_matrix_html}
@@ -957,6 +1010,163 @@ def register_presupuestos_routes(router) -> None:
         </div></body></html>
         """
         return HTMLResponse(content=html)
+
+    @router.post("/admin/presupuestos/torneo/{tournament_key}/ingresos/import")
+    async def admin_presupuestos_import_income_lines(
+        tournament_key: str,
+        version_id: str = Form(...),
+        edition_year: Optional[int] = Form(None),
+        archivo_presupuesto: UploadFile = File(...),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            payload = await archivo_presupuesto.read()
+            if not payload:
+                raise ValueError("El archivo de ingresos está vacío.")
+            result = await import_budget_lines_upload(
+                session,
+                version_id=str(version_id),
+                actor_empleado_id=str(current_empleado.id),
+                file_bytes=payload,
+                filename=archivo_presupuesto.filename or "presupuesto_ingresos.xlsx",
+                line_direction="income",
+            )
+            msg = (
+                "Partidas de ingreso cargadas: "
+                f"{int(result.get('rows_processed') or 0)} fila(s)"
+            )
+            return RedirectResponse(
+                url=budget_tournament_detail_url(
+                    tournament_key,
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=budget_tournament_detail_url(
+                    tournament_key,
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    error_msg=str(exc)[:180],
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception("Unexpected error importing budget income lines")
+            return RedirectResponse(
+                url=budget_tournament_detail_url(
+                    tournament_key,
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    error_msg="No se pudieron importar las partidas de ingreso.",
+                ),
+                status_code=303,
+            )
+
+    @router.get("/admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx")
+    async def admin_presupuestos_export_income_xlsx(
+        tournament_key: str,
+        edition_year: Optional[int] = Query(None),
+        version_id: Optional[str] = Query(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "export")
+        await ensure_budget_schema(session)
+        tournament_ctx = await resolve_budget_tournament_context(
+            session, tournament_key=tournament_key
+        )
+        if tournament_ctx is None:
+            return RedirectResponse(
+                url=budget_dashboard_url(error_msg="Torneo no encontrado"),
+                status_code=303,
+            )
+        resolved_year = edition_year or date.today().year
+        all_versions = await list_budget_versions(session)
+        selected_version = _select_requested_budget_version(
+            all_versions,
+            requested_version_id=version_id,
+            edition_year=resolved_year,
+        )
+        if selected_version is None:
+            selected_version = await resolve_definitive_budget_version(
+                session,
+                edition_year=resolved_year,
+            )
+        if selected_version is None:
+            return RedirectResponse(
+                url=budget_dashboard_url(
+                    edition_year=resolved_year,
+                    error_msg="No hay versión presupuestal para este año.",
+                ),
+                status_code=303,
+            )
+
+        income_lines = await list_budget_lines(
+            session,
+            version_id=selected_version["id"],
+            tournament_id=tournament_ctx.get("tournament_id"),
+            tournament_code=tournament_ctx.get("tournament_code"),
+            line_direction="income",
+            limit=5000,
+        )
+        income_lines = await attach_cuenta_contable_to_budget_lines(
+            session,
+            income_lines,
+        )
+        plan_map = await list_monthly_plan_for_lines(
+            session,
+            line_ids=[line["id"] for line in income_lines],
+        )
+        actuals_map = await build_budget_monthly_actuals(
+            session,
+            edition_year=resolved_year,
+            version_id=selected_version["id"],
+            tournament_id=tournament_ctx.get("tournament_id"),
+            tournament_name=tournament_ctx.get("tournament_name"),
+            tournament_code=tournament_ctx.get("tournament_code"),
+        )
+        links = await list_budget_cfdi_income_links(
+            session,
+            budget_version_id=str(selected_version["id"]),
+            tournament_id=str(tournament_ctx.get("tournament_id") or "") or None,
+        )
+        candidates = await list_psp_cfdi_income_candidates(
+            session,
+            budget_version_id=str(selected_version["id"]),
+        )
+        payload = generate_budget_income_xlsx(
+            lines=income_lines,
+            plan_map=plan_map,
+            actuals_map=actuals_map,
+            links=links,
+            candidates=candidates,
+            selected_version=selected_version,
+            tournament_context=tournament_ctx,
+            edition_year=resolved_year,
+        )
+        safe_tournament = (
+            str(tournament_ctx.get("tournament_code") or tournament_key)
+            .lower()
+            .replace(" ", "_")
+        )
+        headers = {
+            "Content-Disposition": (
+                f'attachment; filename="presupuesto_ingresos_{resolved_year}_{safe_tournament}.xlsx"'
+            )
+        }
+        return Response(
+            content=payload,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers=headers,
+        )
 
     @router.get("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos")
     async def admin_presupuestos_cfdi_income_redirect(
@@ -1028,7 +1238,9 @@ def register_presupuestos_routes(router) -> None:
                 status_code=303,
             )
 
-    @router.post("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link")
+    @router.post(
+        "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link"
+    )
     async def admin_presupuestos_upload_link_cfdi_income(
         tournament_key: str,
         budget_line_id: str = Form(...),
@@ -1091,7 +1303,9 @@ def register_presupuestos_routes(router) -> None:
                 status_code=303,
             )
 
-    @router.post("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink")
+    @router.post(
+        "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink"
+    )
     async def admin_presupuestos_unlink_cfdi_income(
         tournament_key: str,
         link_id: str,

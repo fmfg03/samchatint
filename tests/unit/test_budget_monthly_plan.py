@@ -317,7 +317,7 @@ def test_render_cfdi_income_bridge_panel_uses_searchable_line_inputs_without_pha
     assert 'name="budget_line_id"' in html
     assert 'data-cfdi-income-phase="existing"' not in html
     assert 'data-cfdi-income-phase="upload"' not in html
-    assert 'data-phase-select=' not in html
+    assert "data-phase-select=" not in html
     assert 'id="cfdi-income-existing-phase"' not in html
     assert 'id="cfdi-income-upload-phase"' not in html
     assert "Estatal / Inscripciones / 4100-001 / $1,500.00" in html
@@ -482,17 +482,26 @@ def test_tournament_budget_detail_defaults_to_current_year():
     route_source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
 
     assert "resolved_year = edition_year or date.today().year" in route_source
-    assert "int(all_versions[0][\"edition_year\"])" not in route_source[
-        route_source.index("async def admin_presupuestos_tournament_detail") :
-        route_source.index("@router.get(\"/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos\")")
-    ]
+    assert (
+        'int(all_versions[0]["edition_year"])'
+        not in route_source[
+            route_source.index(
+                "async def admin_presupuestos_tournament_detail"
+            ) : route_source.index(
+                '@router.get("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos")'
+            )
+        ]
+    )
 
 
 def test_tournament_budget_detail_splits_lines_by_direction():
     route_source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
     detail_source = route_source[
-        route_source.index("async def admin_presupuestos_tournament_detail") :
-        route_source.index("@router.get(\"/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos\")")
+        route_source.index(
+            "async def admin_presupuestos_tournament_detail"
+        ) : route_source.index(
+            '@router.get("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos")'
+        )
     ]
 
     assert 'line_direction="expense"' in detail_source
@@ -506,8 +515,9 @@ def test_tournament_budget_detail_splits_lines_by_direction():
 def test_create_budget_line_route_creates_concept_with_direction_and_account():
     source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
     route_source = source[
-        source.index("@router.post(\"/admin/presupuestos/versiones/{version_id}/lineas/create\")") :
-        source.index("@router.post(\"/admin/presupuestos/lineas/{line_id}/update\")")
+        source.index(
+            '@router.post("/admin/presupuestos/versiones/{version_id}/lineas/create")'
+        ) : source.index('@router.post("/admin/presupuestos/lineas/{line_id}/update")')
     ]
 
     assert "create_budget_concept" in route_source
@@ -584,8 +594,9 @@ def test_budget_catalog_tournament_filter_is_wired():
 def test_budget_catalog_upload_supports_pasivo_and_active_fields():
     service_source = Path("src/samchat/budgets/service.py").read_text()
     import_source = service_source[
-        service_source.index("async def import_budget_concepts_upload(") :
-        service_source.index("async def import_budget_concepts_catalog(")
+        service_source.index(
+            "async def import_budget_concepts_upload("
+        ) : service_source.index("async def import_budget_concepts_catalog(")
     ]
 
     assert "generate_budget_concepts_catalog_xlsx" in service_source
@@ -601,7 +612,10 @@ def test_budget_catalog_upload_supports_pasivo_and_active_fields():
     assert import_source.index("existing = concepts_by_id.get") < import_source.index(
         "_match_tournament_id"
     )
-    assert 'tournament_id = _safe_str((existing or {}).get("tournament_id"))' in import_source
+    assert (
+        'tournament_id = _safe_str((existing or {}).get("tournament_id"))'
+        in import_source
+    )
 
 
 def test_budget_schema_adds_pasivo_account_and_default_backfill():
@@ -611,18 +625,148 @@ def test_budget_schema_adds_pasivo_account_and_default_backfill():
     assert "pasivo_cuenta_contable_id UUID NULL" in service_source
     assert "ix_budget_concepts_pasivo_cuenta_contable_id" in service_source
     assert "2120-002-099" in service_source
-    assert 'RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id")' in guard_source
+    assert (
+        'RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id")' in guard_source
+    )
     assert "budget_concepts_pasivo_default_backfill" in guard_source
 
 
 def test_create_budget_concept_accepts_budget_direction():
     source = Path("src/samchat/budgets/service.py").read_text()
     function_source = source[
-        source.index("async def create_budget_concept(") :
-        source.index("async def update_budget_concept(")
+        source.index("async def create_budget_concept(") : source.index(
+            "async def update_budget_concept("
+        )
     ]
 
     assert "budget_direction: Optional[str] = None" in function_source
-    assert "clean_direction = normalize_budget_line_direction(budget_direction)" in function_source
+    assert (
+        "clean_direction = normalize_budget_line_direction(budget_direction)"
+        in function_source
+    )
     assert "budget_direction, active, source" in function_source
     assert '"budget_direction": clean_direction' in function_source
+
+
+def test_income_budget_import_uses_income_direction_and_expected_months():
+    source = Path("src/samchat/budgets/service.py").read_text()
+    import_source = source[
+        source.index("async def import_budget_lines_upload(") : source.index(
+            "def load_budget_artifact_rows("
+        )
+    ]
+
+    assert "line_direction: Optional[str] = None" in import_source
+    assert "default_direction" in import_source
+    assert (
+        "clean_direction = default_direction or normalize_budget_line_direction"
+        in import_source
+    )
+    assert '"expected_income_amount"' in import_source
+    assert '"budget_expense_amount"' in import_source
+    assert "line_direction=clean_direction" in import_source
+    assert "replace_budget_line_monthly_plan" in import_source
+    assert "concepts_by_scope" in import_source
+    assert "clean_direction" in import_source
+
+
+def test_active_budget_income_import_export_routes_are_wired():
+    source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
+
+    assert (
+        '@router.post("/admin/presupuestos/torneo/{tournament_key}/ingresos/import")'
+        in source
+    )
+    assert (
+        '@router.get("/admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx")'
+        in source
+    )
+    assert 'line_direction="income"' in source
+    assert "generate_budget_income_xlsx" in source
+    assert "list_psp_cfdi_income_candidates" in source
+    assert "list_budget_cfdi_income_links" in source
+    assert "Descargar ingresos" in source
+    assert "Importar ingresos" in source
+    assert 'id="presupuesto-ingresos"' in source
+
+
+def test_generate_budget_income_xlsx_contains_expected_real_and_pending_cfdi():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from samchat.budgets.exporter import generate_budget_income_xlsx
+
+    payload = generate_budget_income_xlsx(
+        lines=[
+            {
+                "id": "line-1",
+                "budget_concept_id": "concept-1",
+                "tournament_code": "TOR",
+                "tournament_name": "Torneo",
+                "phase": "Regional",
+                "concept_name": "Patrocinio",
+                "account_code_final": "4100-001",
+                "budget_amount": 1200,
+            }
+        ],
+        plan_map={
+            "line-1": {
+                1: {"expected_income_amount": 100},
+                2: {"expected_income_amount": 100},
+            }
+        },
+        actuals_map={
+            "concept-1": {
+                1: {"real_income": 80},
+                2: {"real_income": 150},
+            }
+        },
+        links=[
+            {
+                "cfdi_uuid": "UUID-1",
+                "emisor_rfc": "PSP010101AAA",
+                "emisor_nombre": "PSP",
+                "receptor_rfc": "SAM010101AAA",
+                "concept_name": "Patrocinio",
+                "phase": "Regional",
+                "amount": 230,
+                "income_date": "2026-02-15",
+                "unlinked_at": None,
+            }
+        ],
+        candidates=[
+            {
+                "cfdi_uuid": "UUID-PENDING",
+                "fecha": "2026-03-01",
+                "emisor_rfc": "PSP010101AAA",
+                "emisor_nombre": "PSP",
+                "receptor_rfc": "SAM010101AAA",
+                "total": 500,
+            }
+        ],
+        selected_version={
+            "version_name": "Presupuesto operativo 2026",
+            "status": "draft",
+        },
+        tournament_context={"tournament_name": "Torneo", "tournament_code": "TOR"},
+        edition_year=2026,
+    )
+
+    workbook = load_workbook(BytesIO(payload), data_only=True)
+    assert workbook.sheetnames == [
+        "Ingresos",
+        "Mensual",
+        "CFDI vinculados",
+        "CFDI sin clasificar",
+    ]
+    income_sheet = workbook["Ingresos"]
+    assert income_sheet["D9"].value == "Patrocinio"
+    assert income_sheet["G9"].value == 200
+    assert income_sheet["H9"].value == 230
+    assert income_sheet["I9"].value == 30
+    assert income_sheet["J9"].value == 115
+    linked_sheet = workbook["CFDI vinculados"]
+    assert linked_sheet["A2"].value == "UUID-1"
+    pending_sheet = workbook["CFDI sin clasificar"]
+    assert pending_sheet["A2"].value == "UUID-PENDING"
