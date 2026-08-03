@@ -38,6 +38,7 @@ def budget_tournament_detail_url(
     *,
     edition_year: Optional[int] = None,
     version_id: Optional[str] = None,
+    budget_view: Optional[str] = None,
     phase_filter: Optional[str] = None,
     show_committed: bool = True,
     show_yoy: bool = False,
@@ -48,6 +49,7 @@ def budget_tournament_detail_url(
     for key, value in [
         ("edition_year", edition_year),
         ("version_id", version_id),
+        ("budget_view", budget_view),
         ("phase_filter", phase_filter),
         ("show_committed", "1" if show_committed else "0"),
         ("show_yoy", "1" if show_yoy else "0"),
@@ -118,6 +120,7 @@ def render_budget_matrix_filters(
     phase_options: list[tuple[str, str]],
     selected_phase_filter: str = "",
     show_committed: bool = True,
+    budget_view: str = "expenses",
     visible_count: int,
     total_count: int,
 ) -> str:
@@ -156,6 +159,7 @@ def render_budget_matrix_filters(
     >
         <input type="hidden" name="show_committed" value="{"1" if show_committed else "0"}">
         <input type="hidden" name="version_id" value="{escape(version_id)}">
+        <input type="hidden" name="budget_view" value="{escape(budget_view)}">
         <div>
             <label for="matrix-edition-year" style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;">
                 Año edición
@@ -438,6 +442,7 @@ def render_budget_partida_matrix(
     filtered_empty: bool = False,
     cuentas_contables: Optional[list[dict[str, Any]]] = None,
     matrix_mode: str = "full",
+    budget_view: str = "expenses",
 ) -> str:
     if not lines:
         if filtered_empty:
@@ -498,6 +503,7 @@ def render_budget_partida_matrix(
                         <input type="hidden" name="tournament_key" value="{escape(tournament_key)}">
                         {f'<input type="hidden" name="edition_year" value="{int(edition_year)}">' if edition_year is not None else ""}
                         {f'<input type="hidden" name="phase_filter" value="{escape(str(phase_filter))}">' if phase_filter else ""}
+                        <input type="hidden" name="budget_view" value="{escape(budget_view)}">
                         {cuenta_field_html if can_edit else ""}
                         <div style="overflow-x:auto;">
                         <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -629,13 +635,51 @@ def render_budget_partida_matrix(
     return "".join(html_parts)
 
 
-def render_budget_detail_section_nav() -> str:
+def render_budget_detail_section_nav(
+    *,
+    tournament_key: Optional[str] = None,
+    edition_year: Optional[int] = None,
+    version_id: Optional[str] = None,
+    selected_view: str = "expenses",
+    phase_filter: Optional[str] = None,
+    show_committed: bool = True,
+) -> str:
+    if not tournament_key:
+        return """
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 18px;">
+            <a class="button" href="#presupuesto-gastos">Gastos</a>
+            <a class="button secondary" href="#presupuesto-ingresos">Ingresos</a>
+        </div>
+        """
+    expenses_url = budget_tournament_detail_url(
+        tournament_key,
+        edition_year=edition_year,
+        version_id=version_id,
+        budget_view="expenses",
+        phase_filter=phase_filter,
+        show_committed=show_committed,
+    )
+    income_url = budget_tournament_detail_url(
+        tournament_key,
+        edition_year=edition_year,
+        version_id=version_id,
+        budget_view="income",
+        phase_filter=phase_filter,
+        show_committed=show_committed,
+    )
+    expenses_class = "button" if selected_view != "income" else "button secondary"
+    income_class = "button" if selected_view == "income" else "button secondary"
     return """
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 18px;">
-        <a class="button" href="#presupuesto-gastos">Gastos</a>
-        <a class="button secondary" href="#presupuesto-ingresos">Ingresos</a>
+        <a class="{expenses_class}" href="{expenses_url}">Gastos</a>
+        <a class="{income_class}" href="{income_url}">Ingresos</a>
     </div>
-    """
+    """.format(
+        expenses_class=expenses_class,
+        expenses_url=escape(expenses_url),
+        income_class=income_class,
+        income_url=escape(income_url),
+    )
 
 
 def render_cfdi_income_bridge_panel(
@@ -921,6 +965,7 @@ def render_add_tournament_line_form(
     show_phase_field: bool = True,
     section_id: Optional[str] = None,
     cuentas_contables: Optional[list[dict[str, Any]]] = None,
+    budget_view: Optional[str] = None,
 ) -> str:
     """Render the add-line form for tournament budget detail pages."""
     labels = [
@@ -933,6 +978,7 @@ def render_add_tournament_line_form(
     tournament_id_clean = str(tournament_id or "").strip()
     direction_clean = "income" if str(line_direction or "").strip().lower() == "income" else "expense"
     is_income = direction_clean == "income"
+    view_clean = str(budget_view or ("income" if is_income else "expenses")).strip()
     section_title = "Agregar partida de ingreso" if is_income else "Agregar partida al torneo"
     concept_placeholder = (
         "Ej. Inscripción, patrocinio, recuperación"
@@ -1046,6 +1092,7 @@ def render_add_tournament_line_form(
             <input type="hidden" name="tournament_code" value="{escape(tournament_code or "")}">
             <input type="hidden" name="tournament_name" value="{escape(tournament_name or "")}">
             <input type="hidden" name="line_direction" value="{escape(direction_clean)}">
+            <input type="hidden" name="budget_view" value="{escape(view_clean)}">
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;align-items:end;">
                 <div>
                     <label for="add-line-concept" style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;">

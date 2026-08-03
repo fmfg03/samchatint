@@ -765,6 +765,7 @@ def register_presupuestos_routes(router) -> None:
         current_empleado=Depends(get_current_empleado),
         edition_year: Optional[int] = Query(None),
         version_id: Optional[str] = Query(None),
+        budget_view: Optional[str] = Query("expenses"),
         phase_filter: Optional[str] = Query(None),
         show_committed: int = Query(1),
         show_yoy: int = Query(0),
@@ -828,6 +829,11 @@ def register_presupuestos_routes(router) -> None:
             line for line in lines if line.get("id") not in expense_line_ids
         ]
         selected_phase_filter = str(phase_filter or "").strip()
+        selected_budget_view = (
+            "income"
+            if str(budget_view or "").strip().lower() in {"income", "ingresos"}
+            else "expenses"
+        )
 
         from sqlalchemy import select
 
@@ -917,6 +923,7 @@ def register_presupuestos_routes(router) -> None:
             filtered_empty=bool(selected_phase_filter and not filtered_expense_lines),
             cuentas_contables=cuentas_contables,
             matrix_mode="expenses",
+            budget_view="expenses",
         )
         ingresos_matrix_html = render_budget_partida_matrix(
             filtered_income_lines,
@@ -931,6 +938,17 @@ def register_presupuestos_routes(router) -> None:
             filtered_empty=bool(selected_phase_filter and not filtered_income_lines),
             cuentas_contables=cuentas_contables,
             matrix_mode="income",
+            budget_view="income",
+        )
+        active_visible_count = (
+            len(filtered_income_lines)
+            if selected_budget_view == "income"
+            else len(filtered_expense_lines)
+        )
+        active_total_count = (
+            len(income_lines)
+            if selected_budget_view == "income"
+            else len(expense_lines)
         )
         matrix_filters_html = render_budget_matrix_filters(
             tournament_key=tournament_key,
@@ -940,8 +958,9 @@ def register_presupuestos_routes(router) -> None:
             phase_options=phase_options,
             selected_phase_filter=selected_phase_filter,
             show_committed=bool(show_committed),
-            visible_count=len(filtered_expense_lines) + len(filtered_income_lines),
-            total_count=len(lines),
+            budget_view=selected_budget_view,
+            visible_count=active_visible_count,
+            total_count=active_total_count,
         )
         back_url = budget_dashboard_url(
             edition_year=resolved_year,
@@ -959,6 +978,7 @@ def register_presupuestos_routes(router) -> None:
                 phase_labels=phase_labels,
                 line_direction="expense",
                 cuentas_contables=cuentas_contables,
+                budget_view="expenses",
             )
             create_income_line_form = render_add_tournament_line_form(
                 version_id=str(selected_version["id"]),
@@ -970,6 +990,7 @@ def register_presupuestos_routes(router) -> None:
                 line_direction="income",
                 show_phase_field=False,
                 cuentas_contables=cuentas_contables,
+                budget_view="income",
             )
 
         cfdi_income_panel = render_cfdi_income_bridge_panel(
@@ -1013,6 +1034,31 @@ def register_presupuestos_routes(router) -> None:
 
         success_html = _render_budget_status_message(success_msg, is_error=False)
         error_html = _render_budget_status_message(error_msg, is_error=True)
+        gastos_section_html = f"""
+            {create_expense_line_form}
+            <section class="workspace-card" id="presupuesto-gastos" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Gastos</div>
+                <div class="workspace-section-subtitle">Captura presupuesto de gasto; gasto real se calcula automáticamente (caja).</div>
+                {matrix_filters_html}
+                {gastos_matrix_html}
+            </section>
+        """
+        ingresos_section_html = f"""
+            <section class="workspace-card" id="presupuesto-ingresos">
+                <div class="workspace-section-title">Ingresos</div>
+                <div class="workspace-section-subtitle">Captura ingreso esperado; ingreso real se alimenta con CFDI PSP vinculados.</div>
+                {create_income_line_form}
+                {income_import_html}
+                {cfdi_income_panel}
+                {matrix_filters_html}
+                {ingresos_matrix_html}
+            </section>
+        """
+        active_budget_section_html = (
+            ingresos_section_html
+            if selected_budget_view == "income"
+            else gastos_section_html
+        )
 
         html = f"""
         <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1032,24 +1078,16 @@ def register_presupuestos_routes(router) -> None:
                     f'</div>'
                 ),
             )}
-            {render_budget_detail_section_nav()}
+            {render_budget_detail_section_nav(
+                tournament_key=tournament_key,
+                edition_year=resolved_year,
+                version_id=str(selected_version["id"]),
+                selected_view=selected_budget_view,
+                phase_filter=selected_phase_filter or None,
+                show_committed=bool(show_committed),
+            )}
             {success_html}{error_html}
-            {create_expense_line_form}
-            <section class="workspace-card" id="presupuesto-gastos" style="margin-bottom:18px;">
-                <div class="workspace-section-title">Gastos</div>
-                <div class="workspace-section-subtitle">Captura presupuesto de gasto; gasto real se calcula automáticamente (caja).</div>
-                {matrix_filters_html}
-                {gastos_matrix_html}
-            </section>
-            <section class="workspace-card" id="presupuesto-ingresos">
-                <div class="workspace-section-title">Ingresos</div>
-                <div class="workspace-section-subtitle">Captura ingreso esperado; ingreso real se alimenta con CFDI PSP vinculados.</div>
-                {create_income_line_form}
-                {income_import_html}
-                {cfdi_income_panel}
-                {matrix_filters_html}
-                {ingresos_matrix_html}
-            </section>
+            {active_budget_section_html}
         </div></body></html>
         """
         return HTMLResponse(content=html)
@@ -1085,6 +1123,7 @@ def register_presupuestos_routes(router) -> None:
                     tournament_key,
                     edition_year=edition_year,
                     version_id=str(version_id),
+                    budget_view="income",
                     success_msg=msg,
                 ),
                 status_code=303,
@@ -1096,6 +1135,7 @@ def register_presupuestos_routes(router) -> None:
                     tournament_key,
                     edition_year=edition_year,
                     version_id=str(version_id),
+                    budget_view="income",
                     error_msg=str(exc)[:180],
                 ),
                 status_code=303,
@@ -1108,6 +1148,7 @@ def register_presupuestos_routes(router) -> None:
                     tournament_key,
                     edition_year=edition_year,
                     version_id=str(version_id),
+                    budget_view="income",
                     error_msg="No se pudieron importar las partidas de ingreso.",
                 ),
                 status_code=303,
@@ -1220,6 +1261,7 @@ def register_presupuestos_routes(router) -> None:
             url=budget_tournament_detail_url(
                 tournament_key,
                 edition_year=edition_year,
+                budget_view="income",
             ),
             status_code=303,
         )
@@ -1255,6 +1297,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     success_msg=msg,
                 ),
                 status_code=303,
@@ -1265,6 +1308,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     error_msg=str(exc),
                 ),
                 status_code=303,
@@ -1276,6 +1320,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     error_msg="No se pudo vincular el CFDI PSP.",
                 ),
                 status_code=303,
@@ -1320,6 +1365,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     success_msg="CFDI PSP cargado y vinculado a ingreso real.",
                 ),
                 status_code=303,
@@ -1330,6 +1376,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     error_msg=str(exc),
                 ),
                 status_code=303,
@@ -1341,6 +1388,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     error_msg="No se pudo cargar y vincular el CFDI PSP.",
                 ),
                 status_code=303,
@@ -1367,6 +1415,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     success_msg=(
                         "El CFDI PSP dejó de contar como ingreso real."
                         if unlinked
@@ -1382,6 +1431,7 @@ def register_presupuestos_routes(router) -> None:
                 url=budget_tournament_detail_url(
                     tournament_key,
                     edition_year=edition_year,
+                    budget_view="income",
                     error_msg="No se pudo desvincular el CFDI PSP.",
                 ),
                 status_code=303,

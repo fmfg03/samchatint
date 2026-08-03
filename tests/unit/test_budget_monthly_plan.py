@@ -533,6 +533,27 @@ def test_tournament_budget_detail_splits_lines_by_direction():
     assert "cuentas_contables=cuentas_contables" in detail_source
 
 
+def test_tournament_budget_detail_preserves_income_expense_view():
+    route_source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
+    ui_source = Path("src/devnous/gastos/routes/admin_budget_ui.py").read_text()
+    admin_source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    detail_source = route_source[
+        route_source.index(
+            "async def admin_presupuestos_tournament_detail"
+        ) : route_source.index(
+            '@router.post("/admin/presupuestos/torneo/{tournament_key}/ingresos/import")'
+        )
+    ]
+
+    assert 'budget_view: Optional[str] = Query("expenses")' in detail_source
+    assert 'selected_budget_view = (' in detail_source
+    assert "active_budget_section_html" in detail_source
+    assert "budget_view=selected_budget_view" in detail_source
+    assert "budget_view=\"income\"" in route_source
+    assert 'name="budget_view"' in ui_source
+    assert "budget_view: Optional[str] = Form(None)" in admin_source
+
+
 def test_create_budget_line_route_creates_concept_with_direction_and_account():
     source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
     route_source = source[
