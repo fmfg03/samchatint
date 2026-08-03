@@ -364,6 +364,20 @@ def _render_presupuestos_catalog_section(
         """
         for tournament in catalog_tournaments
     )
+    selected_tournament_detail_html = "".join(
+        f"""
+        <a href="{escape_html(budget_tournament_detail_url(
+            str(tournament.id),
+            edition_year=edition_year,
+            version_id=str(selected_version.get("id") or "") if selected_version else None,
+        ), quote=True)}"
+           style="text-decoration:none;background:#0f766e;color:#fff;border-radius:10px;padding:8px 12px;font-size:12px;font-weight:700;">
+            Capturar detalle: {escape_html(tournament.name or "Torneo")}
+        </a>
+        """
+        for tournament in catalog_tournaments
+        if str(tournament.id) in selected_catalog_tournament_set
+    )
     catalog_filter_html = f"""
         <div style="margin-top:14px;padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
             <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
@@ -385,6 +399,7 @@ def _render_presupuestos_catalog_section(
                 </div>
                 <button type="submit" style="margin-top:10px;background:#0f766e;color:#fff;border:none;border-radius:999px;padding:9px 12px;font-size:12px;font-weight:700;cursor:pointer;">Aplicar filtro</button>
             </form>
+            {f'<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">{selected_tournament_detail_html}</div>' if selected_tournament_detail_html else ""}
         </div>
     """
     catalog_export_html = (
