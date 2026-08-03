@@ -2909,12 +2909,103 @@ async def get_budget_concept(
     session: AsyncSession,
     *,
     concept_id: str,
+    ensure_schema: bool = True,
 ) -> Optional[dict[str, Any]]:
     clean_id = _safe_str(concept_id)
     if not clean_id:
         return None
-    concepts = await list_budget_concepts(session, active_only=False, limit=5000)
-    return next((item for item in concepts if item.get("id") == clean_id), None)
+    if ensure_schema:
+        await ensure_budget_schema(session)
+    row = (
+        (
+            await session.execute(
+                text(
+                    """
+                SELECT
+                    bc.id,
+                    bc.tournament_id,
+                    bc.tournament_code,
+                    bc.tournament_name,
+                    bc.concept_name,
+                    bc.concept_key,
+                    COALESCE(bc.budget_direction, 'expense') AS budget_direction,
+                    bc.active,
+                    bc.source,
+                    bc.metadata,
+                    bc.cuenta_contable_id,
+                    cc.codigo AS cuenta_contable_codigo,
+                    cc.nombre AS cuenta_contable_nombre,
+                    bc.pasivo_cuenta_contable_id,
+                    pcc.codigo AS pasivo_cuenta_contable_codigo,
+                    pcc.nombre AS pasivo_cuenta_contable_nombre,
+                    bc.created_by_empleado_id,
+                    bc.created_at,
+                    bc.updated_at
+                FROM budget_concepts bc
+                LEFT JOIN cuentas_contables cc
+                    ON cc.id = bc.cuenta_contable_id
+                LEFT JOIN cuentas_contables pcc
+                    ON pcc.id = bc.pasivo_cuenta_contable_id
+                WHERE bc.id = :concept_id
+                LIMIT 1
+                """
+                ),
+                {"concept_id": clean_id},
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if not row:
+        return None
+    metadata = _merge_budget_concept_metadata(
+        row.get("metadata") if isinstance(row.get("metadata"), dict) else {},
+        _budget_catalog_scope_index().get(
+            (
+                _safe_str(row.get("tournament_code")).upper(),
+                _safe_str(row.get("concept_key")),
+            ),
+            {},
+        ),
+        source=_safe_str(row.get("source")) or None,
+    )
+    return {
+        "id": _safe_str(row.get("id")) or None,
+        "tournament_id": _safe_str(row.get("tournament_id")) or None,
+        "tournament_code": _safe_str(row.get("tournament_code")) or None,
+        "tournament_name": _safe_str(row.get("tournament_name")) or None,
+        "concept_name": _safe_str(row.get("concept_name")) or None,
+        "concept_key": _safe_str(row.get("concept_key")) or None,
+        "budget_direction": normalize_budget_line_direction(
+            _safe_str(row.get("budget_direction"))
+        ),
+        "active": bool(row.get("active")),
+        "source": _safe_str(row.get("source")) or None,
+        "cuenta_contable_id": _safe_str(row.get("cuenta_contable_id")) or None,
+        "cuenta_contable_codigo": _safe_str(row.get("cuenta_contable_codigo"))
+        or None,
+        "cuenta_contable_nombre": _safe_str(row.get("cuenta_contable_nombre"))
+        or None,
+        "pasivo_cuenta_contable_id": _safe_str(row.get("pasivo_cuenta_contable_id"))
+        or None,
+        "pasivo_cuenta_contable_codigo": _safe_str(
+            row.get("pasivo_cuenta_contable_codigo")
+        )
+        or None,
+        "pasivo_cuenta_contable_nombre": _safe_str(
+            row.get("pasivo_cuenta_contable_nombre")
+        )
+        or None,
+        "metadata": metadata,
+        "created_by_empleado_id": _safe_str(row.get("created_by_empleado_id"))
+        or None,
+        "created_at": (
+            row.get("created_at").isoformat() if row.get("created_at") else None
+        ),
+        "updated_at": (
+            row.get("updated_at").isoformat() if row.get("updated_at") else None
+        ),
+    }
 
 
 async def create_budget_concept(
@@ -3021,7 +3112,9 @@ async def create_budget_concept(
     )
     if commit:
         await session.commit()
-    concept = await get_budget_concept(session, concept_id=concept_id)
+    concept = await get_budget_concept(
+        session, concept_id=concept_id, ensure_schema=False
+    )
     if concept is None:
         raise ValueError("No se pudo crear la partida presupuestal.")
     return concept
@@ -3044,10 +3137,14 @@ async def update_budget_concept(
     actor_empleado_id: Optional[str] = None,
     commit: bool = True,
     concept_key: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     del actor_empleado_id  # reserved for future audit events
-    await ensure_budget_schema(session)
-    current = await get_budget_concept(session, concept_id=concept_id)
+    if ensure_schema:
+        await ensure_budget_schema(session)
+    current = await get_budget_concept(
+        session, concept_id=concept_id, ensure_schema=False
+    )
     if current is None:
         raise ValueError("Partida presupuestal no encontrada.")
     updates: dict[str, Any] = {}
@@ -3179,7 +3276,9 @@ async def update_budget_concept(
     )
     if commit:
         await session.commit()
-    updated = await get_budget_concept(session, concept_id=concept_id)
+    updated = await get_budget_concept(
+        session, concept_id=concept_id, ensure_schema=False
+    )
     if updated is None:
         raise ValueError("No se pudo actualizar la partida presupuestal.")
     return updated
@@ -3261,6 +3360,7 @@ async def bulk_save_budget_concepts(
                 actor_empleado_id=actor_empleado_id,
                 commit=False,
                 concept_key=concept_key or None,
+                ensure_schema=False,
                 **cuenta_kwargs,
             )
             updated += 1
