@@ -93,6 +93,7 @@ from .tools import (
     finance_planner_snapshot,
     finance_realtime_report,
     finance_strategy_snapshot,
+    tournament_registration_executive_reports,
 )
 
 logger = logging.getLogger(__name__)
@@ -1516,6 +1517,52 @@ async def operations_tournament_soul_snapshot_adapter(
                 or str(tournament_key or "")
                 or str(primary_tournament.get("slug") or "")
             ),
+        ),
+    )
+
+
+async def operations_tournament_registration_executive_reports_adapter(
+    session: AsyncSession,
+    *,
+    context: AssistantContext,
+    payload: Dict[str, Any],
+) -> AdapterResult:
+    tournament_slug = (
+        payload.get("tournament_slug")
+        or payload.get("slug")
+        or context.tournament_name
+    )
+    tournament_key = (
+        payload.get("tournament_key")
+        or context.sport
+        or tournament_slug
+        or "all"
+    )
+    result = await tournament_registration_executive_reports(
+        session,
+        tournament_key=str(tournament_key or "all"),
+        tournament_slug=str(tournament_slug) if tournament_slug else None,
+        as_of_date=(
+            str(payload.get("as_of_date")) if payload.get("as_of_date") else None
+        ),
+    )
+    primary_tournament = result.get("tournament") or {}
+    return AdapterResult(
+        action="operations.tournament_registration_executive_reports",
+        status="completed",
+        data=result,
+        context=context.merge(
+            tournament_id=(
+                str(primary_tournament.get("id"))
+                if primary_tournament.get("id")
+                else context.tournament_id
+            ),
+            tournament_name=(
+                str(primary_tournament.get("name"))
+                if primary_tournament.get("name")
+                else context.tournament_name
+            ),
+            sport=context.sport or str(tournament_key or ""),
         ),
     )
 

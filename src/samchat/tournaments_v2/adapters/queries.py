@@ -5,6 +5,10 @@ from datetime import date, datetime
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from samchat.assistant.tournament_registration_reports import (
+    build_registration_executive_reports,
+)
+
 from ..config import load_tournaments_v2_config
 from ..supabase_client import SupabaseRestClient, TournamentsV2Error
 
@@ -985,6 +989,28 @@ async def registration_breakdown_v2(
             "para el alcance de torneos resuelto."
         ),
     }
+
+
+async def registration_executive_reports_v2(
+    *,
+    tournament_key: str,
+    tournament_slug: Optional[str] = None,
+    as_of_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    config = load_tournaments_v2_config()
+    client = SupabaseRestClient(config)
+    dataset = await _load_scope_dataset(
+        client,
+        tournament_key=tournament_key,
+        tournament_slug=tournament_slug,
+    )
+    return build_registration_executive_reports(
+        dataset=dataset,
+        tournament_key=tournament_key,
+        tournament_slug=tournament_slug,
+        as_of_date=as_of_date,
+        source="supabase_tournaments_v2",
+    )
 
 
 async def _optional_rows(

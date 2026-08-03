@@ -36,6 +36,7 @@ from .adapters import (
     operations_create_solicitud_from_commitment_adapter,
     operations_folder_planner_snapshot_adapter,
     operations_send_tournament_reminder_adapter,
+    operations_tournament_registration_executive_reports_adapter,
     operations_tournament_soul_snapshot_adapter,
     operations_update_commitment_adapter,
     operations_update_team_status_adapter,
@@ -77,6 +78,9 @@ _ROUTES: Dict[str, Callable[..., Awaitable[AdapterResult]]] = {
     "executive.planner_snapshot": executive_planner_snapshot_adapter,
     "expense.full_workflow_snapshot": expense_full_workflow_snapshot_adapter,
     "operations.folder_planner_snapshot": operations_folder_planner_snapshot_adapter,
+    "operations.tournament_registration_executive_reports": (
+        operations_tournament_registration_executive_reports_adapter
+    ),
     "operations.tournament_soul_snapshot": operations_tournament_soul_snapshot_adapter,
     "operations.create_media_asset": operations_create_media_asset_adapter,
     "operations.create_solicitud_from_commitment": operations_create_solicitud_from_commitment_adapter,
@@ -144,6 +148,7 @@ def supported_read_actions() -> list[str]:
             "executive.strategy_snapshot",
             "expense.full_workflow_snapshot",
             "operations.folder_planner_snapshot",
+            "operations.tournament_registration_executive_reports",
             "operations.tournament_soul_snapshot",
             "receipts.cfdi_matching_overview",
             "receipts.cfdi_workflow_snapshot",

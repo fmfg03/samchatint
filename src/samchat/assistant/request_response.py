@@ -70,7 +70,7 @@ def render_request_report(
             lines.extend(["", *[item for item in result.caveats if item]])
         return "\n".join(lines)
 
-    if result.status == "success":
+    if result.status in {"success", "partial"}:
         parts = [result.title.strip(), ""]
         table = _markdown_table(result.columns, result.rows)
         if table:

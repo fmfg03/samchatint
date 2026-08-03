@@ -51,6 +51,21 @@ def route_request(intent: OperationalRequestIntent) -> RequestRoute:
             reason="deterministic_finance_comparison",
         )
 
+    if (
+        intent.domain == "tournament"
+        and intent.intent == "registration_executive_reports"
+    ):
+        canonical = "operations.tournament_registration_executive_reports"
+        if canonical in supported_read_actions():
+            return RequestRoute(
+                type="read_only_report",
+                canonical_action=canonical,
+                requires_provider=False,
+                requires_confirmation=False,
+                read_only=True,
+                reason="tournament_registration_executive_reports_read_only_route",
+            )
+
     canonical_by_domain = {
         "finance": "executive.realtime_report",
         "cfdi": "receipts.cfdi_matching_overview",

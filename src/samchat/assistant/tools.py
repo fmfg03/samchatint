@@ -53,9 +53,13 @@ from samchat.tournaments_v2 import load_tournaments_v2_config
 from samchat.tournaments_v2.adapters import (
     register_team_from_roster_v2,
     registration_breakdown_v2,
+    registration_executive_reports_v2,
     schedule_create_v2,
     schedule_regenerate_from_rules_v2,
     tournament_ops_query_v2,
+)
+from samchat.assistant.tournament_registration_reports import (
+    build_registration_executive_reports,
 )
 
 
@@ -2385,6 +2389,125 @@ async def tournament_registration_breakdown(
         state=state,
         date_from=date_from,
         date_to=date_to,
+    )
+
+
+async def _tournament_registration_executive_reports_legacy(
+    session: AsyncSession,
+    *,
+    tournament_key: str,
+    tournament_slug: Optional[str] = None,
+    as_of_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    team_filters = []
+    if tournament_slug:
+        team_filters.append(Team.tournament_slug.ilike(f"%{tournament_slug}%"))
+
+    team_rows = (await session.execute(select(Team).where(*team_filters))).scalars().all()
+    team_ids = [team.id for team in team_rows]
+    player_rows = []
+    if team_ids:
+        player_rows = (
+            await session.execute(select(Player).where(Player.team_id.in_(team_ids)))
+        ).scalars().all()
+
+    registrations = [
+        {
+            "id": str(team.id),
+            "team_id": str(team.id),
+            "category_id": f"legacy:{team.category or 'sin_categoria'}:{team.gender or ''}",
+        }
+        for team in team_rows
+    ]
+    category_seen: Dict[str, Dict[str, Any]] = {}
+    for team in team_rows:
+        category_id = f"legacy:{team.category or 'sin_categoria'}:{team.gender or ''}"
+        category_seen.setdefault(
+            category_id,
+            {
+                "id": category_id,
+                "name": team.category or "(sin categoria)",
+                "branch": team.gender,
+            },
+        )
+    players = [
+        {
+            "id": str(player.id),
+            "registration_id": str(player.team_id),
+            "birth_date": player.birth_date.isoformat() if player.birth_date else None,
+            "curp": player.curp,
+        }
+        for player in player_rows
+    ]
+    teams = [
+        {
+            "id": str(team.id),
+            "team_name": team.name,
+            "state": team.state,
+            "municipality": team.municipality,
+            "gender": team.gender,
+            "tournament_id": team.tournament_slug or tournament_key,
+        }
+        for team in team_rows
+    ]
+    return build_registration_executive_reports(
+        dataset={
+            "tournaments": [
+                {
+                    "id": tournament_slug or tournament_key,
+                    "name": tournament_slug or tournament_key,
+                    "slug": tournament_slug,
+                }
+            ],
+            "categories": list(category_seen.values()),
+            "teams": teams,
+            "registrations": registrations,
+            "players": players,
+        },
+        tournament_key=tournament_key,
+        tournament_slug=tournament_slug,
+        as_of_date=as_of_date,
+        source="legacy_copa_telmex_db",
+    )
+
+
+async def tournament_registration_executive_reports(
+    session: AsyncSession,
+    *,
+    tournament_key: str,
+    tournament_slug: Optional[str] = None,
+    as_of_date: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Build director-facing reports from captured registrations."""
+    reads_enabled, fallback_to_legacy = _tournaments_v2_read_flags()
+    if reads_enabled:
+        try:
+            return await registration_executive_reports_v2(
+                tournament_key=tournament_key,
+                tournament_slug=tournament_slug,
+                as_of_date=as_of_date,
+            )
+        except Exception as exc:
+            if not fallback_to_legacy:
+                raise
+            logger.warning(
+                "tournaments_v2 executive registration reports failed; "
+                "falling back to legacy: %s",
+                exc,
+            )
+            legacy = await _tournament_registration_executive_reports_legacy(
+                session,
+                tournament_key=tournament_key,
+                tournament_slug=tournament_slug,
+                as_of_date=as_of_date,
+            )
+            return _apply_tournaments_v2_fallback_metadata(legacy, error=exc)
+
+    return await _tournament_registration_executive_reports_legacy(
+        session,
+        tournament_key=tournament_key,
+        tournament_slug=tournament_slug,
+        as_of_date=as_of_date,
     )
 
 

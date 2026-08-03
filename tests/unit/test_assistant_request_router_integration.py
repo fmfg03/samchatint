@@ -241,3 +241,47 @@ async def test_owner_ai_folder_definition_does_not_bypass_provider_as_tournament
         for step in response.tool_trace
         if isinstance(step, dict)
     )
+
+
+@pytest.mark.asyncio
+async def test_registration_executive_report_bypasses_provider_and_is_exportable():
+    calls = []
+
+    async def executor(action, payload):
+        calls.append((action, payload))
+        return {
+            "status": "completed",
+            "data": {
+                "title": "Reportes de cedulas por torneo",
+                "reports": {
+                    "juvenil_edades": [
+                        {
+                            "estado": "Jalisco",
+                            "municipio": "Zapopan",
+                            "edad_15": 1,
+                            "edad_16": 2,
+                            "edad_17": 3,
+                        }
+                    ]
+                },
+                "caveats": [
+                    "FMF/Liga MX y RENAPO se reportan como unavailable."
+                ],
+            },
+        }
+
+    response = await _run_message(
+        "Dame reportes de cédulas capturadas de CTT",
+        executor=executor,
+    )
+
+    assert calls[0][0] == "operations.tournament_registration_executive_reports"
+    assert "Reportes de cedulas por torneo" in response.assistant_message
+    assert "juvenil_edades" in response.assistant_message
+    assert (
+        "¿Quieres que te lo exporte ahora? Responde Excel (CSV) o PDF."
+        in response.assistant_message
+    )
+    trace = response.tool_trace[0]["request_intelligence_live_wiring"]
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False

@@ -118,6 +118,59 @@ async def test_cfdi_request_uses_injected_read_only_action_executor():
 
 
 @pytest.mark.asyncio
+async def test_registration_executive_report_uses_read_only_executor():
+    intent = detect_request_intent("Dame reportes de cédulas capturadas de CTT")
+    route = route_request(intent)
+    calls = []
+
+    async def executor(action, payload):
+        calls.append((action, payload))
+        return {
+            "status": "completed",
+            "data": {
+                "title": "Reportes de cedulas por torneo",
+                "reports": {
+                    "participacion_general": [
+                        {
+                            "estado": "Jalisco",
+                            "municipio": "Guadalajara",
+                            "categoria": "Femenil",
+                            "rama": "femenil",
+                            "equipos": 1,
+                            "jugadores": 2,
+                        }
+                    ]
+                },
+                "caveats": ["FMF unavailable"],
+            },
+        }
+
+    result = await run_read_only_report(
+        intent=intent,
+        route=route,
+        action_executor=executor,
+    )
+
+    assert calls == [
+        (
+            "operations.tournament_registration_executive_reports",
+            {
+                "tournament_name": None,
+                "tournament_slug": "copa-telmex",
+                "tournament_key": None,
+                "as_of_date": None,
+                "include_communications": False,
+                "include_media": False,
+                "limit": 100,
+            },
+        )
+    ]
+    assert result.status == "partial"
+    assert result.exportable is True
+    assert result.rows[0]["reporte"] == "participacion_general"
+
+
+@pytest.mark.asyncio
 async def test_missing_read_only_executor_returns_unavailable_not_provider():
     intent = detect_request_intent("Qué pagos vencen esta semana")
     route = route_request(intent)

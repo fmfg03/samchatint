@@ -4878,6 +4878,21 @@ def _can_manage_operations_console(current_empleado: Any) -> bool:
     )
 
 
+def _can_view_tournament_registration_reports(current_empleado: Any) -> bool:
+    role = getattr(current_empleado, "rol", None)
+    normalized_role = str(role or "").strip().lower()
+    return (
+        _is_superadmin(role)
+        or normalized_role in {"admin", "direccion", "directivo"}
+        or has_permission(current_empleado, "admin.operaciones.manage")
+        or has_permission(current_empleado, "admin.torneos.manage")
+        or has_permission(current_empleado, "operations.teams.read")
+        or has_permission(current_empleado, "operations.players.read")
+        or has_permission(current_empleado, "executive.reports.read")
+        or has_permission(current_empleado, "admin.*")
+    )
+
+
 def _can_view_finance_console(current_empleado: Any) -> bool:
     role = getattr(current_empleado, "rol", None)
     return bool(
@@ -9849,6 +9864,47 @@ async def assistant_me(current_empleado=Depends(get_current_empleado)):
             can_finance_admin or can_operations_admin or can_user_admin
         ),
         "can_superadmin": bool(_is_superadmin(role)),
+    }
+
+
+@router.get("/reports/tournament-registrations")
+async def assistant_tournament_registration_reports(
+    tournament_slug: str = Query(..., min_length=1),
+    tournament_key: Optional[str] = Query(default=None),
+    as_of_date: Optional[str] = Query(default=None),
+    current_empleado=Depends(get_current_empleado),
+    session: AsyncSession = Depends(get_db_session),
+):
+    if not _can_view_tournament_registration_reports(current_empleado):
+        raise HTTPException(
+            status_code=403,
+            detail="No tienes permisos para consultar reportes de cedulas.",
+        )
+    result = await execute_canonical_action(
+        "operations.tournament_registration_executive_reports",
+        session=session,
+        context=AssistantContext(
+            tournament_name=tournament_slug,
+            sport=tournament_key or tournament_slug,
+        ),
+        payload={
+            "tournament_slug": tournament_slug,
+            "tournament_key": tournament_key or tournament_slug,
+            "as_of_date": as_of_date,
+        },
+    )
+    data = dict(result.data or {})
+    reports = data.get("reports") or {}
+    row_count = (
+        sum(len(rows) for rows in reports.values() if isinstance(rows, list))
+        if isinstance(reports, dict)
+        else 0
+    )
+    return {
+        "ok": True,
+        "status": "partial" if data.get("caveats") else "success",
+        "row_count": row_count,
+        "data": data,
     }
 
 

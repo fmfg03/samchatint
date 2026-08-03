@@ -132,6 +132,44 @@ OWNER_AI_CONTEXT_TERMS = (
 )
 
 
+REGISTRATION_EXECUTIVE_REPORT_TERMS = (
+    "reportes de cedulas",
+    "reportes de cédulas",
+    "cedulas capturadas",
+    "cédulas capturadas",
+    "equipos y jugadores por estado",
+    "sumatoria total de equipos",
+    "municipios participan",
+    "municipios participantes",
+    "categoria femenil",
+    "categoría femenil",
+    "categoria juvenil",
+    "categoría juvenil",
+    "categoria varonil",
+    "categoría varonil",
+)
+
+
+def is_registration_executive_report_request(text: str) -> bool:
+    normalized = normalize_request_text(text)
+    if any(term in normalized for term in REGISTRATION_EXECUTIVE_REPORT_TERMS):
+        return True
+    return (
+        "cedula" in normalized
+        and any(token in normalized for token in ("reporte", "reportes", "sumatoria"))
+        and any(token in normalized for token in ("equipo", "jugador", "municipio"))
+    )
+
+
+def _extract_tournament_slug_hint(text: str) -> Optional[str]:
+    normalized = normalize_request_text(text)
+    if any(token in normalized for token in ("ctt", "copa telmex", "telmex")):
+        return "copa-telmex"
+    if any(token in normalized for token in ("liga telmex", "beisbol")):
+        return "liga-telmex-telcel"
+    return None
+
+
 def is_owner_ai_context_request(text: str) -> bool:
     normalized = normalize_request_text(text)
     return any(term in normalized for term in OWNER_AI_CONTEXT_TERMS)
@@ -259,6 +297,27 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             intent="due_soon" if due_soon else "list_pending",
             confidence=0.88,
             slots={**slots, "metric": "payment", "output": "table"},
+        )
+
+    if is_registration_executive_report_request(raw_text):
+        tournament_slug = _extract_tournament_slug_hint(raw_text)
+        report_slots = {
+            **slots,
+            "metric": "registration_executive_reports",
+            "output": "report_package",
+            "filters": {
+                **dict(slots.get("filters") or {}),
+                "tournament_slug": tournament_slug,
+            },
+        }
+        missing = [] if tournament_slug else ["tournament"]
+        return _intent(
+            raw_text=raw_text,
+            domain="tournament",
+            intent="registration_executive_reports",
+            confidence=0.9,
+            slots=report_slots,
+            missing_fields=missing,
         )
 
     if (

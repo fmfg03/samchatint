@@ -11,6 +11,7 @@ from .commands import (
 from .queries import (
     infer_tournament_key_from_slug,
     registration_breakdown_v2,
+    registration_executive_reports_v2,
     resolve_category_for_tournament,
     resolve_primary_tournament,
     resolve_team_for_tournament,
@@ -39,6 +40,7 @@ __all__ = [
     "update_team_fields_v2",
     "update_team_registration_v2",
     "registration_breakdown_v2",
+    "registration_executive_reports_v2",
     "resolve_tournaments_for_scope",
     "team_summary_query_v2",
     "team_roster_query_v2",

@@ -40,6 +40,9 @@ PUBLIC_ACTION_TITLES = {
     "receipts.pending_payment_overview": "Pagos pendientes",
     "receipts.cfdi_matching_overview": "CFDIs y gastos candidatos",
     "operations.tournament_soul_snapshot": "Estado operativo del torneo",
+    "operations.tournament_registration_executive_reports": (
+        "Reportes de cédulas por torneo"
+    ),
     "executive.realtime_report": "Reporte ejecutivo",
 }
 
@@ -90,6 +93,8 @@ def _payload_for_intent(intent: OperationalRequestIntent) -> Dict[str, Any]:
         return {
             "tournament_name": filters.get("tournament_name"),
             "tournament_slug": filters.get("tournament_slug"),
+            "tournament_key": filters.get("tournament_key"),
+            "as_of_date": filters.get("as_of_date"),
             "include_communications": False,
             "include_media": False,
             "limit": 100,
@@ -100,6 +105,16 @@ def _payload_for_intent(intent: OperationalRequestIntent) -> Dict[str, Any]:
 
 
 def _rows_from_mapping(data: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    reports = data.get("reports")
+    if isinstance(reports, Mapping):
+        rows: List[Dict[str, Any]] = []
+        for report_name, report_rows in reports.items():
+            if not isinstance(report_rows, list):
+                continue
+            for row in report_rows:
+                if isinstance(row, Mapping):
+                    rows.append({"reporte": str(report_name), **dict(row)})
+        return rows
     for key in (
         "rows",
         "items",
@@ -263,6 +278,12 @@ async def run_read_only_report(
     data = dict(executed.get("data") or executed)
     rows = _rows_from_mapping(data)
     status = "success" if rows or data else "empty"
+    if (
+        route.canonical_action == "operations.tournament_registration_executive_reports"
+        and status == "success"
+        and data.get("caveats")
+    ):
+        status = "partial"
     public_title = str(
         data.get("title")
         or PUBLIC_ACTION_TITLES.get(route.canonical_action or "")
@@ -281,8 +302,8 @@ async def run_read_only_report(
         ),
         columns=_columns(rows),
         rows=rows,
-        caveats=[],
-        exportable=status == "success" and bool(rows),
+        caveats=list(data.get("caveats") or []),
+        exportable=status in {"success", "partial"} and bool(rows),
         provider_called=False,
         actions_executed=[],
         canonical_action=route.canonical_action,
