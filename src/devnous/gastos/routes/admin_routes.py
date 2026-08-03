@@ -13404,6 +13404,7 @@ def _presupuestos_redirect_url(
 async def admin_presupuestos_bulk_save_concepts(
     concept_ids: List[str] = Form([]),
     concept_names: List[str] = Form([]),
+    budget_directions: List[str] = Form([]),
     tournament_ids: List[str] = Form([]),
     sub_proyectos: List[str] = Form([]),
     cuenta_contable_ids: List[str] = Form([]),
@@ -13420,6 +13421,7 @@ async def admin_presupuestos_bulk_save_concepts(
         row_count = max(
             len(concept_ids),
             len(concept_names),
+            len(budget_directions),
             len(tournament_ids),
             len(sub_proyectos),
             len(cuenta_contable_ids),
@@ -13428,6 +13430,9 @@ async def admin_presupuestos_bulk_save_concepts(
         for index in range(row_count):
             concept_name = (concept_names[index] if index < len(concept_names) else "").strip()
             concept_id = (concept_ids[index] if index < len(concept_ids) else "").strip()
+            budget_direction = (
+                budget_directions[index] if index < len(budget_directions) else "expense"
+            ).strip()
             tournament_id = (tournament_ids[index] if index < len(tournament_ids) else "").strip()
             sub_proyecto = (sub_proyectos[index] if index < len(sub_proyectos) else "").strip()
             cuenta_contable_id = (
@@ -13444,6 +13449,7 @@ async def admin_presupuestos_bulk_save_concepts(
                 {
                     "concept_id": concept_id or None,
                     "concept_name": concept_name,
+                    "budget_direction": budget_direction,
                     "tournament_id": tournament_id,
                     "sub_proyecto": sub_proyecto,
                     "cuenta_contable_id": cuenta_contable_id or None,

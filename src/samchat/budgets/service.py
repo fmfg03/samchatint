@@ -3038,6 +3038,8 @@ async def update_budget_concept(
     cuenta_contable_provided: bool = False,
     pasivo_cuenta_contable_id: Optional[str] = None,
     pasivo_cuenta_contable_provided: bool = False,
+    budget_direction: Optional[str] = None,
+    budget_direction_provided: bool = False,
     active: Optional[bool] = None,
     actor_empleado_id: Optional[str] = None,
     commit: bool = True,
@@ -3156,6 +3158,10 @@ async def update_budget_concept(
             )
         else:
             updates["pasivo_cuenta_contable_id"] = None
+    if budget_direction_provided:
+        updates["budget_direction"] = normalize_budget_line_direction(
+            budget_direction
+        )
     if not updates:
         return current
     updates["source"] = "admin_ui"
@@ -3213,6 +3219,8 @@ async def bulk_save_budget_concepts(
         cuenta_contable_id = row.get("cuenta_contable_id")
         pasivo_cuenta_contable_id = row.get("pasivo_cuenta_contable_id")
         pasivo_cuenta_contable_provided = "pasivo_cuenta_contable_id" in row
+        budget_direction = row.get("budget_direction")
+        budget_direction_provided = "budget_direction" in row
         active_provided = "active" in row
         active = bool(row.get("active")) if active_provided else True
         if not concept_name and not concept_id:
@@ -3233,6 +3241,13 @@ async def bulk_save_budget_concepts(
                 {
                     "pasivo_cuenta_contable_id": pasivo_cuenta_contable_id,
                     "pasivo_cuenta_contable_provided": True,
+                }
+            )
+        if budget_direction_provided:
+            cuenta_kwargs.update(
+                {
+                    "budget_direction": budget_direction,
+                    "budget_direction_provided": True,
                 }
             )
         if concept_id:
@@ -3257,6 +3272,7 @@ async def bulk_save_budget_concepts(
                 scope_labels=scope_labels,
                 cuenta_contable_id=_safe_str(cuenta_contable_id) or None,
                 pasivo_cuenta_contable_id=_safe_str(pasivo_cuenta_contable_id) or None,
+                budget_direction=budget_direction,
                 actor_empleado_id=actor_empleado_id,
                 source="admin_ui",
                 commit=False,
@@ -3274,6 +3290,27 @@ def _budget_catalog_active_value(value: Any) -> bool:
     if raw in {"0", "false", "no", "n", "inactivo", "inactive"}:
         return False
     raise ValueError(f"Valor activo inválido: {_safe_str(value)}")
+
+
+def _budget_catalog_direction_value(value: Any, *, default: str = "expense") -> str:
+    raw = _normalize_budget_key(value)
+    if not raw:
+        return normalize_budget_line_direction(default)
+    if raw in {"egreso", "egresos", "gasto", "gastos", "expense", "expenses"}:
+        return "expense"
+    if raw in {"ingreso", "ingresos", "income", "incomes"}:
+        return "income"
+    if raw in {"cargo", "debe"}:
+        return "expense"
+    if raw in {"abono", "haber"}:
+        return "income"
+    if _safe_str(default):
+        return normalize_budget_line_direction(default)
+    raise ValueError(f"Tipo inválido: {_safe_str(value)}")
+
+
+def _budget_catalog_direction_label(value: Any) -> str:
+    return "ingreso" if normalize_budget_line_direction(value) == "income" else "egreso"
 
 
 def _budget_catalog_scope_key_from_metadata(metadata: Any) -> str:
@@ -3298,11 +3335,12 @@ def generate_budget_concepts_catalog_xlsx(
     sheet.title = "catalogo"
     headers = [
         "id",
+        "tipo",
         "partida",
         "proyecto",
         "sub_proyecto",
-        "cuenta_contable",
-        "cuenta_pasivo",
+        "cuenta_presupuestal",
+        "contracuenta_presupuestal",
         "activo",
     ]
     sheet.append(headers)
@@ -3319,6 +3357,7 @@ def generate_budget_concepts_catalog_xlsx(
         sheet.append(
             [
                 _safe_str(concept.get("id")),
+                _budget_catalog_direction_label(concept.get("budget_direction")),
                 _safe_str(concept.get("concept_name")),
                 _safe_str(concept.get("tournament_name")),
                 _budget_catalog_scope_label_for_export(metadata),
@@ -3329,12 +3368,13 @@ def generate_budget_concepts_catalog_xlsx(
         )
     widths = {
         "A": 38,
-        "B": 32,
-        "C": 30,
-        "D": 28,
-        "E": 18,
+        "B": 14,
+        "C": 32,
+        "D": 30,
+        "E": 28,
         "F": 18,
-        "G": 12,
+        "G": 24,
+        "H": 12,
     }
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
@@ -3371,14 +3411,7 @@ async def import_budget_concepts_upload(
     normalized_headers = {
         _normalize_budget_key(key) for key in rows[0].keys() if _safe_str(key)
     }
-    required_headers = {
-        "partida",
-        "proyecto",
-        "sub_proyecto",
-        "cuenta_contable",
-        "cuenta_pasivo",
-        "activo",
-    }
+    required_headers = {"partida", "proyecto"}
     missing_headers = sorted(required_headers - normalized_headers)
     if missing_headers:
         raise ValueError(
@@ -3416,11 +3449,45 @@ async def import_budget_concepts_upload(
         sub_proyecto = _safe_str(
             _pick_upload_value(row, "sub_proyecto", "subproyecto", "fase", "phase")
         )
-        cuenta_codigo = _safe_str(
-            _pick_upload_value(row, "cuenta_contable", "cuenta_contable_codigo")
+        direction_raw = _pick_upload_value(
+            row,
+            "tipo",
+            "direccion",
+            "budget_direction",
+            "line_direction",
         )
-        pasivo_codigo = _safe_str(
-            _pick_upload_value(row, "cuenta_pasivo", "pasivo", "cuenta_pasivo_codigo")
+        default_direction = (
+            "income"
+            if _pick_upload_value(row, "cuenta_contable_ingresos")
+            or _pick_upload_value(row, "cuenta_contable_cuenta_por_cobrar")
+            else "expense"
+        )
+        try:
+            budget_direction = _budget_catalog_direction_value(
+                direction_raw,
+                default=default_direction,
+            )
+        except ValueError as exc:
+            errors.append(f"Fila {index}: {exc}")
+            continue
+        cuenta_codigo = _safe_str(
+            _pick_upload_value(
+                row,
+                "cuenta_presupuestal",
+                "cuenta_contable",
+                "cuenta_contable_codigo",
+                "cuenta_contable_ingresos",
+            )
+        )
+        contracuenta_codigo = _safe_str(
+            _pick_upload_value(
+                row,
+                "contracuenta_presupuestal",
+                "cuenta_pasivo",
+                "pasivo",
+                "cuenta_pasivo_codigo",
+                "cuenta_contable_cuenta_por_cobrar",
+            )
         )
         try:
             active = _budget_catalog_active_value(
@@ -3463,10 +3530,10 @@ async def import_budget_concepts_upload(
                 errors.append(f"Fila {index}: {exc}")
                 continue
         pasivo_id = None
-        if pasivo_codigo:
+        if contracuenta_codigo:
             try:
                 pasivo_id = await resolve_active_cuenta_contable_id_by_code(
-                    session, pasivo_codigo
+                    session, contracuenta_codigo
                 )
             except ValueError as exc:
                 errors.append(f"Fila {index}: {exc}")
@@ -3490,6 +3557,7 @@ async def import_budget_concepts_upload(
                 "sub_proyecto": sub_proyecto,
                 "cuenta_contable_id": cuenta_id,
                 "pasivo_cuenta_contable_id": pasivo_id,
+                "budget_direction": budget_direction,
                 "active": active,
                 "concept_key": _scoped_budget_concept_key(partida, sub_proyecto),
             }

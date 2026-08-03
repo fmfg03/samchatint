@@ -213,9 +213,22 @@ def _render_presupuestos_catalog_section(
             f'border-radius:8px;">{"".join(options)}</select>'
         )
 
+    def _render_direction_options(selected_direction: str) -> str:
+        clean_direction = str(selected_direction or "expense").strip().lower()
+        options = [
+            ("expense", "egreso"),
+            ("income", "ingreso"),
+        ]
+        return "".join(
+            f'<option value="{value}" {"selected" if value == clean_direction else ""}>'
+            f"{label}</option>"
+            for value, label in options
+        )
+
     def _render_edit_row(concept: Optional[dict[str, Any]] = None) -> str:
         item = concept or {}
         concept_id = str(item.get("id") or "")
+        budget_direction = str(item.get("budget_direction") or "expense").strip()
         tournament_id = _resolve_catalog_tournament_id(item) if item else ""
         metadata = (
             item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
@@ -243,6 +256,11 @@ def _render_presupuestos_catalog_section(
             <td>
                 <input type="hidden" name="concept_ids" value="{escape_html(concept_id, quote=True)}">
                 <input type="text" name="concept_names" value="{escape_html(str(item.get("concept_name") or ""), quote=True)}" placeholder="Partida" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
+            </td>
+            <td>
+                <select name="budget_directions" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
+                    {_render_direction_options(budget_direction)}
+                </select>
             </td>
             <td>
                 <select name="tournament_ids" style="width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:8px;">
@@ -282,9 +300,15 @@ def _render_presupuestos_catalog_section(
             if item.get("pasivo_cuenta_contable_codigo")
             else "—"
         )
+        tipo_label = (
+            "ingreso"
+            if str(item.get("budget_direction") or "expense") == "income"
+            else "egreso"
+        )
         return f"""
         <tr>
             <td>{escape_html(str(item.get("concept_name") or "—"))}</td>
+            <td>{escape_html(tipo_label)}</td>
             <td>{escape_html(str(tournament_label or "—"))}</td>
             <td>{escape_html(_budget_catalog_scope_label(metadata) or "Todas")}</td>
             <td>{escape_html(cuenta_label)}</td>
@@ -298,7 +322,7 @@ def _render_presupuestos_catalog_section(
         catalog_rows += _render_edit_row()
     readonly_rows = "".join(_render_readonly_row(item) for item in active_concepts)
     empty_catalog_message = (
-        '<tr><td colspan="6">Selecciona torneos para cargar partidas.</td></tr>'
+        '<tr><td colspan="7">Selecciona torneos para cargar partidas.</td></tr>'
         if not active_concepts
         else ""
     )
@@ -311,10 +335,11 @@ def _render_presupuestos_catalog_section(
                     <thead>
                         <tr>
                             <th>Partida</th>
+                            <th>Tipo</th>
                             <th>Proyecto</th>
                             <th>Sub Proyecto</th>
-                            <th>Cuenta Contable</th>
-                            <th>Cuenta Pasivo</th>
+                            <th>Cuenta presupuestal</th>
+                            <th>Contracuenta presupuestal</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
@@ -329,8 +354,8 @@ def _render_presupuestos_catalog_section(
         <div style="margin-top:14px;color:#64748b;font-size:12px;">Sin permiso para editar el catálogo.</div>
         <div style="overflow:auto;margin-top:10px;">
             <table>
-                <thead><tr><th>Partida</th><th>Proyecto</th><th>Sub Proyecto</th><th>Cuenta Contable</th><th>Cuenta Pasivo</th></tr></thead>
-                <tbody>{readonly_rows if readonly_rows else '<tr><td colspan="5">Selecciona torneos para cargar partidas.</td></tr>'}</tbody>
+                <thead><tr><th>Partida</th><th>Tipo</th><th>Proyecto</th><th>Sub Proyecto</th><th>Cuenta presupuestal</th><th>Contracuenta presupuestal</th></tr></thead>
+                <tbody>{readonly_rows if readonly_rows else '<tr><td colspan="6">Selecciona torneos para cargar partidas.</td></tr>'}</tbody>
             </table>
         </div>
         """
@@ -427,12 +452,12 @@ def _render_presupuestos_catalog_section(
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-top:14px;">
             <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
                 <div style="font-weight:700;color:#0f172a;">Exportar catálogo</div>
-                <div style="margin-top:6px;font-size:12px;color:#64748b;">Descarga partidas, proyecto, subproyecto, cuenta contable, cuenta pasivo y activo.</div>
+                <div style="margin-top:6px;font-size:12px;color:#64748b;">Descarga tipo, partidas, proyecto, subproyecto, cuenta presupuestal, contracuenta presupuestal y activo.</div>
                 {catalog_export_html}
             </div>
             <div style="padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
                 <div style="font-weight:700;color:#0f172a;">Importar catálogo</div>
-                <div style="margin-top:6px;font-size:12px;color:#64748b;">Acepta CSV/XLSX con columnas partida, proyecto, sub_proyecto, cuenta_contable, cuenta_pasivo y activo. Las cuentas y proyectos deben existir.</div>
+                <div style="margin-top:6px;font-size:12px;color:#64748b;">Acepta CSV/XLSX con columnas tipo, partida, proyecto, sub_proyecto, cuenta_presupuestal, contracuenta_presupuestal y activo. Tambien acepta los layouts Ingresos.xlsx y Egresos.xlsx.</div>
                 {catalog_import_html}
             </div>
         </div>

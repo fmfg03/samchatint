@@ -577,10 +577,12 @@ def test_budget_catalog_editor_supports_pasivo_account():
         "src/devnous/gastos/routes/admin_budget_routes.py"
     ).read_text()
 
-    assert "Cuenta Pasivo" in source
-    assert "Cuenta Pasivo" in active_route_source
+    assert "Contracuenta presupuestal" in active_route_source
+    assert "Tipo" in active_route_source
     assert "list_budget_concepts" in active_route_source
     assert "/admin/presupuestos/conceptos/bulk-save" in active_route_source
+    assert "budget_directions: List[str] = Form([])" in source
+    assert 'name="budget_directions"' in active_route_source
     assert "pasivo_cuenta_contable_ids: List[str] = Form([])" in source
     assert 'field_name="pasivo_cuenta_contable_ids"' in active_route_source
     assert 'field_name="pasivo_cuenta_contable_ids"' in source
@@ -635,7 +637,7 @@ def test_budget_catalog_tournament_filter_is_wired():
     assert "catalog_tournament_ids={quote(str(tournament_id))}" in source
 
 
-def test_budget_catalog_upload_supports_pasivo_and_active_fields():
+def test_budget_catalog_upload_supports_direction_counterpart_and_active_fields():
     service_source = Path("src/samchat/budgets/service.py").read_text()
     import_source = service_source[
         service_source.index(
@@ -645,13 +647,20 @@ def test_budget_catalog_upload_supports_pasivo_and_active_fields():
 
     assert "generate_budget_concepts_catalog_xlsx" in service_source
     assert "import_budget_concepts_upload" in service_source
+    assert '"tipo"' in service_source
+    assert '"cuenta_presupuestal"' in service_source
+    assert '"contracuenta_presupuestal"' in service_source
     assert '"cuenta_pasivo"' in service_source
     assert '"activo"' in service_source
+    assert '"cuenta_contable_ingresos"' in service_source
+    assert '"cuenta_contable_cuenta_por_cobrar"' in service_source
     assert "resolve_active_cuenta_contable_id_by_code" in service_source
     assert "_budget_catalog_active_value" in service_source
+    assert "_budget_catalog_direction_value" in service_source
     assert "required_headers" in service_source
     assert "El archivo no contiene las columnas requeridas" in service_source
     assert '"pasivo_cuenta_contable_id": pasivo_id' in service_source
+    assert '"budget_direction": budget_direction' in service_source
     assert '"active": active' in service_source
     assert import_source.index("existing = concepts_by_id.get") < import_source.index(
         "_match_tournament_id"
