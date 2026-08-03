@@ -267,8 +267,10 @@ def render_tournament_dashboard_cards(
                         <div style="font-weight:800;">${float(comparison.get("committed_total") or 0):,.2f}</div>
                     </div>
                 </div>
-                <div style="margin-top:10px;font-size:12px;color:#0f766e;font-weight:700;">
-                    Ver detalle de partidas →
+                <div style="margin-top:12px;display:flex;justify-content:flex-end;">
+                    <span class="button" style="padding:8px 12px;font-size:12px;border-radius:10px;">
+                        Capturar detalle &rarr;
+                    </span>
                 </div>
             </div>
             </a>
