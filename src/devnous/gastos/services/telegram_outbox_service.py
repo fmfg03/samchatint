@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from uuid import UUID
 
 from sqlalchemy import and_, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 NOTIFICATION_TYPE_LABELS: Dict[str, str] = {
     "workflow_send_approver": "Nueva solicitud de aprobación",
+    "workflow_notification_monitor_alert": "Alerta monitor Telegram",
     "workflow_approve_requester": "Documento aprobado (solicitante)",
     "workflow_reject_requester": "Documento rechazado (solicitante)",
     "finance_pending_payment": "Solicitud aprobada — pendiente de pago",
@@ -80,6 +82,34 @@ async def create_outbox_entry(
     session.add(entry)
     await session.flush()
     return entry
+
+
+async def find_outbox_entry(
+    session: AsyncSession,
+    *,
+    notification_type: str,
+    documento_id: Optional[UUID],
+    recipient_empleado_id: Optional[UUID],
+) -> Optional[TelegramNotificationOutbox]:
+    """Return the latest outbox row for the logical notification key."""
+    filters = [TelegramNotificationOutbox.notification_type == notification_type]
+    if documento_id is None:
+        filters.append(TelegramNotificationOutbox.documento_id.is_(None))
+    else:
+        filters.append(TelegramNotificationOutbox.documento_id == documento_id)
+    if recipient_empleado_id is None:
+        filters.append(TelegramNotificationOutbox.recipient_empleado_id.is_(None))
+    else:
+        filters.append(
+            TelegramNotificationOutbox.recipient_empleado_id == recipient_empleado_id
+        )
+    result = await session.execute(
+        select(TelegramNotificationOutbox)
+        .where(and_(*filters))
+        .order_by(TelegramNotificationOutbox.created_at.desc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
 
 
 async def mark_outbox_entry(
@@ -195,31 +225,86 @@ async def deliver_telegram_notification(
     recipient_empleado_id: Optional[UUID] = None,
     reply_markup: Optional[Dict[str, Any]] = None,
 ) -> bool:
-    """Persist outbox row, send via Telegram, update delivery status."""
+    """Persist outbox row, send via Telegram, update delivery status.
+
+    Idempotency is intentionally enforced before creating a row. For the same
+    notification/document/recipient key, a prior ``sent`` or ``pending`` row is
+    reused instead of creating duplicates. Failed rows are retried in place.
+    """
+    existing = await find_outbox_entry(
+        session,
+        notification_type=notification_type,
+        documento_id=documento_id,
+        recipient_empleado_id=recipient_empleado_id,
+    )
+    if existing is not None and existing.status == "sent":
+        return True
     if chat_id is None:
-        await create_outbox_entry(
-            session,
-            notification_type=notification_type,
-            status="skipped",
-            header_text=header_text,
-            body_text=text,
-            documento_id=documento_id,
-            recipient_empleado_id=recipient_empleado_id,
-            error_message="Sin telegram_user_id vinculado",
-        )
+        if existing is None:
+            try:
+                await create_outbox_entry(
+                    session,
+                    notification_type=notification_type,
+                    status="skipped",
+                    header_text=header_text,
+                    body_text=text,
+                    documento_id=documento_id,
+                    recipient_empleado_id=recipient_empleado_id,
+                    error_message="Sin telegram_user_id vinculado",
+                )
+            except IntegrityError:
+                await session.rollback()
+                existing = await find_outbox_entry(
+                    session,
+                    notification_type=notification_type,
+                    documento_id=documento_id,
+                    recipient_empleado_id=recipient_empleado_id,
+                )
+                if existing is not None and existing.status == "sent":
+                    return True
+        else:
+            existing.status = "skipped"
+            existing.header_text = (header_text or "").strip() or None
+            existing.body_preview = _preview(text)
+            existing.telegram_chat_id = None
+            existing.error_message = "Sin telegram_user_id vinculado"
+            existing.updated_at = datetime.utcnow()
         await session.commit()
         return False
 
-    entry = await create_outbox_entry(
-        session,
-        notification_type=notification_type,
-        status="pending",
-        header_text=header_text,
-        body_text=text,
-        documento_id=documento_id,
-        recipient_empleado_id=recipient_empleado_id,
-        telegram_chat_id=int(chat_id),
-    )
+    if existing is None:
+        try:
+            entry = await create_outbox_entry(
+                session,
+                notification_type=notification_type,
+                status="pending",
+                header_text=header_text,
+                body_text=text,
+                documento_id=documento_id,
+                recipient_empleado_id=recipient_empleado_id,
+                telegram_chat_id=int(chat_id),
+            )
+        except IntegrityError:
+            await session.rollback()
+            entry = await find_outbox_entry(
+                session,
+                notification_type=notification_type,
+                documento_id=documento_id,
+                recipient_empleado_id=recipient_empleado_id,
+            )
+            if entry is None:
+                raise
+            if entry.status == "sent":
+                return True
+    else:
+        entry = existing
+        entry.status = "pending"
+        entry.header_text = (header_text or "").strip() or None
+        entry.body_preview = _preview(text)
+        entry.telegram_chat_id = int(chat_id)
+        entry.error_message = None
+        entry.updated_at = datetime.utcnow()
+        entry.next_retry_at = None
     await session.commit()
 
     ok = await send_telegram_message(

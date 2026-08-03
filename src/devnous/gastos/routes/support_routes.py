@@ -29,7 +29,7 @@ from uuid import UUID as UUIDType
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -54,6 +54,10 @@ from ..services.support_ticket_service import (
     list_staff_empleados,
     summarize_admin_tickets,
     update_ticket_admin_fields,
+)
+from ..services.documento_telegram import (
+    WORKFLOW_NOTIFICATION_MONITOR_MINUTES,
+    resolve_workflow_approval_notification_recipients,
 )
 from .dependencies import get_current_empleado, get_db_session
 
@@ -503,6 +507,79 @@ async def _telegram_notification_failures(
         .limit(limit)
     )
     return by_type, list(result.scalars().all())
+
+
+async def _workflow_telegram_incomplete_rows(
+    session: AsyncSession,
+    *,
+    limit: int = 20,
+    now: Optional[datetime] = None,
+) -> list[dict[str, Any]]:
+    reference = now or _utc_now()
+    cutoff = reference - timedelta(minutes=WORKFLOW_NOTIFICATION_MONITOR_MINUTES)
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos),
+        )
+        .where(
+            Documento.tipo == "SOLICITUD",
+            Documento.estado == "enviado",
+            Documento.enviado_en.isnot(None),
+            Documento.enviado_en < cutoff,
+        )
+        .order_by(Documento.enviado_en.asc())
+        .limit(max(1, min(limit, 100)))
+    )
+    documentos = list(result.scalars().unique().all())
+    rows: list[dict[str, Any]] = []
+    for documento in documentos:
+        recipients = await resolve_workflow_approval_notification_recipients(
+            session, documento
+        )
+        if not recipients:
+            rows.append(
+                {
+                    "documento": documento,
+                    "recipient": None,
+                    "status": "sin destinatario esperado",
+                }
+            )
+            continue
+        statuses = (
+            await session.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (recipient_empleado_id)
+                        recipient_empleado_id, status
+                    FROM telegram_notification_outbox
+                    WHERE notification_type = 'workflow_send_approver'
+                      AND documento_id = :documento_id
+                      AND recipient_empleado_id IS NOT NULL
+                    ORDER BY recipient_empleado_id, created_at DESC
+                    """
+                ),
+                {"documento_id": str(documento.id)},
+            )
+        ).mappings().all()
+        status_by_recipient = {
+            row["recipient_empleado_id"]: str(row["status"]) for row in statuses
+        }
+        for recipient in recipients:
+            status = status_by_recipient.get(recipient.id, "missing")
+            if status != "sent":
+                rows.append(
+                    {
+                        "documento": documento,
+                        "recipient": recipient,
+                        "status": status,
+                    }
+                )
+    return rows[:limit]
 
 
 def _blocker_is_active(blocker: FlowBlocker) -> bool:
@@ -1423,6 +1500,7 @@ async def support_system_status(
     approval_total, approval_rows = await _solicitud_approval_aging(session)
     payment_total, payment_rows = await _solicitud_payment_aging(session)
     telegram_by_type, telegram_rows = await _telegram_notification_failures(session)
+    workflow_telegram_rows = await _workflow_telegram_incomplete_rows(session)
     blockers = await _flow_blockers(session)
     matrix_rows = _role_visibility_matrix()
 
@@ -1518,6 +1596,28 @@ async def support_system_status(
             <td style="padding:8px 10px;font-size:12px;color:#64748b;">
                 {escape(err_preview)}
             </td>
+        </tr>
+        """
+
+    workflow_telegram_rows_html = ""
+    for row in workflow_telegram_rows:
+        documento = row["documento"]
+        recipient = row.get("recipient")
+        requester = escape(str(getattr(documento.empleado, "nombre", None) or "—"))
+        recipient_name = escape(str(getattr(recipient, "nombre", None) or "—"))
+        status = escape(str(row.get("status") or "missing"))
+        minutes = 0
+        enviado_en = _aware_dt(getattr(documento, "enviado_en", None))
+        if enviado_en is not None:
+            elapsed = _utc_now() - enviado_en
+            minutes = max(0, int(elapsed.total_seconds() // 60))
+        workflow_telegram_rows_html += f"""
+        <tr>
+            <td style="padding:8px 10px;font-family:monospace;">{escape(str(documento.numero_referencia or "—"))}</td>
+            <td style="padding:8px 10px;">{requester}</td>
+            <td style="padding:8px 10px;">{recipient_name}</td>
+            <td style="padding:8px 10px;">{status}</td>
+            <td style="padding:8px 10px;">{minutes} min</td>
         </tr>
         """
 
@@ -1656,6 +1756,22 @@ async def support_system_status(
                         <th style="padding:6px 8px;text-align:left;">Error</th>
                     </tr></thead>
                     <tbody>{telegram_rows_html or '<tr><td colspan="5" style="padding:8px;color:#64748b;">Sin registros</td></tr>'}</tbody>
+                </table>
+                <div class="section-head" style="margin:16px 0 12px;">
+                    <h3 style="margin:0;font-size:15px;">Solicitudes con aviso de aprobación incompleto</h3>
+                    <div class="section-note">
+                        Corte operativo: enviadas hace más de {WORKFLOW_NOTIFICATION_MONITOR_MINUTES} min.
+                    </div>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead><tr style="color:#64748b;font-size:11px;text-transform:uppercase;">
+                        <th style="padding:6px 8px;text-align:left;">Ref</th>
+                        <th style="padding:6px 8px;text-align:left;">Solicitante</th>
+                        <th style="padding:6px 8px;text-align:left;">Destinatario</th>
+                        <th style="padding:6px 8px;text-align:left;">Outbox</th>
+                        <th style="padding:6px 8px;text-align:left;">Espera</th>
+                    </tr></thead>
+                    <tbody>{workflow_telegram_rows_html or '<tr><td colspan="5" style="padding:8px;color:#64748b;">Sin pendientes</td></tr>'}</tbody>
                 </table>
             </section>
             <section class="surface" style="padding:14px 18px;margin-bottom:14px;">

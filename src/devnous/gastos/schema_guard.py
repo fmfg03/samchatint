@@ -243,6 +243,10 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("access_control_audit_logs", "ix_access_control_audit_actor"),
     RequiredIndex("payment_run_closures", "ix_payment_run_closures_closed_at"),
     RequiredIndex("payment_run_closure_items", "ux_payment_run_closure_items_documento"),
+    RequiredIndex(
+        "telegram_notification_outbox",
+        "ux_telegram_notification_outbox_logical_recipient",
+    ),
 )
 
 
@@ -2458,6 +2462,46 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "ix_telegram_notification_outbox_next_retry_at",
         "CREATE INDEX IF NOT EXISTS ix_telegram_notification_outbox_next_retry_at ON telegram_notification_outbox(next_retry_at)",
+    ),
+    (
+        "dedupe_telegram_notification_outbox_logical_recipient",
+        """
+        WITH ranked AS (
+            SELECT
+                id,
+                ROW_NUMBER() OVER (
+                    PARTITION BY notification_type, documento_id, recipient_empleado_id
+                    ORDER BY
+                        CASE status
+                            WHEN 'sent' THEN 0
+                            WHEN 'pending' THEN 1
+                            WHEN 'failed' THEN 2
+                            ELSE 3
+                        END,
+                        created_at DESC
+                ) AS row_rank
+            FROM telegram_notification_outbox
+            WHERE documento_id IS NOT NULL
+              AND recipient_empleado_id IS NOT NULL
+        )
+        DELETE FROM telegram_notification_outbox outbox
+        USING ranked
+        WHERE outbox.id = ranked.id
+          AND ranked.row_rank > 1
+        """,
+    ),
+    (
+        "ux_telegram_notification_outbox_logical_recipient",
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_telegram_notification_outbox_logical_recipient
+        ON telegram_notification_outbox(
+            notification_type,
+            documento_id,
+            recipient_empleado_id
+        )
+        WHERE documento_id IS NOT NULL
+          AND recipient_empleado_id IS NOT NULL
+        """,
     ),
     (
         "create_beneficiary_onboarding_requests_table",

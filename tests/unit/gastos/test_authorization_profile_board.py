@@ -46,12 +46,24 @@ def test_profile_summary_counts_switches_and_exceptions():
 
 def test_authorization_profile_board_routes_and_nav_are_registered():
     source = Path(user_routes.__file__).read_text()
+    access_source = Path(
+        "/root/samchat/src/devnous/gastos/services/access_control_service.py"
+    ).read_text()
+    tool_start = access_source.index('"configuracion.estrategias_autorizacion"')
+    tool_end = access_source.index(
+        'AccessTool(',
+        tool_start + len('"configuracion.estrategias_autorizacion"'),
+    )
+    tool_block = access_source[tool_start:tool_end]
 
     assert '@router.get("/admin/estrategias-autorizacion"' in source
     assert "copy_authorization_profile" in source
     assert "update_authorization_profile_rules" in source
     assert "Estrategias de autorizacion" in source
     assert "configuracion.estrategias_autorizacion" in source
+    assert '"/admin/estrategias-autorizacion"' in source
+    assert "_require_authorization_strategy_admin" in source
+    assert "ADMIN_ROLES" in tool_block
 
 
 def test_document_authorization_input_inference_for_no_invoice_solicitud():

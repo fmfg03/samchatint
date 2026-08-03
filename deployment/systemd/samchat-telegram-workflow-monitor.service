@@ -1,0 +1,11 @@
+[Unit]
+Description=SamChat Telegram workflow notification monitor
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/srv/samchat/current
+Environment=PYTHONPATH=/srv/samchat/current/src:/srv/samchat/current
+Environment=SAMCHAT_ENV_FILE=/etc/samchat/samchat.env
+ExecStart=/srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python scripts/monitor_telegram_workflow_notifications.py --older-than-minutes 5 --limit 100

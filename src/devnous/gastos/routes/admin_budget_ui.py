@@ -790,15 +790,19 @@ def render_cfdi_income_bridge_panel(
     <section class="workspace-card" style="margin-bottom:18px;">
         <div class="workspace-section-title">CFDI PSP vinculados a ingreso real</div>
         <div class="workspace-section-subtitle">
+            Usa CFDI emitidos disponibles desde la descarga SAT o sube un comprobante puntual.
             {escape(edit_note)}
             No borra el CFDI; solo deja de contar como ingreso real.
+            <a href="/admin/gastos/sat" style="color:#0f766e;font-weight:800;">Operación SAT</a>
+            ·
+            <a href="/admin/gastos/cfdis/matching" style="color:#0f766e;font-weight:800;">Matching CFDI</a>
         </div>
         {no_income_lines_notice}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-top:14px;">
             <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/link" style="display:grid;gap:10px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;">
-                <div style="font-weight:800;color:#0f172a;">Vincular CFDI existente</div>
+                <div style="font-weight:800;color:#0f172a;">Vincular CFDI SAT existente</div>
                 <input type="hidden" name="edition_year" value="{int(edition_year)}">
-                <label style="font-size:12px;font-weight:700;color:#475569;">CFDI con emisor PSP</label>
+                <label style="font-size:12px;font-weight:700;color:#475569;">CFDI emitido por PSP</label>
                 <input type="hidden" id="cfdi-income-existing-cfdi-id" name="cfdi_report_id">
                 <input id="cfdi-income-existing-cfdi-input" list="cfdi-income-existing-cfdi-options" data-cfdi-income-field="cfdi" data-hidden-input="cfdi-income-existing-cfdi-id" required{existing_disabled} placeholder="Buscar por UUID, RFC, monto o fecha" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
                 <datalist id="cfdi-income-existing-cfdi-options"></datalist>

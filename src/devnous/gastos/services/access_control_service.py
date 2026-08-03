@@ -334,7 +334,7 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
         "Configuracion",
         "Matriz de autorizacion por area, erogacion, monto y condicion.",
         ("/admin/estrategias-autorizacion",),
-        SUPERADMIN_ROLES,
+        ADMIN_ROLES,
         ("ver", "editar", "administrar"),
     ),
     AccessTool(

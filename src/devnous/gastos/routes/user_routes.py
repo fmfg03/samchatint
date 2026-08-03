@@ -1289,6 +1289,15 @@ def _require_control_accesos_superadmin(current_empleado: Empleado) -> None:
         raise HTTPException(status_code=403, detail="Solo superadmin puede administrar accesos.")
 
 
+def _require_authorization_strategy_admin(current_empleado: Empleado) -> None:
+    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    if role not in {"admin", "superadmin", "super_admin"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Solo admin puede administrar estrategias de autorización.",
+        )
+
+
 @router.get("/admin/control-accesos", response_class=HTMLResponse)
 async def control_accesos_page(
     request: Request,
@@ -1680,7 +1689,7 @@ async def estrategias_autorizacion_page(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ) -> str:
-    _require_control_accesos_superadmin(current_empleado)
+    _require_authorization_strategy_admin(current_empleado)
     profiles = await list_authorization_profiles(session)
     selected_profile_id = (request.query_params.get("profile_id") or "").strip()
     selected_profile = None
@@ -1843,7 +1852,7 @@ async def estrategias_autorizacion_copy_profile(
     current_empleado: Empleado = Depends(get_current_empleado),
     new_name: str = Form(...),
 ) -> RedirectResponse:
-    _require_control_accesos_superadmin(current_empleado)
+    _require_authorization_strategy_admin(current_empleado)
     try:
         profile = await copy_authorization_profile(
             session,
@@ -1872,7 +1881,7 @@ async def estrategias_autorizacion_save_rules(
     first_rule_keys: List[str] = Form(default=[]),
     second_rule_keys: List[str] = Form(default=[]),
 ) -> RedirectResponse:
-    _require_control_accesos_superadmin(current_empleado)
+    _require_authorization_strategy_admin(current_empleado)
     try:
         await update_authorization_profile_rules(
             session,

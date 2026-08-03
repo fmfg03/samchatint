@@ -21839,6 +21839,8 @@ async def gastos_sin_cuenta_contable(
     hero_actions_html = f"""
         <a href="/admin/gastos{bi_query_suffix}" class="button secondary">Volver a finanzas</a>
         <a href="/admin/gastos/expenses{bi_query_suffix}" class="button secondary">Ver gastos</a>
+        <a href="/admin/gastos/sat" class="button secondary">SAT / CFDI</a>
+        <a href="/admin/gastos/cfdis/matching" class="button secondary">Matching CFDI</a>
         <a href="/admin/cuentas-contables" class="button secondary">Catálogo contable</a>
     """
     hero_side_html = f"""

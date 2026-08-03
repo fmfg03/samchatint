@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SamChat Telegram workflow notification monitor every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Unit=samchat-telegram-workflow-monitor.service
+
+[Install]
+WantedBy=timers.target

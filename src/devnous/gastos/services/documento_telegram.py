@@ -9,12 +9,13 @@ from __future__ import annotations
 import logging
 import os
 import re
-from datetime import datetime
+import unicodedata
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -29,7 +30,9 @@ from .cuenta_settlement_service import compute_cuenta_saldo_adjustments
 from .documento_semantics import is_employee_reimbursement
 from .telegram_notify import schedule_fire_and_forget
 from .telegram_outbox_service import (
+    create_outbox_entry,
     deliver_telegram_notification,
+    find_outbox_entry,
     outbox_entry_exists,
 )
 
@@ -44,6 +47,8 @@ CB_VIEW_REQUESTER = "gv:"  # read-only for document owner
 APPROVER_QUEUE_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 SUPERADMIN_ROLES = frozenset({"superadmin", "super_admin"})
 TEMP_APPROVAL_ALERT_ACTOR_EMAIL = "otrujillo@plataformasports.com"
+WORKFLOW_NOTIFICATION_MONITOR_MINUTES = 5
+WORKFLOW_NOTIFICATION_ALERT_MATCHER = "francisco"
 
 _notify_engine = None
 _notify_session_maker: Optional[async_sessionmaker[AsyncSession]] = None
@@ -422,6 +427,145 @@ def _project_and_phase_labels(documento: Documento) -> Tuple[str, str]:
     return project, phase_label
 
 
+def _telegram_text_key(value: object) -> str:
+    raw = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", raw)
+    return " ".join(
+        "".join(ch for ch in normalized if not unicodedata.combining(ch)).split()
+    )
+
+
+def _employee_matches_profile(employee: Empleado, profile: dict[str, Any]) -> bool:
+    matcher = _telegram_text_key(profile.get("employee_matcher"))
+    if not matcher:
+        return False
+    haystack = _telegram_text_key(
+        " ".join(
+            str(getattr(employee, attr, "") or "")
+            for attr in ("nombre", "correo", "departamento")
+        )
+    )
+    return matcher in haystack or haystack in matcher
+
+
+async def _active_employees_for_profiles(
+    session: AsyncSession,
+    profiles: Sequence[dict[str, Any]],
+) -> list[Empleado]:
+    useful_profiles = [
+        profile
+        for profile in profiles
+        if isinstance(profile, dict) and _telegram_text_key(profile.get("employee_matcher"))
+    ]
+    if not useful_profiles:
+        return []
+    result = await session.execute(
+        select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre.asc())
+    )
+    employees = list(result.scalars().all())
+    matched: list[Empleado] = []
+    seen: set[Any] = set()
+    for profile in useful_profiles:
+        for employee in employees:
+            if employee.id in seen:
+                continue
+            if _employee_matches_profile(employee, profile):
+                seen.add(employee.id)
+                matched.append(employee)
+    return matched
+
+
+async def resolve_workflow_approval_notification_recipients(
+    session: AsyncSession,
+    documento: Documento,
+) -> list[Empleado]:
+    """Resolve every real Telegram recipient expected for a workflow send."""
+    recipients: list[Empleado] = []
+    seen: set[Any] = set()
+
+    owner = documento.empleado
+    owner_approver_id = getattr(owner, "aprobador_id", None) if owner is not None else None
+    if owner_approver_id:
+        approver = getattr(owner, "aprobador", None)
+        if approver is None:
+            approver = await session.get(Empleado, owner_approver_id)
+        if approver is not None and getattr(approver, "activo", True):
+            recipients.append(approver)
+            seen.add(approver.id)
+
+    try:
+        from .authorization_profile_service import build_document_authorization_evidence
+
+        evidence = await build_document_authorization_evidence(session, documento)
+        profiles = [
+            profile
+            for profile in (evidence.get("matching_profiles") or [])
+            if isinstance(profile, dict)
+        ]
+        for employee in await _active_employees_for_profiles(session, profiles):
+            if employee.id in seen:
+                continue
+            seen.add(employee.id)
+            recipients.append(employee)
+    except Exception:
+        logger.exception(
+            "Failed to resolve matrix Telegram recipients",
+            extra={"documento_id": str(getattr(documento, "id", ""))},
+        )
+
+    return recipients
+
+
+async def _record_failed_workflow_notification(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    recipient: Empleado,
+    header: str,
+    error_message: str,
+) -> None:
+    existing = await find_outbox_entry(
+        session,
+        notification_type="workflow_send_approver",
+        documento_id=documento.id,
+        recipient_empleado_id=recipient.id,
+    )
+    if existing is not None and existing.status in {"sent", "pending"}:
+        return
+    fallback_body = (
+        f"No se pudo construir el mensaje de Telegram para "
+        f"{getattr(documento, 'numero_referencia', documento.id)}."
+    )
+    if existing is None:
+        await create_outbox_entry(
+            session,
+            notification_type="workflow_send_approver",
+            status="failed",
+            header_text=header,
+            body_text=fallback_body,
+            documento_id=documento.id,
+            recipient_empleado_id=recipient.id,
+            telegram_chat_id=(
+                int(recipient.telegram_user_id)
+                if recipient.telegram_user_id is not None
+                else None
+            ),
+            error_message=error_message,
+        )
+    else:
+        existing.status = "failed"
+        existing.header_text = header
+        existing.body_preview = fallback_body
+        existing.telegram_chat_id = (
+            int(recipient.telegram_user_id)
+            if recipient.telegram_user_id is not None
+            else None
+        )
+        existing.error_message = error_message
+        existing.updated_at = datetime.utcnow()
+    await session.commit()
+
+
 async def build_documento_telegram_context(
     session: AsyncSession,
     documento: Documento,
@@ -698,33 +842,219 @@ async def notify_assigned_approver_new_request(
     session: AsyncSession,
     documento: Documento,
 ) -> None:
-    """Notify only the assigned approver (mirrors web inbox)."""
-    owner = documento.empleado
-    if owner is None or not owner.aprobador_id:
+    """Notify all required approvers for the current workflow route."""
+    recipients = await resolve_workflow_approval_notification_recipients(
+        session, documento
+    )
+    if not recipients:
         return
-    approver = owner.aprobador
-    if approver is None:
+    header = "📥 *Nueva solicitud de aprobación*"
+    try:
+        ctx = await build_documento_telegram_context(session, documento)
+        body = format_documento_resumen_es(
+            documento, context=ctx, include_actions_hint=True
+        )
+        message_text = header + "\n\n" + body
+    except Exception as exc:
+        logger.exception(
+            "Failed to build workflow approver Telegram message",
+            extra={"documento_id": str(getattr(documento, "id", ""))},
+        )
+        for recipient in recipients:
+            await _record_failed_workflow_notification(
+                session,
+                documento=documento,
+                recipient=recipient,
+                header=header,
+                error_message=f"No se pudo construir el mensaje: {exc}",
+            )
         return
 
-    ctx = await build_documento_telegram_context(session, documento)
-    body = format_documento_resumen_es(documento, context=ctx, include_actions_hint=True)
-    header = "📥 *Nueva solicitud de aprobación*"
-    text = header + "\n\n" + body
+    for recipient in recipients:
+        chat_id = (
+            int(recipient.telegram_user_id)
+            if recipient.telegram_user_id is not None
+            else None
+        )
+        await deliver_telegram_notification(
+            session,
+            notification_type="workflow_send_approver",
+            header_text=header,
+            text=message_text,
+            chat_id=chat_id,
+            documento_id=documento.id,
+            recipient_empleado_id=recipient.id,
+            reply_markup=approval_inline_keyboard(documento.id) if chat_id else None,
+        )
+
+
+async def _find_monitor_alert_recipient(session: AsyncSession) -> Optional[Empleado]:
+    matcher = _telegram_text_key(
+        os.getenv("SAMCHAT_TELEGRAM_MONITOR_ALERT_MATCHER")
+        or WORKFLOW_NOTIFICATION_ALERT_MATCHER
+    )
+    if not matcher:
+        return None
+    result = await session.execute(
+        select(Empleado)
+        .where(Empleado.activo.is_(True))
+        .order_by(Empleado.nombre.asc())
+    )
+    for empleado in result.scalars().all():
+        haystack = _telegram_text_key(
+            " ".join(
+                str(getattr(empleado, attr, "") or "")
+                for attr in ("nombre", "correo", "departamento")
+            )
+        )
+        if matcher in haystack:
+            return empleado
+    return None
+
+
+async def _workflow_outbox_status_by_recipient(
+    session: AsyncSession,
+    *,
+    documento_id: UUID,
+) -> dict[UUID, str]:
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT DISTINCT ON (recipient_empleado_id)
+                    recipient_empleado_id, status
+                FROM telegram_notification_outbox
+                WHERE notification_type = 'workflow_send_approver'
+                  AND documento_id = :documento_id
+                  AND recipient_empleado_id IS NOT NULL
+                ORDER BY recipient_empleado_id, created_at DESC
+                """
+            ),
+            {"documento_id": str(documento_id)},
+        )
+    ).mappings().all()
+    return {row["recipient_empleado_id"]: row["status"] for row in rows}
+
+
+async def _send_workflow_monitor_alert(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    missing_or_failed: list[tuple[Empleado, str]],
+) -> bool:
+    recipient = await _find_monitor_alert_recipient(session)
+    if recipient is None:
+        logger.warning("Telegram monitor alert skipped; Francisco recipient not found")
+        return False
+    header = "🚨 *Falla en notificación Telegram*"
+    details = "\n".join(
+        f"- {empleado.nombre}: {status}" for empleado, status in missing_or_failed
+    )
+    body = (
+        f"*Solicitud* {documento.numero_referencia}\n"
+        f"*Estado* {documento.estado}\n"
+        f"*Problema* Notificación de aprobador incompleta después de reintento.\n"
+        f"{details}"
+    )
     chat_id = (
-        int(approver.telegram_user_id)
-        if approver.telegram_user_id is not None
+        int(recipient.telegram_user_id)
+        if recipient.telegram_user_id is not None
         else None
     )
-    await deliver_telegram_notification(
+    existing = await find_outbox_entry(
         session,
-        notification_type="workflow_send_approver",
+        notification_type="workflow_notification_monitor_alert",
+        documento_id=documento.id,
+        recipient_empleado_id=recipient.id,
+    )
+    if existing is not None and existing.status == "sent":
+        return False
+    return await deliver_telegram_notification(
+        session,
+        notification_type="workflow_notification_monitor_alert",
         header_text=header,
-        text=text,
+        text=header + "\n\n" + body,
         chat_id=chat_id,
         documento_id=documento.id,
-        recipient_empleado_id=approver.id,
-        reply_markup=approval_inline_keyboard(documento.id) if chat_id else None,
+        recipient_empleado_id=recipient.id,
     )
+
+
+async def monitor_workflow_telegram_notifications(
+    session: AsyncSession,
+    *,
+    older_than_minutes: int = WORKFLOW_NOTIFICATION_MONITOR_MINUTES,
+    limit: int = 100,
+) -> dict[str, int]:
+    """Detect and automatically repair incomplete workflow Telegram sends."""
+    cutoff_minutes = max(1, int(older_than_minutes or 1))
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=cutoff_minutes)
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+        )
+        .where(
+            Documento.tipo == "SOLICITUD",
+            Documento.estado == "enviado",
+            Documento.enviado_en.isnot(None),
+            Documento.enviado_en < cutoff,
+        )
+        .order_by(Documento.enviado_en.asc())
+        .limit(max(1, min(limit, 500)))
+    )
+    documentos = list(result.scalars().unique().all())
+    stats = {
+        "checked": 0,
+        "incomplete_before_retry": 0,
+        "retry_attempted": 0,
+        "repaired": 0,
+        "still_incomplete": 0,
+        "alerts_sent": 0,
+    }
+    for documento in documentos:
+        recipients = await resolve_workflow_approval_notification_recipients(
+            session, documento
+        )
+        if not recipients:
+            continue
+        stats["checked"] += 1
+        status_by_recipient = await _workflow_outbox_status_by_recipient(
+            session, documento_id=documento.id
+        )
+        incomplete = [
+            (recipient, status_by_recipient.get(recipient.id, "missing"))
+            for recipient in recipients
+            if status_by_recipient.get(recipient.id) != "sent"
+        ]
+        if not incomplete:
+            continue
+        stats["incomplete_before_retry"] += 1
+        stats["retry_attempted"] += 1
+        await notify_assigned_approver_new_request(session, documento)
+        status_by_recipient = await _workflow_outbox_status_by_recipient(
+            session, documento_id=documento.id
+        )
+        still_incomplete = [
+            (recipient, status_by_recipient.get(recipient.id, "missing"))
+            for recipient in recipients
+            if status_by_recipient.get(recipient.id) != "sent"
+        ]
+        if not still_incomplete:
+            stats["repaired"] += 1
+            continue
+        stats["still_incomplete"] += 1
+        if await _send_workflow_monitor_alert(
+            session,
+            documento=documento,
+            missing_or_failed=still_incomplete,
+        ):
+            stats["alerts_sent"] += 1
+    return stats
 
 
 async def notify_requester_decision(

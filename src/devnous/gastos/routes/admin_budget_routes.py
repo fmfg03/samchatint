@@ -744,7 +744,10 @@ def register_presupuestos_routes(router) -> None:
                 eyebrow="C-suite",
                 title=f"Presupuestos {resolved_year}",
                 description="Selecciona un torneo para capturar presupuesto mensual, ingreso esperado y revisar gasto real en caja.",
-                actions_html="",
+                actions_html=(
+                    '<a class="button secondary" href="/admin/gastos/sat">SAT / CFDI</a>'
+                    '<a class="button secondary" href="/admin/gastos/cfdis/matching">Matching CFDI</a>'
+                ),
                 side_html=(
                     f'<div class="meta-grid">'
                     f'<div class="meta-card"><span>Torneos</span><strong>{int(summary.get("tournaments_count") or 0)}</strong></div>'
@@ -1095,7 +1098,11 @@ def register_presupuestos_routes(router) -> None:
                 eyebrow="Detalle torneo",
                 title=str(tournament_ctx.get("tournament_name") or tournament_key),
                 description=f"Presupuesto operativo {resolved_year}",
-                actions_html=f'<a class="button secondary" href="{back_url}">← Dashboard</a>',
+                actions_html=(
+                    f'<a class="button secondary" href="{back_url}">← Dashboard</a>'
+                    '<a class="button secondary" href="/admin/gastos/sat">SAT / CFDI</a>'
+                    '<a class="button secondary" href="/admin/gastos/cfdis/matching">Matching CFDI</a>'
+                ),
                 side_html=(
                     f'<div class="meta-grid">'
                     f'<div class="meta-card"><span>Presupuesto gasto</span><strong>${rollups.get("budget_expense_total", 0):,.2f}</strong></div>'

@@ -330,6 +330,10 @@ def test_render_cfdi_income_bridge_panel_uses_searchable_line_inputs_without_pha
     assert "Sin partidas de ingreso disponibles" in html
     assert "Selecciona una opción de la lista." in html
     assert "Primero agrega o importa partidas de ingreso" not in html
+    assert "Vincular CFDI SAT existente" in html
+    assert "CFDI emitido por PSP" in html
+    assert 'href="/admin/gastos/sat"' in html
+    assert 'href="/admin/gastos/cfdis/matching"' in html
 
 
 def test_render_cfdi_income_bridge_panel_explains_missing_income_lines():
@@ -552,6 +556,35 @@ def test_tournament_budget_detail_preserves_income_expense_view():
     assert "budget_view=\"income\"" in route_source
     assert 'name="budget_view"' in ui_source
     assert "budget_view: Optional[str] = Form(None)" in admin_source
+
+
+def test_budget_and_accounting_surfaces_link_to_sat_cfdi_workflows():
+    budget_source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
+    accounting_source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+
+    dashboard_source = budget_source[
+        budget_source.index("async def admin_presupuestos_dashboard") : budget_source.index(
+            "async def admin_presupuestos_tournament_detail"
+        )
+    ]
+    detail_source = budget_source[
+        budget_source.index("async def admin_presupuestos_tournament_detail") : budget_source.index(
+            '@router.post("/admin/presupuestos/torneo/{tournament_key}/ingresos/import")'
+        )
+    ]
+    cleanup_source = accounting_source[
+        accounting_source.index("async def gastos_sin_cuenta_contable") : accounting_source.index(
+            '@router.post("/admin/gastos/{gasto_id}/cleanup-contable")'
+        )
+    ]
+
+    for source in (dashboard_source, detail_source, cleanup_source):
+        assert "/admin/gastos/sat" in source
+        assert "/admin/gastos/cfdis/matching" in source
+
+    assert "SAT / CFDI" in dashboard_source
+    assert "SAT / CFDI" in detail_source
+    assert "SAT / CFDI" in cleanup_source
 
 
 def test_create_budget_line_route_creates_concept_with_direction_and_account():

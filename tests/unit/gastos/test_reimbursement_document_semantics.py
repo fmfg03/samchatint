@@ -225,3 +225,71 @@ def test_telegram_workflow_approval_triggers_odilon_finance_alert() -> None:
 
     assert "notify_requester_decision" in approve_block
     assert "notify_finance_when_odilon_approves(session, documento, actor)" in approve_block
+
+
+def test_workflow_send_notifies_all_resolved_recipients() -> None:
+    source = Path(tg.__file__).read_text()
+    notify_start = source.index("async def notify_assigned_approver_new_request")
+    notify_end = source.index("async def _find_monitor_alert_recipient", notify_start)
+    notify_block = source[notify_start:notify_end]
+
+    assert "resolve_workflow_approval_notification_recipients" in notify_block
+    assert "for recipient in recipients:" in notify_block
+    assert 'notification_type="workflow_send_approver"' in notify_block
+    assert "recipient_empleado_id=recipient.id" in notify_block
+
+
+def test_workflow_monitor_retries_and_alerts_francisco_after_cutoff() -> None:
+    source = Path(tg.__file__).read_text()
+    alert_start = source.index("async def _send_workflow_monitor_alert")
+    monitor_start = source.index("async def monitor_workflow_telegram_notifications")
+    monitor_end = source.index("async def notify_requester_decision", monitor_start)
+    alert_block = source[alert_start:monitor_start]
+    monitor_block = source[monitor_start:monitor_end]
+
+    assert "WORKFLOW_NOTIFICATION_MONITOR_MINUTES = 5" in source
+    assert 'WORKFLOW_NOTIFICATION_ALERT_MATCHER = "francisco"' in source
+    assert "await notify_assigned_approver_new_request(session, documento)" in monitor_block
+    assert "await _send_workflow_monitor_alert(" in monitor_block
+    assert 'notification_type="workflow_notification_monitor_alert"' in alert_block
+    assert "existing is not None and existing.status == \"sent\"" in alert_block
+    assert "status_by_recipient.get(recipient.id) != \"sent\"" in monitor_block
+
+
+def test_outbox_idempotency_has_service_and_schema_guards() -> None:
+    outbox_source = Path(
+        "src/devnous/gastos/services/telegram_outbox_service.py"
+    ).read_text()
+    schema_source = Path("src/devnous/gastos/schema_guard.py").read_text()
+
+    assert "async def find_outbox_entry" in outbox_source
+    assert "if existing is not None and existing.status == \"sent\"" in outbox_source
+    assert "except IntegrityError" in outbox_source
+    assert "ux_telegram_notification_outbox_logical_recipient" in schema_source
+    assert (
+        "PARTITION BY notification_type, documento_id, recipient_empleado_id"
+        in schema_source
+    )
+
+
+def test_support_status_exposes_incomplete_workflow_notifications() -> None:
+    source = Path("src/devnous/gastos/routes/support_routes.py").read_text()
+
+    assert "async def _workflow_telegram_incomplete_rows" in source
+    assert "resolve_workflow_approval_notification_recipients" in source
+    assert "Solicitudes con aviso de aprobación incompleto" in source
+    assert "WORKFLOW_NOTIFICATION_MONITOR_MINUTES" in source
+
+
+def test_systemd_timer_runs_workflow_monitor_every_five_minutes() -> None:
+    timer = Path(
+        "deployment/systemd/samchat-telegram-workflow-monitor.timer"
+    ).read_text()
+    service = Path(
+        "deployment/systemd/samchat-telegram-workflow-monitor.service"
+    ).read_text()
+
+    assert "OnUnitActiveSec=5min" in timer
+    assert "scripts/monitor_telegram_workflow_notifications.py" in service
+    assert "SAMCHAT_ENV_FILE=/etc/samchat/samchat.env" in service
+    assert "--older-than-minutes 5" in service
