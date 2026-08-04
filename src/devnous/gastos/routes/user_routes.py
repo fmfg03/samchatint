@@ -17157,14 +17157,18 @@ async def contabilidad_cash_flow_view(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    horizon_days: int = Query(30),
+    dias_credito: int = Query(30),
 ) -> str:
     """Read-only operational cash-flow snapshot built from bank reconciliation, payment requests and SAT CFDI."""
     now = datetime.utcnow()
     today = now.date()
     selected_year = year or now.year
     selected_month = month or now.month
+    horizon_days = max(15, min(int(horizon_days or 30), 180))
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=30), datetime.min.time())
+    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [
@@ -17245,7 +17249,7 @@ async def contabilidad_cash_flow_view(
     emitted_total = sum(float(c.total or 0) for c in emitted_cfdis)
     received_total = sum(float(c.total or 0) for c in received_cfdis)
 
-    receivable_horizon_end = today + timedelta(days=30)
+    receivable_horizon_end = today + timedelta(days=horizon_days)
     receivable_cfdis: List[CFDIReport] = []
     if platform_rfcs:
         receivable_result = await session.execute(
@@ -17299,7 +17303,7 @@ async def contabilidad_cash_flow_view(
         if saldo <= 0.01:
             continue
         issue_date = cfdi.fecha.date() if cfdi.fecha else today
-        due_date = issue_date + timedelta(days=30)
+        due_date = issue_date + timedelta(days=dias_credito)
         if due_date <= receivable_horizon_end:
             receivable_due_30_total += saldo
         if due_date < today:
@@ -17314,8 +17318,8 @@ async def contabilidad_cash_flow_view(
         ("vencido", "Vencido", None, -1),
         ("d0_7", "0–7 días", 0, 7),
         ("d8_14", "8–14 días", 8, 14),
-        ("d15_30", "15–30 días", 15, 30),
-        ("sin_fecha", "Sin fecha", None, None),
+        ("d15_horizon", f"15–{horizon_days} días", 15, horizon_days),
+        ("sin_fecha", "Fuera de horizonte / sin fecha", None, None),
     ]
     liquidity_buckets: Dict[str, Dict[str, Any]] = {
         key: {"label": label, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0}
@@ -17332,8 +17336,8 @@ async def contabilidad_cash_flow_view(
             return "d0_7"
         if delta <= 14:
             return "d8_14"
-        if delta <= 30:
-            return "d15_30"
+        if delta <= horizon_days:
+            return "d15_horizon"
         return "sin_fecha"
 
     for row in receivable_rows:
@@ -17423,17 +17427,19 @@ async def contabilidad_cash_flow_view(
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
+                <div><label>Horizonte</label><br><input type="number" min="15" max="180" name="horizon_days" value="{horizon_days}" style="width:110px;"> días</div>
+                <div><label>Días crédito CxC</label><br><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}" style="width:110px;"> días</div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
-                <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Ver CxC</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
             </form>
         </div>
         <div class="grid">
             <div class="metric"><div class="label">Banco entradas</div><div class="value">{format_currency(bank_inflows)}</div><div class="muted">Movimientos con signo +</div></div>
             <div class="metric"><div class="label">Banco salidas</div><div class="value">{format_currency(bank_outflows)}</div><div class="muted">Movimientos con signo -</div></div>
             <div class="metric"><div class="label">Neto bancario</div><div class="value">{format_currency(bank_net)}</div><div class="muted">Entradas menos salidas del período</div></div>
-            <div class="metric"><div class="label">Cobros esperados 30 días</div><div class="value">{format_currency(forecast_in_30)}</div><div class="muted">CxC emitida pendiente</div></div>
-            <div class="metric"><div class="label">Pagos próximos 30 días</div><div class="value">{format_currency(forecast_out_30)}</div><div class="muted">Aprobados + enviados</div></div>
+            <div class="metric"><div class="label">Cobros esperados {horizon_days} días</div><div class="value">{format_currency(forecast_in_30)}</div><div class="muted">CxC emitida pendiente</div></div>
+            <div class="metric"><div class="label">Pagos próximos {horizon_days} días</div><div class="value">{format_currency(forecast_out_30)}</div><div class="muted">Aprobados + enviados</div></div>
             <div class="metric"><div class="label">Posición proyectada simple</div><div class="value">{format_currency(projected_position)}</div><div class="muted">Neto banco + CxC - compromisos</div></div>
             <div class="metric"><div class="label">Riesgo caja</div><div class="value"><span class="pill">{risk_label}</span></div><div class="muted">Heurístico operativo</div></div>
         </div>
@@ -17461,8 +17467,8 @@ async def contabilidad_cash_flow_view(
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
-            <table><thead><tr><th>UUID CFDI</th><th>Vence</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th></tr></thead><tbody>{receivable_preview_rows or '<tr><td colspan="6" class="muted">Sin cuentas por cobrar pendientes en horizonte de 30 días.</td></tr>'}</tbody></table>
-            <p class="muted">La estimación usa 30 días de crédito desde fecha CFDI y resta ingresos cobrados vinculados por UUID.</p>
+            <table><thead><tr><th>UUID CFDI</th><th>Vence</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th></tr></thead><tbody>{receivable_preview_rows or f'<tr><td colspan="6" class="muted">Sin cuentas por cobrar pendientes en horizonte de {horizon_days} días.</td></tr>'}</tbody></table>
+            <p class="muted">La estimación usa {dias_credito} días de crédito desde fecha CFDI y resta ingresos cobrados vinculados por UUID.</p>
         </div>
     </div></body></html>
     """
