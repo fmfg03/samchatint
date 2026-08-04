@@ -20903,7 +20903,8 @@ async def cfdi_matching_control_room(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
     view: Optional[str] = Query(None),  # 'pendiente', 'vinculado', 'sin_gasto'
-    tipo: Optional[str] = Query(None),  # CFDI TipoDeComprobante: I, E, P, N, T
+    tipo: Optional[str] = Query(None),  # Backcompat: CFDI TipoDeComprobante I/E/P/N/T
+    flujo: Optional[str] = Query(None),  # Plataforma perspective: ingresos, egresos, pagos, nomina, etc.
 ):
     """
     Operator control room for CFDI ↔ expense matching.
@@ -20920,29 +20921,82 @@ async def cfdi_matching_control_room(
         if active_view not in {"pendiente", "vinculado", "sin_gasto"}:
             active_view = ""
         cfdi_type_labels = {
-            "I": "Ingreso / factura",
-            "E": "Egreso / nota de credito",
-            "P": "Pago / complemento",
+            "I": "Factura",
+            "E": "Nota de credito",
+            "P": "Complemento de pago",
             "N": "Nomina",
             "T": "Traslado",
         }
+        flow_filter_labels = {
+            "ingresos": "Ingresos / facturas emitidas",
+            "egresos": "Egresos / facturas recibidas",
+            "notas_emitidas": "Notas de credito emitidas",
+            "notas_recibidas": "Notas de credito recibidas",
+            "pagos": "Complementos de pago",
+            "nomina": "Nomina",
+            "traslado": "Traslado",
+        }
+        active_flujo = (flujo or "").strip().lower()
+        if active_flujo not in flow_filter_labels:
+            active_flujo = ""
         active_tipo = (tipo or "").strip().upper()
         if active_tipo not in cfdi_type_labels:
             active_tipo = ""
+        # Backcompat with links like ?tipo=P. Business filters use flujo=...
+        if active_tipo and not active_flujo:
+            active_flujo = {
+                "P": "pagos",
+                "N": "nomina",
+                "T": "traslado",
+            }.get(active_tipo, "")
+        active_tipo = ""
 
-        def matching_url(view_value: str = "", tipo_value: str = active_tipo) -> str:
+        def matching_url(view_value: str = "", flujo_value: str = active_flujo) -> str:
             params = []
             if view_value:
                 params.append(f"view={quote(view_value)}")
-            if tipo_value:
-                params.append(f"tipo={quote(tipo_value)}")
+            if flujo_value:
+                params.append(f"flujo={quote(flujo_value)}")
             return "/admin/gastos/cfdis/matching" + ("?" + "&".join(params) if params else "")
 
-        show_pending = active_view in {"", "pendiente"} and not active_tipo
+        def _platform_rfc_conditions(column):
+            if not platform_rfcs:
+                return [text("1=0")]
+            return [func.upper(column).in_(platform_rfcs)]
+
+        def _cfdi_flow_conditions():
+            if not active_flujo:
+                return []
+            if active_flujo == "ingresos":
+                return [CFDIReport.tipo_de_comprobante == "I", *_platform_rfc_conditions(CFDIReport.emisor_rfc)]
+            if active_flujo == "egresos":
+                return [CFDIReport.tipo_de_comprobante == "I", *_platform_rfc_conditions(CFDIReport.receptor_rfc)]
+            if active_flujo == "notas_emitidas":
+                return [CFDIReport.tipo_de_comprobante == "E", *_platform_rfc_conditions(CFDIReport.emisor_rfc)]
+            if active_flujo == "notas_recibidas":
+                return [CFDIReport.tipo_de_comprobante == "E", *_platform_rfc_conditions(CFDIReport.receptor_rfc)]
+            if active_flujo == "pagos":
+                return [CFDIReport.tipo_de_comprobante == "P"]
+            if active_flujo == "nomina":
+                return [CFDIReport.tipo_de_comprobante == "N"]
+            if active_flujo == "traslado":
+                return [CFDIReport.tipo_de_comprobante == "T"]
+            return []
+
+        show_pending = active_view in {"", "pendiente"} and not active_flujo
         show_linked = active_view in {"", "vinculado"}
         show_unlinked = active_view in {"", "sin_gasto"}
 
         with session.no_autoflush:
+            rfc_result = await session.execute(
+                select(RFCConfig.tax_id).where(RFCConfig.active.is_(True))
+            )
+            platform_rfcs = [
+                str(row[0]).strip().upper()
+                for row in rfc_result.all()
+                if row and row[0] and str(row[0]).strip()
+            ]
+
             # 1. Gastos con CFDI pendiente (UUID captured but not yet linked)
             pending_query = (
                 select(ExpenseReport)
@@ -20966,11 +21020,12 @@ async def cfdi_matching_control_room(
                 ExpenseReport.estado_gasto == "activo",
             ]
             linked_select = select(ExpenseReport)
-            if active_tipo:
+            flow_conditions = _cfdi_flow_conditions()
+            if flow_conditions:
                 linked_select = linked_select.join(
                     CFDIReport, ExpenseReport.cfdi_report_id == CFDIReport.id
                 )
-                linked_conditions.append(CFDIReport.tipo_de_comprobante == active_tipo)
+                linked_conditions.extend(flow_conditions)
             linked_query = (
                 linked_select
                 .options(selectinload(ExpenseReport.empleado))
@@ -20992,8 +21047,7 @@ async def cfdi_matching_control_room(
 
             # Get CFDIs not in that list
             unlinked_conditions = [~CFDIReport.id.in_(linked_cfdi_ids_subquery)]
-            if active_tipo:
-                unlinked_conditions.append(CFDIReport.tipo_de_comprobante == active_tipo)
+            unlinked_conditions.extend(_cfdi_flow_conditions())
             unlinked_cfdis_query = (
                 select(CFDIReport)
                 .where(and_(*unlinked_conditions))
@@ -21106,19 +21160,21 @@ async def cfdi_matching_control_room(
             <a href="/admin/gastos/invoices" class="button secondary">Ver facturas</a>
         """
         type_filter_links = "".join(
-            f'<a href="{matching_url(active_view, code)}" class="{'active' if active_tipo == code else ''}">{label}</a>'
+            f'<a href="{matching_url(active_view, code)}" class="{'active' if active_flujo == code else ''}">{label}</a>'
             for code, label in [
-                ("", "Todos los tipos"),
-                ("I", "Ingresos / facturas"),
-                ("E", "Egresos / notas"),
-                ("P", "Pagos / complementos"),
-                ("N", "Nomina"),
-                ("T", "Traslado"),
+                ("", "Todos"),
+                ("ingresos", "Ingresos / facturas emitidas"),
+                ("egresos", "Egresos / facturas recibidas"),
+                ("notas_emitidas", "Notas emitidas"),
+                ("notas_recibidas", "Notas recibidas"),
+                ("pagos", "Complementos de pago"),
+                ("nomina", "Nomina"),
+                ("traslado", "Traslado"),
             ]
         )
 
         hero_side_html = f"""
-            <div class="eyebrow">Cobertura{f' - {cfdi_type_labels[active_tipo]}' if active_tipo else ''}</div>
+            <div class="eyebrow">Cobertura{f' - {flow_filter_labels[active_flujo]}' if active_flujo else ''}</div>
             <div class="meta-grid">
                 <div class="meta-card"><span>Pendientes</span><strong>{pending_count}</strong><small>Gastos con UUID manual aún sin match.</small></div>
                 <div class="meta-card"><span>Vinculados</span><strong>{linked_count}</strong><small>Gastos ya pegados al CFDI correcto.</small></div>
@@ -21181,12 +21237,12 @@ async def cfdi_matching_control_room(
                         </div>
                     </div>
                     <div class="summary-links">
-                        <a href="{matching_url('', active_tipo)}" class="{'active' if not active_view else ''}">Todos</a>
+                        <a href="{matching_url('', active_flujo)}" class="{'active' if not active_view else ''}">Todos</a>
                         <a href="{matching_url('pendiente', '')}" class="{'active' if active_view == 'pendiente' else ''}">Pendientes ({pending_count})</a>
-                        <a href="{matching_url('vinculado', active_tipo)}" class="{'active' if active_view == 'vinculado' else ''}">Vinculados ({linked_count})</a>
-                        <a href="{matching_url('sin_gasto', active_tipo)}" class="{'active' if active_view == 'sin_gasto' else ''}">CFDI sin gasto ({unlinked_cfdi_count})</a>
+                        <a href="{matching_url('vinculado', active_flujo)}" class="{'active' if active_view == 'vinculado' else ''}">Vinculados ({linked_count})</a>
+                        <a href="{matching_url('sin_gasto', active_flujo)}" class="{'active' if active_view == 'sin_gasto' else ''}">CFDI sin gasto ({unlinked_cfdi_count})</a>
                     </div>
-                    <div class="section-note" style="margin-top:16px;">Filtrar por tipo de comprobante SAT.</div>
+                    <div class="section-note" style="margin-top:16px;">Filtrar por perspectiva de Plataforma y tipo fiscal.</div>
                     <div class="summary-links" style="margin-top:10px;">
                         {type_filter_links}
                     </div>
@@ -21244,7 +21300,7 @@ async def cfdi_matching_control_room(
                                     <th>Concepto</th>
                                     <th>Total Gasto</th>
                                     <th>UUID CFDI</th>
-                                    <th>Tipo CFDI</th>
+                                    <th>Tipo fiscal</th>
                                     <th>Total CFDI</th>
                                     <th>AR</th>
                                     <th>3-Way Match</th>
