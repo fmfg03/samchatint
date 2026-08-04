@@ -17309,6 +17309,42 @@ async def contabilidad_cash_flow_view(
     forecast_out_30 = approved_pending_total + submitted_pending_total
     forecast_in_30 = receivable_due_30_total
     projected_position = bank_net + forecast_in_30 - forecast_out_30
+
+    bucket_defs = [
+        ("vencido", "Vencido", None, -1),
+        ("d0_7", "0–7 días", 0, 7),
+        ("d8_14", "8–14 días", 8, 14),
+        ("d15_30", "15–30 días", 15, 30),
+        ("sin_fecha", "Sin fecha", None, None),
+    ]
+    liquidity_buckets: Dict[str, Dict[str, Any]] = {
+        key: {"label": label, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0}
+        for key, label, _start, _end in bucket_defs
+    }
+
+    def _cash_bucket_for(target_date: Optional[date]) -> str:
+        if target_date is None:
+            return "sin_fecha"
+        delta = (target_date - today).days
+        if delta < 0:
+            return "vencido"
+        if delta <= 7:
+            return "d0_7"
+        if delta <= 14:
+            return "d8_14"
+        if delta <= 30:
+            return "d15_30"
+        return "sin_fecha"
+
+    for row in receivable_rows:
+        bucket = liquidity_buckets[_cash_bucket_for(row.get("due_date"))]
+        bucket["in"] += float(row.get("saldo") or 0)
+        bucket["in_count"] += 1
+
+    for doc in committed_docs:
+        bucket = liquidity_buckets[_cash_bucket_for(doc.fecha_pago)]
+        bucket["out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out_count"] += 1
     risk_label = "Bajo"
     risk_color = "#047857"
     if projected_position < 0 or len(bank_unmatched) > 25 or receivable_overdue_total > max(forecast_in_30, 1) * 0.5:
@@ -17337,6 +17373,16 @@ async def contabilidad_cash_flow_view(
         f"<tr><td><code>{escape((row['cfdi'].cfdi_uuid or '—')[:36])}</code></td><td>{escape(row['due_date'].isoformat())}</td><td>{escape(row['cfdi'].receptor_nombre or '—')}</td><td>{escape(row['cfdi'].serie or '—')}</td><td>{escape(row['cfdi'].folio or '—')}</td><td>{format_currency(row['saldo'], row['cfdi'].moneda or 'MXN')}</td></tr>"
         for row in sorted(receivable_rows, key=lambda r: (r['due_date'], r['cfdi'].receptor_nombre or ''))[:20]
     )
+    running_position = bank_net
+    liquidity_bucket_rows = []
+    for key, label, _start, _end in bucket_defs:
+        bucket = liquidity_buckets[key]
+        net = float(bucket["in"] or 0) - float(bucket["out"] or 0)
+        running_position += net
+        liquidity_bucket_rows.append(
+            f"<tr><td>{escape(label)}</td><td>{format_currency(bucket['in'])}<br><span class='muted'>{bucket['in_count']} cobros</span></td><td>{format_currency(bucket['out'])}<br><span class='muted'>{bucket['out_count']} pagos</span></td><td>{format_currency(net)}</td><td>{format_currency(running_position)}</td></tr>"
+        )
+    liquidity_calendar_rows = "".join(liquidity_bucket_rows)
 
     month_options = "".join(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
@@ -17399,6 +17445,11 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">CxC vencida</div><div class="value">{format_currency(receivable_overdue_total)}</div><div class="muted">Saldo emitido no cobrado vencido</div></div>
             <div class="metric light"><div class="label">CFDI recibidos SAT</div><div class="value">{format_currency(received_total)}</div><div class="muted">{len(received_cfdis)} facturas recibidas</div></div>
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Calendario de liquidez</h2>
+            <table><thead><tr><th>Ventana</th><th>Cobros esperados</th><th>Pagos comprometidos</th><th>Neto ventana</th><th>Posición acumulada</th></tr></thead><tbody>{liquidity_calendar_rows}</tbody></table>
+            <p class="muted">La posición acumulada inicia con el neto bancario del período seleccionado y suma/resta cada ventana.</p>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cuentas bancarias</h2>
