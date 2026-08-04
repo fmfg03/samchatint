@@ -24,6 +24,11 @@ from ..models import CFDIReport, CuentaContable, ExpenseReport
 
 DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "2120-000-000"
 DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "ACREEDORES DIVERSOS"
+_NON_FISCAL_ACCOUNT_NAMES = {
+    "sin requisitos fiscales",
+    "no deducible",
+    "gastos no deducibles",
+}
 from .budget_concept_account_service import cleanup_expense_loader_options
 from .expense_accounting_service import build_expense_accounting_preview
 from .hospedaje_tax_service import normalize_hospedaje_rate, normalize_hospedaje_state
@@ -170,6 +175,17 @@ async def build_historical_precedent_evidence(
         }
 
 
+def _normalize_account_name(value: Any) -> str:
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def _allows_cleanup_without_cfdi(expense: ExpenseReport) -> bool:
+    account = getattr(expense, "cuenta_contable", None)
+    if account is None:
+        return False
+    return _normalize_account_name(getattr(account, "nombre", None)) in _NON_FISCAL_ACCOUNT_NAMES
+
+
 def resolve_default_cleanup_contra_cuenta(
     cuentas: Iterable[CuentaContable],
 ) -> Optional[CuentaContable]:
@@ -253,7 +269,19 @@ async def load_cleanup_expenses(
     ]
     query = select(ExpenseReport).options(*loader_options).where(and_(*conditions))
     result = await session.execute(query.order_by(ExpenseReport.fecha.desc()))
-    return result.scalars().all()
+    candidates = result.scalars().all()
+
+    # Show rows that still need human/accounting action, not rows that are merely
+    # missing a persisted fallback field. Counterpart accounts can be resolved
+    # deterministically from payment method/catalog rules, and non-fiscal expense
+    # accounts intentionally allow missing CFDI. Use the same readiness contract as
+    # the export path so counters and rows move together.
+    pending: List[ExpenseReport] = []
+    for expense in candidates:
+        state = await build_cleanup_preview(session, expense)
+        if state.get("issues"):
+            pending.append(expense)
+    return pending
 
 
 async def build_cleanup_preview(
@@ -273,7 +301,7 @@ async def build_cleanup_preview(
         "contra_account"
     ):
         issues.append("Falta contrapartida")
-    if not getattr(expense, "cfdi_report_id", None):
+    if not getattr(expense, "cfdi_report_id", None) and not _allows_cleanup_without_cfdi(expense):
         issues.append("Falta CFDI vinculado")
     if float(taxes.get("iva_trasladado") or 0.0) > 0 and not (
         taxes.get("iva_account") or {}
