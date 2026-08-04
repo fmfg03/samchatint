@@ -20903,6 +20903,7 @@ async def cfdi_matching_control_room(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
     view: Optional[str] = Query(None),  # 'pendiente', 'vinculado', 'sin_gasto'
+    tipo: Optional[str] = Query(None),  # CFDI TipoDeComprobante: I, E, P, N, T
 ):
     """
     Operator control room for CFDI ↔ expense matching.
@@ -20918,7 +20919,26 @@ async def cfdi_matching_control_room(
         active_view = (view or "").strip().lower()
         if active_view not in {"pendiente", "vinculado", "sin_gasto"}:
             active_view = ""
-        show_pending = active_view in {"", "pendiente"}
+        cfdi_type_labels = {
+            "I": "Ingreso / factura",
+            "E": "Egreso / nota de credito",
+            "P": "Pago / complemento",
+            "N": "Nomina",
+            "T": "Traslado",
+        }
+        active_tipo = (tipo or "").strip().upper()
+        if active_tipo not in cfdi_type_labels:
+            active_tipo = ""
+
+        def matching_url(view_value: str = "", tipo_value: str = active_tipo) -> str:
+            params = []
+            if view_value:
+                params.append(f"view={quote(view_value)}")
+            if tipo_value:
+                params.append(f"tipo={quote(tipo_value)}")
+            return "/admin/gastos/cfdis/matching" + ("?" + "&".join(params) if params else "")
+
+        show_pending = active_view in {"", "pendiente"} and not active_tipo
         show_linked = active_view in {"", "vinculado"}
         show_unlinked = active_view in {"", "sin_gasto"}
 
@@ -20941,16 +20961,21 @@ async def cfdi_matching_control_room(
             pending_expenses = pending_result.scalars().all()
 
             # 2. Gastos con CFDI vinculado
+            linked_conditions = [
+                ExpenseReport.cfdi_report_id.isnot(None),
+                ExpenseReport.estado_gasto == "activo",
+            ]
+            linked_select = select(ExpenseReport)
+            if active_tipo:
+                linked_select = linked_select.join(
+                    CFDIReport, ExpenseReport.cfdi_report_id == CFDIReport.id
+                )
+                linked_conditions.append(CFDIReport.tipo_de_comprobante == active_tipo)
             linked_query = (
-                select(ExpenseReport)
+                linked_select
                 .options(selectinload(ExpenseReport.empleado))
                 .options(selectinload(ExpenseReport.cfdi_report))
-                .where(
-                    and_(
-                        ExpenseReport.cfdi_report_id.isnot(None),
-                        ExpenseReport.estado_gasto == "activo",
-                    )
-                )
+                .where(and_(*linked_conditions))
                 .order_by(ExpenseReport.created_at.desc())
                 .limit(500)
             )
@@ -20966,9 +20991,12 @@ async def cfdi_matching_control_room(
             )
 
             # Get CFDIs not in that list
+            unlinked_conditions = [~CFDIReport.id.in_(linked_cfdi_ids_subquery)]
+            if active_tipo:
+                unlinked_conditions.append(CFDIReport.tipo_de_comprobante == active_tipo)
             unlinked_cfdis_query = (
                 select(CFDIReport)
-                .where(~CFDIReport.id.in_(linked_cfdi_ids_subquery))
+                .where(and_(*unlinked_conditions))
                 .order_by(CFDIReport.created_at.desc())
                 .limit(500)
             )
@@ -21010,7 +21038,8 @@ async def cfdi_matching_control_room(
             fecha_str = expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "-"
             cfdi = expense.cfdi_report
             cfdi_uuid = cfdi.cfdi_uuid if cfdi else "-"
-            cfdi_total = f"${cfdi.total:,.2f}" if cfdi and cfdi.total else "-"
+            cfdi_tipo = cfdi_type_labels.get(cfdi.tipo_de_comprobante, cfdi.tipo_de_comprobante or "-") if cfdi else "-"
+            cfdi_total = f"${cfdi.total:,.2f}" if cfdi and cfdi.total is not None else "-"
             ar_status = evaluate_ar_status(expense, cfdi=cfdi)
             match_status = evaluate_three_way_match(expense, cfdi=cfdi)
             match_title = (
@@ -21026,6 +21055,7 @@ async def cfdi_matching_control_room(
                 <td>{format_value(expense.concepto)}</td>
                 <td>${expense.gasto_cantidad:,.2f}</td>
                 <td><code style="font-size: 11px; background: #d4edda; padding: 2px 4px; border-radius: 3px;">{cfdi_uuid}</code></td>
+                <td>{format_value(cfdi_tipo)}</td>
                 <td>{cfdi_total}</td>
                 <td>{format_value(ar_status.status)}</td>
                 <td{match_title}>{format_value(match_status.status)}</td>
@@ -21048,6 +21078,8 @@ async def cfdi_matching_control_room(
                 cfdi.origen,
                 f'<span style="color: #607D8B;">{format_value(cfdi.origen)}</span>',
             )
+            cfdi_tipo = cfdi_type_labels.get(cfdi.tipo_de_comprobante, cfdi.tipo_de_comprobante or "-")
+            cfdi_total = f"${cfdi.total:,.2f}" if cfdi.total is not None else "-"
             unlinked_rows += f"""
             <tr>
                 <td><code style="font-size: 11px;">{format_value(cfdi.cfdi_uuid)}</code></td>
@@ -21055,7 +21087,8 @@ async def cfdi_matching_control_room(
                 <td>{origen_badge}</td>
                 <td>{format_value(cfdi.emisor_nombre)[:40] if cfdi.emisor_nombre else '-'}...</td>
                 <td>{format_value(cfdi.receptor_nombre)[:40] if cfdi.receptor_nombre else '-'}...</td>
-                <td>${cfdi.total:,.2f}</td>
+                <td>{format_value(cfdi_tipo)}</td>
+                <td>{cfdi_total}</td>
                 <td>{format_value(cfdi.serie)}</td>
                 <td>{format_value(cfdi.folio)}</td>
                 <td>
@@ -21072,8 +21105,20 @@ async def cfdi_matching_control_room(
             <a href="/admin/gastos/expenses" class="button secondary">Ver gastos</a>
             <a href="/admin/gastos/invoices" class="button secondary">Ver facturas</a>
         """
+        type_filter_links = "".join(
+            f'<a href="{matching_url(active_view, code)}" class="{'active' if active_tipo == code else ''}">{label}</a>'
+            for code, label in [
+                ("", "Todos los tipos"),
+                ("I", "Ingresos / facturas"),
+                ("E", "Egresos / notas"),
+                ("P", "Pagos / complementos"),
+                ("N", "Nomina"),
+                ("T", "Traslado"),
+            ]
+        )
+
         hero_side_html = f"""
-            <div class="eyebrow">Cobertura</div>
+            <div class="eyebrow">Cobertura{f' - {cfdi_type_labels[active_tipo]}' if active_tipo else ''}</div>
             <div class="meta-grid">
                 <div class="meta-card"><span>Pendientes</span><strong>{pending_count}</strong><small>Gastos con UUID manual aún sin match.</small></div>
                 <div class="meta-card"><span>Vinculados</span><strong>{linked_count}</strong><small>Gastos ya pegados al CFDI correcto.</small></div>
@@ -21136,10 +21181,14 @@ async def cfdi_matching_control_room(
                         </div>
                     </div>
                     <div class="summary-links">
-                        <a href="/admin/gastos/cfdis/matching" class="{'active' if not active_view else ''}">Todos</a>
-                        <a href="/admin/gastos/cfdis/matching?view=pendiente" class="{'active' if active_view == 'pendiente' else ''}">Pendientes ({pending_count})</a>
-                        <a href="/admin/gastos/cfdis/matching?view=vinculado" class="{'active' if active_view == 'vinculado' else ''}">Vinculados ({linked_count})</a>
-                        <a href="/admin/gastos/cfdis/matching?view=sin_gasto" class="{'active' if active_view == 'sin_gasto' else ''}">CFDI sin gasto ({unlinked_cfdi_count})</a>
+                        <a href="{matching_url('', active_tipo)}" class="{'active' if not active_view else ''}">Todos</a>
+                        <a href="{matching_url('pendiente', '')}" class="{'active' if active_view == 'pendiente' else ''}">Pendientes ({pending_count})</a>
+                        <a href="{matching_url('vinculado', active_tipo)}" class="{'active' if active_view == 'vinculado' else ''}">Vinculados ({linked_count})</a>
+                        <a href="{matching_url('sin_gasto', active_tipo)}" class="{'active' if active_view == 'sin_gasto' else ''}">CFDI sin gasto ({unlinked_cfdi_count})</a>
+                    </div>
+                    <div class="section-note" style="margin-top:16px;">Filtrar por tipo de comprobante SAT.</div>
+                    <div class="summary-links" style="margin-top:10px;">
+                        {type_filter_links}
                     </div>
                 </section>
                 {f'''
@@ -21195,6 +21244,7 @@ async def cfdi_matching_control_room(
                                     <th>Concepto</th>
                                     <th>Total Gasto</th>
                                     <th>UUID CFDI</th>
+                                    <th>Tipo CFDI</th>
                                     <th>Total CFDI</th>
                                     <th>AR</th>
                                     <th>3-Way Match</th>
@@ -21228,6 +21278,7 @@ async def cfdi_matching_control_room(
                                     <th>Origen</th>
                                     <th>Emisor</th>
                                     <th>Receptor</th>
+                                    <th>Tipo</th>
                                     <th>Total</th>
                                     <th>Serie</th>
                                     <th>Folio</th>
