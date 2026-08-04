@@ -18256,6 +18256,21 @@ async def contabilidad_tesoreria_matches_view(
                 <td>{escape(row['cfdi'].folio or '—')}</td>
                 <td>{format_currency(row['amount'], row['cfdi'].moneda or 'MXN')}</td>
                 <td>{format_currency(row['delta'])}</td>
+                <td>
+                    <form method="POST" action="/admin/contabilidad/tesoreria-matches/accept" onsubmit="return confirm('Aceptar esta sugerencia sólo marcará el movimiento bancario como revisado contra este CFDI. No crea pólizas ni gastos. ¿Continuar?');">
+                        <input type="hidden" name="movement_id" value="{row['movement'].id}">
+                        <input type="hidden" name="cfdi_id" value="{row['cfdi'].id}">
+                        <input type="hidden" name="direction" value="{escape(row['direction'].lower())}">
+                        <input type="hidden" name="year" value="{selected_year}">
+                        <input type="hidden" name="month" value="{selected_month}">
+                        <input type="hidden" name="horizon_days" value="{horizon_days}">
+                        <input type="hidden" name="dias_credito" value="{dias_credito}">
+                        <input type="hidden" name="tolerance" value="{tolerance}">
+                        <input type="hidden" name="min_score" value="{min_score}">
+                        <input type="hidden" name="tipo" value="{tipo}">
+                        <button type="submit" class="button secondary" style="padding:6px 10px;">Aceptar</button>
+                    </form>
+                </td>
             </tr>
             """
             for row in suggestions
@@ -18319,17 +18334,174 @@ async def contabilidad_tesoreria_matches_view(
         </div>
         <div class="card" style="margin-top:16px;">
             <h2 style="margin:0 0 12px 0;">Cobros sugeridos: banco → CxC</h2>
-            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th><th>Diferencia</th></tr></thead><tbody>{cxc_rows or '<tr><td colspan="13" class="muted">Sin sugerencias CxC con estos filtros.</td></tr>'}</tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th><th>Diferencia</th><th>Acción</th></tr></thead><tbody>{cxc_rows or '<tr><td colspan="14" class="muted">Sin sugerencias CxC con estos filtros.</td></tr>'}</tbody></table></div>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Pagos sugeridos: banco → CxP sin captura</h2>
-            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th><th>Diferencia</th></tr></thead><tbody>{cxp_rows or '<tr><td colspan="13" class="muted">Sin sugerencias CxP con estos filtros.</td></tr>'}</tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th><th>Diferencia</th><th>Acción</th></tr></thead><tbody>{cxp_rows or '<tr><td colspan="14" class="muted">Sin sugerencias CxP con estos filtros.</td></tr>'}</tbody></table></div>
             <p class="muted">Score = monto + similitud de texto + cercanía de fecha. Umbral actual: {min_score}. Esta pantalla no modifica conciliación ni marca facturas como cobradas/pagadas.</p>
         </div>
     </div></body></html>
     """
     return HTMLResponse(content=html)
 
+
+
+
+@router.post("/admin/contabilidad/tesoreria-matches/accept")
+async def contabilidad_tesoreria_matches_accept(
+    request: Request,
+    movement_id: UUIDType = Form(...),
+    cfdi_id: UUIDType = Form(...),
+    direction: str = Form(...),
+    year: int = Form(...),
+    month: int = Form(...),
+    horizon_days: int = Form(60),
+    dias_credito: int = Form(30),
+    tolerance: float = Form(1.0),
+    min_score: int = Form(75),
+    tipo: str = Form("todos"),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> RedirectResponse:
+    """Accept a treasury pre-match after recalculating the evidence server-side."""
+    direction = (direction or "").lower().strip()
+    if direction not in {"cxc", "cxp"}:
+        raise HTTPException(status_code=400, detail="Tipo de match inválido")
+    tolerance = max(0.0, min(float(tolerance or 1.0), 5000.0))
+    min_score = max(75, min(int(min_score or 75), 120))
+    horizon_days = max(15, min(int(horizon_days or 60), 180))
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    tipo = (tipo or "todos").lower().strip()
+    if tipo not in {"todos", "cxc", "cxp"}:
+        tipo = "todos"
+    return_url = f"/admin/contabilidad/tesoreria-matches?year={year}&month={month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}&min_score={min_score}&tipo={tipo}"
+
+    movement = await session.get(BankMovement, movement_id)
+    cfdi = await session.get(CFDIReport, cfdi_id)
+    if movement is None or cfdi is None:
+        raise HTTPException(status_code=404, detail="Movimiento o CFDI no encontrado")
+    if (movement.conciliacion_estado or "unmatched").lower() != "unmatched":
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El movimiento ya no está pendiente de conciliación"), status_code=303)
+    expected_sign = "+" if direction == "cxc" else "-"
+    if (movement.signo or "").strip() != expected_sign:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El signo bancario ya no corresponde a la sugerencia"), status_code=303)
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = {str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()}
+    if not platform_rfcs:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("No hay RFC activos para validar la sugerencia"), status_code=303)
+    if direction == "cxc" and (cfdi.emisor_rfc or "").strip().upper() not in platform_rfcs:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El CFDI no es una factura emitida por la empresa"), status_code=303)
+    if direction == "cxp" and (cfdi.receptor_rfc or "").strip().upper() not in platform_rfcs:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El CFDI no es una factura recibida por la empresa"), status_code=303)
+    if (cfdi.tipo_de_comprobante or "").strip() != "I":
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("Sólo se aceptan CFDI tipo Ingreso en este pre-match"), status_code=303)
+
+    def _norm_party(value: Optional[str]) -> str:
+        raw = unicodedata.normalize("NFKD", value or "")
+        raw = "".join(ch for ch in raw if not unicodedata.combining(ch)).lower()
+        return re.sub(r"[^a-z0-9]+", " ", raw).strip()
+
+    def _party_score(bank_text: str, party: str) -> int:
+        bank_norm = _norm_party(bank_text)
+        party_norm = _norm_party(party)
+        if not bank_norm or not party_norm:
+            return 0
+        if party_norm in bank_norm or bank_norm in party_norm:
+            return 25
+        party_tokens = {tok for tok in party_norm.split() if len(tok) >= 4}
+        bank_tokens = {tok for tok in bank_norm.split() if len(tok) >= 4}
+        if not party_tokens or not bank_tokens:
+            return 0
+        overlap = len(party_tokens & bank_tokens) / max(len(party_tokens), 1)
+        ratio = SequenceMatcher(None, bank_norm, party_norm).ratio()
+        return int(max(overlap * 22, ratio * 18))
+
+    def _date_score(bank_date: Optional[datetime], cfdi_date: Optional[datetime], due_date: Optional[date] = None) -> int:
+        if not bank_date:
+            return 0
+        bank_day = bank_date.date()
+        target_day = due_date or (cfdi_date.date() if cfdi_date else None)
+        if not target_day:
+            return 0
+        delta = abs((bank_day - target_day).days)
+        if delta <= 2:
+            return 15
+        if delta <= 7:
+            return 10
+        if delta <= 30:
+            return 5
+        return 0
+
+    def _bank_text(m: BankMovement) -> str:
+        return " ".join(part for part in [m.descripcion, m.concepto_banco, m.nombre_beneficiario, m.nombre_ordenante, m.referencia_bancaria, m.clave_rastreo] if part)
+
+    amount = float(cfdi.total or 0)
+    if direction == "cxc":
+        # Recompute outstanding emitted-CFDI balance before accepting.
+        collected_result = await session.execute(
+            select(AccountingPoliza).options(selectinload(AccountingPoliza.lines)).where(
+                AccountingPoliza.origen == "ingreso_cobrado_ui",
+                or_(AccountingPoliza.cfdi_report_id == cfdi.id, func.upper(AccountingPoliza.cfdi_uuid) == (cfdi.cfdi_uuid or "").strip().upper()),
+            )
+        )
+        collected = 0.0
+        for poliza in collected_result.scalars().all():
+            collected += sum(float(line.debe or 0) for line in poliza.lines)
+        amount = max(float(cfdi.total or 0) - collected, 0.0)
+        due_date = (cfdi.fecha.date() + timedelta(days=dias_credito)) if cfdi.fecha else None
+        party = cfdi.receptor_nombre or cfdi.receptor_rfc or ""
+    else:
+        linked_result = await session.execute(
+            select(ExpenseReport).where(
+                ExpenseReport.estado_gasto == "activo",
+                or_(
+                    ExpenseReport.cfdi_report_id == cfdi.id,
+                    func.upper(ExpenseReport.cfdi_uuid_manual) == (cfdi.cfdi_uuid or "").strip().upper(),
+                    func.upper(ExpenseReport.numero_factura) == (cfdi.cfdi_uuid or "").strip().upper(),
+                ),
+            )
+        )
+        if linked_result.scalars().first() is not None:
+            return RedirectResponse(url=return_url + "&error_msg=" + quote("El CFDI recibido ya está vinculado a un gasto"), status_code=303)
+        due_date = cfdi.fecha.date() if cfdi.fecha else None
+        party = cfdi.emisor_nombre or cfdi.emisor_rfc or ""
+
+    bank_amount = float(movement.importe or 0)
+    amount_delta = abs(bank_amount - amount)
+    if amount <= 0.01 or amount_delta > tolerance:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El monto ya no cumple la tolerancia configurada"), status_code=303)
+    amount_score = 60 if amount_delta < 0.01 else max(40, int(60 - amount_delta))
+    p_score = _party_score(_bank_text(movement), party)
+    d_score = _date_score(movement.fecha, cfdi.fecha, due_date)
+    score = amount_score + p_score + d_score
+    if score < min_score:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote(f"La sugerencia ya no alcanza el score mínimo ({score} < {min_score})"), status_code=303)
+
+    before_state = _movement_snapshot(movement)
+    movement.conciliacion_estado = "high"
+    await _log_reconciliation_action(
+        session,
+        movement,
+        current_empleado,
+        "accept_treasury_cfdi_match",
+        before_state,
+        {
+            "direction": direction,
+            "cfdi_report_id": str(cfdi.id),
+            "cfdi_uuid": cfdi.cfdi_uuid,
+            "bank_amount": bank_amount,
+            "cfdi_amount_considered": amount,
+            "amount_delta": amount_delta,
+            "score": score,
+            "min_score": min_score,
+            "tolerance": tolerance,
+            "note": "Accepted from treasury pre-match. No poliza, expense, or income record was created.",
+        },
+    )
+    await session.commit()
+    return RedirectResponse(url=return_url + "&success_msg=" + quote(f"Match {direction.upper()} aceptado con score {score}. Movimiento marcado como revisado."), status_code=303)
 
 
 @router.get("/admin/contabilidad/tesoreria-matches/export.xlsx")
