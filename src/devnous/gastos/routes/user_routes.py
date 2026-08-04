@@ -20970,11 +20970,11 @@ async def documentos_pendientes(
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
+            <td>{referencia_operaciones}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>{documento.estado}</td>
-            <td>{referencia_operaciones}</td>
             <td>{format_currency(documento.monto_total)}</td>
             <td>{enviado_str}</td>
         </tr>
@@ -21020,11 +21020,11 @@ async def documentos_pendientes(
                 <thead>
                     <tr>
                         <th>Número de Referencia</th>
+                        <th>Referencia Operaciones</th>
                         <th>ID Interno</th>
                         <th>Empleado</th>
                         <th>Tipo</th>
                         <th>Estado</th>
-                        <th>Referencia operaciones</th>
                         <th>Monto Total</th>
                         <th>Fecha de Envío</th>
                     </tr>
@@ -21143,12 +21143,12 @@ async def historial_aprobador(
         rows_html += f"""
         <tr>
             <td>{fecha_str}</td>
+            <td>{referencia_operaciones}</td>
             <td><span style="color: {accion_color}; font-weight: bold;">{accion_str}</span></td>
             <td>{doc_link}</td>
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>{documento.estado}</td>
-            <td>{referencia_operaciones}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_str}">{comentario_str}</td>
         </tr>
         """
@@ -21193,12 +21193,12 @@ async def historial_aprobador(
                 <thead>
                     <tr>
                         <th>Fecha</th>
+                        <th>Referencia Operaciones</th>
                         <th>Acción</th>
                         <th>Número de Referencia</th>
                         <th>Empleado</th>
                         <th>Tipo</th>
                         <th>Estado Actual</th>
-                        <th>Referencia operaciones</th>
                         <th>Comentario</th>
                     </tr>
                 </thead>
