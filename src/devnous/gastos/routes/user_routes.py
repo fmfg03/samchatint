@@ -9801,8 +9801,10 @@ def _cuenta_success_actions_html(
         )
     if success_code_normalized == "cerrada":
         return _post_action_cta_html(
-            primary_href="/informes-de-gastos/crear",
-            primary_label="Crear otro informe",
+            primary_href=f"/informes-de-gastos/{cuenta_id}/exportar-informe.xlsx",
+            primary_label="Descargar informe de gastos",
+            home_href="/informes-de-gastos",
+            home_label="Abrir otro informe",
         )
     return _post_action_cta_html(
         primary_href=f"/informes-de-gastos/{cuenta_id}",
@@ -23194,6 +23196,50 @@ async def _approved_informe_for_cuenta_or_redirect(
     return informe_doc
 
 
+async def _informe_for_cuenta_or_redirect(
+    cuenta_id: UUIDType,
+    session: AsyncSession,
+    current_empleado: Empleado,
+) -> Union[Documento, RedirectResponse]:
+    cuenta_result = await session.execute(
+        select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_id)
+    )
+    cuenta = cuenta_result.scalar_one_or_none()
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+
+    informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
+    if informe_doc is None:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta_id}",
+                error="no_informe_doc",
+                error_msg="Este informe no tiene documento INFORME vinculado para descargar.",
+            ),
+            status_code=303,
+        )
+    return informe_doc
+
+
+@router.get("/informes-de-gastos/{cuenta_id}/exportar-informe.xlsx", response_model=None)
+async def exportar_informe_excel_cuenta(
+    cuenta_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    informe_or_response = await _informe_for_cuenta_or_redirect(
+        cuenta_id, session, current_empleado
+    )
+    if isinstance(informe_or_response, RedirectResponse):
+        return informe_or_response
+    return RedirectResponse(
+        url=f"/documentos/{informe_or_response.id}/exportar-informe",
+        status_code=303,
+    )
+
+
 @router.get("/informes-de-gastos/{cuenta_id}/exportar-coi", response_model=None)
 async def exportar_coi_poliza_cuenta(
     cuenta_id: UUIDType,
@@ -30607,6 +30653,11 @@ async def cuenta_de_gastos_detail(
     else:
         ro_detail_display = "—"
         ro_detail_hint = "No hay documento informe vinculado."
+    informe_support_actions_html = ""
+    if informe_doc and active_expenses:
+        informe_support_actions_html = f"""
+        <a href="/informes-de-gastos/{cuenta.id}/exportar-informe.xlsx" class="button primary">Descargar informe de gastos (Excel)</a>
+        """
     coi_actions_html = ""
     diot_actions_html = ""
     if informe_doc and active_expenses:
@@ -30633,6 +30684,7 @@ async def cuenta_de_gastos_detail(
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         <a href="/informes-de-gastos" class="button secondary">Abrir informes de gastos</a>
+        {informe_support_actions_html}
         {coi_actions_html}
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if cuenta.estado == 'abierta' and _can_manage_cuenta else ''}
