@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Optional
 from uuid import UUID
 
@@ -44,6 +45,7 @@ DEMO_ANALYTICS_DOC_NOTES = "Demo analytics cliente"
 DEFAULT_EDITION_YEAR = 2026
 _BUDGET_SUPER_ROLES = {"superadmin", "super_admin"}
 _BUDGET_VIEWER_EMAILS = {"azuniga@plataformasports.com"}
+_MONEY_QUANT = Decimal("0.01")
 
 
 def _can_view_budgets(empleado: Empleado) -> bool:
@@ -76,6 +78,34 @@ def _is_test_runtime() -> bool:
         return True
     url = (os.getenv("DATABASE_URL") or "") + (os.getenv("SAMCHAT_ENV_FILE") or "")
     return "devnous_db_test" in url
+
+
+def _money(value: Any) -> float:
+    try:
+        return float(
+            Decimal(str(value or 0)).quantize(_MONEY_QUANT, rounding=ROUND_HALF_UP)
+        )
+    except (InvalidOperation, TypeError, ValueError):
+        return 0.0
+
+
+def _format_budget_line_money(line: dict[str, Any]) -> dict[str, Any]:
+    formatted = dict(line)
+    for key in ("budget_amount", "allocated_amount"):
+        if key in formatted:
+            formatted[key] = _money(formatted.get(key))
+    monthly = formatted.get("monthly_allocations")
+    if isinstance(monthly, list):
+        formatted["monthly_allocations"] = [
+            {
+                **item,
+                "allocated_amount": _money(item.get("allocated_amount")),
+            }
+            if isinstance(item, dict)
+            else item
+            for item in monthly
+        ]
+    return formatted
 
 
 def _remaining_month_numbers(*, edition_year: int, as_of: Optional[date] = None) -> list[int]:
@@ -140,7 +170,7 @@ async def operaciones_analytics_summary(
             ).where(*filters)
         )
     ).one()
-    total_spent = float(total_row.total or 0)
+    total_spent = _money(total_row.total)
     expense_count = int(total_row.count or 0)
 
     spent_rows = (
@@ -161,7 +191,7 @@ async def operaciones_analytics_summary(
         str(row.concept_id): {
             "concept_name": row.concept_name,
             "concept_key": row.concept_key,
-            "amount": float(row.amount or 0),
+            "amount": _money(row.amount),
             "count": int(row.count or 0),
         }
         for row in spent_rows
@@ -186,13 +216,13 @@ async def operaciones_analytics_summary(
         if not concept_id:
             continue
         monthly_lookup = {
-            int(item["month_number"]): float(item["allocated_amount"])
+            int(item["month_number"]): _money(item["allocated_amount"])
             for item in line.get("monthly_allocations") or []
         }
-        budget_amount = float(line.get("budget_amount") or 0)
+        budget_amount = _money(line.get("budget_amount"))
         spent_info = spent_by_concept.get(concept_id, {})
-        spent_amount = float(spent_info.get("amount") or 0)
-        remaining_year = round(budget_amount - spent_amount, 2)
+        spent_amount = _money(spent_info.get("amount"))
+        remaining_year = _money(budget_amount - spent_amount)
         pct_budget = round((spent_amount / budget_amount) * 100) if budget_amount else None
         partida_map[concept_id] = {
             "budget_concept_id": concept_id,
@@ -206,7 +236,7 @@ async def operaciones_analytics_summary(
             "pct_budget": pct_budget,
             "pct_of_total_spent": None,
             "remaining_months": {
-                str(month): round(monthly_lookup.get(month, 0.0), 2)
+                str(month): _money(monthly_lookup.get(month, 0.0))
                 for month in remaining_months
             },
         }
@@ -221,9 +251,9 @@ async def operaciones_analytics_summary(
             "concept_name": spent_info.get("concept_name"),
             "concept_key": spent_info.get("concept_key"),
             "budget_amount": 0.0,
-            "spent_amount": float(spent_info.get("amount") or 0),
+            "spent_amount": _money(spent_info.get("amount")),
             "expense_count": int(spent_info.get("count") or 0),
-            "remaining_year": round(0 - float(spent_info.get("amount") or 0), 2),
+            "remaining_year": _money(0 - _money(spent_info.get("amount"))),
             "pct_budget": None,
             "pct_of_total_spent": None,
             "remaining_months": {str(month): 0.0 for month in remaining_months},
@@ -238,7 +268,7 @@ async def operaciones_analytics_summary(
         if total_spent:
             row["pct_of_total_spent"] = round((row["spent_amount"] / total_spent) * 100)
 
-    budget_total = round(sum(float(row.get("budget_amount") or 0) for row in by_partida), 2)
+    budget_total = _money(sum(_money(row.get("budget_amount")) for row in by_partida))
 
     fase_rows = (
         await session.execute(
@@ -356,7 +386,7 @@ async def operaciones_analytics_summary(
             "total_spent": total_spent,
             "expense_count": expense_count,
             "budget_total": budget_total,
-            "budget_remaining_year": round(budget_total - total_spent, 2),
+            "budget_remaining_year": _money(budget_total - total_spent),
             "pct_budget_consumed": round((total_spent / budget_total) * 100)
             if budget_total
             else None,
@@ -370,13 +400,13 @@ async def operaciones_analytics_summary(
                 )
             ).scalar_one(),
             "solicitud_count": int(solicitud_kpi.count or 0),
-            "solicitud_amount": float(solicitud_kpi.amount or 0),
+            "solicitud_amount": _money(solicitud_kpi.amount),
         },
         "by_partida": by_partida,
         "by_fase": [
             {
                 "fase": row.fase_torneo or "Sin fase",
-                "amount": float(row.amount or 0),
+                "amount": _money(row.amount),
                 "count": int(row.count or 0),
             }
             for row in fase_rows
@@ -388,7 +418,7 @@ async def operaciones_analytics_summary(
                     if isinstance(row.month, datetime)
                     else str(row.month)
                 ),
-                "amount": float(row.amount or 0),
+                "amount": _money(row.amount),
                 "count": int(row.count or 0),
             }
             for row in month_rows
@@ -396,7 +426,7 @@ async def operaciones_analytics_summary(
         "by_empleado": [
             {
                 "nombre": row.nombre,
-                "amount": float(row.amount or 0),
+                "amount": _money(row.amount),
                 "count": int(row.count or 0),
             }
             for row in empleado_rows
@@ -404,7 +434,7 @@ async def operaciones_analytics_summary(
         "by_documento_tipo": [
             {
                 "tipo": row.tipo,
-                "amount": float(row.amount or 0),
+                "amount": _money(row.amount),
                 "count": int(row.count or 0),
             }
             for row in doc_rows
@@ -446,4 +476,4 @@ async def operaciones_analytics_budget_upsert(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return JSONResponse({"ok": True, "line": line})
+    return JSONResponse({"ok": True, "line": _format_budget_line_money(line)})

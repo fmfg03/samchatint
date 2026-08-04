@@ -19,7 +19,7 @@ import zipfile
 from collections import Counter
 from html import escape
 from datetime import datetime, timedelta, date
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, List, Union, Dict, Any, Tuple
@@ -9879,8 +9879,11 @@ def format_currency(value, currency: str = "MXN") -> str:
     if value is None:
         return f"{symbol}0.00"
     try:
-        return f"{symbol}{float(value):,.2f}"
-    except (ValueError, TypeError):
+        amount = Decimal(str(value)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        return f"{symbol}{amount:,.2f}"
+    except (InvalidOperation, ValueError, TypeError):
         return str(value)
 
 
@@ -20954,6 +20957,9 @@ async def documentos_pendientes(
 
         # Get empleado name
         empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
+        referencia_operaciones = escape(
+            str((documento.referencia_operaciones or "").strip() or "—")
+        )
 
         # Link to documento detail with next parameter
         next_url = quote("/documentos/pendientes")
@@ -20968,6 +20974,7 @@ async def documentos_pendientes(
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>{documento.estado}</td>
+            <td>{referencia_operaciones}</td>
             <td>{format_currency(documento.monto_total)}</td>
             <td>{enviado_str}</td>
         </tr>
@@ -21017,6 +21024,7 @@ async def documentos_pendientes(
                         <th>Empleado</th>
                         <th>Tipo</th>
                         <th>Estado</th>
+                        <th>Referencia operaciones</th>
                         <th>Monto Total</th>
                         <th>Fecha de Envío</th>
                     </tr>

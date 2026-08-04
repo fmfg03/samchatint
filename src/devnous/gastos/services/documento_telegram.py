@@ -11,7 +11,7 @@ import os
 import re
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
@@ -328,8 +328,11 @@ def _fmt_mxn(amount: Any) -> str:
     try:
         if amount is None:
             return "—"
-        return f"${float(amount):,.2f} MXN"
-    except (TypeError, ValueError):
+        value = Decimal(str(amount)).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        )
+        return f"${value:,.2f} MXN"
+    except (InvalidOperation, TypeError, ValueError):
         return "—"
 
 
