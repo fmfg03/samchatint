@@ -17521,9 +17521,65 @@ async def contabilidad_cash_flow_view(
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
+    payable_cfdis: List[CFDIReport] = []
+    if platform_rfcs:
+        payable_result = await session.execute(
+            select(CFDIReport)
+            .where(
+                CFDIReport.fecha >= datetime(today.year, 1, 1),
+                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                CFDIReport.tipo_de_comprobante == "I",
+                func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+            )
+            .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.emisor_nombre.asc())
+            .limit(1000)
+        )
+        payable_cfdis = payable_result.scalars().all()
+
+    payable_ids = [c.id for c in payable_cfdis]
+    payable_uuids = [(c.cfdi_uuid or "").strip().upper() for c in payable_cfdis if (c.cfdi_uuid or "").strip()]
+    payable_expenses_by_id: Dict[str, List[ExpenseReport]] = {}
+    payable_expenses_by_uuid: Dict[str, List[ExpenseReport]] = {}
+    if payable_ids or payable_uuids:
+        payable_match_conditions = []
+        if payable_ids:
+            payable_match_conditions.append(ExpenseReport.cfdi_report_id.in_(payable_ids))
+        if payable_uuids:
+            payable_match_conditions.append(func.upper(ExpenseReport.cfdi_uuid_manual).in_(payable_uuids))
+            payable_match_conditions.append(func.upper(ExpenseReport.numero_factura).in_(payable_uuids))
+        payable_expense_result = await session.execute(
+            select(ExpenseReport)
+            .where(
+                ExpenseReport.estado_gasto == "activo",
+                or_(*payable_match_conditions),
+            )
+        )
+        for expense in payable_expense_result.scalars().all():
+            if expense.cfdi_report_id:
+                payable_expenses_by_id.setdefault(str(expense.cfdi_report_id), []).append(expense)
+            for raw_uuid in [expense.cfdi_uuid_manual, expense.numero_factura]:
+                uuid_key = (raw_uuid or "").strip().upper()
+                if uuid_key:
+                    payable_expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+
+    payable_unprocessed_rows: List[Dict[str, Any]] = []
+    payable_unprocessed_total = 0.0
+    for cfdi in payable_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        linked = list(payable_expenses_by_id.get(str(cfdi.id), []))
+        for expense in payable_expenses_by_uuid.get(uuid_key, []):
+            if expense not in linked:
+                linked.append(expense)
+        if linked:
+            continue
+        amount = float(cfdi.total or 0)
+        payable_unprocessed_total += amount
+        payable_unprocessed_rows.append({"cfdi": cfdi, "amount": amount})
+
     forecast_out_30 = approved_pending_total + submitted_pending_total
     forecast_in_30 = receivable_due_30_total
     projected_position = bank_net + forecast_in_30 - forecast_out_30
+    conservative_position = projected_position - payable_unprocessed_total
 
     bucket_defs = [
         ("vencido", "Vencido", None, -1),
@@ -17588,6 +17644,10 @@ async def contabilidad_cash_flow_view(
         f"<tr><td><code>{escape((row['cfdi'].cfdi_uuid or '—')[:36])}</code></td><td>{escape(row['due_date'].isoformat())}</td><td>{escape(row['cfdi'].receptor_nombre or '—')}</td><td>{escape(row['cfdi'].serie or '—')}</td><td>{escape(row['cfdi'].folio or '—')}</td><td>{format_currency(row['saldo'], row['cfdi'].moneda or 'MXN')}</td></tr>"
         for row in sorted(receivable_rows, key=lambda r: (r['due_date'], r['cfdi'].receptor_nombre or ''))[:20]
     )
+    payable_unprocessed_preview_rows = "".join(
+        f"<tr><td><code>{escape((row['cfdi'].cfdi_uuid or '—')[:36])}</code></td><td>{escape(row['cfdi'].fecha.date().isoformat() if row['cfdi'].fecha else '—')}</td><td>{escape(row['cfdi'].emisor_nombre or '—')}</td><td>{escape(row['cfdi'].serie or '—')}</td><td>{escape(row['cfdi'].folio or '—')}</td><td>{format_currency(row['amount'], row['cfdi'].moneda or 'MXN')}</td></tr>"
+        for row in sorted(payable_unprocessed_rows, key=lambda r: (r['cfdi'].fecha or datetime.min, r['cfdi'].emisor_nombre or ''), reverse=True)[:20]
+    )
     running_position = bank_net
     liquidity_bucket_rows = []
     for key, label, _start, _end in bucket_defs:
@@ -17643,6 +17703,7 @@ async def contabilidad_cash_flow_view(
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-pagar">Ver CxP</a></div>
             </form>
         </div>
         <div class="grid">
@@ -17651,7 +17712,8 @@ async def contabilidad_cash_flow_view(
             <div class="metric"><div class="label">Neto bancario</div><div class="value">{format_currency(bank_net)}</div><div class="muted">Entradas menos salidas del período</div></div>
             <div class="metric"><div class="label">Cobros esperados {horizon_days} días</div><div class="value">{format_currency(forecast_in_30)}</div><div class="muted">CxC emitida pendiente</div></div>
             <div class="metric"><div class="label">Pagos próximos {horizon_days} días</div><div class="value">{format_currency(forecast_out_30)}</div><div class="muted">Aprobados + enviados</div></div>
-            <div class="metric"><div class="label">Posición proyectada simple</div><div class="value">{format_currency(projected_position)}</div><div class="muted">Neto banco + CxC - compromisos</div></div>
+            <div class="metric"><div class="label">Posición comprometida</div><div class="value">{format_currency(projected_position)}</div><div class="muted">Neto banco + CxC - compromisos</div></div>
+            <div class="metric"><div class="label">Posición conservadora</div><div class="value">{format_currency(conservative_position)}</div><div class="muted">Comprometida - CxP sin captura</div></div>
             <div class="metric"><div class="label">Riesgo caja</div><div class="value"><span class="pill">{risk_label}</span></div><div class="muted">Heurístico operativo</div></div>
         </div>
         <div class="grid" style="margin-top:12px;">
@@ -17660,6 +17722,7 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">AMEX empresa comprobado</div><div class="value">{format_currency(amex_total)}</div><div class="muted">{len(amex_expenses)} cargos; {amex_without_cfdi} sin CFDI/UUID</div></div>
             <div class="metric light"><div class="label">CFDI emitidos SAT</div><div class="value">{format_currency(emitted_total)}</div><div class="muted">{len(emitted_cfdis)} facturas emitidas en período</div></div>
             <div class="metric light"><div class="label">CxC vencida</div><div class="value">{format_currency(receivable_overdue_total)}</div><div class="muted">Saldo emitido no cobrado vencido</div></div>
+            <div class="metric light"><div class="label">CxP sin captura</div><div class="value">{format_currency(payable_unprocessed_total)}</div><div class="muted">{len(payable_unprocessed_rows)} CFDI recibidos no operados</div></div>
             <div class="metric light"><div class="label">CFDI recibidos SAT</div><div class="value">{format_currency(received_total)}</div><div class="muted">{len(received_cfdis)} facturas recibidas</div></div>
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
         </div>
@@ -17680,6 +17743,11 @@ async def contabilidad_cash_flow_view(
             <h2 style="margin:0 0 12px 0;">Cobros esperados / CxC</h2>
             <table><thead><tr><th>UUID CFDI</th><th>Vence</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th></tr></thead><tbody>{receivable_preview_rows or f'<tr><td colspan="6" class="muted">Sin cuentas por cobrar pendientes en horizonte de {horizon_days} días.</td></tr>'}</tbody></table>
             <p class="muted">La estimación usa {dias_credito} días de crédito desde fecha CFDI y resta ingresos cobrados vinculados por UUID.</p>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Pasivo detectado / CxP sin captura</h2>
+            <table><thead><tr><th>UUID CFDI</th><th>Fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th></tr></thead><tbody>{payable_unprocessed_preview_rows or '<tr><td colspan="6" class="muted">Sin CFDI recibidos sin captura en el horizonte.</td></tr>'}</tbody></table>
+            <p class="muted">Estos CFDI recibidos no tienen gasto vinculado; no son pagos aprobados, pero sí riesgo conservador de salida.</p>
         </div>
     </div></body></html>
     """
