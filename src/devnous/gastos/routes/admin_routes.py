@@ -21521,15 +21521,30 @@ async def gastos_sin_cuenta_contable(
         ]
     )
 
-    # Count suggestions by confidence level
+    # Count suggestions and readiness issues using the same cleanup contract used
+    # by the rows/export path. Do not count deterministic counterpart fallbacks as
+    # human-pending work, otherwise the module appears not to update after save.
     high_confidence_count = sum(
         1 for s in suggestions.values() if s and s.confidence_score >= 0.8
     )
-    missing_main_count = sum(1 for gasto in gastos if gasto.cuenta_contable_id is None)
-    missing_contra_count = sum(
-        1 for gasto in gastos if gasto.contra_cuenta_contable_id is None
+    cleanup_states = {}
+    for gasto in gastos:
+        cleanup_states[gasto.id] = await build_cleanup_preview(session, gasto)
+    missing_main_count = sum(
+        1
+        for state in cleanup_states.values()
+        if "Falta cuenta de cargo" in (state.get("issues") or [])
     )
-    missing_cfdi_count = sum(1 for gasto in gastos if gasto.cfdi_report_id is None)
+    missing_contra_count = sum(
+        1
+        for state in cleanup_states.values()
+        if "Falta contrapartida" in (state.get("issues") or [])
+    )
+    missing_cfdi_count = sum(
+        1
+        for state in cleanup_states.values()
+        if "Falta CFDI vinculado" in (state.get("issues") or [])
+    )
 
     # Tournament map for proyecto UUID -> name
     tournament_map = {}
@@ -21587,7 +21602,7 @@ async def gastos_sin_cuenta_contable(
 
         # Get suggestion for this expense
         suggestion = suggestions.get(gasto.id)
-        cleanup_state = await build_cleanup_preview(session, gasto)
+        cleanup_state = cleanup_states.get(gasto.id) or await build_cleanup_preview(session, gasto)
         preview = cleanup_state["preview"]
         readiness_issues = list(cleanup_state["issues"] or [])
         suggestion_html = ""
