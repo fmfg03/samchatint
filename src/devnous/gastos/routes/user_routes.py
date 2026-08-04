@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Optional, List, Union, Dict, Any, Tuple
+from typing import Optional, List, Union, Dict, Any, Tuple, Iterable
 from uuid import UUID as UUIDType, uuid4
 from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
@@ -18829,13 +18829,26 @@ async def contabilidad_cash_flow_view(
                 id_key = str(poliza.cfdi_report_id)
                 collected_by_id[id_key] = collected_by_id.get(id_key, 0.0) + amount
 
+    treasury_cxc_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxc",
+        cfdi_ids=receivable_ids,
+        cfdi_uuids=receivable_uuids,
+    )
+    treasury_cxc_total = float(treasury_cxc_matches.get("total") or 0.0)
+    treasury_cxc_count = int(treasury_cxc_matches.get("count") or 0)
+
     receivable_rows: List[Dict[str, Any]] = []
     receivable_due_30_total = 0.0
     receivable_overdue_total = 0.0
     for cfdi in receivable_cfdis:
         total = float(cfdi.total or 0)
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
-        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        treasury_collected = max(
+            treasury_cxc_matches["by_uuid"].get(uuid_key, 0.0),
+            treasury_cxc_matches["by_id"].get(str(cfdi.id), 0.0),
+        )
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0)) + treasury_collected
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
@@ -18888,10 +18901,20 @@ async def contabilidad_cash_flow_view(
                 if uuid_key:
                     payable_expenses_by_uuid.setdefault(uuid_key, []).append(expense)
 
+    treasury_cxp_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxp",
+        cfdi_ids=payable_ids,
+        cfdi_uuids=payable_uuids,
+    )
+    treasury_cxp_total = float(treasury_cxp_matches.get("total") or 0.0)
+    treasury_cxp_count = int(treasury_cxp_matches.get("count") or 0)
     payable_unprocessed_rows: List[Dict[str, Any]] = []
     payable_unprocessed_total = 0.0
     for cfdi in payable_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        if str(cfdi.id) in treasury_cxp_matches["by_id"] or uuid_key in treasury_cxp_matches["by_uuid"]:
+            continue
         linked = list(payable_expenses_by_id.get(str(cfdi.id), []))
         for expense in payable_expenses_by_uuid.get(uuid_key, []):
             if expense not in linked:
@@ -19155,6 +19178,8 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">CxP sin captura</div><div class="value">{format_currency(payable_unprocessed_total)}</div><div class="muted">{len(payable_unprocessed_rows)} CFDI recibidos no operados</div></div>
             <div class="metric light"><div class="label">CFDI recibidos SAT</div><div class="value">{format_currency(received_total)}</div><div class="muted">{len(received_cfdis)} facturas recibidas</div></div>
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
+            <div class="metric light"><div class="label">CxC conciliada tesorería</div><div class="value">{format_currency(treasury_cxc_total)}</div><div class="muted">{treasury_cxc_count} matches aceptados; no se proyectan doble</div></div>
+            <div class="metric light"><div class="label">CxP conciliada tesorería</div><div class="value">{format_currency(treasury_cxp_total)}</div><div class="muted">{treasury_cxp_count} matches aceptados; fuera del riesgo CxP</div></div>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Tablero ejecutivo por periodo</h2>
@@ -19288,13 +19313,25 @@ async def contabilidad_cash_flow_export_xlsx(
                 collected_by_uuid[uuid_key] = collected_by_uuid.get(uuid_key, 0.0) + amount
             if poliza.cfdi_report_id:
                 collected_by_id[str(poliza.cfdi_report_id)] = collected_by_id.get(str(poliza.cfdi_report_id), 0.0) + amount
+    treasury_cxc_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxc",
+        cfdi_ids=receivable_ids,
+        cfdi_uuids=receivable_uuids,
+    )
+    treasury_cxc_total = float(treasury_cxc_matches.get("total") or 0.0)
+    treasury_cxc_count = int(treasury_cxc_matches.get("count") or 0)
     receivable_rows: List[Dict[str, Any]] = []
     receivable_due_total = 0.0
     receivable_overdue_total = 0.0
     for cfdi in receivable_cfdis:
         total = float(cfdi.total or 0)
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
-        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        treasury_collected = max(
+            treasury_cxc_matches["by_uuid"].get(uuid_key, 0.0),
+            treasury_cxc_matches["by_id"].get(str(cfdi.id), 0.0),
+        )
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0)) + treasury_collected
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
@@ -19339,10 +19376,20 @@ async def contabilidad_cash_flow_export_xlsx(
                 uuid_key = (raw_uuid or "").strip().upper()
                 if uuid_key:
                     payable_expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+    treasury_cxp_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxp",
+        cfdi_ids=payable_ids,
+        cfdi_uuids=payable_uuids,
+    )
+    treasury_cxp_total = float(treasury_cxp_matches.get("total") or 0.0)
+    treasury_cxp_count = int(treasury_cxp_matches.get("count") or 0)
     payable_unprocessed_rows: List[Dict[str, Any]] = []
     payable_unprocessed_total = 0.0
     for cfdi in payable_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        if str(cfdi.id) in treasury_cxp_matches["by_id"] or uuid_key in treasury_cxp_matches["by_uuid"]:
+            continue
         linked = list(payable_expenses_by_id.get(str(cfdi.id), []))
         for expense in payable_expenses_by_uuid.get(uuid_key, []):
             if expense not in linked:
@@ -19419,6 +19466,10 @@ async def contabilidad_cash_flow_export_xlsx(
         ["Posición conservadora", conservative_position],
         ["CxC vencida", receivable_overdue_total],
         ["Banco sin conciliar", bank_unmatched_amount],
+        ["CxC conciliada tesorería", treasury_cxc_total],
+        ["# matches CxC tesorería", treasury_cxc_count],
+        ["CxP conciliada tesorería", treasury_cxp_total],
+        ["# matches CxP tesorería", treasury_cxp_count],
         ["CFDI emitidos período", emitted_total],
         ["CFDI recibidos período", received_total],
     ])
@@ -21128,6 +21179,69 @@ def _recompute_conciliacion_estado(movement: BankMovement) -> str:
     if movement.matched_aux_entry_id or movement.proveedor_cliente_id or movement.matched_expense_id:
         return "medium"
     return "unmatched"
+
+
+def _treasury_match_key_uuid(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+async def _load_active_treasury_cfdi_match_amounts(
+    session: AsyncSession,
+    *,
+    direction: str,
+    cfdi_ids: Iterable[Any],
+    cfdi_uuids: Iterable[str],
+) -> Dict[str, Any]:
+    """Return active accepted treasury matches by CFDI id/UUID.
+
+    These matches intentionally do not create pólizas or gastos. Cash-flow should
+    still use them as collection/payment evidence so accepted bank evidence does
+    not remain projected as a future CxC/CxP item.
+    """
+    direction = (direction or "").strip().lower()
+    id_keys = {str(value) for value in cfdi_ids if value}
+    uuid_keys = {_treasury_match_key_uuid(value) for value in cfdi_uuids if _treasury_match_key_uuid(value)}
+    empty = {"by_id": {}, "by_uuid": {}, "total": 0.0, "count": 0}
+    if direction not in {"cxc", "cxp"} or (not id_keys and not uuid_keys):
+        return empty
+
+    result = await session.execute(
+        select(ReconciliationAuditLog)
+        .options(selectinload(ReconciliationAuditLog.bank_movement))
+        .where(ReconciliationAuditLog.action.in_(["accept_treasury_cfdi_match", "undo_treasury_cfdi_match"]))
+        .order_by(ReconciliationAuditLog.bank_movement_id.asc(), ReconciliationAuditLog.created_at.asc())
+    )
+    latest_by_movement: Dict[str, ReconciliationAuditLog] = {}
+    for log in result.scalars().all():
+        latest_by_movement[str(log.bank_movement_id)] = log
+
+    by_id: Dict[str, float] = {}
+    by_uuid: Dict[str, float] = {}
+    total = 0.0
+    count = 0
+    for log in latest_by_movement.values():
+        if log.action != "accept_treasury_cfdi_match":
+            continue
+        movement = log.bank_movement
+        if movement is None or (movement.conciliacion_estado or "unmatched").lower() == "unmatched":
+            continue
+        details = log.details or {}
+        if (details.get("direction") or "").strip().lower() != direction:
+            continue
+        cfdi_id = str(details.get("cfdi_report_id") or "").strip()
+        cfdi_uuid = _treasury_match_key_uuid(details.get("cfdi_uuid"))
+        if cfdi_id not in id_keys and cfdi_uuid not in uuid_keys:
+            continue
+        amount = float(details.get("cfdi_amount_considered") or movement.importe or 0)
+        if amount <= 0:
+            continue
+        if cfdi_id:
+            by_id[cfdi_id] = by_id.get(cfdi_id, 0.0) + amount
+        if cfdi_uuid:
+            by_uuid[cfdi_uuid] = by_uuid.get(cfdi_uuid, 0.0) + amount
+        total += amount
+        count += 1
+    return {"by_id": by_id, "by_uuid": by_uuid, "total": total, "count": count}
 
 
 def _get_aging_bucket(now: datetime, movement: BankMovement) -> Optional[str]:
