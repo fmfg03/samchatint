@@ -1969,6 +1969,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/coi", "COI", "coi"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
         ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
+        ("/admin/contabilidad/cuentas-por-pagar", "CxP", "cxp"),
         ("/admin/contabilidad/manual", "Pólizas manuales", "manual"),
         ("/admin/contabilidad/reclasificacion", "Reclasificación", "reclasificacion"),
         ("/admin/contabilidad/diario", "Diario", "diario"),
@@ -17144,6 +17145,216 @@ async def contabilidad_cuentas_por_cobrar_view(
                 <tbody>{rows_html or '<tr><td colspan="12" class="muted">No hay CFDI emitidos con estos filtros.</td></tr>'}</tbody>
             </table></div>
             <p class="muted">Nota: si una factura fue cobrada pero el ingreso no tiene UUID capturado, aparecerá pendiente hasta vincularla.</p>
+        </div>
+    </div></body></html>
+    """
+    return HTMLResponse(content=html)
+
+
+
+@router.get("/admin/contabilidad/cuentas-por-pagar", response_class=HTMLResponse)
+async def contabilidad_cuentas_por_pagar_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    desde: Optional[str] = Query(None),
+    hasta: Optional[str] = Query(None),
+    estado: str = Query("sin_captura"),
+    proveedor: Optional[str] = Query(None),
+) -> HTMLResponse:
+    """Read-only accounts payable worklist from received CFDI and linked expenses."""
+    today = datetime.utcnow().date()
+    try:
+        from_date = datetime.strptime(desde, "%Y-%m-%d") if desde else datetime(today.year, 1, 1)
+    except ValueError:
+        from_date = datetime(today.year, 1, 1)
+    try:
+        to_date_exclusive = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1) if hasta else datetime.combine(today + timedelta(days=1), datetime.min.time())
+    except ValueError:
+        to_date_exclusive = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    estado = (estado or "sin_captura").lower().strip()
+    proveedor_filter = (proveedor or "").strip()
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = [
+        str(row[0]).strip().upper()
+        for row in rfc_rows.all()
+        if row and row[0] and str(row[0]).strip()
+    ]
+
+    if platform_rfcs:
+        cfdi_conditions = [
+            CFDIReport.fecha >= from_date,
+            CFDIReport.fecha < to_date_exclusive,
+            CFDIReport.tipo_de_comprobante == "I",
+            func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+        ]
+        if proveedor_filter:
+            token = f"%{proveedor_filter}%"
+            cfdi_conditions.append(
+                or_(
+                    CFDIReport.emisor_nombre.ilike(token),
+                    CFDIReport.emisor_rfc.ilike(token),
+                    CFDIReport.serie.ilike(token),
+                    CFDIReport.folio.ilike(token),
+                    CFDIReport.cfdi_uuid.ilike(token),
+                )
+            )
+        cfdi_result = await session.execute(
+            select(CFDIReport)
+            .where(and_(*cfdi_conditions))
+            .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.emisor_nombre.asc())
+            .limit(1000)
+        )
+        received_cfdis = cfdi_result.scalars().all()
+    else:
+        received_cfdis = []
+
+    cfdi_ids = [c.id for c in received_cfdis]
+    cfdi_uuids = [(c.cfdi_uuid or "").strip().upper() for c in received_cfdis if (c.cfdi_uuid or "").strip()]
+    expenses_by_id: Dict[str, List[ExpenseReport]] = {}
+    expenses_by_uuid: Dict[str, List[ExpenseReport]] = {}
+    if cfdi_ids or cfdi_uuids:
+        match_conditions = []
+        if cfdi_ids:
+            match_conditions.append(ExpenseReport.cfdi_report_id.in_(cfdi_ids))
+        if cfdi_uuids:
+            match_conditions.append(func.upper(ExpenseReport.cfdi_uuid_manual).in_(cfdi_uuids))
+            match_conditions.append(func.upper(ExpenseReport.numero_factura).in_(cfdi_uuids))
+        expense_result = await session.execute(
+            select(ExpenseReport)
+            .where(
+                ExpenseReport.estado_gasto == "activo",
+                or_(*match_conditions),
+            )
+        )
+        for expense in expense_result.scalars().all():
+            if expense.cfdi_report_id:
+                expenses_by_id.setdefault(str(expense.cfdi_report_id), []).append(expense)
+            uuid_keys = [expense.cfdi_uuid_manual, expense.numero_factura]
+            for raw_uuid in uuid_keys:
+                uuid_key = (raw_uuid or "").strip().upper()
+                if uuid_key:
+                    expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+
+    rows_data: List[Dict[str, Any]] = []
+    for cfdi in received_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        linked_expenses = list(expenses_by_id.get(str(cfdi.id), []))
+        for exp in expenses_by_uuid.get(uuid_key, []):
+            if exp not in linked_expenses:
+                linked_expenses.append(exp)
+        linked_total = sum(float(exp.gasto_cantidad or 0) for exp in linked_expenses)
+        amex_total = sum(float(exp.gasto_cantidad or 0) for exp in linked_expenses if exp.pagado_con_amex_empresa is True)
+        if not linked_expenses:
+            row_status = "sin_captura"
+        elif amex_total >= max(linked_total, 0.01):
+            row_status = "amex"
+        else:
+            row_status = "vinculado"
+        if estado in {"sin_captura", "vinculado", "amex"} and row_status != estado:
+            continue
+        rows_data.append({
+            "cfdi": cfdi,
+            "linked_expenses": linked_expenses,
+            "linked_total": linked_total,
+            "amex_total": amex_total,
+            "status": row_status,
+        })
+
+    total_cfdi = sum(float(row["cfdi"].total or 0) for row in rows_data)
+    total_sin_captura = sum(float(row["cfdi"].total or 0) for row in rows_data if row["status"] == "sin_captura")
+    total_vinculado = sum(float(row["cfdi"].total or 0) for row in rows_data if row["status"] == "vinculado")
+    total_amex = sum(float(row["cfdi"].total or 0) for row in rows_data if row["status"] == "amex")
+
+    def _status_badge(value: str) -> str:
+        colors = {"sin_captura": "#b91c1c", "vinculado": "#047857", "amex": "#1d4ed8"}
+        labels = {"sin_captura": "Sin captura", "vinculado": "Vinculado", "amex": "AMEX empresa"}
+        return f'<span style="display:inline-block;padding:4px 9px;border-radius:999px;background:{colors.get(value, "#374151")};color:#fff;font-weight:700;font-size:12px;">{labels.get(value, value)}</span>'
+
+    rows_html = "".join(
+        f"""
+        <tr>
+            <td><code>{escape((row['cfdi'].cfdi_uuid or '—')[:36])}</code></td>
+            <td>{escape(row['cfdi'].fecha.date().isoformat() if row['cfdi'].fecha else '—')}</td>
+            <td>{escape(row['cfdi'].emisor_nombre or '—')}<br><span class="muted">{escape(row['cfdi'].emisor_rfc or '—')}</span></td>
+            <td>{escape(row['cfdi'].serie or '—')}</td>
+            <td>{escape(row['cfdi'].folio or '—')}</td>
+            <td>{format_currency(float(row['cfdi'].total or 0), row['cfdi'].moneda or 'MXN')}</td>
+            <td>{format_currency(row['linked_total'], row['cfdi'].moneda or 'MXN')}</td>
+            <td>{len(row['linked_expenses'])}</td>
+            <td>{_status_badge(row['status'])}</td>
+            <td>{escape(row['cfdi'].descripcion_concepto_principal or '—')}</td>
+        </tr>
+        """
+        for row in rows_data[:500]
+    )
+
+    status_options = "".join(
+        f'<option value="{value}" {"selected" if estado == value else ""}>{label}</option>'
+        for value, label in [
+            ("todos", "Todos"),
+            ("sin_captura", "Sin captura"),
+            ("vinculado", "Vinculados"),
+            ("amex", "AMEX empresa"),
+        ]
+    )
+    desde_value = escape(from_date.date().isoformat())
+    hasta_value = escape((to_date_exclusive.date() - timedelta(days=1)).isoformat())
+
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cuentas por Pagar</title>
+    <style>
+    body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
+    .container {{ max-width: 1500px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
+    .toolbar {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; align-items:end; }}
+    input, select {{ width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; box-sizing:border-box; }}
+    .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+    .metric {{ background:#111827; color:#fff; border-radius:12px; padding:16px; }}
+    .metric.warn {{ background:#7f1d1d; }}
+    .metric.info {{ background:#1d4ed8; }}
+    .metric .label {{ font-size:12px; opacity:.75; text-transform:uppercase; letter-spacing:.04em; }}
+    .metric .value {{ font-size:24px; font-weight:800; margin-top:6px; }}
+    .muted {{ color:#6b7280; font-size:13px; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
+    th {{ background:#f3f4f6; position:sticky; top:0; }}
+    .table-wrap {{ overflow:auto; max-height:70vh; }}
+    code {{ font-size:12px; }}
+    </style></head>
+    <body><div class="container">
+        {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cxp")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">Cuentas por Pagar</h1>
+            <p class="muted" style="margin:0;">Facturas recibidas por las RFC activas de Plataforma cruzadas contra gastos capturados. Vista read-only para detectar pasivos operativos y soporte de cash flow.</p>
+        </div>
+        <div class="card">
+            <form method="GET" action="/admin/contabilidad/cuentas-por-pagar" class="toolbar">
+                <div><label>Desde</label><input type="date" name="desde" value="{desde_value}"></div>
+                <div><label>Hasta</label><input type="date" name="hasta" value="{hasta_value}"></div>
+                <div><label>Estado</label><select name="estado">{status_options}</select></div>
+                <div><label>Proveedor / RFC / UUID</label><input type="text" name="proveedor" value="{escape(proveedor_filter)}" placeholder="Ej. FedEx"></div>
+                <div><button type="submit" class="button">Filtrar</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
+            </form>
+        </div>
+        <div class="grid">
+            <div class="metric"><div class="label">CFDI recibidos</div><div class="value">{format_currency(total_cfdi)}</div><div class="muted">{len(rows_data)} CFDI en vista</div></div>
+            <div class="metric warn"><div class="label">Sin captura operativa</div><div class="value">{format_currency(total_sin_captura)}</div><div class="muted">No vinculado a gasto</div></div>
+            <div class="metric"><div class="label">Vinculado a gastos</div><div class="value">{format_currency(total_vinculado)}</div><div class="muted">Ya existe evidencia operativa</div></div>
+            <div class="metric info"><div class="label">AMEX empresa</div><div class="value">{format_currency(total_amex)}</div><div class="muted">No debería generar reembolso</div></div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+            <h2 style="margin:0 0 12px 0;">Facturas recibidas</h2>
+            <div class="table-wrap"><table>
+                <thead><tr><th>UUID CFDI</th><th>Fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total CFDI</th><th>Gasto vinculado</th><th># gastos</th><th>Estado</th><th>Concepto</th></tr></thead>
+                <tbody>{rows_html or '<tr><td colspan="10" class="muted">No hay CFDI recibidos con estos filtros.</td></tr>'}</tbody>
+            </table></div>
+            <p class="muted">Nota: “sin captura” no significa necesariamente vencido o no pagado; significa que el CFDI recibido aún no está amarrado a un gasto en SamChat.</p>
         </div>
     </div></body></html>
     """
