@@ -1976,6 +1976,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/cierres", "Cierres", "cierres"),
         ("/admin/contabilidad/auditoria", "Auditoría", "auditoria"),
         ("/admin/contabilidad/conciliacion", "Conciliación", "conciliacion"),
+        ("/admin/contabilidad/cash-flow", "Cash Flow", "cash_flow"),
         ("/admin/contabilidad/coi/carga-masiva", "Cargar COI", "coi_upload"),
         ("/admin/contabilidad/auxiliar/carga-masiva", "Cargar auxiliar", "aux_upload"),
         ("/admin/contabilidad/banco/carga-masiva", "Cargar banco", "bank_upload"),
@@ -16920,6 +16921,200 @@ async def amex_conciliacion_view(
     </html>
     """
     return html
+
+
+@router.get("/admin/contabilidad/cash-flow", response_class=HTMLResponse)
+async def contabilidad_cash_flow_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> str:
+    """Read-only operational cash-flow snapshot built from bank reconciliation, payment requests and SAT CFDI."""
+    now = datetime.utcnow()
+    today = now.date()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
+    horizon_end = datetime.combine(today + timedelta(days=30), datetime.min.time())
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = [
+        str(row[0]).strip().upper()
+        for row in rfc_rows.all()
+        if row and row[0] and str(row[0]).strip()
+    ]
+
+    bank_result = await session.execute(
+        select(BankMovement)
+        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt)
+        .order_by(BankMovement.cuenta_bancaria.asc(), BankMovement.fecha.asc(), BankMovement.source_row_number.asc())
+    )
+    bank_movements = bank_result.scalars().all()
+
+    bank_inflows = sum(float(m.importe or 0) for m in bank_movements if (m.signo or "").strip() == "+")
+    bank_outflows = sum(float(m.importe or 0) for m in bank_movements if (m.signo or "").strip() == "-")
+    bank_net = bank_inflows - bank_outflows
+    bank_unmatched = [m for m in bank_movements if (m.conciliacion_estado or "unmatched").lower() == "unmatched"]
+    bank_unmatched_amount = sum(float(m.importe or 0) for m in bank_unmatched)
+
+    account_rows: Dict[str, Dict[str, Any]] = {}
+    for movement in bank_movements:
+        account = movement.cuenta_bancaria or "Sin cuenta"
+        bucket = account_rows.setdefault(account, {"count": 0, "in": 0.0, "out": 0.0, "net": 0.0, "unmatched": 0})
+        amount = float(movement.importe or 0)
+        sign = (movement.signo or "").strip()
+        bucket["count"] += 1
+        if sign == "+":
+            bucket["in"] += amount
+            bucket["net"] += amount
+        elif sign == "-":
+            bucket["out"] += amount
+            bucket["net"] -= amount
+        if (movement.conciliacion_estado or "unmatched").lower() == "unmatched":
+            bucket["unmatched"] += 1
+
+    committed_result = await session.execute(
+        select(Documento)
+        .options(selectinload(Documento.proveedor_cliente), selectinload(Documento.beneficiario_empleado), selectinload(Documento.torneo))
+        .where(
+            Documento.tipo == "SOLICITUD",
+            Documento.estado.in_(["aprobado", "enviado"]),
+            or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        )
+        .order_by(Documento.fecha_pago.asc().nulls_last(), Documento.creado_en.asc())
+    )
+    committed_docs = committed_result.scalars().all()
+    approved_pending = [d for d in committed_docs if (d.estado or "").lower() == "aprobado"]
+    submitted_pending = [d for d in committed_docs if (d.estado or "").lower() == "enviado"]
+    approved_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in approved_pending)
+    submitted_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in submitted_pending)
+
+    amex_result = await session.execute(
+        select(ExpenseReport)
+        .where(
+            ExpenseReport.estado_gasto == "activo",
+            ExpenseReport.pagado_con_amex_empresa.is_(True),
+            ExpenseReport.fecha >= start_dt,
+            ExpenseReport.fecha < end_dt,
+        )
+    )
+    amex_expenses = amex_result.scalars().all()
+    amex_total = sum(float(e.gasto_cantidad or 0) for e in amex_expenses)
+    amex_without_cfdi = sum(1 for e in amex_expenses if not e.cfdi_report_id and not (e.cfdi_uuid_manual or "").strip())
+
+    cfdi_conditions_common = [CFDIReport.fecha >= start_dt, CFDIReport.fecha < end_dt]
+    if platform_rfcs:
+        emitted_conditions = [*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs)]
+        received_conditions = [*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs)]
+    else:
+        emitted_conditions = [text("1=0")]
+        received_conditions = [text("1=0")]
+    emitted_result = await session.execute(select(CFDIReport).where(and_(*emitted_conditions)))
+    received_result = await session.execute(select(CFDIReport).where(and_(*received_conditions)))
+    emitted_cfdis = emitted_result.scalars().all()
+    received_cfdis = received_result.scalars().all()
+    emitted_total = sum(float(c.total or 0) for c in emitted_cfdis)
+    received_total = sum(float(c.total or 0) for c in received_cfdis)
+
+    forecast_out_30 = approved_pending_total + submitted_pending_total
+    projected_position = bank_net - forecast_out_30
+    risk_label = "Bajo"
+    risk_color = "#047857"
+    if projected_position < 0 or len(bank_unmatched) > 25:
+        risk_label = "Alto"
+        risk_color = "#b91c1c"
+    elif forecast_out_30 > max(bank_inflows, 1) * 0.5 or len(bank_unmatched) > 10:
+        risk_label = "Medio"
+        risk_color = "#b45309"
+
+    def _doc_party(doc: Documento) -> str:
+        if doc.proveedor_cliente and doc.proveedor_cliente.nombre:
+            return doc.proveedor_cliente.nombre
+        if doc.beneficiario_empleado and doc.beneficiario_empleado.nombre:
+            return doc.beneficiario_empleado.nombre
+        return "—"
+
+    upcoming_rows = "".join(
+        f"<tr><td>{escape(d.numero_referencia or '—')}</td><td>{escape(d.estado or '—')}</td><td>{d.fecha_pago.isoformat() if d.fecha_pago else 'Sin fecha'}</td><td>{escape(_doc_party(d))}</td><td>{format_currency(float(d.monto_solicitado or d.monto_total or 0), currency_for(d))}</td><td>{escape((d.torneo.name if d.torneo else d.proyecto_otro) or '—')}</td></tr>"
+        for d in committed_docs[:25]
+    )
+    account_summary_rows = "".join(
+        f"<tr><td>{escape(account)}</td><td>{stats['count']}</td><td>{format_currency(stats['in'])}</td><td>{format_currency(stats['out'])}</td><td>{format_currency(stats['net'])}</td><td>{stats['unmatched']}</td></tr>"
+        for account, stats in sorted(account_rows.items(), key=lambda item: abs(item[1]['net']), reverse=True)
+    )
+
+    month_options = "".join(
+        f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
+        for m in range(1, 13)
+    )
+    year_options = "".join(
+        f'<option value="{y}" {"selected" if y == selected_year else ""}>{y}</option>'
+        for y in range(now.year - 2, now.year + 2)
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cash Flow Operativo</title>
+    <style>
+    body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
+    .container {{ max-width: 1500px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
+    .toolbar {{ display:flex; gap:12px; flex-wrap:wrap; align-items:end; }}
+    select, input {{ padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; }}
+    .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+    .metric {{ background:#111827; color:#fff; border-radius:12px; padding:16px; }}
+    .metric.light {{ background:#fff; color:#111827; border:1px solid #e5e7eb; }}
+    .metric .label {{ font-size:12px; opacity:.75; text-transform:uppercase; letter-spacing:.04em; }}
+    .metric .value {{ font-size:24px; font-weight:800; margin-top:6px; }}
+    .muted {{ color:#6b7280; font-size:13px; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
+    th {{ background:#f3f4f6; }}
+    .pill {{ display:inline-block; padding:4px 10px; border-radius:999px; color:#fff; background:{risk_color}; font-weight:700; }}
+    </style></head>
+    <body><div class="container">
+        {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
+            <p class="muted" style="margin:0 0 16px 0;">Primer snapshot read-only: banco real del período, compromisos próximos y contexto fiscal SAT. No sustituye el cierre contable; lo prepara.</p>
+            <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
+                <div><label>Año</label><br><select name="year">{year_options}</select></div>
+                <div><label>Mes</label><br><select name="month">{month_options}</select></div>
+                <div><button type="submit" class="button">Actualizar</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
+            </form>
+        </div>
+        <div class="grid">
+            <div class="metric"><div class="label">Banco entradas</div><div class="value">{format_currency(bank_inflows)}</div><div class="muted">Movimientos con signo +</div></div>
+            <div class="metric"><div class="label">Banco salidas</div><div class="value">{format_currency(bank_outflows)}</div><div class="muted">Movimientos con signo -</div></div>
+            <div class="metric"><div class="label">Neto bancario</div><div class="value">{format_currency(bank_net)}</div><div class="muted">Entradas menos salidas del período</div></div>
+            <div class="metric"><div class="label">Pagos próximos 30 días</div><div class="value">{format_currency(forecast_out_30)}</div><div class="muted">Aprobados + enviados</div></div>
+            <div class="metric"><div class="label">Posición proyectada simple</div><div class="value">{format_currency(projected_position)}</div><div class="muted">Neto banco - compromisos</div></div>
+            <div class="metric"><div class="label">Riesgo caja</div><div class="value"><span class="pill">{risk_label}</span></div><div class="muted">Heurístico operativo</div></div>
+        </div>
+        <div class="grid" style="margin-top:12px;">
+            <div class="metric light"><div class="label">Solicitudes aprobadas pendientes</div><div class="value">{format_currency(approved_pending_total)}</div><div class="muted">{len(approved_pending)} documentos</div></div>
+            <div class="metric light"><div class="label">Solicitudes enviadas pendientes</div><div class="value">{format_currency(submitted_pending_total)}</div><div class="muted">{len(submitted_pending)} documentos</div></div>
+            <div class="metric light"><div class="label">AMEX empresa comprobado</div><div class="value">{format_currency(amex_total)}</div><div class="muted">{len(amex_expenses)} cargos; {amex_without_cfdi} sin CFDI/UUID</div></div>
+            <div class="metric light"><div class="label">CFDI emitidos SAT</div><div class="value">{format_currency(emitted_total)}</div><div class="muted">{len(emitted_cfdis)} facturas emitidas</div></div>
+            <div class="metric light"><div class="label">CFDI recibidos SAT</div><div class="value">{format_currency(received_total)}</div><div class="muted">{len(received_cfdis)} facturas recibidas</div></div>
+            <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Cuentas bancarias</h2>
+            <table><thead><tr><th>Cuenta</th><th>Movs</th><th>Entradas</th><th>Salidas</th><th>Neto</th><th>Sin conciliar</th></tr></thead><tbody>{account_summary_rows or '<tr><td colspan="6" class="muted">Sin movimientos bancarios para el período.</td></tr>'}</tbody></table>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Compromisos próximos</h2>
+            <table><thead><tr><th>Documento</th><th>Estado</th><th>Fecha pago</th><th>Beneficiario</th><th>Monto</th><th>Proyecto</th></tr></thead><tbody>{upcoming_rows or '<tr><td colspan="6" class="muted">Sin solicitudes enviadas/aprobadas en horizonte de 30 días.</td></tr>'}</tbody></table>
+        </div>
+    </div></body></html>
+    """
+    return HTMLResponse(content=html)
 
 
 @router.get("/admin/contabilidad/conciliacion", response_class=HTMLResponse)
