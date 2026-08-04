@@ -67,6 +67,7 @@ jobs:
             "tests/unit/test_assistant_analyst_live_evidence.py"
             "tests/unit/test_assistant_analyst_evidence_quality.py"
             "tests/unit/test_assistant_analyst_workspace.py"
+            "tests/unit/test_assistant_business_diff_preview.py"
             "tests/unit/test_assistant_owner_needs_eval.py"
             "tests/integration/test_assistant_analyst_case_persistence.py"
             "scripts/check_tournament_write_boundaries.py"
@@ -159,6 +160,7 @@ jobs:
             tests/unit/test_assistant_analyst_live_evidence.py \
             tests/unit/test_assistant_analyst_evidence_quality.py \
             tests/unit/test_assistant_analyst_workspace.py \
+            tests/unit/test_assistant_business_diff_preview.py \
             tests/unit/test_assistant_owner_needs_eval.py \
             tests/integration/test_assistant_analyst_case_persistence.py \
             tests/unit/gastos/test_tournament_admin_authority_closure.py \
