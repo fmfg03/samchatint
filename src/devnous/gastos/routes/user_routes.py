@@ -80,6 +80,7 @@ from ..services.amex_expense_service import (
     compute_informe_saldo,
     describe_informe_balance,
     employee_paid_sql_condition,
+    is_company_amex_account,
     is_company_amex_expense,
     set_company_amex_status,
     sum_paid_solicitud_amounts,
@@ -29865,6 +29866,7 @@ async def crear_gasto_rapido_en_informe(
                 selectinload(CuentaDeGastos.torneo),
                 selectinload(CuentaDeGastos.empleado),
                 selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
             )
         )
         cuenta = cuenta_result.scalar_one_or_none()
@@ -29981,6 +29983,10 @@ async def crear_gasto_rapido_en_informe(
             currency=currency_for(cuenta),
             budget_concept_id=UUIDType(str(budget_concept["id"])) if budget_concept else None,
         )
+        if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
+            expense.pagado_con_amex_empresa = True
+            expense.metodo_pago = "TARJETA CREDITO AMEX"
+
         expense.numero_factura = values["numero_factura"]
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base

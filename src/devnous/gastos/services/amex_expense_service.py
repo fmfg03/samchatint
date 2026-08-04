@@ -138,6 +138,22 @@ def describe_informe_balance(
     return balance_amount, "Saldado", "Entregado y gastos de bolsillo coinciden."
 
 
+def is_company_amex_account(account: object) -> bool:
+    """Return True when a beneficiary bank-account record represents company AMEX.
+
+    Informes de Gastos may be created by a capturer for an employee beneficiary
+    while selecting the employee's AMEX card record as the payment/account
+    vehicle. Expenses entered into that account are company-paid and must not
+    become employee reimbursement balance.
+    """
+    haystack = " ".join(
+        str(getattr(account, field, "") or "")
+        for field in ("nombre", "banco", "cuenta_bancaria", "cuenta_clabe", "tipo")
+    ).strip().lower()
+    normalized = haystack.replace(".", " ").replace("-", " ")
+    return "amex" in normalized or "american express" in normalized
+
+
 def is_company_amex_expense(expense: ExpenseReport) -> bool:
     explicit = getattr(expense, "pagado_con_amex_empresa", None)
     if explicit is not None:
