@@ -17704,6 +17704,7 @@ async def contabilidad_cash_flow_view(
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-pagar">Ver CxP</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -17752,6 +17753,287 @@ async def contabilidad_cash_flow_view(
     </div></body></html>
     """
     return HTMLResponse(content=html)
+
+
+
+@router.get("/admin/contabilidad/cash-flow/export.xlsx")
+async def contabilidad_cash_flow_export_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    horizon_days: int = Query(30),
+    dias_credito: int = Query(30),
+) -> Response:
+    """Export the operational cash-flow snapshot to Excel."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    now = datetime.utcnow()
+    today = now.date()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    horizon_days = max(15, min(int(horizon_days or 30), 180))
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
+    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
+
+    bank_result = await session.execute(
+        select(BankMovement)
+        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt)
+        .order_by(BankMovement.cuenta_bancaria.asc(), BankMovement.fecha.asc(), BankMovement.source_row_number.asc())
+    )
+    bank_movements = bank_result.scalars().all()
+    bank_inflows = sum(float(m.importe or 0) for m in bank_movements if (m.signo or "").strip() == "+")
+    bank_outflows = sum(float(m.importe or 0) for m in bank_movements if (m.signo or "").strip() == "-")
+    bank_net = bank_inflows - bank_outflows
+    bank_unmatched = [m for m in bank_movements if (m.conciliacion_estado or "unmatched").lower() == "unmatched"]
+    bank_unmatched_amount = sum(float(m.importe or 0) for m in bank_unmatched)
+
+    committed_result = await session.execute(
+        select(Documento)
+        .options(selectinload(Documento.proveedor_cliente), selectinload(Documento.beneficiario_empleado), selectinload(Documento.torneo))
+        .where(
+            Documento.tipo == "SOLICITUD",
+            Documento.estado.in_(["aprobado", "enviado"]),
+            or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        )
+        .order_by(Documento.fecha_pago.asc().nulls_last(), Documento.creado_en.asc())
+    )
+    committed_docs = committed_result.scalars().all()
+    approved_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in committed_docs if (d.estado or "").lower() == "aprobado")
+    submitted_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in committed_docs if (d.estado or "").lower() == "enviado")
+
+    cfdi_conditions_common = [CFDIReport.fecha >= start_dt, CFDIReport.fecha < end_dt]
+    if platform_rfcs:
+        emitted_result = await session.execute(select(CFDIReport).where(and_(*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs))))
+        received_result = await session.execute(select(CFDIReport).where(and_(*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs))))
+        emitted_cfdis = emitted_result.scalars().all()
+        received_cfdis = received_result.scalars().all()
+    else:
+        emitted_cfdis = []
+        received_cfdis = []
+    emitted_total = sum(float(c.total or 0) for c in emitted_cfdis)
+    received_total = sum(float(c.total or 0) for c in received_cfdis)
+
+    receivable_cfdis: List[CFDIReport] = []
+    if platform_rfcs:
+        receivable_result = await session.execute(
+            select(CFDIReport)
+            .where(
+                CFDIReport.fecha >= datetime(today.year, 1, 1),
+                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                CFDIReport.tipo_de_comprobante == "I",
+                func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+            )
+            .order_by(CFDIReport.fecha.asc().nulls_last(), CFDIReport.receptor_nombre.asc())
+            .limit(1000)
+        )
+        receivable_cfdis = receivable_result.scalars().all()
+    receivable_ids = [c.id for c in receivable_cfdis]
+    receivable_uuids = [(c.cfdi_uuid or "").strip().upper() for c in receivable_cfdis if (c.cfdi_uuid or "").strip()]
+    collected_by_uuid: Dict[str, float] = {}
+    collected_by_id: Dict[str, float] = {}
+    if receivable_ids or receivable_uuids:
+        match_conditions = []
+        if receivable_uuids:
+            match_conditions.append(func.upper(AccountingPoliza.cfdi_uuid).in_(receivable_uuids))
+        if receivable_ids:
+            match_conditions.append(AccountingPoliza.cfdi_report_id.in_(receivable_ids))
+        collected_result = await session.execute(
+            select(AccountingPoliza).options(selectinload(AccountingPoliza.lines)).where(AccountingPoliza.origen == "ingreso_cobrado_ui", or_(*match_conditions))
+        )
+        for poliza in collected_result.scalars().all():
+            amount = sum(float(line.debe or 0) for line in poliza.lines)
+            uuid_key = (poliza.cfdi_uuid or "").strip().upper()
+            if uuid_key:
+                collected_by_uuid[uuid_key] = collected_by_uuid.get(uuid_key, 0.0) + amount
+            if poliza.cfdi_report_id:
+                collected_by_id[str(poliza.cfdi_report_id)] = collected_by_id.get(str(poliza.cfdi_report_id), 0.0) + amount
+    receivable_rows: List[Dict[str, Any]] = []
+    receivable_due_total = 0.0
+    receivable_overdue_total = 0.0
+    for cfdi in receivable_cfdis:
+        total = float(cfdi.total or 0)
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        saldo = max(total - collected, 0.0)
+        if saldo <= 0.01:
+            continue
+        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        due_date = issue_date + timedelta(days=dias_credito)
+        if due_date <= today + timedelta(days=horizon_days):
+            receivable_due_total += saldo
+        if due_date < today:
+            receivable_overdue_total += saldo
+        receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
+
+    payable_cfdis: List[CFDIReport] = []
+    if platform_rfcs:
+        payable_result = await session.execute(
+            select(CFDIReport)
+            .where(
+                CFDIReport.fecha >= datetime(today.year, 1, 1),
+                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                CFDIReport.tipo_de_comprobante == "I",
+                func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+            )
+            .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.emisor_nombre.asc())
+            .limit(1000)
+        )
+        payable_cfdis = payable_result.scalars().all()
+    payable_ids = [c.id for c in payable_cfdis]
+    payable_uuids = [(c.cfdi_uuid or "").strip().upper() for c in payable_cfdis if (c.cfdi_uuid or "").strip()]
+    payable_expenses_by_id: Dict[str, List[ExpenseReport]] = {}
+    payable_expenses_by_uuid: Dict[str, List[ExpenseReport]] = {}
+    if payable_ids or payable_uuids:
+        payable_match_conditions = []
+        if payable_ids:
+            payable_match_conditions.append(ExpenseReport.cfdi_report_id.in_(payable_ids))
+        if payable_uuids:
+            payable_match_conditions.append(func.upper(ExpenseReport.cfdi_uuid_manual).in_(payable_uuids))
+            payable_match_conditions.append(func.upper(ExpenseReport.numero_factura).in_(payable_uuids))
+        payable_expense_result = await session.execute(select(ExpenseReport).where(ExpenseReport.estado_gasto == "activo", or_(*payable_match_conditions)))
+        for expense in payable_expense_result.scalars().all():
+            if expense.cfdi_report_id:
+                payable_expenses_by_id.setdefault(str(expense.cfdi_report_id), []).append(expense)
+            for raw_uuid in [expense.cfdi_uuid_manual, expense.numero_factura]:
+                uuid_key = (raw_uuid or "").strip().upper()
+                if uuid_key:
+                    payable_expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+    payable_unprocessed_rows: List[Dict[str, Any]] = []
+    payable_unprocessed_total = 0.0
+    for cfdi in payable_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        linked = list(payable_expenses_by_id.get(str(cfdi.id), []))
+        for expense in payable_expenses_by_uuid.get(uuid_key, []):
+            if expense not in linked:
+                linked.append(expense)
+        if linked:
+            continue
+        amount = float(cfdi.total or 0)
+        payable_unprocessed_total += amount
+        payable_unprocessed_rows.append({"cfdi": cfdi, "amount": amount})
+
+    forecast_out = approved_pending_total + submitted_pending_total
+    committed_position = bank_net + receivable_due_total - forecast_out
+    conservative_position = committed_position - payable_unprocessed_total
+
+    bucket_defs = [("vencido", "Vencido"), ("d0_7", "0-7 días"), ("d8_14", "8-14 días"), ("d15_horizon", f"15-{horizon_days} días"), ("sin_fecha", "Fuera de horizonte / sin fecha")]
+    buckets: Dict[str, Dict[str, Any]] = {key: {"label": label, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0} for key, label in bucket_defs}
+
+    def _bucket_for(target_date: Optional[date]) -> str:
+        if target_date is None:
+            return "sin_fecha"
+        delta = (target_date - today).days
+        if delta < 0:
+            return "vencido"
+        if delta <= 7:
+            return "d0_7"
+        if delta <= 14:
+            return "d8_14"
+        if delta <= horizon_days:
+            return "d15_horizon"
+        return "sin_fecha"
+
+    for row in receivable_rows:
+        bucket = buckets[_bucket_for(row["due_date"])]
+        bucket["in"] += float(row["saldo"] or 0)
+        bucket["in_count"] += 1
+    for doc in committed_docs:
+        bucket = buckets[_bucket_for(doc.fecha_pago)]
+        bucket["out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out_count"] += 1
+    for row in payable_unprocessed_rows:
+        target_date = row["cfdi"].fecha.date() if row["cfdi"].fecha else None
+        bucket = buckets[_bucket_for(target_date)]
+        bucket["out"] += float(row["amount"] or 0)
+        bucket["out_count"] += 1
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Resumen"
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    def write_rows(sheet, rows):
+        for row in rows:
+            sheet.append(row)
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        for col in sheet.columns:
+            width = min(max(len(str(cell.value or "")) for cell in col) + 2, 50)
+            sheet.column_dimensions[col[0].column_letter].width = width
+
+    write_rows(ws, [
+        ["Métrica", "Valor"],
+        ["Período", f"{selected_year}-{selected_month:02d}"],
+        ["Horizonte días", horizon_days],
+        ["Días crédito CxC", dias_credito],
+        ["Banco entradas", bank_inflows],
+        ["Banco salidas", bank_outflows],
+        ["Banco neto", bank_net],
+        ["Cobros esperados", receivable_due_total],
+        ["Pagos comprometidos", forecast_out],
+        ["CxP sin captura", payable_unprocessed_total],
+        ["Posición comprometida", committed_position],
+        ["Posición conservadora", conservative_position],
+        ["CxC vencida", receivable_overdue_total],
+        ["Banco sin conciliar", bank_unmatched_amount],
+        ["CFDI emitidos período", emitted_total],
+        ["CFDI recibidos período", received_total],
+    ])
+
+    ws2 = wb.create_sheet("Liquidez")
+    liquidity_rows = [["Ventana", "Cobros esperados", "# cobros", "Salidas", "# salidas", "Neto", "Posición acumulada"]]
+    running = bank_net
+    for key, label in bucket_defs:
+        bucket = buckets[key]
+        net = float(bucket["in"] or 0) - float(bucket["out"] or 0)
+        running += net
+        liquidity_rows.append([label, bucket["in"], bucket["in_count"], bucket["out"], bucket["out_count"], net, running])
+    write_rows(ws2, liquidity_rows)
+
+    ws3 = wb.create_sheet("CxC")
+    cxc_rows = [["UUID", "Vence", "Cliente", "RFC", "Serie", "Folio", "Saldo"]]
+    for row in sorted(receivable_rows, key=lambda r: (r["due_date"], r["cfdi"].receptor_nombre or "")):
+        cfdi = row["cfdi"]
+        cxc_rows.append([cfdi.cfdi_uuid, row["due_date"].isoformat(), cfdi.receptor_nombre, cfdi.receptor_rfc, cfdi.serie, cfdi.folio, row["saldo"]])
+    write_rows(ws3, cxc_rows)
+
+    ws4 = wb.create_sheet("CxP sin captura")
+    cxp_rows = [["UUID", "Fecha", "Proveedor", "RFC", "Serie", "Folio", "Total", "Concepto"]]
+    for row in sorted(payable_unprocessed_rows, key=lambda r: (r["cfdi"].fecha or datetime.min, r["cfdi"].emisor_nombre or ""), reverse=True):
+        cfdi = row["cfdi"]
+        cxp_rows.append([cfdi.cfdi_uuid, cfdi.fecha.date().isoformat() if cfdi.fecha else None, cfdi.emisor_nombre, cfdi.emisor_rfc, cfdi.serie, cfdi.folio, row["amount"], cfdi.descripcion_concepto_principal])
+    write_rows(ws4, cxp_rows)
+
+    ws5 = wb.create_sheet("Banco")
+    bank_rows = [["Fecha", "Cuenta", "Signo", "Importe", "Referencia", "Concepto", "Beneficiario", "Estado conciliación"]]
+    for movement in bank_movements:
+        bank_rows.append([movement.fecha.isoformat() if movement.fecha else None, movement.cuenta_bancaria, movement.signo, float(movement.importe or 0), movement.referencia_bancaria, movement.concepto_banco or movement.descripcion, movement.nombre_beneficiario, movement.conciliacion_estado])
+    write_rows(ws5, bank_rows)
+
+    ws6 = wb.create_sheet("Compromisos")
+    docs_rows = [["Documento", "Estado", "Fecha pago", "Beneficiario", "Monto", "Proyecto"]]
+    for doc in committed_docs:
+        party = doc.proveedor_cliente.nombre if doc.proveedor_cliente and doc.proveedor_cliente.nombre else (doc.beneficiario_empleado.nombre if doc.beneficiario_empleado and doc.beneficiario_empleado.nombre else "")
+        docs_rows.append([doc.numero_referencia, doc.estado, doc.fecha_pago.isoformat() if doc.fecha_pago else None, party, float(doc.monto_solicitado or doc.monto_total or 0), (doc.torneo.name if doc.torneo else doc.proyecto_otro) or ""])
+    write_rows(ws6, docs_rows)
+
+    output = io.BytesIO()
+    wb.save(output)
+    filename = f"cash-flow-{selected_year}-{selected_month:02d}-{horizon_days}d.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/contabilidad/conciliacion", response_class=HTMLResponse)
