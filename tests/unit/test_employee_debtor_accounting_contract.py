@@ -36,3 +36,12 @@ def test_debtor_accounting_is_visible_in_both_approved_views():
     assert "build_cuenta_debtor_auxiliary" in user_routes
     assert '"/admin/contabilidad/deudores"' in admin_routes
     assert "Empleados sin subcuenta de deudores" in admin_routes
+
+
+def test_debtor_accounting_uses_cuenta_beneficiary_not_requester_for_reports():
+    source = read("src/devnous/gastos/services/employee_debtor_accounting_service.py")
+
+    assert "resolve_cuenta_debtor_empleado" in source
+    assert 'beneficiario_empleado_id' in source
+    assert "empleado = await resolve_cuenta_debtor_empleado(session, cuenta)" in source
+    assert "CuentaDeGastos.empleado_id`` is the authenticated requester/capturer" in source

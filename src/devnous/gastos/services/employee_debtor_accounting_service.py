@@ -95,6 +95,26 @@ async def resolve_employee_debtor_account(
     return matches[0] if len(matches) == 1 else None
 
 
+async def resolve_cuenta_debtor_empleado(
+    session: AsyncSession,
+    cuenta: Optional[CuentaDeGastos],
+) -> Optional[Empleado]:
+    """Return the employee whose debtor auxiliary owns a cuenta.
+
+    ``CuentaDeGastos.empleado_id`` is the authenticated requester/capturer.
+    For third-party expense reports and AMEX comprobación, the accounting debtor
+    must be the employee beneficiary/cardholder when one is explicitly stored.
+    Existing reports without a beneficiary keep the historical requester fallback.
+    """
+    if cuenta is None:
+        return None
+    beneficiary_id = getattr(cuenta, "beneficiario_empleado_id", None)
+    owner_id = beneficiary_id or getattr(cuenta, "empleado_id", None)
+    if owner_id is None:
+        return None
+    return await session.get(Empleado, owner_id)
+
+
 async def resolve_default_bank_account(
     session: AsyncSession,
 ) -> Optional[CuentaContable]:
@@ -292,7 +312,7 @@ async def ensure_debtor_comprobacion_posting_for_informe(
         return DebtorPostingResult(status="exists", poliza=existing)
 
     cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
-    empleado = await session.get(Empleado, cuenta.empleado_id) if cuenta else None
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     if empleado is None:
         return DebtorPostingResult(status="pending", reason="missing_employee")
     debtor = await resolve_employee_debtor_account(session, empleado)
@@ -415,7 +435,7 @@ async def ensure_debtor_settlement_posting(
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
-    empleado = await session.get(Empleado, cuenta.empleado_id)
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     if empleado is None:
         return DebtorPostingResult(status="pending", reason="missing_employee")
     debtor = await resolve_employee_debtor_account(session, empleado)
@@ -495,7 +515,7 @@ async def build_cuenta_debtor_auxiliary(
     cuenta_id: UUID,
 ) -> dict[str, Any]:
     cuenta = await session.get(CuentaDeGastos, cuenta_id)
-    empleado = await session.get(Empleado, cuenta.empleado_id) if cuenta else None
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     debtor = (
         await resolve_employee_debtor_account(session, empleado)
         if empleado is not None
@@ -676,4 +696,5 @@ __all__ = [
     "ensure_debtor_settlement_posting",
     "list_employees_missing_debtor_account",
     "resolve_employee_debtor_account",
+    "resolve_cuenta_debtor_empleado",
 ]
