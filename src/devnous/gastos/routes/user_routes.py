@@ -18239,6 +18239,51 @@ async def contabilidad_tesoreria_matches_view(
     cxc_suggestions = _suggest(inflows, cxc_candidates, "cxc") if tipo in {"todos", "cxc"} else []
     cxp_suggestions = _suggest(outflows, cxp_candidates, "cxp") if tipo in {"todos", "cxp"} else []
 
+    accepted_audit_result = await session.execute(
+        select(ReconciliationAuditLog)
+        .options(selectinload(ReconciliationAuditLog.bank_movement), selectinload(ReconciliationAuditLog.empleado))
+        .where(ReconciliationAuditLog.action == "accept_treasury_cfdi_match")
+        .order_by(ReconciliationAuditLog.created_at.desc())
+        .limit(50)
+    )
+    accepted_audit_logs = accepted_audit_result.scalars().all()
+
+    def _accepted_rows(logs: List[ReconciliationAuditLog]) -> str:
+        rows = []
+        for log in logs:
+            movement = log.bank_movement
+            details = log.details or {}
+            if not movement:
+                continue
+            rows.append(f"""
+            <tr>
+                <td>{escape(log.created_at.date().isoformat() if log.created_at else '—')}</td>
+                <td>{escape((details.get('direction') or '—').upper())}</td>
+                <td>{escape(movement.fecha.date().isoformat() if movement.fecha else '—')}</td>
+                <td>{escape(movement.cuenta_bancaria or '—')}</td>
+                <td>{format_currency(float(movement.importe or 0))}</td>
+                <td>{escape((_bank_text(movement) or '—')[:140])}</td>
+                <td><code>{escape(str(details.get('cfdi_uuid') or '—')[:36])}</code></td>
+                <td>{escape(str(details.get('score') or '—'))}</td>
+                <td>{escape((log.empleado.nombre if log.empleado else '—') or '—')}</td>
+                <td>
+                    <form method="POST" action="/admin/contabilidad/tesoreria-matches/{movement.id}/undo" onsubmit="return confirm('Deshacer este match de tesorería regresará el movimiento a pendiente. ¿Continuar?');">
+                        <input type="hidden" name="year" value="{selected_year}">
+                        <input type="hidden" name="month" value="{selected_month}">
+                        <input type="hidden" name="horizon_days" value="{horizon_days}">
+                        <input type="hidden" name="dias_credito" value="{dias_credito}">
+                        <input type="hidden" name="tolerance" value="{tolerance}">
+                        <input type="hidden" name="min_score" value="{min_score}">
+                        <input type="hidden" name="tipo" value="{tipo}">
+                        <button type="submit" class="button secondary" style="padding:6px 10px;">Deshacer</button>
+                    </form>
+                </td>
+            </tr>
+            """)
+        return "".join(rows)
+
+    accepted_rows = _accepted_rows(accepted_audit_logs)
+
     def _rows(suggestions: List[Dict[str, Any]], party_attr: str) -> str:
         return "".join(
             f"""
@@ -18331,6 +18376,11 @@ async def contabilidad_tesoreria_matches_view(
             <div class="metric"><div class="label">Salidas bancarias sin match</div><div class="value">{len(outflows)}</div><div class="muted">Período seleccionado</div></div>
             <div class="metric"><div class="label">Sugerencias CxC</div><div class="value">{len(cxc_suggestions)}</div><div class="muted">Cobros candidatos</div></div>
             <div class="metric"><div class="label">Sugerencias CxP</div><div class="value">{len(cxp_suggestions)}</div><div class="muted">Pagos candidatos</div></div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+            <h2 style="margin:0 0 12px 0;">Matches de tesorería aceptados recientemente</h2>
+            <div class="table-wrap"><table><thead><tr><th>Aceptado</th><th>Tipo</th><th>Banco fecha</th><th>Cuenta</th><th>Importe</th><th>Texto banco</th><th>UUID CFDI</th><th>Score</th><th>Usuario</th><th>Acción</th></tr></thead><tbody>{accepted_rows or '<tr><td colspan="10" class="muted">Sin matches aceptados recientemente.</td></tr>'}</tbody></table></div>
+            <p class="muted">Deshacer sólo revierte el movimiento bancario a pendiente y registra auditoría; no elimina el historial.</p>
         </div>
         <div class="card" style="margin-top:16px;">
             <h2 style="margin:0 0 12px 0;">Cobros sugeridos: banco → CxC</h2>
@@ -18502,6 +18552,76 @@ async def contabilidad_tesoreria_matches_accept(
     )
     await session.commit()
     return RedirectResponse(url=return_url + "&success_msg=" + quote(f"Match {direction.upper()} aceptado con score {score}. Movimiento marcado como revisado."), status_code=303)
+
+
+
+@router.post("/admin/contabilidad/tesoreria-matches/{movement_id}/undo")
+async def contabilidad_tesoreria_matches_undo(
+    movement_id: UUIDType,
+    year: int = Form(...),
+    month: int = Form(...),
+    horizon_days: int = Form(60),
+    dias_credito: int = Form(30),
+    tolerance: float = Form(1.0),
+    min_score: int = Form(75),
+    tipo: str = Form("todos"),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> RedirectResponse:
+    """Undo a treasury-accepted match by returning the bank movement to unmatched."""
+    horizon_days = max(15, min(int(horizon_days or 60), 180))
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    tolerance = max(0.0, min(float(tolerance or 1.0), 5000.0))
+    min_score = max(0, min(int(min_score or 75), 120))
+    tipo = (tipo or "todos").lower().strip()
+    if tipo not in {"todos", "cxc", "cxp"}:
+        tipo = "todos"
+    return_url = f"/admin/contabilidad/tesoreria-matches?year={year}&month={month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}&min_score={min_score}&tipo={tipo}"
+
+    movement = await session.get(BankMovement, movement_id)
+    if movement is None:
+        raise HTTPException(status_code=404, detail="Movimiento bancario no encontrado")
+
+    last_accept_result = await session.execute(
+        select(ReconciliationAuditLog)
+        .where(
+            ReconciliationAuditLog.bank_movement_id == movement.id,
+            ReconciliationAuditLog.action == "accept_treasury_cfdi_match",
+        )
+        .order_by(ReconciliationAuditLog.created_at.desc())
+        .limit(1)
+    )
+    last_accept = last_accept_result.scalar_one_or_none()
+    if last_accept is None:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("El movimiento no tiene un match de tesorería aceptado"), status_code=303)
+
+    later_actions_result = await session.execute(
+        select(func.count(ReconciliationAuditLog.id)).where(
+            ReconciliationAuditLog.bank_movement_id == movement.id,
+            ReconciliationAuditLog.created_at > last_accept.created_at,
+            ReconciliationAuditLog.action != "undo_treasury_cfdi_match",
+        )
+    )
+    later_actions = int(later_actions_result.scalar_one() or 0)
+    if later_actions > 0:
+        return RedirectResponse(url=return_url + "&error_msg=" + quote("No se puede deshacer: el movimiento tuvo acciones posteriores de conciliación"), status_code=303)
+
+    before_state = _movement_snapshot(movement)
+    movement.conciliacion_estado = "unmatched"
+    await _log_reconciliation_action(
+        session,
+        movement,
+        current_empleado,
+        "undo_treasury_cfdi_match",
+        before_state,
+        {
+            "undone_accept_log_id": str(last_accept.id),
+            "previous_details": last_accept.details or {},
+            "note": "Undo treasury pre-match. No poliza, expense, or income record was modified.",
+        },
+    )
+    await session.commit()
+    return RedirectResponse(url=return_url + "&success_msg=" + quote("Match de tesorería deshecho; movimiento regresó a pendiente."), status_code=303)
 
 
 @router.get("/admin/contabilidad/tesoreria-matches/export.xlsx")
