@@ -21130,6 +21130,9 @@ async def historial_aprobador(
 
         # Get empleado name (owner of the documento)
         empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
+        referencia_operaciones = escape(
+            str((documento.referencia_operaciones or "").strip() or "—")
+        )
 
         # Link to documento detail
         doc_link = f'<a href="/documentos/{documento.id}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
@@ -21145,6 +21148,7 @@ async def historial_aprobador(
             <td>{empleado_nombre}</td>
             <td>{documento.tipo}</td>
             <td>{documento.estado}</td>
+            <td>{referencia_operaciones}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_str}">{comentario_str}</td>
         </tr>
         """
@@ -21194,6 +21198,7 @@ async def historial_aprobador(
                         <th>Empleado</th>
                         <th>Tipo</th>
                         <th>Estado Actual</th>
+                        <th>Referencia operaciones</th>
                         <th>Comentario</th>
                     </tr>
                 </thead>
