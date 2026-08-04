@@ -18296,6 +18296,7 @@ async def contabilidad_tesoreria_matches_view(
                 <div><label>Tolerancia monto</label><br><input type="number" min="0" max="5000" step="0.01" name="tolerance" value="{tolerance}" style="width:120px;"></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Cash Flow</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -18316,6 +18317,234 @@ async def contabilidad_tesoreria_matches_view(
     </div></body></html>
     """
     return HTMLResponse(content=html)
+
+
+
+@router.get("/admin/contabilidad/tesoreria-matches/export.xlsx")
+async def contabilidad_tesoreria_matches_export_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    horizon_days: int = Query(60),
+    dias_credito: int = Query(30),
+    tolerance: float = Query(1.0),
+) -> Response:
+    """Export read-only bank-to-CFDI treasury pre-match suggestions."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    now = datetime.utcnow()
+    today = now.date()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    horizon_days = max(15, min(int(horizon_days or 60), 180))
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    tolerance = max(0.0, min(float(tolerance or 1.0), 5000.0))
+    start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
+    fiscal_start = datetime(today.year, 1, 1)
+    horizon_end_dt = datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time())
+
+    def _norm_party(value: Optional[str]) -> str:
+        raw = unicodedata.normalize("NFKD", value or "")
+        raw = "".join(ch for ch in raw if not unicodedata.combining(ch)).lower()
+        return re.sub(r"[^a-z0-9]+", " ", raw).strip()
+
+    def _party_score(bank_text: str, party: str) -> int:
+        bank_norm = _norm_party(bank_text)
+        party_norm = _norm_party(party)
+        if not bank_norm or not party_norm:
+            return 0
+        if party_norm in bank_norm or bank_norm in party_norm:
+            return 25
+        party_tokens = {tok for tok in party_norm.split() if len(tok) >= 4}
+        bank_tokens = {tok for tok in bank_norm.split() if len(tok) >= 4}
+        if not party_tokens or not bank_tokens:
+            return 0
+        overlap = len(party_tokens & bank_tokens) / max(len(party_tokens), 1)
+        ratio = SequenceMatcher(None, bank_norm, party_norm).ratio()
+        return int(max(overlap * 22, ratio * 18))
+
+    def _date_score(bank_date: Optional[datetime], cfdi_date: Optional[datetime], due_date: Optional[date] = None) -> int:
+        if not bank_date:
+            return 0
+        bank_day = bank_date.date()
+        target_day = due_date or (cfdi_date.date() if cfdi_date else None)
+        if not target_day:
+            return 0
+        delta = abs((bank_day - target_day).days)
+        if delta <= 2:
+            return 15
+        if delta <= 7:
+            return 10
+        if delta <= 30:
+            return 5
+        return 0
+
+    def _bank_text(movement: BankMovement) -> str:
+        return " ".join(part for part in [movement.descripcion, movement.concepto_banco, movement.nombre_beneficiario, movement.nombre_ordenante, movement.referencia_bancaria, movement.clave_rastreo] if part)
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
+    bank_result = await session.execute(
+        select(BankMovement)
+        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt, BankMovement.conciliacion_estado == "unmatched")
+        .order_by(BankMovement.fecha.desc().nulls_last(), BankMovement.importe.desc().nulls_last())
+        .limit(1000)
+    )
+    bank_movements = bank_result.scalars().all()
+    inflows = [m for m in bank_movements if (m.signo or "").strip() == "+"]
+    outflows = [m for m in bank_movements if (m.signo or "").strip() == "-"]
+
+    emitted_cfdis: List[CFDIReport] = []
+    received_cfdis: List[CFDIReport] = []
+    if platform_rfcs:
+        emitted_result = await session.execute(select(CFDIReport).where(CFDIReport.fecha >= fiscal_start, CFDIReport.fecha < horizon_end_dt, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs)).limit(1000))
+        received_result = await session.execute(select(CFDIReport).where(CFDIReport.fecha >= fiscal_start, CFDIReport.fecha < horizon_end_dt, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs)).limit(1000))
+        emitted_cfdis = emitted_result.scalars().all()
+        received_cfdis = received_result.scalars().all()
+
+    emitted_ids = [c.id for c in emitted_cfdis]
+    emitted_uuids = [(c.cfdi_uuid or "").strip().upper() for c in emitted_cfdis if (c.cfdi_uuid or "").strip()]
+    collected_by_uuid: Dict[str, float] = {}
+    collected_by_id: Dict[str, float] = {}
+    if emitted_ids or emitted_uuids:
+        match_conditions = []
+        if emitted_uuids:
+            match_conditions.append(func.upper(AccountingPoliza.cfdi_uuid).in_(emitted_uuids))
+        if emitted_ids:
+            match_conditions.append(AccountingPoliza.cfdi_report_id.in_(emitted_ids))
+        polizas_result = await session.execute(select(AccountingPoliza).options(selectinload(AccountingPoliza.lines)).where(AccountingPoliza.origen == "ingreso_cobrado_ui", or_(*match_conditions)))
+        for poliza in polizas_result.scalars().all():
+            amount = sum(float(line.debe or 0) for line in poliza.lines)
+            uuid_key = (poliza.cfdi_uuid or "").strip().upper()
+            if uuid_key:
+                collected_by_uuid[uuid_key] = collected_by_uuid.get(uuid_key, 0.0) + amount
+            if poliza.cfdi_report_id:
+                collected_by_id[str(poliza.cfdi_report_id)] = collected_by_id.get(str(poliza.cfdi_report_id), 0.0) + amount
+
+    cxc_candidates = []
+    for cfdi in emitted_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        total = float(cfdi.total or 0)
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        saldo = max(total - collected, 0.0)
+        if saldo <= 0.01:
+            continue
+        due_date = (cfdi.fecha.date() + timedelta(days=dias_credito)) if cfdi.fecha else None
+        cxc_candidates.append({"cfdi": cfdi, "amount": saldo, "party": cfdi.receptor_nombre or cfdi.receptor_rfc or "", "due_date": due_date})
+
+    received_ids = [c.id for c in received_cfdis]
+    received_uuids = [(c.cfdi_uuid or "").strip().upper() for c in received_cfdis if (c.cfdi_uuid or "").strip()]
+    expenses_by_id: Dict[str, List[ExpenseReport]] = {}
+    expenses_by_uuid: Dict[str, List[ExpenseReport]] = {}
+    if received_ids or received_uuids:
+        expense_conditions = []
+        if received_ids:
+            expense_conditions.append(ExpenseReport.cfdi_report_id.in_(received_ids))
+        if received_uuids:
+            expense_conditions.append(func.upper(ExpenseReport.cfdi_uuid_manual).in_(received_uuids))
+            expense_conditions.append(func.upper(ExpenseReport.numero_factura).in_(received_uuids))
+        expense_result = await session.execute(select(ExpenseReport).where(ExpenseReport.estado_gasto == "activo", or_(*expense_conditions)))
+        for expense in expense_result.scalars().all():
+            if expense.cfdi_report_id:
+                expenses_by_id.setdefault(str(expense.cfdi_report_id), []).append(expense)
+            for raw_uuid in [expense.cfdi_uuid_manual, expense.numero_factura]:
+                uuid_key = (raw_uuid or "").strip().upper()
+                if uuid_key:
+                    expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+    cxp_candidates = []
+    for cfdi in received_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        linked = list(expenses_by_id.get(str(cfdi.id), []))
+        for expense in expenses_by_uuid.get(uuid_key, []):
+            if expense not in linked:
+                linked.append(expense)
+        if linked:
+            continue
+        cxp_candidates.append({"cfdi": cfdi, "amount": float(cfdi.total or 0), "party": cfdi.emisor_nombre or cfdi.emisor_rfc or "", "due_date": cfdi.fecha.date() if cfdi.fecha else None})
+
+    def _suggest(bank_items: List[BankMovement], cfdi_items: List[Dict[str, Any]], direction: str) -> List[Dict[str, Any]]:
+        suggestions: List[Dict[str, Any]] = []
+        for movement in bank_items:
+            bank_amount = float(movement.importe or 0)
+            if bank_amount <= 0:
+                continue
+            text = _bank_text(movement)
+            best = []
+            for item in cfdi_items:
+                amount = float(item["amount"] or 0)
+                amount_delta = abs(bank_amount - amount)
+                if amount_delta > tolerance:
+                    continue
+                amount_score = 60 if amount_delta < 0.01 else max(40, int(60 - amount_delta))
+                p_score = _party_score(text, item["party"])
+                d_score = _date_score(movement.fecha, item["cfdi"].fecha, item.get("due_date"))
+                score = amount_score + p_score + d_score
+                if score < 65:
+                    continue
+                best.append({"movement": movement, "cfdi": item["cfdi"], "amount": amount, "delta": amount_delta, "score": score, "direction": direction})
+            suggestions.extend(sorted(best, key=lambda row: row["score"], reverse=True)[:3])
+        return sorted(suggestions, key=lambda row: row["score"], reverse=True)[:100]
+
+    cxc_suggestions = _suggest(inflows, cxc_candidates, "CxC")
+    cxp_suggestions = _suggest(outflows, cxp_candidates, "CxP")
+
+    wb = Workbook()
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    def write_rows(sheet, rows):
+        for row in rows:
+            sheet.append(row)
+        for cell in sheet[1]:
+            cell.fill = header_fill
+            cell.font = header_font
+        for col in sheet.columns:
+            width = min(max(len(str(cell.value or "")) for cell in col) + 2, 60)
+            sheet.column_dimensions[col[0].column_letter].width = width
+
+    ws = wb.active
+    ws.title = "Resumen"
+    write_rows(ws, [
+        ["Métrica", "Valor"],
+        ["Período", f"{selected_year}-{selected_month:02d}"],
+        ["Horizonte días", horizon_days],
+        ["Días crédito CxC", dias_credito],
+        ["Tolerancia", tolerance],
+        ["Entradas bancarias sin match", len(inflows)],
+        ["Salidas bancarias sin match", len(outflows)],
+        ["Sugerencias CxC", len(cxc_suggestions)],
+        ["Sugerencias CxP", len(cxp_suggestions)],
+    ])
+
+    def suggestion_rows(suggestions: List[Dict[str, Any]], party_attr: str) -> List[List[Any]]:
+        rows = [["Tipo", "Score", "Banco fecha", "Banco cuenta", "Banco importe", "Texto banco", "UUID CFDI", "CFDI fecha", "Cliente/Proveedor", "RFC", "Serie", "Folio", "Monto CFDI", "Diferencia"]]
+        for row in suggestions:
+            movement = row["movement"]
+            cfdi = row["cfdi"]
+            party_rfc = cfdi.receptor_rfc if party_attr == "receptor_nombre" else cfdi.emisor_rfc
+            rows.append([
+                row["direction"], row["score"], movement.fecha.date().isoformat() if movement.fecha else None, movement.cuenta_bancaria,
+                float(movement.importe or 0), _bank_text(movement), cfdi.cfdi_uuid, cfdi.fecha.date().isoformat() if cfdi.fecha else None,
+                getattr(cfdi, party_attr) or "", party_rfc, cfdi.serie, cfdi.folio, row["amount"], row["delta"],
+            ])
+        return rows
+
+    ws2 = wb.create_sheet("Cobros CxC")
+    write_rows(ws2, suggestion_rows(cxc_suggestions, "receptor_nombre"))
+    ws3 = wb.create_sheet("Pagos CxP")
+    write_rows(ws3, suggestion_rows(cxp_suggestions, "emisor_nombre"))
+
+    output = io.BytesIO()
+    wb.save(output)
+    filename = f"tesoreria-matches-{selected_year}-{selected_month:02d}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/contabilidad/conciliacion", response_class=HTMLResponse)
