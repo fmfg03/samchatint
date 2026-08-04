@@ -18049,6 +18049,8 @@ async def contabilidad_tesoreria_matches_view(
     horizon_days: int = Query(60),
     dias_credito: int = Query(30),
     tolerance: float = Query(1.0),
+    min_score: int = Query(75),
+    tipo: str = Query("todos"),
 ) -> HTMLResponse:
     """Read-only bank-to-CFDI treasury pre-match suggestions."""
     now = datetime.utcnow()
@@ -18058,6 +18060,10 @@ async def contabilidad_tesoreria_matches_view(
     horizon_days = max(15, min(int(horizon_days or 60), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
     tolerance = max(0.0, min(float(tolerance or 1.0), 5000.0))
+    min_score = max(0, min(int(min_score or 75), 120))
+    tipo = (tipo or "todos").lower().strip()
+    if tipo not in {"todos", "cxc", "cxp"}:
+        tipo = "todos"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     fiscal_start = datetime(today.year, 1, 1)
     horizon_end_dt = datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time())
@@ -18224,14 +18230,14 @@ async def contabilidad_tesoreria_matches_view(
                 p_score = _party_score(text, item["party"])
                 d_score = _date_score(movement.fecha, item["cfdi"].fecha, item.get("due_date"))
                 score = amount_score + p_score + d_score
-                if score < 65:
+                if score < min_score:
                     continue
                 best.append({"movement": movement, "cfdi": item["cfdi"], "amount": amount, "delta": amount_delta, "score": score, "direction": direction})
             suggestions.extend(sorted(best, key=lambda row: row["score"], reverse=True)[:3])
         return sorted(suggestions, key=lambda row: row["score"], reverse=True)[:100]
 
-    cxc_suggestions = _suggest(inflows, cxc_candidates, "cxc")
-    cxp_suggestions = _suggest(outflows, cxp_candidates, "cxp")
+    cxc_suggestions = _suggest(inflows, cxc_candidates, "cxc") if tipo in {"todos", "cxc"} else []
+    cxp_suggestions = _suggest(outflows, cxp_candidates, "cxp") if tipo in {"todos", "cxp"} else []
 
     def _rows(suggestions: List[Dict[str, Any]], party_attr: str) -> str:
         return "".join(
@@ -18259,6 +18265,10 @@ async def contabilidad_tesoreria_matches_view(
     cxp_rows = _rows(cxp_suggestions, "emisor_nombre")
     year_options = "".join(f'<option value="{y}" {"selected" if y == selected_year else ""}>{y}</option>' for y in range(now.year - 2, now.year + 2))
     month_options = "".join(f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>' for m in range(1, 13))
+    tipo_options = "".join(
+        f'<option value="{value}" {"selected" if tipo == value else ""}>{label}</option>'
+        for value, label in [("todos", "CxC y CxP"), ("cxc", "Sólo CxC"), ("cxp", "Sólo CxP")]
+    )
 
     html = f"""
     <!DOCTYPE html>
@@ -18294,9 +18304,11 @@ async def contabilidad_tesoreria_matches_view(
                 <div><label>Horizonte</label><br><input type="number" min="15" max="180" name="horizon_days" value="{horizon_days}" style="width:100px;"> días</div>
                 <div><label>Días crédito CxC</label><br><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}" style="width:100px;"> días</div>
                 <div><label>Tolerancia monto</label><br><input type="number" min="0" max="5000" step="0.01" name="tolerance" value="{tolerance}" style="width:120px;"></div>
+                <div><label>Score mínimo</label><br><input type="number" min="0" max="120" name="min_score" value="{min_score}" style="width:110px;"></div>
+                <div><label>Tipo</label><br><select name="tipo">{tipo_options}</select></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Cash Flow</a></div>
-                <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}">Exportar Excel</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}&min_score={min_score}&tipo={tipo}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -18312,7 +18324,7 @@ async def contabilidad_tesoreria_matches_view(
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Pagos sugeridos: banco → CxP sin captura</h2>
             <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th><th>Diferencia</th></tr></thead><tbody>{cxp_rows or '<tr><td colspan="13" class="muted">Sin sugerencias CxP con estos filtros.</td></tr>'}</tbody></table></div>
-            <p class="muted">Score = monto + similitud de texto + cercanía de fecha. Esta pantalla no modifica conciliación ni marca facturas como cobradas/pagadas.</p>
+            <p class="muted">Score = monto + similitud de texto + cercanía de fecha. Umbral actual: {min_score}. Esta pantalla no modifica conciliación ni marca facturas como cobradas/pagadas.</p>
         </div>
     </div></body></html>
     """
@@ -18330,6 +18342,8 @@ async def contabilidad_tesoreria_matches_export_xlsx(
     horizon_days: int = Query(60),
     dias_credito: int = Query(30),
     tolerance: float = Query(1.0),
+    min_score: int = Query(75),
+    tipo: str = Query("todos"),
 ) -> Response:
     """Export read-only bank-to-CFDI treasury pre-match suggestions."""
     from openpyxl import Workbook
@@ -18342,6 +18356,10 @@ async def contabilidad_tesoreria_matches_export_xlsx(
     horizon_days = max(15, min(int(horizon_days or 60), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
     tolerance = max(0.0, min(float(tolerance or 1.0), 5000.0))
+    min_score = max(0, min(int(min_score or 75), 120))
+    tipo = (tipo or "todos").lower().strip()
+    if tipo not in {"todos", "cxc", "cxp"}:
+        tipo = "todos"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     fiscal_start = datetime(today.year, 1, 1)
     horizon_end_dt = datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time())
@@ -18482,14 +18500,14 @@ async def contabilidad_tesoreria_matches_export_xlsx(
                 p_score = _party_score(text, item["party"])
                 d_score = _date_score(movement.fecha, item["cfdi"].fecha, item.get("due_date"))
                 score = amount_score + p_score + d_score
-                if score < 65:
+                if score < min_score:
                     continue
                 best.append({"movement": movement, "cfdi": item["cfdi"], "amount": amount, "delta": amount_delta, "score": score, "direction": direction})
             suggestions.extend(sorted(best, key=lambda row: row["score"], reverse=True)[:3])
         return sorted(suggestions, key=lambda row: row["score"], reverse=True)[:100]
 
-    cxc_suggestions = _suggest(inflows, cxc_candidates, "CxC")
-    cxp_suggestions = _suggest(outflows, cxp_candidates, "CxP")
+    cxc_suggestions = _suggest(inflows, cxc_candidates, "CxC") if tipo in {"todos", "cxc"} else []
+    cxp_suggestions = _suggest(outflows, cxp_candidates, "CxP") if tipo in {"todos", "cxp"} else []
 
     wb = Workbook()
     header_fill = PatternFill("solid", fgColor="0F766E")
@@ -18513,6 +18531,8 @@ async def contabilidad_tesoreria_matches_export_xlsx(
         ["Horizonte días", horizon_days],
         ["Días crédito CxC", dias_credito],
         ["Tolerancia", tolerance],
+        ["Score mínimo", min_score],
+        ["Tipo", tipo],
         ["Entradas bancarias sin match", len(inflows)],
         ["Salidas bancarias sin match", len(outflows)],
         ["Sugerencias CxC", len(cxc_suggestions)],
