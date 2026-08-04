@@ -1968,6 +1968,7 @@ def _contabilidad_subnav(active: str) -> str:
         ("/admin/contabilidad/historica", "Histórica", "historica"),
         ("/admin/contabilidad/coi", "COI", "coi"),
         ("/admin/contabilidad/ingresos", "Ingresos", "ingresos"),
+        ("/admin/contabilidad/cuentas-por-cobrar", "CxC", "cxc"),
         ("/admin/contabilidad/manual", "Pólizas manuales", "manual"),
         ("/admin/contabilidad/reclasificacion", "Reclasificación", "reclasificacion"),
         ("/admin/contabilidad/diario", "Diario", "diario"),
@@ -16921,6 +16922,232 @@ async def amex_conciliacion_view(
     </html>
     """
     return html
+
+
+
+@router.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
+async def contabilidad_cuentas_por_cobrar_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    desde: Optional[str] = Query(None),
+    hasta: Optional[str] = Query(None),
+    estado: str = Query("pendiente"),
+    cliente: Optional[str] = Query(None),
+    dias_credito: int = Query(30),
+) -> HTMLResponse:
+    """Read-only accounts receivable view from emitted CFDI and collected-income policies."""
+    today = datetime.utcnow().date()
+    try:
+        from_date = datetime.strptime(desde, "%Y-%m-%d") if desde else datetime(today.year, 1, 1)
+    except ValueError:
+        from_date = datetime(today.year, 1, 1)
+    try:
+        to_date_exclusive = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1) if hasta else datetime.combine(today + timedelta(days=1), datetime.min.time())
+    except ValueError:
+        to_date_exclusive = datetime.combine(today + timedelta(days=1), datetime.min.time())
+    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    estado = (estado or "pendiente").lower().strip()
+    cliente_filter = (cliente or "").strip()
+
+    rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
+    platform_rfcs = [
+        str(row[0]).strip().upper()
+        for row in rfc_rows.all()
+        if row and row[0] and str(row[0]).strip()
+    ]
+
+    if platform_rfcs:
+        cfdi_conditions = [
+            CFDIReport.fecha >= from_date,
+            CFDIReport.fecha < to_date_exclusive,
+            CFDIReport.tipo_de_comprobante == "I",
+            func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+        ]
+        if cliente_filter:
+            token = f"%{cliente_filter}%"
+            cfdi_conditions.append(
+                or_(
+                    CFDIReport.receptor_nombre.ilike(token),
+                    CFDIReport.receptor_rfc.ilike(token),
+                    CFDIReport.serie.ilike(token),
+                    CFDIReport.folio.ilike(token),
+                    CFDIReport.cfdi_uuid.ilike(token),
+                )
+            )
+        cfdi_result = await session.execute(
+            select(CFDIReport)
+            .where(and_(*cfdi_conditions))
+            .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.receptor_nombre.asc())
+            .limit(1000)
+        )
+        emitted_cfdis = cfdi_result.scalars().all()
+    else:
+        emitted_cfdis = []
+
+    cfdi_ids = [c.id for c in emitted_cfdis]
+    cfdi_uuids = [(c.cfdi_uuid or "").strip().upper() for c in emitted_cfdis if (c.cfdi_uuid or "").strip()]
+    collected_by_uuid: Dict[str, float] = {}
+    collected_by_id: Dict[str, float] = {}
+    poliza_refs_by_uuid: Dict[str, List[str]] = {}
+    poliza_refs_by_id: Dict[str, List[str]] = {}
+    if cfdi_ids or cfdi_uuids:
+        poliza_conditions = [AccountingPoliza.origen == "ingreso_cobrado_ui"]
+        match_conditions = []
+        if cfdi_uuids:
+            match_conditions.append(func.upper(AccountingPoliza.cfdi_uuid).in_(cfdi_uuids))
+        if cfdi_ids:
+            match_conditions.append(AccountingPoliza.cfdi_report_id.in_(cfdi_ids))
+        poliza_conditions.append(or_(*match_conditions))
+        poliza_result = await session.execute(
+            select(AccountingPoliza)
+            .options(selectinload(AccountingPoliza.lines))
+            .where(and_(*poliza_conditions))
+        )
+        for poliza in poliza_result.scalars().all():
+            collected_amount = sum(float(line.debe or 0) for line in poliza.lines)
+            ref = poliza.numero_poliza or "—"
+            uuid_key = (poliza.cfdi_uuid or "").strip().upper()
+            if uuid_key:
+                collected_by_uuid[uuid_key] = collected_by_uuid.get(uuid_key, 0.0) + collected_amount
+                poliza_refs_by_uuid.setdefault(uuid_key, []).append(ref)
+            if poliza.cfdi_report_id:
+                id_key = str(poliza.cfdi_report_id)
+                collected_by_id[id_key] = collected_by_id.get(id_key, 0.0) + collected_amount
+                poliza_refs_by_id.setdefault(id_key, []).append(ref)
+
+    rows_data: List[Dict[str, Any]] = []
+    for cfdi in emitted_cfdis:
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        id_key = str(cfdi.id)
+        total = float(cfdi.total or 0)
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(id_key, 0.0))
+        saldo = max(total - collected, 0.0)
+        issue_date = cfdi.fecha.date() if cfdi.fecha else None
+        due_date = issue_date + timedelta(days=dias_credito) if issue_date else None
+        overdue_days = max((today - due_date).days, 0) if due_date and saldo > 0 else 0
+        if saldo <= 0.01:
+            row_status = "cobrado"
+        elif overdue_days > 0:
+            row_status = "vencido"
+        else:
+            row_status = "pendiente"
+        if estado in {"pendiente", "cobrado", "vencido"} and row_status != estado:
+            continue
+        poliza_refs = poliza_refs_by_uuid.get(uuid_key) or poliza_refs_by_id.get(id_key) or []
+        rows_data.append({
+            "cfdi": cfdi,
+            "total": total,
+            "collected": collected,
+            "saldo": saldo,
+            "issue_date": issue_date,
+            "due_date": due_date,
+            "overdue_days": overdue_days,
+            "status": row_status,
+            "polizas": poliza_refs,
+        })
+
+    total_facturado = sum(row["total"] for row in rows_data)
+    total_cobrado = sum(row["collected"] for row in rows_data)
+    total_pendiente = sum(row["saldo"] for row in rows_data)
+    total_vencido = sum(row["saldo"] for row in rows_data if row["status"] == "vencido")
+    count_vencido = sum(1 for row in rows_data if row["status"] == "vencido")
+
+    def _status_badge(value: str) -> str:
+        colors = {"cobrado": "#047857", "pendiente": "#b45309", "vencido": "#b91c1c"}
+        labels = {"cobrado": "Cobrado", "pendiente": "Pendiente", "vencido": "Vencido"}
+        return f'<span style="display:inline-block;padding:4px 9px;border-radius:999px;background:{colors.get(value, "#374151")};color:#fff;font-weight:700;font-size:12px;">{labels.get(value, value)}</span>'
+
+    rows_html = "".join(
+        f"""
+        <tr>
+            <td><code>{escape((row['cfdi'].cfdi_uuid or '—')[:36])}</code></td>
+            <td>{escape(row['issue_date'].isoformat() if row['issue_date'] else '—')}</td>
+            <td>{escape(row['due_date'].isoformat() if row['due_date'] else '—')}</td>
+            <td>{escape(row['cfdi'].receptor_nombre or '—')}<br><span class="muted">{escape(row['cfdi'].receptor_rfc or '—')}</span></td>
+            <td>{escape(row['cfdi'].serie or '—')}</td>
+            <td>{escape(row['cfdi'].folio or '—')}</td>
+            <td>{format_currency(row['total'], row['cfdi'].moneda or 'MXN')}</td>
+            <td>{format_currency(row['collected'], row['cfdi'].moneda or 'MXN')}</td>
+            <td>{format_currency(row['saldo'], row['cfdi'].moneda or 'MXN')}</td>
+            <td>{row['overdue_days']}</td>
+            <td>{_status_badge(row['status'])}</td>
+            <td>{escape(', '.join(row['polizas']) if row['polizas'] else '—')}</td>
+        </tr>
+        """
+        for row in rows_data[:500]
+    )
+
+    status_options = "".join(
+        f'<option value="{value}" {"selected" if estado == value else ""}>{label}</option>'
+        for value, label in [
+            ("todos", "Todos"),
+            ("pendiente", "Pendientes"),
+            ("vencido", "Vencidos"),
+            ("cobrado", "Cobrados"),
+        ]
+    )
+    desde_value = escape(from_date.date().isoformat())
+    hasta_value = escape((to_date_exclusive.date() - timedelta(days=1)).isoformat())
+
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cuentas por Cobrar</title>
+    <style>
+    body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
+    .container {{ max-width: 1500px; margin:0 auto; }}
+    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
+    .toolbar {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; align-items:end; }}
+    input, select {{ width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; box-sizing:border-box; }}
+    .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
+    .button.secondary {{ background:#e5e7eb; color:#111827; }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }}
+    .metric {{ background:#111827; color:#fff; border-radius:12px; padding:16px; }}
+    .metric.warn {{ background:#7f1d1d; }}
+    .metric.light {{ background:#fff; color:#111827; border:1px solid #e5e7eb; }}
+    .metric .label {{ font-size:12px; opacity:.75; text-transform:uppercase; letter-spacing:.04em; }}
+    .metric .value {{ font-size:24px; font-weight:800; margin-top:6px; }}
+    .muted {{ color:#6b7280; font-size:13px; }}
+    table {{ width:100%; border-collapse:collapse; }}
+    th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
+    th {{ background:#f3f4f6; position:sticky; top:0; }}
+    .table-wrap {{ overflow:auto; max-height:70vh; }}
+    code {{ font-size:12px; }}
+    </style></head>
+    <body><div class="container">
+        {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cxc")}
+        <div class="card">
+            <h1 style="margin:0 0 8px 0;">Cuentas por Cobrar</h1>
+            <p class="muted" style="margin:0;">Facturas emitidas por las RFC activas de Plataforma cruzadas contra ingresos cobrados registrados por UUID. Vista read-only para cartera y cash flow.</p>
+        </div>
+        <div class="card">
+            <form method="GET" action="/admin/contabilidad/cuentas-por-cobrar" class="toolbar">
+                <div><label>Desde</label><input type="date" name="desde" value="{desde_value}"></div>
+                <div><label>Hasta</label><input type="date" name="hasta" value="{hasta_value}"></div>
+                <div><label>Estado</label><select name="estado">{status_options}</select></div>
+                <div><label>Cliente / RFC / UUID</label><input type="text" name="cliente" value="{escape(cliente_filter)}" placeholder="Ej. Bimbo"></div>
+                <div><label>Días crédito</label><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}"></div>
+                <div><button type="submit" class="button">Filtrar</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
+            </form>
+        </div>
+        <div class="grid">
+            <div class="metric"><div class="label">Facturado</div><div class="value">{format_currency(total_facturado)}</div><div class="muted">{len(rows_data)} CFDI en vista</div></div>
+            <div class="metric"><div class="label">Cobrado asociado</div><div class="value">{format_currency(total_cobrado)}</div><div class="muted">Por pólizas de ingresos cobrados</div></div>
+            <div class="metric"><div class="label">Saldo pendiente</div><div class="value">{format_currency(total_pendiente)}</div><div class="muted">Base de entrada esperada</div></div>
+            <div class="metric warn"><div class="label">Vencido</div><div class="value">{format_currency(total_vencido)}</div><div class="muted">{count_vencido} CFDI vencidos</div></div>
+        </div>
+        <div class="card" style="margin-top:16px;">
+            <h2 style="margin:0 0 12px 0;">Cartera</h2>
+            <div class="table-wrap"><table>
+                <thead><tr><th>UUID CFDI</th><th>Fecha</th><th>Vence</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Días vencido</th><th>Estado</th><th>Póliza cobro</th></tr></thead>
+                <tbody>{rows_html or '<tr><td colspan="12" class="muted">No hay CFDI emitidos con estos filtros.</td></tr>'}</tbody>
+            </table></div>
+            <p class="muted">Nota: si una factura fue cobrada pero el ingreso no tiene UUID capturado, aparecerá pendiente hasta vincularla.</p>
+        </div>
+    </div></body></html>
+    """
+    return HTMLResponse(content=html)
 
 
 @router.get("/admin/contabilidad/cash-flow", response_class=HTMLResponse)
