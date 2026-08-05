@@ -17640,6 +17640,47 @@ async def contabilidad_cash_flow_view(
         bucket = liquidity_buckets[_cash_bucket_for(doc.fecha_pago)]
         bucket["out"] += float(doc.monto_solicitado or doc.monto_total or 0)
         bucket["out_count"] += 1
+
+    daily_cash_rows: Dict[date, Dict[str, Any]] = {}
+
+    def _daily_bucket(target_date: Optional[date]) -> Optional[Dict[str, Any]]:
+        if target_date is None:
+            return None
+        delta = (target_date - today).days
+        if delta < 0 or delta > horizon_days:
+            return None
+        return daily_cash_rows.setdefault(
+            target_date,
+            {"date": target_date, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0, "notes": []},
+        )
+
+    for row in receivable_rows:
+        bucket = _daily_bucket(row.get("due_date"))
+        if bucket is None:
+            continue
+        amount = float(row.get("saldo") or 0)
+        bucket["in"] += amount
+        bucket["in_count"] += 1
+        bucket["notes"].append(f"CxC {row['cfdi'].receptor_nombre or row['cfdi'].receptor_rfc or 'cliente'} {format_currency(amount, row['cfdi'].moneda or 'MXN')}")
+    for doc in committed_docs:
+        bucket = _daily_bucket(doc.fecha_pago)
+        if bucket is None:
+            continue
+        amount = float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out"] += amount
+        bucket["out_count"] += 1
+        bucket["notes"].append(f"Solicitud {doc.numero_referencia or '—'} {format_currency(amount, currency_for(doc))}")
+    for row in payable_unprocessed_rows:
+        cfdi = row["cfdi"]
+        target_date = cfdi.fecha.date() if cfdi.fecha else None
+        bucket = _daily_bucket(target_date)
+        if bucket is None:
+            continue
+        amount = float(row.get("amount") or 0)
+        bucket["out"] += amount
+        bucket["out_count"] += 1
+        bucket["notes"].append(f"CxP sin captura {cfdi.emisor_nombre or cfdi.emisor_rfc or 'proveedor'} {format_currency(amount, cfdi.moneda or 'MXN')}")
+
     risk_label = "Bajo"
     risk_color = "#047857"
     if projected_position < 0 or len(bank_unmatched) > 25 or receivable_overdue_total > max(forecast_in_30, 1) * 0.5:
@@ -17682,6 +17723,18 @@ async def contabilidad_cash_flow_view(
             f"<tr><td>{escape(label)}</td><td>{format_currency(bucket['in'])}<br><span class='muted'>{bucket['in_count']} cobros</span></td><td>{format_currency(bucket['out'])}<br><span class='muted'>{bucket['out_count']} pagos</span></td><td>{format_currency(net)}</td><td>{format_currency(running_position)}</td></tr>"
         )
     liquidity_calendar_rows = "".join(liquidity_bucket_rows)
+    daily_rows_html_parts = []
+    daily_running_position = bank_net
+    for day, row in sorted(daily_cash_rows.items(), key=lambda item: item[0]):
+        net = float(row["in"] or 0) - float(row["out"] or 0)
+        daily_running_position += net
+        notes = "; ".join(row["notes"][:3])
+        if len(row["notes"]) > 3:
+            notes += f"; +{len(row['notes']) - 3} más"
+        daily_rows_html_parts.append(
+            f"<tr><td>{escape(day.isoformat())}</td><td>{format_currency(row['in'])}<br><span class='muted'>{row['in_count']} cobros</span></td><td>{format_currency(row['out'])}<br><span class='muted'>{row['out_count']} salidas</span></td><td>{format_currency(net)}</td><td>{format_currency(daily_running_position)}</td><td>{escape(notes or '—')}</td></tr>"
+        )
+    daily_cash_flow_rows = "".join(daily_rows_html_parts)
 
     month_options = "".join(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
@@ -17758,6 +17811,11 @@ async def contabilidad_cash_flow_view(
             <h2 style="margin:0 0 12px 0;">Calendario de liquidez</h2>
             <table><thead><tr><th>Ventana</th><th>Cobros esperados</th><th>Pagos comprometidos</th><th>Neto ventana</th><th>Posición acumulada</th></tr></thead><tbody>{liquidity_calendar_rows}</tbody></table>
             <p class="muted">La posición acumulada inicia con el neto bancario del período seleccionado y suma/resta cada ventana.</p>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Posición diaria proyectada</h2>
+            <table><thead><tr><th>Día</th><th>Cobros</th><th>Salidas</th><th>Neto día</th><th>Posición acumulada</th><th>Notas</th></tr></thead><tbody>{daily_cash_flow_rows or f'<tr><td colspan="6" class="muted">Sin actividad proyectada día a día dentro de {horizon_days} días.</td></tr>'}</tbody></table>
+            <p class="muted">Sólo muestra días con actividad proyectada. Inicia con el neto bancario del período seleccionado.</p>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Cuentas bancarias</h2>
@@ -18003,6 +18061,46 @@ async def contabilidad_cash_flow_export_xlsx(
         bucket["out"] += float(row["amount"] or 0)
         bucket["out_count"] += 1
 
+    daily_cash_rows: Dict[date, Dict[str, Any]] = {}
+
+    def _daily_bucket(target_date: Optional[date]) -> Optional[Dict[str, Any]]:
+        if target_date is None:
+            return None
+        delta = (target_date - today).days
+        if delta < 0 or delta > horizon_days:
+            return None
+        return daily_cash_rows.setdefault(
+            target_date,
+            {"date": target_date, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0, "notes": []},
+        )
+
+    for row in receivable_rows:
+        bucket = _daily_bucket(row.get("due_date"))
+        if bucket is None:
+            continue
+        amount = float(row.get("saldo") or 0)
+        bucket["in"] += amount
+        bucket["in_count"] += 1
+        bucket["notes"].append(f"CxC {row['cfdi'].receptor_nombre or row['cfdi'].receptor_rfc or 'cliente'}")
+    for doc in committed_docs:
+        bucket = _daily_bucket(doc.fecha_pago)
+        if bucket is None:
+            continue
+        amount = float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out"] += amount
+        bucket["out_count"] += 1
+        bucket["notes"].append(f"Solicitud {doc.numero_referencia or '—'}")
+    for row in payable_unprocessed_rows:
+        cfdi = row["cfdi"]
+        target_date = cfdi.fecha.date() if cfdi.fecha else None
+        bucket = _daily_bucket(target_date)
+        if bucket is None:
+            continue
+        amount = float(row.get("amount") or 0)
+        bucket["out"] += amount
+        bucket["out_count"] += 1
+        bucket["notes"].append(f"CxP sin captura {cfdi.emisor_nombre or cfdi.emisor_rfc or 'proveedor'}")
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen"
@@ -18051,6 +18149,15 @@ async def contabilidad_cash_flow_export_xlsx(
         running += net
         liquidity_rows.append([label, bucket["in"], bucket["in_count"], bucket["out"], bucket["out_count"], net, running])
     write_rows(ws2, liquidity_rows)
+
+    ws_daily = wb.create_sheet("Posición diaria")
+    daily_rows = [["Día", "Cobros", "# cobros", "Salidas", "# salidas", "Neto día", "Posición acumulada", "Notas"]]
+    running_daily = bank_net
+    for day, row in sorted(daily_cash_rows.items(), key=lambda item: item[0]):
+        net = float(row["in"] or 0) - float(row["out"] or 0)
+        running_daily += net
+        daily_rows.append([day.isoformat(), row["in"], row["in_count"], row["out"], row["out_count"], net, running_daily, "; ".join(row["notes"])])
+    write_rows(ws_daily, daily_rows)
 
     ws3 = wb.create_sheet("CxC")
     cxc_rows = [["UUID", "Vence", "Cliente", "RFC", "Serie", "Folio", "Saldo"]]
