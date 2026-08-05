@@ -17952,6 +17952,71 @@ async def contabilidad_cash_flow_view(
             "Clasificar si son pagos pendientes, facturas ya cubiertas o CFDI sin efecto operativo.",
             "/admin/contabilidad/cuentas-por-pagar",
         )
+
+    cash_action_queue: List[Dict[str, Any]] = []
+
+    def _add_cash_action(priority: str, kind: str, amount: float, explanation: str, href: str, owner: str = "Finanzas") -> None:
+        color = {"alta": "#b91c1c", "media": "#b45309", "baja": "#047857"}.get(priority, "#4b5563")
+        cash_action_queue.append({
+            "priority": priority,
+            "color": color,
+            "kind": kind,
+            "amount": float(amount or 0),
+            "explanation": explanation,
+            "href": href,
+            "owner": owner,
+        })
+
+    if projected_position < 0:
+        _add_cash_action(
+            "alta",
+            "Balance de caja",
+            abs(projected_position),
+            f"La posición comprometida queda negativa dentro de {horizon_days} días; revisar compromisos antes de nuevas autorizaciones.",
+            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}{project_query}#compromisos",
+        )
+    if receivable_overdue_total > 0:
+        _add_cash_action(
+            "alta" if receivable_overdue_total > max(forecast_in_30, 1) * 0.5 else "media",
+            "Cobranza vencida",
+            receivable_overdue_total,
+            "Confirmar cobros, aceptar matches bancarios o dar seguimiento a facturas emitidas vencidas.",
+            f"/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}",
+        )
+    if bank_unmatched_amount > 0 and len(bank_unmatched) > 0:
+        _add_cash_action(
+            "alta" if len(bank_unmatched) > 25 else ("media" if len(bank_unmatched) > 10 else "baja"),
+            "Banco sin conciliar",
+            bank_unmatched_amount,
+            f"Conciliar {len(bank_unmatched)} movimientos para evitar decisiones con banco incompleto.",
+            f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched",
+        )
+    if payable_unprocessed_total > 0:
+        _add_cash_action(
+            "media" if payable_unprocessed_total <= max(abs(bank_net), 1) * 0.5 else "alta",
+            "CxP sin captura",
+            payable_unprocessed_total,
+            "Clasificar CFDI recibidos: pago pendiente, gasto ya capturado o documento sin efecto operativo.",
+            "/admin/contabilidad/cuentas-por-pagar",
+        )
+    if approved_pending_total > 0:
+        _add_cash_action(
+            "media",
+            "Pagos aprobados",
+            approved_pending_total,
+            f"Revisar {len(approved_pending)} solicitudes aprobadas pendientes de ejecución o programación.",
+            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}{project_query}#compromisos",
+        )
+    if submitted_pending_total > 0:
+        _add_cash_action(
+            "baja",
+            "Solicitudes enviadas",
+            submitted_pending_total,
+            f"Monitorear {len(submitted_pending)} solicitudes enviadas que pueden convertirse en compromiso.",
+            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}{project_query}#compromisos",
+        )
+    cash_action_queue.sort(key=lambda row: ({"alta": 0, "media": 1, "baja": 2}.get(row["priority"], 9), -abs(row["amount"])))
+
     if not cash_alerts:
         _add_cash_alert(
             "baja",
@@ -18013,6 +18078,10 @@ async def contabilidad_cash_flow_view(
     certainty_rows_html = "".join(
         f"<tr><td><span class='alert-pill' style='background:{row['color']};'>{escape(row['certainty'])}</span></td><td><strong>{escape(row['source'])}</strong><br><span class='muted'>{escape(row['note'])}</span></td><td>{format_currency(row['in'])}</td><td>{format_currency(row['out'])}</td><td>{row['count']}</td></tr>"
         for row in cash_certainty_rows
+    )
+    action_queue_rows_html = "".join(
+        f"<tr><td><span class='alert-pill' style='background:{row['color']};'>{escape(row['priority'].upper())}</span></td><td>{escape(row['kind'])}</td><td>{format_currency(row['amount'])}</td><td>{escape(row['explanation'])}<br><span class='muted'>Responsable sugerido: {escape(row['owner'])}</span></td><td><a class='button secondary' style='padding:6px 10px;' href='{escape(row['href'])}'>Resolver</a></td></tr>"
+        for row in cash_action_queue
     )
 
     month_options = "".join(
@@ -18099,6 +18168,11 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
             <div class="metric light"><div class="label">CxC conciliada tesorería</div><div class="value">{format_currency(treasury_cxc_total)}</div><div class="muted">{treasury_cxc_count} matches aceptados; no se proyectan doble</div></div>
             <div class="metric light"><div class="label">CxP conciliada tesorería</div><div class="value">{format_currency(treasury_cxp_total)}</div><div class="muted">{treasury_cxp_count} matches aceptados; fuera del riesgo CxP</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Cola accionable</h2>
+            <table><thead><tr><th>Prioridad</th><th>Tipo</th><th>Monto</th><th>Qué resolver</th><th>Acción</th></tr></thead><tbody>{action_queue_rows_html or '<tr><td colspan="5" class="muted">Sin acciones abiertas para este corte de caja.</td></tr>'}</tbody></table>
+            <p class="muted">La cola convierte el análisis en trabajo operativo: conciliar, cobrar, clasificar CFDI o revisar compromisos. No ejecuta cambios por sí sola.</p>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Composición por certeza</h2>
@@ -18412,6 +18486,26 @@ async def contabilidad_cash_flow_export_xlsx(
         _add_cash_alert("alta" if len(bank_unmatched) > 25 else "media", "Banco pendiente de conciliación", f"{len(bank_unmatched)} movimientos por {bank_unmatched_amount:.2f}", "Usar conciliación y matches de tesorería.", f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched")
     if payable_unprocessed_total > 0:
         _add_cash_alert("media", "CxP sin captura", f"CFDI recibidos no vinculados por {payable_unprocessed_total:.2f}", "Clasificar CFDI recibidos pendientes.", "/admin/contabilidad/cuentas-por-pagar")
+
+    cash_action_queue: List[Dict[str, Any]] = []
+
+    def _add_cash_action(priority: str, kind: str, amount: float, explanation: str, href: str, owner: str = "Finanzas") -> None:
+        cash_action_queue.append({"priority": priority, "kind": kind, "amount": float(amount or 0), "explanation": explanation, "href": href, "owner": owner})
+
+    if committed_position < 0:
+        _add_cash_action("alta", "Balance de caja", abs(committed_position), f"La posición comprometida queda negativa dentro de {horizon_days} días; revisar compromisos antes de nuevas autorizaciones.", f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}#compromisos")
+    if receivable_overdue_total > 0:
+        _add_cash_action("media", "Cobranza vencida", receivable_overdue_total, "Confirmar cobros, aceptar matches bancarios o dar seguimiento a facturas emitidas vencidas.", f"/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}")
+    if bank_unmatched_amount > 0 and len(bank_unmatched) > 0:
+        _add_cash_action("alta" if len(bank_unmatched) > 25 else ("media" if len(bank_unmatched) > 10 else "baja"), "Banco sin conciliar", bank_unmatched_amount, f"Conciliar {len(bank_unmatched)} movimientos para evitar decisiones con banco incompleto.", f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched")
+    if payable_unprocessed_total > 0:
+        _add_cash_action("media", "CxP sin captura", payable_unprocessed_total, "Clasificar CFDI recibidos: pago pendiente, gasto ya capturado o documento sin efecto operativo.", "/admin/contabilidad/cuentas-por-pagar")
+    if approved_pending_total > 0:
+        _add_cash_action("media", "Pagos aprobados", approved_pending_total, f"Revisar {approved_pending_count} solicitudes aprobadas pendientes de ejecución o programación.", f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}#compromisos")
+    if submitted_pending_total > 0:
+        _add_cash_action("baja", "Solicitudes enviadas", submitted_pending_total, f"Monitorear {submitted_pending_count} solicitudes enviadas que pueden convertirse en compromiso.", f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}#compromisos")
+    cash_action_queue.sort(key=lambda row: ({"alta": 0, "media": 1, "baja": 2}.get(row["priority"], 9), -abs(row["amount"])))
+
     if not cash_alerts:
         _add_cash_alert("baja", "Sin alertas críticas", "No se detectaron focos rojos con los datos actuales.", "Mantener conciliación al día.", f"/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}")
 
@@ -18542,6 +18636,12 @@ async def contabilidad_cash_flow_export_xlsx(
     for alert in cash_alerts:
         alert_rows.append([alert["severity"], alert["title"], alert["detail"], alert["action"], alert.get("href")])
     write_rows(ws_alerts, alert_rows)
+
+    ws_actions = wb.create_sheet("Cola accionable")
+    action_export_rows = [["Prioridad", "Tipo", "Monto", "Qué resolver", "Responsable", "Vista"]]
+    for row in cash_action_queue:
+        action_export_rows.append([row["priority"], row["kind"], row["amount"], row["explanation"], row["owner"], row["href"]])
+    write_rows(ws_actions, action_export_rows)
 
     ws_certainty = wb.create_sheet("Certeza")
     certainty_export_rows = [["Certeza", "Fuente", "Entradas", "Salidas", "Registros", "Nota"]]
