@@ -45,3 +45,25 @@ def test_debtor_accounting_uses_cuenta_beneficiary_not_requester_for_reports():
     assert 'beneficiario_empleado_id' in source
     assert "empleado = await resolve_cuenta_debtor_empleado(session, cuenta)" in source
     assert "CuentaDeGastos.empleado_id`` is the authenticated requester/capturer" in source
+
+
+def test_debtor_account_match_allows_omitted_middle_name():
+    from devnous.gastos.services.employee_debtor_accounting_service import (
+        _debtor_account_match_score,
+    )
+
+    assert (
+        _debtor_account_match_score(
+            "CARLOS FELIPE LOZANO PARDINAS",
+            "CARLOS LOZANO PARDINAS",
+        )
+        > 0
+    )
+
+
+def test_debtor_account_match_rejects_weak_name_overlap():
+    from devnous.gastos.services.employee_debtor_accounting_service import (
+        _debtor_account_match_score,
+    )
+
+    assert _debtor_account_match_score("CARLOS FELIPE LOZANO PARDINAS", "CARLOS GARCIA") == 0
