@@ -18901,7 +18901,22 @@ async def contabilidad_tesoreria_matches_view(
                 score = amount_score + p_score + d_score
                 if score < min_score:
                     continue
-                best.append({"movement": movement, "cfdi": item["cfdi"], "amount": amount, "delta": amount_delta, "score": score, "direction": direction})
+                reason_parts = [
+                    f"monto {'exacto' if amount_delta < 0.01 else 'diferencia ' + format_currency(amount_delta)} ({amount_score})",
+                    f"texto/contraparte {p_score}",
+                    f"fecha {d_score}",
+                ]
+                if item.get("due_date"):
+                    reason_parts.append(f"vencimiento {item['due_date'].isoformat()}")
+                best.append({
+                    "movement": movement,
+                    "cfdi": item["cfdi"],
+                    "amount": amount,
+                    "delta": amount_delta,
+                    "score": score,
+                    "direction": direction,
+                    "reason": "; ".join(reason_parts),
+                })
             suggestions.extend(sorted(best, key=lambda row: row["score"], reverse=True)[:3])
         return sorted(suggestions, key=lambda row: row["score"], reverse=True)[:100]
 
@@ -18970,6 +18985,7 @@ async def contabilidad_tesoreria_matches_view(
                 <td>{escape(row['cfdi'].folio or '—')}</td>
                 <td>{format_currency(row['amount'], row['cfdi'].moneda or 'MXN')}</td>
                 <td>{format_currency(row['delta'])}</td>
+                <td>{escape(row.get('reason') or '?')}</td>
                 <td>
                     <form method="POST" action="/admin/contabilidad/tesoreria-matches/accept" onsubmit="return confirm('Aceptar esta sugerencia sólo marcará el movimiento bancario como revisado contra este CFDI. No crea pólizas ni gastos. ¿Continuar?');">
                         <input type="hidden" name="movement_id" value="{row['movement'].id}">
@@ -19036,6 +19052,7 @@ async def contabilidad_tesoreria_matches_view(
                 <div><label>Score mínimo</label><br><input type="number" min="0" max="120" name="min_score" value="{min_score}" style="width:110px;"></div>
                 <div><label>Tipo</label><br><select name="tipo">{tipo_options}</select></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
+                <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched">Conciliacion</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Cash Flow</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&tolerance={tolerance}&min_score={min_score}&tipo={tipo}">Exportar Excel</a></div>
             </form>
@@ -19053,12 +19070,12 @@ async def contabilidad_tesoreria_matches_view(
         </div>
         <div class="card" style="margin-top:16px;">
             <h2 style="margin:0 0 12px 0;">Cobros sugeridos: banco → CxC</h2>
-            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th><th>Diferencia</th><th>Acción</th></tr></thead><tbody>{cxc_rows or '<tr><td colspan="14" class="muted">Sin sugerencias CxC con estos filtros.</td></tr>'}</tbody></table></div>
+            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Saldo</th><th>Diferencia</th><th>Razon</th><th>Accion</th></tr></thead><tbody>{cxc_rows or '<tr><td colspan="15" class="muted">Sin sugerencias CxC con estos filtros.</td></tr>'}</tbody></table></div>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Pagos sugeridos: banco → CxP sin captura</h2>
-            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th><th>Diferencia</th><th>Acción</th></tr></thead><tbody>{cxp_rows or '<tr><td colspan="14" class="muted">Sin sugerencias CxP con estos filtros.</td></tr>'}</tbody></table></div>
-            <p class="muted">Score = monto + similitud de texto + cercanía de fecha. Umbral actual: {min_score}. Esta pantalla no modifica conciliación ni marca facturas como cobradas/pagadas.</p>
+            <div class="table-wrap"><table><thead><tr><th>Tipo</th><th>Score</th><th>Banco fecha</th><th>Cuenta</th><th>Banco importe</th><th>Texto banco</th><th>UUID CFDI</th><th>CFDI fecha</th><th>Proveedor</th><th>Serie</th><th>Folio</th><th>Total</th><th>Diferencia</th><th>Razon</th><th>Accion</th></tr></thead><tbody>{cxp_rows or '<tr><td colspan="15" class="muted">Sin sugerencias CxP con estos filtros.</td></tr>'}</tbody></table></div>
+            <p class="muted">Score = monto + similitud de texto + cercania de fecha. Umbral actual: {min_score}. Aceptar una sugerencia marca el movimiento bancario como revisado contra el CFDI; no crea polizas ni gastos.</p>
         </div>
     </div></body></html>
     """
@@ -19195,6 +19212,11 @@ async def contabilidad_tesoreria_matches_accept(
     p_score = _party_score(_bank_text(movement), party)
     d_score = _date_score(movement.fecha, cfdi.fecha, due_date)
     score = amount_score + p_score + d_score
+    reason = "; ".join([
+        f"monto {'exacto' if amount_delta < 0.01 else 'diferencia ' + format_currency(amount_delta)} ({amount_score})",
+        f"texto/contraparte {p_score}",
+        f"fecha {d_score}",
+    ] + ([f"vencimiento {due_date.isoformat()}"] if due_date else []))
     if score < min_score:
         return RedirectResponse(url=return_url + "&error_msg=" + quote(f"La sugerencia ya no alcanza el score mínimo ({score} < {min_score})"), status_code=303)
 
@@ -19214,6 +19236,7 @@ async def contabilidad_tesoreria_matches_accept(
             "cfdi_amount_considered": amount,
             "amount_delta": amount_delta,
             "score": score,
+            "reason": reason,
             "min_score": min_score,
             "tolerance": tolerance,
             "note": "Accepted from treasury pre-match. No poliza, expense, or income record was created.",
@@ -19463,7 +19486,22 @@ async def contabilidad_tesoreria_matches_export_xlsx(
                 score = amount_score + p_score + d_score
                 if score < min_score:
                     continue
-                best.append({"movement": movement, "cfdi": item["cfdi"], "amount": amount, "delta": amount_delta, "score": score, "direction": direction})
+                reason_parts = [
+                    f"monto {'exacto' if amount_delta < 0.01 else 'diferencia ' + format_currency(amount_delta)} ({amount_score})",
+                    f"texto/contraparte {p_score}",
+                    f"fecha {d_score}",
+                ]
+                if item.get("due_date"):
+                    reason_parts.append(f"vencimiento {item['due_date'].isoformat()}")
+                best.append({
+                    "movement": movement,
+                    "cfdi": item["cfdi"],
+                    "amount": amount,
+                    "delta": amount_delta,
+                    "score": score,
+                    "direction": direction,
+                    "reason": "; ".join(reason_parts),
+                })
             suggestions.extend(sorted(best, key=lambda row: row["score"], reverse=True)[:3])
         return sorted(suggestions, key=lambda row: row["score"], reverse=True)[:100]
 
@@ -19501,7 +19539,7 @@ async def contabilidad_tesoreria_matches_export_xlsx(
     ])
 
     def suggestion_rows(suggestions: List[Dict[str, Any]], party_attr: str) -> List[List[Any]]:
-        rows = [["Tipo", "Score", "Banco fecha", "Banco cuenta", "Banco importe", "Texto banco", "UUID CFDI", "CFDI fecha", "Cliente/Proveedor", "RFC", "Serie", "Folio", "Monto CFDI", "Diferencia"]]
+        rows = [["Tipo", "Score", "Banco fecha", "Banco cuenta", "Banco importe", "Texto banco", "UUID CFDI", "CFDI fecha", "Cliente/Proveedor", "RFC", "Serie", "Folio", "Monto CFDI", "Diferencia", "Razon"]]
         for row in suggestions:
             movement = row["movement"]
             cfdi = row["cfdi"]
@@ -19509,7 +19547,7 @@ async def contabilidad_tesoreria_matches_export_xlsx(
             rows.append([
                 row["direction"], row["score"], movement.fecha.date().isoformat() if movement.fecha else None, movement.cuenta_bancaria,
                 float(movement.importe or 0), _bank_text(movement), cfdi.cfdi_uuid, cfdi.fecha.date().isoformat() if cfdi.fecha else None,
-                getattr(cfdi, party_attr) or "", party_rfc, cfdi.serie, cfdi.folio, row["amount"], row["delta"],
+                getattr(cfdi, party_attr) or "", party_rfc, cfdi.serie, cfdi.folio, row["amount"], row["delta"], row.get("reason") or "",
             ])
         return rows
 
