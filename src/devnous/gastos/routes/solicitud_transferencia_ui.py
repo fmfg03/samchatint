@@ -1027,6 +1027,7 @@ def render_cfdi_quick_expense_autofill_script(
     descuento_id: str = "quick-descuento",
     impuestos_y_retenciones_id: str = "quick-impuestos-y-retenciones",
     propina_id: str = "quick-propina",
+    budget_concept_id: str = "quick-budget-concept",
     total_id: str = "quick-total",
     notice_id: str = "quick_cfdi_autofill_notice",
     tip_input_id: str = "quick-propina",
@@ -1046,8 +1047,10 @@ def render_cfdi_quick_expense_autofill_script(
                 {json.dumps(impuestos_y_retenciones_id)}
             );
             const propina = document.getElementById({json.dumps(propina_id)});
+            const budgetConcept = document.getElementById({json.dumps(budget_concept_id)});
             const total = document.getElementById({json.dumps(total_id)});
             const tipInput = document.getElementById({json.dumps(tip_input_id)});
+            const tipColumns = Array.from(document.querySelectorAll('.quick-tip-col'));
             const notice = document.getElementById({json.dumps(notice_id)});
             let autofillRequestId = 0;
 
@@ -1056,19 +1059,59 @@ def render_cfdi_quick_expense_autofill_script(
                 return Number.isFinite(parsed) ? parsed : 0;
             }}
 
+            function normalizedText(value) {{
+                return String(value || '')
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\u0300-\u036f]/g, '');
+            }}
+
+            function isFoodContext() {{
+                const selectedBudget = (
+                    budgetConcept
+                    && budgetConcept.options
+                    && budgetConcept.selectedIndex >= 0
+                ) ? budgetConcept.options[budgetConcept.selectedIndex].textContent : '';
+                const haystack = normalizedText(
+                    [concepto && concepto.value, selectedBudget].join(' ')
+                );
+                return [
+                    'alimento',
+                    'alimentacion',
+                    'comida',
+                    'desayuno',
+                    'cena',
+                    'restaurant',
+                    'restaurante',
+                ].some(function(token) {{ return haystack.indexOf(token) !== -1; }});
+            }}
+
+            function syncTipVisibility() {{
+                const show = isFoodContext();
+                tipColumns.forEach(function(el) {{ el.hidden = !show; }});
+                if (!show && tipInput && money(tipInput.value) !== 0) {{
+                    tipInput.value = '0';
+                }}
+                updateTotal();
+            }}
+
             function updateTotal() {{
                 if (!total) return;
                 const computed = (
                     money(subtotal && subtotal.value)
                     - money(descuento && descuento.value)
                     + money(impuestosYRetenciones && impuestosYRetenciones.value)
-                    + money(tipInput && tipInput.value)
+                    + (isFoodContext() ? money(tipInput && tipInput.value) : 0)
                 );
                 total.value = computed.toFixed(2);
             }}
 
             [subtotal, descuento, impuestosYRetenciones, tipInput].forEach(function(el) {{
                 if (el) el.addEventListener('input', updateTotal);
+            }});
+            [concepto, budgetConcept].forEach(function(el) {{
+                if (el) el.addEventListener('input', syncTipVisibility);
+                if (el) el.addEventListener('change', syncTipVisibility);
             }});
 
             function hideNotice() {{
@@ -1107,7 +1150,7 @@ def render_cfdi_quick_expense_autofill_script(
                 ) {{
                     impuestosYRetenciones.value = payload.impuestos_y_retenciones;
                 }}
-                updateTotal();
+                syncTipVisibility();
             }}
 
             async function requestAutofill(sourceInput, otherInput, deferToOther) {{
@@ -1174,7 +1217,7 @@ def render_cfdi_quick_expense_autofill_script(
                 }});
             }}
 
-            updateTotal();
+            syncTipVisibility();
         }})();
     </script>
     """
