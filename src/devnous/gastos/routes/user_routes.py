@@ -32460,6 +32460,27 @@ def _quick_expense_decimal(
     return parsed
 
 
+def _normalizar_propina_texto(value: Optional[str]) -> str:
+    normalized = unicodedata.normalize("NFD", str(value or "").strip().lower())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
+def _is_alimentos_tip_context(*values: Optional[str]) -> bool:
+    haystack = " ".join(_normalizar_propina_texto(value) for value in values)
+    return any(
+        token in haystack
+        for token in (
+            "alimento",
+            "alimentacion",
+            "comida",
+            "desayuno",
+            "cena",
+            "restaurant",
+            "restaurante",
+        )
+    )
+
+
 def _quick_expense_values(
     *,
     concepto: Optional[str],
@@ -32684,6 +32705,14 @@ async def crear_gasto_rapido_en_informe(
             raise ValueError("La partida presupuestal es requerida para este informe.")
         if budget_concept_raw and budget_concept is None:
             raise ValueError("La partida presupuestal no corresponde al torneo del informe.")
+        budget_concept_label = str((budget_concept or {}).get("label") or "")
+        if values["propina"] > 0 and not _is_alimentos_tip_context(
+            values.get("concepto"),
+            budget_concept_label,
+        ):
+            raise ValueError(
+                "La propina solo puede capturarse en conceptos o partidas de Alimentos."
+            )
         proyecto = (
             (cuenta.torneo.name or "").strip()
             if cuenta.torneo
@@ -33438,7 +33467,7 @@ async def cuenta_de_gastos_detail(
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
                                         <th>Impuestos y retenciones</th>
-                                        <th>Propina</th>
+                                        <th class="quick-tip-col" hidden>Propina</th>
                                         <th>TOTAL</th>
                                         <th>MONEDA</th>
                                         <th>MATERIALIDADES</th>
@@ -33461,7 +33490,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
-                                        <td><input type="number" min="0" step="0.01" name="propina" id="quick-propina" value="0"></td>
+                                        <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina" id="quick-propina" value="0"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
                                         <td>
@@ -33525,6 +33554,9 @@ async def cuenta_de_gastos_detail(
             }}
             .quick-expense-table input[type="file"] {{
                 min-width:180px;
+            }}
+            .quick-expense-table .quick-tip-col[hidden] {{
+                display:none;
             }}
             .notice.warn {{
                 background:#fef2f2;
