@@ -18353,7 +18353,7 @@ async def contabilidad_cash_flow_export_xlsx(
                 and_(*_append_manual_project_cfdi_filter([
                     CFDIReport.fecha >= datetime(today.year, 1, 1),
                     CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
-                    CFDIReport.tipo_de_comprobante == I,
+                    CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
             )
@@ -18592,6 +18592,51 @@ async def contabilidad_cash_flow_export_xlsx(
         bucket["out_count"] += 1
         bucket["notes"].append(f"CxP sin captura {cfdi.emisor_nombre or cfdi.emisor_rfc or 'proveedor'}")
 
+    treasury_match_export_rows = [[
+        "Aceptado en",
+        "Tipo",
+        "Banco fecha",
+        "Cuenta",
+        "Banco importe",
+        "Texto banco",
+        "CFDI UUID",
+        "Monto considerado",
+        "Diferencia",
+        "Score",
+        "Razon",
+    ]]
+    treasury_logs_result = await session.execute(
+        select(ReconciliationAuditLog)
+        .options(selectinload(ReconciliationAuditLog.bank_movement))
+        .where(ReconciliationAuditLog.action.in_(["accept_treasury_cfdi_match", "undo_treasury_cfdi_match"]))
+        .order_by(ReconciliationAuditLog.bank_movement_id.asc(), ReconciliationAuditLog.created_at.asc())
+    )
+    latest_treasury_log_by_movement: Dict[str, ReconciliationAuditLog] = {}
+    for log in treasury_logs_result.scalars().all():
+        latest_treasury_log_by_movement[str(log.bank_movement_id)] = log
+    for log in latest_treasury_log_by_movement.values():
+        if log.action != "accept_treasury_cfdi_match":
+            continue
+        movement = log.bank_movement
+        if movement is None or (movement.conciliacion_estado or "unmatched").lower() == "unmatched":
+            continue
+        if not movement.fecha or not (start_dt <= movement.fecha < end_dt):
+            continue
+        details = log.details or {}
+        treasury_match_export_rows.append([
+            log.created_at.isoformat() if log.created_at else None,
+            (details.get("direction") or "").upper(),
+            movement.fecha.isoformat() if movement.fecha else None,
+            movement.cuenta_bancaria,
+            float(movement.importe or 0),
+            " ".join(part for part in [movement.descripcion, movement.concepto_banco, movement.nombre_beneficiario, movement.nombre_ordenante, movement.referencia_bancaria, movement.clave_rastreo] if part),
+            details.get("cfdi_uuid"),
+            float(details.get("cfdi_amount_considered") or 0),
+            float(details.get("amount_delta") or 0),
+            details.get("score"),
+            details.get("reason") or "",
+        ])
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Resumen"
@@ -18660,6 +18705,9 @@ async def contabilidad_cash_flow_export_xlsx(
     for row in cash_certainty_rows:
         certainty_export_rows.append([row["certainty"], row["source"], row["in"], row["out"], row["count"], row["note"]])
     write_rows(ws_certainty, certainty_export_rows)
+
+    ws_treasury = wb.create_sheet("Tesoreria matches")
+    write_rows(ws_treasury, treasury_match_export_rows)
 
     ws_daily = wb.create_sheet("Posición diaria")
     daily_rows = [["Día", "Cobros", "# cobros", "Salidas", "# salidas", "Neto día", "Posición acumulada", "Notas"]]
