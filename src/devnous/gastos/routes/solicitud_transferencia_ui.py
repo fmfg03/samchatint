@@ -1053,6 +1053,7 @@ def render_cfdi_quick_expense_autofill_script(
             const tipColumns = Array.from(document.querySelectorAll('.quick-tip-col'));
             const notice = document.getElementById({json.dumps(notice_id)});
             let autofillRequestId = 0;
+            let xmlTotal = null;
 
             function money(value) {{
                 const parsed = Number.parseFloat(value || '0');
@@ -1097,18 +1098,27 @@ def render_cfdi_quick_expense_autofill_script(
 
             function updateTotal() {{
                 if (!total) return;
-                const computed = (
-                    money(subtotal && subtotal.value)
-                    - money(descuento && descuento.value)
-                    + money(impuestosYRetenciones && impuestosYRetenciones.value)
-                    + (isFoodContext() ? money(tipInput && tipInput.value) : 0)
-                );
+                const baseTotal = xmlTotal !== null
+                    ? xmlTotal
+                    : (
+                        money(subtotal && subtotal.value)
+                        - money(descuento && descuento.value)
+                        + money(impuestosYRetenciones && impuestosYRetenciones.value)
+                    );
+                const computed = baseTotal + (isFoodContext() ? money(tipInput && tipInput.value) : 0);
                 total.value = computed.toFixed(2);
             }}
 
-            [subtotal, descuento, impuestosYRetenciones, tipInput].forEach(function(el) {{
-                if (el) el.addEventListener('input', updateTotal);
+            [subtotal, descuento, impuestosYRetenciones].forEach(function(el) {{
+                if (!el) return;
+                el.addEventListener('input', function() {{
+                    xmlTotal = null;
+                    updateTotal();
+                }});
             }});
+            if (tipInput) {{
+                tipInput.addEventListener('input', updateTotal);
+            }}
             [concepto, budgetConcept].forEach(function(el) {{
                 if (el) el.addEventListener('input', syncTipVisibility);
                 if (el) el.addEventListener('change', syncTipVisibility);
@@ -1149,6 +1159,10 @@ def render_cfdi_quick_expense_autofill_script(
                     && payload.impuestos_y_retenciones !== ''
                 ) {{
                     impuestosYRetenciones.value = payload.impuestos_y_retenciones;
+                }}
+                if (total && payload.total) {{
+                    xmlTotal = money(payload.total);
+                    total.value = payload.total;
                 }}
                 syncTipVisibility();
             }}

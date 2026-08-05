@@ -2239,6 +2239,31 @@ class TelegramAdapter:
             ) as resp:
                 return await resp.json()
 
+    async def edit_message_reply_markup(
+        self,
+        chat_id: int,
+        message_id: int,
+        reply_markup: Optional[Dict] = None,
+    ):
+        """Edit or remove inline keyboard for an existing Telegram message."""
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": reply_markup or {"inline_keyboard": []},
+            }
+            async with session.post(
+                f"{self.api_base}/editMessageReplyMarkup",
+                json=payload,
+            ) as resp:
+                data = await resp.json()
+                if not data.get("ok"):
+                    logger.warning(
+                        "Telegram editMessageReplyMarkup failed",
+                        extra={"chat_id": chat_id, "message_id": message_id, "response": data},
+                    )
+                return data
+
     async def download_photo(self, file_id: str) -> bytes:
         """Download photo from Telegram"""
         file_bytes, _ = await self.download_file(file_id, max_bytes=self._max_image_bytes)

@@ -840,3 +840,15 @@ def test_workflow_blocks_reopen_after_any_approval_but_allows_materiality():
     assert '"cerrado",' in routes_source
     assert '"reembolsado",' in routes_source
     assert '"aplicado",' in routes_source
+
+
+def test_telegram_approval_callbacks_clear_stale_inline_buttons():
+    runtime_source = Path("src/devnous/gastos/services/telegram_document_runtime.py").read_text(encoding="utf-8")
+    adapter_source = Path("src/devnous/tournaments/core/telegram_adapter.py").read_text(encoding="utf-8")
+
+    assert "edit_message_reply_markup" in adapter_source
+    assert "editMessageReplyMarkup" in adapter_source
+    assert "_clear_callback_keyboard" in runtime_source
+    assert "authorization_closed_document" in runtime_source
+    assert "workflow_locked_document" in runtime_source
+    assert "Ya fue procesado" in runtime_source

@@ -22,13 +22,13 @@ class TelegramDocumentRuntime:
     def __init__(self, gateway: Any) -> None:
         self.gateway = gateway
 
-    async def execute_approve(self, chat_id: int, empleado: Any, doc_uuid: UUID) -> None:
+    async def execute_approve(self, chat_id: int, empleado: Any, doc_uuid: UUID) -> bool:
         session_maker = self.gateway._resolve_auth_session_maker()
         if not session_maker:
             await self.gateway.send_message(
                 chat_id, "⚠️ No hay conexión a la base de datos."
             )
-            return
+            return False
         try:
             async with session_maker() as session:
                 await transition_documento_workflow(
@@ -46,18 +46,19 @@ class TelegramDocumentRuntime:
                 )
             else:
                 await self.gateway.send_message(chat_id, f"⚠️ {exc.message}")
-            return
+            return exc.code in {"invalid_estado", "authorization_closed_document", "workflow_locked_document"}
         except DocumentoWorkflowPermissionError as exc:
             await self.gateway.send_message(chat_id, f"⚠️ {exc.message}")
-            return
+            return False
         except Exception:
             logger.exception("Telegram document approve failed")
             await self.gateway.send_message(
                 chat_id,
                 "❌ No se pudo aprobar. Intenta de nuevo o usa la web.",
             )
-            return
+            return False
         await self.gateway.send_message(chat_id, "✅ Documento *aprobado* correctamente.")
+        return True
 
     async def execute_reject(
         self,
@@ -229,6 +230,35 @@ class TelegramDocumentRuntime:
         )
         await self.gateway.send_message(chat_id, text)
 
+
+    async def _clear_callback_keyboard(self, callback_query: Dict[str, Any]) -> None:
+        message = callback_query.get("message") or {}
+        chat = message.get("chat") or {}
+        chat_id = chat.get("id")
+        message_id = message.get("message_id")
+        if chat_id is None or message_id is None:
+            return
+        edit_markup = getattr(self.gateway, "edit_message_reply_markup", None)
+        if edit_markup is None:
+            return
+        try:
+            await edit_markup(int(chat_id), int(message_id), reply_markup={"inline_keyboard": []})
+        except Exception:
+            logger.exception("Failed to clear Telegram inline keyboard")
+
+    async def _document_is_actionable_for_approver(
+        self,
+        session_maker: Any,
+        empleado: Any,
+        doc_uuid: UUID,
+    ) -> bool:
+        async with session_maker() as session:
+            doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
+            return bool(
+                doc
+                and gastos_tg.approver_can_see_document_in_queue(empleado, doc)
+            )
+
     async def handle_callback(self, callback_query: Dict[str, Any]) -> bool:
         data = (callback_query.get("data") or "").strip()
         parsed = gastos_tg.parse_documento_callback(data)
@@ -299,27 +329,28 @@ class TelegramDocumentRuntime:
                     )
                     return True
             await self.gateway.answer_callback_query(callback_id, "Procesando…")
-            await self.execute_approve(chat_id, empleado, doc_uuid)
+            should_clear = await self.execute_approve(chat_id, empleado, doc_uuid)
+            if should_clear:
+                await self._clear_callback_keyboard(callback_query)
             return True
 
         if prefix == gastos_tg.CB_REJECT:
-            async with session_maker() as session:
-                doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
-                if not doc or not gastos_tg.approver_can_see_document_in_queue(empleado, doc):
-                    await self.gateway.answer_callback_query(callback_id, "Ya no está pendiente")
-                    await self.gateway.send_message(
-                        chat_id,
-                        "ℹ️ Este documento ya no está pendiente para tu aprobación. "
-                        "Usa /pendientes para ver solo las solicitudes vigentes.",
-                    )
-                    return True
+            if not await self._document_is_actionable_for_approver(session_maker, empleado, doc_uuid):
+                await self.gateway.answer_callback_query(callback_id, "Ya fue procesado")
+                await self._clear_callback_keyboard(callback_query)
+                await self.gateway.send_message(
+                    chat_id,
+                    "ℹ️ Este documento ya no está pendiente para tu aprobación. "
+                    "Usa /pendientes para ver solo las solicitudes vigentes.",
+                )
+                return True
             self.gateway._gastos_reject_pending[int(user_id)] = str(doc_uuid)
             await self.gateway.answer_callback_query(callback_id)
+            await self._clear_callback_keyboard(callback_query)
             await self.gateway.send_message(
                 chat_id,
                 "✏️ Escribe el *motivo del rechazo* en el siguiente mensaje.\n"
                 "Para cancelar sin rechazar, envía `/cancel` (si no tienes otra acción pendiente del asistente).",
             )
             return True
-
         return False
