@@ -133,6 +133,7 @@ from ..services.documento_service import (
 from ..services.documento_workflow_service import (
     DocumentoWorkflowPermissionError,
     DocumentoWorkflowValidationError,
+    documento_financial_terminal_reason,
     promote_solicitudes_ready_for_payment,
     transition_documento_workflow,
 )
@@ -27486,6 +27487,19 @@ async def editar_solicitud_terceros_form(
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     if documento.empleado_id != current_empleado.id:
         raise HTTPException(status_code=403, detail="Acceso denegado")
+    terminal_reason = await documento_financial_terminal_reason(session, documento)
+    if terminal_reason is not None:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/documentos/{documento_id}",
+                error="financial_terminal_document",
+                error_msg=(
+                    "Esta solicitud ya tiene cierre financiero ("
+                    f"{terminal_reason}) y no puede editarse ni reenviarse."
+                ),
+            ),
+            status_code=303,
+        )
     if not _can_edit_solicitud_terceros(documento, current_empleado):
         return RedirectResponse(
             url=_append_error_params(
@@ -28469,6 +28483,19 @@ async def editar_solicitud_terceros_post(
     documento = doc_result.scalar_one_or_none()
     if not documento:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
+    terminal_reason = await documento_financial_terminal_reason(session, documento)
+    if terminal_reason is not None:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/documentos/{documento_id}",
+                error="financial_terminal_document",
+                error_msg=(
+                    "Esta solicitud ya tiene cierre financiero ("
+                    f"{terminal_reason}) y no puede editarse ni reenviarse."
+                ),
+            ),
+            status_code=303,
+        )
     if not _can_edit_solicitud_terceros(documento, current_empleado):
         return RedirectResponse(
             url=_append_error_params(
@@ -29546,10 +29573,14 @@ async def ver_documento(
             and getattr(documento, "cuenta_gastos_id", None)
         )
     )
-    can_edit_solicitud_terceros = _can_edit_solicitud_terceros(
-        documento,
-        current_empleado,
-        solicitud_cancelada=solicitud_cancelada,
+    terminal_reason = await documento_financial_terminal_reason(session, documento)
+    can_edit_solicitud_terceros = (
+        terminal_reason is None
+        and _can_edit_solicitud_terceros(
+            documento,
+            current_empleado,
+            solicitud_cancelada=solicitud_cancelada,
+        )
     )
     can_add_solicitud_adjuntos = _can_add_solicitud_adjuntos(
         documento,
