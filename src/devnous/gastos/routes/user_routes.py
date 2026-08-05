@@ -18693,6 +18693,7 @@ async def contabilidad_cash_flow_view(
     horizon_days: int = Query(30),
     dias_credito: int = Query(30),
     periodo: str = Query("semanal"),
+    cuenta_bancaria: str = Query("all"),
 ) -> str:
     """Read-only operational cash-flow snapshot built from bank reconciliation, payment requests and SAT CFDI."""
     now = datetime.utcnow()
@@ -18704,6 +18705,8 @@ async def contabilidad_cash_flow_view(
     periodo = (periodo or "semanal").lower().strip()
     if periodo not in {"semanal", "mensual", "trimestral", "semestral", "anual"}:
         periodo = "semanal"
+    selected_bank_account = (cuenta_bancaria or "all").strip() or "all"
+    bank_query = "" if selected_bank_account == "all" else f"&cuenta_bancaria={quote(selected_bank_account)}"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
@@ -18714,9 +18717,27 @@ async def contabilidad_cash_flow_view(
         if row and row[0] and str(row[0]).strip()
     ]
 
+    account_choice_result = await session.execute(
+        select(BankMovement.cuenta_bancaria)
+        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt)
+        .distinct()
+        .order_by(BankMovement.cuenta_bancaria.asc())
+    )
+    available_bank_accounts = [
+        str(row[0] or "Sin cuenta")
+        for row in account_choice_result.all()
+        if str(row[0] or "Sin cuenta").strip()
+    ]
+    bank_conditions = [BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt]
+    if selected_bank_account != "all":
+        if selected_bank_account == "Sin cuenta":
+            bank_conditions.append(or_(BankMovement.cuenta_bancaria.is_(None), BankMovement.cuenta_bancaria == ""))
+        else:
+            bank_conditions.append(BankMovement.cuenta_bancaria == selected_bank_account)
+
     bank_result = await session.execute(
         select(BankMovement)
-        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt)
+        .where(and_(*bank_conditions))
         .order_by(BankMovement.cuenta_bancaria.asc(), BankMovement.fecha.asc(), BankMovement.source_row_number.asc())
     )
     bank_movements = bank_result.scalars().all()
@@ -19127,7 +19148,7 @@ async def contabilidad_cash_flow_view(
             "Posición comprometida negativa",
             f"El escenario comprometido queda en {format_currency(projected_position)} dentro de {horizon_days} días.",
             "Revisar pagos próximos, acelerar CxC o reprogramar solicitudes antes de autorizar nuevas salidas.",
-            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}#compromisos",
+            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}#compromisos",
         )
     if conservative_position < 0:
         _add_cash_alert(
@@ -19227,6 +19248,10 @@ async def contabilidad_cash_flow_view(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
         for m in range(1, 13)
     )
+    bank_account_options = '<option value="all" ' + ('selected' if selected_bank_account == 'all' else '') + '>Todas las cuentas</option>' + "".join(
+        f'<option value="{escape(account)}" {"selected" if account == selected_bank_account else ""}>{escape(account)}</option>'
+        for account in available_bank_accounts
+    )
     year_options = "".join(
         f'<option value="{y}" {"selected" if y == selected_year else ""}>{y}</option>'
         for y in range(now.year - 2, now.year + 2)
@@ -19260,19 +19285,20 @@ async def contabilidad_cash_flow_view(
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
-            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara.</p>
+            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>.</p>
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
                 <div><label>Horizonte</label><br><input type="number" min="15" max="180" name="horizon_days" value="{horizon_days}" style="width:110px;"> días</div>
                 <div><label>Días crédito CxC</label><br><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}" style="width:110px;"> días</div>
                 <div><label>Periodo ejecutivo</label><br><select name="periodo">{period_options}</select></div>
+                <div><label>Cuenta bancaria</label><br><select name="cuenta_bancaria">{bank_account_options}</select></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-pagar">Ver CxP</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Sugerir matches</a></div>
-                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&periodo={periodo}">Exportar Excel</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&periodo={periodo}{bank_query}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -19350,6 +19376,7 @@ async def contabilidad_cash_flow_export_xlsx(
     month: Optional[int] = Query(None),
     horizon_days: int = Query(30),
     dias_credito: int = Query(30),
+    cuenta_bancaria: str = Query("all"),
 ) -> Response:
     """Export the operational cash-flow snapshot to Excel."""
     from openpyxl import Workbook
@@ -19361,15 +19388,22 @@ async def contabilidad_cash_flow_export_xlsx(
     selected_month = month or now.month
     horizon_days = max(15, min(int(horizon_days or 30), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
+    selected_bank_account = (cuenta_bancaria or "all").strip() or "all"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
 
+    bank_conditions = [BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt]
+    if selected_bank_account != "all":
+        if selected_bank_account == "Sin cuenta":
+            bank_conditions.append(or_(BankMovement.cuenta_bancaria.is_(None), BankMovement.cuenta_bancaria == ""))
+        else:
+            bank_conditions.append(BankMovement.cuenta_bancaria == selected_bank_account)
     bank_result = await session.execute(
         select(BankMovement)
-        .where(BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt)
+        .where(and_(*bank_conditions))
         .order_by(BankMovement.cuenta_bancaria.asc(), BankMovement.fecha.asc(), BankMovement.source_row_number.asc())
     )
     bank_movements = bank_result.scalars().all()
@@ -19640,6 +19674,7 @@ async def contabilidad_cash_flow_export_xlsx(
         ["Período", f"{selected_year}-{selected_month:02d}"],
         ["Horizonte días", horizon_days],
         ["Días crédito CxC", dias_credito],
+        ["Cuenta bancaria", selected_bank_account if selected_bank_account != "all" else "Todas"],
         ["Banco entradas", bank_inflows],
         ["Banco salidas", bank_outflows],
         ["Banco neto", bank_net],
