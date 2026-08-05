@@ -1026,6 +1026,7 @@ def render_cfdi_quick_expense_autofill_script(
     subtotal_id: str = "quick-subtotal",
     descuento_id: str = "quick-descuento",
     impuestos_y_retenciones_id: str = "quick-impuestos-y-retenciones",
+    propina_id: str = "quick-propina",
     total_id: str = "quick-total",
     notice_id: str = "quick_cfdi_autofill_notice",
 ) -> str:
@@ -1043,6 +1044,7 @@ def render_cfdi_quick_expense_autofill_script(
             const impuestosYRetenciones = document.getElementById(
                 {json.dumps(impuestos_y_retenciones_id)}
             );
+            const propina = document.getElementById({json.dumps(propina_id)});
             const total = document.getElementById({json.dumps(total_id)});
             const notice = document.getElementById({json.dumps(notice_id)});
             let autofillRequestId = 0;
@@ -1058,11 +1060,12 @@ def render_cfdi_quick_expense_autofill_script(
                     money(subtotal && subtotal.value)
                     - money(descuento && descuento.value)
                     + money(impuestosYRetenciones && impuestosYRetenciones.value)
+                    + money(propina && propina.value)
                 );
                 total.value = computed.toFixed(2);
             }}
 
-            [subtotal, descuento, impuestosYRetenciones].forEach(function(el) {{
+            [subtotal, descuento, impuestosYRetenciones, propina].forEach(function(el) {{
                 if (el) el.addEventListener('input', updateTotal);
             }});
 
@@ -1105,11 +1108,7 @@ def render_cfdi_quick_expense_autofill_script(
                 ) {{
                     impuestosYRetenciones.value = payload.impuestos_y_retenciones;
                 }}
-                if (total && payload.total) {{
-                    total.value = payload.total;
-                }} else {{
-                    updateTotal();
-                }}
+                updateTotal();
             }}
 
             async function requestAutofill(sourceInput, otherInput, deferToOther) {{

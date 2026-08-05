@@ -110,6 +110,7 @@ class ExpenseReport(Base):
     iva = Column(
         Float, nullable=True
     )  # IVA amount (NULL means no IVA, numeric value means IVA amount)
+    propina_no_deducible = Column(Float, nullable=True, default=0)
     hospedaje_entidad_fiscal = Column(String(120), nullable=True)
     hospedaje_tasa_impuesto = Column(Float, nullable=True)
     hospedaje_impuesto_monto = Column(Float, nullable=True)

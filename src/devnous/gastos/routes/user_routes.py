@@ -303,6 +303,18 @@ from samchat.budgets.service import (
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_expense_tip_schema(session: AsyncSession) -> None:
+    """Persist explicit AMEX/food tips separately from fiscal CFDI totals."""
+    await session.execute(
+        text(
+            """
+            ALTER TABLE expense_reports
+            ADD COLUMN IF NOT EXISTS propina_no_deducible DOUBLE PRECISION NULL
+            """
+        )
+    )
+
+
 async def _ensure_cfdi_project_assignment_schema(session: AsyncSession) -> None:
     """Manual operational classification for loose CFDI; does not alter fiscal XML truth."""
     await session.execute(
@@ -32456,9 +32468,15 @@ def _quick_expense_values(
     subtotal: Optional[str],
     descuento: Optional[str],
     impuestos_y_retenciones: Optional[str],
+    propina: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
+    propina_amount = _quick_expense_decimal(
+        propina,
+        "Propina",
+        required=False,
+    )
     if xml_data:
         concepto_final = (xml_data.get("descripcion_concepto_principal") or "").strip()
         fecha_xml = xml_data.get("fecha")
@@ -32484,7 +32502,7 @@ def _quick_expense_values(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
                 "Impuestos y retenciones"
             )
-        calculated_total = xml_total
+        calculated_total = xml_total + propina_amount
     else:
         concepto_final = (concepto or "").strip()
         fecha_final = (fecha or "").strip()
@@ -32505,7 +32523,7 @@ def _quick_expense_values(
             subtotal_amount,
             descuento_amount,
             impuestos_net,
-        )
+        ) + propina_amount
         iva_amount = max(impuestos_net, Decimal("0"))
 
     if not concepto_final:
@@ -32535,6 +32553,7 @@ def _quick_expense_values(
         "descuento": descuento_amount,
         "impuestos_y_retenciones": impuestos_net,
         "iva": iva_amount,
+        "propina": propina_amount,
         "total": calculated_total,
     }
 
@@ -32551,6 +32570,7 @@ async def crear_gasto_rapido_en_informe(
     subtotal: Optional[str] = Form(None),
     descuento: Optional[str] = Form("0"),
     impuestos_y_retenciones: Optional[str] = Form("0"),
+    propina: Optional[str] = Form("0"),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
@@ -32641,8 +32661,10 @@ async def crear_gasto_rapido_en_informe(
             subtotal=subtotal,
             descuento=descuento,
             impuestos_y_retenciones=impuestos_y_retenciones,
+            propina=propina,
             xml_data=xml_data,
         )
+        await _ensure_expense_tip_schema(session)
         owner = cuenta.empleado
         available_budget_concepts = await _budget_concepts_for_cuenta(session, cuenta)
         budget_concept_raw = (
@@ -32691,6 +32713,7 @@ async def crear_gasto_rapido_en_informe(
             expense.metodo_pago = "TARJETA CREDITO AMEX"
 
         expense.numero_factura = values["numero_factura"]
+        expense.propina_no_deducible = float(values["propina"] or Decimal("0"))
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
@@ -33397,7 +33420,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos concepto, montos e impuestos; revisa antes de guardar.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos concepto, montos e impuestos; la propina se suma al total pagado y se clasifica como No Deducible.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -33415,6 +33438,7 @@ async def cuenta_de_gastos_detail(
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
                                         <th>Impuestos y retenciones</th>
+                                        <th>Propina</th>
                                         <th>TOTAL</th>
                                         <th>MONEDA</th>
                                         <th>MATERIALIDADES</th>
@@ -33437,6 +33461,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td><input type="number" min="0" step="0.01" name="propina" id="quick-propina" value="0"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
                                         <td>
@@ -33464,7 +33489,7 @@ async def cuenta_de_gastos_detail(
     <head>
         <title>Informe de Gastos {titulo_cuenta} - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1380px")}
+            {_workspace_shell_styles("1500px")}
             .docs-grid {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
@@ -33481,7 +33506,7 @@ async def cuenta_de_gastos_detail(
                 overflow-x:auto;
             }}
             .quick-expense-table {{
-                min-width:1380px;
+                min-width:1500px;
             }}
             .quick-expense-table th {{
                 white-space:nowrap;
