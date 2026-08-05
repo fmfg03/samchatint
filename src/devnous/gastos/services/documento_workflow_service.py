@@ -10,7 +10,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import Aprobacion, CuentaDeGastos, Documento, Empleado, ExpenseReport
+from ..models import Aprobacion, Anticipo, CuentaDeGastos, Documento, Empleado, ExpenseReport, Reembolso
 from ..utils.mexico_city_dates import utc_now
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
 from .amex_accounting_posting_service import ensure_amex_report_approval_posting
@@ -258,6 +258,61 @@ async def _count_active_document_expenses(
     return int(result.scalar_one() or 0)
 
 
+FINANCIAL_TERMINAL_DOCUMENT_STATES = {"pagado", "cerrado", "reembolsado", "aplicado", "liquidado"}
+NON_TERMINAL_SETTLEMENT_STATES = {"cancelado", "cancelada", "rechazado", "rechazada", "anulado", "anulada"}
+
+
+def _normalized_state(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+async def documento_financial_terminal_reason(
+    session: AsyncSession,
+    documento: Documento,
+) -> Optional[str]:
+    """Return a reason when a document already reached a financial terminal step.
+
+    A document that has been paid, reimbursed, or applied against advances must
+    never re-enter authorization. This helper is intentionally based on durable
+    financial evidence, not only on the mutable ``estado`` field, because older
+    bugs could leave a paid document in an editable/rejected state.
+    """
+    estado = _normalized_state(getattr(documento, "estado", None))
+    if estado in FINANCIAL_TERMINAL_DOCUMENT_STATES:
+        return f"estado terminal '{estado}'"
+    if getattr(documento, "pagado_en", None):
+        return "pago registrado"
+    if getattr(documento, "gasto_generado_id", None):
+        return "gasto generado por pago"
+
+    anticipo_result = await session.execute(
+        select(func.count(Anticipo.id)).where(
+            Anticipo.documento_id == documento.id,
+            func.lower(func.coalesce(Anticipo.estado, "")).notin_(
+                NON_TERMINAL_SETTLEMENT_STATES
+            ),
+        )
+    )
+    if int(anticipo_result.scalar_one() or 0) > 0:
+        return "anticipo registrado o aplicado"
+
+    reembolso_filters = [Reembolso.documento_id == documento.id]
+    if getattr(documento, "cuenta_gastos_id", None):
+        reembolso_filters.append(Reembolso.cuenta_gastos_id == documento.cuenta_gastos_id)
+    reembolso_result = await session.execute(
+        select(func.count(Reembolso.id)).where(
+            or_(*reembolso_filters),
+            func.lower(func.coalesce(Reembolso.estado, "")).notin_(
+                NON_TERMINAL_SETTLEMENT_STATES
+            ),
+        )
+    )
+    if int(reembolso_result.scalar_one() or 0) > 0:
+        return "reembolso/devolucion registrado"
+
+    return None
+
+
 async def _reopen_informe_de_gastos_on_reject(
     session: AsyncSession, documento: Documento
 ) -> None:
@@ -313,6 +368,17 @@ async def transition_documento_workflow(
     now = utc_now()
     comentario_normalizado = (comentario or "").strip() or None
     auto_aprobacion: Optional[Aprobacion] = None
+
+    terminal_reason = await documento_financial_terminal_reason(session, documento)
+    if terminal_reason is not None:
+        raise DocumentoWorkflowValidationError(
+            "financial_terminal_document",
+            (
+                "Este documento ya tiene cierre financiero ("
+                f"{terminal_reason}). No puede rechazarse, reenviarse ni regresar "
+                "al circuito de autorizacion."
+            ),
+        )
 
     if normalized_action == "send":
         if documento.empleado_id != actor.id:
