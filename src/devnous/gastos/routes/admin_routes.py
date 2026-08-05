@@ -217,6 +217,35 @@ from devnous.gastos.services.sat_catalog_service import (
 
 logger = logging.getLogger(__name__)
 
+
+async def _ensure_cfdi_project_assignment_schema(session: AsyncSession) -> None:
+    """Manual operational classification for loose CFDI; does not alter fiscal XML truth."""
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS cfdi_project_assignments (
+                id UUID PRIMARY KEY,
+                cfdi_report_id UUID NOT NULL REFERENCES cfdi_reports(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                tournament_id UUID NULL REFERENCES tournaments(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                proyecto_otro TEXT NULL,
+                phase TEXT NULL,
+                note TEXT NULL,
+                assigned_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                removed_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                removed_at TIMESTAMPTZ NULL
+            )
+            """
+        )
+    )
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_cfdi ON cfdi_project_assignments(cfdi_report_id)"))
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_tournament ON cfdi_project_assignments(tournament_id) WHERE removed_at IS NULL"))
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_otro ON cfdi_project_assignments(proyecto_otro) WHERE removed_at IS NULL"))
+    await session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_cfdi_project_assignments_active_cfdi ON cfdi_project_assignments(cfdi_report_id) WHERE removed_at IS NULL"))
+    await session.commit()
+
+
 _PROFILE_ACTION_LABELS: list[tuple[str, str]] = [
     ("read", "Ver"),
     ("create", "Crear"),
@@ -21697,6 +21726,99 @@ async def admin_sat_process_request(
         )
 
 
+
+@router.post("/admin/gastos/cfdis/{cfdi_id}/project-assignment")
+async def assign_cfdi_operational_project(
+    cfdi_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    project_scope: str = Form(""),
+    phase: str = Form(""),
+    clear_assignment: str = Form(""),
+):
+    """Assign or remove a manual operational project for a loose CFDI."""
+    await _ensure_cfdi_project_assignment_schema(session)
+    cfdi = await session.get(CFDIReport, cfdi_id)
+    if cfdi is None:
+        raise HTTPException(status_code=404, detail="CFDI no encontrado")
+
+    actor_id = str(getattr(current_empleado, "id", "") or "") or None
+    if (clear_assignment or "").strip():
+        await session.execute(
+            text(
+                """
+                UPDATE cfdi_project_assignments
+                SET removed_at = NOW(), removed_by_empleado_id = :actor_id, updated_at = NOW()
+                WHERE cfdi_report_id = :cfdi_id AND removed_at IS NULL
+                """
+            ),
+            {"cfdi_id": str(cfdi_id), "actor_id": actor_id},
+        )
+        await session.commit()
+        return RedirectResponse(url="/admin/gastos/cfdis/matching?view=sin_gasto", status_code=303)
+
+    raw_scope = (project_scope or "").strip()
+    raw_phase = (phase or "").strip()[:200]
+    tournament_id = None
+    proyecto_otro = None
+    if raw_scope.startswith("tournament:"):
+        try:
+            tournament_id = str(UUIDType(raw_scope.split(":", 1)[1]))
+        except (TypeError, ValueError):
+            tournament_id = None
+    elif raw_scope.startswith("otro:"):
+        proyecto_otro = raw_scope.split(":", 1)[1].strip()[:300] or None
+
+    if not tournament_id and not proyecto_otro:
+        await session.execute(
+            text(
+                """
+                UPDATE cfdi_project_assignments
+                SET removed_at = NOW(), removed_by_empleado_id = :actor_id, updated_at = NOW()
+                WHERE cfdi_report_id = :cfdi_id AND removed_at IS NULL
+                """
+            ),
+            {"cfdi_id": str(cfdi_id), "actor_id": actor_id},
+        )
+        await session.commit()
+        return RedirectResponse(url="/admin/gastos/cfdis/matching?view=sin_gasto", status_code=303)
+
+    await session.execute(
+        text(
+            """
+            UPDATE cfdi_project_assignments
+            SET removed_at = NOW(), removed_by_empleado_id = :actor_id, updated_at = NOW()
+            WHERE cfdi_report_id = :cfdi_id AND removed_at IS NULL
+            """
+        ),
+        {"cfdi_id": str(cfdi_id), "actor_id": actor_id},
+    )
+    await session.execute(
+        text(
+            """
+            INSERT INTO cfdi_project_assignments (
+                id, cfdi_report_id, tournament_id, proyecto_otro, phase,
+                assigned_by_empleado_id, created_at, updated_at
+            ) VALUES (
+                :id, :cfdi_id, :tournament_id, :proyecto_otro, :phase,
+                :actor_id, NOW(), NOW()
+            )
+            """
+        ),
+        {
+            "id": str(uuid4()),
+            "cfdi_id": str(cfdi_id),
+            "tournament_id": tournament_id,
+            "proyecto_otro": proyecto_otro,
+            "phase": raw_phase or None,
+            "actor_id": actor_id,
+        },
+    )
+    await session.commit()
+    return RedirectResponse(url="/admin/gastos/cfdis/matching?view=sin_gasto", status_code=303)
+
+
 @router.get("/admin/gastos/cfdis/matching", response_class=HTMLResponse)
 async def cfdi_matching_control_room(
     request: Request,
@@ -21797,6 +21919,21 @@ async def cfdi_matching_control_room(
                 if row and row[0] and str(row[0]).strip()
             ]
 
+            await _ensure_cfdi_project_assignment_schema(session)
+            tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
+            matching_tournaments = tournaments_result.scalars().all()
+            other_projects_result = await session.execute(
+                select(Documento.proyecto_otro)
+                .where(Documento.proyecto_otro.isnot(None), Documento.proyecto_otro != "")
+                .distinct()
+                .order_by(Documento.proyecto_otro.asc())
+            )
+            matching_other_projects = [
+                str(row[0]).strip()
+                for row in other_projects_result.all()
+                if row and str(row[0] or "").strip()
+            ]
+
             # 1. Gastos con CFDI pendiente (UUID captured but not yet linked)
             pending_query = (
                 select(ExpenseReport)
@@ -21856,6 +21993,32 @@ async def cfdi_matching_control_room(
             )
             unlinked_result = await session.execute(unlinked_cfdis_query)
             unlinked_cfdis = unlinked_result.scalars().all()
+
+            assignment_by_cfdi: dict[str, dict[str, Any]] = {}
+            unlinked_cfdi_ids = [str(cfdi.id) for cfdi in unlinked_cfdis]
+            if unlinked_cfdi_ids:
+                assignment_result = await session.execute(
+                    text(
+                        """
+                        SELECT a.cfdi_report_id, a.tournament_id, a.proyecto_otro, a.phase, a.note,
+                               a.created_at, t.name AS tournament_name
+                        FROM cfdi_project_assignments a
+                        LEFT JOIN tournaments t ON t.id = a.tournament_id
+                        WHERE a.removed_at IS NULL AND a.cfdi_report_id::text = ANY(:cfdi_ids)
+                        """
+                    ),
+                    {"cfdi_ids": unlinked_cfdi_ids},
+                )
+                assignment_by_cfdi = {
+                    str(row.cfdi_report_id): {
+                        "tournament_id": str(row.tournament_id) if row.tournament_id else "",
+                        "tournament_name": row.tournament_name or "",
+                        "proyecto_otro": row.proyecto_otro or "",
+                        "phase": row.phase or "",
+                        "note": row.note or "",
+                    }
+                    for row in assignment_result
+                }
 
             # Get counts for summary
             pending_count = len(pending_expenses)
@@ -21934,6 +22097,30 @@ async def cfdi_matching_control_room(
             )
             cfdi_tipo = cfdi_type_labels.get(cfdi.tipo_de_comprobante, cfdi.tipo_de_comprobante or "-")
             cfdi_total = f"${cfdi.total:,.2f}" if cfdi.total is not None else "-"
+            assignment = assignment_by_cfdi.get(str(cfdi.id), {})
+            assignment_scope_value = (
+                f"tournament:{assignment.get('tournament_id')}"
+                if assignment.get("tournament_id")
+                else (f"otro:{assignment.get('proyecto_otro')}" if assignment.get("proyecto_otro") else "")
+            )
+            assignment_label = assignment.get("tournament_name") or assignment.get("proyecto_otro") or "Sin proyecto"
+            project_options = '<option value="">— Sin proyecto —</option>' + "".join(
+                f'<option value="tournament:{t.id}" {"selected" if assignment_scope_value == f"tournament:{t.id}" else ""}>{escape(str(t.name or ""))}</option>'
+                for t in matching_tournaments
+            ) + "".join(
+                f'<option value="otro:{escape(project, quote=True)}" {"selected" if assignment_scope_value == f"otro:{project}" else ""}>Otro: {escape(project)}</option>'
+                for project in matching_other_projects
+            )
+            assignment_badge = (
+                f'<div style="margin-bottom:6px;color:#0f766e;font-weight:800;">Proyecto manual: {escape(assignment_label)}</div>'
+                if assignment_scope_value
+                else '<div style="margin-bottom:6px;color:#64748b;">Sin proyecto operativo asignado</div>'
+            )
+            clear_assignment_button = (
+                '<button type="submit" name="clear_assignment" value="1" class="action-btn" style="background:#e5e7eb;color:#111827;">Quitar</button>'
+                if assignment_scope_value
+                else ''
+            )
             unlinked_rows += f"""
             <tr>
                 <td><code style="font-size: 11px;">{format_value(cfdi.cfdi_uuid)}</code></td>
@@ -21946,7 +22133,14 @@ async def cfdi_matching_control_room(
                 <td>{format_value(cfdi.serie)}</td>
                 <td>{format_value(cfdi.folio)}</td>
                 <td>
-                    <form method="POST" action="/admin/gastos/sat/cfdi/{cfdi.id}/status" style="display:inline;">
+                    {assignment_badge}
+                    <form method="POST" action="/admin/gastos/cfdis/{cfdi.id}/project-assignment" style="display:grid;grid-template-columns:minmax(180px,1fr) 110px auto auto;gap:6px;align-items:center;min-width:520px;">
+                        <select name="project_scope" style="padding:6px;border:1px solid #cbd5e1;border-radius:8px;">{project_options}</select>
+                        <input type="text" name="phase" value="{escape(assignment.get('phase', ''), quote=True)}" placeholder="Fase" style="padding:6px;border:1px solid #cbd5e1;border-radius:8px;">
+                        <button type="submit" class="action-btn view">Asignar</button>
+                        {clear_assignment_button}
+                    </form>
+                    <form method="POST" action="/admin/gastos/sat/cfdi/{cfdi.id}/status" style="display:inline-block;margin-top:6px;">
                         <button type="submit" class="action-btn view">Validar SAT</button>
                     </form>
                 </td>
@@ -22138,7 +22332,7 @@ async def cfdi_matching_control_room(
                                     <th>Total</th>
                                     <th>Serie</th>
                                     <th>Folio</th>
-                                    <th>Acciones</th>
+                                    <th>Proyecto operativo / Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
