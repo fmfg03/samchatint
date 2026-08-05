@@ -790,3 +790,39 @@ def test_materialidades_picker_contract_keeps_files_verifiable_before_submit() -
     assert 'archivo_pdf_preview_frame' not in combined
     assert 'name="archivo_xml"' not in combined
     assert 'name="archivo_pdf"' not in combined
+
+
+def test_solicitante_can_add_materialidad_after_financial_closure():
+    documento_id = uuid4()
+    empleado_id = uuid4()
+    documento = SimpleNamespace(
+        id=documento_id,
+        tipo="SOLICITUD",
+        proveedor_cliente_id=uuid4(),
+        empleado_id=empleado_id,
+        estado="pagado",
+    )
+    empleado = SimpleNamespace(id=empleado_id, rol="empleado")
+
+    assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
+
+    documento.estado = "cerrado"
+    assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
+
+    documento.estado = "reembolsado"
+    assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
+
+    documento.estado = "aplicado"
+    assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
+
+
+def test_financial_closure_does_not_reopen_solicitud_editing():
+    documento = SimpleNamespace(
+        tipo="SOLICITUD",
+        proveedor_cliente_id=uuid4(),
+        empleado_id=uuid4(),
+        estado="pagado",
+    )
+    empleado = SimpleNamespace(id=documento.empleado_id, rol="empleado")
+
+    assert user_routes._can_edit_solicitud_terceros(documento, empleado) is False

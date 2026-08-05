@@ -10023,12 +10023,20 @@ def _can_add_solicitud_adjuntos(
         return False
     rol = (empleado.rol or "").strip().lower()
     finance_roles = {"finanzas", "admin", "superadmin", "super_admin"}
-    allowed_states = {"borrador", "aprobado", "pagado"}
+    materiality_states = {
+        "borrador",
+        "aprobado",
+        "pagado",
+        "cerrado",
+        "reembolsado",
+        "aplicado",
+        "liquidado",
+    }
     if rol in finance_roles:
-        return documento.estado in allowed_states | {"enviado"}
+        return documento.estado in materiality_states | {"enviado"}
     if documento.empleado_id != empleado.id:
         return False
-    return documento.estado in allowed_states
+    return documento.estado in materiality_states
 
 
 def _can_remove_solicitud_adjunto(
