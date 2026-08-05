@@ -19095,6 +19095,53 @@ async def contabilidad_cash_flow_view(
     forecast_in_30 = receivable_due_30_total
     projected_position = bank_net + forecast_in_30 - forecast_out_30
     conservative_position = projected_position - payable_unprocessed_total
+    cash_certainty_rows: List[Dict[str, Any]] = [
+        {
+            "source": "Banco real",
+            "certainty": "Confirmado",
+            "in": bank_inflows,
+            "out": bank_outflows,
+            "count": len(bank_movements),
+            "note": "Movimientos importados de bancos en el período seleccionado.",
+            "color": "#047857",
+        },
+        {
+            "source": "Solicitudes aprobadas",
+            "certainty": "Comprometido",
+            "in": 0.0,
+            "out": approved_pending_total,
+            "count": len(approved_pending),
+            "note": "Salidas ya autorizadas o listas para ejecución.",
+            "color": "#1d4ed8",
+        },
+        {
+            "source": "Solicitudes enviadas",
+            "certainty": "Pendiente de autorización",
+            "in": 0.0,
+            "out": submitted_pending_total,
+            "count": len(submitted_pending),
+            "note": "Solicitudes enviadas que pueden convertirse en compromiso.",
+            "color": "#7c3aed",
+        },
+        {
+            "source": "CxC CFDI emitidos",
+            "certainty": "Estimado",
+            "in": receivable_due_30_total,
+            "out": 0.0,
+            "count": len(receivable_rows),
+            "note": f"Cobros proyectados con {dias_credito} días de crédito y matches descontados.",
+            "color": "#b45309",
+        },
+        {
+            "source": "CxP CFDI sin captura",
+            "certainty": "Riesgo conservador",
+            "in": 0.0,
+            "out": payable_unprocessed_total,
+            "count": len(payable_unprocessed_rows),
+            "note": "CFDI recibidos sin gasto/solicitud vinculada; requieren clasificación.",
+            "color": "#b91c1c",
+        },
+    ]
 
     def _cashflow_period_key(target_date: Optional[date]) -> Tuple[str, str, date]:
         if isinstance(target_date, datetime):
@@ -19388,6 +19435,10 @@ async def contabilidad_cash_flow_view(
         f"<tr><td><span class='alert-pill' style='background:{alert['color']};'>{escape(alert['severity'].upper())}</span></td><td><strong>{escape(alert['title'])}</strong><br><span class='muted'>{escape(alert['detail'])}</span></td><td>{escape(alert['action'])}<br><a class='button secondary' style='margin-top:6px; padding:6px 10px;' href='{escape(alert['href'])}'>Abrir vista</a></td></tr>"
         for alert in cash_alerts
     )
+    certainty_rows_html = "".join(
+        f"<tr><td><span class='alert-pill' style='background:{row['color']};'>{escape(row['certainty'])}</span></td><td><strong>{escape(row['source'])}</strong><br><span class='muted'>{escape(row['note'])}</span></td><td>{format_currency(row['in'])}</td><td>{format_currency(row['out'])}</td><td>{row['count']}</td></tr>"
+        for row in cash_certainty_rows
+    )
 
     month_options = "".join(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
@@ -19475,6 +19526,11 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
             <div class="metric light"><div class="label">CxC conciliada tesorería</div><div class="value">{format_currency(treasury_cxc_total)}</div><div class="muted">{treasury_cxc_count} matches aceptados; no se proyectan doble</div></div>
             <div class="metric light"><div class="label">CxP conciliada tesorería</div><div class="value">{format_currency(treasury_cxp_total)}</div><div class="muted">{treasury_cxp_count} matches aceptados; fuera del riesgo CxP</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Composición por certeza</h2>
+            <table><thead><tr><th>Certeza</th><th>Fuente</th><th>Entrada</th><th>Salida</th><th>Registros</th></tr></thead><tbody>{certainty_rows_html}</tbody></table>
+            <p class="muted">Esta lectura separa efectivo confirmado, compromisos, estimaciones y riesgos. Ayuda a decidir sin confundir banco real con supuestos operativos.</p>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Alertas operativas de caja</h2>
@@ -19763,6 +19819,15 @@ async def contabilidad_cash_flow_export_xlsx(
     forecast_out = approved_pending_total + submitted_pending_total
     committed_position = bank_net + receivable_due_total - forecast_out
     conservative_position = committed_position - payable_unprocessed_total
+    approved_pending_count = sum(1 for d in committed_docs if (d.estado or "").lower() == "aprobado")
+    submitted_pending_count = sum(1 for d in committed_docs if (d.estado or "").lower() == "enviado")
+    cash_certainty_rows: List[Dict[str, Any]] = [
+        {"source": "Banco real", "certainty": "Confirmado", "in": bank_inflows, "out": bank_outflows, "count": len(bank_movements), "note": "Movimientos importados de bancos en el período seleccionado."},
+        {"source": "Solicitudes aprobadas", "certainty": "Comprometido", "in": 0.0, "out": approved_pending_total, "count": approved_pending_count, "note": "Salidas ya autorizadas o listas para ejecución."},
+        {"source": "Solicitudes enviadas", "certainty": "Pendiente de autorización", "in": 0.0, "out": submitted_pending_total, "count": submitted_pending_count, "note": "Solicitudes enviadas que pueden convertirse en compromiso."},
+        {"source": "CxC CFDI emitidos", "certainty": "Estimado", "in": receivable_due_total, "out": 0.0, "count": len(receivable_rows), "note": f"Cobros proyectados con {dias_credito} días de crédito y matches descontados."},
+        {"source": "CxP CFDI sin captura", "certainty": "Riesgo conservador", "in": 0.0, "out": payable_unprocessed_total, "count": len(payable_unprocessed_rows), "note": "CFDI recibidos sin gasto/solicitud vinculada; requieren clasificación."},
+    ]
 
     cash_alerts: List[Dict[str, Any]] = []
 
@@ -19909,6 +19974,12 @@ async def contabilidad_cash_flow_export_xlsx(
     for alert in cash_alerts:
         alert_rows.append([alert["severity"], alert["title"], alert["detail"], alert["action"], alert.get("href")])
     write_rows(ws_alerts, alert_rows)
+
+    ws_certainty = wb.create_sheet("Certeza")
+    certainty_export_rows = [["Certeza", "Fuente", "Entradas", "Salidas", "Registros", "Nota"]]
+    for row in cash_certainty_rows:
+        certainty_export_rows.append([row["certainty"], row["source"], row["in"], row["out"], row["count"], row["note"]])
+    write_rows(ws_certainty, certainty_export_rows)
 
     ws_daily = wb.create_sheet("Posición diaria")
     daily_rows = [["Día", "Cobros", "# cobros", "Salidas", "# salidas", "Neto día", "Posición acumulada", "Notas"]]
