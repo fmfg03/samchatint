@@ -302,6 +302,76 @@ from samchat.budgets.service import (
 
 logger = logging.getLogger(__name__)
 
+
+async def _ensure_cfdi_project_assignment_schema(session: AsyncSession) -> None:
+    """Manual operational classification for loose CFDI; does not alter fiscal XML truth."""
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS cfdi_project_assignments (
+                id UUID PRIMARY KEY,
+                cfdi_report_id UUID NOT NULL REFERENCES cfdi_reports(id) ON UPDATE CASCADE ON DELETE CASCADE,
+                tournament_id UUID NULL REFERENCES tournaments(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                proyecto_otro TEXT NULL,
+                phase TEXT NULL,
+                note TEXT NULL,
+                assigned_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                removed_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                removed_at TIMESTAMPTZ NULL
+            )
+            """
+        )
+    )
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_cfdi ON cfdi_project_assignments(cfdi_report_id)"))
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_tournament ON cfdi_project_assignments(tournament_id) WHERE removed_at IS NULL"))
+    await session.execute(text("CREATE INDEX IF NOT EXISTS ix_cfdi_project_assignments_otro ON cfdi_project_assignments(proyecto_otro) WHERE removed_at IS NULL"))
+    await session.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_cfdi_project_assignments_active_cfdi ON cfdi_project_assignments(cfdi_report_id) WHERE removed_at IS NULL"))
+    await session.commit()
+
+
+async def _active_cfdi_project_assignment_ids(
+    session: AsyncSession,
+    *,
+    tournament_id: Optional[UUIDType] = None,
+    proyecto_otro: str = "",
+) -> list[UUIDType]:
+    """CFDI manually classified into a project for operational cash-flow filtering."""
+    if tournament_id is None and not (proyecto_otro or "").strip():
+        return []
+    await _ensure_cfdi_project_assignment_schema(session)
+    if tournament_id is not None:
+        result = await session.execute(
+            text(
+                """
+                SELECT cfdi_report_id
+                FROM cfdi_project_assignments
+                WHERE removed_at IS NULL AND tournament_id = :tournament_id
+                """
+            ),
+            {"tournament_id": str(tournament_id)},
+        )
+    else:
+        result = await session.execute(
+            text(
+                """
+                SELECT cfdi_report_id
+                FROM cfdi_project_assignments
+                WHERE removed_at IS NULL AND proyecto_otro = :proyecto_otro
+                """
+            ),
+            {"proyecto_otro": (proyecto_otro or "").strip()},
+        )
+    ids: list[UUIDType] = []
+    for row in result:
+        try:
+            ids.append(UUIDType(str(row.cfdi_report_id)))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 router = APIRouter()
 
 # This will be set by the app that includes these routes
@@ -17424,6 +17494,36 @@ async def contabilidad_cash_flow_view(
         .order_by(Documento.proyecto_otro.asc())
     )
     other_projects = [str(row[0]).strip() for row in other_projects_result.all() if row and str(row[0] or "").strip()]
+    await _ensure_cfdi_project_assignment_schema(session)
+    assigned_other_projects_result = await session.execute(
+        text(
+            """
+            SELECT DISTINCT proyecto_otro
+            FROM cfdi_project_assignments
+            WHERE removed_at IS NULL AND proyecto_otro IS NOT NULL AND TRIM(proyecto_otro) <> ''
+            ORDER BY proyecto_otro ASC
+            """
+        )
+    )
+    for row in assigned_other_projects_result:
+        value = str(row.proyecto_otro or "").strip()
+        if value and value not in other_projects:
+            other_projects.append(value)
+    other_projects.sort()
+    manual_project_cfdi_ids = await _active_cfdi_project_assignment_ids(
+        session,
+        tournament_id=selected_tournament_id,
+        proyecto_otro=selected_other_project,
+    )
+
+    def _append_manual_project_cfdi_filter(conditions: list[Any]) -> list[Any]:
+        if selected_project_scope == "all":
+            return conditions
+        if manual_project_cfdi_ids:
+            conditions.append(CFDIReport.id.in_(manual_project_cfdi_ids))
+        else:
+            conditions.append(text("1=0"))
+        return conditions
 
     account_choice_result = await session.execute(
         select(BankMovement.cuenta_bancaria)
@@ -17511,8 +17611,8 @@ async def contabilidad_cash_flow_view(
 
     cfdi_conditions_common = [CFDIReport.fecha >= start_dt, CFDIReport.fecha < end_dt]
     if platform_rfcs:
-        emitted_conditions = [*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs)]
-        received_conditions = [*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs)]
+        emitted_conditions = _append_manual_project_cfdi_filter([*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs)])
+        received_conditions = _append_manual_project_cfdi_filter([*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs)])
     else:
         emitted_conditions = [text("1=0")]
         received_conditions = [text("1=0")]
@@ -17529,10 +17629,12 @@ async def contabilidad_cash_flow_view(
         receivable_result = await session.execute(
             select(CFDIReport)
             .where(
-                CFDIReport.fecha >= datetime(today.year, 1, 1),
-                CFDIReport.fecha < datetime.combine(receivable_horizon_end + timedelta(days=1), datetime.min.time()),
-                CFDIReport.tipo_de_comprobante == "I",
-                func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+                and_(*_append_manual_project_cfdi_filter([
+                    CFDIReport.fecha >= datetime(today.year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(receivable_horizon_end + timedelta(days=1), datetime.min.time()),
+                    CFDIReport.tipo_de_comprobante == "I",
+                    func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+                ]))
             )
             .order_by(CFDIReport.fecha.asc().nulls_last(), CFDIReport.receptor_nombre.asc())
             .limit(1000)
@@ -17602,10 +17704,12 @@ async def contabilidad_cash_flow_view(
         payable_result = await session.execute(
             select(CFDIReport)
             .where(
-                CFDIReport.fecha >= datetime(today.year, 1, 1),
-                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
-                CFDIReport.tipo_de_comprobante == "I",
-                func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+                and_(*_append_manual_project_cfdi_filter([
+                    CFDIReport.fecha >= datetime(today.year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.tipo_de_comprobante == "I",
+                    func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+                ]))
             )
             .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.emisor_nombre.asc())
             .limit(1000)
@@ -17907,7 +18011,7 @@ async def contabilidad_cash_flow_view(
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
-            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se mantiene global cuando no hay amarre confiable a proyecto.</p>
+            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se filtra por asignación manual a proyecto cuando existe; CFDI sin amarre quedan sólo en Todos.</p>
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
@@ -18035,6 +18139,21 @@ async def contabilidad_cash_flow_export_xlsx(
     elif selected_other_project:
         selected_project_label = selected_other_project
 
+    manual_project_cfdi_ids = await _active_cfdi_project_assignment_ids(
+        session,
+        tournament_id=selected_tournament_id,
+        proyecto_otro=selected_other_project,
+    )
+
+    def _append_manual_project_cfdi_filter(conditions: list[Any]) -> list[Any]:
+        if selected_project_scope == "all":
+            return conditions
+        if manual_project_cfdi_ids:
+            conditions.append(CFDIReport.id.in_(manual_project_cfdi_ids))
+        else:
+            conditions.append(text("1=0"))
+        return conditions
+
     bank_conditions = [BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt]
     if selected_bank_account != "all":
         if selected_bank_account == "Sin cuenta":
@@ -18074,8 +18193,8 @@ async def contabilidad_cash_flow_export_xlsx(
 
     cfdi_conditions_common = [CFDIReport.fecha >= start_dt, CFDIReport.fecha < end_dt]
     if platform_rfcs:
-        emitted_result = await session.execute(select(CFDIReport).where(and_(*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs))))
-        received_result = await session.execute(select(CFDIReport).where(and_(*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs))))
+        emitted_result = await session.execute(select(CFDIReport).where(and_(*_append_manual_project_cfdi_filter([*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs)]))))
+        received_result = await session.execute(select(CFDIReport).where(and_(*_append_manual_project_cfdi_filter([*cfdi_conditions_common, CFDIReport.tipo_de_comprobante == "I", func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs)]))))
         emitted_cfdis = emitted_result.scalars().all()
         received_cfdis = received_result.scalars().all()
     else:
@@ -18089,10 +18208,12 @@ async def contabilidad_cash_flow_export_xlsx(
         receivable_result = await session.execute(
             select(CFDIReport)
             .where(
-                CFDIReport.fecha >= datetime(today.year, 1, 1),
-                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
-                CFDIReport.tipo_de_comprobante == "I",
-                func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+                and_(*_append_manual_project_cfdi_filter([
+                    CFDIReport.fecha >= datetime(today.year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.tipo_de_comprobante == I,
+                    func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
+                ]))
             )
             .order_by(CFDIReport.fecha.asc().nulls_last(), CFDIReport.receptor_nombre.asc())
             .limit(1000)
@@ -18153,10 +18274,12 @@ async def contabilidad_cash_flow_export_xlsx(
         payable_result = await session.execute(
             select(CFDIReport)
             .where(
-                CFDIReport.fecha >= datetime(today.year, 1, 1),
-                CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
-                CFDIReport.tipo_de_comprobante == "I",
-                func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+                and_(*_append_manual_project_cfdi_filter([
+                    CFDIReport.fecha >= datetime(today.year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.tipo_de_comprobante == "I",
+                    func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
+                ]))
             )
             .order_by(CFDIReport.fecha.desc().nulls_last(), CFDIReport.emisor_nombre.asc())
             .limit(1000)
