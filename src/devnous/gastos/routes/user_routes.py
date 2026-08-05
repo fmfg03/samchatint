@@ -17950,10 +17950,10 @@ async def contabilidad_cash_flow_view(
         severity = "alta" if len(bank_unmatched) > 25 else "media"
         _add_cash_alert(
             severity,
-            "Banco pendiente de conciliación",
+            "Banco pendiente de conciliacion",
             f"Quedan {len(bank_unmatched)} movimientos por {format_currency(bank_unmatched_amount)} sin conciliar.",
-            "Usar conciliación y matches de tesorería antes de tomar decisiones de caja.",
-            f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched",
+            "Usar pre-match banco-CFDI y despues conciliacion manual para lo restante.",
+            f"/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}",
         )
     if payable_unprocessed_total > 0:
         severity = "media" if payable_unprocessed_total <= max(abs(bank_net), 1) * 0.5 else "alta"
@@ -18000,8 +18000,8 @@ async def contabilidad_cash_flow_view(
             "alta" if len(bank_unmatched) > 25 else ("media" if len(bank_unmatched) > 10 else "baja"),
             "Banco sin conciliar",
             bank_unmatched_amount,
-            f"Conciliar {len(bank_unmatched)} movimientos para evitar decisiones con banco incompleto.",
-            f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched",
+            f"Revisar sugerencias banco-CFDI para {len(bank_unmatched)} movimientos pendientes; si no hay candidato, pasar a conciliacion manual.",
+            f"/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}",
         )
     if payable_unprocessed_total > 0:
         _add_cash_action(
@@ -18495,7 +18495,7 @@ async def contabilidad_cash_flow_export_xlsx(
     if receivable_overdue_total > 0:
         _add_cash_alert("media", "CxC vencida", f"Saldo vencido {receivable_overdue_total:.2f}", "Entrar a CxC y confirmar cobros/matches.", f"/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}")
     if bank_unmatched_amount > 0 and len(bank_unmatched) > 10:
-        _add_cash_alert("alta" if len(bank_unmatched) > 25 else "media", "Banco pendiente de conciliación", f"{len(bank_unmatched)} movimientos por {bank_unmatched_amount:.2f}", "Usar conciliación y matches de tesorería.", f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched")
+        _add_cash_alert("alta" if len(bank_unmatched) > 25 else "media", "Banco pendiente de conciliacion", f"{len(bank_unmatched)} movimientos por {bank_unmatched_amount:.2f}", "Usar pre-match banco-CFDI y despues conciliacion manual para lo restante.", f"/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}")
     if payable_unprocessed_total > 0:
         _add_cash_alert("media", "CxP sin captura", f"CFDI recibidos no vinculados por {payable_unprocessed_total:.2f}", "Clasificar CFDI recibidos pendientes.", "/admin/contabilidad/cuentas-por-pagar")
 
@@ -18509,7 +18509,7 @@ async def contabilidad_cash_flow_export_xlsx(
     if receivable_overdue_total > 0:
         _add_cash_action("media", "Cobranza vencida", receivable_overdue_total, "Confirmar cobros, aceptar matches bancarios o dar seguimiento a facturas emitidas vencidas.", f"/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}")
     if bank_unmatched_amount > 0 and len(bank_unmatched) > 0:
-        _add_cash_action("alta" if len(bank_unmatched) > 25 else ("media" if len(bank_unmatched) > 10 else "baja"), "Banco sin conciliar", bank_unmatched_amount, f"Conciliar {len(bank_unmatched)} movimientos para evitar decisiones con banco incompleto.", f"/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}&status=unmatched")
+        _add_cash_action("alta" if len(bank_unmatched) > 25 else ("media" if len(bank_unmatched) > 10 else "baja"), "Banco sin conciliar", bank_unmatched_amount, f"Revisar sugerencias banco-CFDI para {len(bank_unmatched)} movimientos pendientes; si no hay candidato, pasar a conciliacion manual.", f"/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}")
     if payable_unprocessed_total > 0:
         _add_cash_action("media", "CxP sin captura", payable_unprocessed_total, "Clasificar CFDI recibidos: pago pendiente, gasto ya capturado o documento sin efecto operativo.", "/admin/contabilidad/cuentas-por-pagar")
     if approved_pending_total > 0:
