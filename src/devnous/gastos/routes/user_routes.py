@@ -17372,6 +17372,7 @@ async def contabilidad_cash_flow_view(
     horizon_days: int = Query(30),
     dias_credito: int = Query(30),
     cuenta_bancaria: str = Query("all"),
+    proyecto_scope: str = Query("all"),
 ) -> str:
     """Read-only operational cash-flow snapshot built from bank reconciliation, payment requests and SAT CFDI."""
     now = datetime.utcnow()
@@ -17381,6 +17382,23 @@ async def contabilidad_cash_flow_view(
     horizon_days = max(15, min(int(horizon_days or 30), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
     selected_bank_account = (cuenta_bancaria or "all").strip() or "all"
+    selected_project_scope = (proyecto_scope or "all").strip() or "all"
+    selected_project_label = "Todos"
+    selected_tournament_id = None
+    selected_other_project = ""
+    if selected_project_scope.startswith("tournament:"):
+        try:
+            selected_tournament_id = UUIDType(selected_project_scope.split(":", 1)[1])
+        except (TypeError, ValueError):
+            selected_project_scope = "all"
+    elif selected_project_scope.startswith("otro:"):
+        selected_other_project = selected_project_scope.split(":", 1)[1].strip()
+        if not selected_other_project:
+            selected_project_scope = "all"
+    elif selected_project_scope != "all":
+        selected_project_scope = "all"
+    bank_query = "" if selected_bank_account == "all" else f"&cuenta_bancaria={quote(selected_bank_account)}"
+    project_query = "" if selected_project_scope == "all" else f"&proyecto_scope={quote(selected_project_scope)}"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
@@ -17390,6 +17408,22 @@ async def contabilidad_cash_flow_view(
         for row in rfc_rows.all()
         if row and row[0] and str(row[0]).strip()
     ]
+
+    tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
+    cashflow_tournaments = tournaments_result.scalars().all()
+    tournament_name_by_id = {str(t.id): t.name for t in cashflow_tournaments}
+    if selected_tournament_id is not None:
+        selected_project_label = tournament_name_by_id.get(str(selected_tournament_id), str(selected_tournament_id))
+    elif selected_other_project:
+        selected_project_label = selected_other_project
+
+    other_projects_result = await session.execute(
+        select(Documento.proyecto_otro)
+        .where(Documento.proyecto_otro.isnot(None), Documento.proyecto_otro != "")
+        .distinct()
+        .order_by(Documento.proyecto_otro.asc())
+    )
+    other_projects = [str(row[0]).strip() for row in other_projects_result.all() if row and str(row[0] or "").strip()]
 
     account_choice_result = await session.execute(
         select(BankMovement.cuenta_bancaria)
@@ -17438,14 +17472,19 @@ async def contabilidad_cash_flow_view(
         if (movement.conciliacion_estado or "unmatched").lower() == "unmatched":
             bucket["unmatched"] += 1
 
+    committed_conditions = [
+        Documento.tipo == "SOLICITUD",
+        Documento.estado.in_(["aprobado", "enviado"]),
+        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+    ]
+    if selected_tournament_id is not None:
+        committed_conditions.append(Documento.torneo_id == selected_tournament_id)
+    elif selected_other_project:
+        committed_conditions.append(Documento.proyecto_otro == selected_other_project)
     committed_result = await session.execute(
         select(Documento)
         .options(selectinload(Documento.proveedor_cliente), selectinload(Documento.beneficiario_empleado), selectinload(Documento.torneo))
-        .where(
-            Documento.tipo == "SOLICITUD",
-            Documento.estado.in_(["aprobado", "enviado"]),
-            or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
-        )
+        .where(and_(*committed_conditions))
         .order_by(Documento.fecha_pago.asc().nulls_last(), Documento.creado_en.asc())
     )
     committed_docs = committed_result.scalars().all()
@@ -17454,15 +17493,18 @@ async def contabilidad_cash_flow_view(
     approved_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in approved_pending)
     submitted_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in submitted_pending)
 
-    amex_result = await session.execute(
-        select(ExpenseReport)
-        .where(
-            ExpenseReport.estado_gasto == "activo",
-            ExpenseReport.pagado_con_amex_empresa.is_(True),
-            ExpenseReport.fecha >= start_dt,
-            ExpenseReport.fecha < end_dt,
-        )
-    )
+    amex_conditions = [
+        ExpenseReport.estado_gasto == "activo",
+        ExpenseReport.pagado_con_amex_empresa.is_(True),
+        ExpenseReport.fecha >= start_dt,
+        ExpenseReport.fecha < end_dt,
+    ]
+    if selected_tournament_id is not None:
+        tournament_name = tournament_name_by_id.get(str(selected_tournament_id), "")
+        amex_conditions.append(or_(ExpenseReport.proyecto == str(selected_tournament_id), ExpenseReport.proyecto == tournament_name))
+    elif selected_other_project:
+        amex_conditions.append(ExpenseReport.proyecto == selected_other_project)
+    amex_result = await session.execute(select(ExpenseReport).where(and_(*amex_conditions)))
     amex_expenses = amex_result.scalars().all()
     amex_total = sum(float(e.gasto_cantidad or 0) for e in amex_expenses)
     amex_without_cfdi = sum(1 for e in amex_expenses if not e.cfdi_report_id and not (e.cfdi_uuid_manual or "").strip())
@@ -17722,7 +17764,7 @@ async def contabilidad_cash_flow_view(
             "Posición comprometida negativa",
             f"El escenario comprometido queda en {format_currency(projected_position)} dentro de {horizon_days} días.",
             "Revisar pagos próximos, acelerar CxC o reprogramar solicitudes antes de autorizar nuevas salidas.",
-            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}#compromisos",
+            f"/admin/contabilidad/cash-flow?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}{project_query}#compromisos",
         )
     if conservative_position < 0:
         _add_cash_alert(
@@ -17826,7 +17868,13 @@ async def contabilidad_cash_flow_view(
         f'<option value="{escape(account)}" {"selected" if account == selected_bank_account else ""}>{escape(account)}</option>'
         for account in available_bank_accounts
     )
-    bank_query = "" if selected_bank_account == "all" else f"&cuenta_bancaria={quote(selected_bank_account)}"
+    project_filter_options = '<option value="all" ' + ('selected' if selected_project_scope == 'all' else '') + '>Todos los proyectos</option>' + "".join(
+        f'<option value="tournament:{t.id}" {"selected" if selected_project_scope == f"tournament:{t.id}" else ""}>{escape(t.name)}</option>'
+        for t in cashflow_tournaments
+    ) + "".join(
+        f'<option value="otro:{escape(project)}" {"selected" if selected_project_scope == f"otro:{project}" else ""}>Otro: {escape(project)}</option>'
+        for project in other_projects
+    )
     year_options = "".join(
         f'<option value="{y}" {"selected" if y == selected_year else ""}>{y}</option>'
         for y in range(now.year - 2, now.year + 2)
@@ -17859,19 +17907,20 @@ async def contabilidad_cash_flow_view(
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
-            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>.</p>
+            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se mantiene global cuando no hay amarre confiable a proyecto.</p>
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
                 <div><label>Horizonte</label><br><input type="number" min="15" max="180" name="horizon_days" value="{horizon_days}" style="width:110px;"> días</div>
                 <div><label>Días crédito CxC</label><br><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}" style="width:110px;"> días</div>
                 <div><label>Cuenta bancaria</label><br><select name="cuenta_bancaria">{bank_account_options}</select></div>
+                <div><label>Proyecto operativo</label><br><select name="proyecto_scope">{project_filter_options}</select></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-pagar">Ver CxP</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Sugerir matches</a></div>
-                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}">Exportar Excel</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}{bank_query}{project_query}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -17945,6 +17994,7 @@ async def contabilidad_cash_flow_export_xlsx(
     horizon_days: int = Query(30),
     dias_credito: int = Query(30),
     cuenta_bancaria: str = Query("all"),
+    proyecto_scope: str = Query("all"),
 ) -> Response:
     """Export the operational cash-flow snapshot to Excel."""
     from openpyxl import Workbook
@@ -17957,11 +18007,33 @@ async def contabilidad_cash_flow_export_xlsx(
     horizon_days = max(15, min(int(horizon_days or 30), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
     selected_bank_account = (cuenta_bancaria or "all").strip() or "all"
+    selected_project_scope = (proyecto_scope or "all").strip() or "all"
+    selected_project_label = "Todos"
+    selected_tournament_id = None
+    selected_other_project = ""
+    if selected_project_scope.startswith("tournament:"):
+        try:
+            selected_tournament_id = UUIDType(selected_project_scope.split(":", 1)[1])
+        except (TypeError, ValueError):
+            selected_project_scope = "all"
+    elif selected_project_scope.startswith("otro:"):
+        selected_other_project = selected_project_scope.split(":", 1)[1].strip()
+        if not selected_other_project:
+            selected_project_scope = "all"
+    elif selected_project_scope != "all":
+        selected_project_scope = "all"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
+    tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
+    cashflow_tournaments = tournaments_result.scalars().all()
+    tournament_name_by_id = {str(t.id): t.name for t in cashflow_tournaments}
+    if selected_tournament_id is not None:
+        selected_project_label = tournament_name_by_id.get(str(selected_tournament_id), str(selected_tournament_id))
+    elif selected_other_project:
+        selected_project_label = selected_other_project
 
     bank_conditions = [BankMovement.fecha >= start_dt, BankMovement.fecha < end_dt]
     if selected_bank_account != "all":
@@ -17981,14 +18053,19 @@ async def contabilidad_cash_flow_export_xlsx(
     bank_unmatched = [m for m in bank_movements if (m.conciliacion_estado or "unmatched").lower() == "unmatched"]
     bank_unmatched_amount = sum(float(m.importe or 0) for m in bank_unmatched)
 
+    committed_conditions = [
+        Documento.tipo == "SOLICITUD",
+        Documento.estado.in_(["aprobado", "enviado"]),
+        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+    ]
+    if selected_tournament_id is not None:
+        committed_conditions.append(Documento.torneo_id == selected_tournament_id)
+    elif selected_other_project:
+        committed_conditions.append(Documento.proyecto_otro == selected_other_project)
     committed_result = await session.execute(
         select(Documento)
         .options(selectinload(Documento.proveedor_cliente), selectinload(Documento.beneficiario_empleado), selectinload(Documento.torneo))
-        .where(
-            Documento.tipo == "SOLICITUD",
-            Documento.estado.in_(["aprobado", "enviado"]),
-            or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
-        )
+        .where(and_(*committed_conditions))
         .order_by(Documento.fecha_pago.asc().nulls_last(), Documento.creado_en.asc())
     )
     committed_docs = committed_result.scalars().all()
@@ -18243,6 +18320,7 @@ async def contabilidad_cash_flow_export_xlsx(
         ["Horizonte días", horizon_days],
         ["Días crédito CxC", dias_credito],
         ["Cuenta bancaria", selected_bank_account if selected_bank_account != "all" else "Todas"],
+        ["Proyecto operativo", selected_project_label],
         ["Banco entradas", bank_inflows],
         ["Banco salidas", bank_outflows],
         ["Banco neto", bank_net],
