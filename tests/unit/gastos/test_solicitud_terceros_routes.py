@@ -1,5 +1,6 @@
 """Focused route tests for solicitud de transferencia a terceros."""
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -816,7 +817,7 @@ def test_solicitante_can_add_materialidad_after_financial_closure():
     assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
 
 
-def test_financial_closure_does_not_reopen_solicitud_editing():
+def test_workflow_closure_does_not_reopen_solicitud_editing():
     documento = SimpleNamespace(
         tipo="SOLICITUD",
         proveedor_cliente_id=uuid4(),
@@ -826,3 +827,16 @@ def test_financial_closure_does_not_reopen_solicitud_editing():
     empleado = SimpleNamespace(id=documento.empleado_id, rol="empleado")
 
     assert user_routes._can_edit_solicitud_terceros(documento, empleado) is False
+
+
+def test_workflow_blocks_reopen_after_any_approval_but_allows_materiality():
+    workflow_source = Path("src/devnous/gastos/services/documento_workflow_service.py").read_text(encoding="utf-8")
+    routes_source = Path("src/devnous/gastos/routes/user_routes.py").read_text(encoding="utf-8")
+
+    assert "authorization_closed_document" in workflow_source
+    assert 'normalized_action in {"send", "reject", "cancel", "withdraw"}' in workflow_source
+    assert "documento_has_approval" in workflow_source
+    assert "documento_workflow_locked_reason" in routes_source
+    assert '"cerrado",' in routes_source
+    assert '"reembolsado",' in routes_source
+    assert '"aplicado",' in routes_source

@@ -313,6 +313,29 @@ async def documento_financial_terminal_reason(
     return None
 
 
+async def documento_has_approval(session: AsyncSession, documento: Documento) -> bool:
+    result = await session.execute(
+        select(func.count(Aprobacion.id)).where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == documento.id,
+            func.lower(func.coalesce(Aprobacion.accion, "")) == "aprobar",
+        )
+    )
+    return int(result.scalar_one() or 0) > 0
+
+
+async def documento_workflow_locked_reason(
+    session: AsyncSession,
+    documento: Documento,
+) -> Optional[str]:
+    financial_reason = await documento_financial_terminal_reason(session, documento)
+    if financial_reason is not None:
+        return f"cierre financiero: {financial_reason}"
+    if await documento_has_approval(session, documento):
+        return "autorizacion registrada"
+    return None
+
+
 async def _reopen_informe_de_gastos_on_reject(
     session: AsyncSession, documento: Documento
 ) -> None:
@@ -369,16 +392,26 @@ async def transition_documento_workflow(
     comentario_normalizado = (comentario or "").strip() or None
     auto_aprobacion: Optional[Aprobacion] = None
 
-    terminal_reason = await documento_financial_terminal_reason(session, documento)
-    if terminal_reason is not None:
+    financial_reason = await documento_financial_terminal_reason(session, documento)
+    if financial_reason is not None:
         raise DocumentoWorkflowValidationError(
-            "financial_terminal_document",
+            "workflow_locked_document",
             (
                 "Este documento ya tiene cierre financiero ("
-                f"{terminal_reason}). No puede rechazarse, reenviarse ni regresar "
+                f"{financial_reason}). No puede rechazarse, reenviarse ni regresar "
                 "al circuito de autorizacion."
             ),
         )
+
+    if normalized_action in {"send", "reject", "cancel", "withdraw"}:
+        if await documento_has_approval(session, documento):
+            raise DocumentoWorkflowValidationError(
+                "authorization_closed_document",
+                (
+                    "Este documento ya fue autorizado por al menos un autorizador. "
+                    "No puede rechazarse, reabrirse ni regresar al circuito editable."
+                ),
+            )
 
     if normalized_action == "send":
         if documento.empleado_id != actor.id:
