@@ -337,6 +337,18 @@ from samchat.budgets.service import (
 logger = logging.getLogger(__name__)
 
 
+async def _ensure_expense_tip_schema(session: AsyncSession) -> None:
+    """Persist explicit AMEX/food tips separately from fiscal CFDI totals."""
+    await session.execute(
+        text(
+            """
+            ALTER TABLE expense_reports
+            ADD COLUMN IF NOT EXISTS propina_no_deducible DOUBLE PRECISION NULL
+            """
+        )
+    )
+
+
 async def _ensure_cfdi_project_assignment_schema(session: AsyncSession) -> None:
     """Manual operational classification for loose CFDI; does not alter fiscal XML truth."""
     await session.execute(
@@ -36060,6 +36072,7 @@ def _quick_expense_values(
         "descuento": descuento_amount,
         "impuestos_y_retenciones": impuestos_net,
         "iva": iva_amount,
+        "propina": propina_amount,
         "total": calculated_total,
         "propina_no_deducible": propina_amount,
     }
@@ -36182,6 +36195,7 @@ async def crear_gasto_rapido_en_informe(
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
         )
+        await _ensure_expense_tip_schema(session)
         owner = cuenta.empleado
         can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
         available_budget_concepts = (
@@ -36242,6 +36256,7 @@ async def crear_gasto_rapido_en_informe(
             expense.pagado_con_amex_empresa = False
 
         expense.numero_factura = values["numero_factura"]
+        expense.propina_no_deducible = float(values["propina"] or Decimal("0"))
         expense.cuenta_gastos_id = cuenta.id
         expense.referencia_base = cuenta.referencia_base
         expense.informe_documento_id = informe_doc.id
@@ -37193,7 +37208,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario. La propina se suma al total pagado y se clasifica como No Deducible.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -37308,7 +37323,7 @@ async def cuenta_de_gastos_detail(
     <head>
         <title>Informe de Gastos {titulo_cuenta} - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1380px")}
+            {_workspace_shell_styles("1500px")}
             .docs-grid {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit, minmax(260px, 1fr));
@@ -37325,7 +37340,7 @@ async def cuenta_de_gastos_detail(
                 overflow-x:auto;
             }}
             .quick-expense-table {{
-                min-width:1380px;
+                min-width:1500px;
             }}
             .quick-expense-table th {{
                 white-space:nowrap;

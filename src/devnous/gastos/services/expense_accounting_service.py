@@ -658,7 +658,12 @@ async def build_expense_accounting_preview(
         )
 
     active_accounts = await _load_active_accounts(session)
-    tip_amount = _calculate_amex_tip_amount(expense, cfdi_report)
+    explicit_tip_amount = _money(getattr(expense, "propina_no_deducible", 0))
+    tip_amount = (
+        explicit_tip_amount
+        if explicit_tip_amount > 0
+        else _calculate_amex_tip_amount(expense, cfdi_report)
+    )
     iva_account = getattr(expense, "cuenta_iva", None)
     if iva_account is None and getattr(expense, "cuenta_iva_id", None):
         explicit_iva = await session.get(CuentaContable, expense.cuenta_iva_id)
