@@ -20320,11 +20320,22 @@ async def contabilidad_tesoreria_matches_view(
             if poliza.cfdi_report_id:
                 collected_by_id[str(poliza.cfdi_report_id)] = collected_by_id.get(str(poliza.cfdi_report_id), 0.0) + amount
 
+    treasury_cxc_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxc",
+        cfdi_ids=emitted_ids,
+        cfdi_uuids=emitted_uuids,
+    )
+
     cxc_candidates = []
     for cfdi in emitted_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
         total = float(cfdi.total or 0)
-        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        treasury_collected = max(
+            treasury_cxc_matches["by_uuid"].get(uuid_key, 0.0),
+            treasury_cxc_matches["by_id"].get(str(cfdi.id), 0.0),
+        )
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0)) + treasury_collected
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
@@ -20351,9 +20362,18 @@ async def contabilidad_tesoreria_matches_view(
                 if uuid_key:
                     expenses_by_uuid.setdefault(uuid_key, []).append(expense)
 
+    treasury_cxp_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxp",
+        cfdi_ids=received_ids,
+        cfdi_uuids=received_uuids,
+    )
+
     cxp_candidates = []
     for cfdi in received_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        if str(cfdi.id) in treasury_cxp_matches["by_id"] or uuid_key in treasury_cxp_matches["by_uuid"]:
+            continue
         linked = list(expenses_by_id.get(str(cfdi.id), []))
         for expense in expenses_by_uuid.get(uuid_key, []):
             if expense not in linked:
@@ -20665,6 +20685,17 @@ async def contabilidad_tesoreria_matches_accept(
         collected = 0.0
         for poliza in collected_result.scalars().all():
             collected += sum(float(line.debe or 0) for line in poliza.lines)
+        treasury_cxc_matches = await _load_active_treasury_cfdi_match_amounts(
+            session,
+            direction="cxc",
+            cfdi_ids=[cfdi.id],
+            cfdi_uuids=[cfdi.cfdi_uuid or ""],
+        )
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        collected += max(
+            treasury_cxc_matches["by_uuid"].get(uuid_key, 0.0),
+            treasury_cxc_matches["by_id"].get(str(cfdi.id), 0.0),
+        )
         amount = max(float(cfdi.total or 0) - collected, 0.0)
         due_date = (cfdi.fecha.date() + timedelta(days=dias_credito)) if cfdi.fecha else None
         party = cfdi.receptor_nombre or cfdi.receptor_rfc or ""
@@ -20681,6 +20712,15 @@ async def contabilidad_tesoreria_matches_accept(
         )
         if linked_result.scalars().first() is not None:
             return RedirectResponse(url=return_url + "&error_msg=" + quote("El CFDI recibido ya está vinculado a un gasto"), status_code=303)
+        treasury_cxp_matches = await _load_active_treasury_cfdi_match_amounts(
+            session,
+            direction="cxp",
+            cfdi_ids=[cfdi.id],
+            cfdi_uuids=[cfdi.cfdi_uuid or ""],
+        )
+        uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        if str(cfdi.id) in treasury_cxp_matches["by_id"] or uuid_key in treasury_cxp_matches["by_uuid"]:
+            return RedirectResponse(url=return_url + "&error_msg=" + quote("El CFDI recibido ya tiene un match de tesorería aceptado"), status_code=303)
         due_date = cfdi.fecha.date() if cfdi.fecha else None
         party = cfdi.emisor_nombre or cfdi.emisor_rfc or ""
 
@@ -20906,11 +20946,22 @@ async def contabilidad_tesoreria_matches_export_xlsx(
             if poliza.cfdi_report_id:
                 collected_by_id[str(poliza.cfdi_report_id)] = collected_by_id.get(str(poliza.cfdi_report_id), 0.0) + amount
 
+    treasury_cxc_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxc",
+        cfdi_ids=emitted_ids,
+        cfdi_uuids=emitted_uuids,
+    )
+
     cxc_candidates = []
     for cfdi in emitted_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
         total = float(cfdi.total or 0)
-        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0))
+        treasury_collected = max(
+            treasury_cxc_matches["by_uuid"].get(uuid_key, 0.0),
+            treasury_cxc_matches["by_id"].get(str(cfdi.id), 0.0),
+        )
+        collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(str(cfdi.id), 0.0)) + treasury_collected
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
@@ -20936,9 +20987,18 @@ async def contabilidad_tesoreria_matches_export_xlsx(
                 uuid_key = (raw_uuid or "").strip().upper()
                 if uuid_key:
                     expenses_by_uuid.setdefault(uuid_key, []).append(expense)
+    treasury_cxp_matches = await _load_active_treasury_cfdi_match_amounts(
+        session,
+        direction="cxp",
+        cfdi_ids=received_ids,
+        cfdi_uuids=received_uuids,
+    )
+
     cxp_candidates = []
     for cfdi in received_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
+        if str(cfdi.id) in treasury_cxp_matches["by_id"] or uuid_key in treasury_cxp_matches["by_uuid"]:
+            continue
         linked = list(expenses_by_id.get(str(cfdi.id), []))
         for expense in expenses_by_uuid.get(uuid_key, []):
             if expense not in linked:
