@@ -98,32 +98,56 @@ def _account_label(account: Optional[CuentaContable]) -> str:
     return f"{account.codigo} · {account.nombre}"
 
 
-def _debtor_name_match_score(employee_name: str, account_name: str) -> int:
-    """Score deterministic employee/account name matches.
+def _name_tokens(value: Any) -> list[str]:
+    return [token for token in _normalize_text(value).split() if len(token) > 1]
 
-    The accounting catalog can omit middle names, e.g. `CARLOS LOZANO
-    PARDINAS` for employee `CARLOS FELIPE LOZANO PARDINAS`. Accept those
-    only when the account tokens are a clear subset of the employee tokens;
-    ambiguous ties still fail closed in resolve_employee_debtor_account.
+
+def _debtor_account_match_score(employee_name: Any, account_name: Any) -> int:
+    """Score an employee name against a debtor subaccount label.
+
+    The accounting catalog often omits middle names: e.g. employee
+    ``CARLOS FELIPE LOZANO PARDINAS`` may be catalogued as
+    ``CARLOS LOZANO PARDINAS``. Accept that shape only when the first token,
+    final surname token, and at least one additional token overlap. Ambiguous
+    equal scores are still rejected by the resolver.
     """
-    if not employee_name or not account_name:
+    employee_norm = _normalize_text(employee_name)
+    account_norm = _normalize_text(account_name)
+    if not employee_norm or not account_norm:
         return 0
-    if employee_name == account_name:
-        return 1000
-    if employee_name in account_name or account_name in employee_name:
-        return 900
-    employee_tokens = [token for token in employee_name.split() if len(token) > 1]
-    account_tokens = [token for token in account_name.split() if len(token) > 1]
+    if employee_norm == account_norm:
+        return 120
+    if employee_norm in account_norm or account_norm in employee_norm:
+        return 110
+
+    employee_tokens = _name_tokens(employee_norm)
+    account_tokens = _name_tokens(account_norm)
     if not employee_tokens or not account_tokens:
         return 0
-    common = set(employee_tokens).intersection(account_tokens)
-    if len(common) == len(account_tokens) and len(common) >= 3:
-        return 700 + len(common)
-    if len(common) == len(employee_tokens) and len(common) >= 3:
-        return 650 + len(common)
-    if len(common) >= 3 and len(common) >= min(len(employee_tokens), len(account_tokens)) - 1:
-        return 500 + len(common)
+    employee_set = set(employee_tokens)
+    account_set = set(account_tokens)
+    overlap = employee_set & account_set
+
+    if employee_set <= account_set:
+        return 100
+
+    # Allow omitted middle names while keeping enough identity anchors.
+    first_matches = employee_tokens[0] in account_set
+    last_matches = employee_tokens[-1] in account_set
+    enough_overlap = len(overlap) >= min(3, len(employee_set))
+    if first_matches and last_matches and enough_overlap:
+        return 90 + len(overlap)
+
+    # Some catalog labels may only preserve surnames plus one given name, but
+    # never accept fewer than three overlapping identity tokens.
+    if len(overlap) >= 3 and last_matches:
+        return 80 + len(overlap)
+
     return 0
+
+
+def _debtor_name_match_score(employee_name: Any, account_name: Any) -> int:
+    return _debtor_account_match_score(employee_name, account_name)
 
 
 async def resolve_employee_debtor_account(
@@ -147,17 +171,15 @@ async def resolve_employee_debtor_account(
         .order_by(CuentaContable.codigo.asc())
     )
     candidates = list(result.scalars().all())
-    scored_matches: list[tuple[int, CuentaContable]] = []
-    for account in candidates:
-        account_name = _normalize_text(account.nombre)
-        score = _debtor_name_match_score(employee_name, account_name)
-        if score > 0:
-            scored_matches.append((score, account))
-    if not scored_matches:
+    scored = [
+        (_debtor_account_match_score(employee_name, account.nombre), account)
+        for account in candidates
+    ]
+    scored = [(score, account) for score, account in scored if score > 0]
+    if not scored:
         return None
-    scored_matches.sort(key=lambda item: (-item[0], item[1].codigo))
-    best_score = scored_matches[0][0]
-    best_matches = [account for score, account in scored_matches if score == best_score]
+    best_score = max(score for score, _account in scored)
+    best_matches = [account for score, account in scored if score == best_score]
     return best_matches[0] if len(best_matches) == 1 else None
 
 

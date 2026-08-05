@@ -1,4 +1,7 @@
-from devnous.gastos.services.employee_debtor_accounting_service import _debtor_name_match_score
+from devnous.gastos.services.employee_debtor_accounting_service import (
+    _debtor_account_match_score,
+    _debtor_name_match_score,
+)
 
 from pathlib import Path
 
@@ -62,6 +65,17 @@ def test_debtor_account_match_allows_omitted_middle_names_but_fails_weak_matches
         "carlos felipe lozano pardinas",
         "carlos lozano",
     ) == 0
+    assert (
+        _debtor_account_match_score(
+            "CARLOS FELIPE LOZANO PARDINAS",
+            "CARLOS LOZANO PARDINAS",
+        )
+        > 0
+    )
+
+
+def test_debtor_account_match_rejects_weak_name_overlap():
+    assert _debtor_account_match_score("CARLOS FELIPE LOZANO PARDINAS", "CARLOS GARCIA") == 0
 
 
 def test_debtor_accounting_supports_petty_cash_alternate_accounts_without_changing_normal_debtors():
