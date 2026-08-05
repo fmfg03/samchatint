@@ -19115,6 +19115,58 @@ async def contabilidad_cash_flow_view(
         risk_label = "Medio"
         risk_color = "#b45309"
 
+    cash_alerts: List[Dict[str, Any]] = []
+
+    def _add_cash_alert(severity: str, title: str, detail: str, action: str) -> None:
+        color = {"alta": "#b91c1c", "media": "#b45309", "baja": "#047857"}.get(severity, "#4b5563")
+        cash_alerts.append({"severity": severity, "color": color, "title": title, "detail": detail, "action": action})
+
+    if projected_position < 0:
+        _add_cash_alert(
+            "alta",
+            "Posición comprometida negativa",
+            f"El escenario comprometido queda en {format_currency(projected_position)} dentro de {horizon_days} días.",
+            "Revisar pagos próximos, acelerar CxC o reprogramar solicitudes antes de autorizar nuevas salidas.",
+        )
+    if conservative_position < 0:
+        _add_cash_alert(
+            "alta" if projected_position < 0 else "media",
+            "Escenario conservador negativo",
+            f"Incluyendo CxP sin captura, la posición baja a {format_currency(conservative_position)}.",
+            "Resolver CFDI recibidos sin captura para distinguir obligaciones reales de ruido SAT.",
+        )
+    if receivable_overdue_total > 0:
+        severity = "alta" if receivable_overdue_total > max(forecast_in_30, 1) * 0.5 else "media"
+        _add_cash_alert(
+            severity,
+            "CxC vencida",
+            f"Hay {format_currency(receivable_overdue_total)} de saldo emitido vencido.",
+            "Entrar a CxC, confirmar cobros bancarios y aceptar matches de tesorería cuando aplique.",
+        )
+    if bank_unmatched_amount > 0 and len(bank_unmatched) > 10:
+        severity = "alta" if len(bank_unmatched) > 25 else "media"
+        _add_cash_alert(
+            severity,
+            "Banco pendiente de conciliación",
+            f"Quedan {len(bank_unmatched)} movimientos por {format_currency(bank_unmatched_amount)} sin conciliar.",
+            "Usar conciliación y matches de tesorería antes de tomar decisiones de caja.",
+        )
+    if payable_unprocessed_total > 0:
+        severity = "media" if payable_unprocessed_total <= max(abs(bank_net), 1) * 0.5 else "alta"
+        _add_cash_alert(
+            severity,
+            "CxP detectada sin captura operativa",
+            f"Hay {format_currency(payable_unprocessed_total)} en CFDI recibidos no vinculados a gasto/solicitud.",
+            "Clasificar si son pagos pendientes, facturas ya cubiertas o CFDI sin efecto operativo.",
+        )
+    if not cash_alerts:
+        _add_cash_alert(
+            "baja",
+            "Sin alertas críticas",
+            "No se detectaron focos rojos con los datos actuales del período y horizonte.",
+            "Mantener conciliación al día y revisar el cash flow después de nuevas cargas bancarias/SAT.",
+        )
+
     def _doc_party(doc: Documento) -> str:
         if doc.proveedor_cliente and doc.proveedor_cliente.nombre:
             return doc.proveedor_cliente.nombre
@@ -19160,6 +19212,10 @@ async def contabilidad_cash_flow_view(
             f"<tr><td>{escape(day.isoformat())}</td><td>{format_currency(row['in'])}<br><span class='muted'>{row['in_count']} cobros</span></td><td>{format_currency(row['out'])}<br><span class='muted'>{row['out_count']} salidas</span></td><td>{format_currency(net)}</td><td>{format_currency(daily_running_position)}</td><td>{escape(notes or '—')}</td></tr>"
         )
     daily_cash_flow_rows = "".join(daily_rows_html_parts)
+    cash_alert_rows = "".join(
+        f"<tr><td><span class='alert-pill' style='background:{alert['color']};'>{escape(alert['severity'].upper())}</span></td><td><strong>{escape(alert['title'])}</strong><br><span class='muted'>{escape(alert['detail'])}</span></td><td>{escape(alert['action'])}</td></tr>"
+        for alert in cash_alerts
+    )
 
     month_options = "".join(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
@@ -19192,6 +19248,7 @@ async def contabilidad_cash_flow_view(
     th {{ background:#f3f4f6; }}
     .pill {{ display:inline-block; padding:4px 10px; border-radius:999px; color:#fff; background:{risk_color}; font-weight:700; }}
     .exec-note {{ background:#ecfeff; border:1px solid #a5f3fc; border-radius:12px; padding:12px 14px; color:#164e63; }}
+    .alert-pill {{ display:inline-block; padding:4px 10px; border-radius:999px; color:#fff; font-weight:800; font-size:12px; }}
     </style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
@@ -19233,6 +19290,11 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
             <div class="metric light"><div class="label">CxC conciliada tesorería</div><div class="value">{format_currency(treasury_cxc_total)}</div><div class="muted">{treasury_cxc_count} matches aceptados; no se proyectan doble</div></div>
             <div class="metric light"><div class="label">CxP conciliada tesorería</div><div class="value">{format_currency(treasury_cxp_total)}</div><div class="muted">{treasury_cxp_count} matches aceptados; fuera del riesgo CxP</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Alertas operativas de caja</h2>
+            <table><thead><tr><th>Severidad</th><th>Hallazgo</th><th>Siguiente acción sugerida</th></tr></thead><tbody>{cash_alert_rows}</tbody></table>
+            <p class="muted">Alertas calculadas automáticamente desde banco, CxC, CxP, solicitudes y conciliación. Son guía operativa, no asiento contable.</p>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Tablero ejecutivo por periodo</h2>
@@ -19462,6 +19524,24 @@ async def contabilidad_cash_flow_export_xlsx(
     committed_position = bank_net + receivable_due_total - forecast_out
     conservative_position = committed_position - payable_unprocessed_total
 
+    cash_alerts: List[Dict[str, Any]] = []
+
+    def _add_cash_alert(severity: str, title: str, detail: str, action: str) -> None:
+        cash_alerts.append({"severity": severity, "title": title, "detail": detail, "action": action})
+
+    if committed_position < 0:
+        _add_cash_alert("alta", "Posición comprometida negativa", f"Escenario comprometido {committed_position:.2f}", "Revisar pagos próximos, acelerar CxC o reprogramar solicitudes.")
+    if conservative_position < 0:
+        _add_cash_alert("alta" if committed_position < 0 else "media", "Escenario conservador negativo", f"Escenario conservador {conservative_position:.2f}", "Resolver CFDI recibidos sin captura.")
+    if receivable_overdue_total > 0:
+        _add_cash_alert("media", "CxC vencida", f"Saldo vencido {receivable_overdue_total:.2f}", "Entrar a CxC y confirmar cobros/matches.")
+    if bank_unmatched_amount > 0 and len(bank_unmatched) > 10:
+        _add_cash_alert("alta" if len(bank_unmatched) > 25 else "media", "Banco pendiente de conciliación", f"{len(bank_unmatched)} movimientos por {bank_unmatched_amount:.2f}", "Usar conciliación y matches de tesorería.")
+    if payable_unprocessed_total > 0:
+        _add_cash_alert("media", "CxP sin captura", f"CFDI recibidos no vinculados por {payable_unprocessed_total:.2f}", "Clasificar CFDI recibidos pendientes.")
+    if not cash_alerts:
+        _add_cash_alert("baja", "Sin alertas críticas", "No se detectaron focos rojos con los datos actuales.", "Mantener conciliación al día.")
+
     bucket_defs = [("vencido", "Vencido"), ("d0_7", "0-7 días"), ("d8_14", "8-14 días"), ("d15_horizon", f"15-{horizon_days} días"), ("sin_fecha", "Fuera de horizonte / sin fecha")]
     buckets: Dict[str, Dict[str, Any]] = {key: {"label": label, "in": 0.0, "out": 0.0, "in_count": 0, "out_count": 0} for key, label in bucket_defs}
 
@@ -19581,6 +19661,12 @@ async def contabilidad_cash_flow_export_xlsx(
         running += net
         liquidity_rows.append([label, bucket["in"], bucket["in_count"], bucket["out"], bucket["out_count"], net, running])
     write_rows(ws2, liquidity_rows)
+
+    ws_alerts = wb.create_sheet("Alertas")
+    alert_rows = [["Severidad", "Hallazgo", "Detalle", "Siguiente acción"]]
+    for alert in cash_alerts:
+        alert_rows.append([alert["severity"], alert["title"], alert["detail"], alert["action"]])
+    write_rows(ws_alerts, alert_rows)
 
     ws_daily = wb.create_sheet("Posición diaria")
     daily_rows = [["Día", "Cobros", "# cobros", "Salidas", "# salidas", "Neto día", "Posición acumulada", "Notas"]]
