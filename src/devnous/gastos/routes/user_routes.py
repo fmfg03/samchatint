@@ -178,6 +178,8 @@ from ..services.documento_workflow_service import (
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 from .admin_budget_ui import render_cfdi_income_bridge_panel
 from ..services.cfdi_income_bridge_service import (
+    CFDIIncomeBridgeError,
+    assign_cfdi_income_tournament,
     list_budget_cfdi_income_links,
     list_psp_cfdi_income_candidates,
 )
@@ -18352,6 +18354,20 @@ async def amex_conciliacion_view(
 
 
 
+def _cxc_can_assign_income_cfdi(current_empleado: Empleado) -> bool:
+    return str(getattr(current_empleado, "rol", "") or "").strip().lower() in {
+        "superadmin",
+        "super_admin",
+    }
+
+
+def _safe_cxc_return_url(return_to: Optional[str]) -> str:
+    clean = str(return_to or "").strip()
+    if clean.startswith("/admin/contabilidad/cuentas-por-cobrar"):
+        return clean
+    return "/admin/contabilidad/cuentas-por-cobrar"
+
+
 @router.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
 async def contabilidad_cuentas_por_cobrar_view(
     request: Request,
@@ -18364,6 +18380,8 @@ async def contabilidad_cuentas_por_cobrar_view(
     dias_credito: int = Query(30),
     torneo_id: Optional[str] = Query(None),
     edition_year: Optional[int] = Query(None),
+    success_msg: Optional[str] = Query(None),
+    error_msg: Optional[str] = Query(None),
 ) -> HTMLResponse:
     """Read-only accounts receivable view from emitted CFDI and collected-income policies."""
     today = datetime.utcnow().date()
@@ -18532,19 +18550,94 @@ async def contabilidad_cuentas_por_cobrar_view(
             return_to = str(request.url.path)
             if request.url.query:
                 return_to = f"{return_to}?{request.url.query}"
-            cfdi_income_bridge_html = render_cfdi_income_bridge_panel(
+            unassigned_candidates = await list_psp_cfdi_income_candidates(
+                session,
+                budget_version_id=str(selected_version["id"]),
+                unassigned_only=True,
+                limit=250,
+            )
+            unassigned_options = []
+            for cfdi in unassigned_candidates:
+                cfdi_id = str(cfdi.get("id") or "")
+                if not cfdi_id:
+                    continue
+                date_text = str(cfdi.get("fecha") or "")[:10] or "sin fecha"
+                total = float(cfdi.get("total") or 0)
+                concept = str(cfdi.get("descripcion_concepto_principal") or "").strip()
+                receptor = str(cfdi.get("receptor_nombre") or cfdi.get("receptor_rfc") or "").strip()
+                label = " / ".join(
+                    part
+                    for part in [
+                        str(cfdi.get("cfdi_uuid") or cfdi_id),
+                        str(cfdi.get("emisor_rfc") or "sin emisor"),
+                        receptor,
+                        concept,
+                        f"${total:,.2f}",
+                        date_text,
+                    ]
+                    if part
+                )
+                unassigned_options.append(
+                    f'<option value="{escape(label, quote=True)}" data-id="{escape(cfdi_id, quote=True)}"></option>'
+                )
+            assign_disabled = "" if _cxc_can_assign_income_cfdi(current_empleado) and unassigned_options else " disabled"
+            assignment_panel = f"""
+                <div class="card">
+                    <h2 style="margin:0 0 8px 0;">Clasificar CFDI PSP sin torneo</h2>
+                    <p class="muted" style="margin:0 0 12px 0;">
+                        Primero asigna el CFDI al torneo/proyecto seleccionado. Después aparecerá en el selector de vinculación de este torneo.
+                    </p>
+                    <form method="POST" action="/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign" style="display:grid;grid-template-columns:minmax(320px,1fr) 180px;gap:10px;align-items:end;">
+                        <input type="hidden" name="tournament_id" value="{escape(selected_torneo_id, quote=True)}">
+                        <input type="hidden" name="edition_year" value="{int(resolved_edition_year)}">
+                        <input type="hidden" name="return_to" value="{escape(return_to, quote=True)}">
+                        <input type="hidden" id="cxc-cfdi-assign-id" name="cfdi_report_id">
+                        <div>
+                            <label>CFDI PSP sin clasificar</label>
+                            <input id="cxc-cfdi-assign-input" list="cxc-cfdi-assign-options" placeholder="Buscar por UUID, receptor, concepto, monto o fecha"{assign_disabled}>
+                            <datalist id="cxc-cfdi-assign-options">{''.join(unassigned_options)}</datalist>
+                        </div>
+                        <button type="submit" class="button"{assign_disabled}>Asignar a este torneo</button>
+                    </form>
+                    <script>
+                    (function() {{
+                        const input = document.getElementById('cxc-cfdi-assign-input');
+                        const hidden = document.getElementById('cxc-cfdi-assign-id');
+                        const datalist = document.getElementById('cxc-cfdi-assign-options');
+                        if (!input || !hidden || !datalist) return;
+                        function sync() {{
+                            const option = Array.from(datalist.options).find(function(item) {{ return item.value === input.value; }});
+                            hidden.value = option ? option.getAttribute('data-id') || '' : '';
+                        }}
+                        input.addEventListener('input', sync);
+                        input.form && input.form.addEventListener('submit', function(event) {{
+                            sync();
+                            if (hidden.value) return;
+                            event.preventDefault();
+                            input.setCustomValidity('Selecciona un CFDI de la lista.');
+                            input.reportValidity();
+                            input.setCustomValidity('');
+                        }});
+                    }})();
+                    </script>
+                </div>
+            """
+            cfdi_income_bridge_html = assignment_panel + render_cfdi_income_bridge_panel(
                 tournament_key=selected_torneo_id,
                 edition_year=resolved_edition_year,
                 lines=income_lines,
                 candidates=await list_psp_cfdi_income_candidates(
-                    session, budget_version_id=str(selected_version["id"])
+                    session,
+                    budget_version_id=str(selected_version["id"]),
+                    tournament_id=(tournament_ctx or {}).get("tournament_id"),
+                    assigned_only=True,
                 ),
                 links=await list_budget_cfdi_income_links(
                     session,
                     budget_version_id=str(selected_version["id"]),
                     tournament_id=(tournament_ctx or {}).get("tournament_id"),
                 ),
-                can_edit=str(getattr(current_empleado, "rol", "") or "").strip().lower() in {"superadmin", "super_admin"},
+                can_edit=_cxc_can_assign_income_cfdi(current_empleado),
                 return_to=return_to,
             )
     else:
@@ -18620,6 +18713,8 @@ async def contabilidad_cuentas_por_cobrar_view(
     </style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cxc")}
+        {f'<div class="card" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;font-weight:700;">{escape(success_msg)}</div>' if success_msg else ''}
+        {f'<div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;font-weight:700;">{escape(error_msg)}</div>' if error_msg else ''}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cuentas por Cobrar</h1>
             <p class="muted" style="margin:0;">Facturas emitidas por las RFC activas de Plataforma cruzadas contra ingresos cobrados registrados por UUID. Vista read-only para cartera y cash flow.</p>
@@ -18656,6 +18751,50 @@ async def contabilidad_cuentas_por_cobrar_view(
     """
     return HTMLResponse(content=html)
 
+
+
+@router.post("/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign")
+async def contabilidad_cxc_assign_cfdi_income_tournament(
+    request: Request,
+    cfdi_report_id: str = Form(...),
+    tournament_id: str = Form(...),
+    edition_year: Optional[int] = Form(None),
+    return_to: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> RedirectResponse:
+    if not _cxc_can_assign_income_cfdi(current_empleado):
+        raise HTTPException(status_code=403, detail="No autorizado para clasificar CFDI PSP.")
+    try:
+        await assign_cfdi_income_tournament(
+            session,
+            cfdi_report_id=cfdi_report_id,
+            tournament_id=tournament_id,
+            actor_empleado_id=str(current_empleado.id),
+        )
+    except CFDIIncomeBridgeError as exc:
+        await session.rollback()
+        target = _safe_cxc_return_url(return_to)
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(
+            url=f"{target}{separator}error_msg={quote(str(exc))}",
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception("CFDI PSP tournament assignment failed")
+        target = _safe_cxc_return_url(return_to)
+        separator = "&" if "?" in target else "?"
+        return RedirectResponse(
+            url=f"{target}{separator}error_msg={quote('No se pudo clasificar el CFDI PSP.')}",
+            status_code=303,
+        )
+    target = _safe_cxc_return_url(return_to)
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(
+        url=f"{target}{separator}success_msg={quote('CFDI PSP clasificado para este torneo.')}",
+        status_code=303,
+    )
 
 
 @router.get("/admin/contabilidad/cuentas-por-pagar", response_class=HTMLResponse)
