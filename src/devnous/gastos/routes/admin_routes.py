@@ -22495,7 +22495,7 @@ async def gastos_sin_cuenta_contable(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
-                                    <th>Empleado / método</th>
+                                    <th>Responsable / método</th>
                                     <th>Fecha</th>
                                     <th>Concepto / proyecto</th>
                                     <th>Monto</th>

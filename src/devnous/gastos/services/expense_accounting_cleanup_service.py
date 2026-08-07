@@ -23,7 +23,10 @@ _NON_FISCAL_ACCOUNT_NAMES = {
     "no deducible",
     "gastos no deducibles",
 }
-from .budget_concept_account_service import cleanup_expense_loader_options
+from .budget_concept_account_service import (
+    cleanup_expense_loader_options,
+    resolve_effective_budget_concept,
+)
 from .expense_accounting_service import build_expense_accounting_preview
 from .hospedaje_tax_service import normalize_hospedaje_rate, normalize_hospedaje_state
 
@@ -177,8 +180,10 @@ async def build_cleanup_preview(
 
     preview = await build_expense_accounting_preview(session, expense)
     taxes = preview.get("taxes") or {}
+    effective_concept = resolve_effective_budget_concept(expense)
+    mapped_cuenta_id = getattr(effective_concept, "cuenta_contable_id", None)
     issues = []
-    if not getattr(expense, "cuenta_contable_id", None):
+    if not getattr(expense, "cuenta_contable_id", None) and not mapped_cuenta_id:
         issues.append("Falta cuenta de cargo")
     if not getattr(expense, "contra_cuenta_contable_id", None) and not preview.get(
         "contra_account"
@@ -235,6 +240,14 @@ async def save_expense_cleanup(
             session, cuenta_contable_id, "Cuenta contable"
         )
         expense.cuenta_contable_id = cuenta.id
+    elif expense.cuenta_contable_id is None:
+        effective_concept = resolve_effective_budget_concept(expense)
+        mapped_cuenta_id = getattr(effective_concept, "cuenta_contable_id", None)
+        if mapped_cuenta_id:
+            cuenta = await _load_active_account(
+                session, str(mapped_cuenta_id), "Cuenta contable mapeada"
+            )
+            expense.cuenta_contable_id = cuenta.id
 
     if contra_cuenta_contable_id:
         contra = await _load_active_account(
