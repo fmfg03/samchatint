@@ -37,7 +37,6 @@ from .admin_budget_ui import (
     budget_tournament_detail_url,
     collect_matrix_phase_filter_options,
     filter_budget_lines_by_phase,
-    render_cfdi_income_bridge_panel,
     render_add_tournament_line_form,
     render_budget_detail_section_nav,
     render_budget_matrix_filters,
@@ -55,6 +54,15 @@ from ..services.cfdi_income_bridge_service import (
 from ..models import CuentaContable, Tournament
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_cfdi_income_return_url(return_to: Optional[str], fallback_url: str) -> str:
+    clean = str(return_to or "").strip()
+    if clean.startswith("/admin/contabilidad/cuentas-por-cobrar") or clean.startswith(
+        "/admin/presupuestos/"
+    ):
+        return clean
+    return fallback_url
 
 
 def _render_budget_status_message(message: Optional[str], *, is_error: bool) -> str:
@@ -1021,21 +1029,17 @@ def register_presupuestos_routes(router) -> None:
                 budget_view="income",
             )
 
-        cfdi_income_panel = render_cfdi_income_bridge_panel(
-            tournament_key=tournament_key,
-            edition_year=resolved_year,
-            lines=income_lines,
-            candidates=await list_psp_cfdi_income_candidates(
-                session,
-                budget_version_id=str(selected_version["id"]),
-            ),
-            links=await list_budget_cfdi_income_links(
-                session,
-                budget_version_id=str(selected_version["id"]),
-                tournament_id=str(tournament_id or "") or None,
-            ),
-            can_edit=bool(access.get("line_update")),
+        cxc_income_url = (
+            f"/admin/contabilidad/cuentas-por-cobrar?torneo_id={quote(str(tournament_key))}"
+            f"&edition_year={int(resolved_year)}"
         )
+        cfdi_income_notice = f"""
+            <div style="margin:12px 0;padding:12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff;color:#1e3a8a;font-size:13px;">
+                La vinculación de CFDI PSP a ingreso real ahora se opera desde
+                <a href="{cxc_income_url}" style="color:#0f766e;font-weight:800;">Cuentas por Cobrar</a>.
+                Presupuestos conserva la planeación; CxC concentra la cartera y la cobranza real.
+            </div>
+        """
         income_export_url = (
             f"/admin/presupuestos/torneo/{quote(str(tournament_key))}/ingresos/export.xlsx"
             f"?edition_year={int(resolved_year)}&version_id={quote(str(selected_version['id']))}"
@@ -1077,7 +1081,7 @@ def register_presupuestos_routes(router) -> None:
                 <div class="workspace-section-subtitle">Captura ingreso esperado; ingreso real se alimenta con CFDI PSP vinculados.</div>
                 {create_income_line_form}
                 {income_import_html}
-                {cfdi_income_panel}
+                {cfdi_income_notice}
                 {matrix_filters_html}
                 {ingresos_matrix_html}
             </section>
@@ -1306,6 +1310,7 @@ def register_presupuestos_routes(router) -> None:
         amount: str = Form(""),
         income_date: str = Form(""),
         edition_year: Optional[int] = Form(None),
+        return_to: Optional[str] = Form(None),
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
     ):
@@ -1325,36 +1330,39 @@ def register_presupuestos_routes(router) -> None:
                 if result.get("status") == "updated"
                 else "CFDI PSP vinculado a ingreso real."
             )
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                success_msg=msg,
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    success_msg=msg,
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
         except CFDIIncomeBridgeError as exc:
             await session.rollback()
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                error_msg=str(exc),
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    error_msg=str(exc),
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
         except Exception:
             await session.rollback()
             logger.exception("CFDI PSP income link failed")
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                error_msg="No se pudo vincular el CFDI PSP.",
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    error_msg="No se pudo vincular el CFDI PSP.",
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
 
@@ -1367,6 +1375,7 @@ def register_presupuestos_routes(router) -> None:
         amount: str = Form(""),
         income_date: str = Form(""),
         edition_year: Optional[int] = Form(None),
+        return_to: Optional[str] = Form(None),
         cfdi_xml: Optional[UploadFile] = File(None),
         cfdi_pdf: Optional[UploadFile] = File(None),
         session: AsyncSession = Depends(get_db_session),
@@ -1393,36 +1402,39 @@ def register_presupuestos_routes(router) -> None:
                 amount=amount,
                 income_date=income_date,
             )
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                success_msg="CFDI PSP cargado y vinculado a ingreso real.",
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    success_msg="CFDI PSP cargado y vinculado a ingreso real.",
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
         except CFDIIncomeBridgeError as exc:
             await session.rollback()
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                error_msg=str(exc),
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    error_msg=str(exc),
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
         except Exception:
             await session.rollback()
             logger.exception("CFDI PSP income upload-link failed")
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                error_msg="No se pudo cargar y vincular el CFDI PSP.",
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    error_msg="No se pudo cargar y vincular el CFDI PSP.",
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
 
@@ -1433,6 +1445,7 @@ def register_presupuestos_routes(router) -> None:
         tournament_key: str,
         link_id: str,
         edition_year: Optional[int] = Form(None),
+        return_to: Optional[str] = Form(None),
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
     ):
@@ -1443,29 +1456,31 @@ def register_presupuestos_routes(router) -> None:
                 link_id=link_id,
                 actor_empleado_id=str(current_empleado.id),
             )
-            return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    success_msg=(
-                        "El CFDI PSP dejó de contar como ingreso real."
-                        if unlinked
-                        else "El CFDI PSP ya estaba desvinculado."
-                    ),
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                success_msg=(
+                    "El CFDI PSP dejó de contar como ingreso real."
+                    if unlinked
+                    else "El CFDI PSP ya estaba desvinculado."
                 ),
+            )
+            return RedirectResponse(
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
         except Exception:
             await session.rollback()
             logger.exception("CFDI PSP income unlink failed")
+            fallback_url = budget_tournament_detail_url(
+                tournament_key,
+                edition_year=edition_year,
+                budget_view="income",
+                error_msg="No se pudo desvincular el CFDI PSP.",
+            )
             return RedirectResponse(
-                url=budget_tournament_detail_url(
-                    tournament_key,
-                    edition_year=edition_year,
-                    budget_view="income",
-                    error_msg="No se pudo desvincular el CFDI PSP.",
-                ),
+                url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
 

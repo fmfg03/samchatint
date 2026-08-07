@@ -33,6 +33,14 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload, undefer
 
+from samchat.budgets.service import (
+    attach_cuenta_contable_to_budget_lines,
+    ensure_budget_schema,
+    list_budget_lines,
+    resolve_budget_tournament_context,
+    resolve_definitive_budget_version,
+)
+
 from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest
 from ..expense_metadata import (
     COMMON_CURRENCIES,
@@ -138,6 +146,11 @@ from ..services.documento_workflow_service import (
     transition_documento_workflow,
 )
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
+from .admin_budget_ui import render_cfdi_income_bridge_panel
+from ..services.cfdi_income_bridge_service import (
+    list_budget_cfdi_income_links,
+    list_psp_cfdi_income_candidates,
+)
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
@@ -17028,6 +17041,8 @@ async def contabilidad_cuentas_por_cobrar_view(
     estado: str = Query("pendiente"),
     cliente: Optional[str] = Query(None),
     dias_credito: int = Query(30),
+    torneo_id: Optional[str] = Query(None),
+    edition_year: Optional[int] = Query(None),
 ) -> HTMLResponse:
     """Read-only accounts receivable view from emitted CFDI and collected-income policies."""
     today = datetime.utcnow().date()
@@ -17146,6 +17161,79 @@ async def contabilidad_cuentas_por_cobrar_view(
     total_vencido = sum(row["saldo"] for row in rows_data if row["status"] == "vencido")
     count_vencido = sum(1 for row in rows_data if row["status"] == "vencido")
 
+    await ensure_budget_schema(session)
+    resolved_edition_year = edition_year or today.year
+    selected_torneo_id = str(torneo_id or "").strip()
+    tournament_rows = (
+        (
+            await session.execute(
+                select(Tournament)
+                .where(Tournament.active.is_(True))
+                .order_by(Tournament.display_order.asc(), Tournament.name.asc())
+            )
+        )
+        .scalars()
+        .all()
+    )
+    tournament_options = ['<option value="">— Selecciona torneo/proyecto —</option>']
+    for tournament in tournament_rows:
+        tournament_id = str(tournament.id)
+        selected_attr = " selected" if tournament_id == selected_torneo_id else ""
+        tournament_options.append(
+            f'<option value="{escape(tournament_id)}"{selected_attr}>{escape(tournament.name or tournament_id)}</option>'
+        )
+
+    cfdi_income_bridge_html = ""
+    if selected_torneo_id:
+        selected_version = await resolve_definitive_budget_version(
+            session, edition_year=resolved_edition_year
+        )
+        if selected_version is None:
+            cfdi_income_bridge_html = """
+                <div class="card">
+                    <h2 style="margin:0 0 8px 0;">CFDI PSP vinculados a ingreso real</h2>
+                    <p class="muted" style="margin:0;">No hay versión presupuestal para el año seleccionado; no se pueden elegir partidas de ingreso todavía.</p>
+                </div>
+            """
+        else:
+            tournament_ctx = await resolve_budget_tournament_context(
+                session, tournament_key=selected_torneo_id
+            )
+            income_lines = await list_budget_lines(
+                session,
+                version_id=str(selected_version["id"]),
+                tournament_id=(tournament_ctx or {}).get("tournament_id"),
+                tournament_code=(tournament_ctx or {}).get("tournament_code"),
+                line_direction="income",
+                limit=5000,
+            )
+            income_lines = await attach_cuenta_contable_to_budget_lines(session, income_lines)
+            return_to = str(request.url.path)
+            if request.url.query:
+                return_to = f"{return_to}?{request.url.query}"
+            cfdi_income_bridge_html = render_cfdi_income_bridge_panel(
+                tournament_key=selected_torneo_id,
+                edition_year=resolved_edition_year,
+                lines=income_lines,
+                candidates=await list_psp_cfdi_income_candidates(
+                    session, budget_version_id=str(selected_version["id"])
+                ),
+                links=await list_budget_cfdi_income_links(
+                    session,
+                    budget_version_id=str(selected_version["id"]),
+                    tournament_id=(tournament_ctx or {}).get("tournament_id"),
+                ),
+                can_edit=str(getattr(current_empleado, "rol", "") or "").strip().lower() in {"superadmin", "super_admin"},
+                return_to=return_to,
+            )
+    else:
+        cfdi_income_bridge_html = """
+            <div class="card">
+                <h2 style="margin:0 0 8px 0;">CFDI PSP vinculados a ingreso real</h2>
+                <p class="muted" style="margin:0;">Selecciona un torneo/proyecto y año para vincular CFDI emitidos por PSP contra partidas de ingreso.</p>
+            </div>
+        """
+
     def _status_badge(value: str) -> str:
         colors = {"cobrado": "#047857", "pendiente": "#b45309", "vencido": "#b91c1c"}
         labels = {"cobrado": "Cobrado", "pendiente": "Pendiente", "vencido": "Vencido"}
@@ -17189,7 +17277,9 @@ async def contabilidad_cuentas_por_cobrar_view(
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
     .container {{ max-width: 1500px; margin:0 auto; }}
-    .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
+    .card, .workspace-card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
+    .workspace-section-title {{ font-size:20px; font-weight:800; margin-bottom:6px; }}
+    .workspace-section-subtitle {{ color:#6b7280; font-size:13px; line-height:1.45; }}
     .toolbar {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; align-items:end; }}
     input, select {{ width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; box-sizing:border-box; }}
     .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
@@ -17219,6 +17309,8 @@ async def contabilidad_cuentas_por_cobrar_view(
                 <div><label>Hasta</label><input type="date" name="hasta" value="{hasta_value}"></div>
                 <div><label>Estado</label><select name="estado">{status_options}</select></div>
                 <div><label>Cliente / RFC / UUID</label><input type="text" name="cliente" value="{escape(cliente_filter)}" placeholder="Ej. Bimbo"></div>
+                <div><label>Torneo / proyecto</label><select name="torneo_id">{"".join(tournament_options)}</select></div>
+                <div><label>Año presupuesto</label><input type="number" min="2020" max="2100" name="edition_year" value="{resolved_edition_year}"></div>
                 <div><label>Días crédito</label><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}"></div>
                 <div><button type="submit" class="button">Filtrar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
@@ -17230,6 +17322,7 @@ async def contabilidad_cuentas_por_cobrar_view(
             <div class="metric"><div class="label">Saldo pendiente</div><div class="value">{format_currency(total_pendiente)}</div><div class="muted">Base de entrada esperada</div></div>
             <div class="metric warn"><div class="label">Vencido</div><div class="value">{format_currency(total_vencido)}</div><div class="muted">{count_vencido} CFDI vencidos</div></div>
         </div>
+        {cfdi_income_bridge_html}
         <div class="card" style="margin-top:16px;">
             <h2 style="margin:0 0 12px 0;">Cartera</h2>
             <div class="table-wrap"><table>
