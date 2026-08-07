@@ -150,6 +150,7 @@ from .admin_budget_ui import render_cfdi_income_bridge_panel
 from ..services.cfdi_income_bridge_service import (
     CFDIIncomeBridgeError,
     assign_cfdi_income_tournament,
+    ensure_cfdi_income_tournament_assignment_schema,
     list_budget_cfdi_income_links,
     list_psp_cfdi_income_candidates,
 )
@@ -2408,6 +2409,38 @@ def _parse_money_decimal(value: Any, field_label: str) -> Decimal:
     return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+async def _resolve_cxc_account_for_collected_cfdi(
+    session: AsyncSession,
+    *,
+    cfdi_uuid: str = "",
+    cfdi_report_id: Optional[UUIDType] = None,
+) -> Optional[CuentaContable]:
+    uuid_key = (cfdi_uuid or "").strip().upper()
+    conditions = [AccountingPoliza.origen == "cxc_cfdi_income"]
+    match_conditions = []
+    if uuid_key:
+        match_conditions.append(func.upper(AccountingPoliza.cfdi_uuid) == uuid_key)
+    if cfdi_report_id:
+        match_conditions.append(AccountingPoliza.cfdi_report_id == cfdi_report_id)
+    if not match_conditions:
+        return None
+    poliza = (
+        await session.execute(
+            select(AccountingPoliza)
+            .options(selectinload(AccountingPoliza.lines))
+            .where(and_(*conditions), or_(*match_conditions))
+            .order_by(AccountingPoliza.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if poliza is None:
+        return None
+    for line in poliza.lines:
+        if str(line.cuenta_codigo or "").startswith("1150-") and float(line.debe or 0) > 0:
+            return await session.get(CuentaContable, line.cuenta_contable_id)
+    return None
+
+
 def _build_ingreso_cobrado_line_payload(
     *,
     total_cobrado: Decimal,
@@ -2460,6 +2493,36 @@ def _build_ingreso_cobrado_line_payload(
             }
         )
     return lines, ingreso_base
+
+
+def _build_cxc_collection_line_payload(
+    *,
+    total_cobrado: Decimal,
+    cuenta_banco: CuentaContable,
+    cuenta_cxc: CuentaContable,
+    concepto: str,
+) -> tuple[list[dict[str, Any]], Decimal]:
+    if total_cobrado <= 0:
+        raise ValueError("El monto cobrado debe ser mayor a cero")
+    lines = [
+        {
+            "cuenta_codigo": cuenta_banco.codigo,
+            "cuenta_contable_id": cuenta_banco.id,
+            "concepto": concepto,
+            "movimiento_no": "1",
+            "debe": float(total_cobrado),
+            "haber": 0.0,
+        },
+        {
+            "cuenta_codigo": cuenta_cxc.codigo,
+            "cuenta_contable_id": cuenta_cxc.id,
+            "concepto": concepto,
+            "movimiento_no": "1",
+            "debe": 0.0,
+            "haber": float(total_cobrado),
+        },
+    ]
+    return lines, Decimal("0.00")
 
 
 @router.get("/admin/nomina/patrones", response_class=HTMLResponse)
@@ -3471,6 +3534,18 @@ async def contabilidad_ingresos_save(
         )
 
     cuenta_banco = await session.get(CuentaContable, form.get("cuenta_banco_id"))
+    cfdi_report = None
+    if cfdi_uuid:
+        cfdi_report = (
+            await session.execute(
+                select(CFDIReport).where(func.upper(CFDIReport.cfdi_uuid) == cfdi_uuid.upper()).limit(1)
+            )
+        ).scalar_one_or_none()
+    cuenta_cxc = await _resolve_cxc_account_for_collected_cfdi(
+        session,
+        cfdi_uuid=cfdi_uuid,
+        cfdi_report_id=(cfdi_report.id if cfdi_report else None),
+    )
     cuenta_ingreso = await session.get(CuentaContable, form.get("cuenta_ingreso_id"))
     cuenta_iva = None
     cuenta_iva_id = str(form.get("cuenta_iva_id") or "").strip()
@@ -3485,14 +3560,22 @@ async def contabilidad_ingresos_save(
         )
 
     try:
-        lines, ingreso_base = _build_ingreso_cobrado_line_payload(
-            total_cobrado=total_cobrado,
-            iva_trasladado=iva_trasladado,
-            cuenta_banco=cuenta_banco,
-            cuenta_ingreso=cuenta_ingreso,
-            cuenta_iva=cuenta_iva,
-            concepto=concepto,
-        )
+        if cuenta_cxc is not None:
+            lines, ingreso_base = _build_cxc_collection_line_payload(
+                total_cobrado=total_cobrado,
+                cuenta_banco=cuenta_banco,
+                cuenta_cxc=cuenta_cxc,
+                concepto=f"Cobro CxC / {concepto}",
+            )
+        else:
+            lines, ingreso_base = _build_ingreso_cobrado_line_payload(
+                total_cobrado=total_cobrado,
+                iva_trasladado=iva_trasladado,
+                cuenta_banco=cuenta_banco,
+                cuenta_ingreso=cuenta_ingreso,
+                cuenta_iva=cuenta_iva,
+                concepto=concepto,
+            )
     except ValueError as exc:
         return RedirectResponse(
             url=redirect_base + "&error_msg=" + quote(str(exc)),
@@ -3510,7 +3593,7 @@ async def contabilidad_ingresos_save(
         )
     ).scalars().all()
     numero_poliza = _next_manual_poliza_number(list(existing_numbers), "Ig")
-    full_concept = f"{factura_folio} / {cliente} / {concepto}"
+    full_concept = f"{factura_folio} / {cliente} / {'Cobro CxC / ' if cuenta_cxc is not None else ''}{concepto}"
     poliza = AccountingPoliza(
         id=uuid4(),
         source_file=source_file,
@@ -3525,6 +3608,7 @@ async def contabilidad_ingresos_save(
         line_count_declared=len(lines),
         line_count_actual=len(lines),
         cfdi_uuid=cfdi_uuid or None,
+        cfdi_report_id=(cfdi_report.id if cfdi_report else None),
         origen="ingreso_cobrado_ui",
     )
     session.add(poliza)
@@ -3543,7 +3627,10 @@ async def contabilidad_ingresos_save(
                 haber=line["haber"],
                 raw_row_json={
                     "origin": "ingreso_cobrado_ui",
-                    "no_accounts_receivable": True,
+                    "no_accounts_receivable": cuenta_cxc is None,
+                    "accounts_receivable_collection": cuenta_cxc is not None,
+                    "cuenta_cxc_codigo": getattr(cuenta_cxc, "codigo", None),
+                    "cfdi_report_id": str(cfdi_report.id) if cfdi_report else None,
                     "factura_folio": factura_folio,
                     "cfdi_uuid": cfdi_uuid,
                     "total_cobrado": float(total_cobrado),
@@ -17079,6 +17166,7 @@ async def contabilidad_cuentas_por_cobrar_view(
     dias_credito = max(0, min(int(dias_credito or 30), 365))
     estado = (estado or "pendiente").lower().strip()
     cliente_filter = (cliente or "").strip()
+    selected_torneo_id = str(torneo_id or "").strip()
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [
@@ -17146,10 +17234,54 @@ async def contabilidad_cuentas_por_cobrar_view(
                 collected_by_id[id_key] = collected_by_id.get(id_key, 0.0) + collected_amount
                 poliza_refs_by_id.setdefault(id_key, []).append(ref)
 
+    cxc_links_by_cfdi_id: Dict[str, Dict[str, Any]] = {}
+    assigned_tournament_cfdi_ids: set[str] = set()
+    if cfdi_ids:
+        await ensure_cfdi_income_tournament_assignment_schema(session)
+        link_rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT l.cfdi_report_id, l.amount, l.income_date,
+                           l.tournament_id, l.phase, bl.concept_name,
+                           bl.account_code_final, t.name AS tournament_name
+                    FROM budget_cfdi_income_links l
+                    LEFT JOIN budget_lines bl ON bl.id = l.budget_line_id
+                    LEFT JOIN tournaments t ON t.id = l.tournament_id
+                    WHERE l.unlinked_at IS NULL
+                      AND l.cfdi_report_id = ANY(CAST(:cfdi_ids AS uuid[]))
+                    """
+                ),
+                {"cfdi_ids": [str(item) for item in cfdi_ids]},
+            )
+        ).mappings().all()
+        for link in link_rows:
+            cxc_links_by_cfdi_id[str(link["cfdi_report_id"])] = dict(link)
+        assignment_rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT cfdi_report_id, tournament_id
+                    FROM cfdi_income_tournament_assignments
+                    WHERE cfdi_report_id = ANY(CAST(:cfdi_ids AS uuid[]))
+                    """
+                ),
+                {"cfdi_ids": [str(item) for item in cfdi_ids]},
+            )
+        ).mappings().all()
+        for assignment in assignment_rows:
+            if not selected_torneo_id or str(assignment["tournament_id"]) == selected_torneo_id:
+                assigned_tournament_cfdi_ids.add(str(assignment["cfdi_report_id"]))
+
     rows_data: List[Dict[str, Any]] = []
     for cfdi in emitted_cfdis:
         uuid_key = (cfdi.cfdi_uuid or "").strip().upper()
         id_key = str(cfdi.id)
+        link_info = cxc_links_by_cfdi_id.get(id_key)
+        if selected_torneo_id:
+            linked_tournament_id = str((link_info or {}).get("tournament_id") or "")
+            if id_key not in assigned_tournament_cfdi_ids and linked_tournament_id != selected_torneo_id:
+                continue
         total = float(cfdi.total or 0)
         collected = max(collected_by_uuid.get(uuid_key, 0.0), collected_by_id.get(id_key, 0.0))
         saldo = max(total - collected, 0.0)
@@ -17175,6 +17307,7 @@ async def contabilidad_cuentas_por_cobrar_view(
             "overdue_days": overdue_days,
             "status": row_status,
             "polizas": poliza_refs,
+            "link_info": link_info,
         })
 
     total_facturado = sum(row["total"] for row in rows_data)
@@ -17185,7 +17318,6 @@ async def contabilidad_cuentas_por_cobrar_view(
 
     await ensure_budget_schema(session)
     resolved_edition_year = edition_year or today.year
-    selected_torneo_id = str(torneo_id or "").strip()
     tournament_rows = (
         (
             await session.execute(
@@ -17343,6 +17475,7 @@ async def contabilidad_cuentas_por_cobrar_view(
             <td>{escape(row['issue_date'].isoformat() if row['issue_date'] else '—')}</td>
             <td>{escape(row['due_date'].isoformat() if row['due_date'] else '—')}</td>
             <td>{escape(row['cfdi'].receptor_nombre or '—')}<br><span class="muted">{escape(row['cfdi'].receptor_rfc or '—')}</span></td>
+            <td>{escape(((row.get('link_info') or {}).get('tournament_name') or '—'))}<br><span class="muted">{escape(((row.get('link_info') or {}).get('concept_name') or 'Sin partida CxC'))}</span></td>
             <td>{escape(row['cfdi'].serie or '—')}</td>
             <td>{escape(row['cfdi'].folio or '—')}</td>
             <td>{format_currency(row['total'], row['cfdi'].moneda or 'MXN')}</td>
@@ -17425,8 +17558,8 @@ async def contabilidad_cuentas_por_cobrar_view(
         <div class="card" style="margin-top:16px;">
             <h2 style="margin:0 0 12px 0;">Cartera</h2>
             <div class="table-wrap"><table>
-                <thead><tr><th>UUID CFDI</th><th>Fecha</th><th>Vence</th><th>Cliente</th><th>Serie</th><th>Folio</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Días vencido</th><th>Estado</th><th>Póliza cobro</th></tr></thead>
-                <tbody>{rows_html or '<tr><td colspan="12" class="muted">No hay CFDI emitidos con estos filtros.</td></tr>'}</tbody>
+                <thead><tr><th>UUID CFDI</th><th>Fecha</th><th>Vence</th><th>Cliente</th><th>Torneo / Partida CxC</th><th>Serie</th><th>Folio</th><th>Total</th><th>Cobrado</th><th>Saldo</th><th>Días vencido</th><th>Estado</th><th>Póliza cobro</th></tr></thead>
+                <tbody>{rows_html or '<tr><td colspan="13" class="muted">No hay CFDI emitidos con estos filtros.</td></tr>'}</tbody>
             </table></div>
             <p class="muted">Nota: si una factura fue cobrada pero el ingreso no tiene UUID capturado, aparecerá pendiente hasta vincularla.</p>
         </div>

@@ -123,6 +123,7 @@ async def _load_budget_line(
                 """
                 SELECT id, budget_version_id, budget_concept_id, tournament_id,
                        tournament_code, tournament_name, phase, concept_name,
+                       account_code_final, account_code_suggested,
                        COALESCE(line_direction, 'expense') AS line_direction
                 FROM budget_lines
                 WHERE id = CAST(:budget_line_id AS uuid)
@@ -308,6 +309,207 @@ async def list_psp_cfdi_income_candidates(
     return [dict(row) for row in rows]
 
 
+
+
+def _receivable_account_code_for_budget_line(line: dict[str, Any]) -> str:
+    concept = " ".join(
+        str(line.get(key) or "")
+        for key in ("tournament_name", "concept_name", "account_code_final", "account_code_suggested")
+    ).lower()
+    if "patrocin" in concept or "intercambio" in concept or "4100-001-008" in concept:
+        return "1150-001-003"
+    return "1150-001-001"
+
+
+async def _load_account_by_code(session: AsyncSession, code: str) -> dict[str, Any]:
+    row = (
+        await session.execute(
+            text(
+                """
+                SELECT id, codigo, nombre
+                FROM cuentas_contables
+                WHERE codigo = :code
+                  AND activo IS TRUE
+                LIMIT 1
+                """
+            ),
+            {"code": code},
+        )
+    ).mappings().first()
+    if not row:
+        raise CFDIIncomeBridgeError(f"No existe cuenta contable activa {code}.")
+    return dict(row)
+
+
+async def ensure_cfdi_income_receivable_posting(
+    session: AsyncSession,
+    *,
+    cfdi_report_id: str,
+    budget_line_id: str,
+    amount: Any,
+    income_date: Any,
+) -> dict[str, Any]:
+    """Create/update the accounting CxC policy for an emitted PSP CFDI.
+
+    Link semantics:
+    - CFDI issued and linked to a tournament/budget line creates receivable:
+      Dr 1150-* client, Cr 4100-* income, Cr IVA por pagar when applicable.
+    - Collection can later clear this policy through ingreso_cobrado_ui.
+    """
+    cfdi = await _load_cfdi_report(session, cfdi_report_id)
+    line = await _load_budget_line(session, budget_line_id)
+    total = _safe_decimal(amount if amount not in (None, "") else cfdi.get("total"))
+    if total <= 0:
+        raise CFDIIncomeBridgeError("El CFDI no tiene total válido para generar CxC.")
+    iva = _safe_decimal(cfdi.get("total_impuestos_trasladados"))
+    if iva < 0:
+        iva = Decimal("0.00")
+    if iva >= total:
+        iva = Decimal("0.00")
+    ingreso_base = (total - iva).quantize(Decimal("0.01"))
+    receivable = await _load_account_by_code(
+        session,
+        _receivable_account_code_for_budget_line(line),
+    )
+    income_code = str(line.get("account_code_final") or line.get("account_code_suggested") or "").strip()
+    if not income_code:
+        raise CFDIIncomeBridgeError("La partida de ingreso no tiene cuenta contable 4100 asignada.")
+    income_account = await _load_account_by_code(session, income_code)
+    iva_account = await _load_account_by_code(session, "2140-001-001") if iva > 0 else None
+    fecha = _coerce_income_datetime(income_date) or _coerce_income_datetime(cfdi.get("fecha")) or datetime.now(timezone.utc)
+    folio = "".join(part for part in [str(cfdi.get("serie") or "").strip(), str(cfdi.get("folio") or "").strip()] if part)
+    cfdi_ref = folio or str(cfdi.get("cfdi_uuid") or cfdi_report_id)[:8]
+    concept = " / ".join(
+        part
+        for part in [
+            f"CxC CFDI {cfdi_ref}",
+            str(line.get("tournament_name") or "").strip(),
+            str(line.get("concept_name") or "").strip(),
+        ]
+        if part
+    )
+    numero_poliza = f"CXC-{str(cfdi_report_id)[:8]}"
+    existing = (
+        await session.execute(
+            text(
+                """
+                SELECT id
+                FROM accounting_polizas
+                WHERE origen = 'cxc_cfdi_income'
+                  AND cfdi_report_id = CAST(:cfdi_report_id AS uuid)
+                LIMIT 1
+                """
+            ),
+            {"cfdi_report_id": str(cfdi_report_id)},
+        )
+    ).mappings().first()
+    poliza_id = str(existing["id"]) if existing else str(uuid.uuid4())
+    if existing:
+        await session.execute(text("DELETE FROM accounting_poliza_lines WHERE poliza_id = CAST(:poliza_id AS uuid)"), {"poliza_id": poliza_id})
+        await session.execute(
+            text(
+                """
+                UPDATE accounting_polizas
+                SET source_file = :source_file,
+                    source_sheet = 'cxc_cfdi_income',
+                    tipo_poliza = 'Diario',
+                    numero_poliza = :numero_poliza,
+                    fecha_poliza = :fecha,
+                    beneficiario_nombre = :beneficiario,
+                    concepto = :concepto,
+                    concepto_resumen = :concepto,
+                    line_count_declared = :line_count,
+                    line_count_actual = :line_count,
+                    cfdi_uuid = :cfdi_uuid,
+                    origen = 'cxc_cfdi_income',
+                    updated_at = NOW()
+                WHERE id = CAST(:poliza_id AS uuid)
+                """
+            ),
+            {
+                "poliza_id": poliza_id,
+                "source_file": f"samchat:cxc:{cfdi_report_id}",
+                "numero_poliza": numero_poliza,
+                "fecha": fecha,
+                "beneficiario": str(cfdi.get("receptor_nombre") or cfdi.get("receptor_rfc") or ""),
+                "concepto": concept,
+                "line_count": 3 if iva_account else 2,
+                "cfdi_uuid": str(cfdi.get("cfdi_uuid") or "") or None,
+            },
+        )
+    else:
+        await session.execute(
+            text(
+                """
+                INSERT INTO accounting_polizas (
+                    id, source_file, source_sheet, source_row_start, tipo_poliza,
+                    numero_poliza, fecha_poliza, beneficiario_nombre, concepto,
+                    concepto_resumen, line_count_declared, line_count_actual,
+                    cfdi_uuid, cfdi_report_id, origen, created_at, updated_at
+                ) VALUES (
+                    CAST(:poliza_id AS uuid), :source_file, 'cxc_cfdi_income', NULL, 'Diario',
+                    :numero_poliza, :fecha, :beneficiario, :concepto,
+                    :concepto, :line_count, :line_count,
+                    :cfdi_uuid, CAST(:cfdi_report_id AS uuid), 'cxc_cfdi_income', NOW(), NOW()
+                )
+                """
+            ),
+            {
+                "poliza_id": poliza_id,
+                "source_file": f"samchat:cxc:{cfdi_report_id}",
+                "numero_poliza": numero_poliza,
+                "fecha": fecha,
+                "beneficiario": str(cfdi.get("receptor_nombre") or cfdi.get("receptor_rfc") or ""),
+                "concepto": concept,
+                "line_count": 3 if iva_account else 2,
+                "cfdi_uuid": str(cfdi.get("cfdi_uuid") or "") or None,
+                "cfdi_report_id": str(cfdi_report_id),
+            },
+        )
+    raw_base = {
+        "origin": "cxc_cfdi_income",
+        "cfdi_report_id": str(cfdi_report_id),
+        "budget_line_id": str(budget_line_id),
+        "tournament_id": str(line.get("tournament_id") or "") or None,
+        "budget_version_id": str(line.get("budget_version_id") or "") or None,
+        "cfdi_uuid": str(cfdi.get("cfdi_uuid") or ""),
+    }
+    line_specs = [
+        (1, receivable, total, Decimal("0.00"), "debe_cxc"),
+        (2, income_account, Decimal("0.00"), ingreso_base, "haber_ingreso"),
+    ]
+    if iva_account and iva > 0:
+        line_specs.append((3, iva_account, Decimal("0.00"), iva, "haber_iva_trasladado"))
+    for line_no, account, debe, haber, movement in line_specs:
+        await session.execute(
+            text(
+                """
+                INSERT INTO accounting_poliza_lines (
+                    id, poliza_id, line_no, cuenta_codigo, cuenta_contable_id,
+                    concepto, movimiento_no, debe, haber, raw_row_json, created_at
+                ) VALUES (
+                    CAST(:id AS uuid), CAST(:poliza_id AS uuid), :line_no, :cuenta_codigo,
+                    CAST(:cuenta_contable_id AS uuid), :concepto, :movimiento_no,
+                    :debe, :haber, CAST(:raw AS jsonb), NOW()
+                )
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "poliza_id": poliza_id,
+                "line_no": line_no,
+                "cuenta_codigo": account["codigo"],
+                "cuenta_contable_id": str(account["id"]),
+                "concepto": concept,
+                "movimiento_no": str(line_no),
+                "debe": float(debe),
+                "haber": float(haber),
+                "raw": json.dumps({**raw_base, "movement": movement}, ensure_ascii=False),
+            },
+        )
+    return {"status": "posted", "poliza_id": poliza_id, "numero_poliza": numero_poliza}
+
+
 async def list_budget_cfdi_income_links(
     session: AsyncSession,
     *,
@@ -412,8 +614,15 @@ async def create_cfdi_income_link(
                     "income_date": resolved_income_date,
                 },
             )
+            posting = await ensure_cfdi_income_receivable_posting(
+                session,
+                cfdi_report_id=str(cfdi_report_id),
+                budget_line_id=str(line["id"]),
+                amount=resolved_amount,
+                income_date=resolved_income_date,
+            )
             await session.commit()
-            return {"status": "updated", "id": str(existing["id"])}
+            return {"status": "updated", "id": str(existing["id"]), "posting": posting}
         raise CFDIIncomeBridgeError(
             "Este CFDI ya cuenta como ingreso real en otra partida de esta versión."
         )
@@ -463,8 +672,15 @@ async def create_cfdi_income_link(
             "metadata": json.dumps(metadata, ensure_ascii=False),
         },
     )
+    posting = await ensure_cfdi_income_receivable_posting(
+        session,
+        cfdi_report_id=str(cfdi_report_id),
+        budget_line_id=str(line["id"]),
+        amount=resolved_amount,
+        income_date=resolved_income_date,
+    )
     await session.commit()
-    return {"status": "linked", "id": link_id}
+    return {"status": "linked", "id": link_id, "posting": posting}
 
 
 async def ingest_and_link_cfdi_income(
