@@ -32,12 +32,13 @@ def resolve_effective_budget_concept(
 ) -> Optional[BudgetConcept]:
     """Return the expense partida, falling back to linked documento records."""
 
-    if expense.budget_concept:
-        return expense.budget_concept
+    budget_concept = getattr(expense, "budget_concept", None)
+    if budget_concept:
+        return budget_concept
     for doc in (
-        expense.documento,
-        expense.informe_documento,
-        expense.solicitud_documento,
+        getattr(expense, "documento", None),
+        getattr(expense, "informe_documento", None),
+        getattr(expense, "solicitud_documento", None),
     ):
         concept = getattr(doc, "budget_concept", None)
         if concept:
