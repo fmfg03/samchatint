@@ -142,16 +142,121 @@ async def _load_budget_line(
     return line
 
 
+async def ensure_cfdi_income_tournament_assignment_schema(session: AsyncSession) -> None:
+    await session.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS cfdi_income_tournament_assignments (
+                id uuid PRIMARY KEY,
+                cfdi_report_id uuid NOT NULL REFERENCES cfdi_reports(id) ON DELETE CASCADE,
+                tournament_id uuid NOT NULL REFERENCES tournaments(id) ON DELETE CASCADE,
+                assigned_by_empleado_id uuid NULL REFERENCES empleados(id) ON DELETE SET NULL,
+                metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+                created_at timestamptz NOT NULL DEFAULT NOW(),
+                updated_at timestamptz NOT NULL DEFAULT NOW(),
+                UNIQUE (cfdi_report_id)
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_cfdi_income_tournament_assignments_tournament
+            ON cfdi_income_tournament_assignments(tournament_id)
+            """
+        )
+    )
+
+
+async def assign_cfdi_income_tournament(
+    session: AsyncSession,
+    *,
+    cfdi_report_id: str,
+    tournament_id: str,
+    actor_empleado_id: Optional[str],
+) -> dict[str, Any]:
+    await ensure_cfdi_income_tournament_assignment_schema(session)
+    allowlist = await list_configured_rfc_allowlist(session)
+    cfdi = await _load_cfdi_report(session, cfdi_report_id)
+    matched_rfc = validate_cfdi_emisor_in_rfc_allowlist(
+        emisor_rfc=cfdi.get("emisor_rfc"),
+        allowlist=allowlist,
+    )
+    tournament = (
+        await session.execute(
+            text(
+                """
+                SELECT id, name
+                FROM tournaments
+                WHERE id = CAST(:tournament_id AS uuid)
+                  AND active IS TRUE
+                LIMIT 1
+                """
+            ),
+            {"tournament_id": str(tournament_id)},
+        )
+    ).mappings().first()
+    if not tournament:
+        raise CFDIIncomeBridgeError("Torneo/proyecto no encontrado o inactivo.")
+    assignment_id = str(uuid.uuid4())
+    metadata = {
+        "cfdi_uuid": str(cfdi.get("cfdi_uuid") or ""),
+        "matched_emisor_rfc": matched_rfc,
+        "matched_rfc_config_name": allowlist.get(matched_rfc, ""),
+        "emisor_nombre": str(cfdi.get("emisor_nombre") or ""),
+        "receptor_rfc": str(cfdi.get("receptor_rfc") or ""),
+        "tournament_name": str(tournament.get("name") or ""),
+    }
+    await session.execute(
+        text(
+            """
+            INSERT INTO cfdi_income_tournament_assignments (
+                id, cfdi_report_id, tournament_id, assigned_by_empleado_id, metadata,
+                created_at, updated_at
+            ) VALUES (
+                CAST(:id AS uuid),
+                CAST(:cfdi_report_id AS uuid),
+                CAST(:tournament_id AS uuid),
+                CAST(:actor_id AS uuid),
+                CAST(:metadata AS jsonb),
+                NOW(), NOW()
+            )
+            ON CONFLICT (cfdi_report_id) DO UPDATE SET
+                tournament_id = EXCLUDED.tournament_id,
+                assigned_by_empleado_id = EXCLUDED.assigned_by_empleado_id,
+                metadata = EXCLUDED.metadata,
+                updated_at = NOW()
+            RETURNING id
+            """
+        ),
+        {
+            "id": assignment_id,
+            "cfdi_report_id": str(cfdi_report_id),
+            "tournament_id": str(tournament_id),
+            "actor_id": str(actor_empleado_id or "") or None,
+            "metadata": json.dumps(metadata, ensure_ascii=False),
+        },
+    )
+    await session.commit()
+    return {"status": "assigned", "tournament_id": str(tournament_id)}
+
+
 async def list_psp_cfdi_income_candidates(
     session: AsyncSession,
     *,
     budget_version_id: Optional[str] = None,
+    tournament_id: Optional[str] = None,
+    assigned_only: bool = False,
+    unassigned_only: bool = False,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
+    await ensure_cfdi_income_tournament_assignment_schema(session)
     allowlist = await list_configured_rfc_allowlist(session)
     if not allowlist:
         return []
     link_version_filter = ""
+    assignment_filter = ""
     params: dict[str, Any] = {
         "allowed_rfcs": sorted(allowlist.keys()),
         "limit": max(1, min(int(limit or 100), 500)),
@@ -161,19 +266,31 @@ async def list_psp_cfdi_income_candidates(
             "AND l.budget_version_id = CAST(:budget_version_id AS uuid)"
         )
         params["budget_version_id"] = str(budget_version_id)
+    if tournament_id:
+        assignment_filter = "AND a.tournament_id = CAST(:tournament_id AS uuid)"
+        params["tournament_id"] = str(tournament_id)
+    if assigned_only:
+        assignment_filter += " AND a.id IS NOT NULL"
+    if unassigned_only:
+        assignment_filter += " AND a.id IS NULL"
     rows = (
         await session.execute(
             text(
                 f"""
                 SELECT c.id, c.cfdi_uuid, c.fecha, c.total, c.emisor_rfc,
-                       c.emisor_nombre, c.receptor_rfc, c.receptor_nombre
+                       c.emisor_nombre, c.receptor_rfc, c.receptor_nombre,
+                       c.descripcion_concepto_principal,
+                       a.tournament_id AS assigned_tournament_id
                 FROM cfdi_reports c
+                LEFT JOIN cfdi_income_tournament_assignments a
+                  ON a.cfdi_report_id = c.id
                 WHERE REGEXP_REPLACE(
                     UPPER(COALESCE(c.emisor_rfc, '')),
                     '[^A-Z0-9]',
                     '',
                     'g'
                 ) = ANY(CAST(:allowed_rfcs AS text[]))
+                  {assignment_filter}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM budget_cfdi_income_links l
