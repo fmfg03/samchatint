@@ -22472,6 +22472,8 @@ async def ver_gasto(
     """
     Show expense detail page.
     """
+    await _ensure_expense_tip_schema(session)
+
     # Load expense
     result = await session.execute(
         select(ExpenseReport).where(ExpenseReport.id == gasto_id)
@@ -23112,6 +23114,8 @@ async def editar_gasto_form(
     """
     from datetime import timezone
 
+    await _ensure_expense_tip_schema(session)
+
     # Load expense
     result = await session.execute(
         select(ExpenseReport).where(ExpenseReport.id == gasto_id)
@@ -23324,6 +23328,11 @@ async def editar_gasto_form(
         required=False,
     )
 
+    current_tip_amount = float(getattr(expense, "propina_no_deducible", None) or 0.0)
+    current_tip_value = f"{current_tip_amount:.2f}" if current_tip_amount else ""
+    show_tip_initial = _is_alimentos_tip_context(expense.concepto) or current_tip_amount > 0
+    tip_field_style = "" if show_tip_initial else 'style="display:none"'
+
     # Build form HTML
     disabled_attr = "disabled" if not can_edit else ""
     motivo_required = "required" if (is_locked and is_finance_admin) else ""
@@ -23442,6 +23451,12 @@ async def editar_gasto_form(
                     <label for="metodo_pago">Método de Pago</label>
                     <input type="text" name="metodo_pago" id="metodo_pago" value="{expense.metodo_pago or ''}" {disabled_attr} maxlength="50">
                     <small>Ejemplo: Efectivo, Tarjeta Personal, Tarjeta de Empresa</small>
+                </div>
+
+                <div id="propina-no-deducible-group" class="form-group" {tip_field_style}>
+                    <label for="propina_no_deducible">Propina pagada (No deducible)</label>
+                    <input type="number" step="0.01" min="0" name="propina_no_deducible" id="propina_no_deducible" value="{current_tip_value}" {disabled_attr}>
+                    <small>Solo aplica para consumo/alimentos. Se suma al total pagado y se clasifica contablemente como No Deducible.</small>
                 </div>
 
                 <div style="border:1px solid #dbe2ea; border-radius:10px; padding:14px; background:#f8fafc; margin-bottom:14px;">
@@ -23585,6 +23600,28 @@ async def editar_gasto_form(
             }});
 
             (function() {{
+                const conceptoInput = document.getElementById('concepto');
+                const tipGroup = document.getElementById('propina-no-deducible-group');
+                const tipInput = document.getElementById('propina_no_deducible');
+                if (!conceptoInput || !tipGroup || !tipInput) return;
+                function normalizeTipText(value) {{
+                    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                }}
+                function isTipContext(value) {{
+                    const v = normalizeTipText(value);
+                    return ['alimento','alimentacion','comida','desayuno','cena','restaurant','restaurante','consumo'].some(function(token) {{ return v.includes(token); }});
+                }}
+                function syncTipVisibility() {{
+                    const hasTip = Number(tipInput.value || 0) > 0;
+                    tipGroup.style.display = (isTipContext(conceptoInput.value) || hasTip) ? '' : 'none';
+                    if (tipGroup.style.display === 'none') tipInput.value = '';
+                }}
+                conceptoInput.addEventListener('input', syncTipVisibility);
+                tipInput.addEventListener('input', syncTipVisibility);
+                syncTipVisibility();
+            }})();
+
+            (function() {{
                 const cuentaSelect = document.getElementById('cuenta_gastos_id');
                 const budgetConceptSelect = document.getElementById('budget_concept_id');
                 if (!cuentaSelect || !budgetConceptSelect) return;
@@ -23629,6 +23666,7 @@ async def editar_gasto(
     current_empleado: Empleado = Depends(get_current_empleado),
     concepto: str = Form(...),
     metodo_pago: Optional[str] = Form(None),
+    propina_no_deducible: Optional[str] = Form(None),
     hospedaje_entidad_fiscal: Optional[str] = Form(None),
     hospedaje_tasa_impuesto: Optional[str] = Form(None),
     hospedaje_impuesto_monto: Optional[str] = Form(None),
@@ -23648,6 +23686,8 @@ async def editar_gasto(
     Creates audit trail via Aprobacion record.
     """
     from datetime import timezone
+
+    await _ensure_expense_tip_schema(session)
 
     # Load expense
     result = await session.execute(
@@ -23733,6 +23773,28 @@ async def editar_gasto(
     metodo_pago = metodo_pago.strip() if metodo_pago else None
     if metodo_pago == "":
         metodo_pago = None
+    try:
+        tip_amount = _quick_expense_decimal(
+            propina_no_deducible,
+            "Propina",
+            required=False,
+        )
+    except ValueError as exc:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}/editar",
+                error_msg=str(exc),
+            ),
+            status_code=303,
+        )
+    if tip_amount > 0 and not _is_alimentos_tip_context(concepto):
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}/editar",
+                error_msg="La propina solo puede capturarse en conceptos de Consumo o Alimentos.",
+            ),
+            status_code=303,
+        )
     hospedaje_state = normalize_hospedaje_state(hospedaje_entidad_fiscal)
     hospedaje_rate = _parse_optional_percentage_form(hospedaje_tasa_impuesto)
     if hospedaje_tasa_impuesto and hospedaje_rate is None:
@@ -23788,6 +23850,27 @@ async def editar_gasto(
         new_values['metodo_pago'] = metodo_pago
         changes.append(f"metodo_pago '{old_metodo or '(vacío)'}'→'{new_metodo or '(vacío)'}'")
         expense.metodo_pago = metodo_pago
+
+    old_tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if old_tip != tip_amount:
+        old_values['propina_no_deducible'] = float(old_tip)
+        new_values['propina_no_deducible'] = float(tip_amount)
+        delta_tip = tip_amount - old_tip
+        current_total = Decimal(str(expense.gasto_cantidad or 0)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        new_total = (current_total + delta_tip).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        if new_total <= 0:
+            return RedirectResponse(
+                url=_append_error_params(
+                    f"/gastos/{gasto_id}/editar",
+                    error_msg="El total del gasto no puede quedar en cero o negativo al ajustar propina.",
+                ),
+                status_code=303,
+            )
+        changes.append(f"propina_no_deducible '{old_tip:,.2f}'→'{tip_amount:,.2f}'")
+        old_values['gasto_cantidad'] = expense.gasto_cantidad
+        new_values['gasto_cantidad'] = float(new_total)
+        expense.propina_no_deducible = float(tip_amount)
+        expense.gasto_cantidad = float(new_total)
 
     old_hosp_state = expense.hospedaje_entidad_fiscal or ''
     new_hosp_state = hospedaje_state or ''
@@ -33172,6 +33255,7 @@ def _is_alimentos_tip_context(*values: Optional[str]) -> bool:
             "cena",
             "restaurant",
             "restaurante",
+            "consumo",
         )
     )
 
