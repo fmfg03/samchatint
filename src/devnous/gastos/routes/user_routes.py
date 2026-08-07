@@ -16812,6 +16812,7 @@ async def carga_masiva_amex_post(
         skipped_count = 0
         auto_cfdi_match_count = 0
         auto_tip_match_count = 0
+        auto_pase_match_count = 0
         errors = []
         cfdi_month_key: Optional[str] = None
         if not cfdi_uuid_mensual_norm:
@@ -16933,6 +16934,8 @@ async def carga_masiva_amex_post(
                             except Exception:
                                 pass
                             auto_tip_match_count += 1
+                        elif amex_match.confidence == "pase_monthly":
+                            auto_pase_match_count += 1
                         else:
                             auto_cfdi_match_count += 1
                         session.add(expense)
@@ -16982,10 +16985,11 @@ async def carga_masiva_amex_post(
                 success_msg += " CFDI mensual consolidado aplicado y vinculado automáticamente."
             else:
                 success_msg += " CFDI mensual consolidado aplicado (pendiente de vinculación automática al cargar CFDIs)."
-        elif auto_cfdi_match_count or auto_tip_match_count:
+        elif auto_cfdi_match_count or auto_tip_match_count or auto_pase_match_count:
             success_msg += (
-                f" Vinculación automática: {auto_cfdi_match_count} CFDI exactos"
-                f" y {auto_tip_match_count} con posible propina."
+                f" Vinculación automática: {auto_cfdi_match_count} CFDI exactos,"
+                f" {auto_tip_match_count} con posible propina"
+                f" y {auto_pase_match_count} cargos PASE contra factura mensual."
             )
 
         return RedirectResponse(

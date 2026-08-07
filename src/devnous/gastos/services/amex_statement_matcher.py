@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +39,31 @@ _RESTAURANT_TERMS = (
     "hotel",
 )
 
+_PASE_TERMS = (
+    "pase",
+    "i d mexico",
+    "id mexico",
+    "telepeaje",
+    "tag pase",
+    "caseta",
+    "casetas",
+    "peaje",
+    "cuota",
+    "autopista",
+)
+
+_AMOUNT_KEYS = (
+    "importe",
+    "total",
+    "monto",
+    "amount",
+    "charge",
+    "cargo",
+    "valor",
+    "valor_unitario",
+    "valorunitario",
+)
+
 
 @dataclass(frozen=True)
 class AmexCFDIMatch:
@@ -60,6 +85,124 @@ def normalize_match_text(value: object) -> str:
 def is_food_or_hospitality_charge(description: object) -> bool:
     normalized = normalize_match_text(description)
     return any(term in normalized for term in _RESTAURANT_TERMS)
+
+
+def is_pase_toll_charge(description: object) -> bool:
+    normalized = normalize_match_text(description)
+    return any(term in normalized for term in _PASE_TERMS)
+
+
+def _amount_close(left: float, right: float, *, tolerance: float = EXACT_AMOUNT_TOLERANCE) -> bool:
+    return abs(float(left or 0.0) - float(right or 0.0)) <= tolerance
+
+
+def _coerce_amount(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return abs(float(value))
+    raw = str(value).strip()
+    if not raw:
+        return None
+    raw = raw.replace("$", "").replace(",", "").replace(" ", "")
+    try:
+        return abs(float(raw))
+    except ValueError:
+        return None
+
+
+def _concept_text(concepts: Any) -> str:
+    if isinstance(concepts, dict):
+        return " ".join(str(v or "") for v in concepts.values())
+    if isinstance(concepts, list):
+        return " ".join(_concept_text(item) for item in concepts)
+    return str(concepts or "")
+
+
+def _concept_line_amounts(concepts: Any) -> list[float]:
+    amounts: list[float] = []
+    if isinstance(concepts, dict):
+        for key, value in concepts.items():
+            key_norm = normalize_match_text(key).replace(" ", "_")
+            if key_norm in _AMOUNT_KEYS:
+                amount = _coerce_amount(value)
+                if amount is not None:
+                    amounts.append(amount)
+            elif isinstance(value, (dict, list)):
+                amounts.extend(_concept_line_amounts(value))
+    elif isinstance(concepts, list):
+        for item in concepts:
+            amounts.extend(_concept_line_amounts(item))
+    return amounts
+
+
+def _concept_amount_matches_charge(concepts: Any, amount: float) -> bool:
+    for line_amount in _concept_line_amounts(concepts):
+        if _amount_close(line_amount, amount):
+            return True
+        # Toll CFDI concepts often store base amount; AMEX charge may include IVA.
+        if _amount_close(round(line_amount * 1.16, 2), amount):
+            return True
+    return False
+
+
+async def _find_pase_monthly_cfdi_match(
+    session: AsyncSession,
+    *,
+    charge_description: str,
+    charge_amount: float,
+    charge_date: datetime,
+) -> Optional[AmexCFDIMatch]:
+    month_start = datetime(charge_date.year, charge_date.month, 1)
+    month_end = (
+        datetime(charge_date.year + 1, 1, 1)
+        if charge_date.month == 12
+        else datetime(charge_date.year, charge_date.month + 1, 1)
+    )
+    result = await session.execute(
+        select(CFDIReport)
+        .where(
+            and_(
+                CFDIReport.total.isnot(None),
+                CFDIReport.fecha >= month_start,
+                CFDIReport.fecha < month_end,
+                CFDIReport.total >= max(float(charge_amount or 0.0) - EXACT_AMOUNT_TOLERANCE, 0),
+                or_(
+                    CFDIReport.tipo_de_comprobante.is_(None),
+                    func.upper(CFDIReport.tipo_de_comprobante) == "I",
+                ),
+            )
+        )
+        .order_by(CFDIReport.fecha.desc())
+        .limit(150)
+    )
+    best: Optional[AmexCFDIMatch] = None
+    for cfdi in result.scalars().all():
+        cfdi_text = " ".join((
+            _merchant_text(cfdi),
+            _concept_text(cfdi.conceptos),
+        ))
+        cfdi_is_pase = is_pase_toll_charge(cfdi_text)
+        if not cfdi_is_pase:
+            continue
+        has_line_amount = _concept_amount_matches_charge(cfdi.conceptos, charge_amount)
+        text_score = _text_similarity(charge_description, cfdi_text)
+        if not has_line_amount and text_score < 0.20:
+            continue
+        score = 0.95 if has_line_amount else 0.72 + min(text_score, 0.20)
+        match = AmexCFDIMatch(
+            cfdi=cfdi,
+            confidence="pase_monthly",
+            reason=(
+                "Cargo de caseta PASE compatible con CFDI mensual; "
+                "el cargo debe conciliarse contra el desglose de conceptos de la factura."
+            ),
+            score=score,
+            amount_delta=round(float(charge_amount or 0.0) - float(cfdi.total or 0.0), 2),
+        )
+        if best is None or match.score > best.score:
+            best = match
+    return best
 
 
 def _text_similarity(left: object, right: object) -> float:
@@ -107,6 +250,16 @@ async def find_amex_cfdi_match(
     amount = abs(float(charge_amount or 0.0))
     if amount <= 0 or not charge_date:
         return None
+
+    if is_pase_toll_charge(charge_description):
+        pase_match = await _find_pase_monthly_cfdi_match(
+            session,
+            charge_description=charge_description,
+            charge_amount=amount,
+            charge_date=charge_date,
+        )
+        if pase_match is not None:
+            return pase_match
 
     start = charge_date - timedelta(days=DATE_WINDOW_DAYS)
     end = charge_date + timedelta(days=DATE_WINDOW_DAYS + 1)
