@@ -29908,6 +29908,7 @@ async def exportar_informe_gastos(
         aprobacion_doc = aprobacion_result.scalar_one_or_none()
         if aprobacion_doc and aprobacion_doc.aprobador:
             autorizado_por_nombre = aprobacion_doc.aprobador.nombre or ""
+        informe_payment_marker = "AMEX" if any(is_company_amex_expense(expense) for expense in expenses) else None
         excel_bytes_informe = create_informe_excel(
             numero_referencia=documento.numero_referencia,
             empleado_nombre=empleado_nombre,
@@ -29924,6 +29925,7 @@ async def exportar_informe_gastos(
             categorias=list(getattr(documento, "categorias", None) or []),
             edicion=getattr(documento, "edicion", None),
             currency=currency_for(documento),
+            payment_marker=informe_payment_marker,
         )
         filename = f"Informe_Gastos_{documento.numero_referencia}.xlsx"
         return Response(
