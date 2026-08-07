@@ -732,6 +732,8 @@ def render_cfdi_income_bridge_panel(
             {
                 "id": cfdi_id,
                 "label": label,
+                "total": f"{total:.2f}",
+                "fecha": date_text if date_text != "sin fecha" else "",
             }
         )
     return_to_hidden = (
@@ -819,8 +821,8 @@ def render_cfdi_income_bridge_panel(
                 <input id="cfdi-income-existing-line-input" list="cfdi-income-existing-line-options" data-cfdi-income-field="line" data-hidden-input="cfdi-income-existing-line-id" required{no_lines_disabled} placeholder="Buscar partida, cuenta o monto" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
                 <datalist id="cfdi-income-existing-line-options"></datalist>
                 <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;">
-                    <div><label style="font-size:12px;font-weight:700;color:#475569;">Monto</label><input type="number" step="0.01" min="0" name="amount" placeholder="Total CFDI" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;"></div>
-                    <div><label style="font-size:12px;font-weight:700;color:#475569;">Fecha ingreso</label><input type="date" name="income_date" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;"></div>
+                    <div><label style="font-size:12px;font-weight:700;color:#475569;">Monto</label><input type="number" step="0.01" min="0" name="amount" data-cfdi-income-autofill="amount" placeholder="Total CFDI" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;"></div>
+                    <div><label style="font-size:12px;font-weight:700;color:#475569;">Fecha ingreso</label><input type="date" name="income_date" data-cfdi-income-autofill="income_date" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;"></div>
                 </div>
                 <button type="submit" class="button"{existing_disabled}>Vincular ingreso</button>
             </form>
@@ -867,14 +869,27 @@ def render_cfdi_income_bridge_panel(
                 }});
             }}
 
+            function selectedOptionFor(input, items) {{
+                return items.find(function(item) {{
+                    return item.label === input.value;
+                }}) || null;
+            }}
+
             function syncHidden(input, items) {{
                 const hiddenId = input.getAttribute("data-hidden-input");
                 const hidden = hiddenId ? document.getElementById(hiddenId) : null;
-                if (!hidden) return;
-                const selected = items.find(function(item) {{
-                    return item.label === input.value;
-                }});
-                hidden.value = selected ? selected.id : "";
+                const selected = selectedOptionFor(input, items);
+                if (hidden) hidden.value = selected ? selected.id : "";
+                return selected;
+            }}
+
+            function autofillCfdiFields(input, selected) {{
+                const form = input.closest("form");
+                if (!form || !selected) return;
+                const amount = form.querySelector('[data-cfdi-income-autofill="amount"]');
+                const incomeDate = form.querySelector('[data-cfdi-income-autofill="income_date"]');
+                if (amount && selected.total) amount.value = selected.total;
+                if (incomeDate && selected.fecha) incomeDate.value = selected.fecha;
             }}
 
             function wireLineInput(input) {{
@@ -892,7 +907,8 @@ def render_cfdi_income_bridge_panel(
             function wireCfdiInput(input) {{
                 fillDatalist(input.getAttribute("list"), cfdiOptions);
                 input.addEventListener("input", function() {{
-                    syncHidden(input, cfdiOptions);
+                    const selected = syncHidden(input, cfdiOptions);
+                    autofillCfdiFields(input, selected);
                 }});
             }}
 
