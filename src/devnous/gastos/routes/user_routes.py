@@ -10414,14 +10414,17 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
             </tr>
         """
     missing_note = ""
+    debtor_block_label = str(aux.get("debtor_account_block_label") or "1170-001 / 1170-002")
+    debtor_block_wildcard = " / ".join(
+        f"{part.strip()}-*" for part in debtor_block_label.split("/") if part.strip()
+    )
     if status == "sin_subcuenta":
         empleado = aux.get("empleado")
         missing_note = (
             '<div class="notice warn" style="margin:12px 0;">'
             "Este empleado no tiene una subcuenta activa bajo "
-            "1170-001-* (empleados) o 1170-002-* (socios) en el catálogo "
-            "contable. Contabilidad debe crearla manualmente para "
-            f"{_format_empleado_display_name(empleado)}."
+            f"{escape(debtor_block_wildcard)} en el catálogo contable. Contabilidad debe crearla "
+            f"manualmente para {_format_empleado_display_name(empleado)}."
             "</div>"
         )
     return f"""
@@ -10437,7 +10440,7 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
             </div>
             {missing_note}
             <div class="meta-grid" style="margin-top:14px;">
-                <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloques 1170-001 / 1170-002</small></div>
+                <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloque {escape(debtor_block_label)}</small></div>
                 <div class="meta-card"><span>Debe deudores</span><strong>{format_currency(aux.get("debe") or 0, currency)}</strong><small>Cargos al empleado</small></div>
                 <div class="meta-card"><span>Haber deudores</span><strong>{format_currency(aux.get("haber") or 0, currency)}</strong><small>Comprobaciones/devoluciones</small></div>
                 <div class="meta-card"><span>Saldo contable</span><strong>{format_currency(aux.get("saldo") or 0, currency)}</strong><small>Debe quedar en cero al liquidar</small></div>

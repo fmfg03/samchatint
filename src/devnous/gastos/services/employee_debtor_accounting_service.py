@@ -32,6 +32,8 @@ DEBTOR_ACCOUNT_ROOT_CODE = "1170-001-000"
 DEBTOR_ACCOUNT_PREFIX = "1170-001-"
 DEBTOR_SOCIO_ACCOUNT_ROOT_CODE = "1170-002-000"
 DEBTOR_SOCIO_ACCOUNT_PREFIX = "1170-002-"
+PARTNER_DEBTOR_ACCOUNT_ROOT_CODE = DEBTOR_SOCIO_ACCOUNT_ROOT_CODE
+PARTNER_DEBTOR_ACCOUNT_PREFIX = DEBTOR_SOCIO_ACCOUNT_PREFIX
 # Canonical catalog: 1170-001 = employees, 1170-002 = socios.  New postings do
 # not tolerate the historical 1700 typo: accepting it would silently post to a
 # different chart-of-accounts branch.
@@ -49,6 +51,12 @@ PETTY_CASH_DEBTOR_ACCOUNT_CODES = {
 }
 PETTY_CASH_DEBTOR_ACCOUNT_CODE_SET = set(PETTY_CASH_DEBTOR_ACCOUNT_CODES.values())
 SANTANDER_BANK_ACCOUNT_CODE = "1120-001-001"
+PARTNER_DEBTOR_NAME_MARKERS = (
+    "federico gonzalez",
+    "jose odilon",
+    "odilon trujillo",
+    "luis angel",
+)
 DEBTOR_ORIGINS = {
     "deudores_anticipo",
     "deudores_comprobacion",
@@ -100,6 +108,58 @@ def _account_label(account: Optional[CuentaContable]) -> str:
 
 def _name_tokens(value: Any) -> list[str]:
     return [token for token in _normalize_text(value).split() if len(token) > 1]
+
+
+def is_partner_debtor_employee(empleado: Optional[Empleado]) -> bool:
+    employee_name = _normalize_text(getattr(empleado, "nombre", None))
+    return any(marker in employee_name for marker in PARTNER_DEBTOR_NAME_MARKERS)
+
+
+def debtor_account_prefixes_for_employee(empleado: Optional[Empleado]) -> tuple[str, ...]:
+    if is_partner_debtor_employee(empleado):
+        return (PARTNER_DEBTOR_ACCOUNT_PREFIX, DEBTOR_ACCOUNT_PREFIX)
+    return (DEBTOR_ACCOUNT_PREFIX,)
+
+
+def debtor_account_block_label_for_employee(empleado: Optional[Empleado]) -> str:
+    prefixes = debtor_account_prefixes_for_employee(empleado)
+    return " / ".join(prefix.rstrip("-") for prefix in prefixes)
+
+
+def _is_debtor_account_code(cuenta_codigo: Any) -> bool:
+    code = str(cuenta_codigo or "")
+    return any(code.startswith(prefix) for prefix in DEBTOR_ACCOUNT_PREFIXES)
+
+
+def _document_system_reference(
+    documento: Optional[Documento] = None,
+    cuenta: Optional[CuentaDeGastos] = None,
+) -> str:
+    doc_ref = str(getattr(documento, "numero_referencia", None) or "").strip()
+    if doc_ref:
+        return doc_ref
+    cuenta_ref = str(getattr(cuenta, "referencia_base", None) or "").strip()
+    if cuenta_ref:
+        return cuenta_ref if cuenta_ref.startswith("I-") else f"I-{cuenta_ref}"
+    return ""
+
+
+def format_samchat_poliza_concept(
+    base: Any,
+    *,
+    documento: Optional[Documento] = None,
+    cuenta: Optional[CuentaDeGastos] = None,
+) -> str:
+    parts: list[str] = []
+    ref_ops = str(getattr(documento, "referencia_operaciones", None) or "").strip()
+    if ref_ops:
+        parts.append(f"REF {ref_ops}")
+    system_ref = _document_system_reference(documento=documento, cuenta=cuenta)
+    if system_ref:
+        parts.append(system_ref)
+    prefix = " / ".join(parts)
+    clean_base = str(base or "Movimiento contable").strip()
+    return f"{prefix} - {clean_base}" if prefix else clean_base
 
 
 def _debtor_account_match_score(employee_name: Any, account_name: Any) -> int:
@@ -157,15 +217,12 @@ async def resolve_employee_debtor_account(
     employee_name = _normalize_text(getattr(empleado, "nombre", None))
     if not employee_name:
         return None
-    prefix_filters = [
-        CuentaContable.codigo.like(f"{prefix}%")
-        for prefix in DEBTOR_ACCOUNT_PREFIXES
-    ]
+    prefixes = debtor_account_prefixes_for_employee(empleado)
     result = await session.execute(
         select(CuentaContable)
         .where(
             CuentaContable.activo.is_(True),
-            or_(*prefix_filters),
+            or_(*(CuentaContable.codigo.like(f"{prefix}%") for prefix in prefixes)),
             CuentaContable.codigo.notin_(DEBTOR_ACCOUNT_ROOT_CODES),
         )
         .order_by(CuentaContable.codigo.asc())
@@ -746,6 +803,7 @@ async def ensure_debtor_payment_posting_for_document(
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
 
+    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
@@ -767,7 +825,10 @@ async def ensure_debtor_payment_posting_for_document(
         cuenta_gastos_id=cuenta_gastos_id,
         documento_id=documento.id,
     )
-    concepto = f"Pago a deudor empleado - {documento.numero_referencia or documento.id}"
+    concepto = format_samchat_poliza_concept(
+        "Pago a deudor empleado",
+        documento=documento,
+    )
     poliza = await _create_poliza(
         session,
         origen="deudores_anticipo",
@@ -877,6 +938,12 @@ async def ensure_debtor_comprobacion_posting_for_informe(
                 reason=f"expense_accounting_incomplete:{expense.id}:{error}",
                 debtor_account=debtor,
             )
+        for line in expense_lines:
+            line["concepto"] = format_samchat_poliza_concept(
+                line.get("concepto"),
+                documento=informe_documento,
+                cuenta=cuenta,
+            )
         lines.extend(expense_lines)
         total_credit += sum(
             (
@@ -889,7 +956,11 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     if total_credit <= 0:
         return DebtorPostingResult(status="skipped", reason="invalid_total")
 
-    concepto = f"Comprobación de gastos - I-{getattr(cuenta, 'referencia_base', cuenta_gastos_id)}"
+    concepto = format_samchat_poliza_concept(
+        "Comprobación de gastos",
+        documento=informe_documento,
+        cuenta=cuenta,
+    )
     # Each expense already includes its own exact debtor credit, keeping the
     # evidence binding and fiscal split local to that expense.
     poliza = await _create_poliza(
@@ -942,7 +1013,16 @@ async def ensure_debtor_settlement_posting(
     )
     meta["reembolso_id"] = str(reembolso.id)
     tipo = (reembolso.tipo or "reembolso").strip().lower()
-    concepto = f"{'Devolución' if tipo == 'devolucion' else 'Reembolso'} de informe - I-{cuenta.referencia_base}"
+    documento = (
+        await session.get(Documento, reembolso.documento_id)
+        if reembolso.documento_id
+        else None
+    )
+    concepto = format_samchat_poliza_concept(
+        f"{'Devolución' if tipo == 'devolucion' else 'Reembolso'} de informe",
+        documento=documento,
+        cuenta=cuenta,
+    )
     if tipo == "devolucion":
         lines = [
             {
@@ -1033,6 +1113,7 @@ async def build_cuenta_debtor_auxiliary(
         "empleado": empleado,
         "debtor_account": debtor,
         "debtor_account_label": _account_label(debtor),
+        "debtor_account_block_label": debtor_account_block_label_for_employee(empleado),
         "lines": lines,
         "debe": round(debe, 2),
         "haber": round(haber, 2),
@@ -1170,13 +1251,20 @@ async def list_employees_missing_debtor_account(
 
 __all__ = [
     "DEBTOR_ACCOUNT_PREFIX",
+    "DEBTOR_ACCOUNT_PREFIXES",
     "DEBTOR_ACCOUNT_ROOT_CODE",
+    "DEBTOR_SOCIO_ACCOUNT_PREFIX",
+    "DEBTOR_SOCIO_ACCOUNT_ROOT_CODE",
+    "PARTNER_DEBTOR_ACCOUNT_PREFIX",
+    "PARTNER_DEBTOR_ACCOUNT_ROOT_CODE",
     "PETTY_CASH_DEBTOR_ACCOUNT_CODES",
     "build_cuenta_debtor_auxiliary",
     "build_debtors_admin_snapshot",
+    "debtor_account_block_label_for_employee",
     "ensure_debtor_comprobacion_posting_for_informe",
     "ensure_debtor_payment_posting_for_document",
     "ensure_debtor_settlement_posting",
+    "format_samchat_poliza_concept",
     "list_employees_missing_debtor_account",
     "resolve_employee_debtor_account",
     "resolve_cuenta_debtor_account",
