@@ -23396,6 +23396,20 @@ async def gastos_sin_cuenta_contable(
 
             // Pre-select high confidence suggestions on page load
             document.addEventListener('DOMContentLoaded', function() {{
+                const cleanupFlash = window.sessionStorage.getItem('cleanupContableFlash');
+                if (cleanupFlash) {{
+                    window.sessionStorage.removeItem('cleanupContableFlash');
+                    const anchor = document.getElementById('feedback-anchor');
+                    if (anchor) {{
+                        const banner = document.createElement('div');
+                        banner.className = 'status-banner success';
+                        banner.style.marginTop = '12px';
+                        banner.innerHTML = `<strong>✅ Éxito:</strong> ${{cleanupFlash}}`;
+                        anchor.appendChild(banner);
+                        anchor.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                    }}
+                }}
+
                 document.querySelectorAll('.cuenta-selector[data-preselect-id]').forEach(selector => {{
                     const searchInput = selector.querySelector('.account-search');
                     const gastoId = searchInput.getAttribute('data-gasto-id');
@@ -23703,17 +23717,24 @@ async def gastos_sin_cuenta_contable(
                         }});
 
                         if (response.ok) {{
-                            window.location.reload();
+                            this.textContent = 'Guardado ✓';
+                            this.style.background = '#16a34a';
+                            this.style.cursor = 'default';
+                            window.sessionStorage.setItem(
+                                'cleanupContableFlash',
+                                'Limpieza contable guardada correctamente. La bandeja se actualizó con los datos vigentes.'
+                            );
+                            setTimeout(() => window.location.reload(), 450);
                         }} else {{
                             const error = await response.text();
                             alert('Error al guardar configuración contable: ' + error);
                             this.disabled = false;
-                            this.textContent = 'Guardar';
+                            this.textContent = 'Guardar limpieza contable';
                         }}
                     }} catch (e) {{
                         alert('Error de red: ' + e.message);
                         this.disabled = false;
-                        this.textContent = 'Guardar';
+                        this.textContent = 'Guardar limpieza contable';
                     }}
                 }});
             }});
