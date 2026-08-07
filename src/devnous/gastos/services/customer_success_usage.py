@@ -55,7 +55,16 @@ def render_customer_success_usage_tracker_script(
             const endpoint = {endpoint_json};
             const heartbeatMs = {heartbeat_ms};
             const storageKey = 'customer-success-session-key';
+            const globalKey = '__samchatCustomerSuccessTracker';
+            const minSendGapMs = Math.max(15000, Math.min(heartbeatMs, 30000));
+
+            if (window[globalKey] && window[globalKey].stop) {{
+                window[globalKey].stop();
+            }}
+
             let timer = null;
+            let lastSentAt = 0;
+            let inFlight = false;
 
             function ensureSessionKey() {{
                 try {{
@@ -88,17 +97,27 @@ def render_customer_success_usage_tracker_script(
                 }});
             }}
 
-            function sendHeartbeat() {{
+            function sendHeartbeat(options) {{
+                const force = Boolean(options && options.force);
+                const now = Date.now();
                 if (document.visibilityState === 'hidden') {{
                     return;
                 }}
+                if (!force && (inFlight || now - lastSentAt < minSendGapMs)) {{
+                    return;
+                }}
+                lastSentAt = now;
+                inFlight = true;
                 try {{
                     if (navigator.sendBeacon) {{
                         const blob = new Blob([payload()], {{ type: 'application/json' }});
                         navigator.sendBeacon(endpoint, blob);
+                        inFlight = false;
                         return;
                     }}
-                }} catch (_error) {{}}
+                }} catch (_error) {{
+                    inFlight = false;
+                }}
 
                 fetch(endpoint, {{
                     method: 'POST',
@@ -106,30 +125,44 @@ def render_customer_success_usage_tracker_script(
                     body: payload(),
                     credentials: 'same-origin',
                     keepalive: true
-                }}).catch(function() {{}});
+                }})
+                    .catch(function() {{}})
+                    .finally(function() {{ inFlight = false; }});
             }}
 
             function restartTimer() {{
                 if (timer) {{
                     window.clearInterval(timer);
                 }}
-                timer = window.setInterval(sendHeartbeat, heartbeatMs);
+                timer = window.setInterval(function() {{ sendHeartbeat(); }}, heartbeatMs);
             }}
 
-            document.addEventListener('visibilitychange', function() {{
+            const onVisible = function() {{
                 if (document.visibilityState === 'visible') {{
-                    sendHeartbeat();
+                    sendHeartbeat({{ force: true }});
                     restartTimer();
                 }}
-            }});
-
-            window.addEventListener('focus', sendHeartbeat, {{ passive: true }});
-            window.addEventListener('click', sendHeartbeat, {{ passive: true }});
-            window.addEventListener('keydown', sendHeartbeat, {{ passive: true }});
-            window.addEventListener('load', function() {{
-                sendHeartbeat();
+            }};
+            const onFocus = function() {{ sendHeartbeat(); }};
+            const onLoad = function() {{
+                sendHeartbeat({{ force: true }});
                 restartTimer();
-            }});
+            }};
+
+            document.addEventListener('visibilitychange', onVisible);
+            window.addEventListener('focus', onFocus, {{ passive: true }});
+            window.addEventListener('load', onLoad);
+
+            window[globalKey] = {{
+                stop: function() {{
+                    if (timer) {{
+                        window.clearInterval(timer);
+                    }}
+                    document.removeEventListener('visibilitychange', onVisible);
+                    window.removeEventListener('focus', onFocus, {{ passive: true }});
+                    window.removeEventListener('load', onLoad);
+                }}
+            }};
         }})();
     </script>
     """
