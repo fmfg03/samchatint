@@ -13687,6 +13687,74 @@ async def panel_operaciones_console(
         if can_view_budget
         else "Lectura rápida de carpetas y seguimiento operativo."
     )
+    owner_ops_available = bool(int(summary.get("commitments_count") or 0) or alerts)
+    owner_finance_available = bool(
+        can_view_budget
+        and (
+            tournament_commitments
+            or budget_forecast
+            or (budget.get("summary") if isinstance(budget, dict) else None)
+        )
+    )
+
+    def _owner_readiness_card(
+        title: str,
+        area: str,
+        prepared_text: str,
+        evidence_text: str,
+        has_data: bool,
+    ) -> str:
+        status_label = "Con información parcial" if has_data else "Preparado · sin información"
+        status_class = "ready-partial" if has_data else "ready-empty"
+        note_text = (
+            "Ya hay señales conectadas para este torneo; falta completar el expediente con evidencia de campo."
+            if has_data
+            else "La estructura ya existe; falta capturar o conectar la fuente operativa para poblarla."
+        )
+        return f"""
+        <div class="owner-ready-card {status_class}">
+            <div class="owner-ready-top">
+                <span>{escape(area)}</span>
+                <strong>{escape(status_label)}</strong>
+            </div>
+            <h3>{escape(title)}</h3>
+            <p>{escape(prepared_text)}</p>
+            <small><b>Evidencia actual:</b> {escape(evidence_text)}<br>{escape(note_text)}</small>
+        </div>
+        """
+
+    owner_readiness_html = "".join(
+        [
+            _owner_readiness_card(
+                "Carpeta por entidad participante",
+                "Operaciones",
+                "Nombre de entidad, responsable PS, contacto de la entidad, equipos esperados/reales, jugadores, rondas, uniformes, viajes y clasificación final.",
+                f'{int(summary.get("commitments_count") or 0)} compromisos/ítems operativos y {len(alerts)} alertas visibles.',
+                owner_ops_available,
+            ),
+            _owner_readiness_card(
+                "Finanzas por entidad",
+                "Finanzas",
+                "Ayudas transferidas, pagos sucesivos, equipamiento/utilería, visitas y gastos asociados al responsable de la entidad.",
+                f'{len(tournament_commitments)} compromisos presupuestales vinculados al torneo.' if can_view_budget else "Oculto por permisos presupuestales.",
+                owner_finance_available,
+            ),
+            _owner_readiness_card(
+                "Fase nacional",
+                "Operaciones / Finanzas",
+                "Torneo, fechas, ciudad, hoteles, camas-noche, alimentos, unidad deportiva, canchas, servicios médicos, accidentes, viajes, proveedores, seguros y pagos.",
+                "Sin fuente específica conectada todavía en esta vista.",
+                False,
+            ),
+            _owner_readiness_card(
+                "Activaciones y patrocinadores",
+                "Mercadotecnia",
+                "Proveedores en activación, visitantes ligados a patrocinador, actividades realizadas, resultado y fotografías.",
+                "Sin fuente específica conectada todavía en esta vista.",
+                False,
+            ),
+        ]
+    )
 
     filter_chips = [
         f'<span class="ops-filter-chip">Torneo · {escape(selected_tournament_name)}</span>',
@@ -14004,6 +14072,61 @@ async def panel_operaciones_console(
                 line-height:1.5;
                 opacity:.82;
             }}
+            .owner-ready-grid {{
+                display:grid;
+                grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+                gap:14px;
+            }}
+            .owner-ready-card {{
+                border:1px solid var(--shell-line);
+                border-radius:20px;
+                background:#fff;
+                padding:16px;
+                box-shadow:0 10px 24px rgba(15,23,42,.04);
+            }}
+            .owner-ready-card.ready-empty {{ border-left:5px solid #94a3b8; }}
+            .owner-ready-card.ready-partial {{ border-left:5px solid #0f766e; }}
+            .owner-ready-top {{
+                display:flex;
+                justify-content:space-between;
+                gap:10px;
+                align-items:center;
+                margin-bottom:10px;
+            }}
+            .owner-ready-top span {{
+                font-size:11px;
+                text-transform:uppercase;
+                letter-spacing:.12em;
+                color:#64748b;
+                font-weight:800;
+            }}
+            .owner-ready-top strong {{
+                font-size:11px;
+                padding:5px 9px;
+                border-radius:999px;
+                background:#f1f5f9;
+                color:#334155;
+                white-space:nowrap;
+            }}
+            .owner-ready-card.ready-partial .owner-ready-top strong {{ background:#dcfce7;color:#166534; }}
+            .owner-ready-card h3 {{
+                margin:0 0 8px;
+                font-size:1rem;
+                letter-spacing:-.02em;
+                color:#0f172a;
+            }}
+            .owner-ready-card p {{
+                margin:0 0 10px;
+                color:#475569;
+                font-size:13px;
+                line-height:1.5;
+            }}
+            .owner-ready-card small {{
+                display:block;
+                color:#64748b;
+                font-size:12px;
+                line-height:1.45;
+            }}
             .ops-spotlight-grid {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
@@ -14155,6 +14278,20 @@ async def panel_operaciones_console(
                     </div>
                     <div class="ops-stat-grid">
                         {quick_cards_html}
+                    </div>
+                </section>
+                <section class="surface">
+                    <div class="section-head">
+                        <div>
+                            <h2>Tableros preparados para expediente de torneo</h2>
+                            <div class="section-note">Contrato del dueño convertido en tablero: las secciones existen y distinguen información disponible de información pendiente de captura o conexión.</div>
+                        </div>
+                    </div>
+                    <div class="notice info" style="margin-bottom:14px;">
+                        Estado honesto: el tablero ya está preparado para operar como expediente por torneo/entidad, pero todavía no todos los orígenes de datos están poblados. Cuando falte información, se muestra como pendiente; no se inventa.
+                    </div>
+                    <div class="owner-ready-grid">
+                        {owner_readiness_html}
                     </div>
                 </section>
                 <section class="surface">
