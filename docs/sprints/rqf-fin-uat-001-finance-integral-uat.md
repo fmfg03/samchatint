@@ -313,3 +313,173 @@ La story cierra cuando exista:
 ## Estado final
 
 `PENDING_FINANCE_UAT`
+
+---
+
+# Anexo A — Rutas de revisión para Finanzas
+
+Este anexo traduce el protocolo UAT a rutas concretas dentro de SamChat. Las rutas pueden abrirse desde el menú cuando el usuario tenga permiso, o directamente por URL.
+
+## A.1 Punto de entrada recomendado
+
+| Revisión | Ruta |
+| --- | --- |
+| Panel general | `/panel` |
+| Vista contable / Finanzas | `/admin/finanzas` |
+| Centro de Limpieza Contable | `/admin/gastos/sin-cuenta-contable` |
+
+## A.2 Limpieza Contable / Prepólizas COI
+
+El primer recorrido de Finanzas debe iniciar aquí porque concentra los bloqueos antes de exportar COI.
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Centro de Limpieza Contable | `/admin/gastos/sin-cuenta-contable` | Gastos pendientes de cuenta, contrapartida, CFDI o impuestos. |
+| Vista COI | `/admin/contabilidad/coi` | Prepólizas generadas y líneas contables. |
+| Detalle de póliza COI | `/admin/contabilidad/coi/{poliza_id}` | Debe/Haber, cuenta contable, concepto y referencia. |
+| Editar línea/cuenta COI | `/admin/contabilidad/coi/lineas/{line_id}/cuenta` | Corrección puntual de cuenta contable. |
+| Exportar lote gastos COI Excel | `/admin/contabilidad/coi/exportar-gastos-lote.xlsx` | Archivo Excel para revisión/carga. |
+| Exportar lote gastos COI ZIP | `/admin/contabilidad/coi/exportar-gastos-lote.zip` | Paquete masivo de prepólizas. |
+| Exportar COI por documento | `/documentos/{documento_id}/exportar-coi.xlsx` | Prepóliza de solicitud/documento. |
+| Preview COI por documento | `/documentos/{documento_id}/preview-coi` | Validación visual antes de descargar. |
+| Exportar COI por informe | `/informes-de-gastos/{cuenta_id}/exportar-coi.xlsx` | Prepóliza de informe de gastos. |
+| Preview COI por informe | `/informes-de-gastos/{cuenta_id}/preview-coi` | Validación visual antes de descargar. |
+| Exportar COI por gasto | `/gastos/{gasto_id}/exportar-coi.xlsx` | Prepóliza puntual de gasto. |
+
+### Primer checklist sugerido en Limpieza Contable
+
+1. Entrar a `/admin/gastos/sin-cuenta-contable`.
+2. Tomar un gasto pendiente.
+3. Confirmar si falta cuenta, contrapartida, CFDI o impuesto.
+4. Corregir clasificación.
+5. Ir a preview COI del documento/informe.
+6. Descargar Excel COI.
+7. Verificar que la prepóliza incluya:
+   - referencia de Operaciones;
+   - referencia SamChat;
+   - concepto suficientemente descriptivo;
+   - cuenta gasto;
+   - contrapartida;
+   - IVA/retenciones si aplican;
+   - no deducibles si aplican.
+
+## A.3 Solicitudes / documentos / autorizaciones
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Todas las solicitudes/documentos | `/documentos/todos` | Búsqueda, estado, referencia y navegación. |
+| Nueva solicitud a terceros/proveedores | `/documentos/nueva-solicitud-terceros` | Solicitud pago proveedor/tercero. |
+| Anticipo personal | `/documentos/nueva-solicitud-personal` | Anticipo o solicitud personal. |
+| Pendientes de aprobación | `/documentos/pendientes` | Aprobación y botones. |
+| Historial de aprobaciones | `/documentos/historial-aprobador` | Evidencia de quién aprobó/rechazó. |
+| Pendientes de pago | `/documentos/pendientes-pago` | Confirmación de pago. |
+| Detalle documento | `/documentos/{documento_id}` | Estado, archivos, COI, DIOT, acciones. |
+| Editar solicitud | `/documentos/{documento_id}/editar` | Edición permitida sólo si flujo lo permite. |
+| Exportar informe/documento | `/documentos/{documento_id}/exportar-informe` | Formato descargable de soporte. |
+| Exportar DIOT Excel | `/documentos/{documento_id}/exportar-diot.xlsx` | Revisión fiscal. |
+| Exportar DIOT TXT | `/documentos/{documento_id}/exportar-diot.txt` | Archivo operativo. |
+
+## A.4 Informes de gastos
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Lista informes | `/informes-de-gastos` | Estados, saldos, beneficiario y AMEX. |
+| Crear informe | `/informes-de-gastos/crear` | Solicitante/beneficiario/tercero. |
+| Detalle informe | `/informes-de-gastos/{cuenta_id}` | Gastos, solicitudes vinculadas, saldo, AMEX. |
+| Editar informe | `/informes-de-gastos/{cuenta_id}/editar` | Proyecto, etapa, beneficiario. |
+| Captura rápida de gasto | `/informes-de-gastos/{cuenta_id}/gastos/quick` | CFDI/XML/PDF, propina, partida. |
+| Marcar gastos AMEX | `/informes-de-gastos/{cuenta_id}/gastos/amex` | Pagado por AMEX empresa. |
+| Cerrar informe | `/informes-de-gastos/{cuenta_id}/cerrar` | Envío a aprobación. |
+| Saldar/reembolso/devolución | `/informes-de-gastos/{cuenta_id}/saldar` | Liquidación final. |
+| Descargar informe Excel | `/informes-de-gastos/{cuenta_id}/exportar-informe.xlsx` | Soporte para solicitante/Finanzas. |
+| Exportar COI informe | `/informes-de-gastos/{cuenta_id}/exportar-coi.xlsx` | Prepóliza de informe. |
+| Preview COI informe | `/informes-de-gastos/{cuenta_id}/preview-coi` | Validación previa. |
+
+## A.5 AMEX DG
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Carga masiva AMEX | `/gastos/carga-masiva-amex` | Importación de movimientos AMEX. |
+| Conciliación AMEX | `/admin/gastos/amex/conciliacion` | Cargos, CFDI, consumos, propinas. |
+| Informe AMEX | `/informes-de-gastos/{cuenta_id}` | Que marque AMEX y no genere reembolso al empleado. |
+| Editar gasto AMEX | `/gastos/{gasto_id}/editar` | Propina no deducible en consumo/alimentos. |
+
+## A.6 Payment run / Programación de pagos
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Payment run | `/admin/finanzas/payment-run` | Programación de pagos y corte operativo. |
+| Detalle de corte | `/admin/finanzas/payment-run/closures/{closure_id}` | Documentos incluidos y evidencia del corte. |
+| Pendientes de pago | `/documentos/pendientes-pago` | Confirmación de pagos individuales. |
+
+## A.7 Cuentas por Cobrar
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Cuentas por cobrar | `/admin/contabilidad/cuentas-por-cobrar` | Facturas emitidas, saldos, cobranza. |
+| Clasificar CFDI PSP a torneo | `/admin/contabilidad/cuentas-por-cobrar` | Selección torneo/partida para CxC. |
+| Ingresos cobrados | `/admin/contabilidad/ingresos` | Confirmación de cobranza y póliza banco vs CxC. |
+| Cash flow | `/admin/contabilidad/cash-flow/export.xlsx` | Exportación de flujo de caja. |
+
+### Prepólizas esperadas CxC
+
+Factura emitida vinculada a torneo/partida:
+
+- Debe `1150-*` CxC por total factura.
+- Haber `4100-*` ingreso base.
+- Haber `2140-001-001` IVA trasladado, si aplica.
+
+Cobro posterior:
+
+- Debe `1120-001-001` bancos.
+- Haber `1150-*` CxC.
+
+## A.8 SAT / CFDI
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Dashboard SAT | `/admin/gastos/sat` | Credenciales, jobs y estado. |
+| Carga masiva CFDI | `/admin/gastos/cfdis/carga-masiva` | Importación manual/CSV. |
+| Matching CFDI | `/admin/gastos/cfdis/matching` | CFDI vinculados y pendientes. |
+| Validar CFDI SAT | `/admin/gastos/sat/matching/validate-selected` | Validación fiscal. |
+| Status job SAT | `/admin/gastos/sat/jobs/{run_id}` | Seguimiento de descarga. |
+
+## A.9 Conciliación bancaria
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Conciliación bancaria | `/admin/contabilidad/conciliacion` | Vista principal de bancos vs SamChat. |
+| Recalcular banco | `/admin/contabilidad/conciliacion/recalculate-bank` | Actualizar sugerencias. |
+| Seed + recalcular | `/admin/contabilidad/conciliacion/seed-and-recalculate` | Preparar datos de prueba/revisión. |
+| Revisar movimiento | `/admin/contabilidad/conciliacion/{movement_id}` | Match candidato y evidencia. |
+| Auditoría conciliación | `/admin/contabilidad/conciliacion/auditoria` | Historial de decisiones. |
+| Exportar conciliación | `/admin/contabilidad/conciliacion/export` | Excel/reporte operativo. |
+| Exportar conciliación PDF | `/admin/contabilidad/conciliacion/export.pdf` | Soporte imprimible. |
+
+## A.10 Masivos / exportaciones
+
+| Acción | Ruta | Qué revisar |
+| --- | --- | --- |
+| Finanzas export general | `/admin/finanzas/export.xlsx` | Base general financiera. |
+| COI lote consolidado | `/admin/finanzas/coi-lote-consolidado.xlsx` | Prepólizas consolidadas. |
+| COI lote ZIP | `/admin/finanzas/coi-lote.zip` | Descarga masiva. |
+| Export gastos | `/admin/gastos/expenses/export` | Base gastos. |
+| Export facturas | `/admin/gastos/invoices/export` | Base facturas. |
+| Export diario | `/admin/contabilidad/diario/export` | Libro diario. |
+| Export mayor | `/admin/contabilidad/mayor/export` | Mayor. |
+| Export balanza | `/admin/contabilidad/balanza/export` | Balanza. |
+
+## A.11 Orden sugerido para la sesión con Finanzas
+
+1. Limpieza Contable.
+2. Preview/descarga COI por gasto, documento e informe.
+3. Solicitud proveedor completa.
+4. Anticipo completo.
+5. Informe vs anticipo.
+6. Informe reembolso directo.
+7. Informe AMEX con propina.
+8. Payment run.
+9. CxC factura → torneo/partida → cobro.
+10. SAT emitidos/recibidos y matching.
+11. Conciliación bancaria.
+12. Exportaciones masivas e impresión.
