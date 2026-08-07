@@ -123,6 +123,7 @@ from ..services.amex_cfdi_matching_service import (
     validate_amex_cfdi_suggestion,
     validate_pase_monthly_cfdi_suggestion,
 )
+from ..services.amex_statement_matcher import find_amex_cfdi_match
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
     list_authorization_profiles,
@@ -17486,8 +17487,12 @@ async def carga_masiva_amex_post(
         total_rows = 0
         created_count = 0
         skipped_count = 0
+        auto_cfdi_match_count = 0
+        auto_tip_match_count = 0
         errors = []
         cfdi_month_key: Optional[str] = None
+        if not cfdi_uuid_mensual_norm:
+            await _ensure_expense_tip_schema(session)
 
         for row_num, row in enumerate(csv_reader, start=2):  # Start at 2 (row 1 is header)
             total_rows += 1
@@ -17590,6 +17595,25 @@ async def carga_masiva_amex_post(
                     if cfdi_mensual_report:
                         expense.cfdi_report_id = cfdi_mensual_report.id
                     session.add(expense)
+                else:
+                    amex_match = await find_amex_cfdi_match(
+                        session,
+                        charge_description=descripcion,
+                        charge_amount=gasto_cantidad,
+                        charge_date=fecha_dt,
+                    )
+                    if amex_match is not None:
+                        expense.cfdi_report_id = amex_match.cfdi.id
+                        expense.cfdi_uuid_manual = (amex_match.cfdi.cfdi_uuid or "").strip().upper() or None
+                        if amex_match.inferred_tip > 0:
+                            try:
+                                expense.propina_no_deducible = round(float(amex_match.inferred_tip), 2)
+                            except Exception:
+                                pass
+                            auto_tip_match_count += 1
+                        else:
+                            auto_cfdi_match_count += 1
+                        session.add(expense)
 
                 created_count += 1
 
@@ -17636,6 +17660,11 @@ async def carga_masiva_amex_post(
                 success_msg += " CFDI mensual consolidado aplicado y vinculado automáticamente."
             else:
                 success_msg += " CFDI mensual consolidado aplicado (pendiente de vinculación automática al cargar CFDIs)."
+        elif auto_cfdi_match_count or auto_tip_match_count:
+            success_msg += (
+                f" Vinculación automática: {auto_cfdi_match_count} CFDI exactos"
+                f" y {auto_tip_match_count} con posible propina."
+            )
 
         return RedirectResponse(
             url=f"/gastos/carga-masiva-amex?success_msg={quote(success_msg)}",
