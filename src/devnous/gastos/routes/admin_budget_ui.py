@@ -968,6 +968,7 @@ def render_cfdi_income_bridge_panel(
     candidates: list[dict[str, Any]],
     links: list[dict[str, Any]],
     can_edit: bool,
+    return_to: str = "",
 ) -> str:
     line_items: list[dict[str, str]] = []
     for line in lines:
@@ -1011,6 +1012,11 @@ def render_cfdi_income_bridge_panel(
                 "label": label,
             }
         )
+    return_to_hidden = (
+        f'<input type="hidden" name="return_to" value="{escape(str(return_to), quote=True)}">'
+        if str(return_to or "").strip()
+        else ""
+    )
     active_rows: list[str] = []
     inactive_rows: list[str] = []
     for link in links:
@@ -1023,6 +1029,7 @@ def render_cfdi_income_bridge_panel(
             unlink_form = f"""
                 <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/{escape(str(link.get('id') or ''))}/unlink">
                     <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                    {return_to_hidden}
                     <button type="submit" style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:700;cursor:pointer;">
                         Dejar de contar
                     </button>
@@ -1080,6 +1087,7 @@ def render_cfdi_income_bridge_panel(
             <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/link" style="display:grid;gap:10px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;">
                 <div style="font-weight:800;color:#0f172a;">Vincular CFDI SAT existente</div>
                 <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                {return_to_hidden}
                 <label style="font-size:12px;font-weight:700;color:#475569;">CFDI emitido por PSP</label>
                 <input type="hidden" id="cfdi-income-existing-cfdi-id" name="cfdi_report_id">
                 <input id="cfdi-income-existing-cfdi-input" list="cfdi-income-existing-cfdi-options" data-cfdi-income-field="cfdi" data-hidden-input="cfdi-income-existing-cfdi-id" required{existing_disabled} placeholder="Buscar por UUID, RFC, monto o fecha" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
@@ -1097,6 +1105,7 @@ def render_cfdi_income_bridge_panel(
             <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/upload-link" enctype="multipart/form-data" style="display:grid;gap:10px;padding:14px;border:1px solid #e2e8f0;border-radius:14px;background:#f8fafc;">
                 <div style="font-weight:800;color:#0f172a;">Subir CFDI y vincular</div>
                 <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                {return_to_hidden}
                 <label style="font-size:12px;font-weight:700;color:#475569;">XML CFDI</label>
                 <input type="file" name="cfdi_xml" accept=".xml,text/xml,application/xml"{upload_disabled}>
                 <label style="font-size:12px;font-weight:700;color:#475569;">PDF CFDI</label>
