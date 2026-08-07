@@ -8,6 +8,7 @@ from typing import Optional, List, Any, Tuple
 import csv
 import io
 import openpyxl
+from openpyxl.styles import Font
 
 from ..expense_metadata import format_solicitud_proyecto_display
 
@@ -334,6 +335,7 @@ def create_informe_excel(
     currency: str = "MXN",
     solicitante_nombre: Optional[str] = None,
     beneficiario_nombre: Optional[str] = None,
+    payment_marker: Optional[str] = None,
     **kwargs: Any,
 ) -> bytes:
     """
@@ -354,6 +356,7 @@ def create_informe_excel(
         tipo_cuenta: local|viaje|nacional|extranjero - row 11 selected label is shown as (X)
         referencia_operaciones: Document referencia operaciones (cell G22)
         motivo_del_gasto: Expense reason from cuenta nombre (merged cell B21:F22)
+        payment_marker: Optional payment label shown left of the document date (e.g. AMEX).
         **kwargs: Ignored
 
     Returns:
@@ -376,6 +379,7 @@ def create_informe_excel(
     metadata_ws.append(
         ["Beneficiario", beneficiario_nombre or empleado_nombre or ""]
     )
+    metadata_ws.append(["Marcador de pago", payment_marker or ""])
 
     # Clear template placeholders immediately (openpyxl cell(row, col, value=None) does not
     # clear existing values; we must assign .value = None on the cell object).
@@ -409,6 +413,19 @@ def create_informe_excel(
     row_autorizado = INFORME_AUTORIZADO_ROW + extra_rows
 
     # Header per 4599: F5=date (anchor F5:I5) in Spanish long form; B8=nombre (anchor B8:F9)
+    marker = (payment_marker or "").strip().upper()
+    if marker:
+        marker_cell = ws.cell(row=5, column=4, value=marker)
+        marker_cell.font = Font(
+            name=marker_cell.font.name,
+            sz=marker_cell.font.sz,
+            bold=True,
+            italic=marker_cell.font.italic,
+            vertAlign=marker_cell.font.vertAlign,
+            underline=marker_cell.font.underline,
+            strike=marker_cell.font.strike,
+            color=marker_cell.font.color,
+        )
     if fecha_documento:
         ws.cell(row=5, column=6, value=_fmt_date_informe_header(fecha_documento))
     comprobante_nombre = beneficiario_nombre or empleado_nombre

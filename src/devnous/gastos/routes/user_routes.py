@@ -27040,6 +27040,7 @@ async def exportar_informe_gastos(
                     motivo_del_gasto_export = (cuenta_obj.nombre or "").strip() or None
             except (ProgrammingError, OperationalError):
                 pass  # keep "local"
+        informe_payment_marker = "AMEX" if any(is_company_amex_expense(expense) for expense in expenses) else None
         excel_bytes_informe = create_informe_excel(
             numero_referencia=documento.numero_referencia,
             empleado_nombre=empleado_nombre,
@@ -27055,6 +27056,7 @@ async def exportar_informe_gastos(
             categorias=list(getattr(documento, "categorias", None) or []),
             edicion=getattr(documento, "edicion", None),
             currency=currency_for(documento),
+            payment_marker=informe_payment_marker,
         )
         filename = f"Informe_Gastos_{documento.numero_referencia}.xlsx"
         return Response(
