@@ -383,17 +383,26 @@ async def enqueue_finance_pending_payment_outbox(
         )
         status = "pending" if chat_id is not None else "skipped"
         error = None if chat_id is not None else "Sin telegram_user_id vinculado"
-        await create_outbox_entry(
-            session,
-            notification_type="finance_pending_payment",
-            status=status,
-            header_text=header_text,
-            body_text=text,
-            documento_id=documento.id,
-            recipient_empleado_id=recipient.id,
-            telegram_chat_id=chat_id,
-            error_message=error,
-        )
+        try:
+            await create_outbox_entry(
+                session,
+                notification_type="finance_pending_payment",
+                status=status,
+                header_text=header_text,
+                body_text=text,
+                documento_id=documento.id,
+                recipient_empleado_id=recipient.id,
+                telegram_chat_id=chat_id,
+                error_message=error,
+            )
+        except IntegrityError:
+            await session.rollback()
+            logger.info(
+                "Finance pending-payment outbox already exists for document %s recipient %s",
+                documento.id,
+                recipient.id,
+            )
+            continue
         created += 1
     if created:
         await session.commit()
