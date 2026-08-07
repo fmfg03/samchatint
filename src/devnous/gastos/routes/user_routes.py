@@ -3691,7 +3691,9 @@ async def contabilidad_ingresos_save(
         },
         details={
             "source": "ingreso_cobrado_ui",
-            "no_accounts_receivable": True,
+            "no_accounts_receivable": cuenta_cxc is None,
+            "accounts_receivable_collection": cuenta_cxc is not None,
+            "cuenta_cxc_codigo": getattr(cuenta_cxc, "codigo", None),
             "factura_folio": factura_folio,
             "cfdi_uuid": cfdi_uuid,
             "total_cobrado": float(total_cobrado),
