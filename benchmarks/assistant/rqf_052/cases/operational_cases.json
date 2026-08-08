@@ -1,0 +1,162 @@
+[
+  {
+    "case_id": "TEAM-ESTRELLAS-2026-DOCS",
+    "case_type": "team",
+    "title": "Equipo Deportivo Estrellas con cédula manuscrita",
+    "summary": "Registro OCR de roster con nombres, fechas y slots revisados manualmente.",
+    "facts": {
+      "team_name": "Deportivo Estrellas",
+      "players_detected": 16,
+      "duplicate_players": 0
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-TEAM-001",
+        "source_type": "image",
+        "summary": "Cédula de inscripción normalizada y salida OCR validada.",
+        "source_ref": "samchat://ocr/team/deportivo-estrellas"
+      }
+    ],
+    "relationships": []
+  },
+  {
+    "case_id": "PLAYER-DUP-CURP-2026-001",
+    "case_type": "player_validation",
+    "title": "Duplicidades e incidencias de CURP en Copa Telmex",
+    "summary": "Caso sintético basado en reglas operativas: duplicidades, fechas inconsistentes y excepción documentada.",
+    "facts": {
+      "curp_duplicates": 4,
+      "inconsistent_birth_dates": 2,
+      "historical_exception": "authorized_with_director_note",
+      "curp_evidence_id": "EV-PLAYER-001",
+      "curp_duplicates_evidence_id": "EV-PLAYER-001",
+      "inconsistent_birth_dates_evidence_id": "EV-PLAYER-001",
+      "historical_exception_evidence_id": "EV-PLAYER-002"
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-PLAYER-001",
+        "source_type": "db",
+        "summary": "Tabla de incidencias de CURP por jugador.",
+        "source_ref": "samchat://players/incidents/curp-duplicates"
+      },
+      {
+        "evidence_id": "EV-PLAYER-002",
+        "source_type": "document",
+        "summary": "Nota histórica de autorización excepcional.",
+        "source_ref": "samchat://docs/exceptions/eligibility-note"
+      }
+    ],
+    "relationships": []
+  },
+  {
+    "case_id": "EXP-AMEX-REF28",
+    "case_type": "expense_report",
+    "title": "Informe AMEX referencia Operaciones 28",
+    "summary": "Comprobación AMEX de Odilón capturada por Alicia; requiere cuenta AMEX y evidencia fiscal.",
+    "facts": {
+      "operations_ref": 28,
+      "system_ref": "I-991520",
+      "amount": 3067.43,
+      "expense_account": "5300-004-001",
+      "counterparty_account": "2120-002-062",
+      "cfdi_uuid": "3D-A422-9DAF-9",
+      "amount_evidence_id": "EV-FIN-001",
+      "expense_account_evidence_id": "EV-FIN-002",
+      "operations_ref_evidence_id": "EV-FIN-001",
+      "system_ref_evidence_id": "EV-FIN-001",
+      "counterparty_account_evidence_id": "EV-FIN-002",
+      "cfdi_uuid_evidence_id": "EV-FIN-001"
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-FIN-001",
+        "source_type": "expense_report",
+        "summary": "Informe cerrado con REF 28 / I-991520 y total AMEX.",
+        "source_ref": "samchat://expense-reports/I-991520"
+      },
+      {
+        "evidence_id": "EV-FIN-002",
+        "source_type": "accounting_catalog",
+        "summary": "Catálogo contable con cuenta AMEX 2120-002-062 y partida de gasto.",
+        "source_ref": "samchat://catalog/accounts/amex"
+      }
+    ],
+    "relationships": []
+  },
+  {
+    "case_id": "MONEY-SUPPLIER-HOTEL-MTY",
+    "case_type": "money_request",
+    "title": "Pago a proveedor hotel Monterrey",
+    "summary": "Solicitud de transferencia con prepóliza de pago a proveedor.",
+    "facts": {
+      "amount": 450000.0,
+      "debit_account": "1150-001-001",
+      "credit_account": "1120-001-001",
+      "amount_evidence_id": "EV-MONEY-001",
+      "debit_account_evidence_id": "EV-MONEY-001",
+      "credit_account_evidence_id": "EV-MONEY-001"
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-MONEY-001",
+        "source_type": "money_request",
+        "summary": "Solicitud aprobada con proveedor y banco.",
+        "source_ref": "samchat://money-requests/S-2600069"
+      }
+    ],
+    "relationships": []
+  },
+  {
+    "case_id": "BUDGET-DCC-2026",
+    "case_type": "budget",
+    "title": "Presupuesto De la Calle a la Cancha 2026",
+    "summary": "Partida DCC Nacional ligada a factura emitida para CxC.",
+    "facts": {
+      "tournament": "De la Calle a la Cancha",
+      "line_item": "DCC Nacional",
+      "income_account": "4100-001-004",
+      "receivable_account": "1150-001-001",
+      "amount": 1972903.0,
+      "income_evidence_id": "EV-BUD-001",
+      "tournament_evidence_id": "EV-BUD-001",
+      "line_item_evidence_id": "EV-BUD-001",
+      "receivable_account_evidence_id": "EV-BUD-001",
+      "amount_evidence_id": "EV-BUD-001",
+      "income_account_evidence_id": "EV-BUD-001"
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-BUD-001",
+        "source_type": "budget",
+        "summary": "Partida presupuestal de ingreso DCC Nacional.",
+        "source_ref": "samchat://budget/dcc/2026/income"
+      }
+    ],
+    "relationships": []
+  },
+  {
+    "case_id": "SUPPLIER-PASE-MONTHLY",
+    "case_type": "supplier",
+    "title": "Factura mensual PASE con cargos desglosados",
+    "summary": "Proveedor PASE emite factura mensual; cargos individuales se concilian contra AMEX.",
+    "facts": {
+      "supplier": "PASE",
+      "invoice_pattern": "monthly_aggregate",
+      "matching_rule": "line_level_amex_to_invoice_detail",
+      "rule_evidence_id": "EV-SUP-001",
+      "supplier_evidence_id": "EV-SUP-001",
+      "invoice_pattern_evidence_id": "EV-SUP-001",
+      "matching_rule_evidence_id": "EV-SUP-001"
+    },
+    "evidence": [
+      {
+        "evidence_id": "EV-SUP-001",
+        "source_type": "policy",
+        "summary": "Regla operativa para casetas PASE y desglose mensual.",
+        "source_ref": "samchat://policies/amex/pase"
+      }
+    ],
+    "relationships": []
+  }
+]

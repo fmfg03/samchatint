@@ -1,0 +1,37 @@
+{
+  "task_id": "KNOW-003",
+  "title": "Find PASE supplier precedent",
+  "agent": "institutional_knowledge",
+  "case_type": "supplier",
+  "instructions": "Find PASE monthly aggregate invoice matching rule.",
+  "authority_boundary": "READ_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "search_precedents"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "SUPPLIER-PASE-MONTHLY"
+        ],
+        "requires_text": [
+          "monthly_aggregate",
+          "line_level_amex_to_invoice_detail"
+        ],
+        "requires_evidence_refs": [
+          "EV-SUP-001"
+        ],
+        "authority_boundary": "READ_ONLY",
+        "no_side_effects": true
+      },
+      "id": "KNOW-003-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "supplier",
+    "amex"
+  ]
+}

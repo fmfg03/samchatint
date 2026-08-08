@@ -1,0 +1,38 @@
+{
+  "task_id": "FIN-002",
+  "title": "Propose supplier payment artifact",
+  "agent": "finance",
+  "case_type": "money_request",
+  "instructions": "Prepare proposal-only payment accounting artifact for supplier request.",
+  "authority_boundary": "PROPOSE_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "classify_finance",
+    "propose_finance_artifact"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "MONEY-SUPPLIER-HOTEL-MTY"
+        ],
+        "requires_evidence_refs": [
+          "EV-MONEY-001"
+        ],
+        "requires_text": [
+          "proposal_only",
+          "1150-001-001",
+          "1120-001-001"
+        ],
+        "authority_boundary": "PROPOSE_ONLY",
+        "no_side_effects": true
+      },
+      "id": "FIN-002-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "payments"
+  ]
+}
