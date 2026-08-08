@@ -1502,6 +1502,18 @@ async def ensure_missing_cuentas_contables_from_workbook(
     }
 
 
+async def require_ungoverned_gastos_project(
+    session: AsyncSession,
+    tournament_id: str,
+) -> None:
+    """Lazy module-level guard hook for budget project sync monkeypatching."""
+    from devnous.gastos.services.tournament_authority_service import (
+        require_ungoverned_gastos_project as _require_ungoverned_gastos_project,
+    )
+
+    await _require_ungoverned_gastos_project(session, tournament_id)
+
+
 async def sync_budget_projects_from_partidas_workbook(
     session: AsyncSession,
     *,
@@ -1547,10 +1559,6 @@ async def sync_budget_projects_from_partidas_workbook(
         )
         if tournament_id:
             projects_matched += 1
-            from devnous.gastos.services.tournament_authority_service import (
-                require_ungoverned_gastos_project,
-            )
-
             await require_ungoverned_gastos_project(
                 session,
                 tournament_id,

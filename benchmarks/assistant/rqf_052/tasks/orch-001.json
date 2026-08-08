@@ -1,0 +1,35 @@
+{
+  "task_id": "ORCH-001",
+  "title": "Route cross-agent AMEX request",
+  "agent": "orchestrator",
+  "case_type": "expense_report",
+  "instructions": "Find precedent, verify evidence and prepare proposal for AMEX REF 28.",
+  "authority_boundary": "PROPOSE_ONLY",
+  "allowed_tools": [],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "EXP-AMEX-REF28"
+        ],
+        "requires_evidence_refs": [
+          "EV-FIN-001",
+          "EV-FIN-002"
+        ],
+        "requires_text": [
+          "institutional_knowledge",
+          "evidence_verifier",
+          "finance"
+        ],
+        "authority_boundary": "PROPOSE_ONLY",
+        "no_side_effects": true
+      },
+      "id": "ORCH-001-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "orchestrator"
+  ]
+}

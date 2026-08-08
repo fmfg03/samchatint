@@ -1,0 +1,38 @@
+{
+  "task_id": "VERIFY-003",
+  "title": "Verify DCC CxC evidence",
+  "agent": "evidence_verifier",
+  "case_type": "budget",
+  "instructions": "Verify DCC income account and receivable evidence.",
+  "authority_boundary": "READ_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "verify_evidence"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "BUDGET-DCC-2026"
+        ],
+        "requires_evidence_refs": [
+          "EV-BUD-001"
+        ],
+        "requires_text": [
+          "4100-001-004",
+          "1150-001-001"
+        ],
+        "authority_boundary": "READ_ONLY",
+        "no_side_effects": true,
+        "forbid_unsupported_facts": true
+      },
+      "id": "VERIFY-003-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "cxc",
+    "budget"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "task_id": "FIN-003",
+  "title": "Propose CxC recognition artifact",
+  "agent": "finance",
+  "case_type": "budget",
+  "instructions": "Prepare proposal-only CxC recognition artifact for DCC Nacional.",
+  "authority_boundary": "PROPOSE_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "classify_finance",
+    "propose_finance_artifact"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "BUDGET-DCC-2026"
+        ],
+        "requires_evidence_refs": [
+          "EV-BUD-001"
+        ],
+        "requires_text": [
+          "proposal_only",
+          "4100-001-004",
+          "1150-001-001"
+        ],
+        "authority_boundary": "PROPOSE_ONLY",
+        "no_side_effects": true
+      },
+      "id": "FIN-003-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "cxc"
+  ]
+}

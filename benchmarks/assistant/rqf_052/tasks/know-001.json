@@ -1,0 +1,34 @@
+{
+  "task_id": "KNOW-001",
+  "title": "Find team OCR precedent",
+  "agent": "institutional_knowledge",
+  "case_type": "team",
+  "instructions": "Find the Deportivo Estrellas roster OCR precedent.",
+  "authority_boundary": "READ_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "search_precedents"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "TEAM-ESTRELLAS-2026-DOCS"
+        ],
+        "requires_count": 1,
+        "requires_evidence_refs": [
+          "EV-TEAM-001"
+        ],
+        "authority_boundary": "READ_ONLY",
+        "no_side_effects": true
+      },
+      "id": "KNOW-001-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "ocr",
+    "team"
+  ]
+}
