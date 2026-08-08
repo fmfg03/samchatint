@@ -1,0 +1,40 @@
+{
+  "task_id": "VERIFY-001",
+  "title": "Verify AMEX facts",
+  "agent": "evidence_verifier",
+  "case_type": "expense_report",
+  "instructions": "Verify amount, account and reference facts for REF 28.",
+  "authority_boundary": "READ_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "verify_evidence"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "EXP-AMEX-REF28"
+        ],
+        "requires_evidence_refs": [
+          "EV-FIN-001",
+          "EV-FIN-002"
+        ],
+        "requires_text": [
+          "operations_ref",
+          "expense_account",
+          "verified"
+        ],
+        "authority_boundary": "READ_ONLY",
+        "no_side_effects": true,
+        "forbid_unsupported_facts": true
+      },
+      "id": "VERIFY-001-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "finance",
+    "verify"
+  ]
+}

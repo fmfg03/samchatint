@@ -1,0 +1,37 @@
+{
+  "task_id": "KNOW-002",
+  "title": "Find eligibility incident precedent",
+  "agent": "institutional_knowledge",
+  "case_type": "player_validation",
+  "instructions": "Find CURP duplicate and eligibility exception precedent.",
+  "authority_boundary": "READ_ONLY",
+  "allowed_tools": [
+    "read_operational_cases",
+    "search_precedents"
+  ],
+  "criteria": [
+    {
+      "checks": {
+        "requires_case_ids": [
+          "PLAYER-DUP-CURP-2026-001"
+        ],
+        "requires_evidence_refs": [
+          "EV-PLAYER-001",
+          "EV-PLAYER-002"
+        ],
+        "requires_text": [
+          "curp_duplicates",
+          "historical_exception"
+        ],
+        "authority_boundary": "READ_ONLY",
+        "no_side_effects": true
+      },
+      "id": "KNOW-002-C1",
+      "title": "Deterministic all-pass criterion",
+      "match_criteria": "Deterministic all-pass criterion"
+    }
+  ],
+  "tags": [
+    "eligibility"
+  ]
+}
