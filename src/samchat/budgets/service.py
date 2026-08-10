@@ -202,6 +202,14 @@ def _build_budget_forecast(
     }
 
 
+async def require_ungoverned_gastos_project(session: AsyncSession, tournament_id: str) -> None:
+    from devnous.gastos.services.tournament_authority_service import (
+        require_ungoverned_gastos_project as _require_ungoverned_gastos_project,
+    )
+
+    await _require_ungoverned_gastos_project(session, tournament_id)
+
+
 def _budget_health_for_close(
     *, budget_total: float, projected_close_total: float
 ) -> str:
@@ -1547,10 +1555,6 @@ async def sync_budget_projects_from_partidas_workbook(
         )
         if tournament_id:
             projects_matched += 1
-            from devnous.gastos.services.tournament_authority_service import (
-                require_ungoverned_gastos_project,
-            )
-
             await require_ungoverned_gastos_project(
                 session,
                 tournament_id,
