@@ -21571,6 +21571,7 @@ async def cancelar_gasto(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     motivo_cancelacion: Optional[str] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
     Cancel an expense (soft delete).
@@ -21689,9 +21690,15 @@ async def cancelar_gasto(
 
     logger.info(f"Gasto {gasto_id} cancelled by empleado {current_empleado.id}")
 
+    redirect_url = f"/gastos/{gasto_id}"
+    if return_to:
+        safe_return_to = return_to.strip()
+        if safe_return_to.startswith("/informes-de-gastos/") or safe_return_to.startswith("/gastos/"):
+            redirect_url = safe_return_to
+
     return RedirectResponse(
         url=_append_success_params(
-            f"/gastos/{gasto_id}",
+            redirect_url,
             success_msg="Gasto cancelado exitosamente.",
         ),
         status_code=303
@@ -32255,6 +32262,26 @@ async def cuenta_de_gastos_detail(
                 return dt
         return datetime.min
 
+    def _movimiento_gasto_actions(exp: ExpenseReport) -> str:
+        if exp.estado_gasto == 'cancelado':
+            return (
+                f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
+                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+                f'</div>'
+            )
+        return (
+            f'<div class="inline-actions" style="gap:8px;justify-content:flex-end;white-space:nowrap;">'
+            f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+            f'<a href="/gastos/{exp.id}/editar" style="color:#0f766e;text-decoration:none;">Editar</a>'
+            f'<form method="POST" action="/gastos/{exp.id}/cancelar" style="display:inline;" '
+            f"onsubmit=\"return confirm('¿Eliminar este gasto del informe? Se marcará como cancelado y quedará en auditoría.');\">"
+            f'<input type="hidden" name="return_to" value="/informes-de-gastos/{cuenta.id}">'
+            f'<input type="hidden" name="motivo_cancelacion" value="Eliminado desde movimientos del informe {escape(cuenta.referencia_base)}">'
+            f'<button type="submit" style="border:0;background:transparent;color:#b91c1c;cursor:pointer;padding:0;font:inherit;">Eliminar</button>'
+            f'</form>'
+            f'</div>'
+        )
+
     movimientos_entries: List[tuple[datetime, str]] = []
     for exp in expenses:
         is_cancelled = exp.estado_gasto == 'cancelado'
@@ -32283,7 +32310,7 @@ async def cuenta_de_gastos_detail(
             <td>{escape(currency_for(exp))}</td>
             <td>{escape(status_val)}</td>
             <td>{arch_g}</td>
-            <td><a href="/gastos/{exp.id}" style="color: #4CAF50; text-decoration: none;">Ver</a></td>
+            <td>{_movimiento_gasto_actions(exp)}</td>
         </tr>
         """,
             )
