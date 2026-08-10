@@ -21838,6 +21838,7 @@ async def editar_gasto_form(
             select(CuentaDeGastos)
             .options(
                 undefer(CuentaDeGastos.torneo_id),
+                undefer(CuentaDeGastos.fase),
                 selectinload(CuentaDeGastos.torneo),
             )
             .where(
@@ -21857,6 +21858,7 @@ async def editar_gasto_form(
                 select(CuentaDeGastos)
                 .options(
                     undefer(CuentaDeGastos.torneo_id),
+                    undefer(CuentaDeGastos.fase),
                     selectinload(CuentaDeGastos.torneo),
                 )
                 .where(
@@ -22471,7 +22473,10 @@ async def editar_gasto(
     elif old_cg_id == target_cg_uuid:
         cg_result = await session.execute(
             select(CuentaDeGastos)
-            .options(undefer(CuentaDeGastos.torneo_id))
+            .options(
+                undefer(CuentaDeGastos.torneo_id),
+                undefer(CuentaDeGastos.fase),
+            )
             .where(
                 CuentaDeGastos.id == target_cg_uuid,
                 CuentaDeGastos.empleado_id == expense_owner_id,
@@ -22481,7 +22486,10 @@ async def editar_gasto(
     else:
         cg_result = await session.execute(
             select(CuentaDeGastos)
-            .options(undefer(CuentaDeGastos.torneo_id))
+            .options(
+                undefer(CuentaDeGastos.torneo_id),
+                undefer(CuentaDeGastos.fase),
+            )
             .where(
                 CuentaDeGastos.id == target_cg_uuid,
                 CuentaDeGastos.empleado_id == expense_owner_id,
