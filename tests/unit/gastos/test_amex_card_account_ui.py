@@ -34,3 +34,11 @@ def test_amex_p1218_fee_interest_bulk_action_is_exposed():
     assert "p1218_fee_interest" in source
     assert "Clasificar comisión/interés AMEX → P1218" in source
     assert "apply_amex_fee_interest_p1218" in source
+
+
+def test_amex_reconciliation_validation_notification_surface_is_exposed():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert "/admin/gastos/amex/conciliacion/validar-notificar" in source
+    assert "Validar y notificar" in source
+    assert "notify_amex_reconciliation_validated" in source

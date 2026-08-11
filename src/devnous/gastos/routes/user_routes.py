@@ -96,6 +96,10 @@ from ..services.amex_fee_interest_service import (
     AmexFeeInterestError,
     apply_amex_fee_interest_p1218,
 )
+from ..services.amex_reconciliation_notification_service import (
+    AmexReconciliationNotificationError,
+    notify_amex_reconciliation_validated,
+)
 from ..services.amex_cfdi_matching_service import (
     is_pase_expense,
     suggest_amex_cfdi_matches,
@@ -16922,6 +16926,42 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     )
 
 
+
+
+@router.post("/admin/gastos/amex/conciliacion/validar-notificar")
+async def amex_conciliacion_validate_notify(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    selected_year = year or datetime.utcnow().year
+    selected_month = month or datetime.utcnow().month
+    redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    try:
+        result = await notify_amex_reconciliation_validated(
+            session,
+            year=selected_year,
+            month=selected_month,
+            actor=current_empleado,
+        )
+    except AmexReconciliationNotificationError as exc:
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote(str(exc)),
+            status_code=303,
+        )
+
+    msg = (
+        "Conciliación AMEX validada. "
+        f"Benjamín: {len(result.authorization_recipients)} notificación(es); "
+        f"LAO/FGV/FGN: {len(result.awareness_recipients)} notificación(es); "
+        f"entregadas: {result.delivered}; pendientes/sin Telegram: {result.skipped}."
+    )
+    return RedirectResponse(
+        url=redirect_base + "&msg=" + quote(msg),
+        status_code=303,
+    )
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -17134,6 +17174,11 @@ async def amex_conciliacion_view(
         <a href="/gastos/carga-masiva-amex" class="button primary">Cargar AMEX</a>
         <a href="/admin/gastos/amex/tarjetas" class="button secondary">Catálogo tarjetas</a>
         <a href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}" class="button secondary">Ir a conciliación contable</a>
+        <form method="POST" action="/admin/gastos/amex/conciliacion/validar-notificar" style="display:inline;margin:0;" onsubmit="return confirm('¿Validar la conciliación AMEX del periodo y notificar a Benjamín, LAO, FGV y FGN?');">
+            <input type="hidden" name="year" value="{selected_year}">
+            <input type="hidden" name="month" value="{selected_month}">
+            <button type="submit" class="button primary">Validar y notificar</button>
+        </form>
     """
     hero_side_html = f"""
         <div class="eyebrow">Periodo activo</div>
