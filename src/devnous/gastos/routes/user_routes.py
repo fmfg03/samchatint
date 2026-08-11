@@ -92,6 +92,10 @@ from ..services.amex_card_account_service import (
     list_amex_liability_account_options,
     upsert_amex_card_account,
 )
+from ..services.amex_cfdi_matching_service import (
+    suggest_amex_cfdi_matches,
+    validate_amex_cfdi_suggestion,
+)
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
     list_authorization_profiles,
@@ -16798,6 +16802,59 @@ async def amex_card_accounts_save(
     )
 
 
+
+@router.post("/admin/gastos/amex/conciliacion/vincular-cfdi")
+async def amex_conciliacion_link_cfdi(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    expense_id: str = Form(...),
+    cfdi_report_id: str = Form(...),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    try:
+        expense_uuid = UUIDType(expense_id)
+        cfdi_uuid = UUIDType(cfdi_report_id)
+    except (ValueError, TypeError):
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("Identificador inválido para vincular CFDI."),
+            status_code=303,
+        )
+
+    result = await session.execute(
+        select(ExpenseReport)
+        .options(selectinload(ExpenseReport.cfdi_report))
+        .where(ExpenseReport.id == expense_uuid)
+    )
+    expense = result.scalar_one_or_none()
+    if not expense or expense.origen != "amex_batch" or expense.estado_gasto != "activo":
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación."),
+            status_code=303,
+        )
+    if expense.cfdi_report_id:
+        return RedirectResponse(
+            url=redirect_base + "&msg=" + quote("El cargo AMEX ya tenía CFDI vinculado."),
+            status_code=303,
+        )
+
+    suggestion = await validate_amex_cfdi_suggestion(session, expense, cfdi_uuid)
+    if not suggestion:
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("La sugerencia ya no cumple la regla de conciliación automática."),
+            status_code=303,
+        )
+
+    expense.cfdi_report_id = cfdi_uuid
+    expense.cfdi_uuid_manual = suggestion.cfdi_uuid
+    await session.commit()
+    return RedirectResponse(
+        url=redirect_base + "&msg=" + quote("CFDI vinculado al cargo AMEX."),
+        status_code=303,
+    )
+
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -16805,6 +16862,8 @@ async def amex_conciliacion_view(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    msg: Optional[str] = Query(None),
+    error_msg: Optional[str] = Query(None),
 ) -> str:
     """
     AMEX reconciliation dashboard.
@@ -16922,6 +16981,47 @@ async def amex_conciliacion_view(
         </tr>
         """
 
+    suggestion_rows_html = ""
+    suggestion_count = 0
+    for exp in expenses:
+        if exp.cfdi_report_id:
+            continue
+        suggestions = await suggest_amex_cfdi_matches(session, exp, limit=1)
+        if not suggestions:
+            continue
+        suggestion = suggestions[0]
+        suggestion_count += 1
+        confidence_color = "#2e7d32" if suggestion.confidence == "Alta" else "#b45309"
+        expense_ref = exp.numero_referencia or str(exp.id)[:8]
+        employee_name = exp.empleado.nombre if exp.empleado else "N/A"
+        suggestion_rows_html += f"""
+        <tr>
+            <td><a href="/gastos/{exp.id}" style="color:#0f766e;font-weight:700;text-decoration:none;">{escape(expense_ref)}</a></td>
+            <td>{escape(employee_name)}</td>
+            <td>{exp.fecha.date().isoformat() if exp.fecha else '—'}</td>
+            <td>{escape(exp.concepto or '—')}</td>
+            <td>{format_currency(float(exp.gasto_cantidad or 0))}</td>
+            <td><code>{escape(suggestion.cfdi_uuid)}</code><br><small>{escape(suggestion.emisor_nombre)} · {escape(suggestion.emisor_rfc)}</small></td>
+            <td>{escape(suggestion.cfdi_fecha)}<br><strong>{format_currency(suggestion.cfdi_total)}</strong></td>
+            <td><span style="background:{confidence_color};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">{suggestion.confidence} {suggestion.score}%</span><br><small>{escape(suggestion.reason)}</small></td>
+            <td>
+                <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi" style="margin:0;">
+                    <input type="hidden" name="expense_id" value="{exp.id}">
+                    <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    <input type="hidden" name="year" value="{selected_year}">
+                    <input type="hidden" name="month" value="{selected_month}">
+                    <button type="submit" class="button primary" style="padding:8px 10px;">Vincular</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    notice_html = ""
+    if msg:
+        notice_html = f'<div class="alert success">{escape(msg)}</div>'
+    elif error_msg:
+        notice_html = f'<div class="alert error">{escape(error_msg)}</div>'
+
     month_options = "".join(
         f'<option value="{m}" {"selected" if m == selected_month else ""}>{m:02d}</option>'
         for m in range(1, 13)
@@ -16949,6 +17049,11 @@ async def amex_conciliacion_view(
                 <strong>{len(pending_groups)}</strong>
                 <small>Grupos sin CFDI vinculado todavía.</small>
             </div>
+            <div class="meta-card">
+                <span>Sugerencias</span>
+                <strong>{suggestion_count}</strong>
+                <small>Cargos con CFDI probable para vincular.</small>
+            </div>
         </div>
     """
 
@@ -16975,6 +17080,7 @@ async def amex_conciliacion_view(
                 side_html=hero_side_html,
             )}
             <div class="stack">
+            {notice_html}
             <section class="surface">
                 <div class="section-head">
                     <div>
@@ -17010,6 +17116,41 @@ async def amex_conciliacion_view(
                     <span>Sin CFDI vinculado</span>
                     <strong>{len(pending_groups)}</strong>
                     <small>Capturas que siguen pendientes de amarre fiscal.</small>
+                </div>
+                <div class="meta-card">
+                    <span>Match automático</span>
+                    <strong>{suggestion_count}</strong>
+                    <small>Sugerencias por monto, fecha y texto contra CFDI SAT/XML.</small>
+                </div>
+            </section>
+
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Sugerencias</div>
+                        <h2>AMEX vs CFDI descargados</h2>
+                        <div class="section-note">Coincidencias propuestas por monto, fecha y datos del emisor. Requieren botón de Finanzas para vincular; no se aplican en silencio.</div>
+                    </div>
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Gasto</th>
+                                <th>Empleado</th>
+                                <th>Fecha cargo</th>
+                                <th>Concepto</th>
+                                <th>Monto AMEX</th>
+                                <th>CFDI sugerido</th>
+                                <th>Fecha / Total CFDI</th>
+                                <th>Confianza</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {suggestion_rows_html if suggestion_rows_html else '<tr><td colspan="9" class="section-note">Sin sugerencias automáticas para el periodo seleccionado.</td></tr>'}
+                        </tbody>
+                    </table>
                 </div>
             </section>
 
