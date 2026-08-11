@@ -16831,12 +16831,13 @@ async def amex_conciliacion_link_cfdi(
     month: Optional[int] = Form(None),
 ) -> RedirectResponse:
     redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_anchor = "#sugerencias"
     try:
         expense_uuid = UUIDType(expense_id)
         cfdi_uuid = UUIDType(cfdi_report_id)
     except (ValueError, TypeError):
         return RedirectResponse(
-            url=redirect_base + "&error_msg=" + quote("Identificador inválido para vincular CFDI."),
+            url=redirect_base + "&error_msg=" + quote("Identificador inválido para vincular CFDI.") + redirect_anchor,
             status_code=303,
         )
 
@@ -16848,19 +16849,19 @@ async def amex_conciliacion_link_cfdi(
     expense = result.scalar_one_or_none()
     if not expense or expense.origen != "amex_batch" or expense.estado_gasto != "activo":
         return RedirectResponse(
-            url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación."),
+            url=redirect_base + "&error_msg=" + quote("El cargo AMEX ya no está disponible para vinculación.") + redirect_anchor,
             status_code=303,
         )
     if expense.cfdi_report_id:
         return RedirectResponse(
-            url=redirect_base + "&msg=" + quote("El cargo AMEX ya tenía CFDI vinculado."),
+            url=redirect_base + "&msg=" + quote("El cargo AMEX ya tenía CFDI vinculado.") + redirect_anchor,
             status_code=303,
         )
 
     suggestion = await validate_amex_cfdi_suggestion(session, expense, cfdi_uuid)
     if not suggestion:
         return RedirectResponse(
-            url=redirect_base + "&error_msg=" + quote("La sugerencia ya no cumple la regla de conciliación automática."),
+            url=redirect_base + "&error_msg=" + quote("La sugerencia ya no cumple la regla de conciliación automática.") + redirect_anchor,
             status_code=303,
         )
 
@@ -16868,9 +16869,82 @@ async def amex_conciliacion_link_cfdi(
     expense.cfdi_uuid_manual = suggestion.cfdi_uuid
     await session.commit()
     return RedirectResponse(
-        url=redirect_base + "&msg=" + quote("CFDI vinculado al cargo AMEX."),
+        url=redirect_base + "&msg=" + quote("CFDI vinculado al cargo AMEX.") + redirect_anchor,
         status_code=303,
     )
+
+
+@router.post("/admin/gastos/amex/conciliacion/vincular-cfdi-masivo")
+async def amex_conciliacion_link_cfdi_bulk(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    selected_links: List[str] = Form(default=[]),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    redirect_anchor = "#sugerencias"
+    if not selected_links:
+        return RedirectResponse(
+            url=redirect_base
+            + "&error_msg="
+            + quote("Selecciona al menos una sugerencia para vincular.")
+            + redirect_anchor,
+            status_code=303,
+        )
+
+    parsed_pairs: list[tuple[UUIDType, UUIDType]] = []
+    for raw in selected_links:
+        try:
+            expense_raw, cfdi_raw = str(raw or "").split(":", 1)
+            parsed_pairs.append((UUIDType(expense_raw), UUIDType(cfdi_raw)))
+        except (ValueError, TypeError):
+            return RedirectResponse(
+                url=redirect_base
+                + "&error_msg="
+                + quote("Una seleccion tiene identificadores invalidos.")
+                + redirect_anchor,
+                status_code=303,
+            )
+
+    linked_count = 0
+    skipped_count = 0
+    for expense_uuid, cfdi_uuid in parsed_pairs:
+        result = await session.execute(
+            select(ExpenseReport)
+            .options(selectinload(ExpenseReport.cfdi_report))
+            .where(ExpenseReport.id == expense_uuid)
+        )
+        expense = result.scalar_one_or_none()
+        if (
+            not expense
+            or expense.origen != "amex_batch"
+            or expense.estado_gasto != "activo"
+            or expense.cfdi_report_id
+        ):
+            skipped_count += 1
+            continue
+        suggestion = await validate_amex_cfdi_suggestion(session, expense, cfdi_uuid)
+        if not suggestion:
+            skipped_count += 1
+            continue
+        expense.cfdi_report_id = cfdi_uuid
+        expense.cfdi_uuid_manual = suggestion.cfdi_uuid
+        linked_count += 1
+
+    if linked_count:
+        await session.commit()
+    else:
+        await session.rollback()
+
+    msg = f"CFDI vinculado a {linked_count} cargo(s) AMEX."
+    if skipped_count:
+        msg += f" {skipped_count} seleccion(es) se omitieron porque ya no estaban disponibles o no validaron."
+    return RedirectResponse(
+        url=redirect_base + "&msg=" + quote(msg) + redirect_anchor,
+        status_code=303,
+    )
+
 
 
 
@@ -17156,6 +17230,9 @@ async def amex_conciliacion_view(
         employee_name = exp.empleado.nombre if exp.empleado else "N/A"
         suggestion_rows_html += f"""
         <tr>
+            <td style="text-align:center;">
+                <input type="checkbox" name="selected_links" value="{exp.id}:{suggestion.cfdi_report_id}" form="amex-bulk-link-form" aria-label="Seleccionar {escape(expense_ref)} para vinculacion masiva">
+            </td>
             <td><a href="/gastos/{exp.id}" style="color:#0f766e;font-weight:700;text-decoration:none;">{escape(expense_ref)}</a></td>
             <td>{escape(employee_name)}</td>
             <td>{exp.fecha.date().isoformat() if exp.fecha else '—'}</td>
@@ -17390,7 +17467,7 @@ async def amex_conciliacion_view(
                 </div>
             </section>
 
-            <section class="surface">
+            <section id="sugerencias" class="surface">
                 <div class="section-head">
                     <div>
                         <div class="eyebrow">Sugerencias</div>
@@ -17398,10 +17475,17 @@ async def amex_conciliacion_view(
                         <div class="section-note">Coincidencias propuestas por monto, fecha y datos del emisor. Requieren botón de Finanzas para vincular; no se aplican en silencio.</div>
                     </div>
                 </div>
+                <form id="amex-bulk-link-form" method="POST" action="/admin/gastos/amex/conciliacion/vincular-cfdi-masivo#sugerencias" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+                    <input type="hidden" name="year" value="{selected_year}">
+                    <input type="hidden" name="month" value="{selected_month}">
+                    <button type="submit" class="button primary" onclick="return confirm('Vincular todas las sugerencias seleccionadas?');">Vincular seleccionados</button>
+                    <span class="section-note">Marca varios cargos y vinculalos en una sola accion. Cada fila se vuelve a validar antes de guardar.</span>
+                </form>
                 <div class="table-shell">
                     <table>
                         <thead>
                             <tr>
+                                <th style="width:56px;">Vincular</th>
                                 <th>Gasto</th>
                                 <th>Empleado</th>
                                 <th>Fecha cargo</th>
