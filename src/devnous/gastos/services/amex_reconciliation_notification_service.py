@@ -18,7 +18,7 @@ from typing import Any, Iterable, Literal
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Empleado, ExpenseReport
+from ..models import AmexCardAccount, Empleado, ExpenseReport
 from .amex_expense_service import FINANCE_AMEX_ROLES
 from .telegram_outbox_service import deliver_telegram_notification
 
@@ -48,6 +48,9 @@ class AmexReconciliationPeriodSummary:
     total_amount: Decimal
     linked_amount: Decimal
     pending_amount: Decimal
+    card_label: str | None = None
+    cardholder_key: str | None = None
+    card_last4: str | None = None
 
     @property
     def period_label(self) -> str:
@@ -114,17 +117,19 @@ async def build_amex_reconciliation_period_summary(
     *,
     year: int,
     month: int,
+    card_account: AmexCardAccount | None = None,
 ) -> AmexReconciliationPeriodSummary:
     start_dt, end_dt = _period_bounds(year, month)
+    conditions = [
+        ExpenseReport.origen == "amex_batch",
+        ExpenseReport.estado_gasto == "activo",
+        ExpenseReport.fecha >= start_dt,
+        ExpenseReport.fecha < end_dt,
+    ]
+    if card_account is not None:
+        conditions.append(ExpenseReport.ultimos_4_digitos == card_account.last4)
     result = await session.execute(
-        select(ExpenseReport).where(
-            and_(
-                ExpenseReport.origen == "amex_batch",
-                ExpenseReport.estado_gasto == "activo",
-                ExpenseReport.fecha >= start_dt,
-                ExpenseReport.fecha < end_dt,
-            )
-        )
+        select(ExpenseReport).where(and_(*conditions))
     )
     expenses = list(result.scalars().all())
     total = Decimal("0.00")
@@ -150,6 +155,9 @@ async def build_amex_reconciliation_period_summary(
         total_amount=total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         linked_amount=linked.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         pending_amount=pending.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        card_label=getattr(card_account, "card_label", None),
+        cardholder_key=getattr(card_account, "cardholder_key", None),
+        card_last4=getattr(card_account, "last4", None),
     )
 
 
@@ -186,7 +194,11 @@ def amex_reconciliation_notification_type(
     year: int,
     month: int,
     kind: Literal["authorization", "awareness"],
+    card_last4: str | None = None,
 ) -> str:
+    suffix = "".join(ch for ch in str(card_last4 or "") if ch.isdigit())
+    if suffix:
+        return f"amex_reconciliation_validation_{kind}_{year:04d}_{month:02d}_{suffix}"
     return f"amex_reconciliation_validation_{kind}_{year:04d}_{month:02d}"
 
 
@@ -195,6 +207,14 @@ def _module_url(year: int, month: int) -> str:
         os.getenv("APP_URL") or os.getenv("SAMCHAT_APP_URL") or "https://sam.chat"
     ).rstrip("/")
     return f"{base}/admin/gastos/amex/conciliacion?year={year:04d}&month={month:02d}"
+
+
+def _card_label(summary: AmexReconciliationPeriodSummary) -> str:
+    parts = [summary.card_label, summary.cardholder_key]
+    label = " - ".join(str(part).strip() for part in parts if str(part or "").strip())
+    if summary.card_last4:
+        label = f"{label} - ****{summary.card_last4}" if label else f"****{summary.card_last4}"
+    return label or "-"
 
 
 def build_amex_reconciliation_validation_message(
@@ -220,6 +240,7 @@ def build_amex_reconciliation_validation_message(
             "",
             intro,
             f"*Periodo* {summary.period_label}",
+            f"*Tarjeta* {_card_label(summary)}",
             f"*Validó* {actor_name}",
             f"*Cargos AMEX* {summary.charge_count}",
             f"*Total AMEX* {_mxn(summary.total_amount)}",
@@ -237,6 +258,7 @@ async def notify_amex_reconciliation_validated(
     year: int,
     month: int,
     actor: Empleado,
+    card_account: AmexCardAccount | None = None,
 ) -> AmexReconciliationNotificationResult:
     role = (getattr(actor, "rol", "") or "").strip().lower()
     if role not in FINANCE_AMEX_ROLES:
@@ -247,8 +269,14 @@ async def notify_amex_reconciliation_validated(
         session,
         year=year,
         month=month,
+        card_account=card_account,
     )
     if summary.charge_count <= 0:
+        if card_account is not None:
+            raise AmexReconciliationNotificationError(
+                "No hay cargos AMEX activos para la tarjeta seleccionada en el periodo. "
+                "Verifica que el estado de cuenta se haya cargado con los ultimos 4 correctos."
+            )
         raise AmexReconciliationNotificationError(
             "No hay cargos AMEX activos para el periodo seleccionado."
         )
@@ -267,6 +295,7 @@ async def notify_amex_reconciliation_validated(
             year=year,
             month=month,
             kind=kind,
+            card_last4=summary.card_last4,
         )
         for recipient in recipients:
             ok = await deliver_telegram_notification(

@@ -63,6 +63,11 @@ async def test_notify_amex_reconciliation_validated_routes_benjamin_and_awarenes
         )
     )
     actor = SimpleNamespace(id=uuid4(), nombre="Finanzas", rol="finanzas")
+    card = SimpleNamespace(
+        card_label="AMEX FGV 45007",
+        cardholder_key="FGV",
+        last4="5007",
+    )
     calls = []
 
     async def fake_deliver(session_arg, **kwargs):
@@ -76,6 +81,7 @@ async def test_notify_amex_reconciliation_validated_routes_benjamin_and_awarenes
         year=2026,
         month=8,
         actor=actor,
+        card_account=card,
     )
 
     assert result.summary.charge_count == 2
@@ -89,14 +95,16 @@ async def test_notify_amex_reconciliation_validated_routes_benjamin_and_awarenes
     assert {call["recipient_empleado_id"] for call in calls[1:]} == {fgv.id, lao.id}
     assert (
         calls[0]["notification_type"]
-        == "amex_reconciliation_validation_authorization_2026_08"
+        == "amex_reconciliation_validation_authorization_2026_08_5007"
     )
     assert (
         calls[1]["notification_type"]
-        == "amex_reconciliation_validation_awareness_2026_08"
+        == "amex_reconciliation_validation_awareness_2026_08_5007"
     )
     assert "autorización" in calls[0]["header_text"].lower()
     assert "2026-08" in calls[0]["text"]
+    assert "AMEX FGV 45007" in calls[0]["text"]
+    assert "****5007" in calls[0]["text"]
 
 
 @pytest.mark.asyncio
@@ -115,7 +123,25 @@ async def test_notify_amex_reconciliation_validated_requires_finance_role():
     session.execute.assert_not_called()
 
 
-def test_amex_reconciliation_notification_type_is_period_scoped():
+def test_amex_reconciliation_notification_type_is_card_scoped():
+    assert (
+        svc.amex_reconciliation_notification_type(
+            year=2026,
+            month=8,
+            kind="authorization",
+            card_last4="5007",
+        )
+        == "amex_reconciliation_validation_authorization_2026_08_5007"
+    )
+    assert (
+        svc.amex_reconciliation_notification_type(
+            year=2026,
+            month=8,
+            kind="authorization",
+            card_last4="1234",
+        )
+        == "amex_reconciliation_validation_authorization_2026_08_1234"
+    )
     assert (
         svc.amex_reconciliation_notification_type(
             year=2026,
@@ -123,12 +149,4 @@ def test_amex_reconciliation_notification_type_is_period_scoped():
             kind="authorization",
         )
         == "amex_reconciliation_validation_authorization_2026_08"
-    )
-    assert (
-        svc.amex_reconciliation_notification_type(
-            year=2026,
-            month=9,
-            kind="authorization",
-        )
-        == "amex_reconciliation_validation_authorization_2026_09"
     )
