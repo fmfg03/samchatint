@@ -42,3 +42,13 @@ def test_amex_reconciliation_validation_notification_surface_is_exposed():
     assert "/admin/gastos/amex/conciliacion/validar-notificar" in source
     assert "Validar y notificar" in source
     assert "notify_amex_reconciliation_validated" in source
+
+
+def test_amex_card_payment_run_surface_is_exposed():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert "/admin/gastos/amex/conciliacion/programar-pago" in source
+    assert "Programar pago de AMEX" in source
+    assert "Enviar a Payment Run" in source
+    assert "create_amex_card_payment_request" in source
+    assert "list_amex_card_accounts(session)" in source

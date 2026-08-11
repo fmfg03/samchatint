@@ -96,6 +96,13 @@ from ..services.amex_fee_interest_service import (
     AmexFeeInterestError,
     apply_amex_fee_interest_p1218,
 )
+from ..services.amex_card_payment_service import (
+    AmexCardPaymentError,
+    AmexCardPaymentRequest,
+    create_amex_card_payment_request,
+    parse_amex_payment_amount,
+    parse_amex_payment_date,
+)
 from ..services.amex_reconciliation_notification_service import (
     AmexReconciliationNotificationError,
     notify_amex_reconciliation_validated,
@@ -16928,6 +16935,51 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
 
 
 
+@router.post("/admin/gastos/amex/conciliacion/programar-pago")
+async def amex_conciliacion_schedule_card_payment(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    amex_card_account_id: str = Form(...),
+    monto_pago: str = Form(...),
+    fecha_pago: str = Form(...),
+    pago_urgente: Optional[str] = Form(None),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    selected_year = year or datetime.utcnow().year
+    selected_month = month or datetime.utcnow().month
+    redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
+    try:
+        card_account_uuid = UUIDType(amex_card_account_id)
+        payment_request = AmexCardPaymentRequest(
+            card_account_id=card_account_uuid,
+            amount=parse_amex_payment_amount(monto_pago),
+            fecha_pago=parse_amex_payment_date(fecha_pago),
+            urgent=bool(pago_urgente),
+        )
+        result = await create_amex_card_payment_request(
+            session,
+            actor=current_empleado,
+            request=payment_request,
+        )
+    except (ValueError, TypeError) as exc:
+        message = exc.message if isinstance(exc, AmexCardPaymentError) else "No se pudo programar el pago AMEX."
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote(message),
+            status_code=303,
+        )
+
+    msg = (
+        "Pago AMEX enviado a Payment Run como "
+        f"{result.documento.numero_referencia}. Revísalo en Programación de pagos."
+    )
+    return RedirectResponse(
+        url=redirect_base + "&msg=" + quote(msg),
+        status_code=303,
+    )
+
+
+
 @router.post("/admin/gastos/amex/conciliacion/validar-notificar")
 async def amex_conciliacion_validate_notify(
     session: AsyncSession = Depends(get_db_session),
@@ -17003,6 +17055,7 @@ async def amex_conciliacion_view(
         .order_by(ExpenseReport.fecha.asc())
     )
     expenses = expenses_result.scalars().all()
+    amex_card_accounts = await list_amex_card_accounts(session)
 
     linked_groups: Dict[tuple, Dict[str, Any]] = {}
     pending_groups: Dict[tuple, Dict[str, Any]] = {}
@@ -17169,6 +17222,16 @@ async def amex_conciliacion_view(
         f'<option value="{y}" {"selected" if y == selected_year else ""}>{y}</option>'
         for y in range(now.year - 2, now.year + 2)
     )
+    card_account_options = "".join(
+        f'<option value="{card.id}">{escape(card.card_label or "AMEX")} · {escape(card.cardholder_key)} · ****{escape(card.last4)} · {escape(getattr(card.liability_cuenta_contable, "codigo", "sin cuenta"))}</option>'
+        for card in amex_card_accounts
+    )
+    card_payment_disabled = "" if card_account_options else "disabled"
+    card_payment_help = (
+        "Selecciona tarjeta, monto y fecha. El sistema crea una SOLICITUD aprobada para Payment Run; Finanzas confirmará el pago después."
+        if card_account_options
+        else 'Primero configura las tarjetas y sus cuentas pasivo en <a href="/admin/gastos/amex/tarjetas">Catálogo tarjetas</a>.'
+    )
 
     hero_actions_html = f"""
         <a href="/gastos/carga-masiva-amex" class="button primary">Cargar AMEX</a>
@@ -17242,6 +17305,26 @@ async def amex_conciliacion_view(
                     <div><label>Año</label><select name="year">{year_options}</select></div>
                     <div><label>Mes</label><select name="month">{month_options}</select></div>
                     <div><label>&nbsp;</label><button type="submit" class="button primary">Filtrar</button></div>
+                </form>
+            </section>
+
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Payment Run</div>
+                        <h2>Programar pago de AMEX</h2>
+                        <div class="section-note">{card_payment_help}</div>
+                    </div>
+                    <a href="/admin/finanzas/payment-run" class="button secondary">Abrir Payment Run</a>
+                </div>
+                <form method="POST" action="/admin/gastos/amex/conciliacion/programar-pago" class="toolbar" onsubmit="return confirm('¿Enviar este pago AMEX a Payment Run?');">
+                    <input type="hidden" name="year" value="{selected_year}">
+                    <input type="hidden" name="month" value="{selected_month}">
+                    <div style="min-width:320px;flex:2;"><label>Tarjeta AMEX</label><select name="amex_card_account_id" required {card_payment_disabled}>{card_account_options}</select></div>
+                    <div><label>Monto a pagar</label><input name="monto_pago" inputmode="decimal" placeholder="0.00" required {card_payment_disabled}></div>
+                    <div><label>Fecha de pago</label><input type="date" name="fecha_pago" required {card_payment_disabled}></div>
+                    <div><label>Urgente</label><label style="display:flex;align-items:center;gap:8px;font-weight:700;color:#0f172a;"><input type="checkbox" name="pago_urgente" value="1" {card_payment_disabled}> Sí</label></div>
+                    <div><label>&nbsp;</label><button type="submit" class="button primary" {card_payment_disabled}>Enviar a Payment Run</button></div>
                 </form>
             </section>
 
