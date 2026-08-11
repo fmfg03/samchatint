@@ -52,3 +52,15 @@ def test_amex_card_payment_run_surface_is_exposed():
     assert "Enviar a Payment Run" in source
     assert "create_amex_card_payment_request" in source
     assert "list_amex_card_accounts(session)" in source
+
+
+def test_amex_bulk_cfdi_linking_surface_keeps_user_in_suggestions():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert '"/admin/gastos/amex/conciliacion/vincular-cfdi-masivo"' in source
+    assert 'id="amex-bulk-link-form"' in source
+    assert 'name="selected_links"' in source
+    assert 'form="amex-bulk-link-form"' in source
+    assert 'id="sugerencias"' in source
+    assert 'redirect_anchor = "#sugerencias"' in source
+    assert 'Vincular seleccionados' in source
