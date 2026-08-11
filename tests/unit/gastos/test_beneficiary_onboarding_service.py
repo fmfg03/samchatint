@@ -294,6 +294,93 @@ async def test_create_request_persists_required_attachments(monkeypatch):
     }
 
 
+def test_any_active_employee_can_request_beneficiary_onboarding() -> None:
+    assert svc.can_create_beneficiary_onboarding_request(
+        SimpleNamespace(id=uuid4(), rol="empleado", departamento="Administración", activo=True)
+    )
+    assert not svc.can_create_beneficiary_onboarding_request(
+        SimpleNamespace(id=uuid4(), rol="empleado", departamento="Operaciones", activo=False)
+    )
+
+
+@pytest.mark.asyncio
+async def test_create_request_loads_area_approver_from_persisted_employee(monkeypatch):
+    requester_id = uuid4()
+    approver_id = uuid4()
+    requester = SimpleNamespace(
+        id=requester_id,
+        rol="empleado",
+        departamento="Administración",
+        correo="usuario@plataformasports.com",
+        activo=True,
+        aprobador_id=None,
+    )
+    persisted_requester = SimpleNamespace(id=requester_id, aprobador_id=approver_id)
+    approver = SimpleNamespace(id=approver_id)
+    monkeypatch.setattr(svc, "_ensure_no_active_duplicate", AsyncMock())
+    monkeypatch.setattr(svc, "_notify_employee", AsyncMock())
+    added = []
+
+    async def fake_flush():
+        for obj in added:
+            if isinstance(obj, BeneficiaryOnboardingRequest) and obj.id is None:
+                obj.id = uuid4()
+            if isinstance(obj, BeneficiaryOnboardingAttachment) and obj.id is None:
+                obj.id = uuid4()
+
+    session = SimpleNamespace(
+        add=lambda obj: added.append(obj),
+        get=AsyncMock(side_effect=[persisted_requester, approver]),
+        flush=AsyncMock(side_effect=fake_flush),
+        commit=AsyncMock(),
+        refresh=AsyncMock(),
+    )
+
+    result = await svc.create_beneficiary_onboarding_request(
+        session,
+        requester=requester,
+        payload=svc.BeneficiaryOnboardingInput(
+            target_tipo="empleado",
+            nombre="Empleado con cuenta",
+            cuenta_clabe="123456789012345678",
+        ),
+        attachments=[_attachment("caratula_estado_cuenta")],
+    )
+
+    assert result.area_approver_id == approver_id
+    assert session.get.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_create_request_still_fails_when_persisted_employee_has_no_area_approver():
+    requester_id = uuid4()
+    requester = SimpleNamespace(
+        id=requester_id,
+        rol="empleado",
+        departamento="Administración",
+        correo="usuario@plataformasports.com",
+        activo=True,
+        aprobador_id=None,
+    )
+    session = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(id=requester_id, aprobador_id=None))
+    )
+
+    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
+        await svc.create_beneficiary_onboarding_request(
+            session,
+            requester=requester,
+            payload=svc.BeneficiaryOnboardingInput(
+                target_tipo="empleado",
+                nombre="Empleado sin aprobador",
+                cuenta_clabe="123456789012345678",
+            ),
+            attachments=[_attachment("caratula_estado_cuenta")],
+        )
+
+    assert exc.value.code == "missing_area_approver"
+
+
 @pytest.mark.asyncio
 async def test_area_approval_moves_to_final_review_and_notifies_reviewers(monkeypatch):
     request = SimpleNamespace(
