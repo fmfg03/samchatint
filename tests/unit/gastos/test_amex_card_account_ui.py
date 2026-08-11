@@ -26,3 +26,11 @@ def test_amex_pase_monthly_matching_surface_is_exposed():
     assert "PASE mensual consolidado" in source
     assert "suggest_pase_monthly_cfdi_matches" in source
     assert "validate_pase_monthly_cfdi_suggestion" in source
+
+
+def test_amex_p1218_fee_interest_bulk_action_is_exposed():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert "p1218_fee_interest" in source
+    assert "Clasificar comisión/interés AMEX → P1218" in source
+    assert "apply_amex_fee_interest_p1218" in source

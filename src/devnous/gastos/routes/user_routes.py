@@ -92,6 +92,10 @@ from ..services.amex_card_account_service import (
     list_amex_liability_account_options,
     upsert_amex_card_account,
 )
+from ..services.amex_fee_interest_service import (
+    AmexFeeInterestError,
+    apply_amex_fee_interest_p1218,
+)
 from ..services.amex_cfdi_matching_service import (
     is_pase_expense,
     suggest_amex_cfdi_matches,
@@ -32510,7 +32514,7 @@ async def actualizar_gastos_amex_en_informe(
             status_code=403,
             detail="Solo Finanzas, Admin o Superadmin puede actualizar gastos AMEX.",
         )
-    if amex_action not in {"mark", "unmark"}:
+    if amex_action not in {"mark", "unmark", "p1218_fee_interest"}:
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
@@ -32520,6 +32524,26 @@ async def actualizar_gastos_amex_en_informe(
         )
     try:
         parsed_ids = [UUIDType(value) for value in expense_ids]
+        if amex_action == "p1218_fee_interest":
+            result = await apply_amex_fee_interest_p1218(
+                session,
+                cuenta_id=cuenta_id,
+                expense_ids=parsed_ids,
+                actor=current_empleado,
+            )
+            await session.commit()
+            return RedirectResponse(
+                url=_append_success_params(
+                    f"/informes-de-gastos/{cuenta_id}",
+                    success="amex_p1218_actualizado",
+                    msg=(
+                        f"{len(result.expenses)} gastos clasificados como "
+                        f"comisión/interés AMEX en P1218."
+                    ),
+                ),
+                status_code=303,
+            )
+
         changed = await set_company_amex_status(
             session,
             cuenta_id=cuenta_id,
@@ -32528,7 +32552,7 @@ async def actualizar_gastos_amex_en_informe(
             actor=current_empleado,
         )
         await session.commit()
-    except (ValueError, AmexExpenseError) as exc:
+    except (ValueError, AmexExpenseError, AmexFeeInterestError) as exc:
         await session.rollback()
         return RedirectResponse(
             url=_append_error_params(
@@ -33113,6 +33137,7 @@ async def cuenta_de_gastos_detail(
                     <option value="">Acción AMEX...</option>
                     <option value="mark">Marcar como gasto de AMEX</option>
                     <option value="unmark">Desmarcar gasto de AMEX</option>
+                    <option value="p1218_fee_interest">Clasificar comisión/interés AMEX → P1218</option>
                 </select>
                 <button type="submit" class="button primary">Aplicar a seleccionados</button>
             </div>
