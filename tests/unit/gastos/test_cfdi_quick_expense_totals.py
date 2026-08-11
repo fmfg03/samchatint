@@ -113,3 +113,66 @@ def test_quick_expense_taxes_are_net_of_retenciones() -> None:
     assert autofill is not None
     assert autofill.impuestos_y_retenciones == '12.00'
     assert autofill.total == '112.00'
+
+
+
+def _cfdi_xml_with_local_lodging_tax() -> str:
+    return '''<?xml version="1.0" encoding="UTF-8"?>
+    <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4"
+        xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital"
+        xmlns:implocal="http://www.sat.gob.mx/implocal"
+        Version="4.0" Serie="H" Folio="100" Fecha="2026-08-08T10:30:00"
+        Moneda="MXN" SubTotal="1000.00" Total="1196.00" TipoDeComprobante="I">
+        <cfdi:Emisor Rfc="HOT010101AAA" Nombre="HOTEL PRUEBA" RegimenFiscal="601" />
+        <cfdi:Receptor Rfc="PSP1705058S4" Nombre="PLATAFORMA SPORTS" DomicilioFiscalReceptor="06600" RegimenFiscalReceptor="601" UsoCFDI="G03" />
+        <cfdi:Conceptos>
+            <cfdi:Concepto ClaveProdServ="90111501" Cantidad="1" ClaveUnidad="E48" Descripcion="HOSPEDAJE" ValorUnitario="1000.00" Importe="1000.00">
+                <cfdi:Impuestos>
+                    <cfdi:Traslados>
+                        <cfdi:Traslado Base="1000.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="160.00" />
+                    </cfdi:Traslados>
+                </cfdi:Impuestos>
+            </cfdi:Concepto>
+        </cfdi:Conceptos>
+        <cfdi:Impuestos TotalImpuestosTrasladados="160.00">
+            <cfdi:Traslados>
+                <cfdi:Traslado Base="1000.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="160.00" />
+            </cfdi:Traslados>
+        </cfdi:Impuestos>
+        <cfdi:Complemento>
+            <implocal:ImpuestosLocales version="1.0" TotaldeRetenciones="0.00" TotaldeTraslados="36.00">
+                <implocal:TrasladosLocales ImpLocTrasladado="ISH" TasadeTraslado="3.60" Importe="36.00" />
+            </implocal:ImpuestosLocales>
+            <tfd:TimbreFiscalDigital UUID="22345678-1234-1234-1234-1234567890ab" FechaTimbrado="2026-08-08T10:31:00" />
+        </cfdi:Complemento>
+    </cfdi:Comprobante>
+    '''
+
+
+def test_quick_expense_xml_with_local_lodging_tax_accepts_total() -> None:
+    parsed = parse_cfdi_xml(_cfdi_xml_with_local_lodging_tax())
+
+    taxes = quick_expense_tax_components_from_parsed(parsed)
+    autofill = autofill_quick_expense_from_parsed_cfdi(parsed)
+    values = user_routes._quick_expense_values(
+        concepto=None,
+        fecha=None,
+        numero_factura=None,
+        subtotal=None,
+        descuento=None,
+        impuestos_y_retenciones=None,
+        xml_data=parsed,
+    )
+
+    assert taxes.subtotal == Decimal('1000')
+    assert taxes.impuestos_trasladados == Decimal('160')
+    assert taxes.impuestos_locales_trasladados == Decimal('36')
+    assert taxes.impuestos_y_retenciones == Decimal('196.00')
+    assert taxes.calculated_total == Decimal('1196.00')
+    assert taxes.total == Decimal('1196')
+    assert autofill is not None
+    assert autofill.impuestos_y_retenciones == '196.00'
+    assert autofill.total == '1196.00'
+    assert values['impuestos_y_retenciones'] == Decimal('196.00')
+    assert values['iva'] == Decimal('160.00')
+    assert values['total'] == Decimal('1196.00')

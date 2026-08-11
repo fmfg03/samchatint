@@ -90,11 +90,18 @@ class QuickExpenseTaxComponents:
     impuestos_trasladados: Decimal
     retenciones: Decimal
     iva: Decimal
+    impuestos_locales_trasladados: Decimal
+    impuestos_locales_retenidos: Decimal
     total: Decimal
 
     @property
     def impuestos_y_retenciones(self) -> Decimal:
-        return (self.impuestos_trasladados - self.retenciones).quantize(
+        return (
+            self.impuestos_trasladados
+            - self.retenciones
+            + self.impuestos_locales_trasladados
+            - self.impuestos_locales_retenidos
+        ).quantize(
             Decimal("0.01"),
             rounding=ROUND_HALF_UP,
         )
@@ -169,6 +176,28 @@ def _retenciones_from_parsed(parsed: Dict[str, Any]) -> Decimal:
     )
 
 
+
+def _impuestos_locales_from_parsed(parsed: Dict[str, Any]) -> Tuple[Decimal, Decimal]:
+    impuestos_detalle = parsed.get("impuestos_detalle") or {}
+    locales_list = list(impuestos_detalle.get("locales") or [])
+    trasladados = sum(
+        (
+            _decimal_money(item.get("importe"))
+            for item in locales_list
+            if str(item.get("tipo") or "").strip().lower() == "traslado"
+        ),
+        Decimal("0"),
+    )
+    retenidos = sum(
+        (
+            _decimal_money(item.get("importe"))
+            for item in locales_list
+            if str(item.get("tipo") or "").strip().lower() == "retencion"
+        ),
+        Decimal("0"),
+    )
+    return trasladados, retenidos
+
 def _iva_trasladado_from_parsed(parsed: Dict[str, Any]) -> Decimal:
     impuestos_detalle = parsed.get("impuestos_detalle") or {}
     traslados_list = list(impuestos_detalle.get("traslados") or [])
@@ -202,13 +231,14 @@ def quick_expense_tax_components_from_parsed(
     descuento = _decimal_money(parsed.get("descuento"))
     traslados = _traslados_from_parsed(parsed)
     retenciones = _retenciones_from_parsed(parsed)
+    locales_trasladados, locales_retenidos = _impuestos_locales_from_parsed(parsed)
     total = _decimal_money(parsed.get("total"))
 
     if total == 0 and subtotal > 0:
         total = compute_quick_expense_total(
             subtotal,
             descuento,
-            traslados - retenciones,
+            traslados - retenciones + locales_trasladados - locales_retenidos,
         )
 
     return QuickExpenseTaxComponents(
@@ -217,6 +247,8 @@ def quick_expense_tax_components_from_parsed(
         impuestos_trasladados=traslados,
         retenciones=retenciones,
         iva=_iva_trasladado_from_parsed(parsed),
+        impuestos_locales_trasladados=locales_trasladados,
+        impuestos_locales_retenidos=locales_retenidos,
         total=total,
     )
 

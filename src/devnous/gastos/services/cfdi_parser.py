@@ -185,10 +185,50 @@ def parse_cfdi_xml(xml_content: str) -> Dict[str, Any]:
                         }
                     )
 
-        # Combine traslados and retenciones in impuestos_detalle
+        # Extract local taxes from the ImpuestosLocales complement. Lodging
+        # invoices often include ISH here; it is part of Comprobante.Total but
+        # not part of cfdi:Impuestos totals, so downstream total validation must
+        # account for it explicitly.
+        impuestos_locales_list = []
+        impuestos_locales_elem = root.find(
+            ".//{http://www.sat.gob.mx/implocal}ImpuestosLocales"
+        )
+        if impuestos_locales_elem is None:
+            impuestos_locales_elem = root.find(".//ImpuestosLocales")
+
+        if impuestos_locales_elem is not None:
+            for traslado_local in impuestos_locales_elem.findall(
+                ".//{http://www.sat.gob.mx/implocal}TrasladosLocales"
+            ) or impuestos_locales_elem.findall(".//TrasladosLocales"):
+                impuestos_locales_list.append(
+                    {
+                        "tipo": "traslado",
+                        "impuesto": traslado_local.get("ImpLocTrasladado", ""),
+                        "tasa": float(
+                            traslado_local.get("TasadeTraslado", 0) or 0
+                        ),
+                        "importe": float(traslado_local.get("Importe", 0) or 0),
+                    }
+                )
+            for retencion_local in impuestos_locales_elem.findall(
+                ".//{http://www.sat.gob.mx/implocal}RetencionesLocales"
+            ) or impuestos_locales_elem.findall(".//RetencionesLocales"):
+                impuestos_locales_list.append(
+                    {
+                        "tipo": "retencion",
+                        "impuesto": retencion_local.get("ImpLocRetenido", ""),
+                        "tasa": float(
+                            retencion_local.get("TasadeRetencion", 0) or 0
+                        ),
+                        "importe": float(retencion_local.get("Importe", 0) or 0),
+                    }
+                )
+
+        # Combine traslados, retenciones and local taxes in impuestos_detalle
         impuestos_detalle = {
             "traslados": traslados_list,
             "retenciones": retenciones_list,
+            "locales": impuestos_locales_list,
         }
 
         # Extract main concepto descripcion (first concepto's descripcion)
