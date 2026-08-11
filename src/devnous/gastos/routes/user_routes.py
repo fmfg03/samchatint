@@ -16155,12 +16155,30 @@ async def carga_masiva_amex_get(
         .order_by(Empleado.nombre)
     )
     empleados = empleados_result.scalars().all()
+    amex_card_accounts = await list_amex_card_accounts(session)
 
     # Build empleado options
     empleado_options = '<option value="">-- Selecciona empleado titular --</option>'
     for empleado in empleados:
         rol_display = f" ({empleado.rol})" if empleado.rol else ""
         empleado_options += f'<option value="{empleado.id}">{empleado.nombre}{rol_display}</option>'
+
+    amex_card_options = '<option value="">-- Selecciona tarjeta AMEX --</option>'
+    for card in amex_card_accounts:
+        cuenta = getattr(card, "liability_cuenta_contable", None)
+        cuenta_label = getattr(cuenta, "codigo", None) or "sin cuenta"
+        amex_card_options += (
+            f'<option value="{card.id}">'
+            f'{escape(card.card_label or "AMEX")} - {escape(card.cardholder_key or "")} - '
+            f'****{escape(card.last4 or "")} - {escape(cuenta_label)}'
+            f'</option>'
+        )
+    card_disabled = "" if amex_card_accounts else "disabled"
+    card_help = (
+        "Selecciona la tarjeta del estado de cuenta. El sistema sellara todos los cargos con esos ultimos 4."
+        if amex_card_accounts
+        else 'Primero configura la tarjeta en <a href="/admin/gastos/amex/tarjetas">Catalogo tarjetas AMEX</a>.'
+    )
 
     # Get error/success message if present
     error_msg = request.query_params.get("error_msg", "")
@@ -16312,6 +16330,13 @@ async def carga_masiva_amex_get(
                                 </select>
                                 <small>Se usará para atribuir el gasto y el nombre del titular de tarjeta.</small>
                             </div>
+                            <div class="form-group">
+                                <label for="amex_card_account_id">Tarjeta AMEX <span class="required">*</span></label>
+                                <select name="amex_card_account_id" id="amex_card_account_id" required {card_disabled}>
+                                    {amex_card_options}
+                                </select>
+                                <small>{card_help}</small>
+                            </div>
                             <div class="form-group" style="grid-column:1/-1;">
                                 <label for="cfdi_uuid_mensual">UUID CFDI mensual consolidado</label>
                                 <input type="text" name="cfdi_uuid_mensual" id="cfdi_uuid_mensual" placeholder="Ej: C027C9F4-92CF-4190-BB89-3E76AB2ECA70">
@@ -16340,6 +16365,7 @@ async def carga_masiva_amex_post(
     current_empleado: Empleado = Depends(get_current_empleado),
     archivo_csv: UploadFile = File(...),
     empleado_id: str = Form(...),
+    amex_card_account_id: str = Form(...),
     cfdi_uuid_mensual: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
@@ -16400,6 +16426,32 @@ async def carga_masiva_amex_post(
                     error_msg="Debes seleccionar un empleado válido como titular de la tarjeta.",
                 ),
                 status_code=303
+            )
+
+        try:
+            amex_card_account_uuid = UUIDType(str(amex_card_account_id or "").strip())
+        except (ValueError, TypeError):
+            return RedirectResponse(
+                url=_append_error_params(
+                    "/gastos/carga-masiva-amex",
+                    error_msg="Debes seleccionar una tarjeta AMEX configurada.",
+                ),
+                status_code=303,
+            )
+        card_result = await session.execute(
+            select(AmexCardAccount).where(
+                AmexCardAccount.id == amex_card_account_uuid,
+                AmexCardAccount.active.is_(True),
+            )
+        )
+        amex_card_account = card_result.scalar_one_or_none()
+        if amex_card_account is None:
+            return RedirectResponse(
+                url=_append_error_params(
+                    "/gastos/carga-masiva-amex",
+                    error_msg="La tarjeta AMEX seleccionada no existe o no esta activa.",
+                ),
+                status_code=303,
             )
 
         # Optional consolidated monthly CFDI UUID for AMEX imports
@@ -16595,6 +16647,7 @@ async def carga_masiva_amex_post(
                     nombre_enviador=empleado.nombre,
                     tipo_gasto="manual",
                     metodo_pago="TARJETA CREDITO AMEX",
+                    ultimos_4_digitos=amex_card_account.last4,
                     origen="amex_batch",
                     # Do NOT set tournament_id, proyecto, rfc_id, or file fields
                 )
@@ -17060,16 +17113,35 @@ async def amex_conciliacion_validate_notify(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
+    amex_card_account_id: str = Form(...),
 ) -> RedirectResponse:
     selected_year = year or datetime.utcnow().year
     selected_month = month or datetime.utcnow().month
     redirect_base = f"/admin/gastos/amex/conciliacion?year={selected_year}&month={selected_month}"
     try:
+        try:
+            card_account_uuid = UUIDType(str(amex_card_account_id or "").strip())
+        except (ValueError, TypeError) as exc:
+            raise AmexReconciliationNotificationError(
+                "Selecciona la tarjeta AMEX que se esta validando."
+            ) from exc
+        card_result = await session.execute(
+            select(AmexCardAccount).where(
+                AmexCardAccount.id == card_account_uuid,
+                AmexCardAccount.active.is_(True),
+            )
+        )
+        card_account = card_result.scalar_one_or_none()
+        if card_account is None:
+            raise AmexReconciliationNotificationError(
+                "La tarjeta AMEX seleccionada no existe o no esta activa."
+            )
         result = await notify_amex_reconciliation_validated(
             session,
             year=selected_year,
             month=selected_month,
             actor=current_empleado,
+            card_account=card_account,
         )
     except AmexReconciliationNotificationError as exc:
         return RedirectResponse(
@@ -17314,10 +17386,11 @@ async def amex_conciliacion_view(
         <a href="/gastos/carga-masiva-amex" class="button primary">Cargar AMEX</a>
         <a href="/admin/gastos/amex/tarjetas" class="button secondary">Catálogo tarjetas</a>
         <a href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}" class="button secondary">Ir a conciliación contable</a>
-        <form method="POST" action="/admin/gastos/amex/conciliacion/validar-notificar" style="display:inline;margin:0;" onsubmit="return confirm('¿Validar la conciliación AMEX del periodo y notificar a Benjamín, LAO, FGV y FGN?');">
+        <form method="POST" action="/admin/gastos/amex/conciliacion/validar-notificar" style="display:inline-flex;gap:8px;align-items:center;margin:0;" onsubmit="return confirm('Validar la conciliacion AMEX de esta tarjeta y notificar a Benjamin, LAO, FGV y FGN?');">
             <input type="hidden" name="year" value="{selected_year}">
             <input type="hidden" name="month" value="{selected_month}">
-            <button type="submit" class="button primary">Validar y notificar</button>
+            <select name="amex_card_account_id" required {card_payment_disabled} style="width:auto;min-width:260px;padding:10px;border-radius:12px;border:1px solid #cbd5e1;">{card_account_options}</select>
+            <button type="submit" class="button primary" {card_payment_disabled}>Validar y notificar</button>
         </form>
     """
     hero_side_html = f"""
