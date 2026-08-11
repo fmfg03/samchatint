@@ -5285,6 +5285,7 @@ async def admin_sports_platform(
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Team</label><input name="team_id" value="{escape(str(team_id or ""))}" placeholder="team-id"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Match</label><input name="match_id" value="{escape(str(match_id or ""))}" placeholder="match-id"></div>'
                     '<button class="button" type="submit">Actualizar Sports</button>'
+                    '<a class="button secondary" href="/admin/sports/expediente-entidades">Expediente DG</a>'
                     '</form>'
                 ),
                 side_html=(
@@ -5512,6 +5513,249 @@ async def admin_sports_platform(
                 <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
                     {''.join(f'<span class="sports-chip">{escape(label)}</span>' for label in ["Action Queue", "One-click Ops Brief", "Mission Control", "Command Center", "Team Journey", "Match Center", "Readiness global", "Ops Copilot", "Public microsite", "Sponsor/Media", "Incident Center", "Venue Ops", "Post-tournament report", "Portal equipos", "Roster inteligente", "Matchday Ops", "Comunicación oficial", "Risk Radar", "Sports CRM", "Fan/Public Layer", "Mobile field app", "AI Ops Assistant"])}
                 </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/sports/expediente-entidades", response_class=HTMLResponse)
+async def admin_sports_director_general_entity_dossier(
+    request: Request,
+    current_empleado: Empleado = Depends(get_current_empleado),
+    tournament_key: str = Query("all"),
+    tournament_slug: Optional[str] = Query(None),
+    entity_name: Optional[str] = Query(None),
+):
+    """Director General entity dossier over the canonical tournament snapshot."""
+    from samchat.sports_platform import build_director_general_entity_dossier
+    from samchat.tournaments_v2.services import build_tournament_soul_snapshot
+
+    error_html = ""
+    dossier: dict[str, Any] = {"ok": False, "entities": [], "summary": {}}
+    try:
+        snapshot = await build_tournament_soul_snapshot(
+            tournament_key=tournament_key,
+            tournament_slug=tournament_slug,
+            include_communications=True,
+            include_media=True,
+            limit=500,
+        )
+        dossier = build_director_general_entity_dossier(snapshot)
+    except Exception as exc:
+        error_html = f"""
+            <div style="margin:16px 0;padding:14px;border:1px solid #fecaca;border-radius:14px;background:#fef2f2;color:#991b1b;">
+                No se pudo construir expediente DG: {escape(str(exc)[:220])}
+            </div>
+        """
+
+    entities = list(dossier.get("entities") or [])
+    selected_entity = next(
+        (
+            item
+            for item in entities
+            if str(item.get("entity_name") or "") == str(entity_name or "")
+        ),
+        entities[0] if entities else {},
+    )
+    active_entity_name = str(selected_entity.get("entity_name") or entity_name or "")
+    tournament = dossier.get("tournament") or {}
+    summary = dossier.get("summary") or {}
+    operations = selected_entity.get("operations") or {}
+    finance = selected_entity.get("finance") or {}
+    readiness = selected_entity.get("readiness") or {}
+    op_summary = operations.get("summary") or {}
+    doc_metrics = operations.get("document_metrics") or {}
+
+    def _dg_missing(value: object, fallback: str = "Sin dato capturado") -> str:
+        text = str(value or "").strip()
+        return escape(text if text else fallback)
+
+    def _dg_status_chip(value: object) -> str:
+        raw = str(value or "needs_data").strip()
+        color = "#166534" if raw == "usable" else "#92400e" if raw == "partial" else "#991b1b"
+        bg = "#dcfce7" if raw == "usable" else "#fef3c7" if raw == "partial" else "#fee2e2"
+        return f'<span class="dg-chip" style="background:{bg};color:{color};">{escape(raw)}</span>'
+
+    entity_options = "".join(
+        f'<option value="{escape(str(item.get("entity_name") or ""))}" {"selected" if str(item.get("entity_name") or "") == active_entity_name else ""}>{escape(str(item.get("entity_name") or "Sin entidad"))}</option>'
+        for item in entities
+    )
+    entity_rows = "".join(
+        f"""
+        <tr>
+            <td><a href="/admin/sports/expediente-entidades?tournament_key={quote(str(tournament_key or 'all'))}&tournament_slug={quote(str(tournament_slug or ''))}&entity_name={quote(str(item.get('entity_name') or ''))}">{escape(str(item.get("entity_name") or "Sin entidad"))}</a></td>
+            <td>{int(((item.get("operations") or {}).get("summary") or {}).get("teams_count") or 0)}</td>
+            <td>{int(((item.get("operations") or {}).get("summary") or {}).get("players_count") or 0)}</td>
+            <td>{_dg_status_chip((item.get("readiness") or {}).get("status"))}</td>
+            <td>{int((item.get("readiness") or {}).get("operations_pending_count") or 0)}</td>
+            <td>{int((item.get("readiness") or {}).get("finance_pending_count") or 0)}</td>
+        </tr>
+        """
+        for item in entities[:100]
+    )
+    contacts_html = "".join(
+        f"""
+        <div class="dg-card soft">
+            <div class="dg-label">Contacto entidad</div>
+            <div class="dg-title">{_dg_missing(contact.get("name"), "Sin nombre")}</div>
+            <div class="dg-muted">Tel: {_dg_missing(contact.get("phone"))}</div>
+            <div class="dg-muted">Correo: {_dg_missing(contact.get("email"))}</div>
+            <div class="dg-muted">Nacimiento / pareja: <strong>Sin dato capturado</strong></div>
+        </div>
+        """
+        for contact in list(operations.get("entity_contacts") or [])[:6]
+    ) or '<div class="dg-card soft"><div class="dg-title">Sin contacto capturado</div><div class="dg-muted">No se inventa teléfono, correo, nacimiento ni pareja. Falta cargarlo en el expediente.</div></div>'
+
+    real_team_rows = "".join(
+        f"""
+        <tr>
+            <td>{escape(str(row.get("category") or "-"))}</td>
+            <td>{escape(str(row.get("gender_or_branch") or "-"))}</td>
+            <td>{int(row.get("teams_count") or 0)}</td>
+            <td>{int(row.get("players_count") or 0)}</td>
+            <td>{escape(', '.join(list(row.get("team_names") or [])[:8]) or '-')}</td>
+        </tr>
+        """
+        for row in list(operations.get("real_teams_by_category_gender") or [])
+    )
+    player_rows = "".join(
+        f"""
+        <tr>
+            <td>{escape(str(row.get("category") or "-"))}</td>
+            <td>{escape(str(row.get("gender_or_branch") or "-"))}</td>
+            <td>{escape(str(row.get("age") or "Sin rollup de edad"))}</td>
+            <td>{int(row.get("players_count") or 0)}</td>
+            <td>{escape(str(row.get("age_status") or "-"))}</td>
+        </tr>
+        """
+        for row in list(operations.get("players_by_category_age_gender") or [])
+    )
+    operations_pending = "".join(
+        f"<li>{escape(str(item))}</li>" for item in list(operations.get("pending_fields") or [])
+    )
+    finance_pending = "".join(
+        f"<li>{escape(str(item))}</li>" for item in list(finance.get("pending_fields") or [])
+    )
+    non_claims = "".join(
+        f"<li>{escape(str(item))}</li>" for item in list(dossier.get("non_claims") or [])
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Expediente DG por entidad - SamChat</title>
+        <style>
+            {_admin_workspace_styles("1380px")}
+            .dg-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:14px; }}
+            .dg-two {{ display:grid; grid-template-columns: minmax(320px, .8fr) minmax(420px, 1.2fr); gap:16px; align-items:start; }}
+            @media (max-width: 980px) {{ .dg-two {{ grid-template-columns:1fr; }} }}
+            .dg-card {{ padding:16px; border:1px solid var(--shell-line); border-radius:18px; background:#fff; box-shadow:0 10px 24px rgba(15,23,42,.05); }}
+            .dg-card.soft {{ background:#f8fafc; }}
+            .dg-label {{ font-size:11px; text-transform:uppercase; letter-spacing:.12em; font-weight:900; color:#64748b; }}
+            .dg-title {{ margin-top:6px; font-size:20px; font-weight:950; color:#0f172a; line-height:1.15; }}
+            .dg-muted {{ margin-top:6px; color:#475569; font-size:13px; line-height:1.45; }}
+            .dg-chip {{ display:inline-flex; padding:5px 10px; border-radius:999px; font-size:12px; font-weight:900; }}
+            .dg-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .dg-table th, .dg-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .dg-table th {{ background:#0f766e; color:white; font-size:11px; text-transform:uppercase; letter-spacing:.1em; }}
+            .dg-table td {{ background:#fff; color:#334155; font-size:14px; }}
+            .dg-table tbody tr:nth-child(even) td {{ background:#f8fafc; }}
+            .dg-list {{ margin:10px 0 0 18px; color:#475569; line-height:1.55; }}
+            input, select {{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; background:#fff; color:var(--shell-ink); }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "sports", subtitle="Expediente ejecutivo DG por torneo y entidad.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Dirección General",
+                title="Expediente ejecutivo por entidad",
+                description="Carpeta read-only para que Dirección vea Operaciones y Finanzas por entidad participante. Los huecos se muestran como sin dato; SamChat no inventa información.",
+                actions_html=(
+                    '<form method="GET" action="/admin/sports/expediente-entidades" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end;">'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Scope torneo</label><input name="tournament_key" value="{escape(str(tournament_key or "all"))}" placeholder="all"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Slug torneo</label><input name="tournament_slug" value="{escape(str(tournament_slug or ""))}" placeholder="opcional"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Entidad</label><select name="entity_name"><option value="">Primera entidad disponible</option>{entity_options}</select></div>'
+                    '<button class="button" type="submit">Abrir expediente</button>'
+                    '<a class="button secondary" href="/admin/sports">Command Center</a>'
+                    '</form>'
+                ),
+                side_html=(
+                    f'<div class="dg-label">Torneo</div><div class="dg-title">{escape(str(tournament.get("name") or "Sin torneo"))}</div>'
+                    f'<div class="dg-muted">{escape(str(tournament.get("slug") or tournament_slug or tournament_key))}</div>'
+                    f'<div style="margin-top:12px;">{_dg_status_chip(readiness.get("status"))}</div>'
+                ),
+            )}
+            {error_html}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Resumen DG</div>
+                <div class="workspace-section-subtitle">Corte del expediente. V1 usa datos reales del snapshot operativo; finanzas por entidad queda marcada como puente pendiente.</div>
+                <div class="dg-grid" style="margin-top:14px;">
+                    <div class="dg-card"><div class="dg-label">Entidades</div><div class="dg-title">{int(summary.get("entities_count") or 0)}</div><div class="dg-muted">Carpetas participantes</div></div>
+                    <div class="dg-card"><div class="dg-label">Equipos</div><div class="dg-title">{int(summary.get("teams_count") or 0)}</div><div class="dg-muted">Equipos reales registrados</div></div>
+                    <div class="dg-card"><div class="dg-label">Jugadores</div><div class="dg-title">{int(summary.get("players_count") or 0)}</div><div class="dg-muted">Roster agregado</div></div>
+                    <div class="dg-card"><div class="dg-label">Usables / parciales</div><div class="dg-title">{int(summary.get("usable_entities") or 0)} / {int(summary.get("partial_entities") or 0)}</div><div class="dg-muted">Expedientes con datos suficientes</div></div>
+                </div>
+            </section>
+            <section class="dg-two" style="margin-bottom:18px;">
+                <div class="workspace-card">
+                    <div class="workspace-section-title">Entidades</div>
+                    <div class="workspace-section-subtitle">Selecciona una carpeta para revisar su detalle.</div>
+                    <table class="dg-table" style="margin-top:12px;">
+                        <thead><tr><th>Entidad</th><th>Eq.</th><th>Jug.</th><th>Status</th><th>Pend. Ops</th><th>Pend. Fin</th></tr></thead>
+                        <tbody>{entity_rows or '<tr><td colspan="6">Sin entidades en el snapshot.</td></tr>'}</tbody>
+                    </table>
+                </div>
+                <div class="workspace-card">
+                    <div class="workspace-section-title">{escape(active_entity_name or "Sin entidad")}</div>
+                    <div class="workspace-section-subtitle">Ficha ejecutiva por entidad. Solicitante de datos: Dirección General.</div>
+                    <div class="dg-grid" style="margin-top:14px;">
+                        <div class="dg-card soft"><div class="dg-label">Responsable PS</div><div class="dg-title">Sin dato</div><div class="dg-muted">Campo previsto; falta asignación explícita.</div></div>
+                        <div class="dg-card soft"><div class="dg-label">Equipos reales</div><div class="dg-title">{int(op_summary.get("teams_count") or 0)}</div><div class="dg-muted">Separados por categoría/género abajo.</div></div>
+                        <div class="dg-card soft"><div class="dg-label">Jugadores</div><div class="dg-title">{int(op_summary.get("players_count") or 0)}</div><div class="dg-muted">Edad queda pendiente hasta rollup por nacimiento.</div></div>
+                        <div class="dg-card soft"><div class="dg-label">Documentos completos</div><div class="dg-title">{float(doc_metrics.get("completion_rate") or 0) * 100:.1f}%</div><div class="dg-muted">Verificados {float(doc_metrics.get("verification_rate") or 0) * 100:.1f}%.</div></div>
+                    </div>
+                    <div style="margin-top:16px;" class="dg-grid">{contacts_html}</div>
+                </div>
+            </section>
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Operaciones</div>
+                <div class="workspace-section-subtitle">Campos pedidos por Dirección: equipos, jugadores, rondas, fase estatal, uniformes, viajes y clasificación.</div>
+                <h3>Equipos reales por categoría/género</h3>
+                <table class="dg-table">
+                    <thead><tr><th>Categoría</th><th>Género/rama</th><th>Equipos</th><th>Jugadores</th><th>Nombres</th></tr></thead>
+                    <tbody>{real_team_rows or '<tr><td colspan="5">Sin equipos reales capturados.</td></tr>'}</tbody>
+                </table>
+                <h3 style="margin-top:18px;">Jugadores por categoría/edad/género</h3>
+                <table class="dg-table">
+                    <thead><tr><th>Categoría</th><th>Género/rama</th><th>Edad</th><th>Jugadores</th><th>Status</th></tr></thead>
+                    <tbody>{player_rows or '<tr><td colspan="5">Sin jugadores capturados.</td></tr>'}</tbody>
+                </table>
+                <h3 style="margin-top:18px;">Pendientes de captura operacional</h3>
+                <ul class="dg-list">{operations_pending or '<li>Sin pendientes operativos detectados.</li>'}</ul>
+            </section>
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Finanzas</div>
+                <div class="workspace-section-subtitle">Primera ayuda, pagos sucesivos, equipamiento, visitas y gastos por visita. En esta primera entrega queda visible el hueco para conectar fuentes contables reales por entidad.</div>
+                <div class="dg-grid" style="margin-top:14px;">
+                    <div class="dg-card soft"><div class="dg-label">Ayudas / pagos</div><div class="dg-title">0</div><div class="dg-muted">{escape(str(finance.get("source_status") or "pending"))}</div></div>
+                    <div class="dg-card soft"><div class="dg-label">Equipamiento</div><div class="dg-title">0</div><div class="dg-muted">Uniformes, balones y utilería pendientes de puente.</div></div>
+                    <div class="dg-card soft"><div class="dg-label">Visitas</div><div class="dg-title">0</div><div class="dg-muted">Informes AZ/CL pendientes de evidencia.</div></div>
+                    <div class="dg-card soft"><div class="dg-label">Gastos visitas</div><div class="dg-title">0</div><div class="dg-muted">Cruce con informes/solicitudes pendiente.</div></div>
+                </div>
+                <h3 style="margin-top:18px;">Pendientes de captura financiera</h3>
+                <ul class="dg-list">{finance_pending or '<li>Sin pendientes financieros detectados.</li>'}</ul>
+            </section>
+            <section class="workspace-card">
+                <div class="workspace-section-title">Límites de la carpeta</div>
+                <div class="workspace-section-subtitle">Esto protege el estándar: si no hay fuente, se declara como faltante.</div>
+                <ul class="dg-list">{non_claims}</ul>
             </section>
         </div>
     </body>

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from devnous.gastos.routes.admin_routes import admin_sports_platform
-from samchat.sports_platform import build_sports_platform_snapshot
+from samchat.sports_platform import (
+    build_director_general_entity_dossier,
+    build_sports_platform_snapshot,
+)
 
 
 def _snapshot():
@@ -201,22 +205,27 @@ def test_sponsor_media_declares_marketing_accelerator_modules():
         modules_by_id["sponsor_obligation_tracker"]["function"]
         == "track_sponsor_deliverables_against_contract_commitments"
     )
-    assert "sponsor_deliverable_matrix" in modules_by_id[
-        "sponsor_obligation_tracker"
-    ]["outputs"]
-    assert "missing_evidence_alerts" in modules_by_id[
-        "sponsor_obligation_tracker"
-    ]["outputs"]
-    assert "logo_presence_checks" in modules_by_id[
-        "brand_compliance_logo_evidence"
-    ]["outputs"]
+    assert (
+        "sponsor_deliverable_matrix"
+        in modules_by_id["sponsor_obligation_tracker"]["outputs"]
+    )
+    assert (
+        "missing_evidence_alerts"
+        in modules_by_id["sponsor_obligation_tracker"]["outputs"]
+    )
+    assert (
+        "logo_presence_checks"
+        in modules_by_id["brand_compliance_logo_evidence"]["outputs"]
+    )
     assert "approved_packages" in modules_by_id["content_approval_queue"]["outputs"]
-    assert "active_sponsors_by_match" in modules_by_id[
-        "matchday_content_command_center"
-    ]["outputs"]
-    assert "obligation_coverage_summary" in modules_by_id[
-        "sponsor_proof_package_builder"
-    ]["outputs"]
+    assert (
+        "active_sponsors_by_match"
+        in modules_by_id["matchday_content_command_center"]["outputs"]
+    )
+    assert (
+        "obligation_coverage_summary"
+        in modules_by_id["sponsor_proof_package_builder"]["outputs"]
+    )
 
     expected_boundary = {
         "not_autonomous_publishing",
@@ -278,3 +287,58 @@ async def test_admin_sports_platform_renders_command_center(monkeypatch):
     assert "Matchday Ops" in body
     assert "AI Ops Assistant" in body
     assert "Halcones Morelos" in body
+
+
+def test_director_general_entity_dossier_is_read_only_and_fail_closed():
+    dossier = build_director_general_entity_dossier(_snapshot())
+
+    assert dossier["read_only"] is True
+    assert dossier["schema_version"] == "samchat.dg_entity_dossier.v1"
+    assert dossier["tournament"]["name"] == "Liga Telmex Telcel 2026"
+    assert dossier["summary"]["entities_count"] == 1
+    assert dossier["summary"]["players_count"] == 4
+    assert dossier["non_claims"]
+
+    entity = dossier["entities"][0]
+    assert entity["entity_name"] == "Morelos"
+    assert entity["operations"]["ps_owner"] is None
+    assert entity["operations"]["expected_teams_status"] == "pending_data"
+    assert entity["finance"]["source_status"] == "pending_finance_entity_bridge"
+    assert "Equipos esperados" in " ".join(entity["operations"]["pending_fields"])
+    assert "Fecha y monto" in " ".join(entity["finance"]["pending_fields"])
+
+
+def test_director_general_entity_dossier_groups_real_teams_and_contacts():
+    dossier = build_director_general_entity_dossier(_snapshot())
+    operations = dossier["entities"][0]["operations"]
+
+    real_rows = operations["real_teams_by_category_gender"]
+    assert real_rows == [
+        {
+            "category": "Sub 15",
+            "gender_or_branch": "Sin género/rama",
+            "teams_count": 2,
+            "players_count": 4,
+            "team_names": ["Halcones Morelos", "Leones Morelos"],
+        }
+    ]
+    assert operations["document_metrics"]["completion_rate"] == 0.75
+    assert operations["document_metrics"]["verification_rate"] == 0.5
+    assert len(operations["entity_contacts"]) == 2
+    assert {contact["email"] for contact in operations["entity_contacts"]} == {
+        "mario@example.com",
+        "leones@example.com",
+    }
+    assert (
+        operations["players_by_category_age_gender"][0]["age_status"]
+        == "pending_player_birthdate_rollup"
+    )
+
+
+def test_director_general_entity_dossier_route_is_exposed():
+    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+
+    assert '"/admin/sports/expediente-entidades"' in source
+    assert "Expediente ejecutivo por entidad" in source
+    assert "build_director_general_entity_dossier" in source
+    assert "Command Center" in source
