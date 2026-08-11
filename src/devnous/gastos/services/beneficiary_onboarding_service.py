@@ -272,19 +272,24 @@ def is_final_beneficiary_reviewer(empleado: Empleado) -> bool:
 
 
 def can_create_beneficiary_onboarding_request(empleado: Empleado) -> bool:
-    role = (getattr(empleado, "rol", "") or "").strip().lower()
-    departamento = (getattr(empleado, "departamento", "") or "").strip().lower()
-    email = (getattr(empleado, "correo", "") or "").strip().lower()
-    return bool(
-        role in {"admin", "superadmin", "super_admin", "finanzas"}
-        or "operaciones" in departamento
-        or email in {
-            "azuniga@plataformasports.com",
-            "broman@plataformasports.com",
-            "jlopez@plataformasports.com",
-            "bjimenez@plataformasports.com",
-        }
-    )
+    if empleado is None:
+        return False
+    if getattr(empleado, "activo", True) is False:
+        return False
+    return bool(getattr(empleado, "id", None))
+
+
+async def _resolve_area_approver_id(
+    session: AsyncSession, requester: Empleado
+) -> Optional[UUID]:
+    approver_id = getattr(requester, "aprobador_id", None)
+    if approver_id:
+        return approver_id
+    requester_id = getattr(requester, "id", None)
+    if requester_id is None:
+        return None
+    persisted_requester = await session.get(Empleado, requester_id)
+    return getattr(persisted_requester, "aprobador_id", None) if persisted_requester else None
 
 
 async def _load_onboarding_request(
@@ -494,7 +499,8 @@ async def create_beneficiary_onboarding_request(
             "missing_account",
             "Debe capturar CLABE o cuenta bancaria.",
         )
-    if not getattr(requester, "aprobador_id", None):
+    area_approver_id = await _resolve_area_approver_id(session, requester)
+    if not area_approver_id:
         raise BeneficiaryOnboardingError(
             "missing_area_approver",
             "El solicitante no tiene aprobador de área configurado.",
@@ -523,7 +529,7 @@ async def create_beneficiary_onboarding_request(
     )
     request = BeneficiaryOnboardingRequest(
         requested_by_empleado_id=requester.id,
-        area_approver_id=requester.aprobador_id,
+        area_approver_id=area_approver_id,
         target_tipo=target_tipo,
         nombre=nombre,
         rfc=normalize_optional_text(payload.rfc),
@@ -552,7 +558,7 @@ async def create_beneficiary_onboarding_request(
         )
     )
     await session.flush()
-    approver = await session.get(Empleado, requester.aprobador_id)
+    approver = await session.get(Empleado, area_approver_id)
     await _notify_employee(
         session,
         empleado=approver,
