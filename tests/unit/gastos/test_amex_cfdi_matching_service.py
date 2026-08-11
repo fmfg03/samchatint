@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from devnous.gastos.services.amex_cfdi_matching_service import (
+    is_pase_expense,
     rank_amex_cfdi_candidates,
     score_amex_cfdi_candidate,
+    score_pase_monthly_cfdi_candidate,
 )
 
 
@@ -73,3 +75,43 @@ def test_rank_amex_cfdi_candidates_prefers_best_score():
     suggestions = rank_amex_cfdi_candidates(expense, [weaker, stronger])
 
     assert suggestions[0].cfdi_report_id == str(stronger.id)
+
+
+def test_is_pase_expense_detects_caseta_and_peaje_keywords():
+    assert is_pase_expense(_expense(concepto="PASE caseta México Querétaro"))
+    assert is_pase_expense(_expense(concepto="Peaje autopista"))
+    assert not is_pase_expense(_expense(concepto="Hotel Monterrey"))
+
+
+def test_score_pase_monthly_cfdi_candidate_accepts_monthly_sum():
+    expenses = [
+        _expense(concepto="PASE CASETA 001", gasto_cantidad=120.0),
+        _expense(concepto="Peaje autopista", gasto_cantidad=80.0),
+    ]
+    cfdi = _cfdi(
+        total=200.0,
+        emisor_nombre="PASE SERVICIOS ELECTRONICOS SA DE CV",
+        descripcion_concepto_principal="Servicio mensual de telepeaje",
+    )
+
+    suggestion = score_pase_monthly_cfdi_candidate(expenses, cfdi)
+
+    assert suggestion is not None
+    assert suggestion.charge_count == 2
+    assert suggestion.amex_total == 200.0
+    assert suggestion.confidence == "Alta"
+    assert "suma mensual" in suggestion.reason
+
+
+def test_score_pase_monthly_cfdi_candidate_rejects_non_pase_cfdi():
+    expenses = [_expense(concepto="PASE CASETA", gasto_cantidad=200.0)]
+    cfdi = _cfdi(total=200.0, emisor_nombre="RESTAURANTE LA BUENA MESA")
+
+    assert score_pase_monthly_cfdi_candidate(expenses, cfdi) is None
+
+
+def test_score_pase_monthly_cfdi_candidate_rejects_total_mismatch():
+    expenses = [_expense(concepto="PASE CASETA", gasto_cantidad=200.0)]
+    cfdi = _cfdi(total=250.0, emisor_nombre="PASE SERVICIOS ELECTRONICOS")
+
+    assert score_pase_monthly_cfdi_candidate(expenses, cfdi) is None

@@ -93,8 +93,11 @@ from ..services.amex_card_account_service import (
     upsert_amex_card_account,
 )
 from ..services.amex_cfdi_matching_service import (
+    is_pase_expense,
     suggest_amex_cfdi_matches,
+    suggest_pase_monthly_cfdi_matches,
     validate_amex_cfdi_suggestion,
+    validate_pase_monthly_cfdi_suggestion,
 )
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
@@ -16855,6 +16858,66 @@ async def amex_conciliacion_link_cfdi(
     )
 
 
+
+@router.post("/admin/gastos/amex/conciliacion/vincular-pase-mensual")
+async def amex_conciliacion_link_pase_monthly_cfdi(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    expense_ids: str = Form(...),
+    cfdi_report_id: str = Form(...),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+) -> RedirectResponse:
+    redirect_base = f"/admin/gastos/amex/conciliacion?year={year or datetime.utcnow().year}&month={month or datetime.utcnow().month}"
+    try:
+        expense_uuid_list = [UUIDType(raw.strip()) for raw in (expense_ids or "").split(",") if raw.strip()]
+        cfdi_uuid = UUIDType(cfdi_report_id)
+    except (ValueError, TypeError):
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("Identificador inválido para vincular CFDI PASE."),
+            status_code=303,
+        )
+    if not expense_uuid_list:
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("No hay cargos PASE seleccionados."),
+            status_code=303,
+        )
+
+    result = await session.execute(
+        select(ExpenseReport).where(ExpenseReport.id.in_(expense_uuid_list))
+    )
+    expenses_to_link = list(result.scalars().all())
+    if len(expenses_to_link) != len(expense_uuid_list):
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("No se encontraron todos los cargos PASE."),
+            status_code=303,
+        )
+    if any(
+        exp.origen != "amex_batch" or exp.estado_gasto != "activo" or exp.cfdi_report_id or not is_pase_expense(exp)
+        for exp in expenses_to_link
+    ):
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("Los cargos PASE ya no están disponibles para vinculación mensual."),
+            status_code=303,
+        )
+
+    suggestion = await validate_pase_monthly_cfdi_suggestion(session, expenses_to_link, cfdi_uuid)
+    if not suggestion:
+        return RedirectResponse(
+            url=redirect_base + "&error_msg=" + quote("La factura PASE ya no cuadra contra la suma mensual AMEX."),
+            status_code=303,
+        )
+
+    for exp in expenses_to_link:
+        exp.cfdi_report_id = cfdi_uuid
+        exp.cfdi_uuid_manual = suggestion.cfdi_uuid
+    await session.commit()
+    return RedirectResponse(
+        url=redirect_base + "&msg=" + quote(f"CFDI PASE vinculado a {len(expenses_to_link)} cargos AMEX."),
+        status_code=303,
+    )
+
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -17016,6 +17079,38 @@ async def amex_conciliacion_view(
         </tr>
         """
 
+    pase_rows_html = ""
+    pase_suggestions = await suggest_pase_monthly_cfdi_matches(
+        session,
+        expenses,
+        start_dt=start_dt,
+        end_dt=end_dt,
+        limit=3,
+    )
+    for suggestion in pase_suggestions:
+        confidence_color = "#2e7d32" if suggestion.confidence == "Alta" else "#b45309"
+        joined_expense_ids = ",".join(suggestion.expense_ids)
+        pase_rows_html += f"""
+        <tr>
+            <td>{selected_year}-{selected_month:02d}</td>
+            <td>{suggestion.charge_count}</td>
+            <td>{format_currency(suggestion.amex_total)}</td>
+            <td><code>{escape(suggestion.cfdi_uuid)}</code><br><small>{escape(suggestion.emisor_nombre)} · {escape(suggestion.emisor_rfc)}</small></td>
+            <td>{escape(suggestion.cfdi_fecha)}<br><strong>{format_currency(suggestion.cfdi_total)}</strong></td>
+            <td>{format_currency(suggestion.amount_delta)}</td>
+            <td><span style="background:{confidence_color};color:#fff;padding:2px 8px;border-radius:10px;font-size:11px;">{suggestion.confidence} {suggestion.score}%</span><br><small>{escape(suggestion.reason)}</small></td>
+            <td>
+                <form method="POST" action="/admin/gastos/amex/conciliacion/vincular-pase-mensual" style="margin:0;">
+                    <input type="hidden" name="expense_ids" value="{escape(joined_expense_ids)}">
+                    <input type="hidden" name="cfdi_report_id" value="{suggestion.cfdi_report_id}">
+                    <input type="hidden" name="year" value="{selected_year}">
+                    <input type="hidden" name="month" value="{selected_month}">
+                    <button type="submit" class="button primary" style="padding:8px 10px;">Vincular mes</button>
+                </form>
+            </td>
+        </tr>
+        """
+
     notice_html = ""
     if msg:
         notice_html = f'<div class="alert success">{escape(msg)}</div>'
@@ -17053,6 +17148,11 @@ async def amex_conciliacion_view(
                 <span>Sugerencias</span>
                 <strong>{suggestion_count}</strong>
                 <small>Cargos con CFDI probable para vincular.</small>
+            </div>
+            <div class="meta-card">
+                <span>PASE mensual</span>
+                <strong>{len(pase_suggestions)}</strong>
+                <small>Facturas consolidadas que cuadran con casetas del mes.</small>
             </div>
         </div>
     """
@@ -17121,6 +17221,40 @@ async def amex_conciliacion_view(
                     <span>Match automático</span>
                     <strong>{suggestion_count}</strong>
                     <small>Sugerencias por monto, fecha y texto contra CFDI SAT/XML.</small>
+                </div>
+                <div class="meta-card">
+                    <span>PASE mensual</span>
+                    <strong>{len(pase_suggestions)}</strong>
+                    <small>Suma de casetas AMEX vs CFDI mensual PASE.</small>
+                </div>
+            </section>
+
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Casetas</div>
+                        <h2>PASE mensual consolidado</h2>
+                        <div class="section-note">Caso especial: varios cargos de caseta en AMEX pueden corresponder a una sola factura mensual PASE. Se vinculan en bloque sólo si el total mensual cuadra.</div>
+                    </div>
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Mes</th>
+                                <th># Cargos PASE</th>
+                                <th>Total AMEX</th>
+                                <th>CFDI PASE sugerido</th>
+                                <th>Fecha / Total CFDI</th>
+                                <th>Diferencia</th>
+                                <th>Confianza</th>
+                                <th>Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {pase_rows_html if pase_rows_html else '<tr><td colspan="8" class="section-note">Sin factura PASE mensual sugerida para este periodo.</td></tr>'}
+                        </tbody>
+                    </table>
                 </div>
             </section>
 
