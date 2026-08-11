@@ -1507,6 +1507,57 @@ class CuentaContable(Base):
         }
 
 
+class AmexCardAccount(Base):
+    """Mapping between corporate AMEX cards and liability accounts."""
+
+    __tablename__ = "amex_card_accounts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    card_label = Column(String(200), nullable=False)
+    cardholder_key = Column(String(20), nullable=False, index=True)
+    cardholder_name = Column(String(250), nullable=True)
+    last4 = Column(String(4), nullable=False, unique=True, index=True)
+    liability_cuenta_contable_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    active = Column(Boolean, default=True, nullable=False, index=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    liability_cuenta_contable = relationship(
+        "CuentaContable", foreign_keys=[liability_cuenta_contable_id], lazy="selectin"
+    )
+
+    def __repr__(self):
+        return (
+            "<AmexCardAccount("
+            f"last4='{self.last4}', cardholder_key='{self.cardholder_key}', active={self.active})>"
+        )
+
+    def to_dict(self):
+        return {
+            "id": str(self.id),
+            "card_label": self.card_label,
+            "cardholder_key": self.cardholder_key,
+            "cardholder_name": self.cardholder_name,
+            "last4": self.last4,
+            "liability_cuenta_contable_id": str(self.liability_cuenta_contable_id),
+            "active": self.active,
+            "notes": self.notes,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class CentroDeCosto(Base):
     """
     Cost center dimension - optional cost center for expense tracking.
