@@ -21466,6 +21466,7 @@ async def gastos_sin_cuenta_contable(
                     "origen": getattr(gasto, "origen", None),
                     "fase_torneo": gasto.fase_torneo,
                     "empleado_id": gasto.empleado_id,
+                    "ultimos_4_digitos": getattr(gasto, "ultimos_4_digitos", None),
                     "budget_concept_id": (
                         gasto.budget_concept_id
                         or (effective_concept.id if effective_concept else None)

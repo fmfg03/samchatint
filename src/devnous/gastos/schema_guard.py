@@ -123,6 +123,8 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("access_control_rules", "role_key"),
     RequiredColumn("access_control_audit_logs", "tool_key"),
     RequiredColumn("access_control_audit_logs", "actor_empleado_id"),
+    RequiredColumn("amex_card_accounts", "last4"),
+    RequiredColumn("amex_card_accounts", "liability_cuenta_contable_id"),
 )
 
 
@@ -242,6 +244,9 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("access_control_audit_logs", "ix_access_control_audit_tool"),
     RequiredIndex("access_control_audit_logs", "ix_access_control_audit_actor"),
     RequiredIndex("payment_run_closures", "ix_payment_run_closures_closed_at"),
+    RequiredIndex("amex_card_accounts", "ux_amex_card_accounts_last4"),
+    RequiredIndex("amex_card_accounts", "ix_amex_card_accounts_active"),
+    RequiredIndex("amex_card_accounts", "ix_amex_card_accounts_liability"),
     RequiredIndex("payment_run_closure_items", "ux_payment_run_closure_items_documento"),
     RequiredIndex(
         "telegram_notification_outbox",
@@ -306,6 +311,36 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "ix_access_control_audit_actor",
         "CREATE INDEX IF NOT EXISTS ix_access_control_audit_actor ON access_control_audit_logs(actor_empleado_id, created_at)",
+    ),
+    (
+        "create_amex_card_accounts_table",
+        """
+        CREATE TABLE IF NOT EXISTS amex_card_accounts (
+            id UUID PRIMARY KEY,
+            card_label VARCHAR(200) NOT NULL,
+            cardholder_key VARCHAR(20) NOT NULL,
+            cardholder_name VARCHAR(250) NULL,
+            last4 VARCHAR(4) NOT NULL,
+            liability_cuenta_contable_id UUID NOT NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE RESTRICT,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            notes TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CONSTRAINT ck_amex_card_accounts_last4 CHECK (last4 ~ '^[0-9]{4}$')
+        )
+        """,
+    ),
+    (
+        "ux_amex_card_accounts_last4",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_amex_card_accounts_last4 ON amex_card_accounts(last4)",
+    ),
+    (
+        "ix_amex_card_accounts_active",
+        "CREATE INDEX IF NOT EXISTS ix_amex_card_accounts_active ON amex_card_accounts(active, cardholder_key)",
+    ),
+    (
+        "ix_amex_card_accounts_liability",
+        "CREATE INDEX IF NOT EXISTS ix_amex_card_accounts_liability ON amex_card_accounts(liability_cuenta_contable_id)",
     ),
     (
         "create_accounting_import_runs_table",

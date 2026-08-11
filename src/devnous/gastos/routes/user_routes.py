@@ -33,7 +33,7 @@ from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload, undefer
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -84,6 +84,13 @@ from ..services.amex_expense_service import (
     is_company_amex_expense,
     set_company_amex_status,
     sum_paid_solicitud_amounts,
+)
+from ..services.amex_card_account_service import (
+    AmexCardAccountError,
+    AmexCardAccountInput,
+    list_amex_card_accounts,
+    list_amex_liability_account_options,
+    upsert_amex_card_account,
 )
 from ..services.authorization_profile_service import (
     copy_authorization_profile,
@@ -16650,6 +16657,147 @@ async def carga_masiva_amex_post(
         )
 
 
+def _amex_card_account_rows(items: list[AmexCardAccount]) -> str:
+    if not items:
+        return '<tr><td colspan="7" class="section-note">Sin tarjetas AMEX configuradas todavía.</td></tr>'
+    rows = []
+    for item in items:
+        cuenta = item.liability_cuenta_contable
+        status = (
+            '<span class="status-chip success">Activa</span>'
+            if item.active
+            else '<span class="status-chip muted">Inactiva</span>'
+        )
+        rows.append(
+            f"""
+            <tr>
+                <td><strong>{escape(item.cardholder_key or '')}</strong><br><small>{escape(item.cardholder_name or '')}</small></td>
+                <td>{escape(item.card_label or '')}</td>
+                <td><code>****{escape(item.last4 or '')}</code></td>
+                <td>{escape((cuenta.codigo if cuenta else '') or '')}</td>
+                <td>{escape((cuenta.nombre if cuenta else '') or '')}</td>
+                <td>{status}</td>
+                <td>{escape(item.notes or '')}</td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
+@router.get("/admin/gastos/amex/tarjetas", response_class=HTMLResponse)
+async def amex_card_accounts_view(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    include_inactive: bool = Query(False),
+) -> str:
+    items = await list_amex_card_accounts(session, include_inactive=include_inactive)
+    cuentas = await list_amex_liability_account_options(session)
+    msg = request.query_params.get("msg", "")
+    error_msg = request.query_params.get("error_msg", "")
+    cuenta_options = "".join(
+        f'<option value="{cuenta.id}">{escape(cuenta.codigo)} — {escape(cuenta.nombre or "")}</option>'
+        for cuenta in cuentas
+    )
+    inactive_checked = "checked" if include_inactive else ""
+    rows_html = _amex_card_account_rows(items)
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Catálogo AMEX - SamChat</title>
+        <style>
+            {_workspace_shell_styles("1320px")}
+            label {{ display:block; margin-bottom:6px; font-size:12px; font-weight:700; color:#475569; }}
+            input, select, textarea {{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:10px; }}
+            textarea {{ min-height:72px; }}
+            .form-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; align-items:end; }}
+            .status-chip.success {{ background:#dcfce7; color:#166534; }}
+            .status-chip.muted {{ background:#e5e7eb; color:#374151; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "finanzas")}
+            {_render_workspace_hero(
+                eyebrow="Finanzas",
+                title="Catálogo tarjetas AMEX",
+                description="Mapea cada tarjeta corporativa a su cuenta pasivo contable. Este catálogo gobierna la conciliación y prepólizas AMEX.",
+                actions_html='<a href="/admin/gastos/amex/conciliacion" class="button secondary">Volver a conciliación AMEX</a>',
+                side_html='<div class="meta-card"><span>Responsables</span><strong>FGV · FGN · LAO</strong><small>Configurable por tarjeta.</small></div>',
+            )}
+            {f'<div class="notice ok">{escape(msg)}</div>' if msg else ''}
+            {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+            <section class="surface">
+                <div class="section-head"><div><div class="eyebrow">Configuración</div><h2>Alta o actualización de tarjeta</h2><div class="section-note">Si capturas una tarjeta con los mismos últimos 4, se actualiza el mapeo existente.</div></div></div>
+                <form method="POST" action="/admin/gastos/amex/tarjetas" class="form-grid">
+                    <div><label>Responsable clave *</label><input name="cardholder_key" placeholder="FGV, FGN, LAO" required maxlength="20"></div>
+                    <div><label>Nombre responsable</label><input name="cardholder_name" placeholder="Federico González..."></div>
+                    <div><label>Etiqueta tarjeta *</label><input name="card_label" placeholder="AMEX FGV" required></div>
+                    <div><label>Últimos 4 *</label><input name="last4" pattern="[0-9]{{4}}" maxlength="4" placeholder="1234" required></div>
+                    <div style="grid-column:span 2;"><label>Cuenta pasivo AMEX *</label><select name="liability_cuenta_contable_id" required>{cuenta_options}</select></div>
+                    <div><label>Estado</label><select name="active"><option value="true">Activa</option><option value="false">Inactiva</option></select></div>
+                    <div style="grid-column:1/-1;"><label>Notas</label><textarea name="notes" placeholder="Notas operativas para Benjamín / Finanzas"></textarea></div>
+                    <div><button type="submit" class="button primary">Guardar tarjeta</button></div>
+                </form>
+            </section>
+            <section class="surface">
+                <div class="section-head">
+                    <div><div class="eyebrow">Catálogo</div><h2>Tarjetas configuradas</h2></div>
+                    <form method="GET" action="/admin/gastos/amex/tarjetas"><label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="include_inactive" value="true" {inactive_checked} onchange="this.form.submit()" style="width:auto;"> Mostrar inactivas</label></form>
+                </div>
+                <div class="table-shell"><table><thead><tr><th>Responsable</th><th>Tarjeta</th><th>Últimos 4</th><th>Cuenta</th><th>Nombre cuenta</th><th>Estado</th><th>Notas</th></tr></thead><tbody>{rows_html}</tbody></table></div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/admin/gastos/amex/tarjetas")
+async def amex_card_accounts_save(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    cardholder_key: str = Form(...),
+    cardholder_name: Optional[str] = Form(None),
+    card_label: str = Form(...),
+    last4: str = Form(...),
+    liability_cuenta_contable_id: str = Form(...),
+    active: str = Form("true"),
+    notes: Optional[str] = Form(None),
+) -> RedirectResponse:
+    try:
+        await upsert_amex_card_account(
+            session,
+            AmexCardAccountInput(
+                cardholder_key=cardholder_key,
+                cardholder_name=cardholder_name,
+                card_label=card_label,
+                last4=last4,
+                liability_cuenta_contable_id=UUIDType(liability_cuenta_contable_id),
+                active=(active or "").lower() == "true",
+                notes=notes,
+            ),
+        )
+    except (ValueError, TypeError):
+        return RedirectResponse(
+            url="/admin/gastos/amex/tarjetas?error_msg=" + quote("Cuenta pasivo inválida."),
+            status_code=303,
+        )
+    except AmexCardAccountError as exc:
+        return RedirectResponse(
+            url="/admin/gastos/amex/tarjetas?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url="/admin/gastos/amex/tarjetas?msg=" + quote("Tarjeta AMEX guardada."),
+        status_code=303,
+    )
+
+
 @router.get("/admin/gastos/amex/conciliacion", response_class=HTMLResponse)
 async def amex_conciliacion_view(
     request: Request,
@@ -16785,6 +16933,7 @@ async def amex_conciliacion_view(
 
     hero_actions_html = f"""
         <a href="/gastos/carga-masiva-amex" class="button primary">Cargar AMEX</a>
+        <a href="/admin/gastos/amex/tarjetas" class="button secondary">Catálogo tarjetas</a>
         <a href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}" class="button secondary">Ir a conciliación contable</a>
     """
     hero_side_html = f"""

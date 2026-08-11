@@ -183,7 +183,7 @@ class CuentaContableSuggester:
 
     Tier -1: Partida presupuestal catalog mapping (budget_concepts.cuenta_contable_id)
     Tier 0: Torneo/Proyecto (primary) - base from tournament, sub_cuenta from concepto mapping
-    Tier 0.5: AMEX batch - base 2120-002, suffix from empleado (learned)
+    Tier 0.5: AMEX batch - explicit card catalog, then legacy suffix fallback
     Tier 1: Deterministic rules (keyword, metodo_pago boost)
     Tier 2: Learned mappings from historical data (concepto)
     Tier 3: LLM fallback (optional)
@@ -215,6 +215,7 @@ class CuentaContableSuggester:
         origen: Optional[str] = None,
         fase_torneo: Optional[str] = None,
         empleado_id: Optional[UUID] = None,
+        ultimos_4_digitos: Optional[str] = None,
         budget_concept_id: Optional[UUID] = None,
         has_cfdi: Optional[bool] = None,
         use_llm: bool = True,
@@ -274,6 +275,7 @@ class CuentaContableSuggester:
             fase_torneo=fase_torneo,
             metodo_pago=metodo_pago,
             empleado_id=empleado_id,
+            ultimos_4_digitos=ultimos_4_digitos,
         )
         if amex_suggestion and (
             suggestion is None or amex_suggestion.confidence_score > suggestion.confidence_score
@@ -347,6 +349,7 @@ class CuentaContableSuggester:
                 - origen: Optional[str] (e.g. 'amex_batch')
                 - fase_torneo: Optional[str] (e.g. 'AMEX_BATCH')
                 - empleado_id: Optional[UUID]
+                - ultimos_4_digitos: Optional[str]
                 - budget_concept_id: Optional[UUID]
             use_llm: Whether to use LLM fallback
             llm_confidence_threshold: Minimum confidence to skip LLM
@@ -371,6 +374,7 @@ class CuentaContableSuggester:
                 origen=exp.get('origen'),
                 fase_torneo=exp.get('fase_torneo'),
                 empleado_id=exp.get('empleado_id'),
+                ultimos_4_digitos=exp.get('ultimos_4_digitos'),
                 budget_concept_id=exp.get('budget_concept_id'),
                 has_cfdi=exp.get('has_cfdi'),
                 use_llm=use_llm,
@@ -597,12 +601,17 @@ class CuentaContableSuggester:
         fase_torneo: Optional[str],
         metodo_pago: Optional[str],
         empleado_id: Optional[UUID],
+        ultimos_4_digitos: Optional[str] = None,
     ) -> Optional[CuentaContableSuggestion]:
         """
-        Tier 0.5: AMEX batch expenses → base 2120-002, suffix 062-066 from empleado.
-        Learned: past AMEX expenses with cuenta_contable_id 2120-002-XXX → empleado_id → suffix.
+        Tier 0.5: AMEX batch expenses → explicit card catalog first;
+        legacy fallback keeps the previous learned suffix behavior.
         """
         from devnous.gastos.models import ExpenseReport, CuentaContable
+        from devnous.gastos.services.amex_card_account_service import (
+            AmexCardAccountError,
+            find_amex_card_account_by_last4,
+        )
 
         if not self._cuentas_cache:
             return None
@@ -614,6 +623,27 @@ class CuentaContableSuggester:
         )
         if not is_amex:
             return None
+
+        if ultimos_4_digitos:
+            try:
+                card_account = await find_amex_card_account_by_last4(
+                    self.session, ultimos_4_digitos
+                )
+            except AmexCardAccountError:
+                card_account = None
+            if card_account and card_account.liability_cuenta_contable:
+                cuenta = card_account.liability_cuenta_contable
+                return CuentaContableSuggestion(
+                    cuenta_contable_id=cuenta.id,
+                    cuenta_codigo=cuenta.codigo,
+                    cuenta_nombre=cuenta.nombre,
+                    confidence_score=0.94,
+                    reason=(
+                        "Catálogo AMEX: tarjeta ****"
+                        f"{card_account.last4} → {cuenta.codigo}"
+                    ),
+                    tier="amex_catalog",
+                )
 
         suffix = None
         if empleado_id:
