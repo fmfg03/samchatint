@@ -189,6 +189,45 @@ def test_seed_benchmarks_expose_domain_specific_finance_capabilities() -> None:
     assert capabilities["SAMCHAT-DOC-INCIDENT-001"] == "operations_context_preview"
 
 
+def test_domain_specific_action_previews_are_preview_only() -> None:
+    previews = {}
+    for benchmark in build_seed_benchmarks():
+        result = run_seed_benchmark(benchmark)
+        preview = result.workflow.finance.content["action_preview"]
+        previews[benchmark.task.task_id] = preview
+
+        assert preview["execution_allowed"] is False
+        assert preview["requires_human_approval"] is True
+        assert preview["authority_boundary"] == "human_approval_required"
+        assert preview["steps"]
+        assert preview["checks"]
+
+    assert previews["SAMCHAT-FIN-AMEX-001"]["preview_type"] == (
+        "amex_expense_reconciliation"
+    )
+    assert "prepare_amex_reconciliation_preview" in previews[
+        "SAMCHAT-FIN-AMEX-001"
+    ]["steps"]
+    assert "card_label:AMEX FGV 45007" in previews["SAMCHAT-FIN-AMEX-001"][
+        "checks"
+    ]
+    assert previews["SAMCHAT-CXC-COLLECTION-001"]["preview_type"] == (
+        "accounts_receivable_collection"
+    )
+    assert "prepare_accounts_receivable_entry_preview" in previews[
+        "SAMCHAT-CXC-COLLECTION-001"
+    ]["steps"]
+    assert "ar_account:1150-001-001" in previews["SAMCHAT-CXC-COLLECTION-001"][
+        "checks"
+    ]
+    assert "prepare_budget_line_preview" in previews["SAMCHAT-BUDGET-2027-001"][
+        "steps"
+    ]
+    assert "prepare_payment_request_preview" in previews["SAMCHAT-MONEY-REQ-001"][
+        "steps"
+    ]
+
+
 def test_seed_benchmark_fails_when_required_expected_item_is_wrong() -> None:
     benchmark = build_seed_benchmarks()[0]
     criterion = benchmark.task.criteria[0]

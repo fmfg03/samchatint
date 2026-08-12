@@ -329,6 +329,120 @@ def finance_domain_summary(
     return base
 
 
+def finance_action_preview(domain_summary: Mapping[str, Any]) -> Dict[str, Any]:
+    """Build a domain-specific, preview-only action plan.
+
+    This is the small but important bridge from facts to operator work: the
+    assistant does not execute, but it can explain the exact business workflow
+    it would prepare for human approval.
+    """
+
+    capability = str(domain_summary.get("capability") or FINANCE_CAPABILITY_GENERAL)
+    base: Dict[str, Any] = {
+        "preview_type": capability,
+        "execution_allowed": False,
+        "requires_human_approval": True,
+        "authority_boundary": "human_approval_required",
+        "steps": [],
+        "checks": [],
+    }
+    if capability == FINANCE_CAPABILITY_AMEX:
+        base["steps"] = [
+            "match_amex_charge_to_verified_cfdi_or_support",
+            "classify_expense_account_and_card_context",
+            "prepare_amex_reconciliation_preview",
+            "wait_for_finance_authorization_before_posting",
+        ]
+        base["checks"] = [
+            f"card_label:{domain_summary.get('card_label') or 'missing'}",
+            f"operaciones_ref:{domain_summary.get('operaciones_ref') or 'missing'}",
+            f"system_ref:{domain_summary.get('system_ref') or 'missing'}",
+            f"amount:{domain_summary.get('amount')}",
+        ]
+    elif capability == FINANCE_CAPABILITY_CXC:
+        base["steps"] = [
+            "bind_issued_cfdi_to_tournament_budget_line",
+            "prepare_accounts_receivable_entry_preview",
+            "await_collection_confirmation",
+            "prepare_bank_vs_accounts_receivable_settlement_preview",
+        ]
+        base["checks"] = [
+            f"customer:{domain_summary.get('customer') or 'missing'}",
+            "debit_accounts_receivable",
+            f"ar_account:{domain_summary.get('accounts_receivable_account') or 'missing'}",
+            f"amount:{domain_summary.get('amount')}",
+        ]
+    elif capability == FINANCE_CAPABILITY_BUDGET:
+        base["steps"] = [
+            "load_historical_budget_context",
+            "prepare_budget_line_preview",
+            "compare_against_prior_period",
+            "wait_for_budget_authority_before_publish",
+        ]
+        base["checks"] = [
+            f"budget_line:{domain_summary.get('budget_line') or 'missing'}",
+            f"budget_account:{domain_summary.get('budget_account') or 'missing'}",
+            f"amount:{domain_summary.get('amount')}",
+        ]
+    elif capability == FINANCE_CAPABILITY_MONEY_REQUEST:
+        base["steps"] = [
+            "validate_beneficiary_or_supplier_context",
+            "prepare_payment_request_preview",
+            "preserve_requester_authorization_chain",
+            "wait_for_approval_before_payment_run",
+        ]
+        base["checks"] = [
+            f"beneficiary_or_supplier:{domain_summary.get('beneficiary_or_supplier') or 'missing'}",
+            f"operaciones_ref:{domain_summary.get('operaciones_ref') or 'missing'}",
+            f"system_ref:{domain_summary.get('system_ref') or 'missing'}",
+            f"amount:{domain_summary.get('amount')}",
+        ]
+    elif capability == FINANCE_CAPABILITY_TOURNAMENT:
+        base["steps"] = [
+            "recover_tournament_financial_precedent",
+            "bind_counterparty_to_budget_line",
+            "prepare_owner_or_tournament_folder_finance_preview",
+            "report_missing_evidence_before_execution",
+        ]
+        base["checks"] = [
+            f"tournament:{domain_summary.get('tournament') or 'missing'}",
+            f"budget_line:{domain_summary.get('budget_line') or 'missing'}",
+            f"account:{domain_summary.get('account') or 'missing'}",
+        ]
+    elif capability == FINANCE_CAPABILITY_OPERATIONS:
+        base["steps"] = [
+            "recover_operations_subject_context",
+            "preserve_non_financial_case_as_preview_only",
+            "route_to_specialized_operations_agent_before_real_action",
+        ]
+        base["checks"] = [
+            f"subject:{domain_summary.get('subject') or 'missing'}",
+            f"case_type:{domain_summary.get('case_type') or 'missing'}",
+        ]
+    elif capability == FINANCE_CAPABILITY_SUPPLIER:
+        base["steps"] = [
+            "recover_supplier_precedent",
+            "preserve_tax_or_classification_decision",
+            "prepare_accounting_classification_preview",
+            "require_human_review_for_policy_application",
+        ]
+        base["checks"] = [
+            f"supplier:{domain_summary.get('supplier') or 'missing'}",
+            f"local_tax:{domain_summary.get('local_tax') or 'none'}",
+            f"decision:{domain_summary.get('decision') or 'missing'}",
+        ]
+    else:
+        base["steps"] = [
+            "prepare_general_finance_preview",
+            "require_human_review_before_execution",
+        ]
+        base["checks"] = [
+            f"counterparty:{domain_summary.get('counterparty') or 'missing'}",
+            f"amount:{domain_summary.get('amount')}",
+        ]
+    return base
+
+
 class FinanceAgent:
     """Produce finance proposals only from supported verified claims."""
 
@@ -378,6 +492,7 @@ class FinanceAgent:
                 "rejected_claims": rejected_claims,
                 "finance_capability": domain_summary["capability"],
                 "domain_summary": domain_summary,
+                "action_preview": finance_action_preview(domain_summary),
                 "authority_boundary": "human_approval_required",
                 "execution_allowed": False,
             },
