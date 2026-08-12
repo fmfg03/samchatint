@@ -126,6 +126,20 @@ OWNER_AI_CONTEXT_TERMS = (
     "necesidades de ai",
     "necesidades del dueno",
     "necesidades del dueño",
+    "cosas que necesito que me de la ia",
+    "cosas que necesito que me d? la ia",
+    "para todos y cada uno de los torneos",
+    "tableros preparados",
+    "tableros del dueno",
+    "tableros del due?o",
+    "tableros para el dueno",
+    "tableros para el due?o",
+    "tablero del director general",
+    "tablero para director general",
+    "tablero del dueno",
+    "tablero del due?o",
+    "tablero para direccion general",
+    "tablero para direcci?n general",
 )
 
 

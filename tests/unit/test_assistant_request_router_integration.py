@@ -237,6 +237,8 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     assert "Finanzas" in response.assistant_message
     assert "Ayudas y pagos sucesivos al operador" in response.assistant_message
     assert "Checklist accionable" in response.assistant_message
+    assert "Estado de datos" in response.assistant_message
+    assert "no inventa informacion" in response.assistant_message
     assert "Superficies disponibles" in response.assistant_message
     assert "/admin/sports/expediente-entidades" in response.assistant_message
     assert "Preguntas para avanzar" in response.assistant_message
@@ -266,11 +268,26 @@ async def test_owner_ai_owner_needs_brief_uses_owner_pack_without_provider():
     assert calls == []
     assert "Estructura propuesta" in response.assistant_message
     assert "Checklist accionable" in response.assistant_message
+    assert "Estado de datos" in response.assistant_message
+    assert "no inventa informacion" in response.assistant_message
     assert "Superficies disponibles" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_operator_workflow"]
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_owner_ai_prepared_dashboards_message_is_data_gap_aware():
+    response = await _run_message(
+        "Ya estan preparados los tableros para el dueno, pero falta informacion?"
+    )
+
+    assert "Estado de datos" in response.assistant_message
+    assert "ya estan preparados" in response.assistant_message
+    assert "no inventa informacion" in response.assistant_message
+    trace = response.tool_trace[0]["owner_operator_workflow"]
+    assert trace["provider_called"] is False
 
 
 @pytest.mark.asyncio

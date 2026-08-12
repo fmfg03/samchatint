@@ -284,6 +284,17 @@ def _render_owner_operator_workflow(result: Any) -> str:
     lines.extend(
         [
             "",
+            "Estado de datos:",
+            "- Las superficies y contratos del pack del due?o ya estan preparados "
+            "en modo read-only.",
+            "- Si el torneo, entidad o evidencia real no esta cargada, el pack "
+            "muestra faltantes y no inventa informacion.",
+        ]
+    )
+
+    lines.extend(
+        [
+            "",
             "Superficies disponibles:",
             "- Expediente DG por entidad: /admin/sports/expediente-entidades "
             "(read-only; requiere torneo/datos reales para poblarse).",
