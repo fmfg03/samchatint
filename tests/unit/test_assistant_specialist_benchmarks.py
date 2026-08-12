@@ -11,19 +11,33 @@ from samchat.assistant.specialist_benchmarks import (
 from samchat.assistant.specialist_harness import FAIL, PASS
 
 
-def test_seed_benchmarks_cover_first_platforma_domains() -> None:
+def test_seed_benchmarks_cover_initial_platforma_case_types() -> None:
     benchmarks = build_seed_benchmarks()
+    task_ids = [benchmark.task.task_id for benchmark in benchmarks]
 
-    assert len(benchmarks) == 3
-    assert {benchmark.task.task_id for benchmark in benchmarks} == {
+    assert len(benchmarks) == 10
+    assert len(set(task_ids)) == 10
+    assert set(task_ids) == {
         "SAMCHAT-FIN-AMEX-001",
         "SAMCHAT-OWNER-DCC-001",
         "SAMCHAT-SUPPLIER-HOTEL-001",
+        "SAMCHAT-TEAM-REG-001",
+        "SAMCHAT-PLAYER-ELIG-001",
+        "SAMCHAT-DOC-INCIDENT-001",
+        "SAMCHAT-MONEY-REQ-001",
+        "SAMCHAT-BUDGET-2027-001",
+        "SAMCHAT-TOURNAMENT-2027-001",
+        "SAMCHAT-CXC-COLLECTION-001",
     }
-    assert {benchmark.task.case_type for benchmark in benchmarks} == {
+    assert {case.case_type for benchmark in benchmarks for case in benchmark.cases} == {
+        "budget",
+        "document_incident",
         "expense_report",
-        "tournament",
+        "money_request",
+        "player_validation",
         "supplier",
+        "team",
+        "tournament",
     }
 
 
@@ -42,8 +56,8 @@ def test_seed_benchmark_suite_is_all_pass_and_preview_only() -> None:
     summary = run_seed_benchmarks()
 
     assert summary["status"] == PASS
-    assert summary["total"] == 3
-    assert summary["passed"] == 3
+    assert summary["total"] == 10
+    assert summary["passed"] == 10
     assert summary["failed"] == 0
     for result in summary["results"]:
         finance = result["workflow"]["finance"]
@@ -114,6 +128,36 @@ def test_supplier_hotel_seed_carries_lodging_tax_precedent_without_execution() -
     assert ("supplier", "HOTEL LEON") in proposal
     assert ("account", "5300-006-010") in proposal
     assert result.workflow.finance.content["execution_allowed"] is False
+
+
+def test_expanded_seed_benchmarks_all_have_verified_proposal_items() -> None:
+    for benchmark in build_seed_benchmarks():
+        result = run_seed_benchmark(benchmark)
+        proposal_items = result.workflow.finance.content["proposal_items"]
+        keys = {item["fact_key"] for item in proposal_items}
+
+        assert result.status == PASS
+        assert {"amount", "supplier", "account"}.issubset(keys)
+        assert result.workflow.verification.unsupported_claims == ()
+        assert result.workflow.finance.content["execution_allowed"] is False
+
+
+def test_cxc_collection_seed_preserves_accounts_receivable_account() -> None:
+    benchmark = next(
+        item
+        for item in build_seed_benchmarks()
+        if item.task.task_id == "SAMCHAT-CXC-COLLECTION-001"
+    )
+    result = run_seed_benchmark(benchmark)
+
+    proposal = {
+        (item["fact_key"], item["value"])
+        for item in result.workflow.finance.content["proposal_items"]
+    }
+    assert result.status == PASS
+    assert ("amount", 1972903.00) in proposal
+    assert ("supplier", "BIMBO BIM011108DJ5") in proposal
+    assert ("account", "1150-001-001") in proposal
 
 
 def test_seed_benchmark_fails_when_required_expected_item_is_wrong() -> None:
