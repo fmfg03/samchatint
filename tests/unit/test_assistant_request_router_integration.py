@@ -232,7 +232,11 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     assert calls == []
     assert "Estructura propuesta" in response.assistant_message
     assert "Operaciones" in response.assistant_message
+    assert "Nombre de la entidad" in response.assistant_message
+    assert "Equipos esperados por categoria/genero" in response.assistant_message
     assert "Finanzas" in response.assistant_message
+    assert "Ayudas y pagos sucesivos al operador" in response.assistant_message
+    assert "Checklist accionable" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_operator_workflow"]
     assert trace["stage"] == "deterministic_read_only_owner_pack"

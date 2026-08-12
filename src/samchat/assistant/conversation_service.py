@@ -262,10 +262,24 @@ def _render_owner_operator_workflow(result: Any) -> str:
         "",
         "Estructura propuesta:",
     ]
-    if section_titles:
+    if sections:
+        for section in sections:
+            title = str(section.get("title") or section.get("section_id"))
+            fields = section.get("fields") or []
+            labels = [str(field.get("label") or field.get("field")) for field in fields]
+            if labels:
+                lines.append(f"- {title}: " + "; ".join(labels))
+            else:
+                lines.append(f"- {title}")
+    elif section_titles:
         lines.extend(f"- {title}" for title in section_titles)
     else:
         lines.append("- Alcance")
+
+    proposed_changes = list(response_pack.get("proposed_changes") or [])
+    if proposed_changes:
+        lines.extend(["", "Checklist accionable:"])
+        lines.extend(f"- {change}" for change in proposed_changes[:8])
 
     lines.extend(["", "Evidencia detectada:"])
     if found:

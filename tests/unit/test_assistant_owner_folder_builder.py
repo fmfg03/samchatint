@@ -30,11 +30,7 @@ def _prompt(prompt_id: str):
 
 
 def _all_fields(proposal):
-    return [
-        field
-        for section in proposal.sections
-        for field in section.fields
-    ]
+    return [field for section in proposal.sections for field in section.fields]
 
 
 def _field(proposal, field_name: str):
@@ -72,6 +68,32 @@ def test_ai_owner_001_builds_entity_folder_proposal() -> None:
     _assert_proposal_safety(proposal)
 
 
+def test_entity_folder_proposal_uses_owner_friendly_field_labels() -> None:
+    proposal = build_owner_prompt_folder_proposal(_prompt("AI-OWNER-001"))
+
+    assert _field(proposal, "entity_name").label == "Nombre de la entidad"
+    assert _field(proposal, "expected_teams").label == (
+        "Equipos esperados por categoria/genero"
+    )
+    assert _field(proposal, "operator_payments").label == (
+        "Ayudas y pagos sucesivos al operador"
+    )
+
+
+def test_national_phase_proposal_uses_owner_requested_finance_labels() -> None:
+    proposal = build_owner_prompt_folder_proposal(_prompt("AI-OWNER-013"))
+
+    assert _field(proposal, "contracted_hotels_bed_nights").label == (
+        "Hoteles y camas-noche contratadas"
+    )
+    assert _field(proposal, "provider_payments").label == (
+        "Pagos a proveedores de finales"
+    )
+    assert _field(proposal, "medical_and_insurance_costs").label == (
+        "Costos medicos y seguros"
+    )
+
+
 def test_ai_owner_013_builds_national_phase_folder_proposal() -> None:
     proposal = build_owner_prompt_folder_proposal(_prompt("AI-OWNER-013"))
 
@@ -103,9 +125,7 @@ def test_ai_owner_025_builds_activation_report_proposal() -> None:
         "activation",
         "photographic_evidence",
     }
-    assert _field(proposal, "photographic_evidence").status == (
-        MISSING_EVIDENCE_STATUS
-    )
+    assert _field(proposal, "photographic_evidence").status == (MISSING_EVIDENCE_STATUS)
     assert "media" in proposal.missing_evidence
     _assert_proposal_safety(proposal)
 

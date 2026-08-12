@@ -143,9 +143,7 @@ class OwnerFolderSection:
 
     def to_dict(self) -> Dict[str, object]:
         payload = asdict(self)
-        payload["fields"] = [
-            field_item.to_dict() for field_item in self.fields
-        ]
+        payload["fields"] = [field_item.to_dict() for field_item in self.fields]
         return payload
 
 
@@ -166,9 +164,7 @@ class OwnerFolderProposal:
 
     def to_dict(self) -> Dict[str, object]:
         payload = asdict(self)
-        payload["sections"] = [
-            section.to_dict() for section in self.sections
-        ]
+        payload["sections"] = [section.to_dict() for section in self.sections]
         return payload
 
 
@@ -183,16 +179,49 @@ def folder_type_for_preview(preview: BusinessDiffPreview) -> str:
 
 
 def _proposal_id(preview: BusinessDiffPreview, folder_type: str) -> str:
-    key = (
-        f"{preview.preview_id}|{folder_type}|"
-        f"{sorted(preview.target.items())}"
-    )
+    key = f"{preview.preview_id}|{folder_type}|" f"{sorted(preview.target.items())}"
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
     return f"ofp_{digest}"
 
 
+FIELD_LABELS = {
+    "entity_name": "Nombre de la entidad",
+    "tournament": "Torneo",
+    "expected_teams": "Equipos esperados por categoria/genero",
+    "real_teams": "Equipos reales participantes",
+    "players_by_category_age_gender": "Jugadores por categoria, edad y genero",
+    "round_progression": "Equipos que superan cada ronda",
+    "state_phase_operations": "Organizacion de fase estatal",
+    "operator_payments": "Ayudas y pagos sucesivos al operador",
+    "equipment_costs": "Uniformes, balones, equipamiento y utileria",
+    "visit_results": "Resultados y gastos de visitas",
+    "photographic_evidence": "Fotografias y materialidad",
+    "tournament_category": "Torneo y categoria",
+    "host_city": "Ciudad sede",
+    "opening_and_final_dates": "Fechas de inauguracion, clausura y finales",
+    "contracted_hotels_bed_nights": "Hoteles y camas-noche contratadas",
+    "contracted_meals": "Desayunos, comidas, box lunch y cenas",
+    "sports_venue_and_fields": "Unidad deportiva, numero y tipo de canchas",
+    "medical_services_description": "Servicios medicos en sede",
+    "accidents_with_transfers": "Accidentes con traslado",
+    "staff_travel_costs": "Viajes del personal de PS a la sede",
+    "hotel_payments": "Pagos a hoteles por servicio",
+    "provider_payments": "Pagos a proveedores de finales",
+    "medical_and_insurance_costs": "Costos medicos y seguros",
+    "brand_activation_evidence": "Evidencia de activacion de marcas",
+    "brand_activation_activities": "Actividades de activacion realizadas",
+    "physical_supplier_attendance": "Proveedores presentes en activacion",
+    "sponsor_visitors": "Visitantes vinculados al patrocinador",
+    "activation_result": "Resultado de la activacion",
+    "folder_scope": "Alcance de la carpeta",
+    "source_inventory": "Fuentes a consultar",
+    "missing_evidence_inventory": "Inventario de evidencia faltante",
+    "approval_boundary": "Frontera de aprobacion",
+}
+
+
 def _label(field_name: str) -> str:
-    return field_name.replace("_", " ").title()
+    return FIELD_LABELS.get(field_name, field_name.replace("_", " ").title())
 
 
 def _field_status(change: ProposedBusinessChange) -> str:
@@ -250,10 +279,7 @@ def _sections_for_preview(
     remaining_missing = [
         _field_from_change(change)
         for change in preview.proposed_changes
-        if (
-            change.field not in used_fields
-            and change.status == MISSING_EVIDENCE
-        )
+        if (change.field not in used_fields and change.status == MISSING_EVIDENCE)
     ]
     if remaining_missing:
         sections.append(
@@ -346,9 +372,7 @@ def folder_proposal_contains_execution_claim(
 def evaluate_owner_folder_proposal_set(
     prompts: Iterable[OwnerNeedsPrompt],
 ) -> Dict[str, object]:
-    proposals = [
-        build_owner_prompt_folder_proposal(prompt) for prompt in prompts
-    ]
+    proposals = [build_owner_prompt_folder_proposal(prompt) for prompt in prompts]
     folder_type_counts: Dict[str, int] = {}
     for proposal in proposals:
         folder_type_counts[proposal.folder_type] = (
@@ -357,9 +381,7 @@ def evaluate_owner_folder_proposal_set(
     return {
         "total": len(proposals),
         "folder_type_counts": folder_type_counts,
-        "writes_attempted": sum(
-            proposal.writes_attempted for proposal in proposals
-        ),
+        "writes_attempted": sum(proposal.writes_attempted for proposal in proposals),
         "side_effects_detected": sum(
             proposal.side_effects_detected for proposal in proposals
         ),
@@ -377,6 +399,7 @@ __all__ = [
     "APPROVAL_REQUIRED",
     "ENTITY_FOLDER_PROPOSAL",
     "FOLDER_BUILD_PLAN_PROPOSAL",
+    "FIELD_LABELS",
     "FOLDER_PROPOSAL_ONLY",
     "MISSING_EVIDENCE_STATUS",
     "NATIONAL_PHASE_FOLDER_PROPOSAL",
