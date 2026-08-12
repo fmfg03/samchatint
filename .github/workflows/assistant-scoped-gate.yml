@@ -74,6 +74,7 @@ jobs:
             "tests/unit/test_assistant_owner_operator_workflow.py"
             "tests/unit/test_assistant_owner_response_pack.py"
             "tests/unit/test_assistant_specialist_contract.py"
+            "tests/unit/test_assistant_specialist_agents.py"
             "tests/integration/test_assistant_analyst_case_persistence.py"
             "scripts/check_tournament_write_boundaries.py"
             "tests/unit/gastos/test_tournament_admin_authority_closure.py"
@@ -172,6 +173,7 @@ jobs:
             tests/unit/test_assistant_owner_operator_workflow.py \
             tests/unit/test_assistant_owner_response_pack.py \
             tests/unit/test_assistant_specialist_contract.py \
+            tests/unit/test_assistant_specialist_agents.py \
             tests/integration/test_assistant_analyst_case_persistence.py \
             tests/unit/gastos/test_tournament_admin_authority_closure.py \
             tests/unit/test_assistant_tournament_writer_guard.py \
