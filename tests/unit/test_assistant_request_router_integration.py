@@ -250,6 +250,30 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
 
 
 @pytest.mark.asyncio
+async def test_owner_ai_owner_needs_brief_uses_owner_pack_without_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("owner needs brief should bypass provider")
+
+    response = await _run_message(
+        "Cosas que necesito que me de la IA para todos y cada uno "
+        "de los torneos: una carpeta por cada entidad.",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Estructura propuesta" in response.assistant_message
+    assert "Checklist accionable" in response.assistant_message
+    assert "Superficies disponibles" in response.assistant_message
+    assert "Frontera de autoridad" in response.assistant_message
+    trace = response.tool_trace[0]["owner_operator_workflow"]
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+
+
+@pytest.mark.asyncio
 async def test_registration_executive_report_bypasses_provider_and_is_exportable():
     calls = []
 

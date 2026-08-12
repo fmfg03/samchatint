@@ -69,6 +69,7 @@ def test_report_payment_risk_request_stays_operational() -> None:
     assert intent.domain == "payments"
     assert intent.intent == "list_pending"
 
+
 def test_owner_ai_folder_definition_is_not_deterministic_tournament_status():
     text = "Que debe contener una carpeta por entidad para cualquier torneo?"
 
@@ -77,6 +78,7 @@ def test_owner_ai_folder_definition_is_not_deterministic_tournament_status():
 
     assert intent.domain == "unknown"
 
+
 def test_owner_ai_specific_need_is_context_request():
     assert is_owner_ai_context_request(
         "Cuando y donde se entregan uniformes de fase estatal para Veracruz?"
@@ -84,3 +86,32 @@ def test_owner_ai_specific_need_is_context_request():
     assert is_owner_ai_context_request(
         "Dime hoteles contratados y camas-noche para la fase nacional de basquet."
     )
+
+
+def test_owner_ai_owner_needs_brief_is_context_request_not_generic_executive():
+    text = (
+        "Cosas que necesito que me de la IA para todos y cada uno "
+        "de los torneos: una carpeta por cada entidad."
+    )
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_conceptual_request(text) is True
+    intent = detect_request_intent(text)
+
+    assert intent.domain == "unknown"
+
+
+def test_owner_ai_director_general_dashboard_is_context_request():
+    text = "Prepara el tablero del Director General con carpetas por entidad."
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_conceptual_request(text) is False
+
+
+def test_plain_executive_summary_does_not_become_owner_pack():
+    text = "Hazme un resumen para direccion"
+
+    assert is_owner_ai_context_request(text) is False
+    intent = detect_request_intent(text)
+
+    assert intent.domain == "executive"
