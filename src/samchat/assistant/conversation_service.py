@@ -281,6 +281,15 @@ def _render_owner_operator_workflow(result: Any) -> str:
         lines.extend(["", "Checklist accionable:"])
         lines.extend(f"- {change}" for change in proposed_changes[:8])
 
+    lines.extend(
+        [
+            "",
+            "Superficies disponibles:",
+            "- Expediente DG por entidad: /admin/sports/expediente-entidades "
+            "(read-only; requiere torneo/datos reales para poblarse).",
+        ]
+    )
+
     lines.extend(["", "Evidencia detectada:"])
     if found:
         lines.extend(f"- {item}" for item in found[:8])
