@@ -36,6 +36,7 @@ class BenchmarkReport:
     side_effects_detected: int
     task_ids: Tuple[str, ...]
     case_types: Tuple[str, ...]
+    finance_capabilities: Tuple[str, ...]
     gaps: Tuple[BenchmarkGap, ...]
     results: Tuple[WorkflowBenchmarkResult, ...]
 
@@ -51,6 +52,7 @@ class BenchmarkReport:
             "side_effects_detected": self.side_effects_detected,
             "task_ids": list(self.task_ids),
             "case_types": list(self.case_types),
+            "finance_capabilities": list(self.finance_capabilities),
             "gaps": [gap.to_dict() for gap in self.gaps],
         }
         if include_results:
@@ -119,6 +121,15 @@ def build_benchmark_report(
         case_types=tuple(
             sorted({case.case_type for benchmark in selected for case in benchmark.cases})
         ),
+        finance_capabilities=tuple(
+            sorted(
+                {
+                    str(result.workflow.finance.content.get("finance_capability"))
+                    for result in results
+                    if result.workflow.finance.content.get("finance_capability")
+                }
+            )
+        ),
         gaps=tuple(gaps),
         results=results,
     )
@@ -137,6 +148,8 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
         "",
     ]
     lines.extend(f"- {case_type}" for case_type in report.case_types)
+    lines.extend(["", "## Finance capabilities", ""])
+    lines.extend(f"- {capability}" for capability in report.finance_capabilities)
     lines.extend(["", "## Results", ""])
     for result in report.results:
         lines.append(f"- {result.task_id}: {result.status}")

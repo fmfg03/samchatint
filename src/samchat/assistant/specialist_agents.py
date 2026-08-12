@@ -25,6 +25,16 @@ SUPPORTED = "supported"
 UNVERIFIED = "unverified"
 
 
+FINANCE_CAPABILITY_AMEX = "amex_expense_reconciliation"
+FINANCE_CAPABILITY_CXC = "accounts_receivable_collection"
+FINANCE_CAPABILITY_BUDGET = "budget_reforecast_preview"
+FINANCE_CAPABILITY_MONEY_REQUEST = "money_request_preview"
+FINANCE_CAPABILITY_TOURNAMENT = "tournament_financial_context"
+FINANCE_CAPABILITY_OPERATIONS = "operations_context_preview"
+FINANCE_CAPABILITY_SUPPLIER = "supplier_financial_precedent"
+FINANCE_CAPABILITY_GENERAL = "general_finance_preview"
+
+
 @dataclass(frozen=True)
 class Claim:
     case_id: str
@@ -186,6 +196,139 @@ class EvidenceVerifierAgent:
         )
 
 
+def finance_capability_for_task(task: SamchatVisibleTask) -> str:
+    """Classify the visible finance proposal surface for a task.
+
+    This is intentionally based only on task-visible metadata. It lets the
+    orchestrator and report explain what kind of finance work is being proposed
+    without reading evaluator-only rubric data.
+    """
+
+    tags = set(task.tags or ())
+    if "amex" in tags:
+        return FINANCE_CAPABILITY_AMEX
+    if "cxc" in tags or "collection" in tags:
+        return FINANCE_CAPABILITY_CXC
+    if "budget" in tags:
+        return FINANCE_CAPABILITY_BUDGET
+    if "money_request" in tags or "reimbursement" in tags:
+        return FINANCE_CAPABILITY_MONEY_REQUEST
+    if "tournament" in tags or "owner_pack" in tags:
+        return FINANCE_CAPABILITY_TOURNAMENT
+    if "team" in tags or "player" in tags or "document_incident" in tags:
+        return FINANCE_CAPABILITY_OPERATIONS
+    if "supplier" in tags:
+        return FINANCE_CAPABILITY_SUPPLIER
+    return FINANCE_CAPABILITY_GENERAL
+
+
+def _claim_value_by_key(claims: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    values: Dict[str, Any] = {}
+    for item in claims:
+        claim = item.get("claim") or {}
+        fact_key = claim.get("fact_key")
+        if isinstance(fact_key, str) and fact_key:
+            values[fact_key] = claim.get("value")
+    return values
+
+
+def finance_domain_summary(
+    *,
+    task: SamchatVisibleTask,
+    supported_claims: Sequence[Mapping[str, Any]],
+) -> Dict[str, Any]:
+    capability = finance_capability_for_task(task)
+    values = _claim_value_by_key(supported_claims)
+    base: Dict[str, Any] = {
+        "capability": capability,
+        "case_type": task.case_type,
+        "tags": list(task.tags),
+    }
+    if capability == FINANCE_CAPABILITY_AMEX:
+        base.update(
+            {
+                "summary_label": "AMEX comprobacion preview",
+                "amount": values.get("amount"),
+                "supplier": values.get("supplier"),
+                "expense_account": values.get("account"),
+                "operaciones_ref": values.get("operaciones_ref"),
+                "system_ref": values.get("system_ref"),
+                "card_label": values.get("amex_card_label"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_CXC:
+        base.update(
+            {
+                "summary_label": "CxC collection preview",
+                "amount": values.get("amount"),
+                "customer": values.get("supplier"),
+                "accounts_receivable_account": values.get("account"),
+                "collection_status": values.get("collection_status"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_BUDGET:
+        base.update(
+            {
+                "summary_label": "Budget preview",
+                "amount": values.get("amount"),
+                "budget_account": values.get("account"),
+                "budget_line": values.get("budget_line"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_MONEY_REQUEST:
+        base.update(
+            {
+                "summary_label": "Money request preview",
+                "amount": values.get("amount"),
+                "beneficiary_or_supplier": values.get("supplier"),
+                "account": values.get("account"),
+                "operaciones_ref": values.get("operaciones_ref"),
+                "system_ref": values.get("system_ref"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_TOURNAMENT:
+        base.update(
+            {
+                "summary_label": "Tournament financial context preview",
+                "amount": values.get("amount"),
+                "counterparty": values.get("supplier"),
+                "account": values.get("account"),
+                "tournament": values.get("tournament"),
+                "budget_line": values.get("budget_line"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_OPERATIONS:
+        base.update(
+            {
+                "summary_label": "Operations context preview",
+                "subject": values.get("supplier"),
+                "amount": values.get("amount"),
+                "account": values.get("account"),
+            }
+        )
+    elif capability == FINANCE_CAPABILITY_SUPPLIER:
+        base.update(
+            {
+                "summary_label": "Supplier financial precedent preview",
+                "amount": values.get("amount"),
+                "supplier": values.get("supplier"),
+                "account": values.get("account"),
+                "local_tax": values.get("local_tax"),
+                "decision": values.get("decision"),
+            }
+        )
+    else:
+        base.update(
+            {
+                "summary_label": "General finance preview",
+                "amount": values.get("amount"),
+                "counterparty": values.get("supplier"),
+                "account": values.get("account"),
+            }
+        )
+    return base
+
+
 class FinanceAgent:
     """Produce finance proposals only from supported verified claims."""
 
@@ -224,11 +367,17 @@ class FinanceAgent:
                     "proposal_status": "preview_only",
                 }
             )
+        domain_summary = finance_domain_summary(
+            task=task,
+            supported_claims=supported_claims,
+        )
         return SpecialistArtifact(
             artifact_type="finance_proposal",
             content={
                 "proposal_items": proposal_items,
                 "rejected_claims": rejected_claims,
+                "finance_capability": domain_summary["capability"],
+                "domain_summary": domain_summary,
                 "authority_boundary": "human_approval_required",
                 "execution_allowed": False,
             },

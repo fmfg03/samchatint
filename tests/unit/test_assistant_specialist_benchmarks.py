@@ -160,6 +160,35 @@ def test_cxc_collection_seed_preserves_accounts_receivable_account() -> None:
     assert ("account", "1150-001-001") in proposal
 
 
+def test_seed_benchmarks_expose_domain_specific_finance_capabilities() -> None:
+    capabilities = {}
+    summaries = {}
+    for benchmark in build_seed_benchmarks():
+        result = run_seed_benchmark(benchmark)
+        content = result.workflow.finance.content
+        capabilities[benchmark.task.task_id] = content["finance_capability"]
+        summaries[benchmark.task.task_id] = content["domain_summary"]
+
+    assert capabilities["SAMCHAT-FIN-AMEX-001"] == "amex_expense_reconciliation"
+    assert summaries["SAMCHAT-FIN-AMEX-001"]["card_label"] == "AMEX FGV 45007"
+    assert summaries["SAMCHAT-FIN-AMEX-001"]["operaciones_ref"] == "28"
+    assert capabilities["SAMCHAT-CXC-COLLECTION-001"] == (
+        "accounts_receivable_collection"
+    )
+    assert summaries["SAMCHAT-CXC-COLLECTION-001"][
+        "accounts_receivable_account"
+    ] == "1150-001-001"
+    assert capabilities["SAMCHAT-BUDGET-2027-001"] == "budget_reforecast_preview"
+    assert capabilities["SAMCHAT-MONEY-REQ-001"] == "money_request_preview"
+    assert capabilities["SAMCHAT-SUPPLIER-HOTEL-001"] == (
+        "supplier_financial_precedent"
+    )
+    assert summaries["SAMCHAT-SUPPLIER-HOTEL-001"]["local_tax"] == "ISH"
+    assert capabilities["SAMCHAT-TEAM-REG-001"] == "operations_context_preview"
+    assert capabilities["SAMCHAT-PLAYER-ELIG-001"] == "operations_context_preview"
+    assert capabilities["SAMCHAT-DOC-INCIDENT-001"] == "operations_context_preview"
+
+
 def test_seed_benchmark_fails_when_required_expected_item_is_wrong() -> None:
     benchmark = build_seed_benchmarks()[0]
     criterion = benchmark.task.criteria[0]

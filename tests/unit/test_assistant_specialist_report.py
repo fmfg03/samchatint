@@ -39,6 +39,10 @@ def test_benchmark_report_summarizes_all_seed_tasks() -> None:
         "team",
         "tournament",
     }
+    assert "amex_expense_reconciliation" in report.finance_capabilities
+    assert "accounts_receivable_collection" in report.finance_capabilities
+    assert "budget_reforecast_preview" in report.finance_capabilities
+    assert payload["finance_capabilities"] == list(report.finance_capabilities)
     assert payload["status"] == PASS
     assert "results" not in payload
 
@@ -69,6 +73,8 @@ def test_render_benchmark_report_markdown_is_human_readable() -> None:
     assert "Status: PASS" in markdown
     assert "Benchmarks: 10/10 passed" in markdown
     assert "SAMCHAT-CXC-COLLECTION-001: PASS" in markdown
+    assert "## Finance capabilities" in markdown
+    assert "amex_expense_reconciliation" in markdown
     assert "human_approval_required" in markdown
 
 
@@ -79,6 +85,7 @@ def test_compact_report_dict_omits_heavy_results() -> None:
     assert compact["status"] == PASS
     assert "results" not in compact
     assert compact["side_effects_detected"] == 0
+    assert "finance_capabilities" in compact
 
 
 def test_specialist_benchmark_cli_outputs_json_and_markdown() -> None:

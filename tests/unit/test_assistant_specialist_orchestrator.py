@@ -69,6 +69,26 @@ def test_orchestrator_selection_is_visible_task_only() -> None:
     )
 
 
+def test_orchestrator_trace_preserves_finance_capability_without_execution() -> None:
+    benchmark = next(
+        item
+        for item in build_seed_benchmarks()
+        if item.task.task_id == "SAMCHAT-CXC-COLLECTION-001"
+    )
+    result = run_specialist_orchestrator(
+        task=benchmark.task.agent_visible(),
+        cases=benchmark.cases,
+    )
+
+    assert result.workflow.finance.content["finance_capability"] == (
+        "accounts_receivable_collection"
+    )
+    assert result.workflow.finance.content["domain_summary"][
+        "accounts_receivable_account"
+    ] == "1150-001-001"
+    assert result.execution_allowed is False
+
+
 def test_orchestrator_fails_closed_for_unsupported_routes() -> None:
     task = SamchatVisibleTask(
         task_id="UNSUPPORTED-001",
