@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Mapping, Tuple
 
+from .specialist_business_diff import summarize_specialist_business_previews
 from .specialist_benchmarks import (
     SpecialistBenchmark,
     WorkflowBenchmarkResult,
@@ -37,6 +38,8 @@ class BenchmarkReport:
     task_ids: Tuple[str, ...]
     case_types: Tuple[str, ...]
     finance_capabilities: Tuple[str, ...]
+    business_preview_types: Tuple[str, ...]
+    business_preview_missing_evidence_count: int
     gaps: Tuple[BenchmarkGap, ...]
     results: Tuple[WorkflowBenchmarkResult, ...]
 
@@ -53,6 +56,10 @@ class BenchmarkReport:
             "task_ids": list(self.task_ids),
             "case_types": list(self.case_types),
             "finance_capabilities": list(self.finance_capabilities),
+            "business_preview_types": list(self.business_preview_types),
+            "business_preview_missing_evidence_count": (
+                self.business_preview_missing_evidence_count
+            ),
             "gaps": [gap.to_dict() for gap in self.gaps],
         }
         if include_results:
@@ -108,6 +115,9 @@ def build_benchmark_report(
         gaps.extend(_unsupported_claim_gaps(result))
         gaps.extend(_failed_criteria_gaps(result))
     side_effects = sum(result.workflow.side_effects_detected for result in results)
+    preview_summary = summarize_specialist_business_previews(
+        result.business_preview for result in results
+    )
     return BenchmarkReport(
         status=PASS if all(result.status == PASS for result in results) else "FAIL",
         total=len(results),
@@ -130,6 +140,10 @@ def build_benchmark_report(
                 }
             )
         ),
+        business_preview_types=tuple(preview_summary["preview_types"]),
+        business_preview_missing_evidence_count=int(
+            preview_summary["missing_evidence_count"]
+        ),
         gaps=tuple(gaps),
         results=results,
     )
@@ -150,6 +164,11 @@ def render_benchmark_report_markdown(report: BenchmarkReport) -> str:
     lines.extend(f"- {case_type}" for case_type in report.case_types)
     lines.extend(["", "## Finance capabilities", ""])
     lines.extend(f"- {capability}" for capability in report.finance_capabilities)
+    lines.extend(["", "## Business preview types", ""])
+    lines.extend(f"- {preview_type}" for preview_type in report.business_preview_types)
+    lines.append(
+        f"Missing evidence references in previews: {report.business_preview_missing_evidence_count}"
+    )
     lines.extend(["", "## Results", ""])
     for result in report.results:
         lines.append(f"- {result.task_id}: {result.status}")

@@ -13,6 +13,10 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 from .operational_case import CaseRelationship, EvidenceRef, OperationalCase
 from .samchat_task_schema import RubricCriterion, SamchatTask
 from .specialist_agents import SpecialistWorkflowResult
+from .specialist_business_diff import (
+    SpecialistBusinessDiffPreview,
+    create_specialist_business_diff_preview,
+)
 from .specialist_orchestrator import OrchestratorResult, run_specialist_orchestrator
 from .specialist_harness import FAIL, PASS, CriterionResult
 
@@ -36,6 +40,7 @@ class WorkflowBenchmarkResult:
     workflow: SpecialistWorkflowResult
     criteria: Tuple[CriterionResult, ...]
     orchestrator: OrchestratorResult
+    business_preview: SpecialistBusinessDiffPreview
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -47,6 +52,7 @@ class WorkflowBenchmarkResult:
                 for key, value in self.orchestrator.to_dict().items()
                 if key != "workflow"
             },
+            "business_preview": self.business_preview.to_dict(),
             "criteria": [criterion.to_dict() for criterion in self.criteria],
         }
 
@@ -174,6 +180,10 @@ def run_seed_benchmark(benchmark: SpecialistBenchmark) -> WorkflowBenchmarkResul
         _evaluate_workflow_criterion(workflow, criterion)
         for criterion in benchmark.task.criteria
     )
+    business_preview = create_specialist_business_diff_preview(
+        task=benchmark.task.agent_visible(),
+        workflow=workflow,
+    )
     status = (
         PASS
         if orchestrator.status == PASS and all(item.status == PASS for item in criteria)
@@ -185,6 +195,7 @@ def run_seed_benchmark(benchmark: SpecialistBenchmark) -> WorkflowBenchmarkResul
         workflow=workflow,
         criteria=criteria,
         orchestrator=orchestrator,
+        business_preview=business_preview,
     )
 
 

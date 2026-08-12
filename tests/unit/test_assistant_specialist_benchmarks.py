@@ -64,6 +64,8 @@ def test_seed_benchmark_suite_is_all_pass_and_preview_only() -> None:
         assert finance["content"]["execution_allowed"] is False
         assert finance["content"]["authority_boundary"] == "human_approval_required"
         assert result["workflow"]["side_effects_detected"] == 0
+        assert result["business_preview"]["execution_status"] == "not_executed"
+        assert result["business_preview"]["approval_required"] is True
 
 
 def test_amex_seed_requires_verified_amount_supplier_and_account() -> None:
