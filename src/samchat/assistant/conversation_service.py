@@ -298,6 +298,11 @@ def _render_owner_operator_workflow(result: Any) -> str:
         lines.extend(["", "Siguiente paso propuesto:"])
         lines.extend(f"- {step}" for step in plan[:4])
 
+    questions = list(response_pack.get("next_questions") or [])
+    if questions:
+        lines.extend(["", "Preguntas para avanzar:"])
+        lines.extend(f"- {question}" for question in questions[:4])
+
     lines.extend(
         [
             "",
