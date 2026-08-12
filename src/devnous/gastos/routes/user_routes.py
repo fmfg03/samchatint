@@ -15203,6 +15203,15 @@ async def nuevo_gasto_form(
                     <small>Vista previa automática con el mismo formato del Excel.</small>
                 </div>
 
+                <div id="propina-group" style="display:none; border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff; margin-bottom:14px;">
+                    <div style="font-weight:700; color:#1e3a8a; margin-bottom:8px;">Propina no deducible</div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="propina_no_deducible">Monto de propina</label>
+                        <input type="number" step="0.01" min="0" name="propina_no_deducible" id="propina_no_deducible" placeholder="0.00">
+                        <small>Usalo cuando el cargo AMEX incluye propina pero el CFDI solo trae el consumo. La propina se suma al total pagado y se clasifica como No Deducible.</small>
+                    </div>
+                </div>
+
                 <div class="form-group">
                     <label for="fecha">Fecha <span class="required">*</span></label>
                     <input type="date" name="fecha" id="fecha" required>
@@ -15637,13 +15646,18 @@ async def nuevo_gasto_form(
 
             const conceptoInput = document.getElementById('concepto');
             const hospedajeGroup = document.getElementById('hospedaje-tax-group');
-            function syncHospedajeTaxVisibility() {{
+            const propinaGroup = document.getElementById('propina-group');
+            function isPropinaConcept(value) {{
+                return ['alimento', 'alimentos', 'consumo', 'cafeteria', 'cafeteria', 'restaurante', 'comida', 'cena', 'desayuno'].some(token => value.includes(token));
+            }}
+            function syncConceptDependentFields() {{
                 const value = (conceptoInput.value || '').toLowerCase();
                 const isHospedaje = ['hospedaje', 'hotel', 'hostal', 'alojamiento', 'airbnb'].some(token => value.includes(token));
                 hospedajeGroup.style.display = isHospedaje ? 'block' : 'none';
+                propinaGroup.style.display = isPropinaConcept(value) ? 'block' : 'none';
             }}
-            conceptoInput.addEventListener('input', syncHospedajeTaxVisibility);
-            syncHospedajeTaxVisibility();
+            conceptoInput.addEventListener('input', syncConceptDependentFields);
+            syncConceptDependentFields();
 
             // Cuenta contable search functionality
             const searchInput = document.getElementById('cuenta_contable_search');
@@ -15726,6 +15740,7 @@ async def crear_gasto(
     proyecto_manual: Optional[str] = Form(None),
     concepto: str = Form(...),
     gasto_cantidad: str = Form(...),
+    propina_no_deducible: Optional[str] = Form(None),
     fecha: str = Form(...),
     departamento: Optional[str] = Form(None),
     fase_torneo: str = Form(...),
@@ -15888,9 +15903,19 @@ async def crear_gasto(
         except (ValueError, Exception):
             return RedirectResponse(
                 url=_append_error_params(
-                    "/gastos/nuevo", error_msg="Monto inválido"
+                    "/gastos/nuevo", error_msg="Monto invalido"
                 ),
                 status_code=303
+            )
+
+        propina_amount = _parse_optional_money_form(propina_no_deducible)
+        if propina_no_deducible and propina_amount is None:
+            return RedirectResponse(
+                url=_append_error_params(
+                    "/gastos/nuevo",
+                    error_msg="El monto de propina es invalido.",
+                ),
+                status_code=303,
             )
 
         # Parse date
@@ -16002,6 +16027,7 @@ async def crear_gasto(
             hospedaje_tasa_impuesto=hospedaje_rate,
             hospedaje_impuesto_monto=hospedaje_amount,
             hospedaje_impuesto_confirmado=hospedaje_confirmed,
+            propina_no_deducible=propina_amount,
             cfdi_use=cfdi_use,
             archivo_nombre=archivo_nombre,
             archivo_data=archivo_data,
@@ -22654,6 +22680,10 @@ async def editar_gasto_form(
     # Build form HTML
     disabled_attr = "disabled" if not can_edit else ""
     motivo_required = "required" if (is_locked and is_finance_admin) else ""
+    tip_concept_tokens = ("alimento", "alimentos", "consumo", "cafeteria", "cafeteria", "restaurante", "comida", "cena", "desayuno")
+    tip_group_visible = any(token in (expense.concepto or "").lower() for token in tip_concept_tokens) or bool(expense.propina_no_deducible)
+    tip_group_display = "block" if tip_group_visible else "none"
+
     motivo_field_html = ""
     if is_locked and is_finance_admin:
         motivo_field_html = """
@@ -22769,6 +22799,15 @@ async def editar_gasto_form(
                     <label for="metodo_pago">Método de Pago</label>
                     <input type="text" name="metodo_pago" id="metodo_pago" value="{expense.metodo_pago or ''}" {disabled_attr} maxlength="50">
                     <small>Ejemplo: Efectivo, Tarjeta Personal, Tarjeta de Empresa</small>
+                </div>
+
+                <div id="propina-group" style="display:{tip_group_display}; border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff; margin-bottom:14px;">
+                    <div style="font-weight:700; color:#1e3a8a; margin-bottom:8px;">Propina no deducible</div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label for="propina_no_deducible">Monto de propina</label>
+                        <input type="number" step="0.01" min="0" name="propina_no_deducible" id="propina_no_deducible" value="{expense.propina_no_deducible if expense.propina_no_deducible not in (None, 0) else ''}" {disabled_attr}>
+                        <small>Usalo cuando el cargo AMEX incluye propina pero el CFDI solo trae el consumo. La propina se clasifica como No Deducible.</small>
+                    </div>
                 </div>
 
                 <div style="border:1px solid #dbe2ea; border-radius:10px; padding:14px; background:#f8fafc; margin-bottom:14px;">
@@ -22956,6 +22995,7 @@ async def editar_gasto(
     current_empleado: Empleado = Depends(get_current_empleado),
     concepto: str = Form(...),
     metodo_pago: Optional[str] = Form(None),
+    propina_no_deducible: Optional[str] = Form(None),
     hospedaje_entidad_fiscal: Optional[str] = Form(None),
     hospedaje_tasa_impuesto: Optional[str] = Form(None),
     hospedaje_impuesto_monto: Optional[str] = Form(None),
@@ -23060,6 +23100,16 @@ async def editar_gasto(
     metodo_pago = metodo_pago.strip() if metodo_pago else None
     if metodo_pago == "":
         metodo_pago = None
+    propina_amount = _parse_optional_money_form(propina_no_deducible)
+    if propina_no_deducible and propina_amount is None:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}/editar",
+                error_msg="El monto de propina es invalido.",
+            ),
+            status_code=303
+        )
+
     hospedaje_state = normalize_hospedaje_state(hospedaje_entidad_fiscal)
     hospedaje_rate = _parse_optional_percentage_form(hospedaje_tasa_impuesto)
     if hospedaje_tasa_impuesto and hospedaje_rate is None:
@@ -23115,6 +23165,14 @@ async def editar_gasto(
         new_values['metodo_pago'] = metodo_pago
         changes.append(f"metodo_pago '{old_metodo or '(vacío)'}'→'{new_metodo or '(vacío)'}'")
         expense.metodo_pago = metodo_pago
+
+    old_tip = float(expense.propina_no_deducible or 0.0)
+    new_tip = float(propina_amount or 0.0)
+    if round(old_tip, 2) != round(new_tip, 2):
+        old_values['propina_no_deducible'] = expense.propina_no_deducible
+        new_values['propina_no_deducible'] = new_tip
+        changes.append(f"propina_no_deducible '{old_tip:,.2f}'->'{new_tip:,.2f}'")
+        expense.propina_no_deducible = new_tip
 
     old_hosp_state = expense.hospedaje_entidad_fiscal or ''
     new_hosp_state = hospedaje_state or ''

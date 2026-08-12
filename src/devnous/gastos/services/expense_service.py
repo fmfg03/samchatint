@@ -183,6 +183,7 @@ async def create_expense_from_data(
     edicion: Optional[int] = None,
     currency: str = "MXN",
     budget_concept_id: Optional[UUID] = None,
+    propina_no_deducible: Optional[float] = None,
 ) -> ExpenseReport:
     """
     Create an ExpenseReport from structured data.
@@ -279,6 +280,13 @@ async def create_expense_from_data(
         except (TypeError, ValueError):
             hospedaje_amount = None
 
+    tip_amount = 0.0
+    if propina_no_deducible not in (None, ""):
+        try:
+            tip_amount = max(round(float(propina_no_deducible), 2), 0.0)
+        except (TypeError, ValueError):
+            tip_amount = 0.0
+
     # Create expense
     expense = ExpenseReport(
         empleado_id=empleado_id,
@@ -310,6 +318,7 @@ async def create_expense_from_data(
         hospedaje_tasa_impuesto=hospedaje_rate,
         hospedaje_impuesto_monto=hospedaje_amount,
         hospedaje_impuesto_confirmado=bool(hospedaje_impuesto_confirmado),
+        propina_no_deducible=tip_amount,
         origen=origen,
     )
 
