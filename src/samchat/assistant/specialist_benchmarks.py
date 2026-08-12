@@ -12,7 +12,8 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 from .operational_case import CaseRelationship, EvidenceRef, OperationalCase
 from .samchat_task_schema import RubricCriterion, SamchatTask
-from .specialist_agents import SpecialistWorkflowResult, run_specialist_workflow
+from .specialist_agents import SpecialistWorkflowResult
+from .specialist_orchestrator import OrchestratorResult, run_specialist_orchestrator
 from .specialist_harness import FAIL, PASS, CriterionResult
 
 
@@ -34,12 +35,18 @@ class WorkflowBenchmarkResult:
     status: str
     workflow: SpecialistWorkflowResult
     criteria: Tuple[CriterionResult, ...]
+    orchestrator: OrchestratorResult
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "task_id": self.task_id,
             "status": self.status,
             "workflow": self.workflow.to_dict(),
+            "orchestrator": {
+                key: value
+                for key, value in self.orchestrator.to_dict().items()
+                if key != "workflow"
+            },
             "criteria": [criterion.to_dict() for criterion in self.criteria],
         }
 
@@ -158,20 +165,26 @@ def _evaluate_workflow_criterion(
 
 def run_seed_benchmark(benchmark: SpecialistBenchmark) -> WorkflowBenchmarkResult:
     benchmark.task.validate()
-    workflow = run_specialist_workflow(
+    orchestrator = run_specialist_orchestrator(
         task=benchmark.task.agent_visible(),
         cases=benchmark.cases,
     )
+    workflow = orchestrator.workflow
     criteria = tuple(
         _evaluate_workflow_criterion(workflow, criterion)
         for criterion in benchmark.task.criteria
     )
-    status = PASS if all(item.status == PASS for item in criteria) else FAIL
+    status = (
+        PASS
+        if orchestrator.status == PASS and all(item.status == PASS for item in criteria)
+        else FAIL
+    )
     return WorkflowBenchmarkResult(
         task_id=benchmark.task.task_id,
         status=status,
         workflow=workflow,
         criteria=criteria,
+        orchestrator=orchestrator,
     )
 
 
