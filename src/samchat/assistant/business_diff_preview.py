@@ -88,9 +88,7 @@ class BusinessDiffPreview:
     target: Dict[str, object]
     found_evidence: List[str] = field(default_factory=list)
     missing_evidence: List[str] = field(default_factory=list)
-    proposed_changes: List[ProposedBusinessChange] = field(
-        default_factory=list
-    )
+    proposed_changes: List[ProposedBusinessChange] = field(default_factory=list)
     blocked_reason: str = APPROVAL_REQUIRED
     approval_required: bool = True
     execution_status: str = NOT_EXECUTED
@@ -118,16 +116,33 @@ def _preview_id(prompt_id: str, operation_type: str, target: Mapping) -> str:
 
 def operation_type_for_owner_prompt(prompt: OwnerNeedsPrompt) -> str:
     text = _normalize(prompt.prompt)
+    structural_request = any(
+        token in text
+        for token in (
+            "debe contener",
+            "deberia contener",
+            "deber\u00eda contener",
+            "que datos",
+            "qu\u00e9 datos",
+            "estructura",
+        )
+    )
     if "activacion de marcas" in text or "activacion" in text:
         if "genera" in text or "informe" in text:
             return GENERATE_ACTIVATION_REPORT
     if "actualiza" in text:
         return UPDATE_ENTITY_FOLDER
     if "fase nacional" in text and any(
-        token in text for token in ("crea", "crear", "carpeta")
+        token in text
+        for token in ("crea", "crear", "carpeta", "debe contener", "estructura")
     ):
         return CREATE_NATIONAL_PHASE_FOLDER
-    if "carpeta" in text and any(token in text for token in ("crea", "crear")):
+    if "carpeta" in text and (
+        any(token in text for token in ("crea", "crear"))
+        or structural_request
+        or "por entidad" in text
+        or "cada entidad" in text
+    ):
         return CREATE_ENTITY_FOLDER
     return PLAN_FOLDER_BUILD
 
@@ -197,9 +212,7 @@ def _build_changes(
 ) -> List[ProposedBusinessChange]:
     evidence = _evidence_by_field(available_evidence)
     changes: List[ProposedBusinessChange] = []
-    fields = _fields_for_operation(
-        operation_type, assessment=assessment
-    )
+    fields = _fields_for_operation(operation_type, assessment=assessment)
     for field_name in fields:
         if field_name in evidence and evidence[field_name] not in (None, ""):
             changes.append(
@@ -221,8 +234,7 @@ def _build_changes(
                 source=CANON_REQUIREMENT,
                 confidence="low",
                 reason=(
-                    assessment.confidence_limit
-                    or "live_evidence_not_loaded_for_field"
+                    assessment.confidence_limit or "live_evidence_not_loaded_for_field"
                 ),
                 status=MISSING_EVIDENCE,
             )
@@ -257,17 +269,11 @@ def create_business_diff_preview(
     found = sorted(
         {
             *assessment.evidence_found,
-            *[
-                str(change.field)
-                for change in changes
-                if change.status == SUPPORTED
-            ],
+            *[str(change.field) for change in changes if change.status == SUPPORTED],
         }
     )
     return BusinessDiffPreview(
-        preview_id=_preview_id(
-            assessment.prompt.prompt_id, operation_type, target
-        ),
+        preview_id=_preview_id(assessment.prompt.prompt_id, operation_type, target),
         operation_type=operation_type,
         target=target,
         found_evidence=found,
@@ -325,9 +331,7 @@ def preview_contains_execution_claim(preview: BusinessDiffPreview) -> bool:
 def evaluate_preview_set(
     prompts: Iterable[OwnerNeedsPrompt],
 ) -> Dict[str, object]:
-    previews = [
-        create_owner_prompt_business_diff_preview(prompt) for prompt in prompts
-    ]
+    previews = [create_owner_prompt_business_diff_preview(prompt) for prompt in prompts]
     operation_counts: Dict[str, int] = {}
     for preview in previews:
         operation_counts[preview.operation_type] = (
@@ -337,13 +341,9 @@ def evaluate_preview_set(
         "total": len(previews),
         "operation_counts": operation_counts,
         "writes_attempted": sum(p.writes_attempted for p in previews),
-        "side_effects_detected": sum(
-            p.side_effects_detected for p in previews
-        ),
+        "side_effects_detected": sum(p.side_effects_detected for p in previews),
         "execution_claims_detected": sum(
-            1
-            for preview in previews
-            if preview_contains_execution_claim(preview)
+            1 for preview in previews if preview_contains_execution_claim(preview)
         ),
         "previews": [preview.to_dict() for preview in previews],
     }

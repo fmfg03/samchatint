@@ -215,32 +215,30 @@ async def test_capability_question_does_not_execute_pending_payment_query(
     assert trace["operational_tools_called"] == 0
     assert trace["writes_attempted"] is False
 
+
 @pytest.mark.asyncio
-async def test_owner_ai_folder_definition_does_not_bypass_provider_as_tournament_status():
+async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     calls = []
 
-    async def provider(**kwargs):
+    async def provider(**kwargs):  # pragma: no cover
         calls.append(kwargs)
-        return SimpleNamespace(
-            assistant_message="Respuesta desde contexto canonico del dueño",
-            run_id="run-owner-ai",
-            tool_trace=[{"provider_called": True}],
-            pending_confirmation=None,
-        )
+        raise AssertionError("owner pack should bypass provider")
 
     response = await _run_message(
         "Que debe contener una carpeta por entidad para cualquier torneo?",
         assistant_turn=provider,
     )
 
-    assert calls
-    assert "contexto canonico" in response.assistant_message
-    assert not any(
-        (step.get("request_intelligence_live_wiring") or {}).get("canonical_action")
-        == "operations.tournament_soul_snapshot"
-        for step in response.tool_trace
-        if isinstance(step, dict)
-    )
+    assert calls == []
+    assert "Estructura propuesta" in response.assistant_message
+    assert "Operaciones" in response.assistant_message
+    assert "Finanzas" in response.assistant_message
+    assert "Frontera de autoridad" in response.assistant_message
+    trace = response.tool_trace[0]["owner_operator_workflow"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+    assert trace["side_effects_detected"] == 0
 
 
 @pytest.mark.asyncio
@@ -264,9 +262,7 @@ async def test_registration_executive_report_bypasses_provider_and_is_exportable
                         }
                     ]
                 },
-                "caveats": [
-                    "FMF/Liga MX y RENAPO se reportan como unavailable."
-                ],
+                "caveats": ["FMF/Liga MX y RENAPO se reportan como unavailable."],
             },
         }
 

@@ -14,7 +14,10 @@ from samchat.assistant.business_diff_preview import (
     evaluate_preview_set,
     preview_contains_execution_claim,
 )
-from samchat.assistant.owner_needs_eval import parse_owner_needs_eval_set
+from samchat.assistant.owner_needs_eval import (
+    OwnerNeedsPrompt,
+    parse_owner_needs_eval_set,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +45,20 @@ def _assert_preview_safety(preview) -> None:
     assert preview_contains_execution_claim(preview) is False
 
 
+def test_owner_conceptual_entity_folder_request_uses_entity_folder_contract() -> None:
+    prompt = OwnerNeedsPrompt(
+        prompt_id="AI-OWNER-LIVE",
+        prompt="Que debe contener una carpeta por entidad para cualquier torneo?",
+        expected_sources=["owner_needs", "product_canon", "tournament"],
+        forbidden_behaviors=[],
+    )
+
+    preview = create_owner_prompt_business_diff_preview(prompt)
+
+    assert preview.operation_type == CREATE_ENTITY_FOLDER
+    _assert_preview_safety(preview)
+
+
 def test_ai_owner_001_builds_entity_folder_create_preview() -> None:
     prompt = _prompt("AI-OWNER-001")
     preview = create_owner_prompt_business_diff_preview(prompt)
@@ -51,8 +68,7 @@ def test_ai_owner_001_builds_entity_folder_create_preview() -> None:
     assert preview.target["folder_scope"] == "entity"
     assert preview.target["tournament_hint"] == "beisbol"
     assert any(
-        change.field == "expected_teams"
-        and change.status == MISSING_EVIDENCE
+        change.field == "expected_teams" and change.status == MISSING_EVIDENCE
         for change in preview.proposed_changes
     )
     assert "team" in preview.missing_evidence
@@ -80,8 +96,7 @@ def test_ai_owner_025_builds_activation_report_preview() -> None:
     assert preview.operation_type == GENERATE_ACTIVATION_REPORT
     assert preview.target["report_type"] == "brand_activation"
     assert any(
-        change.field == "photographic_evidence"
-        and change.status == MISSING_EVIDENCE
+        change.field == "photographic_evidence" and change.status == MISSING_EVIDENCE
         for change in preview.proposed_changes
     )
     assert "media" in preview.missing_evidence
@@ -95,8 +110,7 @@ def test_ai_owner_028_builds_entity_folder_update_preview() -> None:
     assert preview.operation_type == UPDATE_ENTITY_FOLDER
     assert preview.target["entity"] == "Jalisco"
     assert any(
-        change.field == "real_teams"
-        and change.status == MISSING_EVIDENCE
+        change.field == "real_teams" and change.status == MISSING_EVIDENCE
         for change in preview.proposed_changes
     )
     assert "authority_preview" in preview.missing_evidence
@@ -115,8 +129,7 @@ def test_ai_owner_018_medical_preview_does_not_invent_facts() -> None:
         for change in preview.proposed_changes
     )
     assert any(
-        change.field == "accidents_with_transfers"
-        and change.status == MISSING_EVIDENCE
+        change.field == "accidents_with_transfers" and change.status == MISSING_EVIDENCE
         for change in preview.proposed_changes
     )
     _assert_preview_safety(preview)
