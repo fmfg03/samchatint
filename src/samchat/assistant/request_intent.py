@@ -25,9 +25,7 @@ class OperationalRequestIntent:
 
 def normalize_request_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKD", text or "")
-    ascii_text = "".join(
-        ch for ch in normalized if not unicodedata.combining(ch)
-    )
+    ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return re.sub(r"\s+", " ", ascii_text.lower()).strip()
 
 
@@ -63,9 +61,7 @@ def _group_by(text: str) -> Optional[str]:
         return "proyecto"
     if any(token in text for token in ("torneo", "tournament")):
         return "torneo"
-    if any(
-        token in text for token in ("cuenta contable", "cuenta", "account")
-    ):
+    if any(token in text for token in ("cuenta contable", "cuenta", "account")):
         return "cuenta_contable"
     if any(token in text for token in ("categoria", "category")):
         return "categoria"
@@ -102,10 +98,11 @@ def _has_document_context(text: str) -> bool:
     )
 
 
-
-
 OWNER_AI_CONTEXT_TERMS = (
     "carpeta por entidad",
+    "carpetas por entidad",
+    "carpeta por cada entidad",
+    "una carpeta por cada entidad",
     "carpeta de la entidad",
     "carpeta de entidad",
     "carpetas del torneo",
@@ -129,6 +126,20 @@ OWNER_AI_CONTEXT_TERMS = (
     "necesidades de ai",
     "necesidades del dueno",
     "necesidades del dueño",
+    "cosas que necesito que me de la ia",
+    "cosas que necesito que me d? la ia",
+    "para todos y cada uno de los torneos",
+    "tableros preparados",
+    "tableros del dueno",
+    "tableros del due?o",
+    "tableros para el dueno",
+    "tableros para el due?o",
+    "tablero del director general",
+    "tablero para director general",
+    "tablero del dueno",
+    "tablero del due?o",
+    "tablero para direccion general",
+    "tablero para direcci?n general",
 )
 
 
@@ -180,6 +191,10 @@ def is_owner_ai_conceptual_request(text: str) -> bool:
     conceptual_terms = (
         "que debe contener",
         "que datos",
+        "que necesita",
+        "necesito que me de la ia",
+        "necesito que me d? la ia",
+        "para todos y cada uno",
         "como debe responder",
         "que puede hacer",
         "sin cambiar datos",
@@ -188,6 +203,7 @@ def is_owner_ai_conceptual_request(text: str) -> bool:
     return is_owner_ai_context_request(text) and any(
         term in normalized for term in conceptual_terms
     )
+
 
 def _intent(
     *,
@@ -232,14 +248,11 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             slots=slots,
         )
 
-    has_finance = any(
-        token in normalized for token in ("gasto", "gastos", "finanza")
-    )
+    has_finance = any(token in normalized for token in ("gasto", "gastos", "finanza"))
     if has_finance:
         slots["metric"] = "gasto"
         if any(
-            token in normalized
-            for token in ("pendiente", "comprobar", "comprobacion")
+            token in normalized for token in ("pendiente", "comprobar", "comprobacion")
         ):
             return _intent(
                 raw_text=raw_text,
@@ -249,8 +262,7 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
                 slots=slots,
             )
         if any(
-            token in normalized
-            for token in ("reporte", "dame", "cuanto", "gastamos")
+            token in normalized for token in ("reporte", "dame", "cuanto", "gastamos")
         ):
             slots["group_by"] = slots.get("group_by") or "proyecto"
             return _intent(
@@ -261,10 +273,7 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
                 slots=slots,
             )
 
-    if any(
-        token in normalized
-        for token in ("cfdi", "cfdis", "factura", "facturas")
-    ):
+    if any(token in normalized for token in ("cfdi", "cfdis", "factura", "facturas")):
         intent_name = "list_pending"
         if any(token in normalized for token in ("sin vincular", "sin gasto")):
             intent_name = "list_unlinked"
@@ -320,18 +329,15 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             missing_fields=missing,
         )
 
-    if (
-        not is_owner_ai_conceptual_request(raw_text)
-        and any(
-            token in normalized
-            for token in (
-                "torneo",
-                "equipos",
-                "equipo",
-                "jugadores",
-                "jugador",
-                "registro",
-            )
+    if not is_owner_ai_conceptual_request(raw_text) and any(
+        token in normalized
+        for token in (
+            "torneo",
+            "equipos",
+            "equipo",
+            "jugadores",
+            "jugador",
+            "registro",
         )
     ):
         missing: List[str] = []
@@ -343,8 +349,7 @@ def detect_request_intent(text: str) -> OperationalRequestIntent:
             else "tournament"
         )
         pending = any(
-            token in normalized
-            for token in ("pendiente", "incompleto", "faltan")
+            token in normalized for token in ("pendiente", "incompleto", "faltan")
         )
         return _intent(
             raw_text=raw_text,
