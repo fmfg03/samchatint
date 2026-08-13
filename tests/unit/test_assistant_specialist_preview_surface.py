@@ -132,6 +132,55 @@ def test_specialist_preview_surface_trace_exposes_renderer_contract(
     assert trace["result"]["business_preview"]["task_id"] == task_id
 
 
+def test_render_specialist_live_context_markdown_reports_read_only_matches() -> None:
+    from samchat.assistant.specialist_live_context import (
+        render_specialist_live_context_markdown,
+    )
+
+    message = render_specialist_live_context_markdown(
+        {
+            "source": "samchat_db",
+            "live_lookup_performed": True,
+            "authority": "read_only_context",
+            "matched": True,
+            "documents": [
+                {
+                    "numero_referencia": "S-2600071",
+                    "tipo": "SOLICITUD",
+                    "estado": "aprobado",
+                    "referencia_operaciones": "9",
+                    "monto_solicitado": 628,
+                }
+            ],
+            "expenses": [
+                {
+                    "numero_referencia": "O-26000312",
+                    "concepto": "CONSUMO",
+                    "monto": 296,
+                    "cfdi_uuid_manual": "75D37C50",
+                }
+            ],
+            "cfdis": [
+                {
+                    "cfdi_uuid": "669DBF39-F23C-4AD5-B858-F1F5A9AC8626",
+                    "emisor_nombre": "BIMBO",
+                    "total": 1972903,
+                    "tipo_de_comprobante": "I",
+                }
+            ],
+            "unresolved": {"uuid_or_prefixes": ["NOPE0000"]},
+            "status": "matched",
+        }
+    )
+
+    assert "Contexto encontrado" in message
+    assert "Documento S-2600071 | SOLICITUD | estado aprobado | REF 9" in message
+    assert "Gasto O-26000312 | CONSUMO | $296.00 | CFDI 75D37C50" in message
+    assert "CFDI 669DBF39-F23C-4AD5-B858-F1F5A9AC8626 | BIMBO" in message
+    assert "Sin resolver: uuid_or_prefixes: NOPE0000" in message
+    assert "consulta read-only" in message
+
+
 @pytest.mark.asyncio
 async def test_specialist_preview_surface_persists_render_payload() -> None:
     from types import SimpleNamespace

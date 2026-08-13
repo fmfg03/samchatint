@@ -336,6 +336,49 @@ async def test_specialist_preview_surface_routes_natural_business_intent_without
 
 
 @pytest.mark.asyncio
+async def test_specialist_preview_surface_attaches_read_only_live_context(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+
+    async def fake_live_context(session, understood_context):
+        assert understood_context["uuid_or_prefixes"] == ["669DBF39"]
+        return {
+            "source": "samchat_db",
+            "live_lookup_performed": True,
+            "authority": "read_only_context",
+            "matched": True,
+            "documents": [],
+            "expenses": [],
+            "cfdis": [
+                {
+                    "cfdi_uuid": "669DBF39-F23C-4AD5-B858-F1F5A9AC8626",
+                    "emisor_nombre": "BIMBO",
+                    "total": 1972903,
+                    "tipo_de_comprobante": "I",
+                }
+            ],
+            "unresolved": {},
+            "status": "matched",
+        }
+
+    monkeypatch.setattr(
+        conversation_service,
+        "resolve_specialist_preview_live_context",
+        fake_live_context,
+    )
+
+    response = await _run_message(
+        "Prepara la CxC de la factura 669DBF39 contra DCC Nacional"
+    )
+
+    assert "Contexto encontrado" in response.assistant_message
+    assert "CFDI 669DBF39-F23C-4AD5-B858-F1F5A9AC8626" in response.assistant_message
+    assert "Frontera de autoridad" in response.assistant_message
+    trace = response.tool_trace[0]["specialist_preview_surface"]
+    assert trace["live_context"]["authority"] == "read_only_context"
+    assert trace["live_context"]["matched"] is True
+
+
+@pytest.mark.asyncio
 async def test_registration_executive_report_bypasses_provider_and_is_exportable():
     calls = []
 
