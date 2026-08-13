@@ -35,6 +35,10 @@ from .analyst_workbench import (
     extract_inline_analyst_evidence,
     run_analyst_workbench,
 )
+from .assistant_workspace_trace import (
+    build_specialist_workspace_source_panel,
+    build_specialist_workspace_step_trace,
+)
 from .capability_negotiation import (
     capability_negotiation_enabled,
     detect_capability_goal,
@@ -414,6 +418,19 @@ async def _build_specialist_preview_surface_response(
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
     )
+    step_trace = build_specialist_workspace_step_trace(
+        task_id=task_id,
+        understood_context=surface.understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=surface.preview_render.to_dict(),
+    )
+    source_panel = build_specialist_workspace_source_panel(
+        understood_context=surface.understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=surface.preview_render.to_dict(),
+    )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
     assistant_message = surface.assistant_message.replace(
@@ -423,9 +440,13 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
+    tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
+    tool_trace_entry["specialist_preview_surface"]["source_panel"] = source_panel
     tool_trace_entry["result"]["live_context"] = live_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
+    tool_trace_entry["result"]["step_trace"] = step_trace
+    tool_trace_entry["result"]["source_panel"] = source_panel
     tool_trace = [tool_trace_entry]
     preview_render = surface.preview_render.to_dict()
     business_preview = (
@@ -445,6 +466,8 @@ async def _build_specialist_preview_surface_response(
             "live_context": live_context,
             "diagnostics": diagnostics,
             "workspace_cards": workspace_cards,
+            "step_trace": step_trace,
+            "source_panel": source_panel,
         },
     )
     return _response_object(
