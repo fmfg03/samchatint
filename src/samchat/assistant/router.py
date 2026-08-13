@@ -147,6 +147,8 @@ from .request_intent import (
     is_owner_ai_conceptual_request,
     is_owner_ai_context_request,
 )
+from .owner_needs_eval import parse_owner_needs_eval_set
+from .owner_pack_status import build_owner_pack_status_report
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -2421,6 +2423,7 @@ def _assistant_default_tournament_key() -> Optional[str]:
 
 READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_owner_pack_status",
     "finance_accounting_report",
     "finance_alerts_scan",
     "finance_ops_query",
@@ -2472,6 +2475,7 @@ WRITE_TOOLS = {
 
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_owner_pack_status",
     "finance_accounting_report",
     "finance_alerts_scan",
     "finance_ops_query",
@@ -2503,6 +2507,7 @@ FINANCE_WRITE_TOOLS = {
     "assistant_save_artifact",
 }
 TOURNAMENT_READ_TOOLS = {
+    "assistant_owner_pack_status",
     "tournament_expediente_snapshot",
     "tournament_draft_inspect",
     "tournament_draft_revise",
@@ -3088,6 +3093,25 @@ _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
 
 def _tool_defs() -> List[Dict[str, Any]]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_status",
+                "description": "Resume en modo solo lectura que superficies del Owner Pack del dueno estan preparadas como contratos del asistente y que evidencia viva falta para llenarlas sin inventar.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -8586,6 +8610,37 @@ async def _run_read_tool(
         if tool_name == "workspace_file_read":
             return await workspace_file_read(**args)
         return await workspace_search(**args)
+
+
+    if tool_name == "assistant_owner_pack_status":
+        eval_path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+        if not eval_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail="Owner Pack eval set is not available in this release",
+            )
+        prompts = parse_owner_needs_eval_set(eval_path.read_text(encoding="utf-8"))
+        report = build_owner_pack_status_report(prompts)
+        scope = str(args.get("scope") or "all").strip()
+        payload = report.to_dict()
+        if scope and scope != "all":
+            payload["surfaces"] = [
+                surface
+                for surface in payload.get("surfaces", [])
+                if surface.get("surface_id") == scope
+            ]
+            payload["prepared_surface_count"] = len(payload["surfaces"])
+            payload["missing_evidence"] = sorted(
+                {
+                    evidence
+                    for surface in payload["surfaces"]
+                    for evidence in surface.get("missing_evidence", [])
+                }
+            )
+            payload.setdefault("safety_summary", {})[
+                "live_data_required_before_complete_claim"
+            ] = bool(payload["missing_evidence"])
+        return payload
 
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(
