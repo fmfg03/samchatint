@@ -4640,6 +4640,7 @@ class MessageResponse(BaseModel):
     run_id: str
     tool_trace: List[Dict[str, Any]] = Field(default_factory=list)
     pending_confirmation: Optional[PendingConfirmation] = None
+    preview_render: Optional[Dict[str, Any]] = None
 
 
 class InvitationCreateRequest(BaseModel):

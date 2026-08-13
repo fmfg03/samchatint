@@ -65,6 +65,10 @@ from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt
 from .owner_operator_workflow import run_owner_operator_workflow
+from .specialist_preview_surface import (
+    detect_specialist_preview_task_id,
+    render_specialist_preview_surface,
+)
 from .request_router import route_request
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -151,12 +155,14 @@ def _response_object(
     assistant_message: str,
     tool_trace: list[dict[str, Any]],
     run_id: Optional[str] = None,
+    preview_render: Optional[dict[str, Any]] = None,
 ) -> Any:
     return SimpleNamespace(
         assistant_message=assistant_message,
         run_id=run_id or str(uuid.uuid4()),
         tool_trace=tool_trace,
         pending_confirmation=None,
+        preview_render=preview_render,
     )
 
 
@@ -374,6 +380,30 @@ async def _build_owner_operator_response(
         session=session,
     )
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+async def _build_specialist_preview_surface_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+) -> Optional[Any]:
+    task_id = detect_specialist_preview_task_id(raw_message)
+    if task_id is None:
+        return None
+    surface = render_specialist_preview_surface(task_id)
+    tool_trace = [surface.tool_trace()]
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=surface.assistant_message,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(
+        assistant_message=surface.assistant_message,
+        tool_trace=tool_trace,
+        preview_render=surface.preview_render.to_dict(),
+    )
 
 
 async def _persist_document_conversation_messages(
@@ -873,6 +903,14 @@ async def run_conversation_turn(
     if capability_response is not None:
         return capability_response
 
+    specialist_preview_response = await _build_specialist_preview_surface_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if specialist_preview_response is not None:
+        return specialist_preview_response
+
     owner_response = await _build_owner_operator_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1095,6 +1133,14 @@ async def run_message_turn_with_pending(
     )
     if capability_response is not None:
         return capability_response
+
+    specialist_preview_response = await _build_specialist_preview_surface_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if specialist_preview_response is not None:
+        return specialist_preview_response
 
     owner_response = await _build_owner_operator_response(
         raw_message=raw_message,
