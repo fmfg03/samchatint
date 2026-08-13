@@ -254,8 +254,8 @@ type AlertsResponse = {
   }>;
 };
 
-const OPENAI_KEY_STORAGE_KEY = "samchat_assistant_openai_api_key";
 const ASSISTANT_MODE_STORAGE_KEY = "samchat_assistant_mode";
+const SUPPORTED_ASSISTANT_MODES: AssistantMode[] = ["ahorro", "balanceado", "calidad"];
 
 const assistantThemeVars = {
   "--assistant-bg": "#f5f7fb",
@@ -291,6 +291,10 @@ function formatAssistantDate(raw?: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function normalizeAssistantMode(raw: string | null | undefined): AssistantMode {
+  return SUPPORTED_ASSISTANT_MODES.includes(raw as AssistantMode) ? (raw as AssistantMode) : "ahorro";
 }
 
 function modeLabel(mode: AssistantMode) {
@@ -790,7 +794,7 @@ export default function Assistant() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>(
-    () => (localStorage.getItem(ASSISTANT_MODE_STORAGE_KEY) as AssistantMode) || "ahorro"
+    () => normalizeAssistantMode(localStorage.getItem(ASSISTANT_MODE_STORAGE_KEY))
   );
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
@@ -825,9 +829,7 @@ export default function Assistant() {
   const [codexDraft, setCodexDraft] = useState<string>("");
   const [codexBusy, setCodexBusy] = useState(false);
   const [codexStatus, setCodexStatus] = useState<string | null>(null);
-  const [sessionOpenAiKey, setSessionOpenAiKey] = useState<string>(
-    () => localStorage.getItem(OPENAI_KEY_STORAGE_KEY) || ""
-  );
+  const [sessionOpenAiKey, setSessionOpenAiKey] = useState<string>("");
   const [ragWeightsDraft, setRagWeightsDraft] = useState({
     doc_weight: "1.0",
     sql_weight: "1.15",
@@ -854,17 +856,12 @@ export default function Assistant() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const keyFromUrl =
-      url.searchParams.get("openai_api_key") ||
-      url.searchParams.get("openai_key") ||
-      "";
-    const normalized = keyFromUrl.trim();
-    if (!normalized) return;
-    localStorage.setItem(OPENAI_KEY_STORAGE_KEY, normalized);
-    setSessionOpenAiKey(normalized);
+    const hasUrlProviderKey = url.searchParams.has("openai_api_key") || url.searchParams.has("openai_key");
+    if (!hasUrlProviderKey) return;
     url.searchParams.delete("openai_api_key");
     url.searchParams.delete("openai_key");
     window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    setError("Por seguridad, las API keys no se aceptan por URL. Pegala manualmente para esta sesion si necesitas usar proveedor propio.");
   }, []);
 
   useEffect(() => {
@@ -909,7 +906,7 @@ export default function Assistant() {
           headers: mergedHeaders,
         });
         if (res.status === 404 && url !== candidates[candidates.length - 1]) {
-          // Try next candidate (common behind reverse proxies).
+          // Try next candidate only for route-mount misses (common behind reverse proxies).
           continue;
         }
         if (res.status === 401) {
@@ -922,6 +919,8 @@ export default function Assistant() {
         return (await res.json()) as T;
       } catch (e) {
         lastErr = e instanceof Error ? e : new Error(String(e));
+        // Do not replay authenticated or mutating calls after non-404 failures.
+        break;
       } finally {
         window.clearTimeout(timeout);
       }
@@ -960,6 +959,8 @@ export default function Assistant() {
         return await res.blob();
       } catch (e) {
         lastErr = e instanceof Error ? e : new Error(String(e));
+        // Export/download POSTs must not replay after non-404 failures.
+        break;
       } finally {
         window.clearTimeout(timeout);
       }
@@ -1409,24 +1410,13 @@ export default function Assistant() {
   function resolveExportIntent(raw: string): "csv" | "pdf" | null {
     const text = (raw || "").trim().toLowerCase();
     if (!text) return null;
-    const asksPdf =
-      text === "pdf" ||
-      text.includes(" en pdf") ||
-      text.includes("a pdf") ||
-      text.includes("exporta pdf") ||
-      text.includes("exportar pdf");
+    const explicitExport = /\b(exporta|exportar|descarga|descargar|baja|bajar|genera|generar|dame|mandame)\b/.test(text);
+    if (!explicitExport) return null;
+    const barePdf = text === "pdf" || text === "descarga pdf" || text === "exporta pdf" || text === "generar pdf";
+    const bareCsv = ["excel", "xlsx", "csv", "descarga excel", "exporta excel", "generar excel"].includes(text);
+    const asksPdf = barePdf || /\b(pdf)\b/.test(text);
     if (asksPdf) return "pdf";
-
-    const asksExcel =
-      text === "excel" ||
-      text === "xlsx" ||
-      text === "csv" ||
-      text.includes(" en excel") ||
-      text.includes("a excel") ||
-      text.includes("xlsx") ||
-      text.includes("csv") ||
-      text.includes("exporta excel") ||
-      text.includes("exportar excel");
+    const asksExcel = bareCsv || /\b(excel|xlsx|csv)\b/.test(text);
     if (asksExcel) return "csv";
     return null;
   }
