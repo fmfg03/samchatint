@@ -311,3 +311,77 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     payload = assistant_messages[0].tool_payload
     assert payload["preview_render"] == response.preview_render
     assert payload["business_preview"]["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+
+
+def test_specialist_preview_workspace_trace_and_sources_contract() -> None:
+    from samchat.assistant.assistant_workspace_trace import (
+        build_specialist_workspace_source_panel,
+        build_specialist_workspace_step_trace,
+    )
+
+    understood_context = {
+        "authority": "context_hint_only",
+        "domains": ["cxc", "cfdi"],
+        "operations_refs": ["28"],
+        "uuid_or_prefixes": ["669DBF39"],
+    }
+    live_context = {
+        "authority": "read_only_context",
+        "status": "matched",
+        "live_lookup_performed": True,
+        "matched": True,
+        "documents": [{"numero_referencia": "S-2600071"}],
+        "expenses": [],
+        "cfdis": [{"cfdi_uuid": "669DBF39"}],
+        "unresolved": {},
+    }
+    diagnostics = {
+        "authority": "read_only_diagnostic",
+        "readiness": "ready_for_read_only_preview",
+        "findings": ["CFDI encontrados: 1."],
+        "missing": [],
+        "risks": [],
+        "next_steps": ["Continuar con preview/diff read-only."],
+    }
+    preview_render = {
+        "preview_id": "preview-1",
+        "task_id": "SAMCHAT-CXC-COLLECTION-001",
+        "preview_type": "specialist_business_diff",
+        "sections": [{"section_id": "summary"}, {"section_id": "authority"}],
+        "primary_action_enabled": False,
+        "execution_status": "not_executed",
+    }
+
+    steps = build_specialist_workspace_step_trace(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context=understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=preview_render,
+    )
+    sources = build_specialist_workspace_source_panel(
+        understood_context=understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=preview_render,
+    )
+
+    assert [step["step_id"] for step in steps] == [
+        "understand_request",
+        "read_live_context",
+        "diagnose_readiness",
+        "prepare_preview",
+        "hold_authority_boundary",
+    ]
+    assert steps[1]["data"]["documents"] == 1
+    assert steps[1]["data"]["cfdis"] == 1
+    assert steps[-1]["status"] == "blocked"
+    assert steps[-1]["data"]["execution_allowed"] is False
+    assert [source["source_id"] for source in sources] == [
+        "user_message",
+        "samchat_db_readonly",
+        "deterministic_diagnostics",
+        "specialist_preview_contract",
+    ]
+    assert sources[1]["status"] == "matched"
+    assert sources[-1]["data"]["primary_action_enabled"] is False
