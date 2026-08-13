@@ -394,6 +394,11 @@ async def _build_specialist_preview_surface_response(
     surface = render_specialist_preview_surface(task_id)
     tool_trace = [surface.tool_trace()]
     preview_render = surface.preview_render.to_dict()
+    business_preview = (
+        surface.business_preview.to_dict()
+        if hasattr(surface.business_preview, "to_dict")
+        else dict(surface.business_preview)
+    )
     await _persist_document_conversation_messages(
         raw_message=raw_message,
         assistant_message=surface.assistant_message,
@@ -401,7 +406,7 @@ async def _build_specialist_preview_surface_response(
         session=session,
         assistant_tool_payload={
             "preview_render": preview_render,
-            "business_preview": surface.business_preview.to_dict(),
+            "business_preview": business_preview,
         },
     )
     return _response_object(
