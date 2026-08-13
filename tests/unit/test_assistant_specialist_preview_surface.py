@@ -55,3 +55,45 @@ def test_specialist_preview_surface_trace_exposes_renderer_contract(task_id: str
     assert trace["tool"] == "assistant.specialist_preview.render"
     assert trace["result"]["preview_render"] == surface.preview_render.to_dict()
     assert trace["result"]["business_preview"]["task_id"] == task_id
+
+
+@pytest.mark.asyncio
+async def test_specialist_preview_surface_persists_render_payload() -> None:
+    from types import SimpleNamespace
+
+    import pydantic
+
+    if not hasattr(pydantic, "field_validator"):
+        pytest.skip("conversation_service import requires pydantic v2")
+
+    from samchat.assistant.conversation_service import (
+        _build_specialist_preview_surface_response,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.added = []
+            self.committed = False
+
+        def add(self, item) -> None:
+            self.added.append(item)
+
+        async def commit(self) -> None:
+            self.committed = True
+
+    session = FakeSession()
+    conversation = SimpleNamespace(id="conv-1", updated_at=None)
+    response = await _build_specialist_preview_surface_response(
+        raw_message="Muestra preview especialista SAMCHAT-CXC-COLLECTION-001",
+        conversation=conversation,
+        session=session,
+    )
+
+    assert response is not None
+    assert response.preview_render["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert session.committed is True
+    assistant_messages = [m for m in session.added if getattr(m, "role", None) == "assistant"]
+    assert len(assistant_messages) == 1
+    payload = assistant_messages[0].tool_payload
+    assert payload["preview_render"] == response.preview_render
+    assert payload["business_preview"]["task_id"] == "SAMCHAT-CXC-COLLECTION-001"

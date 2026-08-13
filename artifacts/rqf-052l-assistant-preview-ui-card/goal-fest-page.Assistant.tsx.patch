@@ -1,0 +1,278 @@
+--- /tmp/Assistant.tsx.before-preview-card	2026-08-13 02:33:04.560408994 +0200
++++ /srv/samchat/archive/projects/goal-fest-page/src/pages/Assistant.tsx	2026-08-13 02:35:55.394243898 +0200
+@@ -34,12 +34,36 @@
+   rol?: string | null;
+ };
+ 
++type SpecialistPreviewItem = Record<string, unknown>;
++
++type SpecialistPreviewSection = {
++  section_id: string;
++  title: string;
++  items: SpecialistPreviewItem[];
++  status?: string;
++};
++
++type SpecialistPreviewRender = {
++  preview_id: string;
++  task_id: string;
++  title: string;
++  preview_type: string;
++  sections: SpecialistPreviewSection[];
++  primary_action_label: string;
++  primary_action_enabled: boolean;
++  blocked_reason?: string | null;
++  execution_status: string;
++  audit_language: string;
++};
++
+ type ChatMessage = {
+   id: string;
+   role: "user" | "assistant";
+   content: string;
+   created_at?: string;
+   tool_trace?: Array<Record<string, unknown>>;
++  tool_payload?: Record<string, unknown> | null;
++  preview_render?: SpecialistPreviewRender | null;
+ };
+ 
+ type PendingConfirmation = {
+@@ -244,6 +268,180 @@
+   return "Ahorro";
+ }
+ 
++
++function asPreviewRender(value: unknown): SpecialistPreviewRender | null {
++  if (!value || typeof value !== "object") return null;
++  const candidate = value as Partial<SpecialistPreviewRender>;
++  if (!candidate.preview_id || !candidate.task_id || !Array.isArray(candidate.sections)) return null;
++  return candidate as SpecialistPreviewRender;
++}
++
++function previewFromPayload(payload: Record<string, unknown> | null | undefined): SpecialistPreviewRender | null {
++  return asPreviewRender(payload?.preview_render);
++}
++
++function previewSection(preview: SpecialistPreviewRender, id: string): SpecialistPreviewSection | null {
++  return preview.sections.find((section) => section.section_id === id) || null;
++}
++
++function previewValue(value: unknown): string {
++  if (value === null || value === undefined || value === "") return "-";
++  if (typeof value === "boolean") return value ? "Si" : "No";
++  if (typeof value === "number") {
++    if (Number.isFinite(value) && Math.abs(value) >= 1000) {
++      return new Intl.NumberFormat("es-MX", { maximumFractionDigits: 2 }).format(value);
++    }
++    return String(value);
++  }
++  if (Array.isArray(value)) return value.map(previewValue).join(", ");
++  if (typeof value === "object") return JSON.stringify(value);
++  return String(value);
++}
++
++function previewStatusClasses(status?: string): string {
++  const normalized = (status || "info").toLowerCase();
++  if (normalized === "ok" || normalized === "supported") return "border-emerald-200 bg-emerald-50 text-emerald-800";
++  if (normalized === "blocked" || normalized === "missing" || normalized === "error") return "border-amber-200 bg-amber-50 text-amber-900";
++  return "border-blue-200 bg-blue-50 text-blue-800";
++}
++
++function SpecialistPreviewCard({ preview }: { preview?: SpecialistPreviewRender | null }) {
++  if (!preview) return null;
++  const summary = previewSection(preview, "summary");
++  const changes = previewSection(preview, "proposed_changes");
++  const evidence = previewSection(preview, "evidence");
++  const missingEvidence = previewSection(preview, "missing_evidence");
++  const steps = previewSection(preview, "steps");
++  const checks = previewSection(preview, "checks");
++  const authority = previewSection(preview, "authority");
++  const changeItems = (changes?.items || []).slice(0, 6);
++  const evidenceItems = evidence?.items || [];
++  const missingItems = missingEvidence?.items || [];
++  const summaryItems = summary?.items || [];
++  const agentType = summaryItems.find((item) => item.label === "agent_type")?.value;
++  const capability = summaryItems.find((item) => item.label === "capability")?.value;
++
++  return (
++    <div className="mt-4 overflow-hidden rounded-[22px] border border-blue-200 bg-white shadow-sm">
++      <div className="border-b border-blue-100 bg-gradient-to-r from-blue-50 via-white to-emerald-50 p-4">
++        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
++          <div>
++            <div className="flex flex-wrap items-center gap-2 text-[11px] font-bold uppercase tracking-[0.16em] text-blue-700">
++              <ShieldCheck className="h-4 w-4" />
++              Preview especialista
++              <span className={`rounded-full border px-2 py-0.5 normal-case tracking-normal ${previewStatusClasses(authority?.status)}`}>
++                {preview.execution_status === "not_executed" ? "No ejecutado" : preview.execution_status}
++              </span>
++            </div>
++            <h3 className="mt-2 text-base font-semibold text-slate-950">{preview.title}</h3>
++            <p className="mt-1 text-xs text-slate-500">
++              {preview.task_id} / {preview.preview_type}
++              {agentType ? ` / agente ${previewValue(agentType)}` : ""}
++              {capability ? ` / ${previewValue(capability)}` : ""}
++            </p>
++          </div>
++          <button
++            type="button"
++            disabled={!preview.primary_action_enabled}
++            className="inline-flex items-center justify-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white opacity-45 disabled:cursor-not-allowed"
++            title={preview.blocked_reason || "Requiere autorizacion"}
++          >
++            <LockKeyhole className="mr-2 h-4 w-4" />
++            {preview.primary_action_label}
++          </button>
++        </div>
++      </div>
++
++      <div className="grid gap-3 p-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(280px,0.8fr)]">
++        <div className="space-y-3">
++          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
++            <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Cambios propuestos</div>
++            {changeItems.length > 0 ? (
++              <div className="grid gap-2 sm:grid-cols-2">
++                {changeItems.map((item, idx) => (
++                  <div key={`${preview.preview_id}-change-${idx}`} className="rounded-xl border border-white bg-white p-3 shadow-sm">
++                    <div className="flex items-start justify-between gap-2">
++                      <div className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
++                        {previewValue(item.field || item.label || `Campo ${idx + 1}`)}
++                      </div>
++                      <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${previewStatusClasses(String(item.status || changes?.status || "info"))}`}>
++                        {previewValue(item.status || changes?.status || "info")}
++                      </span>
++                    </div>
++                    <div className="mt-1 break-words text-sm font-semibold text-slate-950">{previewValue(item.value)}</div>
++                    <div className="mt-2 break-all text-[11px] text-slate-500">
++                      {item.evidence_id ? `Evidencia: ${previewValue(item.evidence_id)}` : "Sin evidencia ligada"}
++                    </div>
++                  </div>
++                ))}
++              </div>
++            ) : (
++              <div className="text-sm text-slate-500">No hay cambios propuestos.</div>
++            )}
++          </div>
++
++          <div className="rounded-2xl border border-slate-200 bg-white p-3">
++            <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Plan de trabajo</div>
++            <div className="grid gap-2 md:grid-cols-2">
++              {(steps?.items || []).map((item, idx) => (
++                <div key={`${preview.preview_id}-step-${idx}`} className="flex items-start gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-700">
++                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
++                  <span>{previewValue(item.step || item.label || item)}</span>
++                </div>
++              ))}
++              {(steps?.items || []).length === 0 ? <div className="text-sm text-slate-500">Sin pasos declarados.</div> : null}
++            </div>
++          </div>
++        </div>
++
++        <div className="space-y-3">
++          <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
++            <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-emerald-800">Evidencia</div>
++            <div className="flex flex-wrap gap-2">
++              {evidenceItems.map((item, idx) => (
++                <span key={`${preview.preview_id}-ev-${idx}`} className="rounded-full border border-emerald-200 bg-white px-2.5 py-1 text-xs font-semibold text-emerald-900">
++                  {previewValue(item.evidence_id || item.label || item)}
++                </span>
++              ))}
++              {evidenceItems.length === 0 ? <span className="text-sm text-emerald-900">Sin evidencia encontrada.</span> : null}
++            </div>
++            {missingItems.length > 0 ? (
++              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
++                Falta: {missingItems.map((item) => previewValue(item.evidence_id || item.label || item)).join(", ")}
++              </div>
++            ) : null}
++          </div>
++
++          <div className="rounded-2xl border border-slate-200 bg-white p-3">
++            <div className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-slate-500">Checks</div>
++            <div className="space-y-1.5">
++              {(checks?.items || []).slice(0, 5).map((item, idx) => (
++                <div key={`${preview.preview_id}-check-${idx}`} className="rounded-lg bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700">
++                  {previewValue(item.check || item.label || item)}
++                </div>
++              ))}
++              {(checks?.items || []).length === 0 ? <div className="text-sm text-slate-500">Sin checks.</div> : null}
++            </div>
++          </div>
++
++          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-amber-950">
++            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em]">
++              <LockKeyhole className="h-4 w-4" />
++              Frontera de autoridad
++            </div>
++            <p className="mt-2 text-sm leading-5">
++              {preview.audit_language === "preview_only"
++                ? "Vista previa unicamente. No se ejecutaron escrituras ni efectos reales."
++                : `Modo: ${preview.audit_language}`}
++            </p>
++            <p className="mt-1 text-xs text-amber-800">Bloqueo: {preview.blocked_reason || "requiere autorizacion"}</p>
++          </div>
++        </div>
++      </div>
++    </div>
++  );
++}
++
+ export default function Assistant() {
+   const [urlFilters] = useSearchParams();
+   const assistantSearchKey = urlFilters.toString();
+@@ -570,6 +768,7 @@
+         run_id: string;
+         tool_trace?: Array<Record<string, unknown>>;
+         pending_confirmation?: PendingConfirmation | null;
++        preview_render?: SpecialistPreviewRender | null;
+       }>(`/api/assistant/conversations/${conversationId}/messages`, {
+         method: "POST",
+         body: JSON.stringify({
+@@ -591,6 +790,7 @@
+           role: "assistant",
+           content: resp.assistant_message,
+           tool_trace: trace,
++          preview_render: resp.preview_render || null,
+         },
+       ]);
+ 
+@@ -641,6 +841,7 @@
+         run_id: string;
+         tool_trace?: Array<Record<string, unknown>>;
+         pending_confirmation?: PendingConfirmation | null;
++        preview_render?: SpecialistPreviewRender | null;
+       }>(`/api/assistant/conversations/${conversationId}/confirm`, {
+         method: "POST",
+         body: JSON.stringify({ run_id: pending.run_id, approve, assistant_mode: assistantMode }),
+@@ -653,6 +854,7 @@
+           role: "assistant",
+           content: resp.assistant_message,
+           tool_trace: trace,
++          preview_render: resp.preview_render || null,
+         },
+       ]);
+       setPending(resp.pending_confirmation || null);
+@@ -710,6 +912,7 @@
+         run_id: string;
+         tool_trace?: Array<Record<string, unknown>>;
+         pending_confirmation?: PendingConfirmation | null;
++        preview_render?: SpecialistPreviewRender | null;
+       }>(`/api/assistant/conversations/${conversationId}/media`, {
+         method: "POST",
+         body: form,
+@@ -722,6 +925,7 @@
+           role: "assistant",
+           content: resp.assistant_message,
+           tool_trace: trace,
++          preview_render: resp.preview_render || null,
+         },
+       ]);
+       if (resp.pending_confirmation) setPending(resp.pending_confirmation);
+@@ -1424,6 +1628,9 @@
+                           </div>
+                         </div>
+                         <div className="whitespace-pre-wrap text-sm leading-6">{m.content}</div>
++                        {m.role === "assistant" ? (
++                          <SpecialistPreviewCard preview={m.preview_render || previewFromPayload(m.tool_payload)} />
++                        ) : null}
+                         {m.role === "assistant" && m.tool_trace && m.tool_trace.length > 0 ? (
+                           <details className="mt-3 rounded-xl border border-[var(--assistant-border)] bg-[var(--assistant-surface-elevated)] p-3">
+                             <summary className="cursor-pointer text-xs font-semibold text-[var(--assistant-text)]">
