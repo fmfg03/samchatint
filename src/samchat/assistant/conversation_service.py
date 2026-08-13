@@ -71,6 +71,7 @@ from .specialist_preview_surface import (
 )
 from .specialist_live_context import (
     build_specialist_preview_diagnostics,
+    build_specialist_preview_workspace_cards,
     render_specialist_live_context_markdown,
     render_specialist_preview_diagnostics_markdown,
     resolve_specialist_preview_live_context,
@@ -406,6 +407,13 @@ async def _build_specialist_preview_surface_response(
         understood_context=surface.understood_context,
         live_context=live_context,
     )
+    workspace_cards = build_specialist_preview_workspace_cards(
+        task_id=task_id,
+        understood_context=surface.understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=surface.preview_render.to_dict(),
+    )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
     assistant_message = surface.assistant_message.replace(
@@ -414,8 +422,10 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry = surface.tool_trace()
     tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
+    tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["result"]["live_context"] = live_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
+    tool_trace_entry["result"]["workspace_cards"] = workspace_cards
     tool_trace = [tool_trace_entry]
     preview_render = surface.preview_render.to_dict()
     business_preview = (
@@ -434,6 +444,7 @@ async def _build_specialist_preview_surface_response(
             "understood_context": surface.understood_context,
             "live_context": live_context,
             "diagnostics": diagnostics,
+            "workspace_cards": workspace_cards,
         },
     )
     return _response_object(

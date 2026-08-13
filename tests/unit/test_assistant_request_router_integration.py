@@ -380,6 +380,14 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
     assert trace["live_context"]["matched"] is True
     assert trace["diagnostics"]["authority"] == "read_only_diagnostic"
     assert trace["diagnostics"]["readiness"] == "ready_for_read_only_preview"
+    assert [card["card_id"] for card in trace["workspace_cards"]] == [
+        "understood_context",
+        "live_context",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert trace["workspace_cards"][-1]["status"] == "blocked"
 
 
 @pytest.mark.asyncio

@@ -132,6 +132,45 @@ def test_specialist_preview_surface_trace_exposes_renderer_contract(
     assert trace["result"]["business_preview"]["task_id"] == task_id
 
 
+def test_specialist_preview_workspace_cards_contract() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={
+            "authority": "read_only_context",
+            "status": "matched",
+            "matched": True,
+            "cfdis": [{"cfdi_uuid": "669DBF39"}],
+        },
+        diagnostics={
+            "authority": "read_only_diagnostic",
+            "readiness": "ready_for_read_only_preview",
+        },
+        preview_render={
+            "task_id": "SAMCHAT-CXC-COLLECTION-001",
+            "execution_status": "not_executed",
+        },
+    )
+
+    assert [card["card_id"] for card in cards] == [
+        "understood_context",
+        "live_context",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert cards[0]["authority"] == "context_hint_only"
+    assert cards[1]["kind"] == "evidence"
+    assert cards[2]["status"] == "ready_for_read_only_preview"
+    assert cards[-1]["status"] == "blocked"
+    assert cards[-1]["data"]["primary_action_enabled"] is False
+    assert cards[-1]["data"]["writes_attempted"] is False
+
+
 def test_specialist_preview_diagnostics_marks_cxc_ready_with_cfdi() -> None:
     from samchat.assistant.specialist_live_context import (
         build_specialist_preview_diagnostics,

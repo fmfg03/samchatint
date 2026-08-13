@@ -389,6 +389,91 @@ def render_specialist_preview_diagnostics_markdown(
     return "\n".join(lines) + "\n"
 
 
+def build_specialist_preview_workspace_cards(
+    *,
+    task_id: str,
+    understood_context: Mapping[str, Any],
+    live_context: Mapping[str, Any],
+    diagnostics: Mapping[str, Any],
+    preview_render: Mapping[str, Any],
+) -> List[Dict[str, Any]]:
+    """Build structured cards for the future assistant operator workspace UI."""
+
+    cards: List[Dict[str, Any]] = []
+    cards.append(
+        {
+            "card_id": "understood_context",
+            "title": "Contexto entendido",
+            "kind": "context",
+            "status": "available",
+            "authority": understood_context.get("authority", "context_hint_only"),
+            "summary": "Referencias y dominios detectados en el mensaje del usuario.",
+            "data": dict(understood_context),
+        }
+    )
+    live_status = live_context.get("status") or "unknown"
+    cards.append(
+        {
+            "card_id": "live_context",
+            "title": "Contexto encontrado",
+            "kind": "evidence",
+            "status": live_status,
+            "authority": live_context.get("authority", "read_only_context"),
+            "summary": (
+                "Coincidencias encontradas en SamChat."
+                if live_context.get("matched")
+                else "Sin coincidencias live suficientes."
+            ),
+            "data": dict(live_context),
+        }
+    )
+    readiness = diagnostics.get("readiness") or "unknown"
+    cards.append(
+        {
+            "card_id": "operational_diagnostics",
+            "title": "Diagnostico operativo",
+            "kind": "diagnostic",
+            "status": readiness,
+            "authority": diagnostics.get("authority", "read_only_diagnostic"),
+            "summary": "Lectura deterministica de hallazgos, faltantes, riesgos y siguiente paso.",
+            "data": dict(diagnostics),
+        }
+    )
+    cards.append(
+        {
+            "card_id": "business_preview",
+            "title": "Preview especialista",
+            "kind": "preview",
+            "status": preview_render.get("execution_status", "not_executed"),
+            "authority": "preview_only",
+            "summary": f"Preview deterministico para {task_id}.",
+            "data": dict(preview_render),
+        }
+    )
+    cards.append(
+        {
+            "card_id": "authority_boundary",
+            "title": "Frontera de autoridad",
+            "kind": "authority",
+            "status": "blocked",
+            "authority": "human_approval_required",
+            "summary": "No se ejecutan acciones ni se crean registros desde este preview.",
+            "data": {
+                "primary_action_enabled": False,
+                "writes_attempted": False,
+                "provider_called": False,
+                "required_before_writes": [
+                    "preview exacto",
+                    "aprobacion humana",
+                    "idempotency key",
+                    "audit trail",
+                ],
+            },
+        }
+    )
+    return cards
+
+
 def _format_money(value: Any) -> str:
     amount = _amount(value)
     if amount is None:
