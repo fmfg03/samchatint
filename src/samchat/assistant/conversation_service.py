@@ -393,16 +393,26 @@ async def _build_specialist_preview_surface_response(
         return None
     surface = render_specialist_preview_surface(task_id)
     tool_trace = [surface.tool_trace()]
+    preview_render = surface.preview_render.to_dict()
+    business_preview = (
+        surface.business_preview.to_dict()
+        if hasattr(surface.business_preview, "to_dict")
+        else dict(surface.business_preview)
+    )
     await _persist_document_conversation_messages(
         raw_message=raw_message,
         assistant_message=surface.assistant_message,
         conversation=conversation,
         session=session,
+        assistant_tool_payload={
+            "preview_render": preview_render,
+            "business_preview": business_preview,
+        },
     )
     return _response_object(
         assistant_message=surface.assistant_message,
         tool_trace=tool_trace,
-        preview_render=surface.preview_render.to_dict(),
+        preview_render=preview_render,
     )
 
 
@@ -412,6 +422,7 @@ async def _persist_document_conversation_messages(
     assistant_message: str,
     conversation: Any,
     session: Any,
+    assistant_tool_payload: Optional[dict[str, Any]] = None,
 ) -> None:
     session.add(
         AssistantMessage(
@@ -428,7 +439,7 @@ async def _persist_document_conversation_messages(
             role="assistant",
             content=assistant_message,
             tool_name=None,
-            tool_payload=None,
+            tool_payload=assistant_tool_payload,
         )
     )
     conversation.updated_at = datetime.utcnow()
