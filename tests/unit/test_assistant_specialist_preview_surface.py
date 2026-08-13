@@ -9,6 +9,7 @@ from samchat.assistant.specialist_preview_renderer import (
 )
 from samchat.assistant.specialist_preview_surface import (
     detect_specialist_preview_task_id,
+    extract_specialist_preview_understood_context,
     render_specialist_preview_surface,
 )
 
@@ -55,6 +56,43 @@ def test_detect_specialist_preview_does_not_trigger_on_domain_chatter() -> None:
     assert detect_specialist_preview_task_id("Tenemos facturas de Bimbo en DCC") is None
     assert detect_specialist_preview_task_id("AMEX de Odilon") is None
     assert detect_specialist_preview_task_id("Que es CxC?") is None
+
+
+def test_extract_specialist_preview_understood_context_from_business_prompt() -> None:
+    context = extract_specialist_preview_understood_context(
+        "Prepara CxC factura 669DBF39 contra DCC Nacional REF 28 con cuenta 1150-001-001"
+    )
+
+    assert context["source"] == "user_message"
+    assert context["live_lookup_performed"] is False
+    assert context["authority"] == "context_hint_only"
+    assert context["operations_refs"] == ["28"]
+    assert context["uuid_or_prefixes"] == ["669DBF39"]
+    assert context["account_codes"] == ["1150-001-001"]
+    assert "cxc" in context["domains"]
+    assert "cfdi" in context["domains"]
+    assert "DCC Nacional" in context["entities"]
+
+
+def test_specialist_preview_surface_includes_understood_context_in_message_and_trace() -> (
+    None
+):
+    surface = render_specialist_preview_surface(
+        "SAMCHAT-FIN-AMEX-001",
+        raw_message="Revisa AMEX referencia 28 de Odilon FGV 45007",
+    )
+    trace = surface.tool_trace()
+
+    assert "Contexto entendido" in surface.assistant_message
+    assert "Referencias operaciones: 28" in surface.assistant_message
+    assert surface.understood_context["operations_refs"] == ["28"]
+    assert "amex" in surface.understood_context["domains"]
+    assert "Odilon" in surface.understood_context["entities"]
+    assert (
+        trace["specialist_preview_surface"]["understood_context"]
+        == surface.understood_context
+    )
+    assert trace["result"]["understood_context"] == surface.understood_context
 
 
 def test_specialist_preview_surface_is_structured_and_inert() -> None:
