@@ -124,3 +124,17 @@ def test_documentos_todos_filter_form_preserves_q_field():
     assert "Abiertas" in text
     assert "Cerradas" in text
     assert "Referencia, proveedor, beneficiario, concepto" in text
+
+
+def test_document_detail_expenses_table_exposes_edit_actions():
+    source = "src/devnous/gastos/routes/user_routes.py"
+    text = open(source, encoding="utf-8").read()
+    start = text.index("# Build expenses table rows")
+    end = text.index("# Build aprobaciones rows", start)
+    expenses_table_flow = text[start:end]
+
+    assert "is_finance_admin_for_expense_actions" in expenses_table_flow
+    assert "can_edit_expense_from_document" in expenses_table_flow
+    assert 'href="/gastos/{expense.id}/editar"' in expenses_table_flow
+    assert "<th>Acciones</th>" in text
+    assert 'colspan="9"' in text

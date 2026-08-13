@@ -29503,6 +29503,12 @@ async def ver_documento(
 
     # Build expenses table rows
     expenses_rows = ""
+    is_finance_admin_for_expense_actions = current_empleado.rol in (
+        "finanzas",
+        "admin",
+        "superadmin",
+        "super_admin",
+    )
     for expense in expenses:
         # Get CFDI data for this expense (prefer explicit cfdi_report_id link)
         cfdi = None
@@ -29561,6 +29567,37 @@ async def ver_documento(
             pdf_link_doc,
             xml_link_doc,
         )
+        expense_doc_estado = documento.estado if expense.documento_id == documento.id else None
+        expense_locked_for_actions = (
+            (
+                expense.documento_id is not None
+                and expense_doc_estado
+                and expense_doc_estado != "borrador"
+            )
+            or (expense.estado_factura in ("en_proceso", "completada"))
+        )
+        can_edit_expense_from_document = (
+            expense.estado_gasto != "cancelado"
+            and (
+                is_finance_admin_for_expense_actions
+                or (
+                    expense.empleado_id == current_empleado.id
+                    and not expense_locked_for_actions
+                )
+            )
+        )
+        expense_actions = (
+            f'<a href="/gastos/{expense.id}" class="text-link">Ver</a>'
+        )
+        if can_edit_expense_from_document:
+            expense_actions += (
+                f' &middot; <a href="/gastos/{expense.id}/editar" class="text-link">Editar</a>'
+            )
+        elif expense_locked_for_actions:
+            expense_actions += (
+                ' <span class="muted" title="Gasto bloqueado por documento enviado/aprobado o CFDI en proceso/completado">Bloqueado</span>'
+            )
+
         expenses_rows += f"""
         <tr>
             <td>{format_value(expense.fecha)}</td>
@@ -29571,6 +29608,7 @@ async def ver_documento(
             <td>{emisor_display}</td>
             <td>{cfdi_total_display}{mismatch_indicator}</td>
             <td>{arch_cell}</td>
+            <td>{expense_actions}</td>
         </tr>
         """
 
@@ -30257,10 +30295,11 @@ async def ver_documento(
                                     <th>Emisor</th>
                                     <th>Total CFDI</th>
                                     <th>Archivos</th>
+                                    <th>Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {expenses_rows if expenses_rows else '<tr><td colspan="8" style="text-align: center; padding: 20px;">No hay gastos asociados</td></tr>'}
+                                {expenses_rows if expenses_rows else '<tr><td colspan="9" style="text-align: center; padding: 20px;">No hay gastos asociados</td></tr>'}
                             </tbody>
                         </table>
                     </div>
