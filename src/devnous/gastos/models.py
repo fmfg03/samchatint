@@ -114,6 +114,7 @@ class ExpenseReport(Base):
     hospedaje_tasa_impuesto = Column(Float, nullable=True)
     hospedaje_impuesto_monto = Column(Float, nullable=True)
     hospedaje_impuesto_confirmado = Column(Boolean, nullable=False, default=False)
+    propina_no_deducible = Column(Float, nullable=False, default=0.0)
 
     # Reimbursement tracking
     estado_reembolso = Column(
@@ -309,6 +310,7 @@ class ExpenseReport(Base):
             "hospedaje_tasa_impuesto": self.hospedaje_tasa_impuesto,
             "hospedaje_impuesto_monto": self.hospedaje_impuesto_monto,
             "hospedaje_impuesto_confirmado": self.hospedaje_impuesto_confirmado,
+            "propina_no_deducible": self.propina_no_deducible,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "referencia_base": self.referencia_base,
             "cuenta_gastos_id": (
