@@ -63,6 +63,13 @@ Close when:
 - execution receipts bind to the approved preview;
 - the pattern is reusable across expenses, payment requests, budgets, tournaments, and operations.
 
+
+## Follow-up backlog: RQF-053B Assistant UI debt
+
+Non-blocking review follow-ups from PR #151 are tracked in `docs/assistant/rqf-053b-ui-followups.md`. They cover provider-key intake hardening, request replay safety, export intent precision, conversation-history rendering, mode validation, dashboard error states, RAG ownership cleanup, deployment rollback notes, and boundary tests.
+
+These items should be addressed before presenting the Assistant UI as polished or before enabling write-capable assistant paths.
+
 ## Non-goals for RQF-009
 
 - No general write enablement.
