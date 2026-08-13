@@ -132,6 +132,55 @@ def test_specialist_preview_surface_trace_exposes_renderer_contract(
     assert trace["result"]["business_preview"]["task_id"] == task_id
 
 
+def test_specialist_preview_diagnostics_marks_cxc_ready_with_cfdi() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_diagnostics,
+        render_specialist_preview_diagnostics_markdown,
+    )
+
+    diagnostics = build_specialist_preview_diagnostics(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"domains": ["cxc", "cfdi"]},
+        live_context={
+            "live_lookup_performed": True,
+            "matched": True,
+            "documents": [],
+            "expenses": [],
+            "cfdis": [{"cfdi_uuid": "669DBF39", "total": 100}],
+            "unresolved": {},
+        },
+    )
+    message = render_specialist_preview_diagnostics_markdown(diagnostics)
+
+    assert diagnostics["authority"] == "read_only_diagnostic"
+    assert diagnostics["readiness"] == "ready_for_read_only_preview"
+    assert diagnostics["writes_attempted"] is False
+    assert "CFDI encontrados: 1" in message
+    assert "Continuar con preview/diff read-only" in message
+
+
+def test_specialist_preview_diagnostics_requires_cxc_cfdi() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_diagnostics,
+    )
+
+    diagnostics = build_specialist_preview_diagnostics(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"domains": ["cxc"]},
+        live_context={
+            "live_lookup_performed": True,
+            "matched": True,
+            "documents": [{"numero_referencia": "S-2600071"}],
+            "expenses": [],
+            "cfdis": [],
+            "unresolved": {},
+        },
+    )
+
+    assert diagnostics["readiness"] == "needs_more_context"
+    assert "Para CxC falta identificar al menos un CFDI emitido." in diagnostics["missing"]
+
+
 def test_render_specialist_live_context_markdown_reports_read_only_matches() -> None:
     from samchat.assistant.specialist_live_context import (
         render_specialist_live_context_markdown,

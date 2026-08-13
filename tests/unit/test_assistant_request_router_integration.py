@@ -371,11 +371,15 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
     )
 
     assert "Contexto encontrado" in response.assistant_message
+    assert "Diagnostico operativo" in response.assistant_message
     assert "CFDI 669DBF39-F23C-4AD5-B858-F1F5A9AC8626" in response.assistant_message
+    assert "ready_for_read_only_preview" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["specialist_preview_surface"]
     assert trace["live_context"]["authority"] == "read_only_context"
     assert trace["live_context"]["matched"] is True
+    assert trace["diagnostics"]["authority"] == "read_only_diagnostic"
+    assert trace["diagnostics"]["readiness"] == "ready_for_read_only_preview"
 
 
 @pytest.mark.asyncio
