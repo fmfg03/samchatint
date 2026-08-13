@@ -70,7 +70,9 @@ from .specialist_preview_surface import (
     render_specialist_preview_surface,
 )
 from .specialist_live_context import (
+    build_specialist_preview_diagnostics,
     render_specialist_live_context_markdown,
+    render_specialist_preview_diagnostics_markdown,
     resolve_specialist_preview_live_context,
 )
 from .request_router import route_request
@@ -399,13 +401,21 @@ async def _build_specialist_preview_surface_response(
     live_context = await resolve_specialist_preview_live_context(
         session, surface.understood_context
     )
+    diagnostics = build_specialist_preview_diagnostics(
+        task_id=task_id,
+        understood_context=surface.understood_context,
+        live_context=live_context,
+    )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
+    diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
     assistant_message = surface.assistant_message.replace(
-        "\n# ", f"\n{live_context_markdown}\n# ", 1
+        "\n# ", f"\n{live_context_markdown}\n{diagnostics_markdown}\n# ", 1
     )
     tool_trace_entry = surface.tool_trace()
     tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
+    tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
     tool_trace_entry["result"]["live_context"] = live_context
+    tool_trace_entry["result"]["diagnostics"] = diagnostics
     tool_trace = [tool_trace_entry]
     preview_render = surface.preview_render.to_dict()
     business_preview = (
@@ -423,6 +433,7 @@ async def _build_specialist_preview_surface_response(
             "business_preview": business_preview,
             "understood_context": surface.understood_context,
             "live_context": live_context,
+            "diagnostics": diagnostics,
         },
     )
     return _response_object(

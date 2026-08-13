@@ -265,6 +265,130 @@ async def resolve_specialist_preview_live_context(
     return base
 
 
+def build_specialist_preview_diagnostics(
+    *,
+    task_id: str,
+    understood_context: Mapping[str, Any],
+    live_context: Mapping[str, Any],
+) -> Dict[str, Any]:
+    """Build a read-only operational diagnosis from preview context.
+
+    This is intentionally deterministic. It does not decide authority or execute
+    work; it only tells the user whether the preview has enough evidence to keep
+    preparing the case.
+    """
+
+    matched = bool(live_context.get("matched"))
+    unresolved = live_context.get("unresolved") or {}
+    documents = list(live_context.get("documents") or [])
+    expenses = list(live_context.get("expenses") or [])
+    cfdis = list(live_context.get("cfdis") or [])
+    findings: List[str] = []
+    missing: List[str] = []
+    risks: List[str] = []
+    next_steps: List[str] = []
+
+    if matched:
+        findings.append(
+            "SamChat encontro contexto operativo para las referencias del mensaje."
+        )
+    elif live_context.get("live_lookup_performed"):
+        missing.append("No se encontraron registros live para las referencias detectadas.")
+    else:
+        missing.append("No hubo consulta live suficiente; solo hay contexto del mensaje.")
+
+    if documents:
+        findings.append(f"Documentos encontrados: {len(documents)}.")
+    if expenses:
+        findings.append(f"Gastos encontrados: {len(expenses)}.")
+    if cfdis:
+        findings.append(f"CFDI encontrados: {len(cfdis)}.")
+
+    if unresolved:
+        missing.append(
+            "Quedaron referencias sin resolver: "
+            + "; ".join(
+                f"{key}={', '.join(str(value) for value in values)}"
+                for key, values in unresolved.items()
+            )
+        )
+
+    domains = set(_as_list(understood_context.get("domains")))
+    if "cxc" in domains and not cfdis:
+        missing.append("Para CxC falta identificar al menos un CFDI emitido.")
+    if "amex" in domains and not (documents or expenses):
+        missing.append("Para AMEX falta ubicar informe, gasto o referencia operativa.")
+    if "torneo" in domains and not (documents or expenses or cfdis):
+        missing.append("Para torneo falta un registro operativo ligado al caso.")
+
+    if len(documents) > 1:
+        risks.append(
+            "Hay multiples documentos; revisar que la referencia correcta sea "
+            "la intencion del usuario."
+        )
+    if len(cfdis) > 1:
+        risks.append("Hay multiples CFDI; evitar asumir uno sin confirmacion.")
+    terminal_states = {"pagado", "cerrado", "liquidado", "aplicado"}
+    if any(
+        str(doc.get("estado") or "").lower() in terminal_states
+        for doc in documents
+    ):
+        risks.append(
+            "Hay documento en estado terminal; cualquier accion futura requiere "
+            "frontera de autoridad reforzada."
+        )
+    if not risks:
+        risks.append("No se detectaron riesgos deterministas adicionales en el contexto disponible.")
+
+    if missing:
+        readiness = "needs_more_context"
+        next_steps.append("Pedir o seleccionar la referencia faltante antes de preparar acciones.")
+    else:
+        readiness = "ready_for_read_only_preview"
+        next_steps.append(
+            "Continuar con preview/diff read-only; mantener ejecucion bloqueada "
+            "hasta aprobacion humana."
+        )
+
+    return {
+        "source": "deterministic_preview_diagnostics",
+        "task_id": task_id,
+        "authority": "read_only_diagnostic",
+        "readiness": readiness,
+        "findings": findings,
+        "missing": missing,
+        "risks": risks,
+        "next_steps": next_steps,
+        "writes_attempted": False,
+    }
+
+
+def render_specialist_preview_diagnostics_markdown(
+    diagnostics: Mapping[str, Any]
+) -> str:
+    """Render deterministic preview diagnostics for assistant messages."""
+
+    readiness = diagnostics.get("readiness") or "unknown"
+    lines = ["## Diagnostico operativo", ""]
+    lines.append(f"- Estado: {readiness}.")
+    for label, key in (
+        ("Hallazgos", "findings"),
+        ("Faltantes", "missing"),
+        ("Riesgos", "risks"),
+        ("Siguiente paso", "next_steps"),
+    ):
+        values = list(diagnostics.get(key) or [])
+        if not values:
+            continue
+        lines.append(f"- {label}:")
+        for value in values:
+            lines.append(f"  - {value}")
+    lines.append(
+        "- Alcance: diagnostico read-only; no crea autoridad ni ejecuta cambios."
+    )
+    return "\n".join(lines) + "\n"
+
+
 def _format_money(value: Any) -> str:
     amount = _amount(value)
     if amount is None:
