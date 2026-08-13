@@ -148,6 +148,7 @@ from .request_intent import (
     is_owner_ai_context_request,
 )
 from .owner_needs_eval import parse_owner_needs_eval_set
+from .owner_pack_inventory import build_owner_pack_inventory_report
 from .owner_pack_status import build_owner_pack_status_report
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
@@ -2423,6 +2424,7 @@ def _assistant_default_tournament_key() -> Optional[str]:
 
 READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_owner_pack_inventory",
     "assistant_owner_pack_status",
     "finance_accounting_report",
     "finance_alerts_scan",
@@ -2475,6 +2477,7 @@ WRITE_TOOLS = {
 
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_owner_pack_inventory",
     "assistant_owner_pack_status",
     "finance_accounting_report",
     "finance_alerts_scan",
@@ -2507,6 +2510,7 @@ FINANCE_WRITE_TOOLS = {
     "assistant_save_artifact",
 }
 TOURNAMENT_READ_TOOLS = {
+    "assistant_owner_pack_inventory",
     "assistant_owner_pack_status",
     "tournament_expediente_snapshot",
     "tournament_draft_inspect",
@@ -3098,6 +3102,25 @@ def _tool_defs() -> List[Dict[str, Any]]:
             "function": {
                 "name": "assistant_owner_pack_status",
                 "description": "Resume en modo solo lectura que superficies del Owner Pack del dueno estan preparadas como contratos del asistente y que evidencia viva falta para llenarlas sin inventar.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_inventory",
+                "description": "Lista en modo solo lectura los campos, secciones y fuentes canonicas esperadas para las carpetas/tableros del Owner Pack antes de consultar datos vivos.",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
@@ -8641,6 +8664,11 @@ async def _run_read_tool(
                 "live_data_required_before_complete_claim"
             ] = bool(payload["missing_evidence"])
         return payload
+
+    if tool_name == "assistant_owner_pack_inventory":
+        scope = str(args.get("scope") or "all").strip()
+        scopes = None if not scope or scope == "all" else (scope,)
+        return build_owner_pack_inventory_report(scopes=scopes).to_dict()
 
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(
