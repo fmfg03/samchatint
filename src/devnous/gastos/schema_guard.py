@@ -43,6 +43,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("expense_reports", "categorias"),
     RequiredColumn("expense_reports", "edicion"),
     RequiredColumn("expense_reports", "currency"),
+    RequiredColumn("expense_reports", "propina_no_deducible"),
     RequiredColumn("documentos", "proveedor_cliente_id"),
     RequiredColumn("copa_telmex_players", "roster_index"),
     RequiredColumn("copa_telmex_players", "photo_sha256"),
@@ -1297,6 +1298,10 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "expense_reports_budget_concept_id_column",
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "expense_reports_propina_no_deducible_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS propina_no_deducible DOUBLE PRECISION NOT NULL DEFAULT 0",
     ),
     (
         "copa_players_roster_index_column",
