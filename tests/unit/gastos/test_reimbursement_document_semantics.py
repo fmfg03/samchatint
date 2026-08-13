@@ -178,6 +178,42 @@ def test_telegram_informe_includes_project_phase_from_context() -> None:
     assert "*Etapa / subproyecto* Articulos varios" in text
     assert "*Monto gastado* $500.00 MXN" in text
 
+def test_telegram_informe_for_employee_beneficiary_does_not_call_employee_provider() -> None:
+    beneficiary = MagicMock()
+    beneficiary.nombre = "JOSE ODILON TRUJILLO MACEDO"
+    provider = MagicMock()
+    provider.nombre = "JOSE ODILON TRUJILLO MACEDO"
+
+    documento = MagicMock(spec=Documento)
+    documento.numero_referencia = "I-128355"
+    documento.tipo = "INFORME"
+    documento.estado = "enviado"
+    documento.proveedor_cliente = provider
+    documento.beneficiario_empleado = beneficiary
+    documento.beneficiario_empleado_id = uuid4()
+    documento.cuenta_gastos_id = uuid4()
+    documento.concepto_pago = None
+    documento.notas = None
+    documento.enviado_en = None
+    documento.aprobado_en = None
+
+    text = tg.format_documento_resumen_es(
+        documento,
+        context={
+            "solicitante": "ALICIA EDITH ZUNIGA SALAZAR",
+            "proyecto": "Copa Telmex Telcel de Futbol",
+            "etapa": "?",
+            "monto_solicitado": "$0.00 MXN",
+            "monto_gastado": "$0.00 MXN",
+            "saldo_line": "$0.00 MXN - Saldado - Entregado y gastos de bolsillo coinciden.",
+        },
+    )
+
+    assert text.startswith("*Tipo de documento* *Informe de gastos*")
+    assert "*Persona que comprueba* *JOSE ODILON TRUJILLO MACEDO*" in text
+    assert "*Solicitante* ALICIA EDITH ZUNIGA SALAZAR" in text
+    assert "Proveedor" not in text
+
 
 def test_project_and_phase_labels_tolerates_deferred_attribute_failures() -> None:
     class DeferredDocumento:
@@ -222,7 +258,7 @@ def test_pending_documents_view_shows_operations_reference_column() -> None:
 
     assert "referencia_operaciones = escape(" in route_block
     assert "documento.referencia_operaciones" in route_block
-    assert "<th>Referencia operaciones</th>" in route_block
+    assert "<th>Referencia Operaciones</th>" in route_block
     assert "<td>{referencia_operaciones}</td>" in route_block
 
 
@@ -235,7 +271,7 @@ def test_approval_history_view_shows_operations_reference_column() -> None:
     assert "Eventos registrados" in route_block
     assert "referencia_operaciones = escape(" in route_block
     assert "documento.referencia_operaciones" in route_block
-    assert "<th>Referencia operaciones</th>" in route_block
+    assert "<th>Referencia Operaciones</th>" in route_block
     assert "<td>{referencia_operaciones}</td>" in route_block
 
 

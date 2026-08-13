@@ -367,6 +367,13 @@ def _bold_field_line(label: str, value: str) -> str:
     return f"*{escape_markdown_light(label)}* *{escape_markdown_light(value)}*"
 
 
+def _has_employee_beneficiary(documento: Documento) -> bool:
+    return bool(
+        getattr(documento, "beneficiario_empleado_id", None)
+        or getattr(documento, "beneficiario_empleado", None) is not None
+    )
+
+
 def _leading_identity_lines(documento: Documento) -> List[str]:
     if is_employee_reimbursement(documento):
         return [
@@ -375,13 +382,21 @@ def _leading_identity_lines(documento: Documento) -> List[str]:
                 "Beneficiario del reembolso", beneficiario_label(documento)
             ),
         ]
+    if _has_employee_beneficiary(documento):
+        if documento.tipo == "INFORME":
+            return [
+                _bold_field_line("Tipo de documento", "Informe de gastos"),
+                _bold_field_line("Persona que comprueba", beneficiario_label(documento)),
+            ]
+        return [_bold_field_line("Beneficiario", beneficiario_label(documento))]
     beneficiario_heading = (
         "Beneficiario / tercero" if documento.tipo == "INFORME" else "Beneficiario"
     )
-    return [
-        _bold_field_line(beneficiario_heading, beneficiario_label(documento)),
-        _bold_field_line("Proveedor", proveedor_label(documento)),
-    ]
+    lines = [_bold_field_line(beneficiario_heading, beneficiario_label(documento))]
+    provider = proveedor_label(documento).strip()
+    if provider.strip("-??"):
+        lines.append(_bold_field_line("Proveedor", provider))
+    return lines
 
 
 def beneficiario_label(documento: Documento) -> str:
