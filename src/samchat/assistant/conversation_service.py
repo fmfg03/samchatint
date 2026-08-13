@@ -69,6 +69,10 @@ from .specialist_preview_surface import (
     detect_specialist_preview_task_id,
     render_specialist_preview_surface,
 )
+from .specialist_live_context import (
+    render_specialist_live_context_markdown,
+    resolve_specialist_preview_live_context,
+)
 from .request_router import route_request
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -392,7 +396,17 @@ async def _build_specialist_preview_surface_response(
     if task_id is None:
         return None
     surface = render_specialist_preview_surface(task_id, raw_message=raw_message)
-    tool_trace = [surface.tool_trace()]
+    live_context = await resolve_specialist_preview_live_context(
+        session, surface.understood_context
+    )
+    live_context_markdown = render_specialist_live_context_markdown(live_context)
+    assistant_message = surface.assistant_message.replace(
+        "\n# ", f"\n{live_context_markdown}\n# ", 1
+    )
+    tool_trace_entry = surface.tool_trace()
+    tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
+    tool_trace_entry["result"]["live_context"] = live_context
+    tool_trace = [tool_trace_entry]
     preview_render = surface.preview_render.to_dict()
     business_preview = (
         surface.business_preview.to_dict()
@@ -401,17 +415,18 @@ async def _build_specialist_preview_surface_response(
     )
     await _persist_document_conversation_messages(
         raw_message=raw_message,
-        assistant_message=surface.assistant_message,
+        assistant_message=assistant_message,
         conversation=conversation,
         session=session,
         assistant_tool_payload={
             "preview_render": preview_render,
             "business_preview": business_preview,
             "understood_context": surface.understood_context,
+            "live_context": live_context,
         },
     )
     return _response_object(
-        assistant_message=surface.assistant_message,
+        assistant_message=assistant_message,
         tool_trace=tool_trace,
         preview_render=preview_render,
     )
