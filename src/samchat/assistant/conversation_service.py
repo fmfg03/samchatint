@@ -391,7 +391,7 @@ async def _build_specialist_preview_surface_response(
     task_id = detect_specialist_preview_task_id(raw_message)
     if task_id is None:
         return None
-    surface = render_specialist_preview_surface(task_id)
+    surface = render_specialist_preview_surface(task_id, raw_message=raw_message)
     tool_trace = [surface.tool_trace()]
     preview_render = surface.preview_render.to_dict()
     business_preview = (
@@ -407,6 +407,7 @@ async def _build_specialist_preview_surface_response(
         assistant_tool_payload={
             "preview_render": preview_render,
             "business_preview": business_preview,
+            "understood_context": surface.understood_context,
         },
     )
     return _response_object(
