@@ -80,6 +80,7 @@ jobs:
             "tests/unit/test_assistant_specialist_orchestrator.py"
             "tests/unit/test_assistant_specialist_business_diff.py"
             "tests/unit/test_assistant_specialist_preview_renderer.py"
+            "tests/unit/test_assistant_specialist_preview_surface.py"
             "tests/integration/test_assistant_analyst_case_persistence.py"
             "scripts/check_tournament_write_boundaries.py"
             "tests/unit/gastos/test_tournament_admin_authority_closure.py"
@@ -184,6 +185,7 @@ jobs:
             tests/unit/test_assistant_specialist_orchestrator.py \
             tests/unit/test_assistant_specialist_business_diff.py \
             tests/unit/test_assistant_specialist_preview_renderer.py \
+            tests/unit/test_assistant_specialist_preview_surface.py \
             tests/integration/test_assistant_analyst_case_persistence.py \
             tests/unit/gastos/test_tournament_admin_authority_closure.py \
             tests/unit/test_assistant_tournament_writer_guard.py \
