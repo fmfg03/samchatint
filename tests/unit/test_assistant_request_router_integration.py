@@ -314,6 +314,28 @@ async def test_specialist_preview_surface_bypasses_provider_and_returns_render_c
 
 
 @pytest.mark.asyncio
+async def test_specialist_preview_surface_routes_natural_business_intent_without_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("natural specialist preview should bypass provider")
+
+    response = await _run_message(
+        "Prepara la CxC de la factura 669DBF39 contra DCC Nacional",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Preview especialista listo" in response.assistant_message
+    assert response.preview_render["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert response.preview_render["primary_action_enabled"] is False
+    trace = response.tool_trace[0]["specialist_preview_surface"]
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False
+
+
+@pytest.mark.asyncio
 async def test_registration_executive_report_bypasses_provider_and_is_exportable():
     calls = []
 

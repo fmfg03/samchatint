@@ -24,6 +24,39 @@ def test_detect_specialist_preview_requires_explicit_preview_intent() -> None:
     assert detect_specialist_preview_task_id("preview SAMCHAT-UNKNOWN-001") is None
 
 
+def test_detect_specialist_preview_routes_natural_business_intents() -> None:
+    assert (
+        detect_specialist_preview_task_id(
+            "Prepara la CxC de la factura 669DBF39 contra DCC Nacional"
+        )
+        == "SAMCHAT-CXC-COLLECTION-001"
+    )
+    assert (
+        detect_specialist_preview_task_id(
+            "Revisa la comprobacion AMEX referencia 28 de Odilon"
+        )
+        == "SAMCHAT-FIN-AMEX-001"
+    )
+    assert (
+        detect_specialist_preview_task_id(
+            "Armame un borrador para el impuesto sobre hospedaje del hotel de Leon"
+        )
+        == "SAMCHAT-SUPPLIER-HOTEL-001"
+    )
+    assert (
+        detect_specialist_preview_task_id(
+            "Genera propuesta para crear torneo 2027 con categoria Sub-17"
+        )
+        == "SAMCHAT-TOURNAMENT-2027-001"
+    )
+
+
+def test_detect_specialist_preview_does_not_trigger_on_domain_chatter() -> None:
+    assert detect_specialist_preview_task_id("Tenemos facturas de Bimbo en DCC") is None
+    assert detect_specialist_preview_task_id("AMEX de Odilon") is None
+    assert detect_specialist_preview_task_id("Que es CxC?") is None
+
+
 def test_specialist_preview_surface_is_structured_and_inert() -> None:
     surface = render_specialist_preview_surface("SAMCHAT-CXC-COLLECTION-001")
     payload = surface.preview_render.to_dict()
@@ -43,8 +76,12 @@ def test_specialist_preview_surface_is_structured_and_inert() -> None:
     assert "Frontera de autoridad" in surface.assistant_message
 
 
-@pytest.mark.parametrize("task_id", ("SAMCHAT-CXC-COLLECTION-001", "SAMCHAT-FIN-AMEX-001"))
-def test_specialist_preview_surface_trace_exposes_renderer_contract(task_id: str) -> None:
+@pytest.mark.parametrize(
+    "task_id", ("SAMCHAT-CXC-COLLECTION-001", "SAMCHAT-FIN-AMEX-001")
+)
+def test_specialist_preview_surface_trace_exposes_renderer_contract(
+    task_id: str,
+) -> None:
     surface = render_specialist_preview_surface(task_id)
     trace = surface.tool_trace()
 
@@ -92,7 +129,9 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     assert response is not None
     assert response.preview_render["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
     assert session.committed is True
-    assistant_messages = [m for m in session.added if getattr(m, "role", None) == "assistant"]
+    assistant_messages = [
+        m for m in session.added if getattr(m, "role", None) == "assistant"
+    ]
     assert len(assistant_messages) == 1
     payload = assistant_messages[0].tool_payload
     assert payload["preview_render"] == response.preview_render
