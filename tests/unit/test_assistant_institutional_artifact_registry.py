@@ -19,6 +19,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "sports.platform_snapshot" in ids
     assert "accounting.historical_snapshot" in ids
     assert "tournament.soul_snapshot" in ids
+    assert "assistant.owner_entity_dossier_audit" in ids
 
     for item in ARTIFACTS:
         assert item.name
@@ -47,12 +48,14 @@ def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> N
     }
     assert {item.artifact_id for item in unwired} >= {
         "sports.platform_snapshot",
-        "sports.director_general_entity_dossier",
         "accounting.historical_snapshot",
         "sam_inbox.payload",
+        "assistant.owner_entity_dossier_audit",
     }
     assert all(item.assistant_tool or item.canonical_action for item in wired)
     assert all(item.next_wiring_step for item in unwired)
+    partial = list_institutional_artifacts(status="partial")
+    assert {item.artifact_id for item in partial} >= {"sports.director_general_entity_dossier"}
 
 
 def test_institutional_artifact_lookup_and_domain_filtering() -> None:
