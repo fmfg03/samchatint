@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from samchat.assistant.soul_wizard import (
     EXECUTION_STATUS,
+    build_soul_wizard_clone_payload,
     build_soul_wizard_contract,
     build_soul_wizard_draft,
     build_soul_wizard_payload,
@@ -179,3 +180,120 @@ def test_soul_wizard_admin_renderer_contains_stepper_and_readonly_boundary() -> 
     assert "Revisar borrador" in html
     assert "no crea torneos" in html or "no crea equipos" in html
     assert "Abrir SOUL Wizard" not in html
+
+
+
+def _source_soul_snapshot() -> dict:
+    return {
+        "snapshot_hash": "sha256:abc123",
+        "tournaments": [{"id": "torneo-2026", "name": "Copa Base"}],
+        "summary": {"teams_count": 16},
+        "breakdowns": {
+            "categories": [{"category": "Sub 15"}, {"category": "Sub 17"}],
+            "branches": [{"branch": "Varonil"}, {"branch": "Femenil"}],
+            "entities": [
+                {"entity_name": "CDMX", "teams_count": 8},
+                {"entity_name": "Jalisco", "teams_count": 8},
+            ],
+        },
+        "compliance": {
+            "required_documents": ["CURP", "Acta"],
+            "eligibility_rules": ["Sin duplicidad CURP"],
+        },
+        "finance_bridge": {"rules": ["Ayuda operador", "Uniformes"]},
+        "phases": [
+            {
+                "phase_id": "state",
+                "name": "Fase estatal",
+                "start_date": "2026-03-01",
+                "end_date": "2026-05-01",
+                "activities": [
+                    {
+                        "activity_id": "rosters",
+                        "name": "Validar rosters",
+                        "owner": "Operaciones",
+                        "due_date": "2026-04-20",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_soul_wizard_clone_from_soul_snapshot_copies_context_and_applies_overrides() -> None:
+    payload = build_soul_wizard_clone_payload(
+        _source_soul_snapshot(),
+        overrides={"tournament_name": "Copa Nueva", "edition_year": 2027},
+    )
+
+    draft = payload["draft"]
+    clone = payload["clone"]
+    assert draft["tournament_name"] == "Copa Nueva"
+    assert draft["edition_year"] == 2027
+    assert draft["categories"] == ["Sub 15", "Sub 17"]
+    assert draft["branches"] == ["Varonil", "Femenil"]
+    assert draft["expected_entities"] == ["CDMX", "Jalisco"]
+    assert draft["expected_teams"] == 16
+    assert draft["required_documents"] == ["CURP", "Acta"]
+    assert draft["eligibility_rules"] == ["Sin duplicidad CURP"]
+    assert draft["finance_baseline"] == ["Ayuda operador", "Uniformes"]
+    assert draft["source_tournament_id"] == "torneo-2026"
+    assert draft["source_snapshot_id"] == "sha256:abc123"
+    assert draft["phases"][0]["activities"][0]["name"] == "Validar rosters"
+    assert payload["readiness"]["status"] == "ready_for_review"
+    assert clone["source_bound"] is True
+    assert clone["operational_writes_allowed"] is False
+    assert clone["execution_status"] == EXECUTION_STATUS
+
+
+def test_soul_wizard_clone_from_operations_matches_builds_phase_skeleton() -> None:
+    payload = build_soul_wizard_clone_payload(
+        {
+            "tournament": {"id": "t-1", "name": "Torneo con juegos"},
+            "operations": {
+                "matches": [
+                    {"phase": "Estatal"},
+                    {"phase": "Estatal"},
+                    {"phase": "Nacional"},
+                ]
+            },
+        },
+        overrides={"edition_year": 2027},
+    )
+
+    draft = payload["draft"]
+    assert [phase["name"] for phase in draft["phases"]] == ["Estatal", "Nacional"]
+    assert draft["phases"][0]["activities"][0]["name"] == "Revisar plan operativo de Estatal"
+    assert payload["readiness"]["status"] == "incomplete"
+    assert "missing_phase_start_date" in {issue["code"] for issue in payload["readiness"]["issues"]}
+
+
+def test_soul_wizard_form_clone_parses_source_json_and_overrides_name() -> None:
+    import json
+
+    payload = build_soul_wizard_payload_from_form(
+        {
+            "source_snapshot_json": json.dumps(_source_soul_snapshot()),
+            "tournament_name": "Copa desde UI",
+            "edition_year": "2028",
+        }
+    )
+
+    assert payload["clone"]["source_tournament_id"] == "torneo-2026"
+    assert payload["draft"]["tournament_name"] == "Copa desde UI"
+    assert payload["draft"]["edition_year"] == 2028
+    assert payload["draft"]["categories"] == ["Sub 15", "Sub 17"]
+
+
+def test_soul_wizard_form_clone_invalid_json_is_safe_and_readonly() -> None:
+    payload = build_soul_wizard_payload_from_form(
+        {
+            "source_snapshot_json": "{nope",
+            "tournament_name": "Copa Manual",
+            "edition_year": "2028",
+        }
+    )
+
+    assert payload["clone"]["source_bound"] is False
+    assert "Invalid source snapshot JSON" in payload["clone"]["error"]
+    assert payload["clone"]["operational_writes_allowed"] is False

@@ -7717,6 +7717,7 @@ def _render_soul_wizard_preview(payload: Optional[dict[str, Any]]) -> str:
         """
     draft = payload.get("draft") or {}
     readiness = payload.get("readiness") or {}
+    clone = payload.get("clone") or {}
     phases = list(draft.get("phases") or [])
     phase_cards = "".join(
         f"""
@@ -7728,9 +7729,18 @@ def _render_soul_wizard_preview(payload: Optional[dict[str, Any]]) -> str:
         """
         for phase in phases
     ) or '<div class="muted-card">Sin fases capturadas.</div>'
+    clone_html = ""
+    if clone:
+        clone_error = clone.get("error")
+        clone_html = f"""
+            <div class="{'readonly-note' if not clone_error else 'muted-card'}">
+                <strong>{'Error de clone' if clone_error else 'Clone source'}</strong>: {escape(str(clone_error or clone.get('source_tournament_name') or clone.get('source_tournament_id') or clone.get('source_snapshot_id') or 'source bound'))}
+            </div>
+        """
     return f"""
         <div class="surface">
             <div class="section-title">Preview del SOUL</div>
+            {clone_html}
             <div class="summary-grid">
                 <div class="metric"><span>Estado</span><strong>{escape(str(readiness.get('status') or '-'))}</strong><small>Validacion del contrato.</small></div>
                 <div class="metric"><span>Score</span><strong>{int(readiness.get('readiness_score') or 0)}</strong><small>Penaliza faltantes y advertencias.</small></div>
@@ -7867,6 +7877,9 @@ def _render_soul_wizard_admin_page(
                         <div><label>Equipos esperados</label><input name="expected_teams" type="number" min="0" value="{_soul_form_value(form_data, 'expected_teams')}" placeholder="64"></div>
                         <div><label>Torneo origen opcional</label><input name="source_tournament_id" value="{_soul_form_value(form_data, 'source_tournament_id')}" placeholder="ID o slug de torneo base"></div>
                     </div>
+                    <label>Clone desde SOUL / torneo existente (JSON opcional)</label>
+                    <textarea name="source_snapshot_json" rows="5" placeholder='Pega aqui un snapshot SOUL o un objeto compatible. Los campos capturados arriba reemplazan la fuente.'>{_soul_text_value(form_data, 'source_snapshot_json')}</textarea>
+                    <div class="readonly-note">Si pegas una fuente, el wizard copia categorias, ramas, entidades, documentos, reglas, baseline financiera y fases disponibles; despues aplica los campos que captures como overrides.</div>
                     <div class="section-title" style="margin-top:20px;">2. Fases, fechas y actividades</div>
                     <div class="phase-list">{phase_inputs}</div>
                     <div class="section-title" style="margin-top:20px;">3. Documentos, reglas y finanzas</div>

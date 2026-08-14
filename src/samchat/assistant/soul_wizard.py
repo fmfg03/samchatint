@@ -358,14 +358,236 @@ def _activities_from_text(value: Any) -> list[dict[str, Any]]:
     ]
 
 
-def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, Any]:
-    """Build a wizard payload from simple HTML form fields.
+def _list_names(rows: Any, *keys: str) -> tuple[str, ...]:
+    names: list[str] = []
+    if isinstance(rows, Mapping):
+        rows = rows.values()
+    if not isinstance(rows, Sequence) or isinstance(rows, (str, bytes)):
+        return ()
+    for row in rows:
+        if isinstance(row, Mapping):
+            for key in keys:
+                value = _clean_text(row.get(key))
+                if value:
+                    names.append(value)
+                    break
+        else:
+            value = _clean_text(row)
+            if value:
+                names.append(value)
+    return tuple(dict.fromkeys(names))
 
-    Phase fields follow the pattern phase_{n}_name, phase_{n}_start_date,
-    phase_{n}_end_date and phase_{n}_activities.  Activities are entered one
-    per line as: activity name | owner | due date.
+
+def _source_tournament(source: Mapping[str, Any]) -> Mapping[str, Any]:
+    if isinstance(source.get("tournament"), Mapping):
+        return source["tournament"]
+    tournaments = source.get("tournaments")
+    if isinstance(tournaments, Sequence) and not isinstance(tournaments, (str, bytes)):
+        first = next((item for item in tournaments if isinstance(item, Mapping)), None)
+        if first is not None:
+            return first
+    draft = source.get("draft")
+    if isinstance(draft, Mapping):
+        return draft
+    return source
+
+
+def _source_breakdowns(source: Mapping[str, Any]) -> Mapping[str, Any]:
+    breakdowns = source.get("breakdowns")
+    return breakdowns if isinstance(breakdowns, Mapping) else {}
+
+
+def _source_categories(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("categories"):
+        return _clean_sequence(source.get("categories"))
+    breakdowns = _source_breakdowns(source)
+    return _list_names(breakdowns.get("categories"), "category", "name", "category_name")
+
+
+def _source_branches(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("branches"):
+        return _clean_sequence(source.get("branches"))
+    breakdowns = _source_breakdowns(source)
+    return _list_names(breakdowns.get("branches"), "branch", "name", "branch_name")
+
+
+def _source_entities(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("expected_entities"):
+        return _clean_sequence(source.get("expected_entities"))
+    breakdowns = _source_breakdowns(source)
+    return _list_names(breakdowns.get("entities"), "entity_name", "name")
+
+
+def _source_expected_teams(source: Mapping[str, Any]) -> Optional[int]:
+    explicit = _clean_int(source.get("expected_teams"))
+    if explicit is not None:
+        return explicit
+    summary = source.get("summary")
+    if isinstance(summary, Mapping):
+        teams = _clean_int(summary.get("teams_count") or summary.get("total_teams"))
+        if teams is not None:
+            return teams
+    breakdowns = _source_breakdowns(source)
+    entities = breakdowns.get("entities")
+    if isinstance(entities, Sequence) and not isinstance(entities, (str, bytes)):
+        total = 0
+        found = False
+        for entity in entities:
+            if isinstance(entity, Mapping):
+                count = _clean_int(entity.get("teams_count"))
+                if count is not None:
+                    total += count
+                    found = True
+        if found:
+            return total
+    return None
+
+
+def _source_required_documents(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("required_documents"):
+        return _clean_sequence(source.get("required_documents"))
+    compliance = source.get("compliance")
+    if isinstance(compliance, Mapping):
+        docs = compliance.get("required_documents") or compliance.get("documents")
+        if docs:
+            return _clean_sequence(docs)
+    return ()
+
+
+def _source_eligibility_rules(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("eligibility_rules"):
+        return _clean_sequence(source.get("eligibility_rules"))
+    rules = source.get("rules")
+    if rules:
+        return _clean_sequence(rules)
+    compliance = source.get("compliance")
+    if isinstance(compliance, Mapping) and compliance.get("eligibility_rules"):
+        return _clean_sequence(compliance.get("eligibility_rules"))
+    return ()
+
+
+def _source_finance_baseline(source: Mapping[str, Any]) -> tuple[str, ...]:
+    if source.get("finance_baseline"):
+        return _clean_sequence(source.get("finance_baseline"))
+    finance = source.get("finance") or source.get("finance_bridge")
+    if isinstance(finance, Mapping):
+        baseline = finance.get("baseline") or finance.get("rules")
+        if baseline:
+            return _clean_sequence(baseline)
+    return ()
+
+
+def _source_phases(source: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw_phases = source.get("phases") or source.get("fases")
+    phases: list[dict[str, Any]] = []
+    for index, item in enumerate(_as_list_of_mappings(raw_phases), start=1):
+        activities = []
+        for activity_index, activity in enumerate(
+            _as_list_of_mappings(item.get("activities") or item.get("actividades")),
+            start=1,
+        ):
+            activities.append(
+                {
+                    "activity_id": _clean_text(activity.get("activity_id")) or f"activity_{activity_index}",
+                    "name": _clean_text(activity.get("name") or activity.get("nombre")),
+                    "owner": _clean_optional_text(activity.get("owner") or activity.get("responsable")),
+                    "due_date": _clean_optional_text(activity.get("due_date") or activity.get("fecha_limite")),
+                    "evidence_required": _clean_sequence(
+                        activity.get("evidence_required") or activity.get("evidencia_requerida")
+                    ),
+                }
+            )
+        phases.append(
+            {
+                "phase_id": _clean_text(item.get("phase_id")) or f"phase_{index}",
+                "name": _clean_text(item.get("name") or item.get("nombre")),
+                "start_date": _clean_optional_text(item.get("start_date") or item.get("fecha_inicio")),
+                "end_date": _clean_optional_text(item.get("end_date") or item.get("fecha_fin")),
+                "activities": activities,
+            }
+        )
+    if phases:
+        return phases
+    operations = source.get("operations")
+    if isinstance(operations, Mapping):
+        matches = operations.get("matches")
+        phase_names = _list_names(matches, "phase", "fase")
+        return [
+            {
+                "phase_id": f"phase_{index}",
+                "name": name,
+                "start_date": None,
+                "end_date": None,
+                "activities": [
+                    {
+                        "activity_id": "review_phase_plan",
+                        "name": f"Revisar plan operativo de {name}",
+                        "owner": None,
+                        "due_date": None,
+                    }
+                ],
+            }
+            for index, name in enumerate(phase_names, start=1)
+        ]
+    return []
+
+
+def build_soul_wizard_clone_payload(
+    source: Mapping[str, Any],
+    *,
+    overrides: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
+    """Clone a source tournament/SOUL shape into an inert wizard draft.
+
+    The clone copies only planning context. It never writes to the tournament
+    catalog and intentionally leaves dates/owners as validation findings when
+    the source does not prove them.
     """
 
+    overrides = overrides or {}
+    tournament = _source_tournament(source)
+    source_id = _clean_optional_text(
+        tournament.get("id")
+        or tournament.get("tournament_id")
+        or source.get("source_tournament_id")
+    )
+    source_hash = _clean_optional_text(
+        source.get("snapshot_hash")
+        or source.get("source_snapshot_id")
+        or source.get("work_product_hash")
+    )
+    source_name = _clean_text(
+        tournament.get("name") or tournament.get("tournament_name") or source.get("tournament_name")
+    )
+    payload = {
+        "draft_id": _clean_text(overrides.get("draft_id")) or "soul_wizard_clone_draft",
+        "tournament_name": overrides.get("tournament_name") or source_name,
+        "edition_year": overrides.get("edition_year") or overrides.get("edicion") or source.get("edition_year") or source.get("edicion"),
+        "categories": overrides.get("categories") or _source_categories(source),
+        "branches": overrides.get("branches") or _source_branches(source),
+        "expected_entities": overrides.get("expected_entities") or _source_entities(source),
+        "expected_teams": overrides.get("expected_teams") or _source_expected_teams(source),
+        "required_documents": overrides.get("required_documents") or _source_required_documents(source),
+        "eligibility_rules": overrides.get("eligibility_rules") or _source_eligibility_rules(source),
+        "finance_baseline": overrides.get("finance_baseline") or _source_finance_baseline(source),
+        "source_tournament_id": overrides.get("source_tournament_id") or source_id,
+        "source_snapshot_id": overrides.get("source_snapshot_id") or source_hash,
+        "phases": overrides.get("phases") or _source_phases(source),
+    }
+    result = build_soul_wizard_payload(payload)
+    result["clone"] = {
+        "source_bound": bool(source_id or source_hash or source_name),
+        "source_tournament_id": source_id,
+        "source_snapshot_id": source_hash,
+        "source_tournament_name": source_name or None,
+        "overrides_applied": sorted(str(key) for key in overrides.keys()),
+        "execution_status": EXECUTION_STATUS,
+        "operational_writes_allowed": False,
+    }
+    return result
+
+
+def _form_phases(form: Mapping[str, Any]) -> list[dict[str, Any]]:
     phases: list[dict[str, Any]] = []
     for index in range(1, 7):
         name = _clean_text(form.get(f"phase_{index}_name"))
@@ -383,8 +605,11 @@ def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, An
                 "activities": activities,
             }
         )
+    return phases
 
-    payload = {
+
+def _form_base_payload(form: Mapping[str, Any]) -> dict[str, Any]:
+    return {
         "draft_id": _clean_text(form.get("draft_id")) or "soul_wizard_ui_draft",
         "tournament_name": form.get("tournament_name"),
         "edition_year": form.get("edition_year"),
@@ -397,9 +622,62 @@ def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, An
         "finance_baseline": form.get("finance_baseline_text"),
         "source_tournament_id": form.get("source_tournament_id"),
         "source_snapshot_id": form.get("source_snapshot_id"),
-        "phases": phases,
+        "phases": _form_phases(form),
     }
-    return build_soul_wizard_payload(payload)
+
+
+def _non_empty_overrides(payload: Mapping[str, Any]) -> dict[str, Any]:
+    overrides: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key == "draft_id" and isinstance(value, str) and value.strip() and value != "soul_wizard_ui_draft":
+            overrides[key] = value
+        elif isinstance(value, str) and value.strip():
+            overrides[key] = value
+        elif isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and value:
+            overrides[key] = value
+        elif value is not None and not isinstance(value, (str, Sequence)):
+            overrides[key] = value
+    return overrides
+
+
+def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a wizard payload from simple HTML form fields.
+
+    Phase fields follow the pattern phase_{n}_name, phase_{n}_start_date,
+    phase_{n}_end_date and phase_{n}_activities. Activities are entered one
+    per line as: activity name | owner | due date. If source_snapshot_json is
+    supplied, the form produces a clone payload and applies non-empty fields as
+    overrides.
+    """
+
+    payload = _form_base_payload(form)
+    source_json = _clean_text(form.get("source_snapshot_json"))
+    if not source_json:
+        return build_soul_wizard_payload(payload)
+    try:
+        source = json.loads(source_json)
+    except json.JSONDecodeError as exc:
+        result = build_soul_wizard_payload(payload)
+        result["clone"] = {
+            "source_bound": False,
+            "error": f"Invalid source snapshot JSON: {exc.msg}",
+            "execution_status": EXECUTION_STATUS,
+            "operational_writes_allowed": False,
+        }
+        return result
+    if not isinstance(source, Mapping):
+        result = build_soul_wizard_payload(payload)
+        result["clone"] = {
+            "source_bound": False,
+            "error": "Source snapshot JSON must be an object.",
+            "execution_status": EXECUTION_STATUS,
+            "operational_writes_allowed": False,
+        }
+        return result
+    return build_soul_wizard_clone_payload(
+        source,
+        overrides=_non_empty_overrides(payload),
+    )
 
 
 def build_soul_wizard_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -420,6 +698,7 @@ __all__ = [
     "SoulWizardPhase",
     "SoulWizardReadinessReport",
     "SoulWizardValidationIssue",
+    "build_soul_wizard_clone_payload",
     "build_soul_wizard_contract",
     "build_soul_wizard_draft",
     "build_soul_wizard_payload",
