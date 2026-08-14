@@ -17,11 +17,17 @@ from .owner_folder_revision import (
     revise_owner_folder_proposal,
 )
 from .owner_needs_eval import OwnerNeedsPrompt
+from .owner_pack_live_snapshot import (
+    OWNER_PACK_LIVE_MISSING,
+    OWNER_PACK_LIVE_SUPPORTED,
+    OwnerPackLiveSnapshotReport,
+)
 
 
 OPERATOR_RESPONSE_PACK_ONLY = "operator_response_pack_only"
 SOURCE_FOLDER_PROPOSAL = "folder_proposal"
 SOURCE_FOLDER_REVISION = "folder_revision"
+SOURCE_LIVE_SNAPSHOT = "live_snapshot"
 SAFETY_READONLY = "readonly_pending_approval"
 SAFETY_BLOCKED_WRITE_DISABLED = "blocked_write_disabled"
 
@@ -162,6 +168,92 @@ def build_response_pack_from_proposal(
     )
 
 
+
+def _field_names_by_live_status(
+    report: OwnerPackLiveSnapshotReport,
+    status: str,
+) -> List[str]:
+    labels: List[str] = []
+    for surface in report.surfaces:
+        for field_item in surface.fields:
+            if field_item.status == status:
+                labels.append(field_item.label)
+    return labels
+
+
+def _snapshot_missing_evidence(report: OwnerPackLiveSnapshotReport) -> List[str]:
+    missing: List[str] = []
+    for surface in report.surfaces:
+        for field_item in surface.fields:
+            if field_item.status != OWNER_PACK_LIVE_SUPPORTED:
+                missing.append(f"{field_item.label} ({field_item.evidence_type})")
+    return sorted(set(missing))
+
+
+def _snapshot_found_evidence(report: OwnerPackLiveSnapshotReport) -> List[str]:
+    found: List[str] = []
+    for surface in report.surfaces:
+        for field_item in surface.fields:
+            if field_item.status == OWNER_PACK_LIVE_SUPPORTED:
+                sources = ", ".join(field_item.source_paths) or field_item.evidence_type
+                found.append(f"{field_item.label}: {sources}")
+    return sorted(set(found))
+
+
+def build_response_pack_from_live_snapshot(
+    report: OwnerPackLiveSnapshotReport,
+) -> OwnerOperatorResponsePack:
+    """Draft a human-readable, no-write brief from a live Owner Pack snapshot."""
+
+    supported = _field_names_by_live_status(report, OWNER_PACK_LIVE_SUPPORTED)
+    missing = _snapshot_missing_evidence(report)
+    found = _snapshot_found_evidence(report)
+    surface_labels = [surface.label for surface in report.surfaces]
+    summary = (
+        f"Revise evidencia viva en modo solo lectura para {', '.join(surface_labels)}. "
+        f"Campos con evidencia: {report.supported_field_count}. "
+        f"Campos faltantes: {report.missing_field_count}. "
+        "No se creo ni actualizo ninguna carpeta; esto es solo un diagnostico."
+    )
+    plan = [
+        "Revisar los campos ya soportados por evidencia viva.",
+        "Cargar o vincular evidencia faltante antes de presentar la carpeta como completa.",
+        "Preparar preview/diff y pedir aprobacion antes de cualquier salida durable.",
+    ]
+    if not supported:
+        plan.insert(
+            0,
+            "Primero conectar datos vivos para esta superficie; hoy no hay campos soportados.",
+        )
+
+    return OwnerOperatorResponsePack(
+        response_id=_response_id(SOURCE_LIVE_SNAPSHOT, report.snapshot_id),
+        source_type=SOURCE_LIVE_SNAPSHOT,
+        source_id=report.snapshot_id,
+        headline="Diagnostico vivo del Owner Pack",
+        summary=summary,
+        plan=plan,
+        evidence_found=found,
+        missing_evidence=missing,
+        proposed_changes=[
+            "No hay cambios ejecutables; solo lectura de evidencia existente.",
+        ],
+        approval_boundary=(
+            "read_only_live_snapshot; approval_required_before_durable_output; "
+            "execution_status=not_executed"
+        ),
+        next_questions=[
+            "Quieres que conecte otra fuente viva para reducir faltantes?",
+            "Quieres que prepare una vista para revisar estos campos por superficie?",
+        ],
+        safety_status=SAFETY_READONLY,
+        execution_status=NOT_EXECUTED,
+        writes_attempted=0,
+        side_effects_detected=0,
+        audit_language=OPERATOR_RESPONSE_PACK_ONLY,
+    )
+
+
 def build_response_pack_from_revision(
     revision: OwnerFolderRevision,
 ) -> OwnerOperatorResponsePack:
@@ -289,9 +381,11 @@ __all__ = [
     "SAFETY_READONLY",
     "SOURCE_FOLDER_PROPOSAL",
     "SOURCE_FOLDER_REVISION",
+    "SOURCE_LIVE_SNAPSHOT",
     "OwnerOperatorResponsePack",
     "build_response_pack_from_proposal",
     "build_response_pack_from_revision",
+    "build_response_pack_from_live_snapshot",
     "evaluate_response_pack_set",
     "response_pack_contains_execution_claim",
 ]

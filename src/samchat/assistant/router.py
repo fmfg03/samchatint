@@ -151,6 +151,7 @@ from .owner_needs_eval import parse_owner_needs_eval_set
 from .owner_pack_inventory import build_owner_pack_inventory_report
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_status import build_owner_pack_status_report
+from .owner_response_pack import build_response_pack_from_live_snapshot
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -2426,6 +2427,7 @@ def _assistant_default_tournament_key() -> Optional[str]:
 READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
     "finance_accounting_report",
@@ -2480,6 +2482,7 @@ WRITE_TOOLS = {
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
     "finance_accounting_report",
@@ -2514,6 +2517,7 @@ FINANCE_WRITE_TOOLS = {
 }
 TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
     "tournament_expediente_snapshot",
@@ -3144,6 +3148,26 @@ def _tool_defs() -> List[Dict[str, Any]]:
             "function": {
                 "name": "assistant_owner_pack_live_snapshot",
                 "description": "Lee en modo solo lectura evidencia viva ya existente en el workspace de inteligencia de torneos para una superficie del Owner Pack y marca campos soportados o faltantes.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "surface_id": {
+                            "type": "string",
+                            "enum": ["entity_folder", "national_phase_folder", "marketing_activation_report"],
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
+                    },
+                    "required": ["surface_id", "tournament_slug"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_live_brief",
+                "description": "Genera un brief conversacional read-only del Owner Pack indicando campos con evidencia viva, campos faltantes y frontera de aprobacion.",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
@@ -8713,6 +8737,27 @@ async def _run_read_tool(
             tournament_slug=tournament_slug,
             entity_name=entity_name,
         ).to_dict()
+
+    if tool_name == "assistant_owner_pack_live_brief":
+        surface_id = str(args.get("surface_id") or "").strip()
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        entity_name = str(args.get("entity_name") or "").strip() or None
+        if not surface_id or not tournament_slug:
+            raise HTTPException(
+                status_code=400,
+                detail="surface_id and tournament_slug are required",
+            )
+        if surface_id == "entity_folder" and not entity_name:
+            raise HTTPException(
+                status_code=400,
+                detail="entity_name is required for entity_folder briefs",
+            )
+        snapshot = build_owner_pack_live_snapshot_report(
+            surface_id=surface_id,
+            tournament_slug=tournament_slug,
+            entity_name=entity_name,
+        )
+        return build_response_pack_from_live_snapshot(snapshot).to_dict()
 
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(
