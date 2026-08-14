@@ -131,12 +131,17 @@ def test_soul_wizard_contract_declares_steps_and_non_claims() -> None:
     assert "does_not_create_tournament" in contract["non_claims"]
 
 
-def test_soul_wizard_payload_binds_contract_draft_and_readiness() -> None:
+def test_soul_wizard_payload_binds_contract_draft_readiness_and_preview() -> None:
     payload = build_soul_wizard_payload(_complete_payload())
 
     assert payload["contract"]["contract_id"] == "soul_wizard_contract_v1"
     assert payload["draft"]["tournament_name"] == "De la Calle a la Cancha"
     assert payload["readiness"]["status"] == "ready_for_review"
+    assert payload["preview"]["preview_version"] == "soul_wizard_preview_v1"
+    assert payload["preview"]["mode"] == "manual_draft"
+    assert payload["preview"]["activation_allowed"] is False
+    assert payload["preview"]["operational_writes_allowed"] is False
+    assert {field["status"] for field in payload["preview"]["fields"]} == {"captured"}
 
 
 
@@ -179,6 +184,7 @@ def test_soul_wizard_admin_renderer_contains_stepper_and_readonly_boundary() -> 
     assert "phase_1_activities" in html
     assert "Revisar borrador" in html
     assert "no crea torneos" in html or "no crea equipos" in html
+    assert "Diff de activacion propuesta" not in html
     assert "Abrir SOUL Wizard" not in html
 
 
@@ -244,6 +250,27 @@ def test_soul_wizard_clone_from_soul_snapshot_copies_context_and_applies_overrid
     assert clone["source_bound"] is True
     assert clone["operational_writes_allowed"] is False
     assert clone["execution_status"] == EXECUTION_STATUS
+    assert payload["preview"]["mode"] == "clone_diff"
+    preview_by_path = {field["path"]: field for field in payload["preview"]["fields"]}
+    assert preview_by_path["tournament_name"]["status"] == "overridden"
+    assert preview_by_path["categories"]["status"] == "inherited"
+    assert payload["preview"]["summary"]["inherited_count"] >= 6
+    assert payload["preview"]["requires_human_authority_before_write"] is True
+
+
+
+def test_soul_wizard_clone_preview_marks_missing_source_fields() -> None:
+    payload = build_soul_wizard_clone_payload(
+        {"tournament": {"id": "t-empty", "name": "Torneo vacio"}},
+        overrides={"edition_year": 2027},
+    )
+
+    preview_by_path = {field["path"]: field for field in payload["preview"]["fields"]}
+    assert preview_by_path["edition_year"]["status"] == "overridden"
+    assert preview_by_path["phases"]["status"] == "missing"
+    assert payload["preview"]["summary"]["blocker_count"] > 0
+    assert payload["preview"]["activation_allowed"] is False
+
 
 
 def test_soul_wizard_clone_from_operations_matches_builds_phase_skeleton() -> None:
@@ -297,3 +324,21 @@ def test_soul_wizard_form_clone_invalid_json_is_safe_and_readonly() -> None:
     assert payload["clone"]["source_bound"] is False
     assert "Invalid source snapshot JSON" in payload["clone"]["error"]
     assert payload["clone"]["operational_writes_allowed"] is False
+
+def test_soul_wizard_admin_renderer_shows_preview_diff_after_review() -> None:
+    from types import SimpleNamespace
+
+    from devnous.gastos.routes.admin_routes import _render_soul_wizard_admin_page
+
+    payload = build_soul_wizard_payload(_complete_payload())
+    html = _render_soul_wizard_admin_page(
+        current_empleado=SimpleNamespace(nombre="Operaciones", rol="admin"),
+        csrf_input='<input type="hidden" name="_csrf_token" value="token">',
+        payload=payload,
+        form_data={"tournament_name": "De la Calle a la Cancha"},
+    )
+
+    assert "Diff de activacion propuesta" in html
+    assert "Capturado" in html
+    assert "bloqueados" in html
+    assert "no crea calendario" in html

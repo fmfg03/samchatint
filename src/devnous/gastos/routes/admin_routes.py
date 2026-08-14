@@ -7708,6 +7708,55 @@ def _render_soul_wizard_issues(readiness: Optional[dict[str, Any]]) -> str:
     """
 
 
+def _soul_preview_status_label(status: str) -> tuple[str, str]:
+    labels = {
+        "captured": ("Capturado", "pill-info"),
+        "missing": ("Falta", "pill-error"),
+        "inherited": ("Heredado", "pill-ok"),
+        "overridden": ("Cambiado", "pill-warning"),
+        "override_same_value": ("Confirmado", "pill-info"),
+        "added": ("Nuevo", "pill-info"),
+        "removed_or_missing": ("Falta contra fuente", "pill-error"),
+        "changed": ("Diferente", "pill-warning"),
+    }
+    return labels.get(str(status or ""), (str(status or "-"), "pill-info"))
+
+
+def _render_soul_wizard_diff(payload: dict[str, Any]) -> str:
+    preview = payload.get("preview") or {}
+    fields = list(preview.get("fields") or [])
+    if not fields:
+        return ""
+    rows = ""
+    for field in fields:
+        label, css_class = _soul_preview_status_label(str(field.get("status") or ""))
+        rows += f"""
+            <tr>
+                <td><strong>{escape(str(field.get('label') or field.get('path') or '-'))}</strong><br><small>{escape(str(field.get('path') or '-'))}</small></td>
+                <td><span class="pill {css_class}">{escape(label)}</span></td>
+                <td>{escape(str(field.get('source_summary') or '-'))}</td>
+                <td>{escape(str(field.get('draft_summary') or '-'))}</td>
+            </tr>
+        """
+    summary = preview.get("summary") or {}
+    return f"""
+        <div class="surface">
+            <div class="section-title">Diff de activacion propuesta</div>
+            <div class="summary-grid compact-grid">
+                <div class="metric"><span>Modo</span><strong>{escape(str(preview.get('mode') or '-'))}</strong><small>Manual o clone.</small></div>
+                <div class="metric"><span>Heredado</span><strong>{int(summary.get('inherited_count') or 0)}</strong><small>Viene de la fuente.</small></div>
+                <div class="metric"><span>Cambios</span><strong>{int(summary.get('overridden_count') or 0)}</strong><small>Overrides del formulario.</small></div>
+                <div class="metric"><span>Faltantes</span><strong>{int(summary.get('missing_count') or 0)}</strong><small>Antes de activar.</small></div>
+            </div>
+            <table class="diff-table">
+                <thead><tr><th>Campo</th><th>Estado</th><th>Fuente</th><th>Borrador</th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+            <div class="readonly-note">Este diff es solo una propuesta. No activa torneo, no crea calendario, no crea equipos y no notifica a nadie.</div>
+        </div>
+    """
+
+
 def _render_soul_wizard_preview(payload: Optional[dict[str, Any]]) -> str:
     if not payload:
         return """
@@ -7753,6 +7802,7 @@ def _render_soul_wizard_preview(payload: Optional[dict[str, Any]]) -> str:
             <div class="phase-grid">{phase_cards}</div>
             <div class="readonly-note">Execution status: <strong>{escape(str(draft.get('execution_status') or 'not_executed'))}</strong>. Operational writes: <strong>{'permitidos' if draft.get('operational_writes_allowed') else 'bloqueados'}</strong>.</div>
         </div>
+        {_render_soul_wizard_diff(payload)}
         {_render_soul_wizard_issues(readiness)}
     """
 
@@ -7843,6 +7893,10 @@ def _render_soul_wizard_admin_page(
             .pill {{ padding:4px 8px; border-radius:999px; font-size:12px; font-weight:900; }}
             .pill-error {{ background:#fee2e2; color:#991b1b; }}
             .pill-warning {{ background:#fef3c7; color:#92400e; }}
+            .pill-ok {{ background:#dcfce7; color:#166534; }}
+            .pill-info {{ background:#dbeafe; color:#1e40af; }}
+            .compact-grid {{ grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:12px; }}
+            .diff-table td:nth-child(3), .diff-table td:nth-child(4) {{ max-width:220px; color:#334155; }}
             @media (max-width: 960px) {{ .wizard-grid, .three-cols, .two-cols, .summary-grid {{ grid-template-columns:1fr; }} }}
         </style>
     </head>

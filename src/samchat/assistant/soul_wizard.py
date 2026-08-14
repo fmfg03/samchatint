@@ -219,6 +219,140 @@ class SoulWizardReadinessReport:
         return payload
 
 
+SOUL_WIZARD_PREVIEW_FIELDS: tuple[tuple[str, str], ...] = (
+    ("tournament_name", "Nombre del torneo"),
+    ("edition_year", "Edicion"),
+    ("categories", "Categorias"),
+    ("branches", "Ramas / generos"),
+    ("expected_entities", "Entidades esperadas"),
+    ("expected_teams", "Equipos esperados"),
+    ("required_documents", "Documentos requeridos"),
+    ("eligibility_rules", "Reglas de elegibilidad"),
+    ("finance_baseline", "Baseline financiera"),
+    ("phases", "Fases, fechas y actividades"),
+)
+
+
+def _preview_empty(value: Any) -> bool:
+    return value is None or value == "" or value == [] or value == ()
+
+
+def _preview_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_preview_value(item) for item in value]
+    if isinstance(value, list):
+        return [_preview_value(item) for item in value]
+    if isinstance(value, Mapping):
+        return {str(key): _preview_value(item) for key, item in value.items()}
+    return value
+
+
+def _summarize_preview_value(value: Any) -> str:
+    value = _preview_value(value)
+    if _preview_empty(value):
+        return "-"
+    if isinstance(value, list):
+        if value and isinstance(value[0], Mapping):
+            if all("activities" in item for item in value if isinstance(item, Mapping)):
+                activities = sum(len(item.get("activities") or []) for item in value if isinstance(item, Mapping))
+                return f"{len(value)} fases / {activities} actividades"
+            names = [str(item.get("name") or item.get("category") or item.get("branch") or item.get("entity_name") or "item") for item in value if isinstance(item, Mapping)]
+        else:
+            names = [str(item) for item in value]
+        preview = ", ".join(names[:4])
+        if len(names) > 4:
+            preview += f" +{len(names) - 4}"
+        return preview or f"{len(value)} elementos"
+    return str(value)
+
+
+def _preview_status(final_value: Any, source_value: Any, *, has_source: bool, overridden: bool) -> str:
+    final_empty = _preview_empty(final_value)
+    source_empty = _preview_empty(source_value)
+    if not has_source:
+        return "missing" if final_empty else "captured"
+    if overridden and final_value != source_value:
+        return "overridden"
+    if overridden and final_value == source_value:
+        return "override_same_value"
+    if source_empty and final_empty:
+        return "missing"
+    if source_empty and not final_empty:
+        return "added"
+    if final_empty and not source_empty:
+        return "removed_or_missing"
+    if final_value == source_value:
+        return "inherited"
+    return "changed"
+
+
+def build_soul_wizard_preview(
+    draft: SoulWizardDraft,
+    readiness: SoulWizardReadinessReport,
+    *,
+    source_draft: Optional[SoulWizardDraft] = None,
+    overrides: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Build a human-reviewable, read-only activation preview.
+
+    This is the SOUL equivalent of a diff. It says what would be carried into
+    the future activation step, what was inherited from a source, what was
+    overridden, and what still blocks review. It never grants authority.
+    """
+
+    draft_dict = draft.to_dict()
+    source_dict = source_draft.to_dict() if source_draft else {}
+    overrides_set = {str(item) for item in overrides}
+    fields: list[dict[str, Any]] = []
+    for path, label in SOUL_WIZARD_PREVIEW_FIELDS:
+        final_value = _preview_value(draft_dict.get(path))
+        source_value = _preview_value(source_dict.get(path)) if source_draft else None
+        status = _preview_status(
+            final_value,
+            source_value,
+            has_source=source_draft is not None,
+            overridden=path in overrides_set,
+        )
+        fields.append(
+            {
+                "path": path,
+                "label": label,
+                "status": status,
+                "source_summary": _summarize_preview_value(source_value) if source_draft else "-",
+                "draft_summary": _summarize_preview_value(final_value),
+                "overridden": path in overrides_set,
+            }
+        )
+
+    blockers = [item.to_dict() for item in readiness.issues if item.severity == "error"]
+    warnings = [item.to_dict() for item in readiness.issues if item.severity == "warning"]
+    return {
+        "preview_version": "soul_wizard_preview_v1",
+        "mode": "clone_diff" if source_draft else "manual_draft",
+        "execution_status": EXECUTION_STATUS,
+        "operational_writes_allowed": False,
+        "activation_allowed": False,
+        "requires_human_authority_before_write": True,
+        "ready_for_review": readiness.status == "ready_for_review",
+        "summary": {
+            "field_count": len(fields),
+            "inherited_count": sum(1 for item in fields if item["status"] == "inherited"),
+            "overridden_count": sum(1 for item in fields if item["status"] in {"overridden", "override_same_value"}),
+            "missing_count": sum(1 for item in fields if item["status"] in {"missing", "removed_or_missing"}),
+            "blocker_count": len(blockers),
+            "warning_count": len(warnings),
+        },
+        "fields": fields,
+        "blockers": blockers,
+        "warnings": warnings,
+        "non_claims": (
+            "does_not_activate_tournament",
+            "does_not_create_records",
+            "does_not_send_notifications",
+        ),
+    }
+
+
 def build_soul_wizard_draft(payload: Mapping[str, Any]) -> SoulWizardDraft:
     phases = tuple(
         SoulWizardPhase.from_mapping(item, index=index + 1)
@@ -559,22 +693,47 @@ def build_soul_wizard_clone_payload(
     source_name = _clean_text(
         tournament.get("name") or tournament.get("tournament_name") or source.get("tournament_name")
     )
+    source_payload = {
+        "draft_id": "soul_wizard_source_draft",
+        "tournament_name": source_name,
+        "edition_year": source.get("edition_year") or source.get("edicion"),
+        "categories": _source_categories(source),
+        "branches": _source_branches(source),
+        "expected_entities": _source_entities(source),
+        "expected_teams": _source_expected_teams(source),
+        "required_documents": _source_required_documents(source),
+        "eligibility_rules": _source_eligibility_rules(source),
+        "finance_baseline": _source_finance_baseline(source),
+        "source_tournament_id": source_id,
+        "source_snapshot_id": source_hash,
+        "phases": _source_phases(source),
+    }
     payload = {
+        **source_payload,
         "draft_id": _clean_text(overrides.get("draft_id")) or "soul_wizard_clone_draft",
-        "tournament_name": overrides.get("tournament_name") or source_name,
-        "edition_year": overrides.get("edition_year") or overrides.get("edicion") or source.get("edition_year") or source.get("edicion"),
-        "categories": overrides.get("categories") or _source_categories(source),
-        "branches": overrides.get("branches") or _source_branches(source),
-        "expected_entities": overrides.get("expected_entities") or _source_entities(source),
-        "expected_teams": overrides.get("expected_teams") or _source_expected_teams(source),
-        "required_documents": overrides.get("required_documents") or _source_required_documents(source),
-        "eligibility_rules": overrides.get("eligibility_rules") or _source_eligibility_rules(source),
-        "finance_baseline": overrides.get("finance_baseline") or _source_finance_baseline(source),
-        "source_tournament_id": overrides.get("source_tournament_id") or source_id,
-        "source_snapshot_id": overrides.get("source_snapshot_id") or source_hash,
-        "phases": overrides.get("phases") or _source_phases(source),
+        "tournament_name": overrides.get("tournament_name") or source_payload["tournament_name"],
+        "edition_year": overrides.get("edition_year") or overrides.get("edicion") or source_payload["edition_year"],
+        "categories": overrides.get("categories") or source_payload["categories"],
+        "branches": overrides.get("branches") or source_payload["branches"],
+        "expected_entities": overrides.get("expected_entities") or source_payload["expected_entities"],
+        "expected_teams": overrides.get("expected_teams") or source_payload["expected_teams"],
+        "required_documents": overrides.get("required_documents") or source_payload["required_documents"],
+        "eligibility_rules": overrides.get("eligibility_rules") or source_payload["eligibility_rules"],
+        "finance_baseline": overrides.get("finance_baseline") or source_payload["finance_baseline"],
+        "source_tournament_id": overrides.get("source_tournament_id") or source_payload["source_tournament_id"],
+        "source_snapshot_id": overrides.get("source_snapshot_id") or source_payload["source_snapshot_id"],
+        "phases": overrides.get("phases") or source_payload["phases"],
     }
     result = build_soul_wizard_payload(payload)
+    source_draft = build_soul_wizard_draft(source_payload)
+    final_draft = build_soul_wizard_draft(payload)
+    final_readiness = validate_soul_wizard_draft(final_draft)
+    result["preview"] = build_soul_wizard_preview(
+        final_draft,
+        final_readiness,
+        source_draft=source_draft,
+        overrides=tuple(str(key) for key in overrides.keys()),
+    )
     result["clone"] = {
         "source_bound": bool(source_id or source_hash or source_name),
         "source_tournament_id": source_id,
@@ -687,6 +846,7 @@ def build_soul_wizard_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
         "contract": build_soul_wizard_contract(),
         "draft": draft.to_dict(),
         "readiness": readiness.to_dict(),
+        "preview": build_soul_wizard_preview(draft, readiness),
     }
 
 
@@ -699,6 +859,7 @@ __all__ = [
     "SoulWizardReadinessReport",
     "SoulWizardValidationIssue",
     "build_soul_wizard_clone_payload",
+    "build_soul_wizard_preview",
     "build_soul_wizard_contract",
     "build_soul_wizard_draft",
     "build_soul_wizard_payload",
