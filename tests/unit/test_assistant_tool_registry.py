@@ -56,6 +56,10 @@ def test_assistant_tool_registry_assigns_surfaces_for_write_groups() -> None:
     assert registry["assistant_owner_pack_live_brief"].surface == "assistant"
     assert registry["assistant_owner_pack_live_brief"].operation_type == "read"
     assert registry["assistant_owner_pack_live_brief"].requires_confirmation is False
+    assert registry["finance_closeout_diagnostics"].surface == "finance"
+    assert registry["finance_closeout_diagnostics"].operation_type == "read"
+    assert registry["finance_closeout_diagnostics"].requires_confirmation is False
+    assert "finance_closeout_diagnostics" in FINANCE_READ_TOOLS
     assert "assistant_owner_pack_status" in FINANCE_READ_TOOLS
     assert "assistant_owner_pack_status" in TOURNAMENT_READ_TOOLS
     assert "assistant_owner_pack_inventory" in FINANCE_READ_TOOLS

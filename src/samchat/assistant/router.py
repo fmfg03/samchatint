@@ -142,6 +142,7 @@ from .provider_service import (
     normalize_assistant_mode as _provider_normalize_assistant_mode,
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
+from .closeout_diagnostics import build_finance_closeout_diagnostics
 from .rag import get_rag_store
 from .request_intent import (
     is_owner_ai_conceptual_request,
@@ -2431,6 +2432,7 @@ READ_TOOLS = {
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_alerts_scan",
     "finance_ops_query",
     "finance_expense_workflow_status",
@@ -2486,6 +2488,7 @@ FINANCE_READ_TOOLS = {
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_alerts_scan",
     "finance_ops_query",
     "finance_expense_workflow_status",
@@ -2500,6 +2503,7 @@ HERMES_FINANCE_STRATEGY_TOOLS = {
     "finance_alerts_scan",
     "finance_realtime_report",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_ops_query",
     "finance_vendor_payments",
     "finance_expense_search",
@@ -4405,6 +4409,32 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["report_type"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "finance_closeout_diagnostics",
+                "description": "Diagnosticar en modo solo lectura si el cierre financiero/contable del periodo está bloqueado por pólizas descuadradas, COI pendiente o CFDI faltante.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "year": {"type": ["integer", "null"]},
+                        "month": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "maximum": 12,
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["accounting", "finance"],
+                            "default": "accounting",
+                        },
+                        "include_medium": {"type": "boolean", "default": True},
+                    },
+                    "required": [],
                 },
             },
         },
@@ -8796,6 +8826,23 @@ async def _run_read_tool(
 
     if tool_name == "finance_accounting_report":
         return await finance_accounting_report(gastos_session, **args)
+
+    if tool_name == "finance_closeout_diagnostics":
+        include_medium_raw = args.get("include_medium", True)
+        include_medium = (
+            include_medium_raw
+            if isinstance(include_medium_raw, bool)
+            else str(include_medium_raw).strip().lower() not in {"false", "0", "no", "off"}
+        )
+        return (
+            await build_finance_closeout_diagnostics(
+                gastos_session,
+                year=args.get("year"),
+                month=args.get("month"),
+                scope=str(args.get("scope") or "accounting"),
+                include_medium=include_medium,
+            )
+        ).to_dict()
 
     if tool_name == "finance_expense_workflow_status":
         return await finance_expense_workflow_status(gastos_session, **args)
