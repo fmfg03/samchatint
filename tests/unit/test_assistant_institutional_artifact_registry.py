@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+
+import samchat.assistant.router as assistant_router
 from samchat.assistant.institutional_artifact_registry import (
     ARTIFACTS,
     build_institutional_artifact_registry_report,
@@ -77,3 +80,26 @@ def test_institutional_artifact_registry_report_is_read_only_summary() -> None:
     assert report["by_status"]["available_not_wired"] >= 1
     assert "finance.closeout_diagnostics" in report["wired_artifacts"]
     assert "accounting.historical_snapshot" in report["not_wired_artifacts"]
+
+
+@pytest.mark.asyncio
+async def test_institutional_artifacts_router_tool_filters_read_only_registry() -> None:
+    result = await assistant_router._run_read_tool(
+        "assistant_institutional_artifacts",
+        {"domain": "accounting", "wired_only": True},
+        gastos_session=object(),
+        tournament_key_default=None,
+        current_role="admin",
+    )
+
+    assert result["registry_id"] == "samchat_institutional_artifact_registry_v1"
+    assert result["read_only"] is True
+    assert result["filters"] == {
+        "domain": "accounting",
+        "status": None,
+        "wired_only": True,
+    }
+    artifact_ids = {item["artifact_id"] for item in result["artifacts"]}
+    assert "finance.closeout_diagnostics" in artifact_ids
+    assert "expense.accounting_preview" in artifact_ids
+    assert "accounting.historical_snapshot" not in artifact_ids

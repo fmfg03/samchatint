@@ -143,6 +143,10 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .closeout_diagnostics import build_finance_closeout_diagnostics
+from .institutional_artifact_registry import (
+    build_institutional_artifact_registry_report,
+    list_institutional_artifacts,
+)
 from .rag import get_rag_store
 from .request_intent import (
     is_owner_ai_conceptual_request,
@@ -2427,6 +2431,7 @@ def _assistant_default_tournament_key() -> Optional[str]:
 
 READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2483,6 +2488,7 @@ WRITE_TOOLS = {
 
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2520,6 +2526,7 @@ FINANCE_WRITE_TOOLS = {
     "assistant_save_artifact",
 }
 TOURNAMENT_READ_TOOLS = {
+    "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -3109,6 +3116,39 @@ _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
 
 def _tool_defs() -> List[Dict[str, Any]]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_institutional_artifacts",
+                "description": "Lista en modo solo lectura los artefactos institucionales existentes de SamChat, su dominio, evidencia, estado de cableado y herramienta/accion relacionada.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "domain": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "finance",
+                                "accounting",
+                                "operations",
+                                "tournament",
+                                "budget",
+                                "owner_pack",
+                                "institutional_memory",
+                                "cross_domain",
+                                None,
+                            ],
+                        },
+                        "status": {
+                            "type": ["string", "null"],
+                            "enum": ["wired", "available_not_wired", "partial", "planned", None],
+                        },
+                        "wired_only": {"type": "boolean", "default": False},
+                    },
+                    "required": [],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -8712,6 +8752,34 @@ async def _run_read_tool(
             return await workspace_file_read(**args)
         return await workspace_search(**args)
 
+
+    if tool_name == "assistant_institutional_artifacts":
+        domain = args.get("domain")
+        status = args.get("status")
+        wired_only_raw = args.get("wired_only", False)
+        wired_only = (
+            wired_only_raw
+            if isinstance(wired_only_raw, bool)
+            else str(wired_only_raw).strip().lower() in {"true", "1", "yes", "on"}
+        )
+        if domain or status or wired_only:
+            artifacts = list_institutional_artifacts(
+                domain=str(domain) if domain else None,
+                status=str(status) if status else None,
+                wired_only=wired_only,
+            )
+            return {
+                "registry_id": "samchat_institutional_artifact_registry_v1",
+                "read_only": True,
+                "artifact_count": len(artifacts),
+                "filters": {
+                    "domain": domain,
+                    "status": status,
+                    "wired_only": wired_only,
+                },
+                "artifacts": [item.to_dict() for item in artifacts],
+            }
+        return build_institutional_artifact_registry_report()
 
     if tool_name == "assistant_owner_pack_status":
         eval_path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")

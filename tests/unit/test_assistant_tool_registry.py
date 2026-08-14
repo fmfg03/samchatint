@@ -44,6 +44,11 @@ def test_assistant_tool_registry_assigns_surfaces_for_write_groups() -> None:
     assert registry["db_write_universal"].surface == "database"
     assert registry["db_read_universal"].allowed_roles == ("admin", "superadmin")
     assert registry["db_write_universal"].allowed_roles == ("superadmin",)
+    assert registry["assistant_institutional_artifacts"].surface == "assistant"
+    assert registry["assistant_institutional_artifacts"].operation_type == "read"
+    assert registry["assistant_institutional_artifacts"].requires_confirmation is False
+    assert "assistant_institutional_artifacts" in FINANCE_READ_TOOLS
+    assert "assistant_institutional_artifacts" in TOURNAMENT_READ_TOOLS
     assert registry["assistant_owner_pack_status"].surface == "assistant"
     assert registry["assistant_owner_pack_status"].operation_type == "read"
     assert registry["assistant_owner_pack_status"].requires_confirmation is False
