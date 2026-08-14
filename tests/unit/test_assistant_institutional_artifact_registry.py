@@ -21,6 +21,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "accounting.historical_snapshot" in ids
     assert "tournament.soul_snapshot" in ids
     assert "assistant.owner_entity_dossier_audit" in ids
+    assert "assistant.soul_wizard_contract" in ids
 
     for item in ARTIFACTS:
         assert item.name
@@ -52,6 +53,7 @@ def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> N
         "sam_inbox.payload",
         "assistant.owner_entity_dossier_audit",
         "assistant.sports_platform_audit",
+        "assistant.soul_wizard_contract",
     }
     assert all(item.assistant_tool or item.canonical_action for item in wired)
     assert all(item.next_wiring_step for item in unwired)
