@@ -337,6 +337,71 @@ def build_soul_wizard_contract() -> dict[str, Any]:
     }
 
 
+def _activity_from_line(line: str, *, index: int) -> dict[str, Any]:
+    parts = [part.strip() for part in str(line or "").split("|")]
+    while len(parts) < 3:
+        parts.append("")
+    return {
+        "activity_id": f"activity_{index}",
+        "name": parts[0],
+        "owner": parts[1],
+        "due_date": parts[2],
+    }
+
+
+def _activities_from_text(value: Any) -> list[dict[str, Any]]:
+    lines = [line.strip() for line in str(value or "").splitlines()]
+    return [
+        _activity_from_line(line, index=index + 1)
+        for index, line in enumerate(lines)
+        if line
+    ]
+
+
+def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, Any]:
+    """Build a wizard payload from simple HTML form fields.
+
+    Phase fields follow the pattern phase_{n}_name, phase_{n}_start_date,
+    phase_{n}_end_date and phase_{n}_activities.  Activities are entered one
+    per line as: activity name | owner | due date.
+    """
+
+    phases: list[dict[str, Any]] = []
+    for index in range(1, 7):
+        name = _clean_text(form.get(f"phase_{index}_name"))
+        start_date = _clean_optional_text(form.get(f"phase_{index}_start_date"))
+        end_date = _clean_optional_text(form.get(f"phase_{index}_end_date"))
+        activities = _activities_from_text(form.get(f"phase_{index}_activities"))
+        if not (name or start_date or end_date or activities):
+            continue
+        phases.append(
+            {
+                "phase_id": f"phase_{index}",
+                "name": name,
+                "start_date": start_date,
+                "end_date": end_date,
+                "activities": activities,
+            }
+        )
+
+    payload = {
+        "draft_id": _clean_text(form.get("draft_id")) or "soul_wizard_ui_draft",
+        "tournament_name": form.get("tournament_name"),
+        "edition_year": form.get("edition_year"),
+        "categories": form.get("categories_text"),
+        "branches": form.get("branches_text"),
+        "expected_entities": form.get("expected_entities_text"),
+        "expected_teams": form.get("expected_teams"),
+        "required_documents": form.get("required_documents_text"),
+        "eligibility_rules": form.get("eligibility_rules_text"),
+        "finance_baseline": form.get("finance_baseline_text"),
+        "source_tournament_id": form.get("source_tournament_id"),
+        "source_snapshot_id": form.get("source_snapshot_id"),
+        "phases": phases,
+    }
+    return build_soul_wizard_payload(payload)
+
+
 def build_soul_wizard_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     draft = build_soul_wizard_draft(payload)
     readiness = validate_soul_wizard_draft(draft)
@@ -358,5 +423,6 @@ __all__ = [
     "build_soul_wizard_contract",
     "build_soul_wizard_draft",
     "build_soul_wizard_payload",
+    "build_soul_wizard_payload_from_form",
     "validate_soul_wizard_draft",
 ]

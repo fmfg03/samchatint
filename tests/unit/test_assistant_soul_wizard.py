@@ -5,6 +5,7 @@ from samchat.assistant.soul_wizard import (
     build_soul_wizard_contract,
     build_soul_wizard_draft,
     build_soul_wizard_payload,
+    build_soul_wizard_payload_from_form,
     validate_soul_wizard_draft,
 )
 
@@ -135,3 +136,46 @@ def test_soul_wizard_payload_binds_contract_draft_and_readiness() -> None:
     assert payload["contract"]["contract_id"] == "soul_wizard_contract_v1"
     assert payload["draft"]["tournament_name"] == "De la Calle a la Cancha"
     assert payload["readiness"]["status"] == "ready_for_review"
+
+
+
+def test_soul_wizard_form_payload_parses_phase_activity_lines() -> None:
+    payload = build_soul_wizard_payload_from_form(
+        {
+            "tournament_name": "Copa Test",
+            "edition_year": "2027",
+            "categories_text": "Sub 15\nSub 17",
+            "branches_text": "Varonil\nFemenil",
+            "expected_entities_text": "CDMX\nJalisco",
+            "expected_teams": "32",
+            "required_documents_text": "CURP\nActa",
+            "eligibility_rules_text": "Sin duplicidad CURP",
+            "phase_1_name": "Inscripcion",
+            "phase_1_start_date": "2027-01-10",
+            "phase_1_end_date": "2027-02-20",
+            "phase_1_activities": "Abrir convocatoria | Operaciones | 2027-01-15\nValidar rosters | Mesa de control | 2027-02-15",
+        }
+    )
+
+    assert payload["readiness"]["status"] == "ready_for_review"
+    assert payload["draft"]["categories"] == ["Sub 15", "Sub 17"]
+    assert payload["draft"]["phases"][0]["activities"][1]["owner"] == "Mesa de control"
+
+
+
+def test_soul_wizard_admin_renderer_contains_stepper_and_readonly_boundary() -> None:
+    from types import SimpleNamespace
+
+    from devnous.gastos.routes.admin_routes import _render_soul_wizard_admin_page
+
+    html = _render_soul_wizard_admin_page(
+        current_empleado=SimpleNamespace(nombre="Operaciones", rol="admin"),
+        csrf_input='<input type="hidden" name="_csrf_token" value="token">',
+        form_data={"tournament_name": "Copa Test"},
+    )
+
+    assert "SOUL Wizard" in html
+    assert "phase_1_activities" in html
+    assert "Revisar borrador" in html
+    assert "no crea torneos" in html or "no crea equipos" in html
+    assert "Abrir SOUL Wizard" not in html
