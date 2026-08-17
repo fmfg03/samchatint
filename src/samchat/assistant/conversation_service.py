@@ -75,6 +75,7 @@ from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
 from .owner_operator_workflow import run_owner_operator_workflow
+from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
 from .owner_pack_readiness import (
     OWNER_PACK_NEEDS_TARGET,
     OWNER_PACK_PARTIAL_LIVE_EVIDENCE,
@@ -389,11 +390,21 @@ async def _build_owner_pack_readiness_response(
         return None
     prompts = _load_owner_needs_prompts()
     status_report = build_owner_pack_status_report(prompts)
+    scope = _owner_readiness_scope_from_message(raw_message)
+    tournament_hint = owner_ai_tournament_slug_hint(raw_message) or ""
+    entity_name = _owner_readiness_entity_hint(raw_message)
+    live_evidence = await resolve_owner_pack_live_evidence(
+        session,
+        scope=scope,
+        tournament_hint=tournament_hint,
+        entity_name=entity_name,
+    )
     report = build_owner_pack_readiness_from_scope(
         status_report=status_report,
-        scope=_owner_readiness_scope_from_message(raw_message),
-        tournament_slug=owner_ai_tournament_slug_hint(raw_message) or "",
-        entity_name=_owner_readiness_entity_hint(raw_message),
+        scope=scope,
+        tournament_slug=tournament_hint,
+        entity_name=entity_name,
+        extra_live_reports=live_evidence.reports,
     )
     rendered = _render_owner_pack_readiness(report)
     tool_trace = [
@@ -408,8 +419,13 @@ async def _build_owner_pack_readiness_response(
                 "writes_attempted": report.writes_attempted,
                 "side_effects_detected": report.side_effects_detected,
                 "approval_required": True,
+                "live_evidence_status": live_evidence.status,
+                "live_evidence_source": live_evidence.source,
+                "live_evidence_reports": len(live_evidence.reports),
+                "live_evidence_unresolved_reason": live_evidence.unresolved_reason,
             },
             "tool": "assistant_owner_pack_readiness",
+            "live_evidence": live_evidence.to_dict(),
             "result": report.to_dict(),
         }
     ]

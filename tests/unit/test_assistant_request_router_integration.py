@@ -330,6 +330,73 @@ async def test_owner_pack_readiness_without_tournament_requests_context():
 
 
 @pytest.mark.asyncio
+async def test_owner_pack_readiness_uses_local_live_evidence_when_available(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+    from samchat.assistant.owner_pack_live_evidence import (
+        OwnerPackLiveEvidenceResolution,
+    )
+    from samchat.assistant.owner_pack_live_snapshot import (
+        OWNER_PACK_LIVE_SNAPSHOT_ONLY,
+        OWNER_PACK_LIVE_SUPPORTED,
+        OwnerPackLiveFieldSnapshot,
+        OwnerPackLiveSnapshotReport,
+        OwnerPackLiveSurfaceSnapshot,
+    )
+
+    async def fake_live_evidence(session, *, scope, tournament_hint, entity_name):
+        assert tournament_hint == "copa-telmex"
+        surface = OwnerPackLiveSurfaceSnapshot(
+            surface_id="national_phase_folder",
+            label="Carpeta fase nacional",
+            target={"tournament_name": "Copa Telmex Telcel de F?tbol"},
+            workspace_root="samchat_local_tournament_db",
+            workspace_files_checked=["samchat_local_tournament_db"],
+            workspace_files_found=["samchat_local_tournament_db"],
+            fields=[
+                OwnerPackLiveFieldSnapshot(
+                    field="tournament_category",
+                    label="Torneo / categor?a",
+                    section_id="operations",
+                    evidence_type="tournament",
+                    status=OWNER_PACK_LIVE_SUPPORTED,
+                    value={"tournament_name": "Copa Telmex Telcel de F?tbol"},
+                    source_paths=["db.tournaments.name"],
+                    source_files=["samchat_local_tournament_db"],
+                )
+            ],
+            supported_field_count=1,
+            missing_field_count=0,
+            audit_language=OWNER_PACK_LIVE_SNAPSHOT_ONLY,
+        )
+        report = OwnerPackLiveSnapshotReport(
+            snapshot_id="owner_pack_live_evidence_v2_national_phase_folder",
+            headline="Evidencia viva local",
+            summary="ok",
+            surfaces=[surface],
+            supported_field_count=1,
+            missing_field_count=0,
+        )
+        return OwnerPackLiveEvidenceResolution(status="resolved", reports=[report])
+
+    monkeypatch.setattr(
+        conversation_service,
+        "resolve_owner_pack_live_evidence",
+        fake_live_evidence,
+    )
+
+    response = await _run_message(
+        "Que falta para contestarle al Director General sobre Copa Telmex?"
+    )
+
+    assert "db.tournaments.name" in str(response.tool_trace[0]["result"])
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["live_evidence_status"] == "resolved"
+    assert trace["live_evidence_reports"] == 1
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+
+
+@pytest.mark.asyncio
 async def test_specialist_preview_surface_bypasses_provider_and_returns_render_contract():
     calls = []
 
