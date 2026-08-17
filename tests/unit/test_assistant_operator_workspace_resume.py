@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from samchat.assistant.operator_workspace_resume import (
+    build_operator_workspace_continuity_surface,
     build_operator_workspace_resume_response,
     detect_operator_workspace_resume_intent,
     extract_operator_workspace_snapshot_from_payload,
@@ -26,14 +27,28 @@ def _snapshot():
             "execution_status": "not_executed",
         },
         business_preview={"task_id": "SAMCHAT-CXC-COLLECTION-001"},
-        understood_context={"authority": "context_hint_only"},
-        live_context={"authority": "read_only_context", "matched": True},
+        understood_context={
+            "authority": "context_hint_only",
+            "operations_refs": ["28"],
+            "uuid_or_prefixes": ["669DBF39"],
+            "domains": ["finance"],
+            "entities": ["DCC Nacional"],
+        },
+        live_context={
+            "authority": "read_only_context",
+            "matched": True,
+            "documents": [{"reference": "I-991520"}],
+            "expenses": [{"reference": "O-1"}],
+            "cfdis": [{"uuid": "669DBF39"}],
+        },
         continuity_context={"authority": "read_only_continuity", "matched": False},
         memory_context={"authority": "read_only_memory", "matched": False},
         diagnostics={
             "authority": "read_only_diagnostic",
             "readiness": "ready_for_read_only_preview",
+            "findings": ["CFDI y referencia operativa detectados."],
             "missing": [],
+            "next_steps": ["Preparar diff de CxC sin ejecutar."],
         },
         evidence_quality_gate={
             "authority": "read_only_evidence_gate",
@@ -47,7 +62,7 @@ def _snapshot():
         },
         workspace_cards=[{"card_id": "understood_context"}, {"card_id": "authority_boundary"}],
         step_trace=[{"step_id": "understand_request"}],
-        source_panel=[{"source_id": "user_message"}],
+        source_panel=[{"source_id": "user_message", "title": "Mensaje del usuario"}],
     )
 
 
@@ -108,6 +123,20 @@ async def test_load_latest_snapshot_skips_invalid_payloads_and_returns_compact_c
     assert resolution["writes_attempted"] is False
 
 
+def test_continuity_surface_summarizes_known_context_sources_and_next_step() -> None:
+    surface = build_operator_workspace_continuity_surface(_snapshot())
+
+    assert surface["authority"] == "read_only_continuity_surface"
+    assert surface["what_i_know"]["operations_refs"] == ["28"]
+    assert surface["what_i_know"]["live_cfdis"] == 1
+    assert surface["findings"] == ["CFDI y referencia operativa detectados."]
+    assert surface["available_sources"] == ["Mensaje del usuario"]
+    assert surface["recommended_preview_task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert surface["provider_called"] is False
+    assert surface["writes_attempted"] is False
+    assert surface["safe_to_execute"] is False
+
+
 def test_resume_response_and_markdown_are_read_only() -> None:
     snapshot = _snapshot()
     resume = build_operator_workspace_resume_response(
@@ -126,6 +155,10 @@ def test_resume_response_and_markdown_are_read_only() -> None:
     assert resume["writes_attempted"] is False
     assert resume["safe_to_execute"] is False
     assert "Workspace retomado" in rendered
+    assert "Lo que ya sabe el workspace" in rendered
+    assert "operations_refs: 28" in rendered
+    assert "Fuentes disponibles: Mensaje del usuario" in rendered
+    assert "Siguiente paso recomendado" in rendered
     assert "no ejecuta acciones" in rendered
 
 
