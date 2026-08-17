@@ -5,6 +5,7 @@ import os
 import re
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, Awaitable, Callable, Optional
@@ -64,11 +65,23 @@ from .receipt_workflow_draft import (
     advance_receipt_draft,
     start_receipt_draft,
 )
-from .request_intent import detect_request_intent, is_owner_ai_context_request
+from .request_intent import (
+    detect_request_intent,
+    is_owner_ai_context_request,
+    is_owner_ai_readiness_request,
+    owner_ai_tournament_slug_hint,
+)
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
-from .owner_needs_eval import OwnerNeedsPrompt
+from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
 from .owner_operator_workflow import run_owner_operator_workflow
+from .owner_pack_readiness import (
+    OWNER_PACK_NEEDS_TARGET,
+    OWNER_PACK_PARTIAL_LIVE_EVIDENCE,
+    OWNER_PACK_READY_FOR_REVIEW,
+    build_owner_pack_readiness_from_scope,
+)
+from .owner_pack_status import build_owner_pack_status_report
 from .specialist_preview_surface import (
     detect_specialist_preview_task_id,
     render_specialist_preview_surface,
@@ -260,6 +273,156 @@ def _owner_prompt_from_message(raw_message: str) -> OwnerNeedsPrompt:
     )
 
 
+def _owner_readiness_scope_from_message(raw_message: str) -> str:
+    normalized = (raw_message or "").lower()
+    if "activacion" in normalized or "marketing" in normalized:
+        return "marketing_activation_report"
+    if "fase nacional" in normalized or "nacional" in normalized:
+        return "national_phase_folder"
+    if "entidad" in normalized or "operador" in normalized:
+        return "entity_folder"
+    return "all"
+
+
+def _owner_readiness_entity_hint(raw_message: str) -> str | None:
+    normalized = (raw_message or "").strip()
+    markers = ("entidad", "operador")
+    lowered = normalized.lower()
+    for marker in markers:
+        idx = lowered.find(marker)
+        if idx < 0:
+            continue
+        tail = normalized[idx + len(marker):].strip(" :,-?")
+        if tail:
+            return tail[:80]
+    return None
+
+
+def _load_owner_needs_prompts() -> list[OwnerNeedsPrompt]:
+    path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+    try:
+        markdown = path.read_text(encoding="utf-8")
+    except OSError:
+        markdown = ""
+    prompts = parse_owner_needs_eval_set(markdown)
+    if prompts:
+        return prompts
+    return [_owner_prompt_from_message("Necesidades del dueno para todos los torneos")]
+
+
+def _render_owner_pack_readiness(report: Any) -> str:
+    lines = [
+        report.headline,
+        "",
+        report.summary,
+        "",
+        f"Estado: {report.status} - readiness {report.readiness_score}%",
+    ]
+    target = report.target or {}
+    target_bits = []
+    if target.get("tournament_slug"):
+        target_bits.append(f"torneo={target['tournament_slug']}")
+    if target.get("entity_name"):
+        target_bits.append(f"entidad={target['entity_name']}")
+    if target.get("scope"):
+        target_bits.append(f"scope={target['scope']}")
+    if target_bits:
+        lines.extend(["", "Objetivo revisado: " + " - ".join(target_bits)])
+
+    lines.extend(["", "Superficies revisadas:"])
+    for surface in report.surfaces[:6]:
+        lines.append(
+            f"- {surface.label}: {surface.status} "
+            f"({surface.supported_field_count}/{surface.field_count} campos respaldados)"
+        )
+
+    lines.extend(["", "Evidencia encontrada:"])
+    if report.evidence_found:
+        lines.extend(f"- {item}" for item in report.evidence_found[:8])
+    else:
+        lines.append(
+            "- Aun no hay evidencia viva suficiente; "
+            "solo contrato/schema preparado."
+        )
+
+    lines.extend(["", "Faltantes para poder contestar sin inventar:"])
+    if report.missing_evidence:
+        lines.extend(f"- {item}" for item in report.missing_evidence[:12])
+    elif report.status == OWNER_PACK_NEEDS_TARGET:
+        lines.append("- Falta indicar la entidad/operador objetivo.")
+    else:
+        lines.append("- Sin faltantes detectados en el alcance solicitado.")
+
+    if report.next_actions:
+        lines.extend(["", "Siguiente paso seguro:"])
+        lines.extend(f"- {item}" for item in report.next_actions[:4])
+    if report.next_questions:
+        lines.extend(["", "Pregunta minima para avanzar:"])
+        lines.extend(f"- {item}" for item in report.next_questions[:3])
+
+    if report.status == OWNER_PACK_READY_FOR_REVIEW:
+        conclusion = "Puede presentarse como preview read-only para revision humana."
+    elif report.status == OWNER_PACK_PARTIAL_LIVE_EVIDENCE:
+        conclusion = "Se puede mostrar avance, pero no cerrar la respuesta como completa."
+    else:
+        conclusion = "Todavia no debe venderse como respuesta completa; falta contexto o evidencia."
+    lines.extend(["", f"Conclusion: {conclusion}"])
+    lines.extend(
+        [
+            "",
+            "Frontera de autoridad: esto no crea carpetas, no modifica datos, "
+            "no manda mensajes y no autoriza nada. Es diagnostico read-only; "
+            "cualquier salida durable requiere aprobacion humana.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+async def _build_owner_pack_readiness_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    if not is_owner_ai_readiness_request(raw_message):
+        return None
+    prompts = _load_owner_needs_prompts()
+    status_report = build_owner_pack_status_report(prompts)
+    report = build_owner_pack_readiness_from_scope(
+        status_report=status_report,
+        scope=_owner_readiness_scope_from_message(raw_message),
+        tournament_slug=owner_ai_tournament_slug_hint(raw_message) or "",
+        entity_name=_owner_readiness_entity_hint(raw_message),
+    )
+    rendered = _render_owner_pack_readiness(report)
+    tool_trace = [
+        {
+            "owner_pack_readiness": {
+                "stage": "deterministic_read_only_owner_pack_readiness",
+                "readiness_id": report.readiness_id,
+                "status": report.status,
+                "readiness_score": report.readiness_score,
+                "surface_count": len(report.surfaces),
+                "provider_called": False,
+                "writes_attempted": report.writes_attempted,
+                "side_effects_detected": report.side_effects_detected,
+                "approval_required": True,
+            },
+            "tool": "assistant_owner_pack_readiness",
+            "result": report.to_dict(),
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 def _render_owner_operator_workflow(result: Any) -> str:
     response_pack = result.response_pack
     proposal = result.folder_proposal
@@ -302,7 +465,7 @@ def _render_owner_operator_workflow(result: Any) -> str:
         [
             "",
             "Estado de datos:",
-            "- Las superficies y contratos del pack del due?o ya estan preparados "
+            "- Las superficies y contratos del pack del dueno ya estan preparados "
             "en modo read-only.",
             "- Si el torneo, entidad o evidencia real no esta cargada, el pack "
             "muestra faltantes y no inventa informacion.",
@@ -983,6 +1146,15 @@ async def run_conversation_turn(
     if specialist_preview_response is not None:
         return specialist_preview_response
 
+    owner_readiness_response = await _build_owner_pack_readiness_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_readiness_response is not None:
+        return owner_readiness_response
+
     owner_response = await _build_owner_operator_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1213,6 +1385,15 @@ async def run_message_turn_with_pending(
     )
     if specialist_preview_response is not None:
         return specialist_preview_response
+
+    owner_readiness_response = await _build_owner_pack_readiness_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_readiness_response is not None:
+        return owner_readiness_response
 
     owner_response = await _build_owner_operator_response(
         raw_message=raw_message,

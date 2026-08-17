@@ -155,6 +155,7 @@ from .request_intent import (
 from .owner_needs_eval import parse_owner_needs_eval_set
 from .owner_pack_inventory import build_owner_pack_inventory_report
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
+from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_status import build_owner_pack_status_report
 from .owner_response_pack import build_response_pack_from_live_snapshot
 from .readonly_workspace import (
@@ -2433,6 +2434,7 @@ READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_readiness",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -2490,6 +2492,7 @@ FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_readiness",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -2528,6 +2531,7 @@ FINANCE_WRITE_TOOLS = {
 TOURNAMENT_READ_TOOLS = {
     "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
+    "assistant_owner_pack_readiness",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -3182,6 +3186,27 @@ def _tool_defs() -> List[Dict[str, Any]]:
                             "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
                             "default": "all",
                         }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_readiness",
+                "description": "Agrega status, inventario y evidencia viva del Owner Pack en un diagnostico read-only: listo/no listo, faltantes, evidencia, preguntas y siguiente accion.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
                     },
                     "required": [],
                 },
@@ -8815,6 +8840,25 @@ async def _run_read_tool(
         scope = str(args.get("scope") or "all").strip()
         scopes = None if not scope or scope == "all" else (scope,)
         return build_owner_pack_inventory_report(scopes=scopes).to_dict()
+
+    if tool_name == "assistant_owner_pack_readiness":
+        eval_path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+        if not eval_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail="Owner Pack eval set is not available in this release",
+            )
+        prompts = parse_owner_needs_eval_set(eval_path.read_text(encoding="utf-8"))
+        status_report = build_owner_pack_status_report(prompts)
+        scope = str(args.get("scope") or "all").strip() or "all"
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        entity_name = str(args.get("entity_name") or "").strip() or None
+        return build_owner_pack_readiness_from_scope(
+            status_report=status_report,
+            scope=scope,
+            tournament_slug=tournament_slug,
+            entity_name=entity_name,
+        ).to_dict()
 
     if tool_name == "assistant_owner_pack_live_snapshot":
         surface_id = str(args.get("surface_id") or "").strip()

@@ -291,6 +291,45 @@ async def test_owner_ai_prepared_dashboards_message_is_data_gap_aware():
 
 
 @pytest.mark.asyncio
+async def test_owner_pack_readiness_question_uses_readiness_tool_without_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("owner readiness should bypass provider")
+
+    response = await _run_message(
+        "Que falta para contestarle al Director General sobre Copa Telmex?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
+    assert "torneo=copa-telmex" in response.assistant_message
+    assert "Frontera de autoridad" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
+
+
+@pytest.mark.asyncio
+async def test_owner_pack_readiness_without_tournament_requests_context():
+    response = await _run_message(
+        "Que tan listo esta el Owner Pack para responderle al dueno?"
+    )
+
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "schema" in response.assistant_message.lower()
+    assert "De que torneo quieres revisar el Owner Pack" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+
+
+@pytest.mark.asyncio
 async def test_specialist_preview_surface_bypasses_provider_and_returns_render_contract():
     calls = []
 
