@@ -18,7 +18,7 @@ from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from threading import Lock
-from typing import Optional, List, Any, Union, Dict
+from typing import Optional, List, Any, Union, Dict, Mapping
 from urllib.parse import quote
 from uuid import UUID as UUIDType, uuid4
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -203,6 +203,10 @@ from samchat.budgets.service import (
     validate_active_cuenta_contable_id,
 )
 from samchat.sam_inbox import build_sam_inbox_payload
+from samchat.assistant.soul_wizard import (
+    build_soul_wizard_contract,
+    build_soul_wizard_payload_from_form,
+)
 from devnous.sat.sat_handler import SATExpenseHandler
 from devnous.sat.sat_sync_service import SATSyncService
 from devnous.gastos.services.sat_catalog_service import (
@@ -7661,6 +7665,332 @@ async def admin_finance_link_diot_blockers_cfdi(
             f"error_msg={quote('No se amarró ningún CFDI. ' + '; '.join(failures[:3]))}"
         ),
         status_code=303,
+    )
+
+
+def _soul_form_value(form_data: Mapping[str, Any], key: str) -> str:
+    return escape(str(form_data.get(key) or ""), quote=True)
+
+
+def _soul_text_value(form_data: Mapping[str, Any], key: str) -> str:
+    return escape(str(form_data.get(key) or ""))
+
+
+def _render_soul_wizard_issues(readiness: Optional[dict[str, Any]]) -> str:
+    if not readiness:
+        return ""
+    issues = list(readiness.get("issues") or [])
+    if not issues:
+        return """
+            <div class="ok-box">
+                Borrador listo para revision humana. Todavia no crea el torneo ni escribe en operacion.
+            </div>
+        """
+    rows = "".join(
+        f"""
+        <tr>
+            <td><span class="pill {'pill-error' if item.get('severity') == 'error' else 'pill-warning'}">{escape(str(item.get('severity') or '-'))}</span></td>
+            <td>{escape(str(item.get('code') or '-'))}</td>
+            <td>{escape(str(item.get('path') or '-'))}</td>
+            <td>{escape(str(item.get('message') or '-'))}</td>
+        </tr>
+        """
+        for item in issues
+    )
+    return f"""
+        <div class="surface">
+            <div class="section-title">Hallazgos del borrador</div>
+            <table>
+                <thead><tr><th>Tipo</th><th>Codigo</th><th>Campo</th><th>Mensaje</th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>
+    """
+
+
+def _soul_preview_status_label(status: str) -> tuple[str, str]:
+    labels = {
+        "captured": ("Capturado", "pill-info"),
+        "missing": ("Falta", "pill-error"),
+        "inherited": ("Heredado", "pill-ok"),
+        "overridden": ("Cambiado", "pill-warning"),
+        "override_same_value": ("Confirmado", "pill-info"),
+        "added": ("Nuevo", "pill-info"),
+        "removed_or_missing": ("Falta contra fuente", "pill-error"),
+        "changed": ("Diferente", "pill-warning"),
+    }
+    return labels.get(str(status or ""), (str(status or "-"), "pill-info"))
+
+
+def _render_soul_wizard_diff(payload: dict[str, Any]) -> str:
+    preview = payload.get("preview") or {}
+    fields = list(preview.get("fields") or [])
+    if not fields:
+        return ""
+    rows = ""
+    for field in fields:
+        label, css_class = _soul_preview_status_label(str(field.get("status") or ""))
+        rows += f"""
+            <tr>
+                <td><strong>{escape(str(field.get('label') or field.get('path') or '-'))}</strong><br><small>{escape(str(field.get('path') or '-'))}</small></td>
+                <td><span class="pill {css_class}">{escape(label)}</span></td>
+                <td>{escape(str(field.get('source_summary') or '-'))}</td>
+                <td>{escape(str(field.get('draft_summary') or '-'))}</td>
+            </tr>
+        """
+    summary = preview.get("summary") or {}
+    return f"""
+        <div class="surface">
+            <div class="section-title">Diff de activacion propuesta</div>
+            <div class="summary-grid compact-grid">
+                <div class="metric"><span>Modo</span><strong>{escape(str(preview.get('mode') or '-'))}</strong><small>Manual o clone.</small></div>
+                <div class="metric"><span>Heredado</span><strong>{int(summary.get('inherited_count') or 0)}</strong><small>Viene de la fuente.</small></div>
+                <div class="metric"><span>Cambios</span><strong>{int(summary.get('overridden_count') or 0)}</strong><small>Overrides del formulario.</small></div>
+                <div class="metric"><span>Faltantes</span><strong>{int(summary.get('missing_count') or 0)}</strong><small>Antes de activar.</small></div>
+            </div>
+            <table class="diff-table">
+                <thead><tr><th>Campo</th><th>Estado</th><th>Fuente</th><th>Borrador</th></tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+            <div class="readonly-note">Este diff es solo una propuesta. No activa torneo, no crea calendario, no crea equipos y no notifica a nadie.</div>
+        </div>
+    """
+
+
+def _render_soul_wizard_preview(payload: Optional[dict[str, Any]]) -> str:
+    if not payload:
+        return """
+            <div class="muted-card">
+                Captura el borrador y presiona <strong>Revisar borrador</strong>. El sistema validara fases, fechas y actividades antes de cualquier activacion.
+            </div>
+        """
+    draft = payload.get("draft") or {}
+    readiness = payload.get("readiness") or {}
+    clone = payload.get("clone") or {}
+    phases = list(draft.get("phases") or [])
+    phase_cards = "".join(
+        f"""
+        <div class="phase-preview">
+            <strong>{escape(str(phase.get('name') or '-'))}</strong>
+            <span>{escape(str(phase.get('start_date') or '-'))} a {escape(str(phase.get('end_date') or '-'))}</span>
+            <small>{len(phase.get('activities') or [])} actividades</small>
+        </div>
+        """
+        for phase in phases
+    ) or '<div class="muted-card">Sin fases capturadas.</div>'
+    clone_html = ""
+    if clone:
+        clone_error = clone.get("error")
+        clone_html = f"""
+            <div class="{'readonly-note' if not clone_error else 'muted-card'}">
+                <strong>{'Error de clone' if clone_error else 'Clone source'}</strong>: {escape(str(clone_error or clone.get('source_tournament_name') or clone.get('source_tournament_id') or clone.get('source_snapshot_id') or 'source bound'))}
+            </div>
+        """
+    return f"""
+        <div class="surface">
+            <div class="section-title">Preview del SOUL</div>
+            {clone_html}
+            <div class="summary-grid">
+                <div class="metric"><span>Estado</span><strong>{escape(str(readiness.get('status') or '-'))}</strong><small>Validacion del contrato.</small></div>
+                <div class="metric"><span>Score</span><strong>{int(readiness.get('readiness_score') or 0)}</strong><small>Penaliza faltantes y advertencias.</small></div>
+                <div class="metric"><span>Errores</span><strong>{int(readiness.get('required_missing_count') or 0)}</strong><small>Bloquean revision.</small></div>
+                <div class="metric"><span>Warnings</span><strong>{int(readiness.get('warnings_count') or 0)}</strong><small>No bloquean, pero hay que cerrar.</small></div>
+            </div>
+            <div class="draft-line"><strong>Torneo:</strong> {escape(str(draft.get('tournament_name') or '-'))} / {escape(str(draft.get('edition_year') or '-'))}</div>
+            <div class="draft-line"><strong>Categorias:</strong> {escape(', '.join(draft.get('categories') or []) or '-')}</div>
+            <div class="draft-line"><strong>Ramas:</strong> {escape(', '.join(draft.get('branches') or []) or '-')}</div>
+            <div class="phase-grid">{phase_cards}</div>
+            <div class="readonly-note">Execution status: <strong>{escape(str(draft.get('execution_status') or 'not_executed'))}</strong>. Operational writes: <strong>{'permitidos' if draft.get('operational_writes_allowed') else 'bloqueados'}</strong>.</div>
+        </div>
+        {_render_soul_wizard_diff(payload)}
+        {_render_soul_wizard_issues(readiness)}
+    """
+
+
+def _render_soul_wizard_admin_page(
+    *,
+    current_empleado: Empleado,
+    csrf_input: str,
+    payload: Optional[dict[str, Any]] = None,
+    form_data: Optional[Mapping[str, Any]] = None,
+) -> str:
+    form_data = form_data or {}
+    contract = build_soul_wizard_contract()
+    step_cards = "".join(
+        f"""
+        <div class="step-card">
+            <span>{index}</span>
+            <strong>{escape(str(step.get('title') or '-'))}</strong>
+            <small>{escape(', '.join(step.get('required_fields') or []))}</small>
+        </div>
+        """
+        for index, step in enumerate(contract.get("steps") or [], start=1)
+    )
+    phase_inputs = "".join(
+        f"""
+        <div class="phase-card">
+            <h3>Fase {index}</h3>
+            <label>Nombre de fase</label>
+            <input name="phase_{index}_name" value="{_soul_form_value(form_data, f'phase_{index}_name')}" placeholder="Ej. Inscripcion estatal">
+            <div class="two-cols">
+                <div><label>Fecha inicio</label><input type="date" name="phase_{index}_start_date" value="{_soul_form_value(form_data, f'phase_{index}_start_date')}"></div>
+                <div><label>Fecha fin</label><input type="date" name="phase_{index}_end_date" value="{_soul_form_value(form_data, f'phase_{index}_end_date')}"></div>
+            </div>
+            <label>Actividades de la fase</label>
+            <textarea name="phase_{index}_activities" rows="4" placeholder="Una por linea: actividad | responsable | YYYY-MM-DD">{_soul_text_value(form_data, f'phase_{index}_activities')}</textarea>
+        </div>
+        """
+        for index in range(1, 7)
+    )
+    preview_html = _render_soul_wizard_preview(payload)
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>SOUL Wizard - SamChat</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+            * {{ box-sizing:border-box; }}
+            body {{ margin:0; padding:24px; min-height:100vh; background:#0f172a; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; color:#0f172a; }}
+            .page {{ max-width:1280px; margin:0 auto; background:#f8fafc; border-radius:24px; padding:24px; box-shadow:0 24px 80px rgba(0,0,0,.28); }}
+            h1 {{ margin:0; font-size:34px; letter-spacing:-.04em; }}
+            .subtitle {{ color:#475569; margin-top:8px; line-height:1.55; }}
+            .topbar {{ display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; align-items:flex-start; margin-bottom:20px; }}
+            .actions {{ display:flex; gap:10px; flex-wrap:wrap; }}
+            a.btn, button.btn {{ border:0; border-radius:14px; padding:12px 16px; font-weight:800; text-decoration:none; cursor:pointer; }}
+            .btn-primary {{ background:#0f766e; color:white; }}
+            .btn-light {{ background:white; color:#0f172a; border:1px solid #dbe2ea; }}
+            .readonly-note {{ margin-top:14px; padding:12px 14px; border-radius:14px; background:#fffbeb; border:1px solid #fde68a; color:#78350f; font-size:13px; }}
+            .wizard-grid {{ display:grid; grid-template-columns:minmax(0,1.35fr) minmax(360px,.65fr); gap:18px; align-items:start; }}
+            .surface {{ background:white; border:1px solid #dbe2ea; border-radius:20px; padding:18px; margin-bottom:16px; box-shadow:0 14px 35px rgba(15,23,42,.06); }}
+            .section-title {{ font-size:18px; font-weight:900; margin-bottom:12px; }}
+            label {{ display:block; margin:12px 0 6px; font-weight:800; color:#334155; font-size:13px; }}
+            input, textarea {{ width:100%; border:1px solid #cbd5e1; border-radius:12px; padding:11px 12px; font-size:14px; background:white; }}
+            textarea {{ resize:vertical; }}
+            .two-cols {{ display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }}
+            .three-cols {{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }}
+            .phase-list {{ display:grid; gap:12px; }}
+            .phase-card {{ border:1px solid #dbe2ea; border-radius:18px; padding:14px; background:#f8fafc; }}
+            .phase-card h3 {{ margin:0 0 6px; }}
+            .steps {{ display:grid; gap:8px; }}
+            .step-card {{ display:grid; grid-template-columns:34px 1fr; gap:10px; align-items:start; padding:12px; border-radius:14px; background:#f1f5f9; border:1px solid #e2e8f0; }}
+            .step-card span {{ width:28px; height:28px; border-radius:999px; display:grid; place-items:center; background:#0f766e; color:white; font-weight:900; }}
+            .step-card small {{ grid-column:2; color:#64748b; }}
+            .summary-grid {{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }}
+            .metric {{ padding:12px; border:1px solid #dbe2ea; border-radius:16px; background:#f8fafc; }}
+            .metric span {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.12em; color:#64748b; font-weight:800; }}
+            .metric strong {{ display:block; font-size:24px; margin-top:4px; }}
+            .metric small {{ color:#64748b; }}
+            .draft-line {{ margin-top:10px; color:#334155; }}
+            .phase-grid {{ display:grid; gap:8px; margin-top:14px; }}
+            .phase-preview {{ padding:12px; border:1px solid #dbe2ea; border-radius:14px; background:#f8fafc; display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap; }}
+            .muted-card {{ padding:18px; border:1px dashed #94a3b8; border-radius:18px; color:#475569; background:#f8fafc; }}
+            .ok-box {{ padding:14px; border-radius:16px; background:#ecfdf5; border:1px solid #bbf7d0; color:#065f46; font-weight:800; }}
+            table {{ width:100%; border-collapse:collapse; }}
+            th, td {{ text-align:left; border-bottom:1px solid #e2e8f0; padding:10px; vertical-align:top; }}
+            th {{ background:#0f766e; color:white; }}
+            .pill {{ padding:4px 8px; border-radius:999px; font-size:12px; font-weight:900; }}
+            .pill-error {{ background:#fee2e2; color:#991b1b; }}
+            .pill-warning {{ background:#fef3c7; color:#92400e; }}
+            .pill-ok {{ background:#dcfce7; color:#166534; }}
+            .pill-info {{ background:#dbeafe; color:#1e40af; }}
+            .compact-grid {{ grid-template-columns:repeat(4,minmax(0,1fr)); margin-bottom:12px; }}
+            .diff-table td:nth-child(3), .diff-table td:nth-child(4) {{ max-width:220px; color:#334155; }}
+            @media (max-width: 960px) {{ .wizard-grid, .three-cols, .two-cols, .summary-grid {{ grid-template-columns:1fr; }} }}
+        </style>
+    </head>
+    <body>
+        <div class="page">
+            {render_admin_navigation(current_empleado, "torneos", subtitle="Crea el borrador SOUL de un torneo paso a paso antes de activarlo.")}
+            <div class="topbar">
+                <div>
+                    <h1>SOUL Wizard</h1>
+                    <div class="subtitle">Borrador institucional para torneos: fases, fechas, actividades, responsables, documentos y reglas. Este corte solo revisa; no crea torneos.</div>
+                </div>
+                <div class="actions">
+                    <a class="btn btn-light" href="/admin/torneos">Volver a Torneos</a>
+                    <a class="btn btn-light" href="/admin/sports">Sports Platform</a>
+                </div>
+            </div>
+            <div class="readonly-note">Contrato read-only: no crea equipos, calendario, comunicaciones ni movimientos. La activacion futura requerira preview y autoridad explicita.</div>
+            <div class="wizard-grid" style="margin-top:18px;">
+                <form method="POST" action="/admin/sports/soul-wizard" class="surface">
+                    {csrf_input}
+                    <div class="section-title">1. Identidad del torneo</div>
+                    <div class="two-cols">
+                        <div><label>Nombre del torneo</label><input name="tournament_name" required value="{_soul_form_value(form_data, 'tournament_name')}" placeholder="Ej. Copa Telmex Telcel de Futbol"></div>
+                        <div><label>Edicion</label><input name="edition_year" type="number" min="2000" max="2100" value="{_soul_form_value(form_data, 'edition_year')}" placeholder="2027"></div>
+                    </div>
+                    <div class="three-cols">
+                        <div><label>Categorias</label><textarea name="categories_text" rows="4" placeholder="Una por linea">{_soul_text_value(form_data, 'categories_text')}</textarea></div>
+                        <div><label>Ramas / generos</label><textarea name="branches_text" rows="4" placeholder="Una por linea">{_soul_text_value(form_data, 'branches_text')}</textarea></div>
+                        <div><label>Entidades esperadas</label><textarea name="expected_entities_text" rows="4" placeholder="Una por linea">{_soul_text_value(form_data, 'expected_entities_text')}</textarea></div>
+                    </div>
+                    <div class="two-cols">
+                        <div><label>Equipos esperados</label><input name="expected_teams" type="number" min="0" value="{_soul_form_value(form_data, 'expected_teams')}" placeholder="64"></div>
+                        <div><label>Torneo origen opcional</label><input name="source_tournament_id" value="{_soul_form_value(form_data, 'source_tournament_id')}" placeholder="ID o slug de torneo base"></div>
+                    </div>
+                    <label>Clone desde SOUL / torneo existente (JSON opcional)</label>
+                    <textarea name="source_snapshot_json" rows="5" placeholder='Pega aqui un snapshot SOUL o un objeto compatible. Los campos capturados arriba reemplazan la fuente.'>{_soul_text_value(form_data, 'source_snapshot_json')}</textarea>
+                    <div class="readonly-note">Si pegas una fuente, el wizard copia categorias, ramas, entidades, documentos, reglas, baseline financiera y fases disponibles; despues aplica los campos que captures como overrides.</div>
+                    <div class="section-title" style="margin-top:20px;">2. Fases, fechas y actividades</div>
+                    <div class="phase-list">{phase_inputs}</div>
+                    <div class="section-title" style="margin-top:20px;">3. Documentos, reglas y finanzas</div>
+                    <div class="three-cols">
+                        <div><label>Documentos requeridos</label><textarea name="required_documents_text" rows="5" placeholder="CURP\nActa\nIdentificacion">{_soul_text_value(form_data, 'required_documents_text')}</textarea></div>
+                        <div><label>Reglas de elegibilidad</label><textarea name="eligibility_rules_text" rows="5" placeholder="Edad por categoria\nSin duplicidad CURP">{_soul_text_value(form_data, 'eligibility_rules_text')}</textarea></div>
+                        <div><label>Baseline financiera</label><textarea name="finance_baseline_text" rows="5" placeholder="Ayuda operador\nUniformes\nViajes nacional">{_soul_text_value(form_data, 'finance_baseline_text')}</textarea></div>
+                    </div>
+                    <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
+                        <button class="btn btn-primary" type="submit">Revisar borrador</button>
+                        <a class="btn btn-light" href="/admin/sports/soul-wizard">Limpiar</a>
+                    </div>
+                </form>
+                <aside>
+                    <div class="surface">
+                        <div class="section-title">Pasos del wizard</div>
+                        <div class="steps">{step_cards}</div>
+                    </div>
+                    {preview_html}
+                </aside>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+@router.get("/admin/sports/soul-wizard", response_class=HTMLResponse)
+async def admin_soul_wizard(
+    request: Request,
+    current_empleado: Empleado = Depends(require_tournament_admin),
+):
+    csrf_input = _tournament_admin_csrf_input(request)
+    return HTMLResponse(
+        content=_render_soul_wizard_admin_page(
+            current_empleado=current_empleado,
+            csrf_input=csrf_input,
+        )
+    )
+
+
+@router.post("/admin/sports/soul-wizard", response_class=HTMLResponse)
+async def admin_soul_wizard_review(
+    request: Request,
+    current_empleado: Empleado = Depends(require_tournament_admin),
+    _csrf: None = Depends(require_tournament_admin_csrf),
+):
+    form = await request.form()
+    form_data = {str(key): str(value) for key, value in form.items()}
+    payload = build_soul_wizard_payload_from_form(form_data)
+    return HTMLResponse(
+        content=_render_soul_wizard_admin_page(
+            current_empleado=current_empleado,
+            csrf_input=_tournament_admin_csrf_input(request),
+            payload=payload,
+            form_data=form_data,
+        )
     )
 
 

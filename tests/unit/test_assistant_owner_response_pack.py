@@ -8,13 +8,16 @@ from samchat.assistant.owner_folder_revision import (
     revise_owner_folder_proposal,
 )
 from samchat.assistant.owner_needs_eval import parse_owner_needs_eval_set
+from samchat.assistant.owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from samchat.assistant.owner_response_pack import (
     OPERATOR_RESPONSE_PACK_ONLY,
     SAFETY_BLOCKED_WRITE_DISABLED,
     SOURCE_FOLDER_PROPOSAL,
     SOURCE_FOLDER_REVISION,
+    SOURCE_LIVE_SNAPSHOT,
     build_response_pack_from_proposal,
     build_response_pack_from_revision,
+    build_response_pack_from_live_snapshot,
     evaluate_response_pack_set,
     response_pack_contains_execution_claim,
 )
@@ -142,3 +145,46 @@ def test_full_owner_eval_set_blocks_execution_wording_in_packs() -> None:
         pack["safety_status"] == SAFETY_BLOCKED_WRITE_DISABLED
         for pack in blocked
     )
+
+
+def test_live_snapshot_response_pack_summarizes_found_and_missing_fields(tmp_path) -> None:
+    national_dir = tmp_path / "copa-telmex" / "national"
+    national_dir.mkdir(parents=True)
+    (national_dir / "operations.json").write_text(
+        '{"tournament_category_dates_city":"Copa Telmex Nacional 2026, CDMX",'
+        '"hotels_and_bed_nights":[{"hotel":"Uno","camas_noche":80}]}',
+        encoding="utf-8",
+    )
+    report = build_owner_pack_live_snapshot_report(
+        surface_id="national_phase_folder",
+        tournament_slug="Copa Telmex",
+        root_dir=tmp_path,
+    )
+    pack = build_response_pack_from_live_snapshot(report)
+
+    assert pack.source_type == SOURCE_LIVE_SNAPSHOT
+    assert pack.source_id == report.snapshot_id
+    assert "Diagnostico vivo" in pack.headline
+    assert "Campos con evidencia" in pack.summary
+    assert "Campos faltantes" in pack.summary
+    assert "No se creo ni actualizo" in pack.summary
+    assert pack.evidence_found
+    assert pack.missing_evidence
+    assert "read_only_live_snapshot" in pack.approval_boundary
+    _assert_pack_safety(pack)
+
+
+def test_live_snapshot_response_pack_handles_empty_workspace_without_claiming_data(tmp_path) -> None:
+    report = build_owner_pack_live_snapshot_report(
+        surface_id="entity_folder",
+        tournament_slug="Copa Telmex",
+        entity_name="Jalisco",
+        root_dir=tmp_path,
+    )
+    pack = build_response_pack_from_live_snapshot(report)
+
+    assert pack.evidence_found == []
+    assert pack.missing_evidence
+    assert "no hay campos soportados" in " ".join(pack.plan)
+    assert "solo lectura" in pack.summary
+    _assert_pack_safety(pack)

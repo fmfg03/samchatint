@@ -142,11 +142,21 @@ from .provider_service import (
     normalize_assistant_mode as _provider_normalize_assistant_mode,
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
+from .closeout_diagnostics import build_finance_closeout_diagnostics
+from .institutional_artifact_registry import (
+    build_institutional_artifact_registry_report,
+    list_institutional_artifacts,
+)
 from .rag import get_rag_store
 from .request_intent import (
     is_owner_ai_conceptual_request,
     is_owner_ai_context_request,
 )
+from .owner_needs_eval import parse_owner_needs_eval_set
+from .owner_pack_inventory import build_owner_pack_inventory_report
+from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
+from .owner_pack_status import build_owner_pack_status_report
+from .owner_response_pack import build_response_pack_from_live_snapshot
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -2421,7 +2431,13 @@ def _assistant_default_tournament_key() -> Optional[str]:
 
 READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_institutional_artifacts",
+    "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
+    "assistant_owner_pack_live_snapshot",
+    "assistant_owner_pack_status",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_alerts_scan",
     "finance_ops_query",
     "finance_expense_workflow_status",
@@ -2472,7 +2488,13 @@ WRITE_TOOLS = {
 
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
+    "assistant_institutional_artifacts",
+    "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
+    "assistant_owner_pack_live_snapshot",
+    "assistant_owner_pack_status",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_alerts_scan",
     "finance_ops_query",
     "finance_expense_workflow_status",
@@ -2487,6 +2509,7 @@ HERMES_FINANCE_STRATEGY_TOOLS = {
     "finance_alerts_scan",
     "finance_realtime_report",
     "finance_accounting_report",
+    "finance_closeout_diagnostics",
     "finance_ops_query",
     "finance_vendor_payments",
     "finance_expense_search",
@@ -2503,6 +2526,11 @@ FINANCE_WRITE_TOOLS = {
     "assistant_save_artifact",
 }
 TOURNAMENT_READ_TOOLS = {
+    "assistant_institutional_artifacts",
+    "assistant_owner_pack_inventory",
+    "assistant_owner_pack_live_brief",
+    "assistant_owner_pack_live_snapshot",
+    "assistant_owner_pack_status",
     "tournament_expediente_snapshot",
     "tournament_draft_inspect",
     "tournament_draft_revise",
@@ -3088,6 +3116,117 @@ _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
 
 def _tool_defs() -> List[Dict[str, Any]]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_institutional_artifacts",
+                "description": "Lista en modo solo lectura los artefactos institucionales existentes de SamChat, su dominio, evidencia, estado de cableado y herramienta/accion relacionada.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "domain": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "finance",
+                                "accounting",
+                                "operations",
+                                "tournament",
+                                "budget",
+                                "owner_pack",
+                                "institutional_memory",
+                                "cross_domain",
+                                None,
+                            ],
+                        },
+                        "status": {
+                            "type": ["string", "null"],
+                            "enum": ["wired", "available_not_wired", "partial", "planned", None],
+                        },
+                        "wired_only": {"type": "boolean", "default": False},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_status",
+                "description": "Resume en modo solo lectura que superficies del Owner Pack del dueno estan preparadas como contratos del asistente y que evidencia viva falta para llenarlas sin inventar.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_inventory",
+                "description": "Lista en modo solo lectura los campos, secciones y fuentes canonicas esperadas para las carpetas/tableros del Owner Pack antes de consultar datos vivos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        }
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_live_snapshot",
+                "description": "Lee en modo solo lectura evidencia viva ya existente en el workspace de inteligencia de torneos para una superficie del Owner Pack y marca campos soportados o faltantes.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "surface_id": {
+                            "type": "string",
+                            "enum": ["entity_folder", "national_phase_folder", "marketing_activation_report"],
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
+                    },
+                    "required": ["surface_id", "tournament_slug"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_live_brief",
+                "description": "Genera un brief conversacional read-only del Owner Pack indicando campos con evidencia viva, campos faltantes y frontera de aprobacion.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "surface_id": {
+                            "type": "string",
+                            "enum": ["entity_folder", "national_phase_folder", "marketing_activation_report"],
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
+                    },
+                    "required": ["surface_id", "tournament_slug"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -4310,6 +4449,32 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                     },
                     "required": ["report_type"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "finance_closeout_diagnostics",
+                "description": "Diagnosticar en modo solo lectura si el cierre financiero/contable del periodo está bloqueado por pólizas descuadradas, COI pendiente o CFDI faltante.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "year": {"type": ["integer", "null"]},
+                        "month": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "maximum": 12,
+                        },
+                        "scope": {
+                            "type": "string",
+                            "enum": ["accounting", "finance"],
+                            "default": "accounting",
+                        },
+                        "include_medium": {"type": "boolean", "default": True},
+                    },
+                    "required": [],
                 },
             },
         },
@@ -8587,6 +8752,111 @@ async def _run_read_tool(
             return await workspace_file_read(**args)
         return await workspace_search(**args)
 
+
+    if tool_name == "assistant_institutional_artifacts":
+        domain = args.get("domain")
+        status = args.get("status")
+        wired_only_raw = args.get("wired_only", False)
+        wired_only = (
+            wired_only_raw
+            if isinstance(wired_only_raw, bool)
+            else str(wired_only_raw).strip().lower() in {"true", "1", "yes", "on"}
+        )
+        if domain or status or wired_only:
+            artifacts = list_institutional_artifacts(
+                domain=str(domain) if domain else None,
+                status=str(status) if status else None,
+                wired_only=wired_only,
+            )
+            return {
+                "registry_id": "samchat_institutional_artifact_registry_v1",
+                "read_only": True,
+                "artifact_count": len(artifacts),
+                "filters": {
+                    "domain": domain,
+                    "status": status,
+                    "wired_only": wired_only,
+                },
+                "artifacts": [item.to_dict() for item in artifacts],
+            }
+        return build_institutional_artifact_registry_report()
+
+    if tool_name == "assistant_owner_pack_status":
+        eval_path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+        if not eval_path.exists():
+            raise HTTPException(
+                status_code=500,
+                detail="Owner Pack eval set is not available in this release",
+            )
+        prompts = parse_owner_needs_eval_set(eval_path.read_text(encoding="utf-8"))
+        report = build_owner_pack_status_report(prompts)
+        scope = str(args.get("scope") or "all").strip()
+        payload = report.to_dict()
+        if scope and scope != "all":
+            payload["surfaces"] = [
+                surface
+                for surface in payload.get("surfaces", [])
+                if surface.get("surface_id") == scope
+            ]
+            payload["prepared_surface_count"] = len(payload["surfaces"])
+            payload["missing_evidence"] = sorted(
+                {
+                    evidence
+                    for surface in payload["surfaces"]
+                    for evidence in surface.get("missing_evidence", [])
+                }
+            )
+            payload.setdefault("safety_summary", {})[
+                "live_data_required_before_complete_claim"
+            ] = bool(payload["missing_evidence"])
+        return payload
+
+    if tool_name == "assistant_owner_pack_inventory":
+        scope = str(args.get("scope") or "all").strip()
+        scopes = None if not scope or scope == "all" else (scope,)
+        return build_owner_pack_inventory_report(scopes=scopes).to_dict()
+
+    if tool_name == "assistant_owner_pack_live_snapshot":
+        surface_id = str(args.get("surface_id") or "").strip()
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        entity_name = str(args.get("entity_name") or "").strip() or None
+        if not surface_id or not tournament_slug:
+            raise HTTPException(
+                status_code=400,
+                detail="surface_id and tournament_slug are required",
+            )
+        if surface_id == "entity_folder" and not entity_name:
+            raise HTTPException(
+                status_code=400,
+                detail="entity_name is required for entity_folder snapshots",
+            )
+        return build_owner_pack_live_snapshot_report(
+            surface_id=surface_id,
+            tournament_slug=tournament_slug,
+            entity_name=entity_name,
+        ).to_dict()
+
+    if tool_name == "assistant_owner_pack_live_brief":
+        surface_id = str(args.get("surface_id") or "").strip()
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        entity_name = str(args.get("entity_name") or "").strip() or None
+        if not surface_id or not tournament_slug:
+            raise HTTPException(
+                status_code=400,
+                detail="surface_id and tournament_slug are required",
+            )
+        if surface_id == "entity_folder" and not entity_name:
+            raise HTTPException(
+                status_code=400,
+                detail="entity_name is required for entity_folder briefs",
+            )
+        snapshot = build_owner_pack_live_snapshot_report(
+            surface_id=surface_id,
+            tournament_slug=tournament_slug,
+            entity_name=entity_name,
+        )
+        return build_response_pack_from_live_snapshot(snapshot).to_dict()
+
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(
             str(args.get("action") or "").strip(),
@@ -8624,6 +8894,23 @@ async def _run_read_tool(
 
     if tool_name == "finance_accounting_report":
         return await finance_accounting_report(gastos_session, **args)
+
+    if tool_name == "finance_closeout_diagnostics":
+        include_medium_raw = args.get("include_medium", True)
+        include_medium = (
+            include_medium_raw
+            if isinstance(include_medium_raw, bool)
+            else str(include_medium_raw).strip().lower() not in {"false", "0", "no", "off"}
+        )
+        return (
+            await build_finance_closeout_diagnostics(
+                gastos_session,
+                year=args.get("year"),
+                month=args.get("month"),
+                scope=str(args.get("scope") or "accounting"),
+                include_medium=include_medium,
+            )
+        ).to_dict()
 
     if tool_name == "finance_expense_workflow_status":
         return await finance_expense_workflow_status(gastos_session, **args)
