@@ -1,7 +1,7 @@
 # SamChat current roadmap handoff
 
 Status: ACTIVE_CONTEXT
-Last updated: 2026-08-14
+Last updated: 2026-08-17
 Branch at time of writing: `codex/rqf-054-owner-pack-institutional-boards`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
@@ -55,19 +55,24 @@ Do not claim full owner-pack readiness until the SOUL data exists for each tourn
 
 ### Lane C - SOUL Wizard
 
-Goal: let Operations create a tournament SOUL step by step, so each tournament can have the context needed by assistant, owner pack, and operations dashboards.
+Goal: support the main Assistant roadmap by giving each tournament a structured SOUL context that the assistant, owner pack, operations dashboards, and future proposal flows can inspect.
 
-See `docs/assistant/soul-wizard-roadmap.md` for the active four-cut plan.
+Important hierarchy: SOUL Wizard is not the principal product roadmap. It is an enabling layer underneath the Assistant/Owner Pack roadmap. Do not let SOUL implementation displace the higher-level assistant objective.
+
+See `docs/assistant/soul-wizard-roadmap.md` for the four-cut mini-roadmap.
 
 Completed:
 
 - `RQF-SOUL-WIZARD-001` - draft contract and validation.
 - `RQF-SOUL-WIZARD-002` - admin UI stepper.
+- `RQF-SOUL-WIZARD-003` - clone from existing tournament/SOUL snapshot.
+- `RQF-SOUL-WIZARD-004` - activation preview/diff contract and UI.
 
 Next:
 
-- `RQF-SOUL-WIZARD-003` - clone from existing tournament.
-- `RQF-SOUL-WIZARD-004` - assistant proposal integration.
+- Return to the Assistant/Owner Pack roadmap.
+- Choose whether the next assistant-facing slice consumes SOUL drafts, owner dossiers, or both.
+- Do not implement real tournament creation from SOUL until an explicit authority path is opened.
 
 ### Lane D - Buzz / multiagent collaboration spike
 
@@ -120,8 +125,9 @@ Recent commits on this branch include:
 1. Check `git status --short --branch`.
 2. Read this file.
 3. Read `docs/assistant/soul-wizard-roadmap.md`.
-4. Continue with `RQF-SOUL-WIZARD-003` unless the user explicitly changes focus.
-5. Keep the SOUL work scoped: capture/clone/review first, no production writes before preview and approval boundary.
+4. Treat the SOUL four-cut mini-roadmap as closed for read-only draft/review.
+5. Resume the primary Assistant/Owner Pack roadmap unless the user explicitly changes focus.
+6. Keep future SOUL work scoped: no production writes before preview, approval, idempotency, audit, and receipt boundaries.
 
 ## Remote working notes
 
@@ -136,3 +142,7 @@ PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest
 ```
 
 Use ASCII in scripted remote file writes when possible; prior PowerShell-to-SSH sessions can corrupt accented characters.
+
+## 2026-08-17 note
+
+SOUL Wizard 003/004 were completed after the original handoff. SOUL now has clone and activation-preview support, but remains read-only infrastructure underneath the main Assistant roadmap.

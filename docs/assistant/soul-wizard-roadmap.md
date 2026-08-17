@@ -1,7 +1,7 @@
 # SOUL Wizard roadmap
 
-Status: ACTIVE
-Last updated: 2026-08-14
+Status: READ_ONLY_MINI_ROADMAP_CLOSED
+Last updated: 2026-08-17
 Parent branch: `codex/rqf-054-owner-pack-institutional-boards`
 
 ## Why this exists
@@ -101,60 +101,51 @@ PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest
 # 78 passed
 ```
 
-## Remaining cuts
+## Completed cuts continued
 
 ### RQF-SOUL-WIZARD-003 - Clone from existing tournament
 
-Objective:
+Commit: `27113be assistant: add soul wizard clone draft`
 
-Let Operations start a SOUL draft from an existing tournament or SOUL snapshot, then edit phases/dates/activities for the new edition.
+Implemented:
 
-Likely implementation:
+- Pure clone helper in `src/samchat/assistant/soul_wizard.py`.
+- Accepts source tournament snapshot / SOUL snapshot mapping.
+- Preserves source tournament id, source snapshot id and source tournament name.
+- Copies categories, branches, expected entities, expected teams, required documents, eligibility rules, finance baseline and phase/activity skeleton.
+- Applies non-empty form overrides for new name/year/dates/fields.
+- UI affordance on `/admin/sports/soul-wizard` for JSON source snapshot import.
 
-- Add pure clone helper in `src/samchat/assistant/soul_wizard.py`.
-- Accept source tournament snapshot / SOUL snapshot mapping.
-- Produce `source_tournament_id`, `source_snapshot_id`, copied categories, branches, required documents, eligibility rules, finance baseline and phase/activity skeleton.
-- Apply overrides for new name/year/dates.
-- Add UI affordance on `/admin/sports/soul-wizard` for source ID/slug and maybe a sample/import path.
-
-Acceptance:
+Acceptance met:
 
 - Clone output remains read-only and not executed.
 - Clone preserves source metadata.
-- New draft hash changes when overrides change.
 - Tests prove source copy plus override behavior.
 - No DB writes.
 
-Do not overbuild:
+### RQF-SOUL-WIZARD-004 - Activation preview/diff
 
-- Do not implement full live DB search unless quick and already available.
-- Do not create production tournament from clone.
-- Do not wire assistant proposal yet; that is 004.
+Commit: `583f09e assistant: add soul wizard activation preview`
 
-### RQF-SOUL-WIZARD-004 - Assistant proposal integration
+Implemented:
 
-Objective:
+- Backend `preview` contract for manual drafts and clone diffs.
+- Field-level status: captured, inherited, overridden, added, missing, removed_or_missing, changed.
+- Summary counts for inherited, overridden, missing, blockers and warnings.
+- UI section: `Diff de activacion propuesta`.
+- Explicit non-claims: does not activate tournament, create records, or send notifications.
 
-Allow assistant to propose a SOUL draft using the same contract, so a user can say: "create this tournament like last year but with these new dates/categories".
+Acceptance met:
 
-Likely implementation:
-
-- Assistant read/preview tool or proposal artifact using `build_soul_wizard_payload`.
-- Proposed action remains inert.
-- Show missing information/questions.
-- Output is a reviewable draft, not execution.
-
-Acceptance:
-
-- Assistant can produce a SOUL draft preview.
-- It can ask for missing dates/categories/activities.
-- It cites source tournament/snapshot when cloned.
+- SOUL draft preview is visible and machine-readable.
+- Clone sources are distinguishable from manual captured fields.
+- Missing dates/categories/activities remain visible as blockers/warnings.
 - It never claims tournament was created.
-- Approval/write path remains out of scope unless explicitly opened later.
+- Approval/write path remains out of scope.
 
 ## After cut 004
 
-Pause and re-evaluate with the user.
+Pause and return to the principal Assistant/Owner Pack roadmap. SOUL is the context substrate, not the main roadmap.
 
 Possible next routes:
 
