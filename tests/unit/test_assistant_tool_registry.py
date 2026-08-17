@@ -55,6 +55,9 @@ def test_assistant_tool_registry_assigns_surfaces_for_write_groups() -> None:
     assert registry["assistant_owner_pack_inventory"].surface == "assistant"
     assert registry["assistant_owner_pack_inventory"].operation_type == "read"
     assert registry["assistant_owner_pack_inventory"].requires_confirmation is False
+    assert registry["assistant_owner_pack_readiness"].surface == "assistant"
+    assert registry["assistant_owner_pack_readiness"].operation_type == "read"
+    assert registry["assistant_owner_pack_readiness"].requires_confirmation is False
     assert registry["assistant_owner_pack_live_snapshot"].surface == "assistant"
     assert registry["assistant_owner_pack_live_snapshot"].operation_type == "read"
     assert registry["assistant_owner_pack_live_snapshot"].requires_confirmation is False
@@ -69,6 +72,8 @@ def test_assistant_tool_registry_assigns_surfaces_for_write_groups() -> None:
     assert "assistant_owner_pack_status" in TOURNAMENT_READ_TOOLS
     assert "assistant_owner_pack_inventory" in FINANCE_READ_TOOLS
     assert "assistant_owner_pack_inventory" in TOURNAMENT_READ_TOOLS
+    assert "assistant_owner_pack_readiness" in FINANCE_READ_TOOLS
+    assert "assistant_owner_pack_readiness" in TOURNAMENT_READ_TOOLS
     assert "assistant_owner_pack_live_snapshot" in FINANCE_READ_TOOLS
     assert "assistant_owner_pack_live_snapshot" in TOURNAMENT_READ_TOOLS
     assert "assistant_owner_pack_live_brief" in FINANCE_READ_TOOLS

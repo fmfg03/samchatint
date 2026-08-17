@@ -109,3 +109,16 @@ async def test_institutional_artifacts_router_tool_filters_read_only_registry() 
     assert "finance.closeout_diagnostics" in artifact_ids
     assert "expense.accounting_preview" in artifact_ids
     assert "accounting.historical_snapshot" not in artifact_ids
+
+
+def test_institutional_registry_exposes_owner_pack_readiness_tool() -> None:
+    from samchat.assistant.institutional_artifact_registry import list_institutional_artifacts
+
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    assert "assistant.owner_pack_readiness" in artifacts
+    spec = artifacts["assistant.owner_pack_readiness"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "read_only"
+    assert spec.assistant_tool == "assistant_owner_pack_readiness"
+    assert "missing_evidence" in spec.output_contract
