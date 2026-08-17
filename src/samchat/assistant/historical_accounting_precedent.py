@@ -135,7 +135,7 @@ def _empty_report(
     return HistoricalAccountingPrecedentReport(
         report_id="historical_accounting_precedent_v1",
         status=status,
-        headline="Sin precedente contable hist?rico suficiente",
+        headline="Sin precedente contable historico suficiente",
         summary=reason,
         query=query,
         company_code=company_code,

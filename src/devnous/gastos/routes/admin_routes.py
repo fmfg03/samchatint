@@ -22162,10 +22162,16 @@ async def gastos_sin_cuenta_contable(
 
         # Get suggestion for this expense
         suggestion = suggestions.get(gasto.id)
-        cleanup_state = await build_cleanup_preview(session, gasto)
+        cleanup_state = await build_cleanup_preview(
+            session,
+            gasto,
+            include_historical_precedent=True,
+        )
         preview = cleanup_state["preview"]
         readiness_issues = list(cleanup_state["issues"] or [])
+        historical_precedent = cleanup_state.get("historical_precedent_evidence") or {}
         suggestion_html = ""
+        historical_precedent_html = ""
         preselect_data = ""
         main_assigned_html = ""
         contra_assigned_html = ""
@@ -22252,6 +22258,30 @@ async def gastos_sin_cuenta_contable(
                 </div>
             </div>
         """
+
+        historical_candidates = list(historical_precedent.get("candidates") or [])[:3]
+        if historical_precedent.get("status") == "precedents_found" and historical_candidates:
+            candidate_items = "".join(
+                f"<li style='margin-bottom:6px;'><strong>{escape(str(item.get('account_code') or ''))}</strong> - "
+                f"{escape(str(item.get('account_name') or ''))}"
+                f"<div style='font-size:11px;color:#64748b;'>"
+                f"{int(item.get('policy_count') or 0)} poliza(s), "
+                f"{int(item.get('match_count') or 0)} linea(s); "
+                f"confianza {escape(str(item.get('confidence') or 'low'))}</div></li>"
+                for item in historical_candidates
+            )
+            historical_query_safe = escape(str(historical_precedent.get("query") or ""))
+            historical_precedent_html = f"""
+                <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:10px; padding:9px; margin-bottom:8px;">
+                    <div style="font-size:12px; color:#334155; margin-bottom:4px;">
+                        Evidencia historica contable <span style="background:#e0f2fe;color:#0369a1;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:700;">solo consulta</span>
+                    </div>
+                    <ul style="margin:4px 0 0 18px; padding:0; color:#0f172a; font-size:12px;">{candidate_items}</ul>
+                    <div style="font-size:11px; color:#64748b; margin-top:6px;">
+                        Busqueda: {historical_query_safe}. No asigna cuenta automaticamente; solo respalda la revision humana.
+                    </div>
+                </div>
+            """
 
         if suggestion:
             # Show suggestion with confidence badge
@@ -22438,6 +22468,7 @@ async def gastos_sin_cuenta_contable(
             <td style="min-width: 420px;">
                 {tax_summary_html}
                 <div style="font-size:12px; font-weight:700; color:#0f172a; margin:8px 0;">Cuentas contables</div>
+                {historical_precedent_html}
                 {suggestion_html}
                 <div style="display:grid; gap:10px;">
                     <div class="cuenta-selector" {preselect_data}>
