@@ -396,6 +396,7 @@ def build_specialist_preview_workspace_cards(
     live_context: Mapping[str, Any],
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
+    memory_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build structured cards for the future assistant operator workspace UI."""
 
@@ -428,6 +429,28 @@ def build_specialist_preview_workspace_cards(
         }
     )
     readiness = diagnostics.get("readiness") or "unknown"
+    if memory_context is not None:
+        memory_status = memory_context.get("status") or "unknown"
+        snippets = list(memory_context.get("snippets") or [])
+        cards.append(
+            {
+                "card_id": "case_memory",
+                "title": "Memoria de casos",
+                "kind": "memory",
+                "status": memory_status,
+                "authority": memory_context.get("authority", "read_only_memory"),
+                "summary": (
+                    "Precedentes operativos encontrados para orientar la revision."
+                    if memory_context.get("matched")
+                    else "Sin precedentes deterministas suficientes."
+                ),
+                "data": {
+                    **dict(memory_context),
+                    "snippet_count": len(snippets),
+                },
+            }
+        )
+
     cards.append(
         {
             "card_id": "operational_diagnostics",

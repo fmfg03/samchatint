@@ -180,6 +180,65 @@ def test_specialist_preview_workspace_cards_contract() -> None:
     assert cards[-1]["data"]["writes_attempted"] is False
 
 
+def test_specialist_memory_context_markdown_is_read_only() -> None:
+    from samchat.assistant.specialist_memory_context import (
+        render_specialist_memory_context_markdown,
+    )
+
+    message = render_specialist_memory_context_markdown(
+        {
+            "source": "case_memory_artifacts",
+            "lookup_performed": True,
+            "authority": "read_only_memory",
+            "matched": True,
+            "status": "matched",
+            "snippets": [
+                {
+                    "label": "memory:case_summary:abc",
+                    "score": 1.12,
+                    "text": "Memoria de caso resumida :: se resolvio como no deducible.",
+                }
+            ],
+        }
+    )
+
+    assert "Memoria de casos" in message
+    assert "memory:case_summary:abc" in message
+    assert "precedente read-only" in message
+
+
+def test_specialist_preview_workspace_cards_include_case_memory_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={"authority": "read_only_context", "status": "matched", "matched": True},
+        memory_context={
+            "authority": "read_only_memory",
+            "status": "matched",
+            "matched": True,
+            "snippets": [{"label": "memory:case_summary:abc"}],
+        },
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        preview_render={"task_id": "SAMCHAT-CXC-COLLECTION-001", "execution_status": "not_executed"},
+    )
+
+    assert [card["card_id"] for card in cards] == [
+        "understood_context",
+        "live_context",
+        "case_memory",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert cards[2]["authority"] == "read_only_memory"
+    assert cards[2]["data"]["snippet_count"] == 1
+    assert cards[-1]["data"]["primary_action_enabled"] is False
+
+
 def test_specialist_preview_diagnostics_marks_cxc_ready_with_cfdi() -> None:
     from samchat.assistant.specialist_live_context import (
         build_specialist_preview_diagnostics,
@@ -320,6 +379,7 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     payload = assistant_messages[0].tool_payload
     assert payload["preview_render"] == response.preview_render
     assert payload["business_preview"]["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert payload["memory_context"]["authority"] == "read_only_memory"
 
 
 def test_specialist_preview_workspace_trace_and_sources_contract() -> None:
@@ -394,3 +454,37 @@ def test_specialist_preview_workspace_trace_and_sources_contract() -> None:
     ]
     assert sources[1]["status"] == "matched"
     assert sources[-1]["data"]["primary_action_enabled"] is False
+
+
+def test_specialist_preview_workspace_trace_and_sources_include_case_memory() -> None:
+    from samchat.assistant.assistant_workspace_trace import (
+        build_specialist_workspace_source_panel,
+        build_specialist_workspace_step_trace,
+    )
+
+    memory_context = {
+        "authority": "read_only_memory",
+        "lookup_performed": True,
+        "matched": True,
+        "status": "matched",
+        "snippets": [{"label": "memory:case_summary:abc"}],
+    }
+    steps = build_specialist_workspace_step_trace(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only"},
+        live_context={"authority": "read_only_context", "live_lookup_performed": True},
+        memory_context=memory_context,
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        preview_render={"execution_status": "not_executed", "sections": []},
+    )
+    sources = build_specialist_workspace_source_panel(
+        understood_context={},
+        live_context={"status": "matched"},
+        memory_context=memory_context,
+        diagnostics={"readiness": "ready_for_read_only_preview"},
+        preview_render={"execution_status": "not_executed"},
+    )
+
+    assert "recall_case_memory" in [step["step_id"] for step in steps]
+    assert "case_memory_readonly" in [source["source_id"] for source in sources]
+    assert steps[-1]["data"]["execution_allowed"] is False

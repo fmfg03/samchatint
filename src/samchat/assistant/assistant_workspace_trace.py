@@ -22,6 +22,7 @@ def build_specialist_workspace_step_trace(
     live_context: Mapping[str, Any],
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
+    memory_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build a deterministic visible step trace for specialist previews.
 
@@ -34,7 +35,7 @@ def build_specialist_workspace_step_trace(
     readiness = str(diagnostics.get("readiness") or "unknown")
     execution_status = str(preview_render.get("execution_status") or "not_executed")
 
-    return [
+    steps: List[Dict[str, Any]] = [
         {
             "step_id": "understand_request",
             "title": "Entender solicitud",
@@ -72,65 +73,94 @@ def build_specialist_workspace_step_trace(
                 "unresolved": live_context.get("unresolved") or {},
             },
         },
-        {
-            "step_id": "diagnose_readiness",
-            "title": "Diagnosticar preparacion",
-            "status": "complete",
-            "kind": "diagnostic",
-            "summary": "Determine si hay contexto suficiente para seguir en preview read-only.",
-            "inputs": ["understood_context", "live_context"],
-            "outputs": ["diagnostics"],
-            "authority": diagnostics.get("authority", "read_only_diagnostic"),
-            "data": {
-                "readiness": readiness,
-                "findings": diagnostics.get("findings") or [],
-                "missing": diagnostics.get("missing") or [],
-                "risks": diagnostics.get("risks") or [],
-                "next_steps": diagnostics.get("next_steps") or [],
-            },
-        },
-        {
-            "step_id": "prepare_preview",
-            "title": "Preparar preview especialista",
-            "status": "blocked" if execution_status == "not_executed" else "complete",
-            "kind": "preview",
-            "summary": "Prepare un diff/propuesta inertizada para revision humana.",
-            "inputs": ["verified_seed_or_live_context"],
-            "outputs": ["preview_render"],
-            "authority": "preview_only",
-            "data": {
-                "task_id": task_id,
-                "preview_type": preview_render.get("preview_type"),
-                "sections": [
-                    section.get("section_id")
-                    for section in _as_list(preview_render.get("sections"))
-                    if isinstance(section, Mapping)
-                ],
-                "execution_status": execution_status,
-                "primary_action_enabled": bool(preview_render.get("primary_action_enabled")),
-            },
-        },
-        {
-            "step_id": "hold_authority_boundary",
-            "title": "Mantener frontera de autoridad",
-            "status": "blocked",
-            "kind": "authority",
-            "summary": "La respuesta puede proponer y explicar, pero no ejecutar cambios.",
-            "inputs": ["preview_render"],
-            "outputs": ["human_review_required"],
-            "authority": "human_approval_required",
-            "data": {
-                "execution_allowed": False,
-                "writes_attempted": False,
-                "required_before_writes": [
-                    "preview exacto",
-                    "aprobacion humana",
-                    "idempotency key",
-                    "audit trail",
-                ],
-            },
-        },
     ]
+
+    if memory_context is not None:
+        steps.append(
+            {
+                "step_id": "recall_case_memory",
+                "title": "Recordar precedentes",
+                "status": "complete" if memory_context.get("lookup_performed") else "skipped",
+                "kind": "memory",
+                "summary": (
+                    "Consulte memoria de casos en modo read-only."
+                    if memory_context.get("lookup_performed")
+                    else "No hubo memoria consultable para este preview."
+                ),
+                "inputs": ["understood_context"],
+                "outputs": ["memory_context"],
+                "authority": memory_context.get("authority", "read_only_memory"),
+                "data": {
+                    "matched": bool(memory_context.get("matched")),
+                    "snippets": _count_items(memory_context.get("snippets")),
+                    "status": memory_context.get("status") or "unknown",
+                },
+            }
+        )
+
+    steps.extend(
+        [
+            {
+                "step_id": "diagnose_readiness",
+                "title": "Diagnosticar preparacion",
+                "status": "complete",
+                "kind": "diagnostic",
+                "summary": "Determine si hay contexto suficiente para seguir en preview read-only.",
+                "inputs": ["understood_context", "live_context", "memory_context"],
+                "outputs": ["diagnostics"],
+                "authority": diagnostics.get("authority", "read_only_diagnostic"),
+                "data": {
+                    "readiness": readiness,
+                    "findings": diagnostics.get("findings") or [],
+                    "missing": diagnostics.get("missing") or [],
+                    "risks": diagnostics.get("risks") or [],
+                    "next_steps": diagnostics.get("next_steps") or [],
+                },
+            },
+            {
+                "step_id": "prepare_preview",
+                "title": "Preparar preview especialista",
+                "status": "blocked" if execution_status == "not_executed" else "complete",
+                "kind": "preview",
+                "summary": "Prepare un diff/propuesta inertizada para revision humana.",
+                "inputs": ["verified_seed_or_live_context"],
+                "outputs": ["preview_render"],
+                "authority": "preview_only",
+                "data": {
+                    "task_id": task_id,
+                    "preview_type": preview_render.get("preview_type"),
+                    "sections": [
+                        section.get("section_id")
+                        for section in _as_list(preview_render.get("sections"))
+                        if isinstance(section, Mapping)
+                    ],
+                    "execution_status": execution_status,
+                    "primary_action_enabled": bool(preview_render.get("primary_action_enabled")),
+                },
+            },
+            {
+                "step_id": "hold_authority_boundary",
+                "title": "Mantener frontera de autoridad",
+                "status": "blocked",
+                "kind": "authority",
+                "summary": "La respuesta puede proponer y explicar, pero no ejecutar cambios.",
+                "inputs": ["preview_render"],
+                "outputs": ["human_review_required"],
+                "authority": "human_approval_required",
+                "data": {
+                    "execution_allowed": False,
+                    "writes_attempted": False,
+                    "required_before_writes": [
+                        "preview exacto",
+                        "aprobacion humana",
+                        "idempotency key",
+                        "audit trail",
+                    ],
+                },
+            },
+        ]
+    )
+    return steps
 
 
 def build_specialist_workspace_source_panel(
@@ -139,6 +169,7 @@ def build_specialist_workspace_source_panel(
     live_context: Mapping[str, Any],
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
+    memory_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build source cards showing which sources informed the assistant."""
 
@@ -170,30 +201,51 @@ def build_specialist_workspace_source_panel(
                 "unresolved": live_context.get("unresolved") or {},
             },
         },
-        {
-            "source_id": "deterministic_diagnostics",
-            "title": "Diagnostico deterministico",
-            "kind": "analysis",
-            "status": diagnostics.get("readiness") or "unknown",
-            "summary": "Reglas deterministicas para hallazgos, faltantes, riesgos y siguiente paso.",
-            "data": {
-                "findings": diagnostics.get("findings") or [],
-                "missing": diagnostics.get("missing") or [],
-                "risks": diagnostics.get("risks") or [],
-            },
-        },
-        {
-            "source_id": "specialist_preview_contract",
-            "title": "Contrato de preview especialista",
-            "kind": "preview_contract",
-            "status": preview_render.get("execution_status") or "not_executed",
-            "summary": "Contrato estructurado que permite pintar proposed changes, evidencia y autoridad.",
-            "data": {
-                "preview_id": preview_render.get("preview_id"),
-                "task_id": preview_render.get("task_id"),
-                "section_count": _count_items(preview_render.get("sections")),
-                "primary_action_enabled": bool(preview_render.get("primary_action_enabled")),
-            },
-        },
     ]
+
+    if memory_context is not None:
+        sources.append(
+            {
+                "source_id": "case_memory_readonly",
+                "title": "Memoria de casos",
+                "kind": "memory",
+                "status": memory_context.get("status") or "unknown",
+                "summary": "Precedentes operativos persistidos; informan pero no autorizan.",
+                "data": {
+                    "matched": bool(memory_context.get("matched")),
+                    "snippets": _count_items(memory_context.get("snippets")),
+                    "authority": memory_context.get("authority", "read_only_memory"),
+                },
+            }
+        )
+
+    sources.extend(
+        [
+            {
+                "source_id": "deterministic_diagnostics",
+                "title": "Diagnostico deterministico",
+                "kind": "analysis",
+                "status": diagnostics.get("readiness") or "unknown",
+                "summary": "Reglas deterministicas para hallazgos, faltantes, riesgos y siguiente paso.",
+                "data": {
+                    "findings": diagnostics.get("findings") or [],
+                    "missing": diagnostics.get("missing") or [],
+                    "risks": diagnostics.get("risks") or [],
+                },
+            },
+            {
+                "source_id": "specialist_preview_contract",
+                "title": "Contrato de preview especialista",
+                "kind": "preview_contract",
+                "status": preview_render.get("execution_status") or "not_executed",
+                "summary": "Contrato estructurado que permite pintar proposed changes, evidencia y autoridad.",
+                "data": {
+                    "preview_id": preview_render.get("preview_id"),
+                    "task_id": preview_render.get("task_id"),
+                    "section_count": _count_items(preview_render.get("sections")),
+                    "primary_action_enabled": bool(preview_render.get("primary_action_enabled")),
+                },
+            },
+        ]
+    )
     return sources

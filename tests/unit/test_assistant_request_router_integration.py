@@ -489,10 +489,12 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
     assert [card["card_id"] for card in trace["workspace_cards"]] == [
         "understood_context",
         "live_context",
+        "case_memory",
         "operational_diagnostics",
         "business_preview",
         "authority_boundary",
     ]
+    assert trace["workspace_cards"][2]["authority"] == "read_only_memory"
     assert trace["workspace_cards"][-1]["status"] == "blocked"
 
 
