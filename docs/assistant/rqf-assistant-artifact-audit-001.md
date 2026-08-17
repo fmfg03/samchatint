@@ -32,7 +32,8 @@ The next assistant work should therefore proceed in this order:
 | `samchat.assistant.institutional_artifact_registry` | Wired read-only registry | Keep as canonical map | Already exposes artifact IDs, domains, contracts, authority level and next wiring steps. |
 | `samchat.finance_platform.service` | Wired through finance strategy snapshot | Ready to keep/use | Strong read-only finance projection for cash, close, tax, payment run and finance brief. Should not duplicate lower-level gasto services. |
 | `samchat.assistant.closeout_diagnostics` | Wired | Ready to keep/use | Correct pattern: answers a bounded question such as whether accounting can close and why. |
-| `samchat.accounting_historical.service` | Available, not wired | Useful; needs narrow precedent query | Valuable for institutional accounting memory. Do not expose full import/COI machinery to chat. |
+| `samchat.accounting_historical.service` | Available, not wired | Useful source service | Valuable for institutional accounting memory. Do not expose full import/COI machinery to chat. |
+| `samchat.assistant.historical_accounting_precedent` | Wired read-only | Historical precedent query | Searches historical policy lines/headers for account candidates by concept/provider/project/account; returns evidence, not automatic account assignment. |
 | `samchat.sports_platform.service` | Partial | Use only through narrowed wrappers | Rich operations projection, but too broad/raw for direct assistant exposure. Start with audit/status/action queue surfaces. |
 | `samchat.assistant.sports_platform_audit` | Available, not wired | Ready as gate before wiring sports modules | Good product filter: classifies what is assistant-ready vs internal/demo. |
 | `samchat.assistant.sports_operations_status` | Wired read-only | Narrowed operations wrapper | Assistant-safe summary over local tournament source, mission, incidents, roster risk, matchday state and action queue; accepts SOUL Wizard draft context and does not expose raw Sports Platform. |
@@ -124,7 +125,7 @@ Initial read-only router exposure is implemented. It connects `director_general_
 
 ### 4. Historical accounting precedent query
 
-Expose a read-only query over `accounting_historical.service` for ?what account did we use before for cases like this?? This supports accounting cleanup without inventing classification.
+Initial read-only router exposure is implemented. It queries historical policy lines/headers for ?what account did we use before for cases like this?? and returns candidates with evidence paths, non-claims and safety summary. This supports accounting cleanup without inventing classification.
 
 ### 5. SOUL Wizard continuation
 

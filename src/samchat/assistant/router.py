@@ -143,6 +143,7 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .closeout_diagnostics import build_finance_closeout_diagnostics
+from .historical_accounting_precedent import query_historical_accounting_precedents
 from .institutional_artifact_registry import (
     build_institutional_artifact_registry_report,
     list_institutional_artifacts,
@@ -2440,6 +2441,7 @@ def _assistant_default_tournament_key() -> Optional[str]:
 READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
+    "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_live_brief",
@@ -2500,6 +2502,7 @@ WRITE_TOOLS = {
 FINANCE_READ_TOOLS = {
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
+    "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_live_brief",
@@ -3131,6 +3134,25 @@ _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
 
 def _tool_defs() -> List[Dict[str, Any]]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_historical_accounting_precedent",
+                "description": "Busca precedentes contables historicos en modo read-only para conceptos, proveedores, proyectos o cuentas; devuelve candidatos con evidencia, no asignaciones automaticas.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "query": {"type": ["string", "null"]},
+                        "company_code": {"type": ["string", "null"], "default": "01"},
+                        "fiscal_year": {"type": ["integer", "null"]},
+                        "account_code": {"type": ["string", "null"]},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": [],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -8824,6 +8846,18 @@ async def _run_read_tool(
             return await workspace_file_read(**args)
         return await workspace_search(**args)
 
+
+    if tool_name == "assistant_historical_accounting_precedent":
+        return (
+            await query_historical_accounting_precedents(
+                gastos_session,
+                query=str(args.get("query") or ""),
+                company_code=str(args.get("company_code") or "01"),
+                fiscal_year=args.get("fiscal_year"),
+                account_code=str(args.get("account_code") or "").strip() or None,
+                limit=int(args.get("limit") or 5),
+            )
+        ).to_dict()
 
     if tool_name == "assistant_institutional_artifacts":
         domain = args.get("domain")
