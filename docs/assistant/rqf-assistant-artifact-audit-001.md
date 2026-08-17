@@ -35,6 +35,7 @@ The next assistant work should therefore proceed in this order:
 | `samchat.accounting_historical.service` | Available, not wired | Useful; needs narrow precedent query | Valuable for institutional accounting memory. Do not expose full import/COI machinery to chat. |
 | `samchat.sports_platform.service` | Partial | Use only through narrowed wrappers | Rich operations projection, but too broad/raw for direct assistant exposure. Start with audit/status/action queue surfaces. |
 | `samchat.assistant.sports_platform_audit` | Available, not wired | Ready as gate before wiring sports modules | Good product filter: classifies what is assistant-ready vs internal/demo. |
+| `samchat.assistant.sports_operations_status` | Available, not wired | Ready as narrowed wrapper candidate | Assistant-safe summary over mission, incidents, roster risk, matchday state and action queue; does not expose raw Sports Platform. |
 | `samchat.sports_platform.director_general_dossier` | Partial | Useful for Owner Pack, not raw | Maps directly to owner's requested folders by entity. Needs live-source confidence and missing-field reporting. |
 | `samchat.assistant.owner_pack_readiness` | Wired | Ready to keep/use | Current best example of read-only product semantics: status, evidence found, missing evidence and next questions. |
 | `samchat.assistant.owner_pack_live_evidence` | Wired | Keep but later consolidate | Correct fail-closed local DB adapter. Should converge with other live evidence adapters later. |

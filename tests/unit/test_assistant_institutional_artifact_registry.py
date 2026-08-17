@@ -18,6 +18,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "finance.platform_snapshot" in ids
     assert "sports.platform_snapshot" in ids
     assert "assistant.sports_platform_audit" in ids
+    assert "assistant.sports_operations_status" in ids
     assert "accounting.historical_snapshot" in ids
     assert "tournament.soul_snapshot" in ids
     assert "assistant.owner_entity_dossier_audit" in ids
