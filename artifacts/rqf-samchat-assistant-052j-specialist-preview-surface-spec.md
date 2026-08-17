@@ -1,6 +1,6 @@
 # RQF-SAMCHAT-ASSISTANT-052J - Specialist Preview Surface Spec
 
-Status: DRAFT_SPEC
+Status: IMPLEMENTED_LOCAL_SPEC
 Depends on: RQF-052A, RQF-052B, RQF-052I
 Implementation scope: deterministic read-only assistant surface
 
@@ -133,3 +133,13 @@ stage unless already implemented as read-only, fail-closed enrichment.
 - 052K: live-context grounding for selected references, fail-closed and read-only.
 - 052L: UI card / assistant workspace integration.
 - 052M: approval receipt boundary design, still without production writes.
+
+## Implementation notes
+
+- Explicit task-id previews remain allowed only for known seed benchmark ids and
+  explicit preview/specialist wording.
+- Natural-language routing remains allowlisted and deterministic.
+- If more than one route has required domain terms in the same request, the
+  detector returns `None` instead of choosing the first match.
+- The preview surface remains read-only: provider_called=false, writes_attempted=false,
+  primary_action_enabled=false.

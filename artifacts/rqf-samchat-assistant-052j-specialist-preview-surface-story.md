@@ -1,6 +1,6 @@
 # RQF-SAMCHAT-ASSISTANT-052J - Specialist Preview Surface Story
 
-Status: DRAFT_STORY
+Status: IMPLEMENTED_LOCAL
 Owner track: SamChat Assistant / Specialist Agents
 Factory phase: Story before implementation/spec lock
 
@@ -102,3 +102,24 @@ RQF-SAMCHAT-ASSISTANT-052J is closed when SamChat can render deterministic,
 read-only specialist previews for selected seed scenarios, with evidence and
 missing-evidence boundaries visible, and with execution still blocked pending a
 future human approval receipt stage.
+
+## Implementation closeout
+
+Implemented against the existing deterministic specialist preview surface. The
+router now fails closed when natural-language preview intent matches more than
+one domain route, preventing the assistant from guessing between competing
+specialist workflows.
+
+Verification target:
+
+```bash
+PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest \
+  tests/unit/test_assistant_specialist_contract.py \
+  tests/unit/test_assistant_specialist_agents.py \
+  tests/unit/test_assistant_specialist_orchestrator.py \
+  tests/unit/test_assistant_specialist_business_diff.py \
+  tests/unit/test_assistant_specialist_preview_renderer.py \
+  tests/unit/test_assistant_specialist_preview_surface.py \
+  tests/unit/test_assistant_specialist_report.py \
+  -q
+```

@@ -223,12 +223,15 @@ def _contains_any(text: str, terms: Sequence[str]) -> bool:
 def _natural_preview_task_id(normalized_text: str) -> Optional[str]:
     if not _contains_any(normalized_text, _NATURAL_PREVIEW_ACTION_TERMS):
         return None
-    for rule in _NATURAL_PREVIEW_RULES:
-        if not _contains_any(normalized_text, rule.required_any):
-            continue
-        signal_count = sum(1 for signal in rule.signals if signal in normalized_text)
-        if signal_count >= rule.min_signal_count:
-            return rule.task_id
+    required_matches = [
+        rule for rule in _NATURAL_PREVIEW_RULES if _contains_any(normalized_text, rule.required_any)
+    ]
+    if len(required_matches) != 1:
+        return None
+    rule = required_matches[0]
+    signal_count = sum(1 for signal in rule.signals if signal in normalized_text)
+    if signal_count >= rule.min_signal_count:
+        return rule.task_id
     return None
 
 

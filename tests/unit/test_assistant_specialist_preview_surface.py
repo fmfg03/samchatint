@@ -58,6 +58,15 @@ def test_detect_specialist_preview_does_not_trigger_on_domain_chatter() -> None:
     assert detect_specialist_preview_task_id("Que es CxC?") is None
 
 
+def test_detect_specialist_preview_fails_closed_on_ambiguous_business_intent() -> None:
+    assert (
+        detect_specialist_preview_task_id(
+            "Prepara preview de AMEX referencia 28 y tambien CxC de DCC con factura"
+        )
+        is None
+    )
+
+
 def test_extract_specialist_preview_understood_context_from_business_prompt() -> None:
     context = extract_specialist_preview_understood_context(
         "Prepara CxC factura 669DBF39 contra DCC Nacional REF 28 con cuenta 1150-001-001"
