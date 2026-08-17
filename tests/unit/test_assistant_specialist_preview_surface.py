@@ -180,6 +180,87 @@ def test_specialist_preview_workspace_cards_contract() -> None:
     assert cards[-1]["data"]["writes_attempted"] is False
 
 
+def test_specialist_continuity_context_detects_active_case() -> None:
+    from types import SimpleNamespace
+
+    from samchat.assistant.specialist_continuity_context import (
+        render_specialist_continuity_context_markdown,
+        resolve_specialist_preview_continuity_context,
+    )
+
+    context = resolve_specialist_preview_continuity_context(
+        SimpleNamespace(
+            tournament_key="copa_telmex",
+            metadata_={
+                "module_key": "tournaments",
+                "module_label": "Torneos",
+                "active_tournament_goal_case": {
+                    "case_id": "analyst_case_" + "a" * 32,
+                    "case_version": 3,
+                    "status": "draft",
+                },
+            },
+        )
+    )
+    message = render_specialist_continuity_context_markdown(context)
+
+    assert context["authority"] == "read_only_continuity"
+    assert context["matched"] is True
+    assert context["active_case"]["case_version"] == 3
+    assert "Caso activo" in message
+    assert "continuidad read-only" in message
+
+
+def test_specialist_continuity_context_fails_closed_on_invalid_pointer() -> None:
+    from types import SimpleNamespace
+
+    from samchat.assistant.specialist_continuity_context import (
+        resolve_specialist_preview_continuity_context,
+    )
+
+    context = resolve_specialist_preview_continuity_context(
+        SimpleNamespace(
+            tournament_key=None,
+            metadata_={"active_tournament_goal_case": {"case_id": "bad"}},
+        )
+    )
+
+    assert context["matched"] is False
+    assert context["status"] == "invalid_active_case_pointer"
+    assert context["active_case"] is None
+
+
+def test_specialist_preview_workspace_cards_include_continuity_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-TOURNAMENT-2027-001",
+        understood_context={"authority": "context_hint_only", "domains": ["torneo"]},
+        live_context={"authority": "read_only_context", "status": "no_matches", "matched": False},
+        continuity_context={
+            "authority": "read_only_continuity",
+            "status": "active_case_found",
+            "matched": True,
+            "active_case": {"case_id": "analyst_case_" + "a" * 32},
+        },
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "needs_more_context"},
+        preview_render={"task_id": "SAMCHAT-TOURNAMENT-2027-001", "execution_status": "not_executed"},
+    )
+
+    assert [card["card_id"] for card in cards] == [
+        "understood_context",
+        "live_context",
+        "case_continuity",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert cards[2]["authority"] == "read_only_continuity"
+    assert cards[-1]["status"] == "blocked"
+
+
 def test_specialist_memory_context_markdown_is_read_only() -> None:
     from samchat.assistant.specialist_memory_context import (
         render_specialist_memory_context_markdown,

@@ -23,6 +23,7 @@ def build_specialist_workspace_step_trace(
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
+    continuity_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build a deterministic visible step trace for specialist previews.
 
@@ -75,6 +76,29 @@ def build_specialist_workspace_step_trace(
         },
     ]
 
+    if continuity_context is not None:
+        steps.append(
+            {
+                "step_id": "identify_case_continuity",
+                "title": "Identificar continuidad",
+                "status": "complete",
+                "kind": "continuity",
+                "summary": (
+                    "Detecte un caso activo en la conversacion."
+                    if continuity_context.get("matched")
+                    else "No hay caso activo que retomar en esta conversacion."
+                ),
+                "inputs": ["conversation_metadata"],
+                "outputs": ["continuity_context"],
+                "authority": continuity_context.get("authority", "read_only_continuity"),
+                "data": {
+                    "matched": bool(continuity_context.get("matched")),
+                    "status": continuity_context.get("status") or "unknown",
+                    "active_case": continuity_context.get("active_case"),
+                },
+            }
+        )
+
     if memory_context is not None:
         steps.append(
             {
@@ -106,7 +130,7 @@ def build_specialist_workspace_step_trace(
                 "status": "complete",
                 "kind": "diagnostic",
                 "summary": "Determine si hay contexto suficiente para seguir en preview read-only.",
-                "inputs": ["understood_context", "live_context", "memory_context"],
+                "inputs": ["understood_context", "live_context", "continuity_context", "memory_context"],
                 "outputs": ["diagnostics"],
                 "authority": diagnostics.get("authority", "read_only_diagnostic"),
                 "data": {
@@ -170,6 +194,7 @@ def build_specialist_workspace_source_panel(
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
+    continuity_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build source cards showing which sources informed the assistant."""
 
@@ -202,6 +227,24 @@ def build_specialist_workspace_source_panel(
             },
         },
     ]
+
+    if continuity_context is not None:
+        sources.append(
+            {
+                "source_id": "conversation_continuity",
+                "title": "Continuidad de conversacion",
+                "kind": "continuity",
+                "status": continuity_context.get("status") or "unknown",
+                "summary": "Metadata activa de la conversacion actual; informa pero no autoriza.",
+                "data": {
+                    "matched": bool(continuity_context.get("matched")),
+                    "active_case": continuity_context.get("active_case"),
+                    "module_key": continuity_context.get("module_key"),
+                    "tournament_key": continuity_context.get("tournament_key"),
+                    "authority": continuity_context.get("authority", "read_only_continuity"),
+                },
+            }
+        )
 
     if memory_context is not None:
         sources.append(

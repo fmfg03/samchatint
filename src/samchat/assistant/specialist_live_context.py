@@ -397,6 +397,7 @@ def build_specialist_preview_workspace_cards(
     diagnostics: Mapping[str, Any],
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
+    continuity_context: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build structured cards for the future assistant operator workspace UI."""
 
@@ -429,6 +430,24 @@ def build_specialist_preview_workspace_cards(
         }
     )
     readiness = diagnostics.get("readiness") or "unknown"
+    if continuity_context is not None:
+        continuity_status = continuity_context.get("status") or "unknown"
+        cards.append(
+            {
+                "card_id": "case_continuity",
+                "title": "Continuidad del caso",
+                "kind": "continuity",
+                "status": continuity_status,
+                "authority": continuity_context.get("authority", "read_only_continuity"),
+                "summary": (
+                    "Caso activo ligado a esta conversacion."
+                    if continuity_context.get("matched")
+                    else "Sin caso activo ligado a esta conversacion."
+                ),
+                "data": dict(continuity_context),
+            }
+        )
+
     if memory_context is not None:
         memory_status = memory_context.get("status") or "unknown"
         snippets = list(memory_context.get("snippets") or [])

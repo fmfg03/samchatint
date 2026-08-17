@@ -94,6 +94,10 @@ from .specialist_live_context import (
     render_specialist_preview_diagnostics_markdown,
     resolve_specialist_preview_live_context,
 )
+from .specialist_continuity_context import (
+    render_specialist_continuity_context_markdown,
+    resolve_specialist_preview_continuity_context,
+)
 from .specialist_memory_context import (
     render_specialist_memory_context_markdown,
     resolve_specialist_preview_memory_context,
@@ -586,6 +590,7 @@ async def _build_specialist_preview_surface_response(
     if task_id is None:
         return None
     surface = render_specialist_preview_surface(task_id, raw_message=raw_message)
+    continuity_context = resolve_specialist_preview_continuity_context(conversation)
     live_context = await resolve_specialist_preview_live_context(
         session, surface.understood_context
     )
@@ -607,6 +612,7 @@ async def _build_specialist_preview_surface_response(
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
+        continuity_context=continuity_context,
     )
     step_trace = build_specialist_workspace_step_trace(
         task_id=task_id,
@@ -615,6 +621,7 @@ async def _build_specialist_preview_surface_response(
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
+        continuity_context=continuity_context,
     )
     source_panel = build_specialist_workspace_source_panel(
         understood_context=surface.understood_context,
@@ -622,23 +629,27 @@ async def _build_specialist_preview_surface_response(
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
+        continuity_context=continuity_context,
     )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
+    continuity_context_markdown = render_specialist_continuity_context_markdown(continuity_context)
     memory_context_markdown = render_specialist_memory_context_markdown(memory_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
     assistant_message = surface.assistant_message.replace(
         "\n# ",
-        f"\n{live_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n# ",
+        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n# ",
         1,
     )
     tool_trace_entry = surface.tool_trace()
     tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
+    tool_trace_entry["specialist_preview_surface"]["continuity_context"] = continuity_context
     tool_trace_entry["specialist_preview_surface"]["memory_context"] = memory_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
     tool_trace_entry["specialist_preview_surface"]["source_panel"] = source_panel
     tool_trace_entry["result"]["live_context"] = live_context
+    tool_trace_entry["result"]["continuity_context"] = continuity_context
     tool_trace_entry["result"]["memory_context"] = memory_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
@@ -661,6 +672,7 @@ async def _build_specialist_preview_surface_response(
             "business_preview": business_preview,
             "understood_context": surface.understood_context,
             "live_context": live_context,
+            "continuity_context": continuity_context,
             "memory_context": memory_context,
             "diagnostics": diagnostics,
             "workspace_cards": workspace_cards,
