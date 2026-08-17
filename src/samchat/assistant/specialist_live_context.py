@@ -398,6 +398,7 @@ def build_specialist_preview_workspace_cards(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    evidence_quality_gate: Mapping[str, Any] | None = None,
     resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build structured cards for the future assistant operator workspace UI."""
@@ -482,6 +483,18 @@ def build_specialist_preview_workspace_cards(
             "data": dict(diagnostics),
         }
     )
+    if evidence_quality_gate is not None:
+        cards.append(
+            {
+                "card_id": "evidence_quality",
+                "title": "Calidad de evidencia",
+                "kind": "evidence_gate",
+                "status": evidence_quality_gate.get("quality_status") or "unknown",
+                "authority": evidence_quality_gate.get("authority", "read_only_evidence_gate"),
+                "summary": "Compuerta deterministica de soporte, faltantes y precedentes.",
+                "data": dict(evidence_quality_gate),
+            }
+        )
     if resume_guidance is not None:
         cards.append(
             {

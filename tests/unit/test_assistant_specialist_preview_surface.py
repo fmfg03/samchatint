@@ -375,6 +375,32 @@ def test_specialist_preview_workspace_cards_include_resume_guidance_when_provide
     assert guidance["data"]["primary_action_enabled"] is False
 
 
+def test_specialist_preview_workspace_cards_include_evidence_quality_gate_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={"authority": "read_only_context", "status": "matched", "matched": True},
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        evidence_quality_gate={
+            "authority": "read_only_evidence_gate",
+            "quality_status": "partial",
+            "safe_to_execute": False,
+            "primary_action_enabled": False,
+        },
+        preview_render={"task_id": "SAMCHAT-CXC-COLLECTION-001", "execution_status": "not_executed"},
+    )
+
+    assert "evidence_quality" in [card["card_id"] for card in cards]
+    gate = next(card for card in cards if card["card_id"] == "evidence_quality")
+    assert gate["authority"] == "read_only_evidence_gate"
+    assert gate["status"] == "partial"
+    assert gate["data"]["primary_action_enabled"] is False
+
+
 def test_specialist_preview_diagnostics_marks_cxc_ready_with_cfdi() -> None:
     from samchat.assistant.specialist_live_context import (
         build_specialist_preview_diagnostics,
@@ -515,7 +541,10 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     payload = assistant_messages[0].tool_payload
     assert payload["preview_render"] == response.preview_render
     assert payload["business_preview"]["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert "Calidad de evidencia" in response.assistant_message
     assert payload["memory_context"]["authority"] == "read_only_memory"
+    assert payload["evidence_quality_gate"]["authority"] == "read_only_evidence_gate"
+    assert payload["evidence_quality_gate"]["safe_to_execute"] is False
     assert payload["resume_guidance"]["authority"] == "read_only_guidance"
 
 

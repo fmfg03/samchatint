@@ -24,6 +24,7 @@ def build_specialist_workspace_step_trace(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    evidence_quality_gate: Mapping[str, Any] | None = None,
     resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build a deterministic visible step trace for specialist previews.
@@ -123,6 +124,21 @@ def build_specialist_workspace_step_trace(
             }
         )
 
+    if evidence_quality_gate is not None:
+        steps.append(
+            {
+                "step_id": "gate_evidence_quality",
+                "title": "Evaluar calidad de evidencia",
+                "status": evidence_quality_gate.get("quality_status") or "unknown",
+                "kind": "evidence_gate",
+                "summary": "Clasifique soporte, faltantes, precedentes y cambios sin evidencia vinculada.",
+                "inputs": ["business_preview", "live_context", "diagnostics", "memory_context", "continuity_context"],
+                "outputs": ["evidence_quality_gate"],
+                "authority": evidence_quality_gate.get("authority", "read_only_evidence_gate"),
+                "data": dict(evidence_quality_gate),
+            }
+        )
+
     if resume_guidance is not None:
         steps.append(
             {
@@ -211,6 +227,7 @@ def build_specialist_workspace_source_panel(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    evidence_quality_gate: Mapping[str, Any] | None = None,
     resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build source cards showing which sources informed the assistant."""
@@ -275,6 +292,25 @@ def build_specialist_workspace_source_panel(
                     "matched": bool(memory_context.get("matched")),
                     "snippets": _count_items(memory_context.get("snippets")),
                     "authority": memory_context.get("authority", "read_only_memory"),
+                },
+            }
+        )
+
+    if evidence_quality_gate is not None:
+        sources.append(
+            {
+                "source_id": "deterministic_evidence_quality_gate",
+                "title": "Calidad de evidencia",
+                "kind": "evidence_gate",
+                "status": evidence_quality_gate.get("quality_status") or "unknown",
+                "summary": "Compuerta deterministica de soporte y faltantes; no ejecuta acciones.",
+                "data": {
+                    "supported_change_count": evidence_quality_gate.get("supported_change_count", 0),
+                    "unbound_change_count": evidence_quality_gate.get("unbound_change_count", 0),
+                    "missing_evidence_count": evidence_quality_gate.get("missing_evidence_count", 0),
+                    "precedent_count": evidence_quality_gate.get("precedent_count", 0),
+                    "safe_to_execute": bool(evidence_quality_gate.get("safe_to_execute")),
+                    "authority": evidence_quality_gate.get("authority", "read_only_evidence_gate"),
                 },
             }
         )

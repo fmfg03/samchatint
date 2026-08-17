@@ -98,6 +98,10 @@ from .specialist_continuity_context import (
     render_specialist_continuity_context_markdown,
     resolve_specialist_preview_continuity_context,
 )
+from .specialist_evidence_quality import (
+    build_specialist_evidence_quality_gate,
+    render_specialist_evidence_quality_gate_markdown,
+)
 from .specialist_memory_context import (
     render_specialist_memory_context_markdown,
     resolve_specialist_preview_memory_context,
@@ -609,6 +613,18 @@ async def _build_specialist_preview_surface_response(
         understood_context=surface.understood_context,
         live_context=live_context,
     )
+    business_preview_payload = (
+        surface.business_preview.to_dict()
+        if hasattr(surface.business_preview, "to_dict")
+        else dict(surface.business_preview)
+    )
+    evidence_quality_gate = build_specialist_evidence_quality_gate(
+        business_preview=business_preview_payload,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        memory_context=memory_context,
+        continuity_context=continuity_context,
+    )
     resume_guidance = build_specialist_resume_guidance(
         diagnostics=diagnostics,
         continuity_context=continuity_context,
@@ -622,6 +638,7 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
         resume_guidance=resume_guidance,
     )
     step_trace = build_specialist_workspace_step_trace(
@@ -632,6 +649,7 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
         resume_guidance=resume_guidance,
     )
     source_panel = build_specialist_workspace_source_panel(
@@ -641,16 +659,18 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
         resume_guidance=resume_guidance,
     )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
     continuity_context_markdown = render_specialist_continuity_context_markdown(continuity_context)
     memory_context_markdown = render_specialist_memory_context_markdown(memory_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
+    evidence_quality_markdown = render_specialist_evidence_quality_gate_markdown(evidence_quality_gate)
     resume_guidance_markdown = render_specialist_resume_guidance_markdown(resume_guidance)
     assistant_message = surface.assistant_message.replace(
         "\n# ",
-        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n{resume_guidance_markdown}\n# ",
+        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n{evidence_quality_markdown}\n{resume_guidance_markdown}\n# ",
         1,
     )
     tool_trace_entry = surface.tool_trace()
@@ -658,6 +678,7 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["specialist_preview_surface"]["continuity_context"] = continuity_context
     tool_trace_entry["specialist_preview_surface"]["memory_context"] = memory_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
+    tool_trace_entry["specialist_preview_surface"]["evidence_quality_gate"] = evidence_quality_gate
     tool_trace_entry["specialist_preview_surface"]["resume_guidance"] = resume_guidance
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
@@ -666,17 +687,14 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["result"]["continuity_context"] = continuity_context
     tool_trace_entry["result"]["memory_context"] = memory_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
+    tool_trace_entry["result"]["evidence_quality_gate"] = evidence_quality_gate
     tool_trace_entry["result"]["resume_guidance"] = resume_guidance
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
     tool_trace_entry["result"]["step_trace"] = step_trace
     tool_trace_entry["result"]["source_panel"] = source_panel
     tool_trace = [tool_trace_entry]
     preview_render = surface.preview_render.to_dict()
-    business_preview = (
-        surface.business_preview.to_dict()
-        if hasattr(surface.business_preview, "to_dict")
-        else dict(surface.business_preview)
-    )
+    business_preview = business_preview_payload
     await _persist_document_conversation_messages(
         raw_message=raw_message,
         assistant_message=assistant_message,
@@ -690,6 +708,7 @@ async def _build_specialist_preview_surface_response(
             "continuity_context": continuity_context,
             "memory_context": memory_context,
             "diagnostics": diagnostics,
+            "evidence_quality_gate": evidence_quality_gate,
             "resume_guidance": resume_guidance,
             "workspace_cards": workspace_cards,
             "step_trace": step_trace,

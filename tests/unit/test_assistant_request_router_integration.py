@@ -478,6 +478,7 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
 
     assert "Contexto encontrado" in response.assistant_message
     assert "Diagnostico operativo" in response.assistant_message
+    assert "Calidad de evidencia" in response.assistant_message
     assert "CFDI 669DBF39-F23C-4AD5-B858-F1F5A9AC8626" in response.assistant_message
     assert "ready_for_read_only_preview" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
@@ -492,6 +493,7 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
         "case_continuity",
         "case_memory",
         "operational_diagnostics",
+        "evidence_quality",
         "resume_guidance",
         "business_preview",
         "authority_boundary",
