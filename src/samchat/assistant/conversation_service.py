@@ -74,6 +74,7 @@ from .request_intent import (
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
+from .operator_workspace_snapshot import build_operator_workspace_snapshot
 from .owner_operator_workflow import run_owner_operator_workflow
 from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
 from .owner_pack_readiness import (
@@ -662,6 +663,23 @@ async def _build_specialist_preview_surface_response(
         evidence_quality_gate=evidence_quality_gate,
         resume_guidance=resume_guidance,
     )
+    preview_render_payload = surface.preview_render.to_dict()
+    operator_workspace_snapshot = build_operator_workspace_snapshot(
+        conversation_id=getattr(conversation, "id", ""),
+        task_id=task_id,
+        preview_render=preview_render_payload,
+        business_preview=business_preview_payload,
+        understood_context=surface.understood_context,
+        live_context=live_context,
+        continuity_context=continuity_context,
+        memory_context=memory_context,
+        diagnostics=diagnostics,
+        evidence_quality_gate=evidence_quality_gate,
+        resume_guidance=resume_guidance,
+        workspace_cards=workspace_cards,
+        step_trace=step_trace,
+        source_panel=source_panel,
+    )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
     continuity_context_markdown = render_specialist_continuity_context_markdown(continuity_context)
     memory_context_markdown = render_specialist_memory_context_markdown(memory_context)
@@ -683,6 +701,7 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
     tool_trace_entry["specialist_preview_surface"]["source_panel"] = source_panel
+    tool_trace_entry["specialist_preview_surface"]["operator_workspace_snapshot"] = operator_workspace_snapshot
     tool_trace_entry["result"]["live_context"] = live_context
     tool_trace_entry["result"]["continuity_context"] = continuity_context
     tool_trace_entry["result"]["memory_context"] = memory_context
@@ -692,8 +711,9 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
     tool_trace_entry["result"]["step_trace"] = step_trace
     tool_trace_entry["result"]["source_panel"] = source_panel
+    tool_trace_entry["result"]["operator_workspace_snapshot"] = operator_workspace_snapshot
     tool_trace = [tool_trace_entry]
-    preview_render = surface.preview_render.to_dict()
+    preview_render = preview_render_payload
     business_preview = business_preview_payload
     await _persist_document_conversation_messages(
         raw_message=raw_message,
@@ -713,6 +733,7 @@ async def _build_specialist_preview_surface_response(
             "workspace_cards": workspace_cards,
             "step_trace": step_trace,
             "source_panel": source_panel,
+            "operator_workspace_snapshot": operator_workspace_snapshot,
         },
     )
     return _response_object(

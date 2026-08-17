@@ -501,6 +501,8 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
     assert trace["workspace_cards"][2]["authority"] == "read_only_continuity"
     assert trace["workspace_cards"][3]["authority"] == "read_only_memory"
     assert trace["resume_guidance"]["authority"] == "read_only_guidance"
+    assert trace["operator_workspace_snapshot"]["authority"] == "read_only_workspace_snapshot"
+    assert trace["operator_workspace_snapshot"]["operational_writes"] is False
     assert trace["workspace_cards"][-1]["status"] == "blocked"
 
 

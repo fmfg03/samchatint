@@ -545,6 +545,10 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     assert payload["memory_context"]["authority"] == "read_only_memory"
     assert payload["evidence_quality_gate"]["authority"] == "read_only_evidence_gate"
     assert payload["evidence_quality_gate"]["safe_to_execute"] is False
+    assert payload["operator_workspace_snapshot"]["authority"] == "read_only_workspace_snapshot"
+    assert payload["operator_workspace_snapshot"]["persistence_medium"] == "assistant_message_tool_payload"
+    assert payload["operator_workspace_snapshot"]["primary_action_enabled"] is False
+    assert payload["operator_workspace_snapshot"]["components"]["workspace_cards"] == payload["workspace_cards"]
     assert payload["resume_guidance"]["authority"] == "read_only_guidance"
 
 
