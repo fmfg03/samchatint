@@ -24,6 +24,7 @@ def build_specialist_workspace_step_trace(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build a deterministic visible step trace for specialist previews.
 
@@ -122,6 +123,21 @@ def build_specialist_workspace_step_trace(
             }
         )
 
+    if resume_guidance is not None:
+        steps.append(
+            {
+                "step_id": "recommend_safe_next_step",
+                "title": "Recomendar siguiente paso",
+                "status": resume_guidance.get("status") or "unknown",
+                "kind": "guidance",
+                "summary": str(resume_guidance.get("recommendation") or "Siguiente paso no determinado."),
+                "inputs": ["diagnostics", "continuity_context", "memory_context"],
+                "outputs": ["resume_guidance"],
+                "authority": resume_guidance.get("authority", "read_only_guidance"),
+                "data": dict(resume_guidance),
+            }
+        )
+
     steps.extend(
         [
             {
@@ -195,6 +211,7 @@ def build_specialist_workspace_source_panel(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build source cards showing which sources informed the assistant."""
 
@@ -258,6 +275,23 @@ def build_specialist_workspace_source_panel(
                     "matched": bool(memory_context.get("matched")),
                     "snippets": _count_items(memory_context.get("snippets")),
                     "authority": memory_context.get("authority", "read_only_memory"),
+                },
+            }
+        )
+
+    if resume_guidance is not None:
+        sources.append(
+            {
+                "source_id": "deterministic_resume_guidance",
+                "title": "Guia de reanudacion",
+                "kind": "guidance",
+                "status": resume_guidance.get("status") or "unknown",
+                "summary": "Recomendacion deterministica del siguiente paso seguro; no autoriza ejecucion.",
+                "data": {
+                    "recommended_mode": resume_guidance.get("recommended_mode"),
+                    "uses_active_case": bool(resume_guidance.get("uses_active_case")),
+                    "uses_case_memory": bool(resume_guidance.get("uses_case_memory")),
+                    "primary_action_enabled": bool(resume_guidance.get("primary_action_enabled")),
                 },
             }
         )

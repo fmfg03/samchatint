@@ -398,6 +398,7 @@ def build_specialist_preview_workspace_cards(
     preview_render: Mapping[str, Any],
     memory_context: Mapping[str, Any] | None = None,
     continuity_context: Mapping[str, Any] | None = None,
+    resume_guidance: Mapping[str, Any] | None = None,
 ) -> List[Dict[str, Any]]:
     """Build structured cards for the future assistant operator workspace UI."""
 
@@ -481,6 +482,19 @@ def build_specialist_preview_workspace_cards(
             "data": dict(diagnostics),
         }
     )
+    if resume_guidance is not None:
+        cards.append(
+            {
+                "card_id": "resume_guidance",
+                "title": "Guia de reanudacion",
+                "kind": "guidance",
+                "status": resume_guidance.get("status") or "unknown",
+                "authority": resume_guidance.get("authority", "read_only_guidance"),
+                "summary": str(resume_guidance.get("recommendation") or "Siguiente paso no determinado."),
+                "data": dict(resume_guidance),
+            }
+        )
+
     cards.append(
         {
             "card_id": "business_preview",

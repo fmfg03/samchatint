@@ -102,6 +102,10 @@ from .specialist_memory_context import (
     render_specialist_memory_context_markdown,
     resolve_specialist_preview_memory_context,
 )
+from .specialist_resume_guidance import (
+    build_specialist_resume_guidance,
+    render_specialist_resume_guidance_markdown,
+)
 from .request_router import route_request
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -605,6 +609,11 @@ async def _build_specialist_preview_surface_response(
         understood_context=surface.understood_context,
         live_context=live_context,
     )
+    resume_guidance = build_specialist_resume_guidance(
+        diagnostics=diagnostics,
+        continuity_context=continuity_context,
+        memory_context=memory_context,
+    )
     workspace_cards = build_specialist_preview_workspace_cards(
         task_id=task_id,
         understood_context=surface.understood_context,
@@ -613,6 +622,7 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        resume_guidance=resume_guidance,
     )
     step_trace = build_specialist_workspace_step_trace(
         task_id=task_id,
@@ -622,6 +632,7 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        resume_guidance=resume_guidance,
     )
     source_panel = build_specialist_workspace_source_panel(
         understood_context=surface.understood_context,
@@ -630,14 +641,16 @@ async def _build_specialist_preview_surface_response(
         preview_render=surface.preview_render.to_dict(),
         memory_context=memory_context,
         continuity_context=continuity_context,
+        resume_guidance=resume_guidance,
     )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
     continuity_context_markdown = render_specialist_continuity_context_markdown(continuity_context)
     memory_context_markdown = render_specialist_memory_context_markdown(memory_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
+    resume_guidance_markdown = render_specialist_resume_guidance_markdown(resume_guidance)
     assistant_message = surface.assistant_message.replace(
         "\n# ",
-        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n# ",
+        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n{resume_guidance_markdown}\n# ",
         1,
     )
     tool_trace_entry = surface.tool_trace()
@@ -645,6 +658,7 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["specialist_preview_surface"]["continuity_context"] = continuity_context
     tool_trace_entry["specialist_preview_surface"]["memory_context"] = memory_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
+    tool_trace_entry["specialist_preview_surface"]["resume_guidance"] = resume_guidance
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
     tool_trace_entry["specialist_preview_surface"]["source_panel"] = source_panel
@@ -652,6 +666,7 @@ async def _build_specialist_preview_surface_response(
     tool_trace_entry["result"]["continuity_context"] = continuity_context
     tool_trace_entry["result"]["memory_context"] = memory_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
+    tool_trace_entry["result"]["resume_guidance"] = resume_guidance
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
     tool_trace_entry["result"]["step_trace"] = step_trace
     tool_trace_entry["result"]["source_panel"] = source_panel
@@ -675,6 +690,7 @@ async def _build_specialist_preview_surface_response(
             "continuity_context": continuity_context,
             "memory_context": memory_context,
             "diagnostics": diagnostics,
+            "resume_guidance": resume_guidance,
             "workspace_cards": workspace_cards,
             "step_trace": step_trace,
             "source_panel": source_panel,
