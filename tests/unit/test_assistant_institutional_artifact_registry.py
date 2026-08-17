@@ -22,6 +22,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "accounting.historical_snapshot" in ids
     assert "tournament.soul_snapshot" in ids
     assert "assistant.owner_entity_dossier_audit" in ids
+    assert "assistant.owner_entity_dossier_live" in ids
     assert "assistant.soul_wizard_contract" in ids
 
     for item in ARTIFACTS:
@@ -49,6 +50,7 @@ def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> N
         "budget.snapshot",
         "expense.accounting_preview",
         "assistant.sports_operations_status",
+        "assistant.owner_entity_dossier_live",
     }
     assert {item.artifact_id for item in unwired} >= {
         "accounting.historical_snapshot",
@@ -134,3 +136,13 @@ def test_institutional_registry_exposes_sports_operations_status_tool() -> None:
     assert spec.authority_level == "read_only"
     assert spec.assistant_tool == "assistant_sports_operations_status"
     assert "wizard_alignment" in spec.output_contract
+
+
+def test_institutional_registry_exposes_owner_entity_dossier_live_tool() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    spec = artifacts["assistant.owner_entity_dossier_live"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "read_only"
+    assert spec.assistant_tool == "assistant_owner_entity_dossier_live"
+    assert "non_claims" in spec.output_contract

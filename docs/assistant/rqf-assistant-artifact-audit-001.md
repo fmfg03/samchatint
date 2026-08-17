@@ -39,6 +39,7 @@ The next assistant work should therefore proceed in this order:
 | `samchat.sports_platform.director_general_dossier` | Partial | Useful for Owner Pack, not raw | Maps directly to owner's requested folders by entity. Needs live-source confidence and missing-field reporting. |
 | `samchat.assistant.owner_pack_readiness` | Wired | Ready to keep/use | Current best example of read-only product semantics: status, evidence found, missing evidence and next questions. |
 | `samchat.assistant.owner_pack_live_evidence` | Wired | Keep but later consolidate | Correct fail-closed local DB adapter. Should converge with other live evidence adapters later. |
+| `samchat.assistant.owner_entity_dossier_live` | Wired read-only | Owner/entity folder live audit | Uses local tournament source plus DG dossier audit to report supported evidence, missing evidence and aggregate-only non-claims. |
 | `samchat.assistant.soul_wizard` | Available contract / UI-oriented | Continue as tournament creation intake layer | Good foundation for Operations creating tournament SOULs step by step: phases, dates, activities, categories and evidence. |
 | `samchat.assistant.tournament_goal_*` | Partial | Consolidate with SOUL Wizard before more UI | Covers cloning/planning/diff logic. Avoid two separate tournament creation stories. |
 | `samchat.assistant.specialist_agents` and `specialist_orchestrator` | Eval-centric foundation | Keep for assistant architecture, not production writes | Good precedent -> verification -> proposal pattern after verifier invariants. Needs real operational cases and handoff UX. |
@@ -119,7 +120,7 @@ Do not expose raw sports platform snapshots. Current limitation: local source co
 
 ### 3. Owner entity dossier live wrapper
 
-Connect `director_general_dossier` to live local tournament sources, but only as a readiness/missing-fields report. This is directly tied to the owner request for folders by entity.
+Initial read-only router exposure is implemented. It connects `director_general_dossier` to live local tournament sources only as a readiness/missing-fields report, with explicit aggregate-only non-claims when local data is not truly per entity. This is directly tied to the owner request for folders by entity.
 
 ### 4. Historical accounting precedent query
 

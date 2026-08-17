@@ -154,6 +154,7 @@ from .request_intent import (
 )
 from .owner_needs_eval import parse_owner_needs_eval_set
 from .owner_pack_inventory import build_owner_pack_inventory_report
+from .owner_entity_dossier_live import build_owner_entity_dossier_live_from_tournament_source
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_status import build_owner_pack_status_report
@@ -2444,6 +2445,7 @@ READ_TOOLS = {
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
+    "assistant_owner_entity_dossier_live",
     "assistant_sports_operations_status",
     "finance_accounting_report",
     "finance_closeout_diagnostics",
@@ -2542,6 +2544,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
+    "assistant_owner_entity_dossier_live",
     "assistant_sports_operations_status",
     "tournament_expediente_snapshot",
     "tournament_draft_inspect",
@@ -3257,6 +3260,23 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "entity_name": {"type": "string"},
                     },
                     "required": ["surface_id", "tournament_slug"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_entity_dossier_live",
+                "description": "Audita en modo read-only la carpeta viva por entidad para el Owner Pack/DG usando solo fuente local: evidencia soportada, faltantes, no-claims y limites por agregados.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "tournament_id": {"type": ["string", "null"]},
+                        "tournament_name": {"type": ["string", "null"]},
+                        "entity_name": {"type": ["string", "null"]},
+                    },
+                    "required": [],
                 },
             },
         },
@@ -8927,6 +8947,29 @@ async def _run_read_tool(
             entity_name=entity_name,
         )
         return build_response_pack_from_live_snapshot(snapshot).to_dict()
+
+    if tool_name == "assistant_owner_entity_dossier_live":
+        tournament_id = str(args.get("tournament_id") or "").strip() or None
+        tournament_name = str(args.get("tournament_name") or "").strip() or None
+        if bool(tournament_id) == bool(tournament_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Provide exactly one of tournament_id or tournament_name",
+            )
+        try:
+            source = await inspect_tournament_source(
+                gastos_session,
+                tournament_id=tournament_id,
+                tournament_name=tournament_name,
+            )
+        except TournamentSourceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TournamentSourceAmbiguousError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return build_owner_entity_dossier_live_from_tournament_source(
+            source,
+            entity_name=str(args.get("entity_name") or "").strip() or None,
+        ).to_dict()
 
     if tool_name == "assistant_sports_operations_status":
         tournament_id = str(args.get("tournament_id") or "").strip() or None
