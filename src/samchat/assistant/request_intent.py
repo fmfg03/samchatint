@@ -98,6 +98,27 @@ def _has_document_context(text: str) -> bool:
     )
 
 
+OWNER_AI_READINESS_TERMS = (
+    "que falta",
+    "que nos falta",
+    "que evidencia falta",
+    "faltantes",
+    "faltante",
+    "que tan listo",
+    "que tan preparado",
+    "readiness",
+    "listo para",
+    "preparado para",
+    "contestarle al director general",
+    "responderle al director general",
+    "contestarle al dueno",
+    "contestarle al dueno",
+    "responderle al dueno",
+    "responderle al dueno",
+    "owner pack",
+)
+
+
 OWNER_AI_CONTEXT_TERMS = (
     "carpeta por entidad",
     "carpetas por entidad",
@@ -131,15 +152,15 @@ OWNER_AI_CONTEXT_TERMS = (
     "para todos y cada uno de los torneos",
     "tableros preparados",
     "tableros del dueno",
-    "tableros del due?o",
+    "tableros del dueno",
     "tableros para el dueno",
-    "tableros para el due?o",
+    "tableros para el dueno",
     "tablero del director general",
     "tablero para director general",
     "tablero del dueno",
-    "tablero del due?o",
+    "tablero del dueno",
     "tablero para direccion general",
-    "tablero para direcci?n general",
+    "tablero para direccion general",
 )
 
 
@@ -181,9 +202,33 @@ def _extract_tournament_slug_hint(text: str) -> Optional[str]:
     return None
 
 
+def owner_ai_tournament_slug_hint(text: str) -> Optional[str]:
+    return _extract_tournament_slug_hint(text)
+
+
 def is_owner_ai_context_request(text: str) -> bool:
     normalized = normalize_request_text(text)
     return any(term in normalized for term in OWNER_AI_CONTEXT_TERMS)
+
+
+def is_owner_ai_readiness_request(text: str) -> bool:
+    normalized = normalize_request_text(text)
+    if not any(term in normalized for term in OWNER_AI_READINESS_TERMS):
+        return False
+    return is_owner_ai_context_request(text) or any(
+        token in normalized
+        for token in (
+            "director general",
+            "direccion general",
+            "dueno",
+            "dueno",
+            "owner pack",
+            "tablero",
+            "torneo",
+            "carpeta",
+            "evidencia",
+        )
+    )
 
 
 def is_owner_ai_conceptual_request(text: str) -> bool:
