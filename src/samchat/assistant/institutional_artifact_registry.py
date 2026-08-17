@@ -109,9 +109,10 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         name="Sports Operations Status",
         purpose="Narrow assistant-safe read-only wrapper over Sports Platform: mission, incidents, roster risk, matchday state and action queue.",
         module_path="samchat.assistant.sports_operations_status",
-        entrypoint="build_sports_operations_status_from_snapshot",
-        status="available_not_wired",
-        evidence_sources=("sports.platform_snapshot", "tournament.soul_snapshot", "sports_platform_audit"),
+        entrypoint="build_sports_operations_status_from_tournament_source",
+        status="wired",
+        assistant_tool="assistant_sports_operations_status",
+        evidence_sources=("local_tournament_db", "sports.platform_snapshot", "tournament.soul_snapshot", "sports_platform_audit"),
         input_contract=("tournament_snapshot", "focus?", "max_actions?", "soul_wizard_payload?"),
         output_contract=("operational_status", "priorities", "top_actions", "roster_summary", "incident_summary", "matchday_summary", "wizard_alignment", "safety_summary"),
         answers=(
@@ -119,7 +120,7 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
             "Que acciones operativas tienen prioridad hoy?",
             "Que equipos, cedulas o incidentes requieren atencion?",
         ),
-        next_wiring_step="Expose as read-only assistant tool after live local tournament source loading is selected; preserve SOUL Wizard alignment so creation drafts and operations status stay in one story.",
+        next_wiring_step="Expand live local source coverage for schedule, communications and media; preserve SOUL Wizard alignment so creation drafts and operations status stay in one story.",
     ),
     InstitutionalArtifactSpec(
         artifact_id="assistant.sports_platform_audit",

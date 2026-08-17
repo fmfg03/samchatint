@@ -158,6 +158,7 @@ from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_status import build_owner_pack_status_report
 from .owner_response_pack import build_response_pack_from_live_snapshot
+from .sports_operations_status import build_sports_operations_status_from_tournament_source
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -171,6 +172,11 @@ from .readonly_workspace import (
     workspace_task_mutation_allowed as _workspace_task_mutation_allowed,
 )
 from .tool_registry import build_tool_registry as _build_tool_registry
+from .tournament_goal_source import (
+    TournamentSourceAmbiguousError,
+    TournamentSourceNotFoundError,
+    inspect_tournament_source,
+)
 from .tournament_application_case import (
     TournamentApplicationCaseConflictError,
     TournamentApplicationCaseForbiddenError,
@@ -2438,6 +2444,7 @@ READ_TOOLS = {
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
+    "assistant_sports_operations_status",
     "finance_accounting_report",
     "finance_closeout_diagnostics",
     "finance_alerts_scan",
@@ -2535,6 +2542,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
+    "assistant_sports_operations_status",
     "tournament_expediente_snapshot",
     "tournament_draft_inspect",
     "tournament_draft_revise",
@@ -3249,6 +3257,25 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "entity_name": {"type": "string"},
                     },
                     "required": ["surface_id", "tournament_slug"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_sports_operations_status",
+                "description": "Diagnostico read-only acotado de operaciones deportivas desde la base local: prioridades, incidentes, roster, matchday, cola de acciones y alineacion opcional con SOUL Wizard.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "tournament_id": {"type": ["string", "null"]},
+                        "tournament_name": {"type": ["string", "null"]},
+                        "focus": {"type": ["string", "null"]},
+                        "max_actions": {"type": "integer", "minimum": 0, "maximum": 20, "default": 5},
+                        "soul_wizard_payload": {"type": ["object", "null"]},
+                    },
+                    "required": [],
                 },
             },
         },
@@ -8900,6 +8927,39 @@ async def _run_read_tool(
             entity_name=entity_name,
         )
         return build_response_pack_from_live_snapshot(snapshot).to_dict()
+
+    if tool_name == "assistant_sports_operations_status":
+        tournament_id = str(args.get("tournament_id") or "").strip() or None
+        tournament_name = str(args.get("tournament_name") or "").strip() or None
+        if bool(tournament_id) == bool(tournament_name):
+            raise HTTPException(
+                status_code=400,
+                detail="Provide exactly one of tournament_id or tournament_name",
+            )
+        try:
+            source = await inspect_tournament_source(
+                gastos_session,
+                tournament_id=tournament_id,
+                tournament_name=tournament_name,
+            )
+        except TournamentSourceNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except TournamentSourceAmbiguousError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        max_actions = int(args.get("max_actions") or 5)
+        max_actions = max(0, min(max_actions, 20))
+        wizard_payload = args.get("soul_wizard_payload")
+        if wizard_payload is not None and not isinstance(wizard_payload, dict):
+            raise HTTPException(
+                status_code=400,
+                detail="soul_wizard_payload must be an object when provided",
+            )
+        return build_sports_operations_status_from_tournament_source(
+            source,
+            max_actions=max_actions,
+            focus=str(args.get("focus") or "").strip() or None,
+            soul_wizard_payload=wizard_payload,
+        ).to_dict()
 
     if tool_name == "assistant_canonical_query":
         result = await execute_canonical_action(

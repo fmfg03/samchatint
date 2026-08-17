@@ -35,7 +35,7 @@ The next assistant work should therefore proceed in this order:
 | `samchat.accounting_historical.service` | Available, not wired | Useful; needs narrow precedent query | Valuable for institutional accounting memory. Do not expose full import/COI machinery to chat. |
 | `samchat.sports_platform.service` | Partial | Use only through narrowed wrappers | Rich operations projection, but too broad/raw for direct assistant exposure. Start with audit/status/action queue surfaces. |
 | `samchat.assistant.sports_platform_audit` | Available, not wired | Ready as gate before wiring sports modules | Good product filter: classifies what is assistant-ready vs internal/demo. |
-| `samchat.assistant.sports_operations_status` | Available, not wired | Ready as narrowed wrapper candidate | Assistant-safe summary over mission, incidents, roster risk, matchday state and action queue; accepts SOUL Wizard draft context and does not expose raw Sports Platform. |
+| `samchat.assistant.sports_operations_status` | Wired read-only | Narrowed operations wrapper | Assistant-safe summary over local tournament source, mission, incidents, roster risk, matchday state and action queue; accepts SOUL Wizard draft context and does not expose raw Sports Platform. |
 | `samchat.sports_platform.director_general_dossier` | Partial | Useful for Owner Pack, not raw | Maps directly to owner's requested folders by entity. Needs live-source confidence and missing-field reporting. |
 | `samchat.assistant.owner_pack_readiness` | Wired | Ready to keep/use | Current best example of read-only product semantics: status, evidence found, missing evidence and next questions. |
 | `samchat.assistant.owner_pack_live_evidence` | Wired | Keep but later consolidate | Correct fail-closed local DB adapter. Should converge with other live evidence adapters later. |
@@ -107,7 +107,7 @@ Expose the registry as a way for the assistant to explain ?what tools and instit
 
 ### 2. Sports operations status wrapper
 
-Create a narrowed tool over `sports_platform_audit` / `sports_platform.service` that also accepts SOUL Wizard draft context, so planning and live operations status stay connected. It answers:
+Initial read-only router exposure is implemented. Continue improving source coverage while keeping this a narrowed tool over `sports_platform_audit` / `sports_platform.service` that also accepts SOUL Wizard draft context, so planning and live operations status stay connected. It answers:
 
 - what is ready;
 - what is missing;
@@ -115,7 +115,7 @@ Create a narrowed tool over `sports_platform_audit` / `sports_platform.service` 
 - what next action is suggested;
 - whether the SOUL Wizard draft is ready for operations review or still missing phases/dates/activities.
 
-Do not expose raw sports platform snapshots.
+Do not expose raw sports platform snapshots. Current limitation: local source coverage still marks schedule, communications and rich dates as unavailable when they are not present in controlled local tables.
 
 ### 3. Owner entity dossier live wrapper
 

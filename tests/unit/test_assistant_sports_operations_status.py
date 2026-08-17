@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
 from samchat.assistant.sports_operations_status import (
     SPORTS_OPERATIONS_STATUS_ONLY,
     build_sports_operations_status_from_snapshot,
+    build_sports_operations_status_from_tournament_source,
 )
 
 
@@ -202,3 +205,145 @@ def test_sports_operations_status_marks_incomplete_wizard_context_as_planning_ga
     assert "phases" in alignment["missing_paths"]
     assert alignment["integration_decision"] == "wizard_needs_completion_before_operations_review"
     assert alignment["live_operations_created"] is False
+
+
+class _Obj:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+
+def test_sports_operations_status_from_local_tournament_source_is_fail_closed_about_missing_rich_data() -> None:
+    source = _Obj(
+        schema_version="local.v1",
+        source_hash="sha256:local",
+        domain_write_performed=False,
+        project=_Obj(
+            id="tor-1",
+            name="Copa Local",
+            categorias=["Sub 15"],
+            etapas=["Inscripcion"],
+        ),
+        operations_link=None,
+        observed_operations=_Obj(
+            scope_slug=None,
+            teams_count=0,
+            players_count=0,
+            categories=[],
+            branches=[],
+            states=[],
+        ),
+        unavailable_components=["matches_and_schedule", "communications"],
+    )
+
+    report = build_sports_operations_status_from_tournament_source(source)
+
+    assert report.source_summary == {
+        "source": "samchat_local_tournament_db",
+        "source_hash": "sha256:local",
+        "schema_version": "local.v1",
+        "unavailable_components": ["matches_and_schedule", "communications"],
+        "domain_write_performed": False,
+    }
+    assert report.operational_status == "attention_required"
+    assert report.safety_summary["read_only"] is True
+    assert report.writes_attempted == 0
+    assert report.incident_summary["open_count"] >= 1
+    assert any(item.get("type") == "missing_operations_link" for item in report.incident_summary["incidents"])
+
+async def _fake_inspect_tournament_source(session, *, tournament_id=None, tournament_name=None):
+    assert tournament_name == "Copa Local"
+    assert tournament_id is None
+    return _Obj(
+        schema_version="local.v1",
+        source_hash="sha256:router",
+        domain_write_performed=False,
+        project=_Obj(
+            id="tor-router",
+            name="Copa Local",
+            categorias=["Sub 15"],
+            etapas=["Inscripcion"],
+        ),
+        operations_link=_Obj(operations_tournament_slug="copa-local"),
+        observed_operations=_Obj(
+            scope_slug="copa-local",
+            teams_count=3,
+            players_count=42,
+            categories=["Sub 15"],
+            branches=["Varonil"],
+            states=["CDMX"],
+        ),
+        unavailable_components=["matches_and_schedule"],
+    )
+
+
+async def _fake_inspect_tournament_not_found(session, *, tournament_id=None, tournament_name=None):
+    from samchat.assistant.tournament_goal_source import TournamentSourceNotFoundError
+
+    raise TournamentSourceNotFoundError("local tournament was not found")
+
+
+@pytest.mark.asyncio
+async def test_router_runs_sports_operations_status_read_tool_from_local_source(monkeypatch) -> None:
+    import samchat.assistant.router as assistant_router
+
+    monkeypatch.setattr(
+        assistant_router,
+        "inspect_tournament_source",
+        _fake_inspect_tournament_source,
+    )
+
+    result = await assistant_router._run_read_tool(
+        "assistant_sports_operations_status",
+        {"tournament_name": "Copa Local", "max_actions": 2},
+        gastos_session=object(),
+        tournament_key_default=None,
+        current_role="admin",
+    )
+
+    assert result["report_id"] == "sports_operations_status_v1"
+    assert result["source_summary"]["source"] == "samchat_local_tournament_db"
+    assert result["source_summary"]["source_hash"] == "sha256:router"
+    assert result["safety_summary"]["read_only"] is True
+    assert result["writes_attempted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_router_sports_operations_status_requires_one_local_selector() -> None:
+    import pytest
+    from fastapi import HTTPException
+    import samchat.assistant.router as assistant_router
+
+    with pytest.raises(HTTPException) as excinfo:
+        await assistant_router._run_read_tool(
+            "assistant_sports_operations_status",
+            {},
+            gastos_session=object(),
+            tournament_key_default=None,
+            current_role="admin",
+        )
+
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_router_sports_operations_status_reports_local_not_found(monkeypatch) -> None:
+    import pytest
+    from fastapi import HTTPException
+    import samchat.assistant.router as assistant_router
+
+    monkeypatch.setattr(
+        assistant_router,
+        "inspect_tournament_source",
+        _fake_inspect_tournament_not_found,
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        await assistant_router._run_read_tool(
+            "assistant_sports_operations_status",
+            {"tournament_name": "No Existe"},
+            gastos_session=object(),
+            tournament_key_default=None,
+            current_role="admin",
+        )
+
+    assert excinfo.value.status_code == 404

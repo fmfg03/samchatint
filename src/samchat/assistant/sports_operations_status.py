@@ -40,6 +40,7 @@ class SportsOperationsStatusReport:
     communication_summary: dict[str, Any] = field(default_factory=dict)
     wizard_alignment: dict[str, Any] = field(default_factory=dict)
     source_modules: list[str] = field(default_factory=list)
+    source_summary: dict[str, Any] = field(default_factory=dict)
     excluded_modules: list[str] = field(default_factory=list)
     safety_summary: dict[str, Any] = field(default_factory=dict)
     execution_status: str = NOT_EXECUTED
@@ -70,8 +71,8 @@ def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, (list, tuple)) else []
 
 
-def _status_from_counts(*, high: int, open_actions: int, blocked_teams: int, open_matches: int) -> str:
-    if high or blocked_teams:
+def _status_from_counts(*, high: int, open_actions: int, blocked_teams: int, open_matches: int, incidents: int = 0) -> str:
+    if high or blocked_teams or incidents:
         return "attention_required"
     if open_actions or open_matches:
         return "in_progress"
@@ -152,6 +153,133 @@ def _wizard_alignment(payload: Optional[Mapping[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _snapshot_from_tournament_source(source: Any) -> dict[str, Any]:
+    project = getattr(source, "project", None)
+    operations = getattr(source, "observed_operations", None)
+    link = getattr(source, "operations_link", None)
+    project_name = _safe_str(getattr(project, "name", ""))
+    project_id = _safe_str(getattr(project, "id", ""))
+    slug = _safe_str(getattr(link, "operations_tournament_slug", ""))
+    categories = list(getattr(project, "categorias", []) or getattr(operations, "categories", []) or [])
+    teams_count = _safe_int(getattr(operations, "teams_count", 0))
+    players_count = _safe_int(getattr(operations, "players_count", 0))
+    unavailable = list(getattr(source, "unavailable_components", []) or [])
+    phases = list(getattr(project, "etapas", []) or [])
+    scope_slug = _safe_str(getattr(operations, "scope_slug", ""))
+
+    risks: list[dict[str, Any]] = []
+    pending_actions: list[str] = []
+    if not scope_slug:
+        risks.append(
+            {
+                "severity": "medium",
+                "code": "missing_operations_link",
+                "message": "El torneo local no tiene liga operativa observada para equipos/jugadores.",
+            }
+        )
+        pending_actions.append("Configurar liga operativa del torneo antes de prometer tablero vivo completo.")
+    if "matches_and_schedule" in unavailable:
+        risks.append(
+            {
+                "severity": "medium",
+                "code": "schedule_unavailable",
+                "message": "Fechas/calendario rico no estan disponibles en la fuente local actual.",
+            }
+        )
+        pending_actions.append("Completar fases, fechas y actividades desde SOUL Wizard o fuente local equivalente.")
+
+    states = list(getattr(operations, "states", []) or [])
+    entity_name = _safe_str(states[0] if states else None) or "Operaciones"
+    team_stub = {
+        "team_id": scope_slug or project_id or project_name,
+        "team_name": project_name or "Torneo",
+        "entity_name": entity_name,
+        "category": categories[0] if categories else None,
+        "players_count": players_count,
+        "documents_complete_players": players_count if players_count else 0,
+        "documents_verified_players": 0,
+        "primary_manager": {},
+    }
+
+    return {
+        "ok": True,
+        "tournaments": [
+            {
+                "id": project_id,
+                "name": project_name,
+                "slug": slug or project_id,
+            }
+        ],
+        "summary": {
+            "teams_count": teams_count,
+            "players_count": players_count,
+            "matches_count": 0,
+            "teams_with_incomplete_documents": 0,
+        },
+        "operations": {"matches": [], "standings": []},
+        "communications": {"email_inbox_unread": 0, "whatsapp_unread": 0},
+        "marketing": {"media": {}},
+        "soul": {
+            "tournament": {
+                "id": project_id,
+                "name": project_name,
+                "slug": slug or project_id,
+            },
+            "pending_actions": pending_actions,
+            "risks": risks,
+            "operations": {
+                "entities": [
+                    {
+                        "entity_name": entity_name,
+                        "teams": [team_stub] if teams_count or players_count else [],
+                    }
+                ],
+            },
+            "compliance": {
+                "players_count": players_count,
+                "completion_rate": 1.0 if players_count else 0.0,
+                "verification_rate": 0.0,
+                "incomplete_teams": [],
+                "required_documents": [],
+            },
+            "phases": [
+                {
+                    "phase_id": f"phase_{index}",
+                    "name": phase,
+                    "start_date": None,
+                    "end_date": None,
+                    "activities": [],
+                }
+                for index, phase in enumerate(phases, start=1)
+            ],
+        },
+    }
+
+
+def build_sports_operations_status_from_tournament_source(
+    source: Any,
+    *,
+    max_actions: int = 5,
+    focus: Optional[str] = None,
+    soul_wizard_payload: Optional[Mapping[str, Any]] = None,
+) -> SportsOperationsStatusReport:
+    report = build_sports_operations_status_from_snapshot(
+        _snapshot_from_tournament_source(source),
+        max_actions=max_actions,
+        focus=focus,
+        soul_wizard_payload=soul_wizard_payload,
+    )
+    payload = report.to_dict()
+    payload["source_summary"] = {
+        "source": "samchat_local_tournament_db",
+        "source_hash": getattr(source, "source_hash", None),
+        "schema_version": getattr(source, "schema_version", None),
+        "unavailable_components": list(getattr(source, "unavailable_components", []) or []),
+        "domain_write_performed": bool(getattr(source, "domain_write_performed", False)),
+    }
+    return SportsOperationsStatusReport(**payload)
+
+
 def build_sports_operations_status_from_snapshot(
     snapshot: Mapping[str, Any],
     *,
@@ -194,6 +322,7 @@ def build_sports_operations_status_from_snapshot(
         open_actions=open_actions,
         blocked_teams=blocked_teams,
         open_matches=open_matches,
+        incidents=incident_count,
     )
 
     ready_modules = set(audit.assistant_ready_modules)
@@ -281,4 +410,5 @@ __all__ = [
     "SPORTS_OPERATIONS_STATUS_ONLY",
     "SportsOperationsStatusReport",
     "build_sports_operations_status_from_snapshot",
+    "build_sports_operations_status_from_tournament_source",
 ]
