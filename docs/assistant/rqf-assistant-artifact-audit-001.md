@@ -41,8 +41,8 @@ The next assistant work should therefore proceed in this order:
 | `samchat.assistant.owner_pack_readiness` | Wired | Ready to keep/use | Current best example of read-only product semantics: status, evidence found, missing evidence and next questions. |
 | `samchat.assistant.owner_pack_live_evidence` | Wired | Keep but later consolidate | Correct fail-closed local DB adapter. Should converge with other live evidence adapters later. |
 | `samchat.assistant.owner_entity_dossier_live` | Wired read-only | Owner/entity folder live audit | Uses local tournament source plus DG dossier audit to report supported evidence, missing evidence and aggregate-only non-claims. |
-| `samchat.assistant.soul_wizard` | Available contract / UI-oriented | Continue as tournament creation intake layer | Good foundation for Operations creating tournament SOULs step by step: phases, dates, activities, categories and evidence. |
-| `samchat.assistant.tournament_goal_*` | Partial | Consolidate with SOUL Wizard before more UI | Covers cloning/planning/diff logic. Avoid two separate tournament creation stories. |
+| `samchat.assistant.soul_wizard` | Available contract / UI-oriented | Continue as tournament creation intake layer | Good foundation for Operations creating tournament SOULs step by step: phases, dates, activities, categories and evidence. Now also usable as the continuation payload for tournament goal cases. |
+| `samchat.assistant.tournament_goal_*` | Partial, reconciled with SOUL | Keep as persistent case/diff layer | Covers cloning/planning/diff logic. It now emits a SOUL Wizard continuation payload so tournament creation remains one story: case/diff first, wizard detail next. |
 | `samchat.assistant.specialist_agents` and `specialist_orchestrator` | Eval-centric foundation | Keep for assistant architecture, not production writes | Good precedent -> verification -> proposal pattern after verifier invariants. Needs real operational cases and handoff UX. |
 | `samchat.assistant.analyst_workbench` | Wired/canary-style | Keep as conversation quality layer | Useful for sufficiency, suggested routes, evidence diagnostics and no-overclaim guard. |
 | `samchat.assistant.analyst_live_evidence` | Dormant/allowlisted live evidence | Keep, but consolidate later | Broad adapter for expenses, budgets, CFDI, vendors and documents. Avoid duplicating owner pack live evidence long-term. |
@@ -129,9 +129,13 @@ Initial read-only router exposure is implemented. It queries historical policy l
 
 ### 5. SOUL Wizard continuation
 
-Continue the tournament creation wizard, but reconcile it with `tournament_goal_*` so there is one creation story:
+Initial reconciliation is implemented: `tournament_goal_case` now includes a JSON-safe `soul_wizard_payload` in the persisted answer contract and public response. The tournament goal case owns source inspection, resumability and business diff; SOUL Wizard owns phases, dates, activities and operations-facing completion.
 
-source tournament -> clone draft -> phases/dates/activities -> validation -> preview -> approval-gated creation.
+The intended single creation story is:
+
+source tournament -> persistent goal case -> clone diff -> SOUL Wizard continuation -> phases/dates/activities -> validation -> preview -> approval-gated creation.
+
+Current limitation: local tournament source still lacks rich dates, owners and activity evidence for most tournaments, so the generated SOUL payload intentionally asks Operations to define those fields rather than inventing them.
 
 ### 6. Specialist agents after evidence contracts
 

@@ -139,6 +139,22 @@ async def test_case_is_persistent_resumable_and_idempotent(
     assert created["source"]["bound_snapshot"]["snapshot_hash"] == (
         created["diff"]["base_snapshot_hash"]
     )
+    soul_payload = created["soul_wizard_payload"]
+    assert soul_payload["contract"]["contract_id"] == "soul_wizard_contract_v1"
+    assert soul_payload["draft"]["tournament_name"] == "Torneo 2027"
+    assert soul_payload["draft"]["source_tournament_id"] == (
+        created["source"]["bound_snapshot"]["tournament_id"]
+    )
+    assert soul_payload["draft"]["source_snapshot_id"] == (
+        created["diff"]["base_snapshot_hash"]
+    )
+    assert soul_payload["draft"]["categories"] == ["2012", "2013"]
+    assert soul_payload["preview"]["mode"] == "clone_diff"
+    assert soul_payload["preview"]["activation_allowed"] is False
+    assert soul_payload["preview"]["operational_writes_allowed"] is False
+    assert "missing_phase_start_date" in {
+        issue["code"] for issue in soul_payload["readiness"]["issues"]
+    }
     assert created["next_questions"]
     assert created["missing_information"] == ["source_component:matches_and_schedule"]
     stored = AnalystCaseStore(session).get_case(created["case_id"])
