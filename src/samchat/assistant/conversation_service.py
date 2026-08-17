@@ -74,6 +74,13 @@ from .request_intent import (
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
+from .operator_workspace_resume import (
+    build_operator_workspace_resume_response,
+    detect_operator_workspace_resume_intent,
+    load_latest_operator_workspace_snapshot,
+    render_operator_workspace_resume_markdown,
+)
+from .operator_workspace_snapshot import build_operator_workspace_snapshot
 from .owner_operator_workflow import run_owner_operator_workflow
 from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
 from .owner_pack_readiness import (
@@ -93,6 +100,22 @@ from .specialist_live_context import (
     render_specialist_live_context_markdown,
     render_specialist_preview_diagnostics_markdown,
     resolve_specialist_preview_live_context,
+)
+from .specialist_continuity_context import (
+    render_specialist_continuity_context_markdown,
+    resolve_specialist_preview_continuity_context,
+)
+from .specialist_evidence_quality import (
+    build_specialist_evidence_quality_gate,
+    render_specialist_evidence_quality_gate_markdown,
+)
+from .specialist_memory_context import (
+    render_specialist_memory_context_markdown,
+    resolve_specialist_preview_memory_context,
+)
+from .specialist_resume_guidance import (
+    build_specialist_resume_guidance,
+    render_specialist_resume_guidance_markdown,
 )
 from .request_router import route_request
 
@@ -582,13 +605,37 @@ async def _build_specialist_preview_surface_response(
     if task_id is None:
         return None
     surface = render_specialist_preview_surface(task_id, raw_message=raw_message)
+    continuity_context = resolve_specialist_preview_continuity_context(conversation)
     live_context = await resolve_specialist_preview_live_context(
         session, surface.understood_context
+    )
+    memory_context = await resolve_specialist_preview_memory_context(
+        session=session,
+        conversation=conversation,
+        raw_message=raw_message,
+        understood_context=surface.understood_context,
     )
     diagnostics = build_specialist_preview_diagnostics(
         task_id=task_id,
         understood_context=surface.understood_context,
         live_context=live_context,
+    )
+    business_preview_payload = (
+        surface.business_preview.to_dict()
+        if hasattr(surface.business_preview, "to_dict")
+        else dict(surface.business_preview)
+    )
+    evidence_quality_gate = build_specialist_evidence_quality_gate(
+        business_preview=business_preview_payload,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        memory_context=memory_context,
+        continuity_context=continuity_context,
+    )
+    resume_guidance = build_specialist_resume_guidance(
+        diagnostics=diagnostics,
+        continuity_context=continuity_context,
+        memory_context=memory_context,
     )
     workspace_cards = build_specialist_preview_workspace_cards(
         task_id=task_id,
@@ -596,6 +643,10 @@ async def _build_specialist_preview_surface_response(
         live_context=live_context,
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
+        memory_context=memory_context,
+        continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
+        resume_guidance=resume_guidance,
     )
     step_trace = build_specialist_workspace_step_trace(
         task_id=task_id,
@@ -603,36 +654,73 @@ async def _build_specialist_preview_surface_response(
         live_context=live_context,
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
+        memory_context=memory_context,
+        continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
+        resume_guidance=resume_guidance,
     )
     source_panel = build_specialist_workspace_source_panel(
         understood_context=surface.understood_context,
         live_context=live_context,
         diagnostics=diagnostics,
         preview_render=surface.preview_render.to_dict(),
+        memory_context=memory_context,
+        continuity_context=continuity_context,
+        evidence_quality_gate=evidence_quality_gate,
+        resume_guidance=resume_guidance,
+    )
+    preview_render_payload = surface.preview_render.to_dict()
+    operator_workspace_snapshot = build_operator_workspace_snapshot(
+        conversation_id=getattr(conversation, "id", ""),
+        task_id=task_id,
+        preview_render=preview_render_payload,
+        business_preview=business_preview_payload,
+        understood_context=surface.understood_context,
+        live_context=live_context,
+        continuity_context=continuity_context,
+        memory_context=memory_context,
+        diagnostics=diagnostics,
+        evidence_quality_gate=evidence_quality_gate,
+        resume_guidance=resume_guidance,
+        workspace_cards=workspace_cards,
+        step_trace=step_trace,
+        source_panel=source_panel,
     )
     live_context_markdown = render_specialist_live_context_markdown(live_context)
+    continuity_context_markdown = render_specialist_continuity_context_markdown(continuity_context)
+    memory_context_markdown = render_specialist_memory_context_markdown(memory_context)
     diagnostics_markdown = render_specialist_preview_diagnostics_markdown(diagnostics)
+    evidence_quality_markdown = render_specialist_evidence_quality_gate_markdown(evidence_quality_gate)
+    resume_guidance_markdown = render_specialist_resume_guidance_markdown(resume_guidance)
     assistant_message = surface.assistant_message.replace(
-        "\n# ", f"\n{live_context_markdown}\n{diagnostics_markdown}\n# ", 1
+        "\n# ",
+        f"\n{live_context_markdown}\n{continuity_context_markdown}\n{memory_context_markdown}\n{diagnostics_markdown}\n{evidence_quality_markdown}\n{resume_guidance_markdown}\n# ",
+        1,
     )
     tool_trace_entry = surface.tool_trace()
     tool_trace_entry["specialist_preview_surface"]["live_context"] = live_context
+    tool_trace_entry["specialist_preview_surface"]["continuity_context"] = continuity_context
+    tool_trace_entry["specialist_preview_surface"]["memory_context"] = memory_context
     tool_trace_entry["specialist_preview_surface"]["diagnostics"] = diagnostics
+    tool_trace_entry["specialist_preview_surface"]["evidence_quality_gate"] = evidence_quality_gate
+    tool_trace_entry["specialist_preview_surface"]["resume_guidance"] = resume_guidance
     tool_trace_entry["specialist_preview_surface"]["workspace_cards"] = workspace_cards
     tool_trace_entry["specialist_preview_surface"]["step_trace"] = step_trace
     tool_trace_entry["specialist_preview_surface"]["source_panel"] = source_panel
+    tool_trace_entry["specialist_preview_surface"]["operator_workspace_snapshot"] = operator_workspace_snapshot
     tool_trace_entry["result"]["live_context"] = live_context
+    tool_trace_entry["result"]["continuity_context"] = continuity_context
+    tool_trace_entry["result"]["memory_context"] = memory_context
     tool_trace_entry["result"]["diagnostics"] = diagnostics
+    tool_trace_entry["result"]["evidence_quality_gate"] = evidence_quality_gate
+    tool_trace_entry["result"]["resume_guidance"] = resume_guidance
     tool_trace_entry["result"]["workspace_cards"] = workspace_cards
     tool_trace_entry["result"]["step_trace"] = step_trace
     tool_trace_entry["result"]["source_panel"] = source_panel
+    tool_trace_entry["result"]["operator_workspace_snapshot"] = operator_workspace_snapshot
     tool_trace = [tool_trace_entry]
-    preview_render = surface.preview_render.to_dict()
-    business_preview = (
-        surface.business_preview.to_dict()
-        if hasattr(surface.business_preview, "to_dict")
-        else dict(surface.business_preview)
-    )
+    preview_render = preview_render_payload
+    business_preview = business_preview_payload
     await _persist_document_conversation_messages(
         raw_message=raw_message,
         assistant_message=assistant_message,
@@ -643,10 +731,15 @@ async def _build_specialist_preview_surface_response(
             "business_preview": business_preview,
             "understood_context": surface.understood_context,
             "live_context": live_context,
+            "continuity_context": continuity_context,
+            "memory_context": memory_context,
             "diagnostics": diagnostics,
+            "evidence_quality_gate": evidence_quality_gate,
+            "resume_guidance": resume_guidance,
             "workspace_cards": workspace_cards,
             "step_trace": step_trace,
             "source_panel": source_panel,
+            "operator_workspace_snapshot": operator_workspace_snapshot,
         },
     )
     return _response_object(
@@ -654,6 +747,40 @@ async def _build_specialist_preview_surface_response(
         tool_trace=tool_trace,
         preview_render=preview_render,
     )
+
+
+async def _build_operator_workspace_resume_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+) -> Optional[Any]:
+    if not detect_operator_workspace_resume_intent(raw_message):
+        return None
+
+    resolution = await load_latest_operator_workspace_snapshot(
+        session=session,
+        conversation_id=conversation.id,
+    )
+    resume = build_operator_workspace_resume_response(resolution)
+    rendered = render_operator_workspace_resume_markdown(resume)
+    tool_trace = [
+        {
+            "tool": "assistant_operator_workspace_resume",
+            "operator_workspace_resume": resume,
+            "provider_called": False,
+            "writes_attempted": False,
+            "safe_to_execute": False,
+        }
+    ]
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+        assistant_tool_payload={"operator_workspace_resume": resume},
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
 async def _persist_document_conversation_messages(
@@ -1154,6 +1281,14 @@ async def run_conversation_turn(
     if capability_response is not None:
         return capability_response
 
+    workspace_resume_response = await _build_operator_workspace_resume_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if workspace_resume_response is not None:
+        return workspace_resume_response
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1393,6 +1528,14 @@ async def run_message_turn_with_pending(
     )
     if capability_response is not None:
         return capability_response
+
+    workspace_resume_response = await _build_operator_workspace_resume_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if workspace_resume_response is not None:
+        return workspace_resume_response
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,

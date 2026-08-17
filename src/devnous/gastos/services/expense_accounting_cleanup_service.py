@@ -14,6 +14,10 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from samchat.assistant.historical_accounting_precedent import (
+    query_historical_accounting_precedents,
+)
+
 from ..models import CFDIReport, CuentaContable, ExpenseReport
 
 DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "1120-001-001"
@@ -53,6 +57,101 @@ def _truthy(value: Any) -> bool:
         "si",
         "sí",
     }
+
+
+def _clean_text_part(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if text and text not in {"-", "\u2014"} else ""
+
+
+def _historical_precedent_query_for_expense(expense: ExpenseReport) -> str:
+    """Build a conservative evidence query for historical accounting lookup."""
+
+    cfdi = getattr(expense, "cfdi_report", None)
+    empleado = getattr(expense, "empleado", None)
+    document = getattr(expense, "documento", None)
+    parts = [
+        getattr(expense, "concepto", None),
+        getattr(expense, "proyecto", None),
+        getattr(expense, "fase_torneo", None),
+        getattr(expense, "metodo_pago", None),
+        getattr(expense, "numero_factura", None),
+        getattr(cfdi, "emisor_nombre", None),
+        getattr(cfdi, "emisor_rfc", None),
+        getattr(empleado, "nombre", None),
+        getattr(document, "numero_referencia", None),
+    ]
+    seen: set[str] = set()
+    tokens: list[str] = []
+    for value in parts:
+        text = _clean_text_part(value)
+        key = text.casefold()
+        if not text or key in seen:
+            continue
+        seen.add(key)
+        tokens.append(text)
+    return " ".join(tokens[:8])
+
+
+async def build_historical_precedent_evidence(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    *,
+    limit: int = 3,
+) -> Dict[str, Any]:
+    """Return read-only accounting precedent evidence for cleanup review.
+
+    This is intentionally advisory: it never assigns cuentas contables and never
+    changes the expense. Historical usage can support a human decision, but it is
+    not authority to classify a current gasto.
+    """
+
+    query = _historical_precedent_query_for_expense(expense)
+    if not query:
+        return {
+            "status": "invalid_query",
+            "headline": "Sin busqueda historica suficiente",
+            "summary": "El gasto no tiene concepto, CFDI, empleado o documento suficiente para buscar precedentes.",
+            "query": "",
+            "candidates": [],
+            "safety_summary": {
+                "read_only": True,
+                "account_assignment_performed": False,
+            },
+            "non_claims": [
+                "No asigna automaticamente la cuenta contable.",
+                "No reemplaza la revision de Finanzas/Contabilidad.",
+            ],
+        }
+    try:
+        report = await query_historical_accounting_precedents(
+            session,
+            query=query,
+            company_code="01",
+            fiscal_year=getattr(expense, "edicion", None),
+            limit=limit,
+        )
+        payload = report.to_dict()
+        payload.setdefault("safety_summary", {})[
+            "account_assignment_performed"
+        ] = False
+        return payload
+    except Exception as exc:  # pragma: no cover - defensive fail-closed path
+        return {
+            "status": "precedent_lookup_failed",
+            "headline": "Precedente historico no disponible",
+            "summary": f"No se pudo consultar el historico contable: {exc}",
+            "query": query,
+            "candidates": [],
+            "safety_summary": {
+                "read_only": True,
+                "account_assignment_performed": False,
+            },
+            "non_claims": [
+                "No asigna automaticamente la cuenta contable.",
+                "No crea ni modifica gastos, polizas, catalogos o partidas.",
+            ],
+        }
 
 
 def resolve_default_cleanup_contra_cuenta(
@@ -144,6 +243,8 @@ async def load_cleanup_expenses(
 async def build_cleanup_preview(
     session: AsyncSession,
     expense: ExpenseReport,
+    *,
+    include_historical_precedent: bool = False,
 ) -> Dict[str, Any]:
     """Build the fiscal/accounting preview plus readiness labels."""
 
@@ -167,11 +268,17 @@ async def build_cleanup_preview(
             issues.append(f"Falta cuenta de retención {retention.get('label')}")
 
     status = "Listo COI" if not issues else "Pendiente"
-    return {
+    state = {
         "preview": preview,
         "issues": issues,
         "status": status,
     }
+    if include_historical_precedent:
+        state["historical_precedent_evidence"] = await build_historical_precedent_evidence(
+            session,
+            expense,
+        )
+    return state
 
 
 async def save_expense_cleanup(
@@ -339,6 +446,7 @@ __all__ = [
     "DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO",
     "DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE",
     "build_cleanup_preview",
+    "build_historical_precedent_evidence",
     "list_unassigned_cfdi_options",
     "load_cleanup_expenses",
     "resolve_default_cleanup_contra_cuenta",

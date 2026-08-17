@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
+import json
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping, Optional
 
@@ -25,6 +26,7 @@ from .analyst_case_store import (
     AnalystCaseStoreError,
     version_id_for,
 )
+from .soul_wizard import build_soul_wizard_clone_payload
 from .tournament_goal_shadow import (
     TournamentGoalShadow,
     TournamentSnapshot,
@@ -140,6 +142,82 @@ def _evidence(
     ]
 
 
+def _soul_wizard_payload_for_shadow(
+    *,
+    source_payload: Dict[str, Any],
+    shadow: TournamentGoalShadow,
+) -> Dict[str, Any]:
+    """Return the SOUL Wizard continuation payload for this goal case.
+
+    The tournament goal shadow owns the case, diff and resumability. The SOUL
+    Wizard owns operations-facing intake details such as phases, dates and
+    activities. This bridge keeps the two artifacts aligned without creating a
+    second tournament-creation path.
+    """
+
+    wizard_source = {
+        "snapshot_hash": source_payload.get("source_hash"),
+        "tournament": {
+            "id": shadow.source.tournament_id,
+            "name": shadow.source.name,
+            "description": shadow.source.description,
+        },
+        "categories": list(shadow.source.categories),
+        "branches": [],
+        "expected_entities": [],
+        "expected_teams": None,
+        "required_documents": [],
+        "eligibility_rules": [],
+        "finance_baseline": [],
+        "phases": [
+            {
+                "phase_id": f"phase_{index}",
+                "name": stage,
+                "start_date": None,
+                "end_date": None,
+                "activities": [
+                    {
+                        "activity_id": "define_phase_plan",
+                        "name": f"Definir actividades, fechas y responsables de {stage}",
+                        "owner": None,
+                        "due_date": None,
+                    }
+                ],
+            }
+            for index, stage in enumerate(shadow.source.stages, start=1)
+            if stage
+        ],
+    }
+    overrides: Dict[str, Any] = {
+        "draft_id": f"soul_from_{shadow.draft.draft_hash[:12]}",
+        "tournament_name": shadow.draft.name,
+        "categories": list(shadow.draft.categories),
+        "source_tournament_id": shadow.source.tournament_id,
+        "source_snapshot_id": shadow.source.snapshot_hash,
+    }
+    if shadow.draft.stages != shadow.source.stages:
+        overrides["phases"] = [
+            {
+                "phase_id": f"phase_{index}",
+                "name": stage,
+                "start_date": None,
+                "end_date": None,
+                "activities": [
+                    {
+                        "activity_id": "define_phase_plan",
+                        "name": f"Definir actividades, fechas y responsables de {stage}",
+                        "owner": None,
+                        "due_date": None,
+                    }
+                ],
+            }
+            for index, stage in enumerate(shadow.draft.stages, start=1)
+            if stage
+        ]
+    payload = build_soul_wizard_clone_payload(wizard_source, overrides=overrides)
+    return json.loads(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
 def _answer_contract(
     *,
     source_payload: Dict[str, Any],
@@ -151,6 +229,10 @@ def _answer_contract(
         "kind": "tournament_goal_shadow",
         "source_authority": source_payload,
         **payload,
+        "soul_wizard_payload": _soul_wizard_payload_for_shadow(
+            source_payload=source_payload,
+            shadow=shadow,
+        ),
         "operational_writes": False,
     }
 
@@ -169,6 +251,7 @@ def _public_response(case: AnalystCase) -> Dict[str, Any]:
         "draft": contract.get("draft") or {},
         "validation": contract.get("validation") or {},
         "diff": contract.get("business_diff") or {},
+        "soul_wizard_payload": contract.get("soul_wizard_payload") or {},
         "answer": case.current_answer,
         "next_questions": list(case.next_questions),
         "missing_information": list(contract.get("missing_information") or []),

@@ -478,6 +478,7 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
 
     assert "Contexto encontrado" in response.assistant_message
     assert "Diagnostico operativo" in response.assistant_message
+    assert "Calidad de evidencia" in response.assistant_message
     assert "CFDI 669DBF39-F23C-4AD5-B858-F1F5A9AC8626" in response.assistant_message
     assert "ready_for_read_only_preview" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
@@ -489,11 +490,92 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
     assert [card["card_id"] for card in trace["workspace_cards"]] == [
         "understood_context",
         "live_context",
+        "case_continuity",
+        "case_memory",
         "operational_diagnostics",
+        "evidence_quality",
+        "resume_guidance",
         "business_preview",
         "authority_boundary",
     ]
+    assert trace["workspace_cards"][2]["authority"] == "read_only_continuity"
+    assert trace["workspace_cards"][3]["authority"] == "read_only_memory"
+    assert trace["resume_guidance"]["authority"] == "read_only_guidance"
+    assert trace["operator_workspace_snapshot"]["authority"] == "read_only_workspace_snapshot"
+    assert trace["operator_workspace_snapshot"]["operational_writes"] is False
     assert trace["workspace_cards"][-1]["status"] == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_operator_workspace_resume_bypasses_provider_and_does_not_create_new_preview(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+    from samchat.assistant.operator_workspace_snapshot import build_operator_workspace_snapshot
+
+    snapshot = build_operator_workspace_snapshot(
+        conversation_id="conv-request",
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        preview_render={
+            "preview_id": "preview-1",
+            "task_id": "SAMCHAT-CXC-COLLECTION-001",
+            "preview_type": "accounts_receivable_collection",
+            "primary_action_enabled": False,
+            "execution_status": "not_executed",
+        },
+        business_preview={"task_id": "SAMCHAT-CXC-COLLECTION-001"},
+        understood_context={"authority": "context_hint_only"},
+        live_context={"authority": "read_only_context", "matched": True},
+        continuity_context={"authority": "read_only_continuity", "matched": False},
+        memory_context={"authority": "read_only_memory", "matched": False},
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        evidence_quality_gate={
+            "authority": "read_only_evidence_gate",
+            "quality_status": "supported",
+            "safe_to_execute": False,
+        },
+        resume_guidance={
+            "authority": "read_only_guidance",
+            "status": "ready_for_isolated_preview",
+            "recommendation": "Continuar con preview/diff read-only.",
+        },
+        workspace_cards=[{"card_id": "understood_context"}],
+        step_trace=[{"step_id": "understand_request"}],
+        source_panel=[{"source_id": "user_message"}],
+    )
+
+    async def fake_loader(*, session, conversation_id, limit=30):
+        assert conversation_id == "conv-request"
+        return {
+            "status": "matched",
+            "matched": True,
+            "message_id": "msg-1",
+            "snapshot": snapshot,
+        }
+
+    monkeypatch.setattr(
+        conversation_service,
+        "load_latest_operator_workspace_snapshot",
+        fake_loader,
+    )
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("workspace resume should bypass provider")
+
+    response = await _run_message(
+        "Retoma el workspace anterior",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Workspace retomado" in response.assistant_message
+    assert "SAMCHAT-CXC-COLLECTION-001" in response.assistant_message
+    assert "no ejecuta acciones" in response.assistant_message
+    trace = response.tool_trace[0]["operator_workspace_resume"]
+    assert trace["status"] == "ready_to_resume"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False
+    assert trace["safe_to_execute"] is False
 
 
 @pytest.mark.asyncio

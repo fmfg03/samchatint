@@ -21,6 +21,10 @@ from .specialist_preview_renderer import (
     render_specialist_business_preview,
     render_specialist_business_preview_markdown,
 )
+from .specialist_task_registry import (
+    route_specialist_task_from_text,
+    specialist_task_ids,
+)
 
 _TASK_ID_RE = re.compile(r"(?<![A-Z0-9])SAMCHAT-[A-Z0-9-]+(?![A-Z0-9])", re.I)
 _DOCUMENT_REF_RE = re.compile(r"\b[ISO]-\d{6,}\b", re.I)
@@ -59,122 +63,6 @@ _NATURAL_PREVIEW_ACTION_TERMS = (
 
 
 @dataclass(frozen=True)
-class _NaturalPreviewRule:
-    task_id: str
-    required_any: Tuple[str, ...]
-    signals: Tuple[str, ...]
-    min_signal_count: int = 1
-
-
-_NATURAL_PREVIEW_RULES: Tuple[_NaturalPreviewRule, ...] = (
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-CXC-COLLECTION-001",
-        required_any=(
-            "cxc",
-            "cuentas por cobrar",
-            "cobro",
-            "cobranza",
-            "factura emitida",
-            "669dbf39",
-        ),
-        signals=(
-            "bimbo",
-            "dcc",
-            "dcc nacional",
-            "factura",
-            "cfdi",
-            "1150-001-001",
-            "4100-001-004",
-            "cobrar",
-        ),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-FIN-AMEX-001",
-        required_any=(
-            "amex",
-            "american express",
-            "tarjeta corporativa",
-            "referencia 28",
-            "ref 28",
-        ),
-        signals=(
-            "odilon",
-            "fgv",
-            "45007",
-            "comprobacion",
-            "comprobar",
-            "estado de cuenta",
-            "tarifa aerea",
-        ),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-SUPPLIER-HOTEL-001",
-        required_any=("hospedaje", "ish", "impuesto sobre hospedaje", "hotel"),
-        signals=("leon", "128", "impuesto local", "cfdi", "cuenta contable"),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-TEAM-REG-001",
-        required_any=("equipo", "cedula", "registro", "roster", "aguiluchos"),
-        signals=(
-            "jugadores",
-            "juvenil",
-            "tercera pagina",
-            "pagina tres",
-            "copa telmex",
-        ),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-PLAYER-ELIG-001",
-        required_any=("jugador", "elegibilidad", "axel"),
-        signals=(
-            "curp",
-            "documentos",
-            "fecha de nacimiento",
-            "soto ramirez",
-            "validacion",
-        ),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-DOC-INCIDENT-001",
-        required_any=("incidente", "curp duplicada", "duplicidad", "documental"),
-        signals=("curp", "documento", "revision humana", "excepcion"),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-MONEY-REQ-001",
-        required_any=("solicitud", "s-2600071", "reembolso", "referencia 9", "ref 9"),
-        signals=(
-            "bibiana",
-            "628",
-            "deudores",
-            "transferencia",
-            "referencia operaciones",
-        ),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-BUDGET-2027-001",
-        required_any=("presupuesto", "budget", "reforecast"),
-        signals=("2027", "historico", "anual", "dcc", "4100-001-004"),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-TOURNAMENT-2027-001",
-        required_any=(
-            "crear torneo",
-            "torneo 2027",
-            "copa telmex 2027",
-            "sub-17",
-            "sub 17",
-        ),
-        signals=("torneo", "categoria", "copa telmex", "2026", "nuevo"),
-    ),
-    _NaturalPreviewRule(
-        task_id="SAMCHAT-OWNER-DCC-001",
-        required_any=("dueno pack", "owner pack", "carpeta", "entidad"),
-        signals=("dcc", "bimbo", "torneo", "direccion", "finanzas"),
-    ),
-)
-
-
-@dataclass(frozen=True)
 class SpecialistPreviewSurface:
     task_id: str
     assistant_message: str
@@ -208,7 +96,7 @@ class SpecialistPreviewSurface:
 
 
 def specialist_preview_task_ids() -> Tuple[str, ...]:
-    return tuple(benchmark.task.task_id for benchmark in build_seed_benchmarks())
+    return specialist_task_ids()
 
 
 def _normalize_text(raw_message: str) -> str:
@@ -223,13 +111,7 @@ def _contains_any(text: str, terms: Sequence[str]) -> bool:
 def _natural_preview_task_id(normalized_text: str) -> Optional[str]:
     if not _contains_any(normalized_text, _NATURAL_PREVIEW_ACTION_TERMS):
         return None
-    for rule in _NATURAL_PREVIEW_RULES:
-        if not _contains_any(normalized_text, rule.required_any):
-            continue
-        signal_count = sum(1 for signal in rule.signals if signal in normalized_text)
-        if signal_count >= rule.min_signal_count:
-            return rule.task_id
-    return None
+    return route_specialist_task_from_text(normalized_text)
 
 
 def extract_specialist_preview_understood_context(raw_message: str) -> Dict[str, Any]:

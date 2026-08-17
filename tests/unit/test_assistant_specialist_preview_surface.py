@@ -58,6 +58,15 @@ def test_detect_specialist_preview_does_not_trigger_on_domain_chatter() -> None:
     assert detect_specialist_preview_task_id("Que es CxC?") is None
 
 
+def test_detect_specialist_preview_fails_closed_on_ambiguous_business_intent() -> None:
+    assert (
+        detect_specialist_preview_task_id(
+            "Prepara preview de AMEX referencia 28 y tambien CxC de DCC con factura"
+        )
+        is None
+    )
+
+
 def test_extract_specialist_preview_understood_context_from_business_prompt() -> None:
     context = extract_specialist_preview_understood_context(
         "Prepara CxC factura 669DBF39 contra DCC Nacional REF 28 con cuenta 1150-001-001"
@@ -169,6 +178,227 @@ def test_specialist_preview_workspace_cards_contract() -> None:
     assert cards[-1]["status"] == "blocked"
     assert cards[-1]["data"]["primary_action_enabled"] is False
     assert cards[-1]["data"]["writes_attempted"] is False
+
+
+def test_specialist_resume_guidance_paths_are_read_only() -> None:
+    from samchat.assistant.specialist_resume_guidance import (
+        build_specialist_resume_guidance,
+        render_specialist_resume_guidance_markdown,
+    )
+
+    missing = build_specialist_resume_guidance(
+        diagnostics={"readiness": "needs_more_context", "missing": ["Falta CFDI"]},
+        continuity_context={"matched": True, "active_case": {"case_id": "analyst_case_" + "a" * 32}},
+        memory_context={"matched": True},
+    )
+    active = build_specialist_resume_guidance(
+        diagnostics={"readiness": "ready_for_read_only_preview", "missing": []},
+        continuity_context={"matched": True, "active_case": {"case_id": "analyst_case_" + "b" * 32}},
+        memory_context={"matched": False},
+    )
+    precedent = build_specialist_resume_guidance(
+        diagnostics={"readiness": "ready_for_read_only_preview", "missing": []},
+        continuity_context={"matched": False},
+        memory_context={"matched": True},
+    )
+
+    assert missing["status"] == "needs_more_context"
+    assert active["status"] == "ready_to_continue_active_case"
+    assert precedent["status"] == "precedent_only"
+    assert active["primary_action_enabled"] is False
+    assert active["writes_attempted"] is False
+    assert "Guia de reanudacion" in render_specialist_resume_guidance_markdown(active)
+
+
+def test_specialist_continuity_context_detects_active_case() -> None:
+    from types import SimpleNamespace
+
+    from samchat.assistant.specialist_continuity_context import (
+        render_specialist_continuity_context_markdown,
+        resolve_specialist_preview_continuity_context,
+    )
+
+    context = resolve_specialist_preview_continuity_context(
+        SimpleNamespace(
+            tournament_key="copa_telmex",
+            metadata_={
+                "module_key": "tournaments",
+                "module_label": "Torneos",
+                "active_tournament_goal_case": {
+                    "case_id": "analyst_case_" + "a" * 32,
+                    "case_version": 3,
+                    "status": "draft",
+                },
+            },
+        )
+    )
+    message = render_specialist_continuity_context_markdown(context)
+
+    assert context["authority"] == "read_only_continuity"
+    assert context["matched"] is True
+    assert context["active_case"]["case_version"] == 3
+    assert "Caso activo" in message
+    assert "continuidad read-only" in message
+
+
+def test_specialist_continuity_context_fails_closed_on_invalid_pointer() -> None:
+    from types import SimpleNamespace
+
+    from samchat.assistant.specialist_continuity_context import (
+        resolve_specialist_preview_continuity_context,
+    )
+
+    context = resolve_specialist_preview_continuity_context(
+        SimpleNamespace(
+            tournament_key=None,
+            metadata_={"active_tournament_goal_case": {"case_id": "bad"}},
+        )
+    )
+
+    assert context["matched"] is False
+    assert context["status"] == "invalid_active_case_pointer"
+    assert context["active_case"] is None
+
+
+def test_specialist_preview_workspace_cards_include_continuity_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-TOURNAMENT-2027-001",
+        understood_context={"authority": "context_hint_only", "domains": ["torneo"]},
+        live_context={"authority": "read_only_context", "status": "no_matches", "matched": False},
+        continuity_context={
+            "authority": "read_only_continuity",
+            "status": "active_case_found",
+            "matched": True,
+            "active_case": {"case_id": "analyst_case_" + "a" * 32},
+        },
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "needs_more_context"},
+        preview_render={"task_id": "SAMCHAT-TOURNAMENT-2027-001", "execution_status": "not_executed"},
+    )
+
+    assert [card["card_id"] for card in cards] == [
+        "understood_context",
+        "live_context",
+        "case_continuity",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert cards[2]["authority"] == "read_only_continuity"
+    assert cards[-1]["status"] == "blocked"
+
+
+def test_specialist_memory_context_markdown_is_read_only() -> None:
+    from samchat.assistant.specialist_memory_context import (
+        render_specialist_memory_context_markdown,
+    )
+
+    message = render_specialist_memory_context_markdown(
+        {
+            "source": "case_memory_artifacts",
+            "lookup_performed": True,
+            "authority": "read_only_memory",
+            "matched": True,
+            "status": "matched",
+            "snippets": [
+                {
+                    "label": "memory:case_summary:abc",
+                    "score": 1.12,
+                    "text": "Memoria de caso resumida :: se resolvio como no deducible.",
+                }
+            ],
+        }
+    )
+
+    assert "Memoria de casos" in message
+    assert "memory:case_summary:abc" in message
+    assert "precedente read-only" in message
+
+
+def test_specialist_preview_workspace_cards_include_case_memory_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={"authority": "read_only_context", "status": "matched", "matched": True},
+        memory_context={
+            "authority": "read_only_memory",
+            "status": "matched",
+            "matched": True,
+            "snippets": [{"label": "memory:case_summary:abc"}],
+        },
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        preview_render={"task_id": "SAMCHAT-CXC-COLLECTION-001", "execution_status": "not_executed"},
+    )
+
+    assert [card["card_id"] for card in cards] == [
+        "understood_context",
+        "live_context",
+        "case_memory",
+        "operational_diagnostics",
+        "business_preview",
+        "authority_boundary",
+    ]
+    assert cards[2]["authority"] == "read_only_memory"
+    assert cards[2]["data"]["snippet_count"] == 1
+    assert cards[-1]["data"]["primary_action_enabled"] is False
+
+
+def test_specialist_preview_workspace_cards_include_resume_guidance_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={"authority": "read_only_context", "status": "matched", "matched": True},
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        resume_guidance={
+            "authority": "read_only_guidance",
+            "status": "ready_for_isolated_preview",
+            "recommendation": "Continuar read-only.",
+            "primary_action_enabled": False,
+        },
+        preview_render={"task_id": "SAMCHAT-CXC-COLLECTION-001", "execution_status": "not_executed"},
+    )
+
+    assert "resume_guidance" in [card["card_id"] for card in cards]
+    guidance = next(card for card in cards if card["card_id"] == "resume_guidance")
+    assert guidance["authority"] == "read_only_guidance"
+    assert guidance["data"]["primary_action_enabled"] is False
+
+
+def test_specialist_preview_workspace_cards_include_evidence_quality_gate_when_provided() -> None:
+    from samchat.assistant.specialist_live_context import (
+        build_specialist_preview_workspace_cards,
+    )
+
+    cards = build_specialist_preview_workspace_cards(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only", "domains": ["cxc"]},
+        live_context={"authority": "read_only_context", "status": "matched", "matched": True},
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        evidence_quality_gate={
+            "authority": "read_only_evidence_gate",
+            "quality_status": "partial",
+            "safe_to_execute": False,
+            "primary_action_enabled": False,
+        },
+        preview_render={"task_id": "SAMCHAT-CXC-COLLECTION-001", "execution_status": "not_executed"},
+    )
+
+    assert "evidence_quality" in [card["card_id"] for card in cards]
+    gate = next(card for card in cards if card["card_id"] == "evidence_quality")
+    assert gate["authority"] == "read_only_evidence_gate"
+    assert gate["status"] == "partial"
+    assert gate["data"]["primary_action_enabled"] is False
 
 
 def test_specialist_preview_diagnostics_marks_cxc_ready_with_cfdi() -> None:
@@ -311,6 +541,15 @@ async def test_specialist_preview_surface_persists_render_payload() -> None:
     payload = assistant_messages[0].tool_payload
     assert payload["preview_render"] == response.preview_render
     assert payload["business_preview"]["task_id"] == "SAMCHAT-CXC-COLLECTION-001"
+    assert "Calidad de evidencia" in response.assistant_message
+    assert payload["memory_context"]["authority"] == "read_only_memory"
+    assert payload["evidence_quality_gate"]["authority"] == "read_only_evidence_gate"
+    assert payload["evidence_quality_gate"]["safe_to_execute"] is False
+    assert payload["operator_workspace_snapshot"]["authority"] == "read_only_workspace_snapshot"
+    assert payload["operator_workspace_snapshot"]["persistence_medium"] == "assistant_message_tool_payload"
+    assert payload["operator_workspace_snapshot"]["primary_action_enabled"] is False
+    assert payload["operator_workspace_snapshot"]["components"]["workspace_cards"] == payload["workspace_cards"]
+    assert payload["resume_guidance"]["authority"] == "read_only_guidance"
 
 
 def test_specialist_preview_workspace_trace_and_sources_contract() -> None:
@@ -385,3 +624,47 @@ def test_specialist_preview_workspace_trace_and_sources_contract() -> None:
     ]
     assert sources[1]["status"] == "matched"
     assert sources[-1]["data"]["primary_action_enabled"] is False
+
+
+def test_specialist_preview_workspace_trace_and_sources_include_case_memory() -> None:
+    from samchat.assistant.assistant_workspace_trace import (
+        build_specialist_workspace_source_panel,
+        build_specialist_workspace_step_trace,
+    )
+
+    memory_context = {
+        "authority": "read_only_memory",
+        "lookup_performed": True,
+        "matched": True,
+        "status": "matched",
+        "snippets": [{"label": "memory:case_summary:abc"}],
+    }
+    guidance = {
+        "authority": "read_only_guidance",
+        "status": "precedent_only",
+        "recommendation": "Usar precedente.",
+        "primary_action_enabled": False,
+    }
+    steps = build_specialist_workspace_step_trace(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context={"authority": "context_hint_only"},
+        live_context={"authority": "read_only_context", "live_lookup_performed": True},
+        memory_context=memory_context,
+        resume_guidance=guidance,
+        diagnostics={"authority": "read_only_diagnostic", "readiness": "ready_for_read_only_preview"},
+        preview_render={"execution_status": "not_executed", "sections": []},
+    )
+    sources = build_specialist_workspace_source_panel(
+        understood_context={},
+        live_context={"status": "matched"},
+        memory_context=memory_context,
+        resume_guidance=guidance,
+        diagnostics={"readiness": "ready_for_read_only_preview"},
+        preview_render={"execution_status": "not_executed"},
+    )
+
+    assert "recall_case_memory" in [step["step_id"] for step in steps]
+    assert "case_memory_readonly" in [source["source_id"] for source in sources]
+    assert "recommend_safe_next_step" in [step["step_id"] for step in steps]
+    assert "deterministic_resume_guidance" in [source["source_id"] for source in sources]
+    assert steps[-1]["data"]["execution_allowed"] is False
