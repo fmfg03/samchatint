@@ -317,13 +317,14 @@ def build_owner_pack_readiness_from_scope(
     tournament_slug: str = "",
     entity_name: str | None = None,
     root_dir: Any = None,
+    extra_live_reports: Sequence[OwnerPackLiveSnapshotReport] = (),
 ) -> OwnerPackReadinessReport:
     """Build readiness for a requested scope, optionally using live workspace evidence."""
 
     requested_scope = (scope or "all").strip() or "all"
     scopes = None if requested_scope == "all" else (requested_scope,)
     inventory = build_owner_pack_inventory_report(scopes=scopes)
-    live_reports: List[OwnerPackLiveSnapshotReport] = []
+    live_reports: List[OwnerPackLiveSnapshotReport] = list(extra_live_reports or [])
     missing_targets: List[str] = []
     target = {
         "scope": requested_scope,
@@ -337,6 +338,12 @@ def build_owner_pack_readiness_from_scope(
                 continue
             if surface.surface_id == "entity_folder" and not entity_name:
                 missing_targets.append(surface.surface_id)
+                continue
+            if surface.surface_id in {
+                report.surfaces[0].surface_id
+                for report in live_reports
+                if report.surfaces
+            }:
                 continue
             live_reports.append(
                 build_owner_pack_live_snapshot_report(
