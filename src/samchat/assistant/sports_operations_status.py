@@ -14,6 +14,7 @@ from typing import Any, Mapping, Optional
 from samchat.sports_platform import build_sports_platform_snapshot
 
 from .business_diff_preview import NOT_EXECUTED
+from .soul_wizard import build_soul_wizard_draft, validate_soul_wizard_draft
 from .sports_platform_audit import (
     COMMERCIAL_OR_DEMO_MODULES,
     INTERNAL_SOURCE_MODULES,
@@ -37,6 +38,7 @@ class SportsOperationsStatusReport:
     incident_summary: dict[str, Any] = field(default_factory=dict)
     matchday_summary: dict[str, Any] = field(default_factory=dict)
     communication_summary: dict[str, Any] = field(default_factory=dict)
+    wizard_alignment: dict[str, Any] = field(default_factory=dict)
     source_modules: list[str] = field(default_factory=list)
     excluded_modules: list[str] = field(default_factory=list)
     safety_summary: dict[str, Any] = field(default_factory=dict)
@@ -108,15 +110,59 @@ def _tournament(platform: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _wizard_alignment(payload: Optional[Mapping[str, Any]]) -> dict[str, Any]:
+    if not payload:
+        return {
+            "present": False,
+            "source": None,
+            "live_operations_created": False,
+        }
+
+    draft_payload = payload.get("draft") if isinstance(payload.get("draft"), Mapping) else payload
+    draft = build_soul_wizard_draft(draft_payload)
+    readiness = validate_soul_wizard_draft(draft)
+    phases = [phase.to_dict() for phase in draft.phases]
+    activity_count = sum(len(phase.activities) for phase in draft.phases)
+    issue_rows = [issue.to_dict() for issue in readiness.issues]
+    missing_paths = [item["path"] for item in issue_rows if item.get("severity") == "error"]
+    warning_paths = [item["path"] for item in issue_rows if item.get("severity") == "warning"]
+    return {
+        "present": True,
+        "source": "soul_wizard",
+        "draft_id": draft.draft_id,
+        "draft_hash": draft.draft_hash,
+        "tournament_name": draft.tournament_name,
+        "edition_year": draft.edition_year,
+        "readiness_status": readiness.status,
+        "readiness_score": readiness.readiness_score,
+        "required_missing_count": readiness.required_missing_count,
+        "warnings_count": readiness.warnings_count,
+        "phase_count": len(draft.phases),
+        "activity_count": activity_count,
+        "phases": phases[:10],
+        "missing_paths": missing_paths,
+        "warning_paths": warning_paths,
+        "integration_decision": (
+            "wizard_ready_for_operations_review"
+            if readiness.status == "ready_for_review"
+            else "wizard_needs_completion_before_operations_review"
+        ),
+        "live_operations_created": False,
+        "operational_writes_allowed": False,
+    }
+
+
 def build_sports_operations_status_from_snapshot(
     snapshot: Mapping[str, Any],
     *,
     max_actions: int = 5,
     focus: Optional[str] = None,
+    soul_wizard_payload: Optional[Mapping[str, Any]] = None,
 ) -> SportsOperationsStatusReport:
     """Build a narrowed assistant-safe operations status from a tournament snapshot."""
 
     platform = build_sports_platform_snapshot(dict(snapshot))
+    wizard_alignment = _wizard_alignment(soul_wizard_payload)
     audit = build_sports_platform_audit_from_snapshot(snapshot)
 
     mission_control = _as_dict(platform.get("mission_control"))
@@ -211,6 +257,7 @@ def build_sports_operations_status_from_snapshot(
             "whatsapp_unread": _safe_int(communications.get("whatsapp_unread")),
             "email_inbox_unread": _safe_int(communications.get("email_inbox_unread")),
         },
+        wizard_alignment=wizard_alignment,
         source_modules=source_modules,
         excluded_modules=excluded,
         safety_summary={
@@ -220,6 +267,8 @@ def build_sports_operations_status_from_snapshot(
             "raw_snapshot_should_not_be_exposed": True,
             "approval_required_for_durable_outputs": True,
             "audit_decision": audit.decision,
+            "soul_wizard_context_accepted": wizard_alignment.get("present") is True,
+            "soul_wizard_creates_live_operations": False,
         },
         execution_status=NOT_EXECUTED,
         writes_attempted=0,

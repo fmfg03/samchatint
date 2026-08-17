@@ -136,3 +136,69 @@ def test_sports_operations_status_focus_filters_top_actions_without_changing_sou
     assert report.excluded_modules
     assert all("communications" in (item.get("source") or "") for item in report.top_actions)
     assert report.safety_summary["audit_decision"] == "wrap_before_wiring"
+
+
+def _wizard_payload() -> dict:
+    return {
+        "draft_id": "dcc-2027",
+        "tournament_name": "De la Calle a la Cancha",
+        "edition_year": 2027,
+        "categories": ["Sub 15"],
+        "branches": ["Varonil", "Femenil"],
+        "expected_entities": ["CDMX"],
+        "expected_teams": 32,
+        "required_documents": ["CURP", "Acta"],
+        "eligibility_rules": ["Sin duplicidad CURP"],
+        "phases": [
+            {
+                "phase_id": "state",
+                "name": "Fase estatal",
+                "start_date": "2027-03-01",
+                "end_date": "2027-05-15",
+                "activities": [
+                    {
+                        "activity_id": "uniforms",
+                        "name": "Entrega de uniformes",
+                        "owner": "Operaciones",
+                        "due_date": "2027-04-01",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_sports_operations_status_accepts_soul_wizard_context_without_creating_operations() -> None:
+    report = build_sports_operations_status_from_snapshot(
+        _snapshot(),
+        soul_wizard_payload=_wizard_payload(),
+    )
+
+    alignment = report.wizard_alignment
+    assert alignment["present"] is True
+    assert alignment["source"] == "soul_wizard"
+    assert alignment["draft_id"] == "dcc-2027"
+    assert alignment["readiness_status"] == "ready_for_review"
+    assert alignment["phase_count"] == 1
+    assert alignment["activity_count"] == 1
+    assert alignment["integration_decision"] == "wizard_ready_for_operations_review"
+    assert alignment["live_operations_created"] is False
+    assert alignment["operational_writes_allowed"] is False
+    assert report.safety_summary["soul_wizard_context_accepted"] is True
+    assert report.safety_summary["soul_wizard_creates_live_operations"] is False
+
+
+def test_sports_operations_status_marks_incomplete_wizard_context_as_planning_gap() -> None:
+    report = build_sports_operations_status_from_snapshot(
+        _snapshot(),
+        soul_wizard_payload={"tournament_name": "Copa incompleta"},
+    )
+
+    alignment = report.wizard_alignment
+    assert alignment["present"] is True
+    assert alignment["readiness_status"] == "incomplete"
+    assert alignment["required_missing_count"] >= 2
+    assert "edition_year" in alignment["missing_paths"]
+    assert "phases" in alignment["missing_paths"]
+    assert alignment["integration_decision"] == "wizard_needs_completion_before_operations_review"
+    assert alignment["live_operations_created"] is False
