@@ -74,6 +74,12 @@ from .request_intent import (
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
+from .operator_workspace_resume import (
+    build_operator_workspace_resume_response,
+    detect_operator_workspace_resume_intent,
+    load_latest_operator_workspace_snapshot,
+    render_operator_workspace_resume_markdown,
+)
 from .operator_workspace_snapshot import build_operator_workspace_snapshot
 from .owner_operator_workflow import run_owner_operator_workflow
 from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
@@ -743,6 +749,40 @@ async def _build_specialist_preview_surface_response(
     )
 
 
+async def _build_operator_workspace_resume_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+) -> Optional[Any]:
+    if not detect_operator_workspace_resume_intent(raw_message):
+        return None
+
+    resolution = await load_latest_operator_workspace_snapshot(
+        session=session,
+        conversation_id=conversation.id,
+    )
+    resume = build_operator_workspace_resume_response(resolution)
+    rendered = render_operator_workspace_resume_markdown(resume)
+    tool_trace = [
+        {
+            "tool": "assistant_operator_workspace_resume",
+            "operator_workspace_resume": resume,
+            "provider_called": False,
+            "writes_attempted": False,
+            "safe_to_execute": False,
+        }
+    ]
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+        assistant_tool_payload={"operator_workspace_resume": resume},
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def _persist_document_conversation_messages(
     *,
     raw_message: str,
@@ -1241,6 +1281,14 @@ async def run_conversation_turn(
     if capability_response is not None:
         return capability_response
 
+    workspace_resume_response = await _build_operator_workspace_resume_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if workspace_resume_response is not None:
+        return workspace_resume_response
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1480,6 +1528,14 @@ async def run_message_turn_with_pending(
     )
     if capability_response is not None:
         return capability_response
+
+    workspace_resume_response = await _build_operator_workspace_resume_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if workspace_resume_response is not None:
+        return workspace_resume_response
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,

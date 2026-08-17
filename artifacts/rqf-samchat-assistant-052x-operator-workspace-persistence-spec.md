@@ -52,3 +52,7 @@ Output:
 ## Future promotion
 
 A later slice may also save the snapshot as `AssistantArtifact` when the conversation path passes actor identity consistently. This slice intentionally avoids a hidden actor workaround.
+
+## Deferred follow-up
+
+Promote the operator workspace snapshot to a separate `AssistantArtifact` only after the specialist preview conversation path passes `created_by_empleado_id` consistently. Until then, the durable source of truth is the persisted assistant message `tool_payload.operator_workspace_snapshot`; do not invent or infer an actor to satisfy the artifact table.
