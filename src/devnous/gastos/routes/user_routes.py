@@ -23703,6 +23703,9 @@ async def documentos_pendientes(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    tipo: Optional[str] = None,
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> str:
     """
     Show documentos in estado 'enviado' that are pending approval.
@@ -23711,89 +23714,198 @@ async def documentos_pendientes(
     - Only finanzas or admin can access (plus superadmin)
     - Superadmin sees ALL documentos with estado 'enviado'
     - Finanzas/admin see documentos where they are the aprobador, plus unassigned docs
+    - Search/filter is applied only inside that already-authorized visibility scope
     """
 
     # Check role - only finanzas or admin can access
     if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
-    # Build query based on role
-    if current_empleado.rol in ('superadmin', 'super_admin'):
-        # Superadmin sees all documentos with estado 'enviado'
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).where(
-            Documento.estado == 'enviado'
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
-    else:
-        # Finanzas/admin see their assigned approvals plus unassigned documents.
-        # This matches the workflow service, which allows finance/admin fallback
-        # when an empleado has no explicit aprobador.
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).join(
-            Empleado, Documento.empleado_id == Empleado.id
-        ).where(
-            and_(
-                Documento.estado == 'enviado',
-                or_(
-                    Empleado.aprobador_id == current_empleado.id,
-                    Empleado.aprobador_id.is_(None),
-                )
+    q_value = (q or "").strip()
+    empleado_nombre_value = (empleado_nombre or "").strip()
+    tipo_value = (tipo or "").strip().upper()
+    if tipo_value not in {"", "INFORME", "SOLICITUD"}:
+        tipo_value = ""
+
+    is_superadmin = current_empleado.rol in ('superadmin', 'super_admin')
+    query = select(Documento).options(
+        selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.proveedor_cliente),
+    )
+
+    needs_empleado_join = (not is_superadmin) or bool(q_value) or bool(empleado_nombre_value)
+    if needs_empleado_join:
+        query = query.join(Empleado, Documento.empleado_id == Empleado.id)
+
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    if q_value:
+        query = query.outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        ).outerjoin(
+            proveedor_alias,
+            Documento.proveedor_cliente_id == proveedor_alias.id,
+        )
+
+    filters = [Documento.estado == 'enviado']
+    if not is_superadmin:
+        filters.append(
+            or_(
+                Empleado.aprobador_id == current_empleado.id,
+                Empleado.aprobador_id.is_(None),
             )
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
+        )
+    if tipo_value:
+        filters.append(Documento.tipo == tipo_value)
+    if empleado_nombre_value:
+        filters.append(Empleado.nombre.ilike(f"%{empleado_nombre_value}%"))
+    if q_value:
+        q_filter = f"%{q_value}%"
+        filters.append(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                Documento.referencia_pago.ilike(q_filter),
+                Documento.notas.ilike(q_filter),
+                Empleado.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+            )
+        )
+
+    query = query.where(and_(*filters)).order_by(
+        Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc()
+    )
 
     result = await session.execute(query)
     documentos = result.scalars().all()
+    aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+
+    current_next_path = "/documentos/pendientes"
+    if request.url.query:
+        current_next_path = f"{current_next_path}?{request.url.query}"
+    next_url = quote(current_next_path)
 
     # Build rows HTML
     rows_html = ""
     for documento in documentos:
-        # Format dates
         enviado_str = format_value(documento.enviado_en) if documento.enviado_en else format_value(documento.creado_en)
-        creado_str = format_value(documento.creado_en)
-
-        # Get empleado name
-        empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
-        referencia_operaciones = escape(
-            str((documento.referencia_operaciones or "").strip() or "—")
+        row_values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_by_doc.get(documento.id, "-"),
         )
-
-        # Link to documento detail with next parameter
-        next_url = quote("/documentos/pendientes")
-        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
-
-        # Shortened internal ID (first 8 characters)
+        referencia_operaciones = escape(
+            str((documento.referencia_operaciones or "").strip() or "-")
+        )
+        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
         doc_id_short = str(documento.id)[:8]
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
             <td>{referencia_operaciones}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
-            <td>{empleado_nombre}</td>
-            <td>{documento.tipo}</td>
-            <td>{documento.estado}</td>
-            <td>{format_currency(documento.monto_total)}</td>
+            <td>{escape(row_values["solicitante"])}</td>
+            <td>{escape(row_values["beneficiario"])}</td>
+            <td>{escape(row_values["proveedor"])}</td>
+            <td>{escape(row_values["tipo_documento"])}</td>
+            <td>{escape(row_values["estado"])}</td>
+            <td>{row_values["monto_total"]}</td>
+            <td>{escape(row_values["concepto"])}</td>
             <td>{enviado_str}</td>
         </tr>
         """
+
+    active_filters = sum(1 for value in [q_value, empleado_nombre_value, tipo_value] if value)
     pendientes_side_html = f"""
-        <div class="eyebrow">Bandeja de aprobación</div>
+        <div class="eyebrow">Bandeja de aprobaci&oacute;n</div>
         <div class="meta-grid">
             <div class="meta-card">
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
-                <small>Documentos actualmente esperando tu decisión.</small>
+                <small>Documentos esperando tu decisi&oacute;n con los filtros actuales.</small>
+            </div>
+            <div class="meta-card">
+                <span>Filtros activos</span>
+                <strong>{active_filters}</strong>
+                <small>Busca por referencia, proveedor, empleado o descripci&oacute;n.</small>
             </div>
         </div>
     """
+
+    filter_form_html = f"""
+    <form method="GET" action="/documentos/pendientes" class="surface" style="margin-bottom: 0;">
+        <div class="section-head" style="margin-bottom:12px;">
+            <div>
+                <h2>Buscar aprobaciones</h2>
+                <div class="section-note">Filtra dentro de los documentos que ya est&aacute;n en tu bandeja; no cambia permisos ni autorizadores.</div>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 15px; align-items:end;">
+            <div>
+                <label for="q" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">B&uacute;squeda</label>
+                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Ref. operaciones, proveedor, empleado, descripci&oacute;n...">
+            </div>
+            <div>
+                <label for="tipo" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">Tipo</label>
+                <select name="tipo" id="tipo">
+                    <option value="" {'selected' if not tipo_value else ''}>Todos</option>
+                    <option value="SOLICITUD" {'selected' if tipo_value == 'SOLICITUD' else ''}>SOLICITUD</option>
+                    <option value="INFORME" {'selected' if tipo_value == 'INFORME' else ''}>INFORME</option>
+                </select>
+            </div>
+            <div>
+                <label for="empleado_nombre" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">Empleado / solicitante</label>
+                <input type="text" name="empleado_nombre" id="empleado_nombre" value="{escape(empleado_nombre_value)}" placeholder="Ej. Alicia, Bibiana, Odilon...">
+            </div>
+            <div>
+                <div class="hero-actions" style="margin-top:0;">
+                    <button type="submit" class="button primary" style="width:100%;">Filtrar</button>
+                    <a href="/documentos/pendientes" class="button secondary" style="width:100%;">Limpiar</a>
+                </div>
+            </div>
+        </div>
+    </form>
+    """
+
+    if rows_html:
+        pending_table_html = f"""
+            <div class="table-shell"><table>
+                <thead>
+                    <tr>
+                        <th>N&uacute;mero de Referencia</th>
+                        <th>Referencia Operaciones</th>
+                        <th>ID Interno</th>
+                        <th>Empleado</th>
+                        <th>Beneficiario</th>
+                        <th>Proveedor</th>
+                        <th>Tipo</th>
+                        <th>Estado</th>
+                        <th>Monto Total</th>
+                        <th>Descripci&oacute;n</th>
+                        <th>Fecha de Env&iacute;o</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table></div>
+        """
+    else:
+        pending_table_html = """
+            <div class="notice info" style="text-align:center;">
+                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar con los filtros seleccionados.</p>
+            </div>
+        """
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1380px")}</style>
+        <style>{_workspace_shell_styles("1580px")}</style>
     </head>
     <body>
         <div class="container">
@@ -23801,41 +23913,20 @@ async def documentos_pendientes(
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Pendientes por aprobar",
-                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todavía al historial.",
+                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todav&iacute;a al historial.",
                 actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
                 side_html=pendientes_side_html,
             )}
             <div class="stack">
+                {filter_form_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
                             <h2>Documentos en espera</h2>
-                            <div class="section-note">Solo aparecen documentos que todavía requieren aprobación.</div>
+                            <div class="section-note">Solo aparecen documentos que todav&iacute;a requieren aprobaci&oacute;n.</div>
                         </div>
                     </div>
-            {f'''
-            <div class="table-shell"><table>
-                <thead>
-                    <tr>
-                        <th>Número de Referencia</th>
-                        <th>Referencia Operaciones</th>
-                        <th>ID Interno</th>
-                        <th>Empleado</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Monto Total</th>
-                        <th>Fecha de Envío</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table></div>
-            ''' if rows_html else '''
-            <div class="notice info" style="text-align:center;">
-                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar.</p>
-            </div>
-            '''}
+                    {pending_table_html}
                 </section>
             </div>
         </div>
