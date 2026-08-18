@@ -806,7 +806,7 @@ def render_cfdi_income_bridge_panel(
                 <input type="hidden" id="cfdi-income-existing-cfdi-id" name="cfdi_report_id">
                 <input id="cfdi-income-existing-cfdi-input" list="cfdi-income-existing-cfdi-options" data-cfdi-income-field="cfdi" data-hidden-input="cfdi-income-existing-cfdi-id" required{existing_disabled} placeholder="Buscar por UUID, RFC, monto o fecha" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
                 <datalist id="cfdi-income-existing-cfdi-options"></datalist>
-                <label style="font-size:12px;font-weight:700;color:#475569;">Partida presupuestal</label>
+                <label style="font-size:12px;font-weight:700;color:#475569;">Concepto</label>
                 <input type="hidden" id="cfdi-income-existing-line-id" name="budget_line_id">
                 <input id="cfdi-income-existing-line-input" list="cfdi-income-existing-line-options" data-cfdi-income-field="line" data-hidden-input="cfdi-income-existing-line-id" required{no_lines_disabled} placeholder="Buscar partida, cuenta o monto" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
                 <datalist id="cfdi-income-existing-line-options"></datalist>
@@ -823,7 +823,7 @@ def render_cfdi_income_bridge_panel(
                 <input type="file" name="cfdi_xml" accept=".xml,text/xml,application/xml"{upload_disabled}>
                 <label style="font-size:12px;font-weight:700;color:#475569;">PDF CFDI</label>
                 <input type="file" name="cfdi_pdf" accept=".pdf,application/pdf"{upload_disabled}>
-                <label style="font-size:12px;font-weight:700;color:#475569;">Partida presupuestal</label>
+                <label style="font-size:12px;font-weight:700;color:#475569;">Concepto</label>
                 <input type="hidden" id="cfdi-income-upload-line-id" name="budget_line_id">
                 <input id="cfdi-income-upload-line-input" list="cfdi-income-upload-line-options" data-cfdi-income-field="line" data-hidden-input="cfdi-income-upload-line-id" required{no_lines_disabled} placeholder="Buscar partida, cuenta o monto" style="width:100%;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
                 <datalist id="cfdi-income-upload-line-options"></datalist>
@@ -1081,7 +1081,7 @@ def render_add_tournament_line_form(
     <section class="workspace-card"{section_id_attr} style="margin-bottom:18px;">
         <div class="workspace-section-title">{section_title}</div>
         <div class="workspace-section-subtitle">
-            Captura una nueva partida presupuestal para
+            Captura un nuevo concepto para
             <strong>{escape(tournament_name or tournament_key)}</strong>.
             {subtitle_tail}
         </div>

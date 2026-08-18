@@ -141,7 +141,7 @@ def _parse_optional_budget_concept_uuid(value: Optional[str]) -> Optional[UUID]:
     except (TypeError, ValueError) as exc:
         raise SolicitudValidationError(
             "invalid_budget_concept",
-            "La partida presupuestal no es válida.",
+            "El concepto no es válida.",
         ) from exc
 
 
@@ -338,7 +338,7 @@ def build_solicitud_terceros_payload(
     if not concepto:
         raise SolicitudValidationError(
             "missing_concepto",
-            "El concepto de pago es requerido.",
+            "La descripción de pago es requerida.",
         )
 
     cfdi_uuid_canonical: Optional[str] = None
@@ -435,7 +435,7 @@ def build_solicitud_personal_payload(
     if not concepto:
         raise SolicitudValidationError(
             "missing_concepto",
-            "El concepto de pago es requerido.",
+            "La descripción de pago es requerida.",
         )
 
     proveedor_uuid: Optional[UUID] = None
@@ -595,12 +595,12 @@ async def create_solicitud_terceros_document(
         if payload.budget_concept_id is None:
             raise SolicitudValidationError(
                 "missing_budget_concept",
-                "La partida presupuestal es requerida para solicitudes con torneo.",
+                "El concepto es requerido para solicitudes con torneo.",
             )
         if concept is None:
             raise SolicitudValidationError(
                 "invalid_budget_concept",
-                "La partida presupuestal no corresponde al torneo seleccionado.",
+                "El concepto no corresponde al torneo seleccionado.",
             )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
@@ -953,12 +953,12 @@ async def update_solicitud_terceros_document(
         if payload.budget_concept_id is None:
             raise SolicitudValidationError(
                 "missing_budget_concept",
-                "La partida presupuestal es requerida para solicitudes con torneo.",
+                "El concepto es requerido para solicitudes con torneo.",
             )
         if concept is None:
             raise SolicitudValidationError(
                 "invalid_budget_concept",
-                "La partida presupuestal no corresponde al torneo seleccionado.",
+                "El concepto no corresponde al torneo seleccionado.",
             )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
@@ -1058,7 +1058,7 @@ async def create_solicitud_personal_document(
     if payload.budget_concept_id is not None and concept is None:
         raise SolicitudValidationError(
             "invalid_budget_concept",
-            "La partida presupuestal no corresponde al torneo del informe.",
+            "El concepto no corresponde al torneo del informe.",
         )
 
     selected_proveedor = None

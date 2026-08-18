@@ -208,7 +208,7 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
         "presupuestos.ingresos",
         "Ingresos",
         "Presupuestos",
-        "Vinculación de CFDI PSP a proyecto y partida presupuestal.",
+        "Vinculación de CFDI PSP a proyecto y concepto.",
         ("/admin/presupuestos",),
         FINANCE_ADMIN_ROLES,
         ("ver", "crear", "editar", "exportar"),

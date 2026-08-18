@@ -520,7 +520,7 @@ def create_informe_csv(
     rows.append(row("REFERENCIA:", numero_referencia))
     rows.append(empty_row())
     # R12 header
-    rows.append(row("CONCEPTO DEL GASTO", "", "FECHA", "NO. FACTURA", "IMPORTE S/IVA", "IVA", "TOTAL"))
+    rows.append(row("DESCRIPCIÓN DEL GASTO", "", "FECHA", "NO. FACTURA", "IMPORTE S/IVA", "IVA", "TOTAL"))
     # Expense rows
     for exp in expenses:
         rows.append(row(
@@ -735,7 +735,7 @@ def create_solicitud_csv(
     # R13–R16: proyecto, fecha de pago, concepto, referencia de pago
     rows.append(row("PROYECTO:", proyecto or ""))
     rows.append(row("FECHA DE PAGO:", fecha_pago or ""))
-    rows.append(row("CONCEPTO:", concepto or ""))
+    rows.append(row("DESCRIPCIÓN:", concepto or ""))
     rows.append(row("REFERENCIA DE PAGO:", referencia_pago or ""))
     rows.append(empty_row())
     rows.append(empty_row())

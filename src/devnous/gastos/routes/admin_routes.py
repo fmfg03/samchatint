@@ -13252,7 +13252,7 @@ async def admin_presupuestos_legacy(
         f"""
         <div style="margin:12px 0 16px 0;padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
             <form method="POST" action="/admin/presupuestos/versiones/{escape(str(selected_version.get('id') if selected_version else ''))}/lineas/create" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end;">
-                <div style="grid-column:1/-1;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Partida presupuestal</label><select name="budget_concept_id" required>{_render_budget_concept_options_for_line(tournament_code="", selected_id=None)}</select></div>
+                <div style="grid-column:1/-1;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Concepto</label><select name="budget_concept_id" required>{_render_budget_concept_options_for_line(tournament_code="", selected_id=None)}</select></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Torneo código</label><input type="text" name="tournament_code" placeholder="Autocompletado por catálogo"></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Torneo</label><input type="text" name="tournament_name" placeholder="Autocompletado por catálogo"></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Concepto</label><input type="text" name="concept_name" placeholder="Opcional si eliges catálogo"></div>
@@ -22809,9 +22809,9 @@ async def gastos_sin_cuenta_contable(
                                     <th>Referencia</th>
                                     <th>Empleado</th>
                                     <th>Fecha</th>
-                                    <th>Concepto</th>
+                                    <th>Descripción</th>
                                     <th>Proyecto</th>
-                                    <th>Partida presupuestal</th>
+                                    <th>Concepto</th>
                                     <th>Cuenta contable</th>
                                     <th>Cuenta base</th>
                                     <th>Monto</th>

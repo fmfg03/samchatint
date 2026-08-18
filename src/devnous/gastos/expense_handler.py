@@ -328,7 +328,7 @@ Después te preguntaré:
 • Departamento
 • RFC
 • Torneo/proyecto
-• Concepto del gasto
+• Descripción del gasto
 • Monto en MXN
 • Uso de CFDI
 
@@ -364,7 +364,7 @@ Voy a ayudarte a registrar un gasto que no tiene recibo.
 2. Departamento
 3. RFC
 4. Torneo/proyecto
-5. Concepto del gasto
+5. Descripción del gasto
 6. Monto en MXN
 7. Fecha del gasto
 
@@ -652,7 +652,7 @@ Selecciona la fase del torneo:
                 message = f"""✅ **Fase del Torneo:** {fase_torneo}
 
 **Pregunta 6:**
-Selecciona el concepto del gasto:
+Selecciona el descripción del gasto:
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
 
@@ -2014,7 +2014,7 @@ Selecciona la fase del torneo:
             message = f"""✅ **Fase del Torneo:** {fase_torneo}
 
 **Pregunta 6:**
-Selecciona el concepto del gasto:
+Selecciona el descripción del gasto:
 
 💡 Si cometes un error, escribe `/reiniciar` para empezar de nuevo."""
 

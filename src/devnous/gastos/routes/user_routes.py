@@ -14186,7 +14186,7 @@ async def gastos_terceros(
                                     <th>Monto Solicitado</th>
                                     <th>Moneda</th>
                                     <th>Fecha Pago</th>
-                                    <th>Concepto Pago</th>
+                                    <th>Descripción de pago</th>
                                     <th>Archivos</th>
                                     <th>Estado</th>
                                     <th>Acciones</th>
@@ -14485,7 +14485,7 @@ async def solicitar_anticipo_form(
                             render_st_fecha_pago_field(**fecha_pago_kwargs),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             f'<input type="text" name="concepto_pago" id="concepto_pago" required value="{escape(preserve_concepto)}">',
                         )}
                         {render_st_doc_row_dual(
@@ -15243,17 +15243,17 @@ async def nuevo_gasto_form(
                     <select name="fase_torneo" id="fase_torneo" required disabled>
                         <option value="">Seleccione...</option>
                     </select>
-                    <small>La partida presupuestal se ajusta al subproyecto/fase seleccionado.</small>
+                    <small>El concepto se ajusta al subproyecto/fase seleccionado.</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="concepto">Concepto <span class="required">*</span></label>
+                    <label for="concepto">Descripción <span class="required">*</span></label>
                     <input type="text" name="concepto" id="concepto" required placeholder="Ej: Transporte, Alimentos, Hospedaje">
-                    <small>Ingrese el concepto del gasto</small>
+                    <small>Ingrese la descripción del gasto</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="budget_concept_search">Partida Presupuestal</label>
+                    <label for="budget_concept_search">Concepto</label>
                     <input type="text" id="budget_concept_search" list="budget_concept_options" placeholder="Escriba para buscar o seleccione de la lista" autocomplete="off" disabled>
                     <datalist id="budget_concept_options"></datalist>
                     <select name="budget_concept_id" id="budget_concept_id" disabled>
@@ -15534,7 +15534,7 @@ async def nuevo_gasto_form(
                         const placeholder = document.createElement('option');
                         placeholder.value = '';
                         placeholder.textContent = concepts.length
-                            ? '— Seleccione partida presupuestal —'
+                            ? '— Seleccione concepto —'
                             : '— Sin partidas para este subproyecto —';
                         placeholder.disabled = true;
                         placeholder.selected = true;
@@ -15937,7 +15937,7 @@ async def crear_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         "/gastos/nuevo",
-                        error_msg="Debe seleccionar una Partida Presupuestal para el torneo.",
+                        error_msg="Debe seleccionar un Concepto para el torneo.",
                     ),
                     status_code=303,
                 )
@@ -15953,7 +15953,7 @@ async def crear_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         "/gastos/nuevo",
-                        error_msg="La Partida Presupuestal no corresponde al torneo seleccionado.",
+                        error_msg="El Concepto no corresponde al torneo seleccionado.",
                     ),
                     status_code=303,
                 )
@@ -22920,7 +22920,7 @@ async def editar_gasto_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="budget_concept_id">Partida Presupuestal</label>
+                    <label for="budget_concept_id">Concepto</label>
                     <select name="budget_concept_id" id="budget_concept_id" {disabled_attr}>
                         {budget_concept_options}
                     </select>
@@ -23033,7 +23033,7 @@ async def editar_gasto_form(
                     budgetConceptSelect.innerHTML = '';
                     const placeholder = document.createElement('option');
                     placeholder.value = '';
-                    placeholder.textContent = '— Sin partida presupuestal —';
+                    placeholder.textContent = '— Sin concepto —';
                     placeholder.selected = !selectedBudgetConceptId;
                     budgetConceptSelect.appendChild(placeholder);
                     items.forEach(function(item) {{
@@ -23390,7 +23390,7 @@ async def editar_gasto(
                 url=_append_error_params(
                     f"/gastos/{gasto_id}/editar",
                     error_msg=(
-                        "La partida presupuestal solo puede asignarse a un informe "
+                        "El concepto solo puede asignarse a un informe "
                         "de gastos con torneo."
                     ),
                 ),
@@ -23408,7 +23408,7 @@ async def editar_gasto(
                 url=_append_error_params(
                     f"/gastos/{gasto_id}/editar",
                     error_msg=(
-                        "La partida presupuestal no corresponde al torneo del "
+                        "El concepto no corresponde al torneo del "
                         "informe de gastos."
                     ),
                 ),
@@ -24546,9 +24546,9 @@ async def nueva_solicitud_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="concepto_pago">Concepto de Pago *</label>
-                    <textarea name="concepto_pago" id="concepto_pago" placeholder="Descripción del concepto de pago..." required></textarea>
-                    <small>Descripción del concepto por el cual se solicita el pago</small>
+                    <label for="concepto_pago">Descripción de pago *</label>
+                    <textarea name="concepto_pago" id="concepto_pago" placeholder="Descripción del pago..." required></textarea>
+                    <small>Descripción del pago solicitado</small>
                 </div>
 
                 <div class="form-group">
@@ -24722,7 +24722,7 @@ async def crear_nueva_solicitud(
             url=_append_error_params(
                 "/documentos/nueva-solicitud",
                 error="missing_concepto",
-                error_msg="El concepto de pago es requerido.",
+                error_msg="El descripción de pago es requerida.",
             ),
             status_code=303
         )
@@ -27881,10 +27881,10 @@ async def _render_solicitud_terceros_form(
                             render_st_fecha_pago_field(**fecha_pago_kwargs),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             (
                                 '<textarea name="concepto_pago" id="concepto_pago" '
-                                'placeholder="Descripción del concepto de pago..." '
+                                'placeholder="Descripción del pago..." '
                                 f"required>{escape(preserve_concepto)}</textarea>"
                             ),
                         )}
@@ -27893,7 +27893,7 @@ async def _render_solicitud_terceros_form(
                             render_pago_urgente_field(checked=preserve_pago_urgente),
                         )}
                         {render_st_doc_row(
-                            "PARTIDA PRESUPUESTAL:",
+                            "CONCEPTO:",
                             (
                                 '<select name="budget_concept_id" '
                                 'id="budget_concept_id_terceros">'
@@ -29244,7 +29244,7 @@ async def _render_document_authorization_strategy_evidence(
             ("Tipo de erogacion", inputs.get("erogation_type") or inputs.get("erogation_key") or "--", "Clasificacion usada para la matriz."),
             ("Monto MXN", inputs.get("amount_mxn") or "--", "Base de rango de autorizacion."),
             ("Factura", "Si" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
-            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
+            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra concepto."),
             ("Urgente", "Si" if inputs.get("is_urgent") else "No", "Excepcion operativa de prioridad."),
         ]
     )
@@ -30660,9 +30660,9 @@ def _html_budget_concept_options(
     required: bool,
 ) -> str:
     placeholder = (
-        '<option value="" disabled selected>— Seleccione partida presupuestal —</option>'
+        '<option value="" disabled selected>— Seleccione concepto —</option>'
         if not selected_id
-        else '<option value="">— Seleccione partida presupuestal —</option>'
+        else '<option value="">— Seleccione concepto —</option>'
     )
     options = [placeholder]
     for concept in concepts:
@@ -30676,9 +30676,9 @@ def _html_budget_concept_options(
         )
     if not required:
         options[0] = (
-            '<option value="" selected>— Sin partida presupuestal —</option>'
+            '<option value="" selected>— Sin concepto —</option>'
             if not selected_id
-            else '<option value="">— Sin partida presupuestal —</option>'
+            else '<option value="">— Sin concepto —</option>'
         )
     return "".join(options)
 
@@ -30757,9 +30757,9 @@ def _render_budget_concept_sync_script(
     concept_map_json = json.dumps(concept_map)
     selected_json = json.dumps(selected_id or "")
     placeholder = (
-        "— Seleccione partida presupuestal —"
+        "— Seleccione concepto —"
         if required
-        else "— Sin partida presupuestal —"
+        else "— Sin concepto —"
     )
     return f"""
     <script>
@@ -32737,7 +32737,7 @@ def _quick_expense_values(
         iva_amount = max(impuestos_net, Decimal("0"))
 
     if not concepto_final:
-        raise ValueError("Concepto del gasto es requerido")
+        raise ValueError("Descripción del gasto es requerida")
     try:
         fecha_dt = datetime.strptime(fecha_final, "%Y-%m-%d")
     except ValueError as exc:
@@ -32887,9 +32887,9 @@ async def crear_gasto_rapido_en_informe(
             budget_direction="expense",
         )
         if available_budget_concepts and not budget_concept_raw:
-            raise ValueError("La partida presupuestal es requerida para este informe.")
+            raise ValueError("El concepto es requerido para este informe.")
         if budget_concept_raw and budget_concept is None:
-            raise ValueError("La partida presupuestal no corresponde al torneo del informe.")
+            raise ValueError("El concepto no corresponde al torneo del informe.")
         proyecto = (
             (cuenta.torneo.name or "").strip()
             if cuenta.torneo
@@ -33678,8 +33678,8 @@ async def cuenta_de_gastos_detail(
                                     <tr>
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
-                                        <th>CONCEPTO DEL GASTO</th>
-                                        <th>PARTIDA PRESUPUESTAL</th>
+                                        <th>DESCRIPCIÓN DEL GASTO</th>
+                                        <th>CONCEPTO</th>
                                         <th>FECHA DEL GASTO</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
@@ -33695,7 +33695,7 @@ async def cuenta_de_gastos_detail(
                                         <td><input type="file" name="cfdi_xml" id="quick-cfdi-xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input type="file" name="cfdi_pdf" id="quick-cfdi-pdf" accept=".pdf,application/pdf"></td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
-                                        <td><select name="budget_concept_id" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered else ""}>{quick_budget_concept_options or '<option value=\"\">— Sin partida presupuestal —</option>'}</select></td>
+                                        <td><select name="budget_concept_id" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered else ""}>{quick_budget_concept_options or '<option value=\"\">— Sin concepto —</option>'}</select></td>
                                         <td><input type="date" name="fecha" id="quick-fecha" required></td>
                                         <td>
                                             <input name="numero_factura" id="quick-numero-factura" list="quick-factura-options" placeholder="UUID, vale azul o no facturable">
@@ -34477,7 +34477,7 @@ async def nueva_solicitud_desde_cuenta_form(
                             render_pago_urgente_field(),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             '<input type="text" name="concepto_pago" id="concepto_pago" required>',
                         )}
                         {render_st_doc_row_dual(
