@@ -26737,6 +26737,7 @@ async def documentos_pendientes(
     - Non-superadmin users only see documents routed to their approval scope.
       If a document has no beneficiary employee, approval falls back to the
       requester/owner.
+    - Search/filter is applied only inside that already-authorized visibility scope.
     """
 
     if not await _can_review_pending_approvals(session, current_empleado):
@@ -26819,6 +26820,7 @@ async def documentos_pendientes(
                 Documento.concepto_pago.ilike(q_filter),
                 Documento.referencia_pago.ilike(q_filter),
                 Documento.referencia_operaciones.ilike(q_filter),
+                Documento.notas.ilike(q_filter),
                 solicitante_alias.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),

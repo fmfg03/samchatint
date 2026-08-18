@@ -490,6 +490,29 @@ def test_pending_documents_view_shows_operations_reference_column() -> None:
     assert "<td>{referencia_operaciones}</td>" in route_block
 
 
+def test_pending_documents_view_adds_search_filters_and_reporting_columns() -> None:
+    source = Path(user_routes.__file__).read_text()
+    route_start = source.index('async def documentos_pendientes(')
+    route_end = source.index('@router.get("/documentos/historial-aprobador"', route_start)
+    route_block = source[route_start:route_end]
+
+    assert 'q: Optional[str] = None' in route_block
+    assert 'empleado_nombre: Optional[str] = None' in route_block
+    assert 'tipo: Optional[str] = None' in route_block
+    assert 'action="/documentos/pendientes"' in route_block
+    assert 'name="q"' in route_block
+    assert 'name="tipo"' in route_block
+    assert 'name="empleado_nombre"' in route_block
+    assert 'Documento.referencia_operaciones.ilike(q_filter)' in route_block
+    assert 'Documento.concepto_pago.ilike(q_filter)' in route_block
+    assert 'Documento.notas.ilike(q_filter)' in route_block
+    assert 'beneficiario_alias.nombre.ilike(q_filter)' in route_block
+    assert 'proveedor_alias.nombre.ilike(q_filter)' in route_block
+    assert '<th>Beneficiario/Proveedor</th>' in route_block
+    assert '<th>Descripción</th>' in route_block
+    assert 'Search/filter is applied only inside that already-authorized visibility scope' in route_block
+
+
 def test_approval_history_view_shows_operations_reference_column() -> None:
     source = Path(user_routes.__file__).read_text()
     route_start = source.index('async def historial_aprobador(')
