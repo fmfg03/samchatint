@@ -9142,6 +9142,8 @@ def _beneficiary_employee_control_html(
     options_html: str,
     select_id: str,
     help_text: str,
+    title: str = "Empleado beneficiario",
+    use_activation: bool = False,
 ) -> str:
     """Render an explicit employee selector only for authorized requesters."""
     beneficiary_name = escape(
@@ -9155,23 +9157,41 @@ def _beneficiary_employee_control_html(
         "display:inline-block;background:#1d4ed8;color:white;border-radius:999px;"
         "padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;"
     )
+    title_safe = escape(title)
+    requester_id = getattr(requester, "id", None)
+    beneficiary_id = getattr(beneficiary, "id", None)
+    activation_checked = bool(use_activation and requester_id and beneficiary_id and requester_id != beneficiary_id)
+    activation_checked_attr = " checked" if activation_checked else ""
+    activation_html = (
+        f'<label style="display:flex;align-items:center;gap:8px;margin:0;font-weight:800;">'
+        f'<input type="checkbox" id="{select_id}_enabled" class="beneficiary-mode-toggle" data-beneficiary-mode="employee"{activation_checked_attr}> '
+        f'{title_safe}</label>'
+        if use_activation
+        else f'<div><span style="{badge_style}">Paso 1</span> <strong>{title_safe}</strong></div>'
+    )
+    select_disabled = " disabled" if use_activation and not activation_checked else ""
+    default_beneficiary_attr = f' data-default-beneficiary-id="{escape(str(requester.id))}"' if use_activation else ""
     if _can_request_for_other_employee(requester):
         return (
             f'<div class="employee-beneficiary-control" style="{control_style}">'
-            f'<div><span style="{badge_style}">Paso 1</span> '
-            '<strong>Empleado beneficiario</strong></div>'
+            f'{activation_html}'
             f'<label for="{select_id}" style="display:block;font-weight:700;">'
             'Elige quien recibira el recurso</label>'
-            f'<select name="beneficiario_empleado_id" id="{select_id}" required '
+            f'<select name="beneficiario_empleado_id" id="{select_id}" required{select_disabled}{default_beneficiary_attr} '
             f'style="margin-bottom:2px;">{options_html}</select>'
             f'<small>{escape(help_text)}</small>'
             '</div>'
         )
+    locked_title = "Beneficiario del informe" if use_activation else title_safe
+    locked_heading = (
+        f'<div><strong>{locked_title}</strong></div>'
+        if use_activation
+        else f'<div><span style="{badge_style}">Beneficiario</span> <strong>{locked_title}</strong></div>'
+    )
     return (
         f'<div class="employee-beneficiary-control locked" style="{control_style}">'
         f'<input type="hidden" name="beneficiario_empleado_id" value="{beneficiary.id}">'
-        f'<div><span style="{badge_style}">Beneficiario</span> '
-        '<strong>Empleado beneficiario</strong></div>'
+        f'{locked_heading}'
         f'<span style="display:block;font-weight:800;">{beneficiary_name}</span>'
         '<small>Este usuario solamente puede solicitar para si mismo.</small>'
         '</div>'
@@ -9275,17 +9295,28 @@ def _regional_operator_beneficiary_control_html(
     selected_operator: Optional[ProveedorCliente],
     options_html: str,
     select_id: str,
+    use_activation: bool = False,
 ) -> str:
     if not _can_request_for_other_employee(requester):
         return ""
+    activation_checked = bool(use_activation and selected_operator is not None)
     selected_note = ""
     if selected_operator is not None:
         selected_note = f'<small>Operador seleccionado: {escape(selected_operator.nombre or "")}</small>'
+    activation_checked_attr = " checked" if activation_checked else ""
+    activation_html = (
+        f'<label style="display:flex;align-items:center;gap:8px;margin:0;font-weight:800;">'
+        f'<input type="checkbox" id="{select_id}_enabled" class="beneficiary-mode-toggle" data-beneficiary-mode="operator"{activation_checked_attr}> '
+        'Operador regional beneficiario</label>'
+        if use_activation
+        else '<div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>'
+    )
+    select_disabled = " disabled" if use_activation and not activation_checked else ""
     return f'''
         <div class="regional-operator-beneficiary-control" style="border:1px solid #fed7aa;background:#fff7ed;border-radius:12px;padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;">
-            <div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>
+            {activation_html}
             <label for="{select_id}" style="display:block;font-weight:700;">Usar operador regional en lugar de empleado</label>
-            <select name="beneficiario_operador_id" id="{select_id}">{options_html}</select>
+            <select name="beneficiario_operador_id" id="{select_id}"{select_disabled}>{options_html}</select>
             <small>Si seleccionas un operador regional, el documento queda a nombre del operador; solicitante y aprobacion siguen siendo del usuario autenticado.</small>
             {selected_note}
         </div>
@@ -31319,6 +31350,8 @@ async def crear_cuenta_de_gastos_form(
             "Selecciona a la persona a cuyo nombre se prepara el informe. "
             "El responsable, propietario y aprobador continúan siendo los del usuario que lo crea."
         ),
+        title="Es para otro beneficiario",
+        use_activation=True,
     )
     regional_operator: Optional[ProveedorCliente] = None
     regional_operator_control = ""
@@ -31336,6 +31369,7 @@ async def crear_cuenta_de_gastos_form(
                 regional_operator.id if regional_operator else None,
             ),
             select_id="beneficiario_operador_id_informe",
+            use_activation=True,
         )
     if regional_operator is not None:
         bank_account_options = _html_single_proveedor_bank_account_options(
@@ -31561,26 +31595,74 @@ async def crear_cuenta_de_gastos_form(
                         }}
                     }}
 
+                    var operatorToggle = document.getElementById("beneficiario_operador_id_informe_enabled");
+                    var employeeToggle = document.getElementById("beneficiario_empleado_id_enabled");
+                    var defaultEmployeeId = employeeSelect && employeeSelect.dataset ? (employeeSelect.dataset.defaultBeneficiaryId || employeeSelect.value || "") : "";
+
+                    function setOperatorDisabled(disabled) {{
+                        if (!operatorSelect) return;
+                        operatorSelect.disabled = disabled;
+                        operatorSelect.required = !disabled && operatorToggle && operatorToggle.checked;
+                    }}
+
+                    function resetToRequester() {{
+                        if (operatorSelect) operatorSelect.value = "";
+                        if (employeeSelect && employeeSelect.tagName === "SELECT" && defaultEmployeeId) employeeSelect.value = defaultEmployeeId;
+                        setOperatorDisabled(true);
+                        setEmployeeDisabled(true);
+                        loadEmployeeAccounts();
+                    }}
+
                     function applyBeneficiaryMode() {{
-                        if (operatorSelect && operatorSelect.value) {{
-                            var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                        var operatorEnabled = !!(operatorToggle && operatorToggle.checked);
+                        var employeeEnabled = !!(employeeToggle && employeeToggle.checked);
+
+                        if (operatorEnabled) {{
+                            if (employeeToggle) employeeToggle.checked = false;
                             setEmployeeDisabled(true);
-                            accountSelect.innerHTML = "";
-                            accountSelect.appendChild(regionalAccountOption(selected));
+                            setOperatorDisabled(false);
+                            if (operatorSelect && operatorSelect.value) {{
+                                var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                                accountSelect.innerHTML = "";
+                                accountSelect.appendChild(regionalAccountOption(selected));
+                            }} else {{
+                                accountSelect.innerHTML = '<option value="" selected disabled>Selecciona operador regional</option>';
+                            }}
                             return;
                         }}
-                        setEmployeeDisabled(false);
+
+                        if (employeeEnabled) {{
+                            if (operatorToggle) operatorToggle.checked = false;
+                            if (operatorSelect) operatorSelect.value = "";
+                            setOperatorDisabled(true);
+                            setEmployeeDisabled(false);
+                            loadEmployeeAccounts();
+                            return;
+                        }}
+
+                        resetToRequester();
                     }}
 
                     if (employeeSelect && employeeSelect.tagName === "SELECT") {{
                         employeeSelect.addEventListener("change", function() {{
-                            if (!operatorSelect || !operatorSelect.value) loadEmployeeAccounts();
+                            if (employeeToggle && employeeToggle.checked) loadEmployeeAccounts();
                         }});
                     }}
                     if (operatorSelect) {{
                         operatorSelect.addEventListener("change", function() {{
+                            if (operatorToggle && operatorToggle.checked) applyBeneficiaryMode();
+                        }});
+                    }}
+                    if (operatorToggle) {{
+                        operatorToggle.addEventListener("change", function() {{
+                            if (operatorToggle.checked && employeeToggle) employeeToggle.checked = false;
                             applyBeneficiaryMode();
-                            if (!operatorSelect.value) loadEmployeeAccounts();
+                        }});
+                    }}
+                    if (employeeToggle) {{
+                        employeeToggle.addEventListener("change", function() {{
+                            if (employeeToggle.checked && operatorToggle) operatorToggle.checked = false;
+                            applyBeneficiaryMode();
                         }});
                     }}
                     applyBeneficiaryMode();
