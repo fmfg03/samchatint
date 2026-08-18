@@ -24,6 +24,27 @@ class _FakeHistoricalReport:
         }
 
 
+class _NestedTransaction:
+    def __init__(self, session):
+        self.session = session
+
+    async def __aenter__(self):
+        self.session.nested_enters += 1
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.session.nested_exits += 1
+        return False
+
+
+class _NestedSession:
+    def __init__(self):
+        self.nested_enters = 0
+        self.nested_exits = 0
+
+    def begin_nested(self):
+        return _NestedTransaction(self)
+
+
 def _expense(**overrides):
     base = {
         "concepto": "Consumo de alimentos",
@@ -117,3 +138,18 @@ async def test_historical_precedent_evidence_requires_visible_query(monkeypatch)
 
     assert evidence["status"] == "invalid_query"
     assert evidence["candidates"] == []
+
+
+@pytest.mark.asyncio
+async def test_historical_precedent_failure_isolated_in_nested_transaction(monkeypatch):
+    async def fake_precedents(session, **kwargs):
+        raise RuntimeError("optional precedent lookup failed after db error")
+
+    monkeypatch.setattr(service, "query_historical_accounting_precedents", fake_precedents)
+
+    session = _NestedSession()
+    evidence = await service.build_historical_precedent_evidence(session, _expense())
+
+    assert evidence["status"] == "precedent_lookup_failed"
+    assert session.nested_enters == 1
+    assert session.nested_exits == 1

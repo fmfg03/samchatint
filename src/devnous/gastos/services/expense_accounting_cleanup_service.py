@@ -6,6 +6,7 @@ reuse the chosen accounts without reclassification.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
@@ -38,6 +39,16 @@ class CFDICleanupOption:
     emisor_nombre: Optional[str]
     fecha: Any
 
+
+
+@asynccontextmanager
+async def _optional_nested_transaction(session: AsyncSession):
+    begin_nested = getattr(session, "begin_nested", None)
+    if begin_nested is None:
+        yield
+        return
+    async with begin_nested():
+        yield
 
 def _money_or_none(value: Any) -> Optional[float]:
     if value in (None, ""):
@@ -124,13 +135,14 @@ async def build_historical_precedent_evidence(
             ],
         }
     try:
-        report = await query_historical_accounting_precedents(
-            session,
-            query=query,
-            company_code="01",
-            fiscal_year=getattr(expense, "edicion", None),
-            limit=limit,
-        )
+        async with _optional_nested_transaction(session):
+            report = await query_historical_accounting_precedents(
+                session,
+                query=query,
+                company_code="01",
+                fiscal_year=getattr(expense, "edicion", None),
+                limit=limit,
+            )
         payload = report.to_dict()
         payload.setdefault("safety_summary", {})[
             "account_assignment_performed"
