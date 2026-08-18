@@ -7,6 +7,7 @@ reuse the chosen accounts without reclassification.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 from uuid import UUID
@@ -26,6 +27,9 @@ DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "BANCO SANTANDER 65506206424"
 from .budget_concept_account_service import cleanup_expense_loader_options
 from .expense_accounting_service import build_expense_accounting_preview
 from .hospedaje_tax_service import normalize_hospedaje_rate, normalize_hospedaje_state
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -293,6 +297,75 @@ async def build_cleanup_preview(
     return state
 
 
+async def safe_build_cleanup_preview(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    *,
+    include_historical_precedent: bool = False,
+) -> Dict[str, Any]:
+    """Build cleanup preview without allowing optional enrichment to blank a page.
+
+    Accounting cleanup screens are operational work queues. They must remain
+    usable even when advisory previews, historical lookups, or fiscal
+    enrichments fail for a single expense row. The returned state is explicit
+    about the degradation so the UI can show the row and let Contabilidad keep
+    working manually.
+    """
+
+    try:
+        async with _optional_nested_transaction(session):
+            return await build_cleanup_preview(
+                session,
+                expense,
+                include_historical_precedent=include_historical_precedent,
+            )
+    except Exception:  # pragma: no cover - defensive operational guard
+        logger.warning(
+            "cleanup preview failed; rendering degraded row",
+            extra={"expense_id": str(getattr(expense, "id", ""))},
+            exc_info=True,
+        )
+        amount = float(getattr(expense, "gasto_cantidad", 0.0) or 0.0)
+        return {
+            "preview": {
+                "taxes": {
+                    "iva_trasladado": 0.0,
+                    "retenciones": [],
+                    "retenciones_total": 0.0,
+                    "impuestos_locales": [],
+                    "impuestos_locales_total": 0.0,
+                    "gastos_no_deducibles": [],
+                    "gastos_no_deducibles_total": 0.0,
+                    "base_gasto": amount,
+                    "neto_contrapartida": amount,
+                },
+                "notes": [
+                    "Vista degradada: no se pudieron calcular sugerencias fiscales/contables para esta fila.",
+                    "Puedes clasificar manualmente o reintentar mas tarde.",
+                ],
+                "contra_account": {},
+            },
+            "issues": [
+                "Preview contable no disponible",
+                *([] if getattr(expense, "cuenta_contable_id", None) else ["Falta cuenta de cargo"]),
+                *([] if getattr(expense, "contra_cuenta_contable_id", None) else ["Falta contrapartida"]),
+                *([] if getattr(expense, "cfdi_report_id", None) else ["Falta CFDI vinculado"]),
+            ],
+            "status": "Pendiente",
+            "historical_precedent_evidence": {
+                "status": "preview_degraded",
+                "headline": "Sugerencias no disponibles",
+                "summary": "La fila se muestra sin enriquecimiento opcional para evitar pantalla blanca.",
+                "query": "",
+                "candidates": [],
+                "safety_summary": {
+                    "read_only": True,
+                    "account_assignment_performed": False,
+                },
+            } if include_historical_precedent else {},
+        }
+
+
 async def save_expense_cleanup(
     session: AsyncSession,
     expense_id: UUID,
@@ -458,6 +531,7 @@ __all__ = [
     "DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO",
     "DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE",
     "build_cleanup_preview",
+    "safe_build_cleanup_preview",
     "build_historical_precedent_evidence",
     "list_unassigned_cfdi_options",
     "load_cleanup_expenses",

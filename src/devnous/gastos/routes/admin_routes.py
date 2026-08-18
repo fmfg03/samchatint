@@ -120,7 +120,7 @@ from ..services.employee_debtor_accounting_service import (
     build_debtors_admin_snapshot,
 )
 from ..services.expense_accounting_cleanup_service import (
-    build_cleanup_preview,
+    safe_build_cleanup_preview,
     list_unassigned_cfdi_options,
     load_cleanup_expenses,
     resolve_default_cleanup_contra_cuenta,
@@ -22162,7 +22162,7 @@ async def gastos_sin_cuenta_contable(
 
         # Get suggestion for this expense
         suggestion = suggestions.get(gasto.id)
-        cleanup_state = await build_cleanup_preview(
+        cleanup_state = await safe_build_cleanup_preview(
             session,
             gasto,
             include_historical_precedent=True,

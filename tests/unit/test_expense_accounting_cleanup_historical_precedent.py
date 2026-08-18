@@ -153,3 +153,26 @@ async def test_historical_precedent_failure_isolated_in_nested_transaction(monke
     assert evidence["status"] == "precedent_lookup_failed"
     assert session.nested_enters == 1
     assert session.nested_exits == 1
+
+
+@pytest.mark.asyncio
+async def test_safe_cleanup_preview_degrades_failed_preview_in_nested_transaction(monkeypatch):
+    async def fake_accounting_preview(session, expense):
+        raise RuntimeError("preview query failed")
+
+    monkeypatch.setattr(service, "build_expense_accounting_preview", fake_accounting_preview)
+
+    session = _NestedSession()
+    state = await service.safe_build_cleanup_preview(
+        session,
+        _expense(gasto_cantidad=123.45),
+        include_historical_precedent=True,
+    )
+
+    assert state["status"] == "Pendiente"
+    assert "Preview contable no disponible" in state["issues"]
+    assert state["preview"]["taxes"]["base_gasto"] == 123.45
+    assert state["preview"]["taxes"]["neto_contrapartida"] == 123.45
+    assert state["historical_precedent_evidence"]["status"] == "preview_degraded"
+    assert session.nested_enters == 1
+    assert session.nested_exits == 1
