@@ -12937,15 +12937,24 @@ async def panel_operaciones_console(
     can_view_budget = _can_view_presupuestos(current_empleado)
     budget_visibility_style = "" if can_view_budget else 'style="display:none"'
 
-    tournament_rows = (
-        await session.execute(
-            select(Tournament.id, Tournament.name).order_by(Tournament.name.asc())
+    operations_degraded_messages: list[str] = []
+    try:
+        tournament_rows = (
+            await session.execute(
+                select(Tournament.id, Tournament.name).order_by(Tournament.name.asc())
+            )
+        ).all()
+        tournaments = [
+            {"id": str(row[0]), "name": str(row[1] or "")}
+            for row in tournament_rows
+        ]
+    except Exception as exc:
+        await session.rollback()
+        logger.warning("Operations console tournament list unavailable: %s", exc, exc_info=True)
+        operations_degraded_messages.append(
+            "No se pudo cargar el catalogo de torneos. La consola queda disponible en modo degradado."
         )
-    ).all()
-    tournaments = [
-        {"id": str(row[0]), "name": str(row[1] or "")}
-        for row in tournament_rows
-    ]
+        tournaments = []
     selected_tournament = None
     if tournament_id:
         selected_tournament = next(
@@ -12957,21 +12966,33 @@ async def panel_operaciones_console(
 
     snapshot_data: dict[str, Any] = {"summary": {}, "alerts": [], "budget": None}
     if can_operate and selected_tournament:
-        result = await operations_folder_planner_snapshot_adapter(
-            session,
-            context=AssistantContext(
-                tournament_id=selected_tournament["id"],
-                tournament_name=selected_tournament["name"],
-                edition="2026",
-            ),
-            payload={
-                "tournament_id": selected_tournament["id"],
-                "tournament_name": selected_tournament["name"],
-                "edition_year": 2026,
-                "limit": 120,
-            },
-        )
-        snapshot_data = result.data or snapshot_data
+        try:
+            result = await operations_folder_planner_snapshot_adapter(
+                session,
+                context=AssistantContext(
+                    tournament_id=selected_tournament["id"],
+                    tournament_name=selected_tournament["name"],
+                    edition="2026",
+                ),
+                payload={
+                    "tournament_id": selected_tournament["id"],
+                    "tournament_name": selected_tournament["name"],
+                    "edition_year": 2026,
+                    "limit": 120,
+                },
+            )
+            snapshot_data = result.data or snapshot_data
+        except Exception as exc:
+            await session.rollback()
+            logger.warning(
+                "Operations console snapshot unavailable for tournament_id=%s: %s",
+                selected_tournament["id"],
+                exc,
+                exc_info=True,
+            )
+            operations_degraded_messages.append(
+                "No se pudo cargar el pulso inteligente de operaciones. Puedes seguir usando el selector y las secciones disponibles."
+            )
 
     summary = snapshot_data.get("summary") or {}
     alerts = list(snapshot_data.get("alerts") or [])
@@ -12980,18 +13001,28 @@ async def panel_operaciones_console(
     budget_alerts = list(budget.get("executive_alerts") or [])
     top_alert = alerts[0] if alerts else {}
     top_budget_alert = budget_alerts[0] if budget_alerts else {}
-    tournament_commitments = (
-        await list_budget_tournament_commitments(
-            session,
-            edition_year=2026,
-            tournament_id=selected_tournament["id"],
-            tournament_name=selected_tournament["name"],
-            tournament_code=None,
-            limit=12,
-        )
-        if can_operate and can_view_budget and selected_tournament
-        else []
-    )
+    tournament_commitments = []
+    if can_operate and can_view_budget and selected_tournament:
+        try:
+            tournament_commitments = await list_budget_tournament_commitments(
+                session,
+                edition_year=2026,
+                tournament_id=selected_tournament["id"],
+                tournament_name=selected_tournament["name"],
+                tournament_code=None,
+                limit=12,
+            )
+        except Exception as exc:
+            await session.rollback()
+            logger.warning(
+                "Operations console commitments unavailable for tournament_id=%s: %s",
+                selected_tournament["id"],
+                exc,
+                exc_info=True,
+            )
+            operations_degraded_messages.append(
+                "No se pudieron cargar compromisos/presupuesto del torneo. El resto de la consola sigue disponible."
+            )
     active_commitment = next(
         (
             item
@@ -13165,6 +13196,15 @@ async def panel_operaciones_console(
         </div>
         """
         for item in budget_alerts
+    )
+
+    degraded_state = "".join(
+        f"""
+            <div class="notice warn" style="margin-bottom:12px;">
+                {escape(message)}
+            </div>
+        """
+        for message in operations_degraded_messages
     )
 
     hero_actions = """
@@ -13433,6 +13473,7 @@ async def panel_operaciones_console(
                 side_html=side_html,
             )}
             <div class="stack">
+                {degraded_state}
                 {empty_state}
                 <div class="ops-toolbar">
                     <div class="ops-filter-strip">
