@@ -15547,6 +15547,40 @@ async def update_password(
 # ============================================================================
 
 
+
+def _cuentas_contables_export_csv(cuentas: List[CuentaContable]) -> str:
+    """Return the accounting account catalog as a UTF-8 BOM CSV payload."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["codigo", "nombre", "tipo", "activo"])
+    for cuenta in cuentas:
+        writer.writerow([
+            cuenta.codigo or "",
+            cuenta.nombre or "",
+            cuenta.tipo or "",
+            "si" if cuenta.activo else "no",
+        ])
+    return "\ufeff" + output.getvalue()
+
+
+@router.get("/admin/cuentas-contables/export.csv", response_class=Response)
+async def export_cuentas_contables_csv(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> Response:
+    """Download the full accounting account catalog for bulk maintenance."""
+    result = await session.execute(select(CuentaContable).order_by(CuentaContable.codigo))
+    cuentas = result.scalars().all()
+    payload = _cuentas_contables_export_csv(list(cuentas))
+    stamp = datetime.now().strftime("%Y%m%d")
+    return Response(
+        content=payload,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="catalogo-cuentas-contables-{stamp}.csv"'
+        },
+    )
+
 @router.get("/admin/cuentas-contables", response_class=HTMLResponse)
 async def admin_cuentas_contables(
     request: Request,
@@ -15753,6 +15787,11 @@ async def admin_cuentas_contables(
             <h1>Gestión de Cuentas Contables</h1>
             <p class="subtitle">Administra el catálogo de cuentas contables</p>
             {bi_context_html}
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin:0 0 22px 0;">
+                <a href="/admin/cuentas-contables/export.csv" class="btn btn-secondary">Bajar cat&aacute;logo</a>
+                <a href="/admin/cuentas-contables/carga-masiva" class="btn btn-primary">Subir cat&aacute;logo</a>
+            </div>
 
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Cuenta Contable</h2>
