@@ -752,7 +752,7 @@ def render_solicitud_transferencia_detail_view(
                     {render_st_doc_row('CANTIDAD A PAGAR:', render_st_doc_readonly_value(cantidad_display), readonly=True)}
                     {render_st_doc_row('CANTIDAD CON LETRA:', render_st_doc_readonly_value(cantidad_letra), readonly=True)}
                     {render_st_doc_row_dual('PROYECTO:', render_st_doc_readonly_value(proyecto), 'FECHA DE PAGO:', render_st_doc_readonly_value(fecha_pago_display), left_readonly=True, right_readonly=True)}
-                    {render_st_doc_row('CONCEPTO:', render_st_doc_readonly_value(concepto), readonly=True)}
+                    {render_st_doc_row('DESCRIPCIÓN:', render_st_doc_readonly_value(concepto), readonly=True)}
                     {render_st_doc_row_dual('NÚMERO DE FACTURA:', render_st_doc_readonly_value(numero_factura), 'REFERENCIA:', render_st_doc_readonly_value(referencia_operaciones), left_readonly=True, right_readonly=True)}
                     {render_st_doc_firmas(solicita, aprueba)}
                 </div>

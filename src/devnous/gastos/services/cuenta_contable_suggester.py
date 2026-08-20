@@ -181,7 +181,7 @@ class CuentaContableSuggester:
     """
     Multi-tier cuenta contable suggestion system.
 
-    Tier -1: Partida presupuestal catalog mapping (budget_concepts.cuenta_contable_id)
+    Tier -1: Concepto catalog mapping (budget_concepts.cuenta_contable_id)
     Tier 0: Torneo/Proyecto (primary) - base from tournament, sub_cuenta from concepto mapping
     Tier 0.5: AMEX batch - explicit card catalog, then legacy suffix fallback
     Tier 1: Deterministic rules (keyword, metodo_pago boost)
@@ -1086,7 +1086,7 @@ class CuentaContableSuggester:
             # Build prompt
             prompt = f"""Eres un asistente contable mexicano. Dado el siguiente gasto, sugiere la cuenta contable más apropiada.
 
-CONCEPTO DEL GASTO: {concepto}
+DESCRIPCIÓN DEL GASTO: {concepto}
 {f'PROVEEDOR/CLIENTE: {proveedor_name}' if proveedor_name else ''}
 {f'MÉTODO DE PAGO: {metodo_pago}' if metodo_pago else ''}
 

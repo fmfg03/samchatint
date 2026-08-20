@@ -655,7 +655,7 @@ def format_documento_resumen_es(
             f"*Solicitante* {sol}",
             f"*Proyecto* {proyecto}",
             f"*Etapa / subproyecto* {etapa}",
-            f"*Concepto / notas* {concepto}",
+            f"*Descripción / notas* {concepto}",
             f"*Referencia Operaciones* {ro}",
             f"*Monto solicitado* {monto_val}",
         ]
@@ -670,7 +670,7 @@ def format_documento_resumen_es(
             f"*Solicitante* {sol}",
             f"*Proyecto* {proyecto}",
             f"*Etapa / subproyecto* {etapa}",
-            f"*Concepto / notas* {concepto}",
+            f"*Descripción / notas* {concepto}",
             f"*Monto solicitado* {monto_sol}",
             f"*Monto gastado* {monto_gas}",
             f"*Saldo* {saldo_val}",
@@ -684,7 +684,7 @@ def format_documento_resumen_es(
             f"*Solicitante* {sol}",
             f"*Proyecto* {proyecto}",
             f"*Etapa / subproyecto* {etapa}",
-            f"*Concepto / notas* {concepto}",
+            f"*Descripción / notas* {concepto}",
             monto_line,
         ]
         if saldo_txt:
