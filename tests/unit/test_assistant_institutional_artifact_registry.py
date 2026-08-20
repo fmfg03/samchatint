@@ -201,6 +201,18 @@ def test_institutional_registry_exposes_owner_variable_query_tool() -> None:
     assert "conflict_values" in spec.output_contract
 
 
+
+def test_institutional_registry_exposes_owner_variable_answer_renderer() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    spec = artifacts["assistant.owner_variable_answer"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "read_only"
+    assert spec.assistant_tool == "assistant_owner_variable_query"
+    assert "assistant.owner_variable_query" in spec.evidence_sources
+    assert "rendered_text" in spec.output_contract
+    assert "safety_summary" in spec.output_contract
+
 def test_institutional_registry_exposes_owner_entity_folder_workspace_tool() -> None:
     artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
 

@@ -292,6 +292,33 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         next_wiring_step="Use variable query results inside conversational owner answers; keep unresolved variables as missing evidence, never as inferred facts.",
     ),
     InstitutionalArtifactSpec(
+        artifact_id="assistant.owner_variable_answer",
+        title="Owner Variable Conversational Answer",
+        domain="owner_pack",
+        status="wired",
+        module_path="samchat.assistant.owner_variable_answer",
+        entrypoint="render_owner_variable_query_answer",
+        authority_level="read_only",
+        assistant_tool="assistant_owner_variable_query",
+        evidence_sources=(
+            "assistant.owner_variable_query",
+        ),
+        input_contract=(
+            "OwnerVariableQueryReport from assistant.owner_variable_query",
+        ),
+        output_contract=(
+            "headline",
+            "short_answer",
+            "detail_lines",
+            "evidence_lines",
+            "missing_lines",
+            "conflict_lines",
+            "rendered_text",
+            "safety_summary",
+        ),
+        next_wiring_step="Use conversation_answer.rendered_text as the owner-facing assistant reply while preserving structured resolver payload for audit.",
+    ),
+    InstitutionalArtifactSpec(
         artifact_id="assistant.owner_entity_folder_workspace",
         domain="owner_pack",
         name="Owner Entity Folder Workspace",

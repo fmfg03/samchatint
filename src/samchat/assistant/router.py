@@ -161,6 +161,7 @@ from .owner_entity_folder_workspace import build_owner_entity_folder_workspace_f
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_status import build_owner_pack_status_report
+from .owner_variable_answer import render_owner_variable_query_answer
 from .owner_variable_query import build_owner_variable_query_report
 from .owner_response_pack import build_response_pack_from_live_snapshot
 from .sports_operations_status import build_sports_operations_status_from_tournament_source
@@ -9021,11 +9022,16 @@ async def _run_read_tool(
                         entity_name=entity_name,
                     )
                 )
-        return build_owner_variable_query_report(
+        variable_report = build_owner_variable_query_report(
             question=question,
             live_reports=live_reports,
             soul_wizard_payload=wizard_payload if isinstance(wizard_payload, Mapping) else None,
+        )
+        payload = variable_report.to_dict()
+        payload["conversation_answer"] = render_owner_variable_query_answer(
+            variable_report
         ).to_dict()
+        return payload
 
     if tool_name == "assistant_owner_pack_live_snapshot":
         surface_id = str(args.get("surface_id") or "").strip()
