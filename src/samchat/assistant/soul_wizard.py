@@ -839,6 +839,124 @@ def build_soul_wizard_payload_from_form(form: Mapping[str, Any]) -> dict[str, An
     )
 
 
+OWNER_PACK_BRIDGE_VERSION = "soul_wizard_owner_pack_bridge_v1"
+OWNER_PACK_SUPPORTED_FIELDS: tuple[str, ...] = (
+    "state_phase_operations",
+    "opening_and_final_dates",
+    "sports_venue_and_fields",
+    "folder_scope",
+    "source_inventory",
+)
+OWNER_PACK_UNSUPPORTED_FIELDS: tuple[str, ...] = (
+    "real_teams",
+    "players_by_category_age_gender",
+    "operator_payments",
+    "equipment_costs",
+    "visit_results",
+    "photographic_evidence",
+)
+
+
+def _draft_from_wizard_bridge_payload(payload: Mapping[str, Any]) -> SoulWizardDraft:
+    draft_payload = payload.get("draft") if isinstance(payload.get("draft"), Mapping) else payload
+    return build_soul_wizard_draft(draft_payload)
+
+
+def build_soul_wizard_owner_pack_bridge(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Summarize a SOUL Wizard draft as inert Owner Pack planning context.
+
+    This bridge is deliberately read-only. It lets the assistant and Owner Pack
+    surfaces consume phases, dates and activities as planning evidence without
+    claiming that folders, teams, calendars or live operations were created.
+    """
+
+    draft = _draft_from_wizard_bridge_payload(payload)
+    readiness = validate_soul_wizard_draft(draft)
+    issue_rows = [issue.to_dict() for issue in readiness.issues]
+    missing_paths = [item["path"] for item in issue_rows if item.get("severity") == "error"]
+    warning_paths = [item["path"] for item in issue_rows if item.get("severity") == "warning"]
+
+    phases: list[dict[str, Any]] = []
+    activity_count = 0
+    for phase in draft.phases:
+        activities: list[dict[str, Any]] = []
+        for activity in phase.activities:
+            activity_count += 1
+            activities.append(
+                {
+                    "activity_id": activity.activity_id,
+                    "name": activity.name,
+                    "owner": activity.owner,
+                    "due_date": activity.due_date,
+                    "status": activity.status,
+                    "evidence_required": list(activity.evidence_required),
+                    "evidence_status": activity.evidence_status,
+                    "ready_for_owner_pack": bool(activity.name),
+                }
+            )
+        phases.append(
+            {
+                "phase_id": phase.phase_id,
+                "name": phase.name,
+                "start_date": phase.start_date,
+                "end_date": phase.end_date,
+                "status": phase.status,
+                "activity_count": len(activities),
+                "activities": activities,
+                "ready_for_owner_pack": bool(phase.name and phase.start_date and phase.end_date and activities),
+                "missing_paths": [path for path in missing_paths if path.startswith(f"phases.{phase.phase_id}")],
+                "warning_paths": [path for path in warning_paths if path.startswith(f"phases.{phase.phase_id}")],
+            }
+        )
+
+    next_action = (
+        "Usar fases, fechas y actividades como contexto de expediente Owner Pack para revision."
+        if readiness.status == "ready_for_review"
+        else "Completar los campos faltantes del SOUL Wizard antes de usarlo como contexto Owner Pack."
+    )
+
+    return {
+        "bridge_version": OWNER_PACK_BRIDGE_VERSION,
+        "source": "assistant.soul_wizard_contract",
+        "execution_status": EXECUTION_STATUS,
+        "operational_writes_allowed": False,
+        "writes_attempted": 0,
+        "side_effects_detected": 0,
+        "status": readiness.status,
+        "readiness_score": readiness.readiness_score,
+        "required_missing_count": readiness.required_missing_count,
+        "warnings_count": readiness.warnings_count,
+        "draft_id": draft.draft_id,
+        "draft_hash": draft.draft_hash,
+        "tournament": {
+            "name": draft.tournament_name,
+            "edition_year": draft.edition_year,
+            "categories": list(draft.categories),
+            "branches": list(draft.branches),
+            "expected_entities": list(draft.expected_entities),
+            "expected_teams": draft.expected_teams,
+        },
+        "phase_count": len(phases),
+        "activity_count": activity_count,
+        "phases": phases,
+        "owner_pack_support": {
+            "supported_fields": list(OWNER_PACK_SUPPORTED_FIELDS),
+            "unsupported_fields": list(OWNER_PACK_UNSUPPORTED_FIELDS),
+            "usage": "planning_context_only",
+        },
+        "missing_paths": missing_paths,
+        "warning_paths": warning_paths,
+        "next_action": next_action,
+        "non_claims": [
+            "does_not_create_owner_folder",
+            "does_not_create_tournament",
+            "does_not_create_calendar",
+            "does_not_register_teams_or_players",
+            "does_not_authorize_budget_or_payments",
+        ],
+    }
+
+
 def build_soul_wizard_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     draft = build_soul_wizard_draft(payload)
     readiness = validate_soul_wizard_draft(draft)
@@ -862,6 +980,7 @@ __all__ = [
     "build_soul_wizard_preview",
     "build_soul_wizard_contract",
     "build_soul_wizard_draft",
+    "build_soul_wizard_owner_pack_bridge",
     "build_soul_wizard_payload",
     "build_soul_wizard_payload_from_form",
     "validate_soul_wizard_draft",

@@ -94,7 +94,7 @@ EVIDENCE_SOURCE_ROUTES = {
     "memory": ["case memory", "expedientes previos", "decisiones registradas"],
     "player": ["base de jugadores", "cedulas OCR", "documentacion de jugadores"],
     "team": ["equipos", "rosters", "rondas/calendarios"],
-    "tournament": ["src/devnous/tournaments", "torneos", "calendarios", "fases"],
+    "tournament": ["src/devnous/tournaments", "torneos", "calendarios", "fases", "SOUL Wizard fases/fechas/actividades"],
 }
 
 PREFERRED_SURFACE_ORDER = (

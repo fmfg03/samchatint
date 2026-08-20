@@ -5,6 +5,7 @@ from samchat.assistant.soul_wizard import (
     build_soul_wizard_clone_payload,
     build_soul_wizard_contract,
     build_soul_wizard_draft,
+    build_soul_wizard_owner_pack_bridge,
     build_soul_wizard_payload,
     build_soul_wizard_payload_from_form,
     validate_soul_wizard_draft,
@@ -144,6 +145,38 @@ def test_soul_wizard_payload_binds_contract_draft_readiness_and_preview() -> Non
     assert {field["status"] for field in payload["preview"]["fields"]} == {"captured"}
 
 
+def test_soul_wizard_owner_pack_bridge_summarizes_phase_plan_and_is_inert() -> None:
+    payload = build_soul_wizard_payload(_complete_payload())
+    bridge = build_soul_wizard_owner_pack_bridge(payload)
+
+    assert bridge["bridge_version"] == "soul_wizard_owner_pack_bridge_v1"
+    assert bridge["source"] == "assistant.soul_wizard_contract"
+    assert bridge["execution_status"] == EXECUTION_STATUS
+    assert bridge["operational_writes_allowed"] is False
+    assert bridge["writes_attempted"] == 0
+    assert bridge["side_effects_detected"] == 0
+    assert bridge["status"] == "ready_for_review"
+    assert bridge["tournament"]["name"] == "De la Calle a la Cancha"
+    assert bridge["phase_count"] == 2
+    assert bridge["activity_count"] == 2
+    assert bridge["phases"][0]["name"] == "Fase estatal"
+    assert bridge["phases"][0]["activities"][0]["evidence_required"] == ["acuse entrega"]
+    assert "state_phase_operations" in bridge["owner_pack_support"]["supported_fields"]
+    assert "real_teams" in bridge["owner_pack_support"]["unsupported_fields"]
+    assert "does_not_create_owner_folder" in bridge["non_claims"]
+    assert "does_not_create_tournament" in bridge["non_claims"]
+
+
+def test_soul_wizard_owner_pack_bridge_surfaces_missing_phase_paths() -> None:
+    bridge = build_soul_wizard_owner_pack_bridge({"tournament_name": "Copa incompleta"})
+
+    assert bridge["status"] == "incomplete"
+    assert bridge["operational_writes_allowed"] is False
+    assert "edition_year" in bridge["missing_paths"]
+    assert "phases" in bridge["missing_paths"]
+    assert bridge["phase_count"] == 0
+    assert bridge["next_action"].startswith("Completar")
+
 
 def test_soul_wizard_form_payload_parses_phase_activity_lines() -> None:
     payload = build_soul_wizard_payload_from_form(
@@ -168,7 +201,6 @@ def test_soul_wizard_form_payload_parses_phase_activity_lines() -> None:
     assert payload["draft"]["phases"][0]["activities"][1]["owner"] == "Mesa de control"
 
 
-
 def test_soul_wizard_admin_renderer_contains_stepper_and_readonly_boundary() -> None:
     from types import SimpleNamespace
 
@@ -186,7 +218,6 @@ def test_soul_wizard_admin_renderer_contains_stepper_and_readonly_boundary() -> 
     assert "no crea torneos" in html or "no crea equipos" in html
     assert "Diff de activacion propuesta" not in html
     assert "Abrir SOUL Wizard" not in html
-
 
 
 def _source_soul_snapshot() -> dict:
@@ -258,7 +289,6 @@ def test_soul_wizard_clone_from_soul_snapshot_copies_context_and_applies_overrid
     assert payload["preview"]["requires_human_authority_before_write"] is True
 
 
-
 def test_soul_wizard_clone_preview_marks_missing_source_fields() -> None:
     payload = build_soul_wizard_clone_payload(
         {"tournament": {"id": "t-empty", "name": "Torneo vacio"}},
@@ -270,7 +300,6 @@ def test_soul_wizard_clone_preview_marks_missing_source_fields() -> None:
     assert preview_by_path["phases"]["status"] == "missing"
     assert payload["preview"]["summary"]["blocker_count"] > 0
     assert payload["preview"]["activation_allowed"] is False
-
 
 
 def test_soul_wizard_clone_from_operations_matches_builds_phase_skeleton() -> None:
