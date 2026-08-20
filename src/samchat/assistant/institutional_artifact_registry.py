@@ -293,7 +293,6 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
     ),
     InstitutionalArtifactSpec(
         artifact_id="assistant.owner_variable_answer",
-        title="Owner Variable Conversational Answer",
         domain="owner_pack",
         status="wired",
         module_path="samchat.assistant.owner_variable_answer",
