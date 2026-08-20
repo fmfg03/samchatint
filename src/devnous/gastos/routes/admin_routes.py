@@ -22489,83 +22489,92 @@ async def gastos_sin_cuenta_contable(
             </div>
         """
 
+        row_state_chips = "".join(
+            [
+                '<span class="cleanup-pill cleanup-pill-warn">Falta cuenta cargo</span>'
+                if gasto.cuenta_contable_id is None
+                else '<span class="cleanup-pill cleanup-pill-ok">Cargo listo</span>',
+                '<span class="cleanup-pill cleanup-pill-warn">Falta contrapartida</span>'
+                if gasto.contra_cuenta_contable_id is None
+                else '<span class="cleanup-pill cleanup-pill-ok">Contrapartida lista</span>',
+                '<span class="cleanup-pill cleanup-pill-warn">Falta CFDI</span>'
+                if not gasto.cfdi_report_id and not (gasto.cfdi_uuid_manual or "").strip()
+                else '<span class="cleanup-pill cleanup-pill-info">CFDI identificado</span>',
+            ]
+        )
+        detail_id = f"cleanup-detail-{gasto.id}"
         rows_html += f"""
-        <tr id="row-{gasto.id}">
-            <td>{referencia_safe}</td>
-            <td>{empleado_safe}</td>
+        <tr id="row-{gasto.id}" class="cleanup-summary-row">
+            <td>
+                <strong>{referencia_safe}</strong><br>
+                <span class="muted-mini">{documento_ref_safe}</span>
+            </td>
             <td>{fecha_str}</td>
-            <td style="max-width: 200px;">{concepto_safe}</td>
-            <td style="max-width: 150px;">{proyecto_safe}</td>
-            <td style="max-width: 180px;">{partida_presupuestal_safe}</td>
-            <td style="max-width: 220px;">{cuenta_asignada_safe}</td>
-            <td style="max-width: 120px;">{cuenta_base_safe}</td>
-            <td>${gasto.gasto_cantidad:,.2f}</td>
-            <td>{metodo_pago_safe}</td>
-            <td>{documento_ref_safe}</td>
-            <td>{cfdi_origen_display}</td>
-            <td>{cfdi_match_html}</td>
-            <td style="min-width: 420px;">
-                {tax_summary_html}
-                <div style="font-size:12px; font-weight:700; color:#0f172a; margin:8px 0;">Cuentas contables</div>
-                {historical_precedent_html}
-                {suggestion_html}
-                <div style="display:grid; gap:10px;">
-                    <div class="cuenta-selector" {preselect_data}>
-                        <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cargo gasto</div>
-                        {main_assigned_html}
-                        <input type="text"
-                               class="account-search"
-                               data-gasto-id="{gasto.id}"
-                               data-target="main"
-                               data-existing-id="{escape(str(gasto.cuenta_contable_id or ''))}"
-                               placeholder="Buscar o escribir cuenta del gasto..."
-                               autocomplete="off"
-                               style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-                        <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
-                        <input type="hidden" class="main-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(gasto.cuenta_contable_id or ''))}">
-                    </div>
-                    <div class="cuenta-selector" {contra_preselect_data}>
-                        <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Contrapartida</div>
-                        {contra_assigned_html}
-                        <input type="text"
-                               class="account-search"
-                               data-gasto-id="{gasto.id}"
-                               data-target="contra"
-                               data-existing-id="{escape(str(gasto.contra_cuenta_contable_id or ''))}"
-                               placeholder="Buscar cuenta origen del dinero..."
-                               autocomplete="off"
-                               style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-                        <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
-                        <input type="hidden" class="contra-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(gasto.contra_cuenta_contable_id or ''))}">
-                        <div style="font-size:11px; color:#64748b; margin-top:4px;">
-                            {contra_prefill_note}
+            <td>{empleado_safe}</td>
+            <td style="max-width:260px;">{concepto_safe}</td>
+            <td style="max-width:240px;">{proyecto_safe}<br><span class="muted-mini">{partida_presupuestal_safe}</span></td>
+            <td>${gasto.gasto_cantidad:,.2f}<br><span class="muted-mini">{metodo_pago_safe}</span></td>
+            <td>{cuenta_asignada_safe}<br><span class="muted-mini">Base: {cuenta_base_safe}</span></td>
+            <td>{cfdi_origen_display}<br><span class="muted-mini">{escape(cfdi_status)}</span></td>
+            <td><div class="cleanup-pill-stack">{row_state_chips}</div></td>
+            <td>
+                <button class="cleanup-toggle" type="button" data-target="{detail_id}">Revisar</button>
+            </td>
+        </tr>
+        <tr id="{detail_id}" class="cleanup-detail-row" style="display:none;">
+            <td colspan="10">
+                <div class="cleanup-detail-panel">
+                    <div class="cleanup-detail-head">
+                        <div>
+                            <strong>{referencia_safe}</strong>
+                            <span class="muted-mini"> - {concepto_safe} - ${gasto.gasto_cantidad:,.2f}</span>
                         </div>
+                        <button class="cleanup-toggle secondary" type="button" data-target="{detail_id}">Cerrar</button>
                     </div>
-                    <div class="cuenta-selector" {iva_preselect_data}>
-                        <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cuenta IVA</div>
-                        {iva_assigned_html}
-                        <input type="text"
-                               class="account-search"
-                               data-gasto-id="{gasto.id}"
-                               data-target="iva"
-                               data-existing-id="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}"
-                               placeholder="Buscar cuenta de IVA acreditable..."
-                               autocomplete="off"
-                               style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-                        <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
-                        <input type="hidden" class="iva-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}">
-                        <div style="font-size:11px; color:#64748b; margin-top:4px;">
-                            {escape("manual" if current_iva_account else "heuristic") if (current_iva_account or iva_account) else "Se resolverá automáticamente si no la eliges."}
-                        </div>
+                    <div class="cleanup-detail-grid">
+                        <section class="cleanup-card cleanup-card-wide">
+                            {cfdi_match_html}
+                        </section>
+                        <section class="cleanup-card">
+                            {tax_summary_html}
+                        </section>
+                        <section class="cleanup-card">
+                            <div style="font-size:12px; font-weight:700; color:#0f172a; margin:0 0 8px;">Cuentas contables</div>
+                            {historical_precedent_html}
+                            {suggestion_html}
+                            <div style="display:grid; gap:10px;">
+                                <div class="cuenta-selector" {preselect_data}>
+                                    <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cargo gasto</div>
+                                    {main_assigned_html}
+                                    <input type="text" class="account-search" data-gasto-id="{gasto.id}" data-target="main" data-existing-id="{escape(str(gasto.cuenta_contable_id or ''))}" placeholder="Buscar o escribir cuenta del gasto..." autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
+                                    <input type="hidden" class="main-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(gasto.cuenta_contable_id or ''))}">
+                                </div>
+                                <div class="cuenta-selector" {contra_preselect_data}>
+                                    <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Contrapartida</div>
+                                    {contra_assigned_html}
+                                    <input type="text" class="account-search" data-gasto-id="{gasto.id}" data-target="contra" data-existing-id="{escape(str(gasto.contra_cuenta_contable_id or ''))}" placeholder="Buscar cuenta origen del dinero..." autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
+                                    <input type="hidden" class="contra-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(gasto.contra_cuenta_contable_id or ''))}">
+                                    <div style="font-size:11px; color:#64748b; margin-top:4px;">{contra_prefill_note}</div>
+                                </div>
+                                <div class="cuenta-selector" {iva_preselect_data}>
+                                    <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cuenta IVA</div>
+                                    {iva_assigned_html}
+                                    <input type="text" class="account-search" data-gasto-id="{gasto.id}" data-target="iva" data-existing-id="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}" placeholder="Buscar cuenta de IVA acreditable..." autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
+                                    <input type="hidden" class="iva-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}">
+                                    <div style="font-size:11px; color:#64748b; margin-top:4px;">{escape("manual" if current_iva_account else "heuristic") if (current_iva_account or iva_account) else "Se resolvera automaticamente si no la eliges."}</div>
+                                </div>
+                            </div>
+                        </section>
+                        <section class="cleanup-card cleanup-action-card">
+                            <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Guardar fila</div>
+                            <p class="muted-mini" style="margin:0 0 12px;">Guarda CFDI, impuestos y cuentas contables de este gasto sin afectar las demas filas.</p>
+                            <button class="btn-asignar" data-gasto-id="{gasto.id}" style="padding: 10px 16px; background: #0f766e; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; width:100%;">Guardar limpieza contable</button>
+                        </section>
                     </div>
                 </div>
-            </td>
-            <td>
-                <button class="btn-asignar"
-                        data-gasto-id="{gasto.id}"
-                        style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-                    Guardar limpieza contable
-                </button>
             </td>
         </tr>
         """
@@ -22746,6 +22755,107 @@ async def gastos_sin_cuenta_contable(
                 color:#166534;
                 border:1px solid #bbf7d0;
             }}
+            .cleanup-summary-row td {{
+                vertical-align:middle;
+            }}
+            .muted-mini {{
+                color:#64748b;
+                font-size:11px;
+                line-height:1.35;
+            }}
+            .cleanup-pill-stack {{
+                display:flex;
+                flex-direction:column;
+                gap:5px;
+                min-width:130px;
+            }}
+            .cleanup-pill {{
+                display:inline-flex;
+                width:max-content;
+                align-items:center;
+                border-radius:999px;
+                padding:3px 8px;
+                font-size:11px;
+                font-weight:700;
+                border:1px solid transparent;
+            }}
+            .cleanup-pill-ok {{
+                background:#dcfce7;
+                color:#166534;
+                border-color:#bbf7d0;
+            }}
+            .cleanup-pill-warn {{
+                background:#fef3c7;
+                color:#92400e;
+                border-color:#fde68a;
+            }}
+            .cleanup-pill-info {{
+                background:#dbeafe;
+                color:#1d4ed8;
+                border-color:#bfdbfe;
+            }}
+            .cleanup-toggle {{
+                border:0;
+                border-radius:10px;
+                background:#0f766e;
+                color:#fff;
+                font-weight:800;
+                padding:8px 12px;
+                cursor:pointer;
+            }}
+            .cleanup-toggle.secondary {{
+                background:#e2e8f0;
+                color:#0f172a;
+            }}
+            .cleanup-detail-row > td {{
+                padding:0 12px 18px;
+                background:#f8fafc;
+            }}
+            .cleanup-detail-panel {{
+                border:1px solid #dbe2ea;
+                border-radius:18px;
+                background:#fff;
+                padding:14px;
+                box-shadow:0 10px 26px rgba(15,23,42,.08);
+            }}
+            .cleanup-detail-head {{
+                display:flex;
+                justify-content:space-between;
+                align-items:center;
+                gap:12px;
+                padding-bottom:12px;
+                border-bottom:1px solid #e2e8f0;
+                margin-bottom:12px;
+            }}
+            .cleanup-detail-grid {{
+                display:grid;
+                grid-template-columns:minmax(280px, 1fr) minmax(300px, 1fr) minmax(340px, 1.2fr) minmax(190px, .65fr);
+                gap:14px;
+                align-items:start;
+            }}
+            .cleanup-card {{
+                border:1px solid #e2e8f0;
+                border-radius:16px;
+                background:#f8fafc;
+                padding:12px;
+            }}
+            .cleanup-card-wide {{
+                background:#fff;
+            }}
+            .cleanup-action-card {{
+                position:sticky;
+                top:12px;
+            }}
+            @media (max-width: 1300px) {{
+                .cleanup-detail-grid {{
+                    grid-template-columns:1fr 1fr;
+                }}
+            }}
+            @media (max-width: 900px) {{
+                .cleanup-detail-grid {{
+                    grid-template-columns:1fr;
+                }}
+            }}
         </style>
     </head>
     <body>
@@ -22846,24 +22956,19 @@ async def gastos_sin_cuenta_contable(
                             <thead>
                                 <tr>
                                     <th>Referencia</th>
-                                    <th>Empleado</th>
                                     <th>Fecha</th>
-                                    <th>Descripción</th>
-                                    <th>Proyecto</th>
-                                    <th>Concepto</th>
-                                    <th>Cuenta contable</th>
-                                    <th>Cuenta base</th>
-                                    <th>Monto</th>
-                                    <th>Método Pago</th>
-                                    <th>Documento</th>
-                                    <th>Origen factura</th>
-                                    <th>Vinculación CFDI</th>
-                                    <th>Configuración contable</th>
-                                    <th>Acción</th>
+                                    <th>Empleado</th>
+                                    <th>Descripcion</th>
+                                    <th>Proyecto / Concepto</th>
+                                    <th>Monto / Metodo</th>
+                                    <th>Cuenta</th>
+                                    <th>CFDI</th>
+                                    <th>Estado limpieza</th>
+                                    <th>Accion</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows_html if rows_html else '<tr><td colspan="15" style="text-align: center; padding: 40px;">No hay gastos pendientes de limpieza contable</td></tr>'}
+                                {rows_html if rows_html else '<tr><td colspan="10" style="text-align: center; padding: 40px;">No hay gastos pendientes de limpieza contable</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -22875,6 +22980,23 @@ async def gastos_sin_cuenta_contable(
             const cuentasContables = {cuentas_json};
             const suggestions = {suggestions_json};
             const cfdiOptions = {cfdi_options_json};
+
+            document.querySelectorAll('.cleanup-toggle').forEach(button => {{
+                button.addEventListener('click', function() {{
+                    const targetId = this.getAttribute('data-target');
+                    const row = document.getElementById(targetId);
+                    if (!row) {{
+                        return;
+                    }}
+                    const isOpen = row.style.display !== 'none';
+                    row.style.display = isOpen ? 'none' : 'table-row';
+                    document.querySelectorAll(`.cleanup-toggle[data-target="${{targetId}}"]`).forEach(toggle => {{
+                        if (!toggle.classList.contains('secondary')) {{
+                            toggle.textContent = isOpen ? 'Revisar' : 'Ocultar';
+                        }}
+                    }});
+                }});
+            }});
 
             // Pre-select high confidence suggestions on page load
             document.addEventListener('DOMContentLoaded', function() {{
