@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+
+import pytest
 from pathlib import Path
 
 from samchat.assistant.owner_needs_eval import parse_owner_needs_eval_set
@@ -165,4 +167,28 @@ async def test_owner_pack_readiness_router_tool_is_read_only() -> None:
     assert payload["safety_summary"]["writes_enabled"] is False
     assert payload["writes_attempted"] == 0
     assert payload["side_effects_detected"] == 0
+
+@pytest.mark.asyncio
+async def test_owner_pack_readiness_conversation_renders_pack_del_dueno_question(monkeypatch) -> None:
+    from samchat.assistant import conversation_service as cs
+
+    async def _noop_persist(**kwargs):
+        return None
+
+    monkeypatch.setattr(cs, "_persist_document_conversation_messages", _noop_persist)
+
+    response = await cs._build_owner_pack_readiness_response(
+        raw_message="tenemos listo el pack del dueno?",
+        conversation=object(),
+        session=object(),
+        maybe_append_export_prompt=lambda message, trace: message,
+    )
+
+    assert response is not None
+    assert "Readiness" in response.assistant_message
+    assert "Owner Pack" in response.assistant_message
+    assert "Estado" in response.assistant_message
+    assert "assistant_owner_pack_readiness" not in response.assistant_message
+    assert '{"name"' not in response.assistant_message
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
