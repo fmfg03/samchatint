@@ -24,7 +24,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Optional, List, Union, Dict, Any, Tuple
 from uuid import UUID as UUIDType, uuid4
-from urllib.parse import quote, unquote, parse_qs, urlparse
+from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
@@ -23631,6 +23631,10 @@ async def documentos_pendientes(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    q: Optional[str] = None,
+    tipo: Optional[str] = None,
+    empleado_nombre: Optional[str] = None,
+    torneo_nombre: Optional[str] = None,
 ) -> str:
     """
     Show documentos in estado 'enviado' that are pending approval.
@@ -23638,90 +23642,259 @@ async def documentos_pendientes(
     Access control:
     - Only finanzas or admin can access (plus superadmin)
     - Superadmin sees ALL documentos with estado 'enviado'
-    - Finanzas/admin see documentos where they are the aprobador, plus unassigned docs
+    - Finanzas/admin see documentos where they are the effective beneficiary's
+      assigned approver. If a document has no beneficiary employee, approval
+      falls back to the requester/owner.
     """
 
-    # Check role - only finanzas or admin can access
     if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
-    # Build query based on role
-    if current_empleado.rol in ('superadmin', 'super_admin'):
-        # Superadmin sees all documentos with estado 'enviado'
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).where(
-            Documento.estado == 'enviado'
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
-    else:
-        # Finanzas/admin see their assigned approvals plus unassigned documents.
-        # This matches the workflow service, which allows finance/admin fallback
-        # when an empleado has no explicit aprobador.
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).join(
-            Empleado, Documento.empleado_id == Empleado.id
-        ).where(
-            and_(
-                Documento.estado == 'enviado',
-                or_(
-                    Empleado.aprobador_id == current_empleado.id,
-                    Empleado.aprobador_id.is_(None),
-                )
+    q_value = (q or "").strip()
+    tipo_value = (tipo or "").strip()
+    empleado_value = (empleado_nombre or "").strip()
+    torneo_value = (torneo_nombre or "").strip()
+
+    solicitante_alias = aliased(Empleado)
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    torneo_alias = aliased(Tournament)
+    cuenta_torneo_alias = aliased(Tournament)
+
+    query = (
+        select(Documento)
+        .options(
+            selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+        )
+        .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
+        .outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        )
+        .outerjoin(proveedor_alias, Documento.proveedor_cliente_id == proveedor_alias.id)
+        .outerjoin(torneo_alias, Documento.torneo_id == torneo_alias.id)
+        .outerjoin(CuentaDeGastos, Documento.cuenta_gastos_id == CuentaDeGastos.id)
+        .outerjoin(cuenta_torneo_alias, CuentaDeGastos.torneo_id == cuenta_torneo_alias.id)
+    )
+
+    filters = [Documento.estado == 'enviado']
+    if current_empleado.rol not in ('superadmin', 'super_admin'):
+        filters.append(
+            or_(
+                beneficiario_alias.aprobador_id == current_empleado.id,
+                and_(
+                    Documento.beneficiario_empleado_id.is_(None),
+                    solicitante_alias.aprobador_id == current_empleado.id,
+                ),
+                and_(
+                    Documento.beneficiario_empleado_id.isnot(None),
+                    beneficiario_alias.aprobador_id.is_(None),
+                ),
+                and_(
+                    Documento.beneficiario_empleado_id.is_(None),
+                    solicitante_alias.aprobador_id.is_(None),
+                ),
             )
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
-
-    result = await session.execute(query)
-    documentos = result.scalars().all()
-
-    # Build rows HTML
-    rows_html = ""
-    for documento in documentos:
-        # Format dates
-        enviado_str = format_value(documento.enviado_en) if documento.enviado_en else format_value(documento.creado_en)
-        creado_str = format_value(documento.creado_en)
-
-        # Get empleado name
-        empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
-        referencia_operaciones = escape(
-            str((documento.referencia_operaciones or "").strip() or "—")
+        )
+    if tipo_value:
+        filters.append(Documento.tipo == tipo_value)
+    if empleado_value:
+        empleado_filter = f"%{empleado_value}%"
+        filters.append(
+            or_(
+                solicitante_alias.nombre.ilike(empleado_filter),
+                beneficiario_alias.nombre.ilike(empleado_filter),
+            )
+        )
+    if torneo_value:
+        torneo_filter = f"%{torneo_value}%"
+        filters.append(
+            or_(
+                torneo_alias.name.ilike(torneo_filter),
+                cuenta_torneo_alias.name.ilike(torneo_filter),
+                Documento.proyecto_otro.ilike(torneo_filter),
+            )
+        )
+    if q_value:
+        q_filter = f"%{q_value}%"
+        filters.append(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                Documento.referencia_pago.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                solicitante_alias.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+                torneo_alias.name.ilike(q_filter),
+                cuenta_torneo_alias.name.ilike(q_filter),
+            )
         )
 
-        # Link to documento detail with next parameter
-        next_url = quote("/documentos/pendientes")
-        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+    query = (
+        query.where(and_(*filters))
+        .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
+    )
 
-        # Shortened internal ID (first 8 characters)
+    result = await session.execute(query)
+    documentos = result.scalars().unique().all()
+    aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+
+    def _pending_torneo_display(documento: Documento) -> str:
+        cuenta = getattr(documento, "cuenta_gastos", None)
+        torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
+        return documento_project_name(documento, torneo) or "\u2014"
+
+    def _pending_description(documento: Documento) -> str:
+        cuenta = getattr(documento, "cuenta_gastos", None)
+        if (getattr(documento, "tipo", None) or "").strip().upper() == "INFORME":
+            return (
+                (getattr(cuenta, "nombre", None) or "").strip()
+                or (getattr(documento, "concepto_pago", None) or "").strip()
+                or "\u2014"
+            )
+        return (getattr(documento, "concepto_pago", None) or "").strip() or "\u2014"
+
+    next_params = []
+    if q_value:
+        next_params.append(("q", q_value))
+    if tipo_value:
+        next_params.append(("tipo", tipo_value))
+    if empleado_value:
+        next_params.append(("empleado_nombre", empleado_value))
+    if torneo_value:
+        next_params.append(("torneo_nombre", torneo_value))
+    next_path = "/documentos/pendientes"
+    if next_params:
+        next_path = f"{next_path}?{urlencode(next_params)}"
+    next_url = quote(next_path)
+
+    rows_html = ""
+    for documento in documentos:
+        row_values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_by_doc.get(documento.id, "\u2014"),
+        )
+        enviado_str = row_values["enviado"] if row_values["enviado"] != "-" else row_values["creado"]
+        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
         doc_id_short = str(documento.id)[:8]
+        descripcion = _pending_description(documento)
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
-            <td>{referencia_operaciones}</td>
+            <td>{escape(str(row_values["referencia_operaciones"]))}</td>
+            <td>{escape(_pending_torneo_display(documento))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
-            <td>{empleado_nombre}</td>
-            <td>{documento.tipo}</td>
-            <td>{documento.estado}</td>
-            <td>{format_currency(documento.monto_total)}</td>
-            <td>{enviado_str}</td>
+            <td>{escape(row_values["solicitante"])}</td>
+            <td>{escape(row_values["beneficiario"])}</td>
+            <td>{escape(row_values["proveedor"])}</td>
+            <td>{escape(row_values["tipo_documento"])}</td>
+            <td>{escape(row_values["estado"])}</td>
+            <td>{escape(row_values["monto_total"])}</td>
+            <td>{escape(descripcion)}</td>
+            <td>{escape(str(enviado_str))}</td>
         </tr>
         """
+
+    active_filter_count = sum(1 for value in (q_value, tipo_value, empleado_value, torneo_value) if value)
+    tipo_options = "".join(
+        f'<option value="{escape(value)}" {"selected" if tipo_value == value else ""}>{escape(label)}</option>'
+        for value, label in (
+            ("", "Todos"),
+            ("SOLICITUD", "Solicitudes"),
+            ("INFORME", "Informes de gastos"),
+        )
+    )
+    filter_form_html = f"""
+        <section class="surface">
+            <div class="section-head">
+                <div>
+                    <h2>Buscar aprobaciones</h2>
+                    <div class="section-note">Filtra dentro de los documentos que ya est\u00e1n en tu bandeja; no cambia permisos ni autorizadores.</div>
+                </div>
+            </div>
+            <form method="GET" action="/documentos/pendientes" class="form-grid" style="grid-template-columns: 1.5fr .8fr 1fr 1fr auto; align-items:end;">
+                <div class="form-group">
+                    <label for="q">B\u00fasqueda</label>
+                    <input id="q" name="q" value="{escape(q_value)}" placeholder="Ref. operaciones, proveedor, empleado, concepto...">
+                </div>
+                <div class="form-group">
+                    <label for="tipo">Tipo</label>
+                    <select id="tipo" name="tipo">{tipo_options}</select>
+                </div>
+                <div class="form-group">
+                    <label for="empleado_nombre">Empleado / beneficiario</label>
+                    <input id="empleado_nombre" name="empleado_nombre" value="{escape(empleado_value)}" placeholder="Ej. Alicia, Roberto...">
+                </div>
+                <div class="form-group">
+                    <label for="torneo_nombre">Torneo</label>
+                    <input id="torneo_nombre" name="torneo_nombre" value="{escape(torneo_value)}" placeholder="Ej. Copa Telmex...">
+                </div>
+                <div style="display:flex; gap:10px; flex-direction:column;">
+                    <button type="submit" class="button primary">Filtrar</button>
+                    <a href="/documentos/pendientes" class="button secondary" style="text-align:center;">Limpiar</a>
+                </div>
+            </form>
+        </section>
+    """
+
     pendientes_side_html = f"""
-        <div class="eyebrow">Bandeja de aprobación</div>
+        <div class="eyebrow">Bandeja de aprobaci\u00f3n</div>
         <div class="meta-grid">
             <div class="meta-card">
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
-                <small>Documentos actualmente esperando tu decisión.</small>
+                <small>Documentos esperando tu decisi\u00f3n con los filtros actuales.</small>
+            </div>
+            <div class="meta-card">
+                <span>Filtros activos</span>
+                <strong>{active_filter_count}</strong>
+                <small>Busca por referencia, proveedor, empleado, torneo o descripci\u00f3n.</small>
             </div>
         </div>
     """
+
+    if rows_html:
+        table_html = f"""
+            <div class="table-shell"><table>
+                <thead>
+                    <tr>
+                        <th>N\u00famero de Referencia</th>
+                        <th>Referencia Operaciones</th>
+                        <th>Torneo</th>
+                        <th>ID Interno</th>
+                        <th>Empleado</th>
+                        <th>Beneficiario</th>
+                        <th>Proveedor</th>
+                        <th>Tipo</th>
+                        <th>Estado</th>
+                        <th>Monto Total</th>
+                        <th>Descripci\u00f3n</th>
+                        <th>Fecha de Env\u00edo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table></div>
+        """
+    else:
+        table_html = """
+            <div class="notice info" style="text-align:center;">
+                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar con esos filtros.</p>
+            </div>
+        """
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1380px")}</style>
+        <style>{_workspace_shell_styles("1580px")}</style>
     </head>
     <body>
         <div class="container">
@@ -23729,41 +23902,20 @@ async def documentos_pendientes(
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Pendientes por aprobar",
-                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todavía al historial.",
+                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todav\u00eda al historial.",
                 actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
                 side_html=pendientes_side_html,
             )}
             <div class="stack">
+                {filter_form_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
                             <h2>Documentos en espera</h2>
-                            <div class="section-note">Solo aparecen documentos que todavía requieren aprobación.</div>
+                            <div class="section-note">Solo aparecen documentos que todav\u00eda requieren aprobaci\u00f3n.</div>
                         </div>
                     </div>
-            {f'''
-            <div class="table-shell"><table>
-                <thead>
-                    <tr>
-                        <th>Número de Referencia</th>
-                        <th>Referencia Operaciones</th>
-                        <th>ID Interno</th>
-                        <th>Empleado</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Monto Total</th>
-                        <th>Fecha de Envío</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table></div>
-            ''' if rows_html else '''
-            <div class="notice info" style="text-align:center;">
-                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar.</p>
-            </div>
-            '''}
+                    {table_html}
                 </section>
             </div>
         </div>
@@ -24055,7 +24207,7 @@ async def documentos_todos(
     # Build base query
     query = select(Documento).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
-        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
     )
 

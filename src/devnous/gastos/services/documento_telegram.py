@@ -17,7 +17,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import aliased, selectinload
 
 from ..models import CuentaDeGastos, Documento, Empleado, ExpenseReport
 from ..utils.mexico_city_dates import format_mexico_city_datetime
@@ -27,7 +27,7 @@ from .amex_expense_service import (
     sum_paid_solicitud_amounts,
 )
 from .cuenta_settlement_service import compute_cuenta_saldo_adjustments
-from .documento_semantics import is_employee_reimbursement
+from .documento_semantics import approval_subject_empleado, is_employee_reimbursement
 from .telegram_notify import schedule_fire_and_forget
 from .telegram_outbox_service import (
     create_outbox_entry,
@@ -754,10 +754,10 @@ def approver_can_see_document_in_queue(empleado: Empleado, documento: Documento)
         return False
     if empleado.rol in SUPERADMIN_ROLES:
         return True
-    owner = documento.empleado
-    if owner is None:
+    approval_subject = approval_subject_empleado(documento)
+    if approval_subject is None:
         return False
-    return owner.aprobador_id == empleado.id
+    return approval_subject.aprobador_id == empleado.id
 
 
 def requester_can_view_document(empleado: Empleado, documento: Documento) -> bool:
@@ -789,14 +789,26 @@ async def query_pending_documentos_for_approver(
         )
         return list(result.scalars().all())
 
+    solicitante_alias = aliased(Empleado)
+    beneficiario_alias = aliased(Empleado)
     result = await session.execute(
         select(Documento)
         .options(*base_opts)
-        .join(Empleado, Documento.empleado_id == Empleado.id)
+        .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
+        .outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        )
         .where(
             and_(
                 Documento.estado == "enviado",
-                Empleado.aprobador_id == empleado.id,
+                or_(
+                    beneficiario_alias.aprobador_id == empleado.id,
+                    and_(
+                        Documento.beneficiario_empleado_id.is_(None),
+                        solicitante_alias.aprobador_id == empleado.id,
+                    ),
+                ),
             )
         )
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
