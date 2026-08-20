@@ -2,6 +2,7 @@ from samchat.assistant.request_intent import (
     detect_request_intent,
     is_owner_ai_conceptual_request,
     is_owner_ai_context_request,
+    is_owner_ai_readiness_request,
 )
 from samchat.assistant.request_router import route_request
 
@@ -115,3 +116,28 @@ def test_plain_executive_summary_does_not_become_owner_pack():
     intent = detect_request_intent(text)
 
     assert intent.domain == "executive"
+
+
+def test_owner_pack_readiness_detects_pack_del_dueno_question():
+    text = "tenemos listo el pack del dueno?"
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_readiness_request(text) is True
+    intent = detect_request_intent(text)
+
+    assert intent.domain == "unknown"
+
+
+def test_owner_pack_readiness_detects_pack_del_dueno_without_accent():
+    text = "ya esta preparado el pack del dueno?"
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_readiness_request(text) is True
+
+
+def test_owner_dashboard_readiness_phrase_stays_on_dashboard_route():
+    text = "Ya estan preparados los tableros para el dueno, pero falta informacion?"
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_readiness_request(text) is False
+

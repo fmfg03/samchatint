@@ -107,15 +107,23 @@ OWNER_AI_READINESS_TERMS = (
     "que tan listo",
     "que tan preparado",
     "readiness",
+    "listo",
+    "lista",
+    "listas",
+    "listos",
     "listo para",
+    "preparado",
+    "preparada",
+    "preparados",
+    "preparadas",
     "preparado para",
     "contestarle al director general",
     "responderle al director general",
     "contestarle al dueno",
-    "contestarle al dueno",
-    "responderle al dueno",
     "responderle al dueno",
     "owner pack",
+    "pack del dueno",
+    "pack de dueno",
 )
 
 
@@ -145,6 +153,9 @@ OWNER_AI_CONTEXT_TERMS = (
     "evidencia fotografica",
     "fotografias",
     "necesidades de ai",
+    "pack del dueno",
+    "pack de dueno",
+    "owner pack",
     "necesidades del dueno",
     "necesidades del dueño",
     "cosas que necesito que me de la ia",
@@ -213,6 +224,16 @@ def is_owner_ai_context_request(text: str) -> bool:
 
 def is_owner_ai_readiness_request(text: str) -> bool:
     normalized = normalize_request_text(text)
+    explicit_owner_pack = any(
+        term in normalized
+        for term in (
+            "owner pack",
+            "pack del dueno",
+            "pack de dueno",
+        )
+    )
+    if "tablero" in normalized and not explicit_owner_pack:
+        return False
     if not any(term in normalized for term in OWNER_AI_READINESS_TERMS):
         return False
     return is_owner_ai_context_request(text) or any(
@@ -221,8 +242,9 @@ def is_owner_ai_readiness_request(text: str) -> bool:
             "director general",
             "direccion general",
             "dueno",
-            "dueno",
             "owner pack",
+            "pack del dueno",
+            "pack de dueno",
             "tablero",
             "torneo",
             "carpeta",
