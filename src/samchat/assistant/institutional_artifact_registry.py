@@ -255,11 +255,12 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         artifact_id="assistant.owner_entity_folder_workspace",
         domain="owner_pack",
         name="Owner Entity Folder Workspace",
-        purpose="Planned composed assistant workspace that turns SOUL, live entity dossiers, owner readiness and finance/operations evidence into an owner-facing folder preview.",
+        purpose="Composed assistant workspace that turns SOUL, live entity dossiers, owner readiness and finance/operations evidence into an owner-facing folder preview.",
         module_path="samchat.assistant.owner_entity_folder_workspace",
         entrypoint="build_owner_entity_folder_workspace",
-        status="planned",
+        status="wired",
         authority_level="preview_only",
+        assistant_tool="assistant_owner_entity_folder_workspace",
         evidence_sources=(
             "assistant.owner_entity_dossier_live",
             "assistant.owner_pack_readiness",
@@ -274,7 +275,7 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
             "Que informacion falta para la carpeta de esta entidad?",
             "Muestrame el expediente operativo y financiero de esta entidad.",
         ),
-        next_wiring_step="Implement RQF-053E as read-only/preview-only composition; no folder write, export or publication without explicit approval.",
+        next_wiring_step="Use workspace cards as the assistant preview surface; no folder write, export or publication without explicit approval.",
     ),
     InstitutionalArtifactSpec(
         artifact_id="accounting.historical_snapshot",
