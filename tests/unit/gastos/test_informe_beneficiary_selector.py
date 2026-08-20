@@ -64,7 +64,11 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
 
     assert 'name="beneficiario_empleado_id"' in html
     assert 'id="beneficiario_empleado_id"' in html
-    assert "Empleado beneficiario" in html
+    assert "Es para otro beneficiario" in html
+    assert "Empleado beneficiario" not in html
+    assert "Paso 1" not in html
+    assert 'id="beneficiario_empleado_id_enabled"' in html
+    assert 'data-beneficiary-mode="employee"' in html
     assert "Bibiana Roman" in html
     assert 'name="proveedor_cliente_id"' in html
     assert "Cuenta bancaria del beneficiario" in html
@@ -117,6 +121,9 @@ async def test_crear_informe_form_allows_regional_operator_for_authorized_user(m
     assert 'name="beneficiario_operador_id"' in html
     assert 'id="beneficiario_operador_id_informe"' in html
     assert "Operador regional beneficiario" in html
+    assert "Opcional" not in html
+    assert 'id="beneficiario_operador_id_informe_enabled"' in html
+    assert 'data-beneficiary-mode="operator"' in html
     assert "Operador Regional Norte" in html
     assert 'name="proveedor_cliente_id"' in html
     assert "Santander" in html

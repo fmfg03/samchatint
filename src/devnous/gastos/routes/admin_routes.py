@@ -120,7 +120,7 @@ from ..services.employee_debtor_accounting_service import (
     build_debtors_admin_snapshot,
 )
 from ..services.expense_accounting_cleanup_service import (
-    build_cleanup_preview,
+    safe_build_cleanup_preview,
     list_unassigned_cfdi_options,
     load_cleanup_expenses,
     resolve_default_cleanup_contra_cuenta,
@@ -13252,7 +13252,7 @@ async def admin_presupuestos_legacy(
         f"""
         <div style="margin:12px 0 16px 0;padding:14px;border:1px solid #dbe2ea;border-radius:14px;background:#fff;">
             <form method="POST" action="/admin/presupuestos/versiones/{escape(str(selected_version.get('id') if selected_version else ''))}/lineas/create" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;align-items:end;">
-                <div style="grid-column:1/-1;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Partida presupuestal</label><select name="budget_concept_id" required>{_render_budget_concept_options_for_line(tournament_code="", selected_id=None)}</select></div>
+                <div style="grid-column:1/-1;"><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Concepto</label><select name="budget_concept_id" required>{_render_budget_concept_options_for_line(tournament_code="", selected_id=None)}</select></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Torneo código</label><input type="text" name="tournament_code" placeholder="Autocompletado por catálogo"></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Torneo</label><input type="text" name="tournament_name" placeholder="Autocompletado por catálogo"></div>
                 <div><label style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:4px;">Concepto</label><input type="text" name="concept_name" placeholder="Opcional si eliges catálogo"></div>
@@ -15547,6 +15547,40 @@ async def update_password(
 # ============================================================================
 
 
+
+def _cuentas_contables_export_csv(cuentas: List[CuentaContable]) -> str:
+    """Return the accounting account catalog as a UTF-8 BOM CSV payload."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["codigo", "nombre", "tipo", "activo"])
+    for cuenta in cuentas:
+        writer.writerow([
+            cuenta.codigo or "",
+            cuenta.nombre or "",
+            cuenta.tipo or "",
+            "si" if cuenta.activo else "no",
+        ])
+    return "\ufeff" + output.getvalue()
+
+
+@router.get("/admin/cuentas-contables/export.csv", response_class=Response)
+async def export_cuentas_contables_csv(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> Response:
+    """Download the full accounting account catalog for bulk maintenance."""
+    result = await session.execute(select(CuentaContable).order_by(CuentaContable.codigo))
+    cuentas = result.scalars().all()
+    payload = _cuentas_contables_export_csv(list(cuentas))
+    stamp = datetime.now().strftime("%Y%m%d")
+    return Response(
+        content=payload,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="catalogo-cuentas-contables-{stamp}.csv"'
+        },
+    )
+
 @router.get("/admin/cuentas-contables", response_class=HTMLResponse)
 async def admin_cuentas_contables(
     request: Request,
@@ -15753,6 +15787,11 @@ async def admin_cuentas_contables(
             <h1>Gestión de Cuentas Contables</h1>
             <p class="subtitle">Administra el catálogo de cuentas contables</p>
             {bi_context_html}
+
+            <div style="display:flex;gap:12px;flex-wrap:wrap;margin:0 0 22px 0;">
+                <a href="/admin/cuentas-contables/export.csv" class="btn btn-secondary">Bajar cat&aacute;logo</a>
+                <a href="/admin/cuentas-contables/carga-masiva" class="btn btn-primary">Subir cat&aacute;logo</a>
+            </div>
 
             <div class="form-section">
                 <h2 style="margin-bottom: 15px;">➕ Agregar Nueva Cuenta Contable</h2>
@@ -22162,7 +22201,7 @@ async def gastos_sin_cuenta_contable(
 
         # Get suggestion for this expense
         suggestion = suggestions.get(gasto.id)
-        cleanup_state = await build_cleanup_preview(
+        cleanup_state = await safe_build_cleanup_preview(
             session,
             gasto,
             include_historical_precedent=True,
@@ -22809,9 +22848,9 @@ async def gastos_sin_cuenta_contable(
                                     <th>Referencia</th>
                                     <th>Empleado</th>
                                     <th>Fecha</th>
-                                    <th>Concepto</th>
+                                    <th>Descripción</th>
                                     <th>Proyecto</th>
-                                    <th>Partida presupuestal</th>
+                                    <th>Concepto</th>
                                     <th>Cuenta contable</th>
                                     <th>Cuenta base</th>
                                     <th>Monto</th>

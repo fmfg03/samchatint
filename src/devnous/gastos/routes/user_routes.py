@@ -9142,6 +9142,8 @@ def _beneficiary_employee_control_html(
     options_html: str,
     select_id: str,
     help_text: str,
+    title: str = "Empleado beneficiario",
+    use_activation: bool = False,
 ) -> str:
     """Render an explicit employee selector only for authorized requesters."""
     beneficiary_name = escape(
@@ -9155,23 +9157,41 @@ def _beneficiary_employee_control_html(
         "display:inline-block;background:#1d4ed8;color:white;border-radius:999px;"
         "padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;"
     )
+    title_safe = escape(title)
+    requester_id = getattr(requester, "id", None)
+    beneficiary_id = getattr(beneficiary, "id", None)
+    activation_checked = bool(use_activation and requester_id and beneficiary_id and requester_id != beneficiary_id)
+    activation_checked_attr = " checked" if activation_checked else ""
+    activation_html = (
+        f'<label style="display:flex;align-items:center;gap:8px;margin:0;font-weight:800;">'
+        f'<input type="checkbox" id="{select_id}_enabled" class="beneficiary-mode-toggle" data-beneficiary-mode="employee"{activation_checked_attr}> '
+        f'{title_safe}</label>'
+        if use_activation
+        else f'<div><span style="{badge_style}">Paso 1</span> <strong>{title_safe}</strong></div>'
+    )
+    select_disabled = " disabled" if use_activation and not activation_checked else ""
+    default_beneficiary_attr = f' data-default-beneficiary-id="{escape(str(requester.id))}"' if use_activation else ""
     if _can_request_for_other_employee(requester):
         return (
             f'<div class="employee-beneficiary-control" style="{control_style}">'
-            f'<div><span style="{badge_style}">Paso 1</span> '
-            '<strong>Empleado beneficiario</strong></div>'
+            f'{activation_html}'
             f'<label for="{select_id}" style="display:block;font-weight:700;">'
             'Elige quien recibira el recurso</label>'
-            f'<select name="beneficiario_empleado_id" id="{select_id}" required '
+            f'<select name="beneficiario_empleado_id" id="{select_id}" required{select_disabled}{default_beneficiary_attr} '
             f'style="margin-bottom:2px;">{options_html}</select>'
             f'<small>{escape(help_text)}</small>'
             '</div>'
         )
+    locked_title = "Beneficiario del informe" if use_activation else title_safe
+    locked_heading = (
+        f'<div><strong>{locked_title}</strong></div>'
+        if use_activation
+        else f'<div><span style="{badge_style}">Beneficiario</span> <strong>{locked_title}</strong></div>'
+    )
     return (
         f'<div class="employee-beneficiary-control locked" style="{control_style}">'
         f'<input type="hidden" name="beneficiario_empleado_id" value="{beneficiary.id}">'
-        f'<div><span style="{badge_style}">Beneficiario</span> '
-        '<strong>Empleado beneficiario</strong></div>'
+        f'{locked_heading}'
         f'<span style="display:block;font-weight:800;">{beneficiary_name}</span>'
         '<small>Este usuario solamente puede solicitar para si mismo.</small>'
         '</div>'
@@ -9275,17 +9295,28 @@ def _regional_operator_beneficiary_control_html(
     selected_operator: Optional[ProveedorCliente],
     options_html: str,
     select_id: str,
+    use_activation: bool = False,
 ) -> str:
     if not _can_request_for_other_employee(requester):
         return ""
+    activation_checked = bool(use_activation and selected_operator is not None)
     selected_note = ""
     if selected_operator is not None:
         selected_note = f'<small>Operador seleccionado: {escape(selected_operator.nombre or "")}</small>'
+    activation_checked_attr = " checked" if activation_checked else ""
+    activation_html = (
+        f'<label style="display:flex;align-items:center;gap:8px;margin:0;font-weight:800;">'
+        f'<input type="checkbox" id="{select_id}_enabled" class="beneficiary-mode-toggle" data-beneficiary-mode="operator"{activation_checked_attr}> '
+        'Operador regional beneficiario</label>'
+        if use_activation
+        else '<div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>'
+    )
+    select_disabled = " disabled" if use_activation and not activation_checked else ""
     return f'''
         <div class="regional-operator-beneficiary-control" style="border:1px solid #fed7aa;background:#fff7ed;border-radius:12px;padding:12px 14px;margin:0 0 10px 0;display:grid;gap:8px;">
-            <div><span style="display:inline-block;background:#c2410c;color:white;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:800;letter-spacing:.02em;">Opcional</span> <strong>Operador regional beneficiario</strong></div>
+            {activation_html}
             <label for="{select_id}" style="display:block;font-weight:700;">Usar operador regional en lugar de empleado</label>
-            <select name="beneficiario_operador_id" id="{select_id}">{options_html}</select>
+            <select name="beneficiario_operador_id" id="{select_id}"{select_disabled}>{options_html}</select>
             <small>Si seleccionas un operador regional, el documento queda a nombre del operador; solicitante y aprobacion siguen siendo del usuario autenticado.</small>
             {selected_note}
         </div>
@@ -12937,15 +12968,24 @@ async def panel_operaciones_console(
     can_view_budget = _can_view_presupuestos(current_empleado)
     budget_visibility_style = "" if can_view_budget else 'style="display:none"'
 
-    tournament_rows = (
-        await session.execute(
-            select(Tournament.id, Tournament.name).order_by(Tournament.name.asc())
+    operations_degraded_messages: list[str] = []
+    try:
+        tournament_rows = (
+            await session.execute(
+                select(Tournament.id, Tournament.name).order_by(Tournament.name.asc())
+            )
+        ).all()
+        tournaments = [
+            {"id": str(row[0]), "name": str(row[1] or "")}
+            for row in tournament_rows
+        ]
+    except Exception as exc:
+        await session.rollback()
+        logger.warning("Operations console tournament list unavailable: %s", exc, exc_info=True)
+        operations_degraded_messages.append(
+            "No se pudo cargar el catalogo de torneos. La consola queda disponible en modo degradado."
         )
-    ).all()
-    tournaments = [
-        {"id": str(row[0]), "name": str(row[1] or "")}
-        for row in tournament_rows
-    ]
+        tournaments = []
     selected_tournament = None
     if tournament_id:
         selected_tournament = next(
@@ -12957,21 +12997,33 @@ async def panel_operaciones_console(
 
     snapshot_data: dict[str, Any] = {"summary": {}, "alerts": [], "budget": None}
     if can_operate and selected_tournament:
-        result = await operations_folder_planner_snapshot_adapter(
-            session,
-            context=AssistantContext(
-                tournament_id=selected_tournament["id"],
-                tournament_name=selected_tournament["name"],
-                edition="2026",
-            ),
-            payload={
-                "tournament_id": selected_tournament["id"],
-                "tournament_name": selected_tournament["name"],
-                "edition_year": 2026,
-                "limit": 120,
-            },
-        )
-        snapshot_data = result.data or snapshot_data
+        try:
+            result = await operations_folder_planner_snapshot_adapter(
+                session,
+                context=AssistantContext(
+                    tournament_id=selected_tournament["id"],
+                    tournament_name=selected_tournament["name"],
+                    edition="2026",
+                ),
+                payload={
+                    "tournament_id": selected_tournament["id"],
+                    "tournament_name": selected_tournament["name"],
+                    "edition_year": 2026,
+                    "limit": 120,
+                },
+            )
+            snapshot_data = result.data or snapshot_data
+        except Exception as exc:
+            await session.rollback()
+            logger.warning(
+                "Operations console snapshot unavailable for tournament_id=%s: %s",
+                selected_tournament["id"],
+                exc,
+                exc_info=True,
+            )
+            operations_degraded_messages.append(
+                "No se pudo cargar el pulso inteligente de operaciones. Puedes seguir usando el selector y las secciones disponibles."
+            )
 
     summary = snapshot_data.get("summary") or {}
     alerts = list(snapshot_data.get("alerts") or [])
@@ -12980,18 +13032,28 @@ async def panel_operaciones_console(
     budget_alerts = list(budget.get("executive_alerts") or [])
     top_alert = alerts[0] if alerts else {}
     top_budget_alert = budget_alerts[0] if budget_alerts else {}
-    tournament_commitments = (
-        await list_budget_tournament_commitments(
-            session,
-            edition_year=2026,
-            tournament_id=selected_tournament["id"],
-            tournament_name=selected_tournament["name"],
-            tournament_code=None,
-            limit=12,
-        )
-        if can_operate and can_view_budget and selected_tournament
-        else []
-    )
+    tournament_commitments = []
+    if can_operate and can_view_budget and selected_tournament:
+        try:
+            tournament_commitments = await list_budget_tournament_commitments(
+                session,
+                edition_year=2026,
+                tournament_id=selected_tournament["id"],
+                tournament_name=selected_tournament["name"],
+                tournament_code=None,
+                limit=12,
+            )
+        except Exception as exc:
+            await session.rollback()
+            logger.warning(
+                "Operations console commitments unavailable for tournament_id=%s: %s",
+                selected_tournament["id"],
+                exc,
+                exc_info=True,
+            )
+            operations_degraded_messages.append(
+                "No se pudieron cargar compromisos/presupuesto del torneo. El resto de la consola sigue disponible."
+            )
     active_commitment = next(
         (
             item
@@ -13165,6 +13227,15 @@ async def panel_operaciones_console(
         </div>
         """
         for item in budget_alerts
+    )
+
+    degraded_state = "".join(
+        f"""
+            <div class="notice warn" style="margin-bottom:12px;">
+                {escape(message)}
+            </div>
+        """
+        for message in operations_degraded_messages
     )
 
     hero_actions = """
@@ -13433,6 +13504,7 @@ async def panel_operaciones_console(
                 side_html=side_html,
             )}
             <div class="stack">
+                {degraded_state}
                 {empty_state}
                 <div class="ops-toolbar">
                     <div class="ops-filter-strip">
@@ -14114,7 +14186,7 @@ async def gastos_terceros(
                                     <th>Monto Solicitado</th>
                                     <th>Moneda</th>
                                     <th>Fecha Pago</th>
-                                    <th>Concepto Pago</th>
+                                    <th>Descripción de pago</th>
                                     <th>Archivos</th>
                                     <th>Estado</th>
                                     <th>Acciones</th>
@@ -14413,7 +14485,7 @@ async def solicitar_anticipo_form(
                             render_st_fecha_pago_field(**fecha_pago_kwargs),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             f'<input type="text" name="concepto_pago" id="concepto_pago" required value="{escape(preserve_concepto)}">',
                         )}
                         {render_st_doc_row_dual(
@@ -15171,17 +15243,17 @@ async def nuevo_gasto_form(
                     <select name="fase_torneo" id="fase_torneo" required disabled>
                         <option value="">Seleccione...</option>
                     </select>
-                    <small>La partida presupuestal se ajusta al subproyecto/fase seleccionado.</small>
+                    <small>El concepto se ajusta al subproyecto/fase seleccionado.</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="concepto">Concepto <span class="required">*</span></label>
+                    <label for="concepto">Descripción <span class="required">*</span></label>
                     <input type="text" name="concepto" id="concepto" required placeholder="Ej: Transporte, Alimentos, Hospedaje">
-                    <small>Ingrese el concepto del gasto</small>
+                    <small>Ingrese la descripción del gasto</small>
                 </div>
 
                 <div class="form-group">
-                    <label for="budget_concept_search">Partida Presupuestal</label>
+                    <label for="budget_concept_search">Concepto</label>
                     <input type="text" id="budget_concept_search" list="budget_concept_options" placeholder="Escriba para buscar o seleccione de la lista" autocomplete="off" disabled>
                     <datalist id="budget_concept_options"></datalist>
                     <select name="budget_concept_id" id="budget_concept_id" disabled>
@@ -15462,7 +15534,7 @@ async def nuevo_gasto_form(
                         const placeholder = document.createElement('option');
                         placeholder.value = '';
                         placeholder.textContent = concepts.length
-                            ? '— Seleccione partida presupuestal —'
+                            ? '— Seleccione concepto —'
                             : '— Sin partidas para este subproyecto —';
                         placeholder.disabled = true;
                         placeholder.selected = true;
@@ -15865,7 +15937,7 @@ async def crear_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         "/gastos/nuevo",
-                        error_msg="Debe seleccionar una Partida Presupuestal para el torneo.",
+                        error_msg="Debe seleccionar un Concepto para el torneo.",
                     ),
                     status_code=303,
                 )
@@ -15881,7 +15953,7 @@ async def crear_gasto(
                 return RedirectResponse(
                     url=_append_error_params(
                         "/gastos/nuevo",
-                        error_msg="La Partida Presupuestal no corresponde al torneo seleccionado.",
+                        error_msg="El Concepto no corresponde al torneo seleccionado.",
                     ),
                     status_code=303,
                 )
@@ -22848,7 +22920,7 @@ async def editar_gasto_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="budget_concept_id">Partida Presupuestal</label>
+                    <label for="budget_concept_id">Concepto</label>
                     <select name="budget_concept_id" id="budget_concept_id" {disabled_attr}>
                         {budget_concept_options}
                     </select>
@@ -22961,7 +23033,7 @@ async def editar_gasto_form(
                     budgetConceptSelect.innerHTML = '';
                     const placeholder = document.createElement('option');
                     placeholder.value = '';
-                    placeholder.textContent = '— Sin partida presupuestal —';
+                    placeholder.textContent = '— Sin concepto —';
                     placeholder.selected = !selectedBudgetConceptId;
                     budgetConceptSelect.appendChild(placeholder);
                     items.forEach(function(item) {{
@@ -23318,7 +23390,7 @@ async def editar_gasto(
                 url=_append_error_params(
                     f"/gastos/{gasto_id}/editar",
                     error_msg=(
-                        "La partida presupuestal solo puede asignarse a un informe "
+                        "El concepto solo puede asignarse a un informe "
                         "de gastos con torneo."
                     ),
                 ),
@@ -23336,7 +23408,7 @@ async def editar_gasto(
                 url=_append_error_params(
                     f"/gastos/{gasto_id}/editar",
                     error_msg=(
-                        "La partida presupuestal no corresponde al torneo del "
+                        "El concepto no corresponde al torneo del "
                         "informe de gastos."
                     ),
                 ),
@@ -23631,6 +23703,9 @@ async def documentos_pendientes(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    tipo: Optional[str] = None,
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
 ) -> str:
     """
     Show documentos in estado 'enviado' that are pending approval.
@@ -23639,89 +23714,198 @@ async def documentos_pendientes(
     - Only finanzas or admin can access (plus superadmin)
     - Superadmin sees ALL documentos with estado 'enviado'
     - Finanzas/admin see documentos where they are the aprobador, plus unassigned docs
+    - Search/filter is applied only inside that already-authorized visibility scope
     """
 
     # Check role - only finanzas or admin can access
     if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
-    # Build query based on role
-    if current_empleado.rol in ('superadmin', 'super_admin'):
-        # Superadmin sees all documentos with estado 'enviado'
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).where(
-            Documento.estado == 'enviado'
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
-    else:
-        # Finanzas/admin see their assigned approvals plus unassigned documents.
-        # This matches the workflow service, which allows finance/admin fallback
-        # when an empleado has no explicit aprobador.
-        query = select(Documento).options(
-            selectinload(Documento.empleado)
-        ).join(
-            Empleado, Documento.empleado_id == Empleado.id
-        ).where(
-            and_(
-                Documento.estado == 'enviado',
-                or_(
-                    Empleado.aprobador_id == current_empleado.id,
-                    Empleado.aprobador_id.is_(None),
-                )
+    q_value = (q or "").strip()
+    empleado_nombre_value = (empleado_nombre or "").strip()
+    tipo_value = (tipo or "").strip().upper()
+    if tipo_value not in {"", "INFORME", "SOLICITUD"}:
+        tipo_value = ""
+
+    is_superadmin = current_empleado.rol in ('superadmin', 'super_admin')
+    query = select(Documento).options(
+        selectinload(Documento.empleado).selectinload(Empleado.aprobador),
+        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.proveedor_cliente),
+    )
+
+    needs_empleado_join = (not is_superadmin) or bool(q_value) or bool(empleado_nombre_value)
+    if needs_empleado_join:
+        query = query.join(Empleado, Documento.empleado_id == Empleado.id)
+
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    if q_value:
+        query = query.outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        ).outerjoin(
+            proveedor_alias,
+            Documento.proveedor_cliente_id == proveedor_alias.id,
+        )
+
+    filters = [Documento.estado == 'enviado']
+    if not is_superadmin:
+        filters.append(
+            or_(
+                Empleado.aprobador_id == current_empleado.id,
+                Empleado.aprobador_id.is_(None),
             )
-        ).order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
+        )
+    if tipo_value:
+        filters.append(Documento.tipo == tipo_value)
+    if empleado_nombre_value:
+        filters.append(Empleado.nombre.ilike(f"%{empleado_nombre_value}%"))
+    if q_value:
+        q_filter = f"%{q_value}%"
+        filters.append(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                Documento.referencia_pago.ilike(q_filter),
+                Documento.notas.ilike(q_filter),
+                Empleado.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+            )
+        )
+
+    query = query.where(and_(*filters)).order_by(
+        Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc()
+    )
 
     result = await session.execute(query)
     documentos = result.scalars().all()
+    aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+
+    current_next_path = "/documentos/pendientes"
+    if request.url.query:
+        current_next_path = f"{current_next_path}?{request.url.query}"
+    next_url = quote(current_next_path)
 
     # Build rows HTML
     rows_html = ""
     for documento in documentos:
-        # Format dates
         enviado_str = format_value(documento.enviado_en) if documento.enviado_en else format_value(documento.creado_en)
-        creado_str = format_value(documento.creado_en)
-
-        # Get empleado name
-        empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
-        referencia_operaciones = escape(
-            str((documento.referencia_operaciones or "").strip() or "—")
+        row_values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_by_doc.get(documento.id, "-"),
         )
-
-        # Link to documento detail with next parameter
-        next_url = quote("/documentos/pendientes")
-        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
-
-        # Shortened internal ID (first 8 characters)
+        referencia_operaciones = escape(
+            str((documento.referencia_operaciones or "").strip() or "-")
+        )
+        doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
         doc_id_short = str(documento.id)[:8]
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
             <td>{referencia_operaciones}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
-            <td>{empleado_nombre}</td>
-            <td>{documento.tipo}</td>
-            <td>{documento.estado}</td>
-            <td>{format_currency(documento.monto_total)}</td>
+            <td>{escape(row_values["solicitante"])}</td>
+            <td>{escape(row_values["beneficiario"])}</td>
+            <td>{escape(row_values["proveedor"])}</td>
+            <td>{escape(row_values["tipo_documento"])}</td>
+            <td>{escape(row_values["estado"])}</td>
+            <td>{row_values["monto_total"]}</td>
+            <td>{escape(row_values["concepto"])}</td>
             <td>{enviado_str}</td>
         </tr>
         """
+
+    active_filters = sum(1 for value in [q_value, empleado_nombre_value, tipo_value] if value)
     pendientes_side_html = f"""
-        <div class="eyebrow">Bandeja de aprobación</div>
+        <div class="eyebrow">Bandeja de aprobaci&oacute;n</div>
         <div class="meta-grid">
             <div class="meta-card">
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
-                <small>Documentos actualmente esperando tu decisión.</small>
+                <small>Documentos esperando tu decisi&oacute;n con los filtros actuales.</small>
+            </div>
+            <div class="meta-card">
+                <span>Filtros activos</span>
+                <strong>{active_filters}</strong>
+                <small>Busca por referencia, proveedor, empleado o descripci&oacute;n.</small>
             </div>
         </div>
     """
+
+    filter_form_html = f"""
+    <form method="GET" action="/documentos/pendientes" class="surface" style="margin-bottom: 0;">
+        <div class="section-head" style="margin-bottom:12px;">
+            <div>
+                <h2>Buscar aprobaciones</h2>
+                <div class="section-note">Filtra dentro de los documentos que ya est&aacute;n en tu bandeja; no cambia permisos ni autorizadores.</div>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 15px; align-items:end;">
+            <div>
+                <label for="q" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">B&uacute;squeda</label>
+                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Ref. operaciones, proveedor, empleado, descripci&oacute;n...">
+            </div>
+            <div>
+                <label for="tipo" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">Tipo</label>
+                <select name="tipo" id="tipo">
+                    <option value="" {'selected' if not tipo_value else ''}>Todos</option>
+                    <option value="SOLICITUD" {'selected' if tipo_value == 'SOLICITUD' else ''}>SOLICITUD</option>
+                    <option value="INFORME" {'selected' if tipo_value == 'INFORME' else ''}>INFORME</option>
+                </select>
+            </div>
+            <div>
+                <label for="empleado_nombre" style="display:block; margin-bottom:5px; font-weight:bold; color:#333;">Empleado / solicitante</label>
+                <input type="text" name="empleado_nombre" id="empleado_nombre" value="{escape(empleado_nombre_value)}" placeholder="Ej. Alicia, Bibiana, Odilon...">
+            </div>
+            <div>
+                <div class="hero-actions" style="margin-top:0;">
+                    <button type="submit" class="button primary" style="width:100%;">Filtrar</button>
+                    <a href="/documentos/pendientes" class="button secondary" style="width:100%;">Limpiar</a>
+                </div>
+            </div>
+        </div>
+    </form>
+    """
+
+    if rows_html:
+        pending_table_html = f"""
+            <div class="table-shell"><table>
+                <thead>
+                    <tr>
+                        <th>N&uacute;mero de Referencia</th>
+                        <th>Referencia Operaciones</th>
+                        <th>ID Interno</th>
+                        <th>Empleado</th>
+                        <th>Beneficiario</th>
+                        <th>Proveedor</th>
+                        <th>Tipo</th>
+                        <th>Estado</th>
+                        <th>Monto Total</th>
+                        <th>Descripci&oacute;n</th>
+                        <th>Fecha de Env&iacute;o</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table></div>
+        """
+    else:
+        pending_table_html = """
+            <div class="notice info" style="text-align:center;">
+                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar con los filtros seleccionados.</p>
+            </div>
+        """
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1380px")}</style>
+        <style>{_workspace_shell_styles("1580px")}</style>
     </head>
     <body>
         <div class="container">
@@ -23729,41 +23913,20 @@ async def documentos_pendientes(
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Pendientes por aprobar",
-                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todavía al historial.",
+                description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todav&iacute;a al historial.",
                 actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
                 side_html=pendientes_side_html,
             )}
             <div class="stack">
+                {filter_form_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
                             <h2>Documentos en espera</h2>
-                            <div class="section-note">Solo aparecen documentos que todavía requieren aprobación.</div>
+                            <div class="section-note">Solo aparecen documentos que todav&iacute;a requieren aprobaci&oacute;n.</div>
                         </div>
                     </div>
-            {f'''
-            <div class="table-shell"><table>
-                <thead>
-                    <tr>
-                        <th>Número de Referencia</th>
-                        <th>Referencia Operaciones</th>
-                        <th>ID Interno</th>
-                        <th>Empleado</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Monto Total</th>
-                        <th>Fecha de Envío</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table></div>
-            ''' if rows_html else '''
-            <div class="notice info" style="text-align:center;">
-                <p style="font-size: 18px; color: #666;">No tienes documentos pendientes por aprobar.</p>
-            </div>
-            '''}
+                    {pending_table_html}
                 </section>
             </div>
         </div>
@@ -24474,9 +24637,9 @@ async def nueva_solicitud_form(
                 </div>
 
                 <div class="form-group">
-                    <label for="concepto_pago">Concepto de Pago *</label>
-                    <textarea name="concepto_pago" id="concepto_pago" placeholder="Descripción del concepto de pago..." required></textarea>
-                    <small>Descripción del concepto por el cual se solicita el pago</small>
+                    <label for="concepto_pago">Descripción de pago *</label>
+                    <textarea name="concepto_pago" id="concepto_pago" placeholder="Descripción del pago..." required></textarea>
+                    <small>Descripción del pago solicitado</small>
                 </div>
 
                 <div class="form-group">
@@ -24650,7 +24813,7 @@ async def crear_nueva_solicitud(
             url=_append_error_params(
                 "/documentos/nueva-solicitud",
                 error="missing_concepto",
-                error_msg="El concepto de pago es requerido.",
+                error_msg="El descripción de pago es requerida.",
             ),
             status_code=303
         )
@@ -27809,10 +27972,10 @@ async def _render_solicitud_terceros_form(
                             render_st_fecha_pago_field(**fecha_pago_kwargs),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             (
                                 '<textarea name="concepto_pago" id="concepto_pago" '
-                                'placeholder="Descripción del concepto de pago..." '
+                                'placeholder="Descripción del pago..." '
                                 f"required>{escape(preserve_concepto)}</textarea>"
                             ),
                         )}
@@ -27821,7 +27984,7 @@ async def _render_solicitud_terceros_form(
                             render_pago_urgente_field(checked=preserve_pago_urgente),
                         )}
                         {render_st_doc_row(
-                            "PARTIDA PRESUPUESTAL:",
+                            "CONCEPTO:",
                             (
                                 '<select name="budget_concept_id" '
                                 'id="budget_concept_id_terceros">'
@@ -29172,7 +29335,7 @@ async def _render_document_authorization_strategy_evidence(
             ("Tipo de erogacion", inputs.get("erogation_type") or inputs.get("erogation_key") or "--", "Clasificacion usada para la matriz."),
             ("Monto MXN", inputs.get("amount_mxn") or "--", "Base de rango de autorizacion."),
             ("Factura", "Si" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
-            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra partida presupuestal."),
+            ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra concepto."),
             ("Urgente", "Si" if inputs.get("is_urgent") else "No", "Excepcion operativa de prioridad."),
         ]
     )
@@ -30588,9 +30751,9 @@ def _html_budget_concept_options(
     required: bool,
 ) -> str:
     placeholder = (
-        '<option value="" disabled selected>— Seleccione partida presupuestal —</option>'
+        '<option value="" disabled selected>— Seleccione concepto —</option>'
         if not selected_id
-        else '<option value="">— Seleccione partida presupuestal —</option>'
+        else '<option value="">— Seleccione concepto —</option>'
     )
     options = [placeholder]
     for concept in concepts:
@@ -30604,9 +30767,9 @@ def _html_budget_concept_options(
         )
     if not required:
         options[0] = (
-            '<option value="" selected>— Sin partida presupuestal —</option>'
+            '<option value="" selected>— Sin concepto —</option>'
             if not selected_id
-            else '<option value="">— Sin partida presupuestal —</option>'
+            else '<option value="">— Sin concepto —</option>'
         )
     return "".join(options)
 
@@ -30685,9 +30848,9 @@ def _render_budget_concept_sync_script(
     concept_map_json = json.dumps(concept_map)
     selected_json = json.dumps(selected_id or "")
     placeholder = (
-        "— Seleccione partida presupuestal —"
+        "— Seleccione concepto —"
         if required
-        else "— Sin partida presupuestal —"
+        else "— Sin concepto —"
     )
     return f"""
     <script>
@@ -31278,6 +31441,8 @@ async def crear_cuenta_de_gastos_form(
             "Selecciona a la persona a cuyo nombre se prepara el informe. "
             "El responsable, propietario y aprobador continúan siendo los del usuario que lo crea."
         ),
+        title="Es para otro beneficiario",
+        use_activation=True,
     )
     regional_operator: Optional[ProveedorCliente] = None
     regional_operator_control = ""
@@ -31295,6 +31460,7 @@ async def crear_cuenta_de_gastos_form(
                 regional_operator.id if regional_operator else None,
             ),
             select_id="beneficiario_operador_id_informe",
+            use_activation=True,
         )
     if regional_operator is not None:
         bank_account_options = _html_single_proveedor_bank_account_options(
@@ -31520,26 +31686,74 @@ async def crear_cuenta_de_gastos_form(
                         }}
                     }}
 
+                    var operatorToggle = document.getElementById("beneficiario_operador_id_informe_enabled");
+                    var employeeToggle = document.getElementById("beneficiario_empleado_id_enabled");
+                    var defaultEmployeeId = employeeSelect && employeeSelect.dataset ? (employeeSelect.dataset.defaultBeneficiaryId || employeeSelect.value || "") : "";
+
+                    function setOperatorDisabled(disabled) {{
+                        if (!operatorSelect) return;
+                        operatorSelect.disabled = disabled;
+                        operatorSelect.required = !disabled && operatorToggle && operatorToggle.checked;
+                    }}
+
+                    function resetToRequester() {{
+                        if (operatorSelect) operatorSelect.value = "";
+                        if (employeeSelect && employeeSelect.tagName === "SELECT" && defaultEmployeeId) employeeSelect.value = defaultEmployeeId;
+                        setOperatorDisabled(true);
+                        setEmployeeDisabled(true);
+                        loadEmployeeAccounts();
+                    }}
+
                     function applyBeneficiaryMode() {{
-                        if (operatorSelect && operatorSelect.value) {{
-                            var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                        var operatorEnabled = !!(operatorToggle && operatorToggle.checked);
+                        var employeeEnabled = !!(employeeToggle && employeeToggle.checked);
+
+                        if (operatorEnabled) {{
+                            if (employeeToggle) employeeToggle.checked = false;
                             setEmployeeDisabled(true);
-                            accountSelect.innerHTML = "";
-                            accountSelect.appendChild(regionalAccountOption(selected));
+                            setOperatorDisabled(false);
+                            if (operatorSelect && operatorSelect.value) {{
+                                var selected = operatorSelect.options[operatorSelect.selectedIndex];
+                                accountSelect.innerHTML = "";
+                                accountSelect.appendChild(regionalAccountOption(selected));
+                            }} else {{
+                                accountSelect.innerHTML = '<option value="" selected disabled>Selecciona operador regional</option>';
+                            }}
                             return;
                         }}
-                        setEmployeeDisabled(false);
+
+                        if (employeeEnabled) {{
+                            if (operatorToggle) operatorToggle.checked = false;
+                            if (operatorSelect) operatorSelect.value = "";
+                            setOperatorDisabled(true);
+                            setEmployeeDisabled(false);
+                            loadEmployeeAccounts();
+                            return;
+                        }}
+
+                        resetToRequester();
                     }}
 
                     if (employeeSelect && employeeSelect.tagName === "SELECT") {{
                         employeeSelect.addEventListener("change", function() {{
-                            if (!operatorSelect || !operatorSelect.value) loadEmployeeAccounts();
+                            if (employeeToggle && employeeToggle.checked) loadEmployeeAccounts();
                         }});
                     }}
                     if (operatorSelect) {{
                         operatorSelect.addEventListener("change", function() {{
+                            if (operatorToggle && operatorToggle.checked) applyBeneficiaryMode();
+                        }});
+                    }}
+                    if (operatorToggle) {{
+                        operatorToggle.addEventListener("change", function() {{
+                            if (operatorToggle.checked && employeeToggle) employeeToggle.checked = false;
                             applyBeneficiaryMode();
-                            if (!operatorSelect.value) loadEmployeeAccounts();
+                        }});
+                    }}
+                    if (employeeToggle) {{
+                        employeeToggle.addEventListener("change", function() {{
+                            if (employeeToggle.checked && operatorToggle) operatorToggle.checked = false;
+                            applyBeneficiaryMode();
                         }});
                     }}
                     applyBeneficiaryMode();
@@ -32614,7 +32828,7 @@ def _quick_expense_values(
         iva_amount = max(impuestos_net, Decimal("0"))
 
     if not concepto_final:
-        raise ValueError("Concepto del gasto es requerido")
+        raise ValueError("Descripción del gasto es requerida")
     try:
         fecha_dt = datetime.strptime(fecha_final, "%Y-%m-%d")
     except ValueError as exc:
@@ -32764,9 +32978,9 @@ async def crear_gasto_rapido_en_informe(
             budget_direction="expense",
         )
         if available_budget_concepts and not budget_concept_raw:
-            raise ValueError("La partida presupuestal es requerida para este informe.")
+            raise ValueError("El concepto es requerido para este informe.")
         if budget_concept_raw and budget_concept is None:
-            raise ValueError("La partida presupuestal no corresponde al torneo del informe.")
+            raise ValueError("El concepto no corresponde al torneo del informe.")
         proyecto = (
             (cuenta.torneo.name or "").strip()
             if cuenta.torneo
@@ -33555,8 +33769,8 @@ async def cuenta_de_gastos_detail(
                                     <tr>
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
-                                        <th>CONCEPTO DEL GASTO</th>
-                                        <th>PARTIDA PRESUPUESTAL</th>
+                                        <th>DESCRIPCIÓN DEL GASTO</th>
+                                        <th>CONCEPTO</th>
                                         <th>FECHA DEL GASTO</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
@@ -33572,7 +33786,7 @@ async def cuenta_de_gastos_detail(
                                         <td><input type="file" name="cfdi_xml" id="quick-cfdi-xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input type="file" name="cfdi_pdf" id="quick-cfdi-pdf" accept=".pdf,application/pdf"></td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
-                                        <td><select name="budget_concept_id" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered else ""}>{quick_budget_concept_options or '<option value=\"\">— Sin partida presupuestal —</option>'}</select></td>
+                                        <td><select name="budget_concept_id" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered else ""}>{quick_budget_concept_options or '<option value=\"\">— Sin concepto —</option>'}</select></td>
                                         <td><input type="date" name="fecha" id="quick-fecha" required></td>
                                         <td>
                                             <input name="numero_factura" id="quick-numero-factura" list="quick-factura-options" placeholder="UUID, vale azul o no facturable">
@@ -34354,7 +34568,7 @@ async def nueva_solicitud_desde_cuenta_form(
                             render_pago_urgente_field(),
                         )}
                         {render_st_doc_row(
-                            "CONCEPTO:",
+                            "DESCRIPCIÓN:",
                             '<input type="text" name="concepto_pago" id="concepto_pago" required>',
                         )}
                         {render_st_doc_row_dual(
