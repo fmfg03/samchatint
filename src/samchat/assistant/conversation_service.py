@@ -1507,14 +1507,6 @@ async def run_conversation_turn(
     if workspace_resume_response is not None:
         return workspace_resume_response
 
-    specialist_preview_response = await _build_specialist_preview_surface_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-    )
-    if specialist_preview_response is not None:
-        return specialist_preview_response
-
     owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1523,6 +1515,14 @@ async def run_conversation_turn(
     )
     if owner_entity_workspace_response is not None:
         return owner_entity_workspace_response
+
+    specialist_preview_response = await _build_specialist_preview_surface_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if specialist_preview_response is not None:
+        return specialist_preview_response
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
@@ -1764,14 +1764,6 @@ async def run_message_turn_with_pending(
     if workspace_resume_response is not None:
         return workspace_resume_response
 
-    specialist_preview_response = await _build_specialist_preview_surface_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-    )
-    if specialist_preview_response is not None:
-        return specialist_preview_response
-
     owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1780,6 +1772,14 @@ async def run_message_turn_with_pending(
     )
     if owner_entity_workspace_response is not None:
         return owner_entity_workspace_response
+
+    specialist_preview_response = await _build_specialist_preview_surface_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+    )
+    if specialist_preview_response is not None:
+        return specialist_preview_response
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
