@@ -315,6 +315,127 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
     assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
 
+@pytest.mark.asyncio
+async def test_owner_variable_question_uses_conversation_answer_without_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("owner variable query should bypass provider")
+
+    response = await _run_message(
+        "Cuantos equipos reales tiene Copa Telmex para el dueno?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Se que variable necesitas" in response.assistant_message
+    assert "Equipos reales participantes" in response.assistant_message
+    assert "no hay evidencia viva suficiente" in response.assistant_message
+    assert "No ejecute cambios" in response.assistant_message
+    trace = response.tool_trace[0]["owner_variable_query"]
+    assert trace["stage"] == "deterministic_read_only_owner_variable_query"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+    assert trace["side_effects_detected"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_variable_query"
+    assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_owner_variable_question_uses_live_evidence_when_available(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+    from samchat.assistant.owner_pack_live_evidence import (
+        OwnerPackLiveEvidenceResolution,
+    )
+    from samchat.assistant.owner_pack_live_snapshot import (
+        OWNER_PACK_LIVE_SUPPORTED,
+        OwnerPackLiveFieldSnapshot,
+        OwnerPackLiveSnapshotReport,
+        OwnerPackLiveSurfaceSnapshot,
+    )
+
+    async def fake_live_evidence(session, *, scope, tournament_hint, entity_name):
+        assert tournament_hint == "copa-telmex"
+        field = OwnerPackLiveFieldSnapshot(
+            field="real_teams",
+            label="Equipos reales participantes",
+            section_id="operations",
+            evidence_type="count",
+            status=OWNER_PACK_LIVE_SUPPORTED,
+            value=[
+                {
+                    "category": "Sub-17",
+                    "gender_or_branch": "Varonil",
+                    "teams_count_total": 18,
+                }
+            ],
+            source_paths=["db.copa_telmex.teams"],
+            source_files=["samchat_local_tournament_db"],
+        )
+        surface = OwnerPackLiveSurfaceSnapshot(
+            surface_id="entity_folder",
+            label="Carpeta de entidad",
+            target={"tournament_name": "Copa Telmex Telcel de Futbol"},
+            workspace_root="samchat_local_tournament_db",
+            workspace_files_checked=["samchat_local_tournament_db"],
+            workspace_files_found=["samchat_local_tournament_db"],
+            fields=[field],
+            supported_field_count=1,
+            missing_field_count=0,
+        )
+        report = OwnerPackLiveSnapshotReport(
+            snapshot_id="owner_pack_live_evidence_v2_entity_folder",
+            headline="Evidencia viva local",
+            summary="ok",
+            surfaces=[surface],
+            supported_field_count=1,
+            missing_field_count=0,
+        )
+        return OwnerPackLiveEvidenceResolution(status="resolved", reports=[report])
+
+    monkeypatch.setattr(
+        conversation_service,
+        "resolve_owner_pack_live_evidence",
+        fake_live_evidence,
+    )
+
+    response = await _run_message(
+        "Cuantos equipos reales tiene Copa Telmex para el dueno?"
+    )
+
+    assert "Tengo una respuesta parcial" in response.assistant_message
+    assert "18" in response.assistant_message
+    assert "db.copa_telmex.teams" in response.assistant_message
+    trace = response.tool_trace[0]["owner_variable_query"]
+    assert trace["live_evidence_status"] == "resolved"
+    assert trace["live_evidence_reports"] == 1
+    assert trace["provider_called"] is False
+    assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "partial"
+
+
+@pytest.mark.asyncio
+async def test_unmapped_owner_like_question_falls_through_to_provider():
+    calls = []
+
+    async def provider(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            assistant_message="provider fallback",
+            tool_trace=[],
+            run_id="provider",
+            pending_confirmation=None,
+        )
+
+    response = await _run_message(
+        "Le fue bien el ambiente al dueno?",
+        assistant_turn=provider,
+    )
+
+    assert calls
+    assert response.assistant_message == "provider fallback"
+
+
 def _owner_workspace_source():
     return SimpleNamespace(
         schema_version="local.v1",
