@@ -158,7 +158,9 @@ async def register_document_payment(
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
         raise DocumentoPaymentValidationError("actor_not_found", "Actor not found")
-    if (actor.rol or "").strip().lower() not in FINANCE_ROLES:
+    actor_role = (actor.rol or "").strip().lower()
+    actor_department = (getattr(actor, "departamento", None) or "").strip().lower()
+    if actor_role not in FINANCE_ROLES and actor_department != "finanzas":
         raise DocumentoPaymentPermissionError(
             "insufficient_role",
             "Access denied. Insufficient permissions.",
@@ -169,10 +171,10 @@ async def register_document_payment(
             "invalid_tipo",
             "Solo se pueden registrar pagos en documentos de tipo SOLICITUD.",
         )
-    if documento.estado != "aprobado":
+    if documento.estado not in {"aprobado", "en_proceso_pago"}:
         raise DocumentoPaymentValidationError(
             "invalid_estado",
-            "El documento debe estar aprobado antes de registrar el pago.",
+            "El documento debe estar aprobado o en proceso de pago antes de registrar el pago.",
         )
     if documento.gasto_generado_id:
         raise DocumentoPaymentValidationError(
@@ -489,7 +491,9 @@ async def get_pending_document_payment_overview(
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
         raise DocumentoPaymentValidationError("actor_not_found", "Actor not found")
-    if (actor.rol or "").strip().lower() not in FINANCE_ROLES:
+    actor_role = (actor.rol or "").strip().lower()
+    actor_department = (getattr(actor, "departamento", None) or "").strip().lower()
+    if actor_role not in FINANCE_ROLES and actor_department != "finanzas":
         raise DocumentoPaymentPermissionError(
             "insufficient_role",
             "Access denied. Insufficient permissions.",

@@ -10,19 +10,19 @@ from devnous.gastos.routes import admin_routes
 
 
 @pytest.mark.asyncio
-async def test_payment_run_page_requires_named_manager_or_superadmin() -> None:
+async def test_payment_run_page_rejects_non_finance_non_manager() -> None:
     with pytest.raises(HTTPException) as exc:
         await admin_routes.admin_finance_payment_run(
             request=SimpleNamespace(query_params={}),
             session=AsyncMock(),
-            current_empleado=SimpleNamespace(id=uuid4(), rol="finanzas"),
+            current_empleado=SimpleNamespace(id=uuid4(), rol="operaciones", departamento="Operaciones"),
         )
 
     assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_payment_run_page_renders_fecha_pago_edit_and_close_without_pay(
+async def test_payment_run_page_renders_fecha_pago_close_and_payment_proof(
     monkeypatch,
 ) -> None:
     empleado_id = uuid4()
@@ -48,6 +48,21 @@ async def test_payment_run_page_renders_fecha_pago_edit_and_close_without_pay(
                     "status": "programada",
                     "can_edit_fecha_pago": True,
                     "can_close": True,
+                    "can_upload_payment_proof": False,
+                },
+                {
+                    "id": uuid4(),
+                    "numero_referencia": "S-26000049",
+                    "solicitante_nombre": "Jacquie",
+                    "beneficiario_nombre": "Proveedor Pago",
+                    "concepto_pago": "Hospedaje",
+                    "fecha_pago": None,
+                    "monto": Decimal("900.00"),
+                    "currency": "MXN",
+                    "status": "en proceso de pago",
+                    "can_edit_fecha_pago": False,
+                    "can_close": False,
+                    "can_upload_payment_proof": True,
                 }
             ]
         ),
@@ -77,6 +92,10 @@ async def test_payment_run_page_renders_fecha_pago_edit_and_close_without_pay(
     assert 'name="fecha_pago"' in html
     assert 'form="payment-run-close-form"' in html
     assert "/admin/finanzas/payment-run/pay" not in html
+    assert "En Proceso de Pago" in html
+    assert "Testigo de pago" in html
+    assert "comprobante-pago" in html
+    assert "Subir testigo y pagar" in html
     assert "sin registrar pago" in html
 
 
