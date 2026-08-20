@@ -133,11 +133,11 @@ async def _load_budget_line(
         )
     ).mappings().first()
     if not row:
-        raise CFDIIncomeBridgeError("Partida presupuestal no encontrada.")
+        raise CFDIIncomeBridgeError("Concepto no encontrado.")
     line = dict(row)
     if str(line.get("line_direction") or "expense").strip().lower() != "income":
         raise CFDIIncomeBridgeError(
-            "La partida presupuestal debe ser de ingresos para vincular CFDI PSP."
+            "El concepto debe ser de ingresos para vincular CFDI PSP."
         )
     return line
 

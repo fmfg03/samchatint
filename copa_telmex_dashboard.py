@@ -1309,6 +1309,127 @@ def _render_not_found_page(request: Request) -> HTMLResponse:
     return HTMLResponse(content=html, status_code=404)
 
 
+def _render_internal_error_page(request: Request, error_id: str) -> HTMLResponse:
+    attempted_path = escape(request.url.path or "/", quote=True)
+    safe_error_id = escape(error_id, quote=True)
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Error temporal | sam.chat</title>
+        <style>
+            :root {{
+                --ink: #0f172a;
+                --muted: #5b6474;
+                --line: rgba(148, 163, 184, 0.28);
+                --bg-start: #07111f;
+                --bg-end: #10324a;
+                --card: rgba(255,255,255,0.96);
+                --primary: #0f766e;
+                --danger: #b45309;
+            }}
+            * {{ box-sizing: border-box; }}
+            body {{
+                margin: 0;
+                min-height: 100vh;
+                display: grid;
+                place-items: center;
+                font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+                color: var(--ink);
+                background:
+                    radial-gradient(circle at top left, rgba(180,83,9,0.18), transparent 28%),
+                    radial-gradient(circle at bottom right, rgba(15,118,110,0.22), transparent 30%),
+                    linear-gradient(140deg, var(--bg-start), var(--bg-end));
+                padding: 24px;
+            }}
+            .card {{
+                width: min(100%, 760px);
+                background: var(--card);
+                border: 1px solid var(--line);
+                border-radius: 28px;
+                padding: 32px;
+                box-shadow: 0 24px 80px rgba(2, 8, 23, 0.35);
+            }}
+            .eyebrow {{
+                display: inline-flex;
+                gap: 8px;
+                align-items: center;
+                padding: 8px 12px;
+                border-radius: 999px;
+                background: rgba(180,83,9,0.1);
+                color: var(--danger);
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }}
+            h1 {{
+                margin: 18px 0 12px;
+                font-size: clamp(2rem, 5vw, 3.4rem);
+                line-height: 1;
+                letter-spacing: -0.04em;
+            }}
+            p {{
+                margin: 0 0 10px;
+                color: var(--muted);
+                font-size: 1.02rem;
+                line-height: 1.6;
+            }}
+            .path, .request-id {{
+                margin-top: 14px;
+                padding: 12px 14px;
+                border-radius: 16px;
+                background: rgba(15, 23, 42, 0.04);
+                border: 1px dashed rgba(148, 163, 184, 0.4);
+                color: var(--ink);
+                font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                font-size: 0.92rem;
+                word-break: break-word;
+            }}
+            .actions {{
+                margin-top: 26px;
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+            }}
+            .btn {{
+                text-decoration: none;
+                border-radius: 14px;
+                padding: 13px 18px;
+                font-weight: 800;
+            }}
+            .btn-primary {{
+                background: #0f766e;
+                color: #fff;
+            }}
+            .btn-secondary {{
+                background: rgba(15, 118, 110, 0.08);
+                color: var(--primary);
+                border: 1px solid rgba(15, 118, 110, 0.18);
+            }}
+        </style>
+    </head>
+    <body>
+        <main class="card">
+            <div class="eyebrow">sam.chat - error temporal</div>
+            <h1>Esta pantalla no pudo cargar completa</h1>
+            <p>El sistema ya registro el detalle tecnico. Puedes reintentar o volver al inicio sin perder la sesion.</p>
+            <p>Si vuelve a pasar, comparte el identificador de error con soporte.</p>
+            <div class="path">Ruta: {attempted_path}</div>
+            <div class="request-id">Error ID: {safe_error_id}</div>
+            <div class="actions">
+                <a class="btn btn-primary" href="{attempted_path}">Reintentar</a>
+                <a class="btn btn-secondary" href="/">Ir al inicio</a>
+            </div>
+        </main>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html, status_code=500)
+
+
 # FastAPI app
 app = FastAPI(
     title="Copa Telmex Dashboard",
@@ -1329,6 +1450,33 @@ async def not_found_exception_handler(request: Request, exc: StarletteHTTPExcept
     ):
         return JSONResponse(status_code=404, content={"detail": exc.detail or "Not Found"})
     return _render_not_found_page(request)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    path = request.url.path or "/"
+    error_id = uuid4().hex[:12]
+    logger.exception(
+        "Unhandled request failure error_id=%s path=%s method=%s",
+        error_id,
+        path,
+        request.method,
+    )
+    if (
+        request.method not in {"GET", "HEAD"}
+        or path.startswith("/api/")
+        or path.startswith("/ingress/")
+        or _looks_like_asset_path(path)
+        or not _wants_html_response(request)
+    ):
+        return JSONResponse(
+            status_code=500,
+            content={
+                "detail": "Unexpected server error",
+                "error_id": error_id,
+            },
+        )
+    return _render_internal_error_page(request, error_id)
 
 MODERN_UI_HEAD_INJECTION = """
 <meta name="viewport" content="width=device-width, initial-scale=1.0">

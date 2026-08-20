@@ -12,7 +12,6 @@ from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
-from .documento_semantics import approval_subject_empleado
 from ..models import Aprobacion, Adjunto, CuentaDeGastos, Documento, Empleado, ProveedorCliente, Tournament
 from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
 from .tournament_project_visibility import visibility_validation_error
@@ -142,7 +141,7 @@ def _parse_optional_budget_concept_uuid(value: Optional[str]) -> Optional[UUID]:
     except (TypeError, ValueError) as exc:
         raise SolicitudValidationError(
             "invalid_budget_concept",
-            "La partida presupuestal no es válida.",
+            "El concepto no es válida.",
         ) from exc
 
 
@@ -339,7 +338,7 @@ def build_solicitud_terceros_payload(
     if not concepto:
         raise SolicitudValidationError(
             "missing_concepto",
-            "El concepto de pago es requerido.",
+            "La descripción de pago es requerida.",
         )
 
     cfdi_uuid_canonical: Optional[str] = None
@@ -436,7 +435,7 @@ def build_solicitud_personal_payload(
     if not concepto:
         raise SolicitudValidationError(
             "missing_concepto",
-            "El concepto de pago es requerido.",
+            "La descripción de pago es requerida.",
         )
 
     proveedor_uuid: Optional[UUID] = None
@@ -596,12 +595,12 @@ async def create_solicitud_terceros_document(
         if payload.budget_concept_id is None:
             raise SolicitudValidationError(
                 "missing_budget_concept",
-                "La partida presupuestal es requerida para solicitudes con torneo.",
+                "El concepto es requerido para solicitudes con torneo.",
             )
         if concept is None:
             raise SolicitudValidationError(
                 "invalid_budget_concept",
-                "La partida presupuestal no corresponde al torneo seleccionado.",
+                "El concepto no corresponde al torneo seleccionado.",
             )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
@@ -954,12 +953,12 @@ async def update_solicitud_terceros_document(
         if payload.budget_concept_id is None:
             raise SolicitudValidationError(
                 "missing_budget_concept",
-                "La partida presupuestal es requerida para solicitudes con torneo.",
+                "El concepto es requerido para solicitudes con torneo.",
             )
         if concept is None:
             raise SolicitudValidationError(
                 "invalid_budget_concept",
-                "La partida presupuestal no corresponde al torneo seleccionado.",
+                "El concepto no corresponde al torneo seleccionado.",
             )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
@@ -1059,7 +1058,7 @@ async def create_solicitud_personal_document(
     if payload.budget_concept_id is not None and concept is None:
         raise SolicitudValidationError(
             "invalid_budget_concept",
-            "La partida presupuestal no corresponde al torneo del informe.",
+            "El concepto no corresponde al torneo del informe.",
         )
 
     selected_proveedor = None
@@ -1154,7 +1153,7 @@ async def fetch_documento_aprobador_display_batch(
     """Resolve Aprobador display names for document list views.
 
     Prefer the actor on the latest aprobar/rechazar aprobacion; otherwise fall
-    back to the effective beneficiary's assigned approver, or requester if none.
+    back to the solicitante's assigned approver (empleado.aprobador).
     """
     if not documentos:
         return {}
@@ -1184,8 +1183,8 @@ async def fetch_documento_aprobador_display_batch(
         if doc.id in latest_by_doc:
             display_by_doc[doc.id] = latest_by_doc[doc.id]
             continue
-        approval_subject = approval_subject_empleado(doc)
-        assigned = getattr(approval_subject, "aprobador", None) if approval_subject else None
+        empleado = doc.empleado
+        assigned = getattr(empleado, "aprobador", None) if empleado else None
         if assigned and assigned.nombre:
             display_by_doc[doc.id] = assigned.nombre
         else:
