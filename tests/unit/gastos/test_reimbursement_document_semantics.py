@@ -79,6 +79,29 @@ def test_pending_approval_contract_routes_by_beneficiary_and_shows_flash_columns
     assert "approval_subject = approval_subject_empleado(documento)" in workflow_source
 
 
+
+
+def test_workflow_notification_recipients_use_beneficiary_approval_subject() -> None:
+    source = Path(tg.__file__).read_text()
+    start = source.index("async def resolve_workflow_approval_notification_recipients")
+    end = source.index("async def _record_failed_workflow_notification", start)
+    block = source[start:end]
+
+    assert "approval_subject = approval_subject_empleado(documento)" in block
+    assert "subject_approver_id" in block
+    assert "owner = documento.empleado" not in block
+    assert "owner_approver_id" not in block
+
+
+def test_documento_approver_display_uses_beneficiary_approval_subject() -> None:
+    source = Path("src/devnous/gastos/services/documento_service.py").read_text()
+    start = source.index("async def fetch_documento_aprobador_display_batch")
+    block = source[start:]
+
+    assert "approval_subject = approval_subject_empleado(doc)" in block
+    assert "assigned = (" in block
+    assert "empleado = doc.empleado" not in block
+
 def test_telegram_approver_queue_uses_effective_beneficiary_approver():
     odilon_id = uuid4()
     federico_id = uuid4()
