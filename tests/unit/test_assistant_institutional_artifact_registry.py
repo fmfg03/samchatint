@@ -25,6 +25,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "assistant.owner_entity_dossier_audit" in ids
     assert "assistant.owner_entity_dossier_live" in ids
     assert "assistant.soul_wizard_contract" in ids
+    assert "assistant.owner_entity_folder_workspace" in ids
 
     for item in ARTIFACTS:
         assert item.name
@@ -59,7 +60,6 @@ def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> N
         "sam_inbox.payload",
         "assistant.owner_entity_dossier_audit",
         "assistant.sports_platform_audit",
-        "assistant.soul_wizard_contract",
     }
     assert all(item.assistant_tool or item.canonical_action for item in wired)
     assert all(item.next_wiring_step for item in unwired)
@@ -158,3 +158,33 @@ def test_institutional_registry_exposes_historical_accounting_precedent_tool() -
     assert spec.authority_level == "read_only"
     assert spec.assistant_tool == "assistant_historical_accounting_precedent"
     assert "candidates" in spec.output_contract
+
+
+def test_institutional_registry_reflects_soul_wizard_reality_sync() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="tournament")}
+
+    spec = artifacts["assistant.soul_wizard_contract"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "read_only"
+    assert spec.canonical_action == "assistant.soul_wizard_review"
+    assert "source_tournament_snapshot?" in spec.input_contract
+    assert "activation_diff" in spec.output_contract
+    assert "clone_metadata" in spec.output_contract
+    assert "explicit review/approval" in (spec.next_wiring_step or "")
+
+
+def test_institutional_registry_plans_owner_entity_folder_workspace() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    spec = artifacts["assistant.owner_entity_folder_workspace"]
+    assert spec.status == "planned"
+    assert spec.authority_level == "preview_only"
+    assert spec.assistant_tool is None
+    assert "assistant.owner_entity_dossier_live" in spec.evidence_sources
+    assert "assistant.owner_pack_readiness" in spec.evidence_sources
+    assert "tournament.soul_snapshot" in spec.evidence_sources
+    assert "assistant.sports_operations_status" in spec.evidence_sources
+    assert "finance.platform_snapshot" in spec.evidence_sources
+    assert "folder_sections" in spec.output_contract
+    assert "non_claims" in spec.output_contract
+    assert "no folder write" in (spec.next_wiring_step or "")
