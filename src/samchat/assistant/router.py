@@ -155,11 +155,13 @@ from .request_intent import (
 )
 from .owner_needs_eval import parse_owner_needs_eval_set
 from .owner_pack_inventory import build_owner_pack_inventory_report
+from .owner_pack_live_evidence import build_owner_pack_live_report_from_tournament_source
 from .owner_entity_dossier_live import build_owner_entity_dossier_live_from_tournament_source
 from .owner_entity_folder_workspace import build_owner_entity_folder_workspace_from_tournament_source
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_status import build_owner_pack_status_report
+from .owner_variable_query import build_owner_variable_query_report
 from .owner_response_pack import build_response_pack_from_live_snapshot
 from .sports_operations_status import build_sports_operations_status_from_tournament_source
 from .readonly_workspace import (
@@ -2445,6 +2447,7 @@ READ_TOOLS = {
     "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -2507,6 +2510,7 @@ FINANCE_READ_TOOLS = {
     "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -2546,6 +2550,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
     "assistant_owner_pack_status",
@@ -3245,6 +3250,25 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "entity_name": {"type": "string"},
                     },
                     "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_variable_query",
+                "description": "Mapea una pregunta del duenio a variables canonicas del Owner Pack y responde si hay evidencia soportada, parcial, faltante o en conflicto. Read-only, sin inventar datos.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "question": {"type": "string"},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "tournament_name": {"type": ["string", "null"]},
+                        "entity_name": {"type": ["string", "null"]},
+                        "soul_wizard_payload": {"type": ["object", "null"]},
+                    },
+                    "required": ["question"],
                 },
             },
         },
@@ -8960,6 +8984,47 @@ async def _run_read_tool(
             scope=scope,
             tournament_slug=tournament_slug,
             entity_name=entity_name,
+        ).to_dict()
+
+    if tool_name == "assistant_owner_variable_query":
+        question = str(args.get("question") or "").strip()
+        if not question:
+            raise HTTPException(status_code=400, detail="question is required")
+        tournament_id = str(args.get("tournament_id") or "").strip() or None
+        tournament_name = str(args.get("tournament_name") or "").strip() or None
+        entity_name = str(args.get("entity_name") or "").strip() or None
+        wizard_payload = args.get("soul_wizard_payload")
+        live_reports = []
+        if tournament_id or tournament_name:
+            if bool(tournament_id) == bool(tournament_name):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Provide exactly one of tournament_id or tournament_name",
+                )
+            try:
+                source = await inspect_tournament_source(
+                    gastos_session,
+                    tournament_id=tournament_id,
+                    tournament_name=tournament_name,
+                )
+            except TournamentSourceNotFoundError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except TournamentSourceAmbiguousError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+            for surface_id in ("entity_folder", "national_phase_folder", "marketing_activation_report"):
+                if surface_id == "entity_folder" and not entity_name:
+                    continue
+                live_reports.append(
+                    build_owner_pack_live_report_from_tournament_source(
+                        source,
+                        surface_id=surface_id,
+                        entity_name=entity_name,
+                    )
+                )
+        return build_owner_variable_query_report(
+            question=question,
+            live_reports=live_reports,
+            soul_wizard_payload=wizard_payload if isinstance(wizard_payload, Mapping) else None,
         ).to_dict()
 
     if tool_name == "assistant_owner_pack_live_snapshot":
