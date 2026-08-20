@@ -67,6 +67,7 @@ from .receipt_workflow_draft import (
 )
 from .request_intent import (
     detect_request_intent,
+    normalize_request_text,
     is_owner_ai_context_request,
     is_owner_ai_readiness_request,
     owner_ai_tournament_slug_hint,
@@ -93,6 +94,11 @@ from .owner_pack_readiness import (
     build_owner_pack_readiness_from_scope,
 )
 from .owner_pack_status import build_owner_pack_status_report
+from .owner_variable_answer import render_owner_variable_query_answer
+from .owner_variable_query import (
+    OWNER_VARIABLE_UNMAPPED,
+    build_owner_variable_query_report,
+)
 from .tournament_goal_source import (
     TournamentSourceAmbiguousError,
     TournamentSourceNotFoundError,
@@ -616,6 +622,132 @@ async def _build_owner_entity_folder_workspace_response(
         assistant_message=rendered,
         conversation=conversation,
         session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+def _owner_variable_query_intent(raw_message: str) -> bool:
+    normalized = normalize_request_text(raw_message)
+    if is_owner_ai_readiness_request(raw_message) or is_owner_ai_context_request(raw_message):
+        return False
+    if any(
+        token in normalized
+        for token in (
+            "que falta",
+            "prepara",
+            "preparame",
+            "crea",
+            "crear",
+            "cosas que necesito",
+            "ya estan preparados",
+        )
+    ):
+        return False
+
+    report = build_owner_variable_query_report(question=raw_message)
+    if report.status == OWNER_VARIABLE_UNMAPPED or not report.candidates:
+        return False
+    owner_context = any(
+        token in normalized
+        for token in (
+            "director general",
+            "direccion general",
+            "dueno",
+            "owner pack",
+            "tablero",
+            "carpeta",
+        )
+    )
+    direct_question = any(
+        token in normalized
+        for token in (
+            "cuantos",
+            "cuantas",
+            "cuanto",
+            "cuanta",
+            "cual",
+            "cuales",
+            "quien",
+            "quienes",
+            "cuando",
+            "donde",
+            "numero",
+            "nombre",
+            "fecha",
+            "lugar",
+            "monto",
+        )
+    )
+    specific_fields = {
+        candidate.field
+        for candidate in report.candidates
+        if candidate.field not in {"tournament", "entity_name"}
+    }
+    return owner_context and direct_question and bool(specific_fields)
+
+
+async def _build_owner_variable_query_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    if not _owner_variable_query_intent(raw_message):
+        return None
+
+    scope = _owner_readiness_scope_from_message(raw_message)
+    tournament_hint = owner_ai_tournament_slug_hint(raw_message) or ""
+    entity_name = _owner_readiness_entity_hint(raw_message)
+    live_evidence = await resolve_owner_pack_live_evidence(
+        session,
+        scope=scope,
+        tournament_hint=tournament_hint,
+        entity_name=entity_name,
+    )
+    report = build_owner_variable_query_report(
+        question=raw_message,
+        live_reports=live_evidence.reports,
+    )
+    if report.status == OWNER_VARIABLE_UNMAPPED:
+        return None
+
+    answer = render_owner_variable_query_answer(report)
+    tool_trace = [
+        {
+            "owner_variable_query": {
+                "stage": "deterministic_read_only_owner_variable_query",
+                "query_id": report.query_id,
+                "status": report.status,
+                "candidate_count": len(report.candidates),
+                "resolution_count": len(report.resolutions),
+                "provider_called": False,
+                "writes_attempted": report.writes_attempted,
+                "side_effects_detected": report.side_effects_detected,
+                "live_evidence_status": live_evidence.status,
+                "live_evidence_source": live_evidence.source,
+                "live_evidence_reports": len(live_evidence.reports),
+                "live_evidence_unresolved_reason": live_evidence.unresolved_reason,
+            },
+            "tool": "assistant_owner_variable_query",
+            "live_evidence": live_evidence.to_dict(),
+            "result": {
+                **report.to_dict(),
+                "conversation_answer": answer.to_dict(),
+            },
+        }
+    ]
+    rendered = maybe_append_export_prompt(answer.rendered_text, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+        assistant_tool_payload={
+            "owner_variable_query": report.to_dict(),
+            "conversation_answer": answer.to_dict(),
+            "live_evidence": live_evidence.to_dict(),
+        },
     )
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
@@ -1524,6 +1656,15 @@ async def run_conversation_turn(
     if specialist_preview_response is not None:
         return specialist_preview_response
 
+    owner_variable_response = await _build_owner_variable_query_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_variable_response is not None:
+        return owner_variable_response
+
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1780,6 +1921,15 @@ async def run_message_turn_with_pending(
     )
     if specialist_preview_response is not None:
         return specialist_preview_response
+
+    owner_variable_response = await _build_owner_variable_query_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_variable_response is not None:
+        return owner_variable_response
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
