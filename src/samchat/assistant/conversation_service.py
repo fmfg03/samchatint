@@ -82,6 +82,9 @@ from .operator_workspace_resume import (
 )
 from .operator_workspace_snapshot import build_operator_workspace_snapshot
 from .owner_operator_workflow import run_owner_operator_workflow
+from .owner_entity_folder_workspace import (
+    build_owner_entity_folder_workspace_from_tournament_source,
+)
 from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
 from .owner_pack_readiness import (
     OWNER_PACK_NEEDS_TARGET,
@@ -90,6 +93,11 @@ from .owner_pack_readiness import (
     build_owner_pack_readiness_from_scope,
 )
 from .owner_pack_status import build_owner_pack_status_report
+from .tournament_goal_source import (
+    TournamentSourceAmbiguousError,
+    TournamentSourceNotFoundError,
+    inspect_tournament_source,
+)
 from .specialist_preview_surface import (
     detect_specialist_preview_task_id,
     render_specialist_preview_surface,
@@ -317,8 +325,101 @@ def _owner_readiness_entity_hint(raw_message: str) -> str | None:
         if idx < 0:
             continue
         tail = normalized[idx + len(marker):].strip(" :,-?")
+        if not tail:
+            continue
+        lowered_tail = tail.lower()
+        if lowered_tail.startswith((
+            "de copa",
+            "para ",
+            "sobre ",
+            "del torneo",
+            "en copa",
+            "torneo ",
+        )):
+            return None
+        cut_points = []
+        separators = (
+            ".",
+            "?",
+            "\n",
+            " para ",
+            " sobre ",
+            " del torneo ",
+            " de copa ",
+            " en copa ",
+            " torneo ",
+        )
+        for separator in separators:
+            pos = lowered_tail.find(separator)
+            if pos > 0:
+                cut_points.append(pos)
+        if cut_points:
+            tail = tail[: min(cut_points)].strip(" :,-?")
         if tail:
             return tail[:80]
+    return None
+
+
+def _owner_entity_folder_workspace_intent(raw_message: str) -> bool:
+    if _owner_readiness_scope_from_message(raw_message) != "entity_folder":
+        return False
+    if not owner_ai_tournament_slug_hint(raw_message):
+        return False
+    normalized = (raw_message or "").lower()
+    return any(
+        token in normalized
+        for token in (
+            "carpeta",
+            "expediente",
+            "entidad",
+            "operador",
+            "director general",
+            "dueno",
+            "due\u00f1o",
+            "owner pack",
+        )
+    ) and (
+        is_owner_ai_readiness_request(raw_message)
+        or is_owner_ai_context_request(raw_message)
+    )
+
+
+def _owner_workspace_tournament_candidates(raw_message: str) -> list[str]:
+    hint = owner_ai_tournament_slug_hint(raw_message) or ""
+    candidates = [hint]
+    if hint:
+        candidates.append(hint.replace("-", " ").title())
+    normalized = (raw_message or "").lower()
+    if hint == "copa-telmex" or "copa telmex" in normalized:
+        candidates.extend(
+            [
+                "Copa Telmex",
+                "Copa Telmex Telcel",
+                "Copa Telmex Telcel de Futbol",
+            ]
+        )
+    if hint == "liga-telmex-telcel" or "liga telmex" in normalized:
+        candidates.extend(["Liga Telmex", "Liga Telmex Telcel"])
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        value = str(candidate or "").strip()
+        key = value.casefold()
+        if value and key not in seen:
+            seen.add(key)
+            result.append(value)
+    return result
+
+
+async def _inspect_owner_workspace_tournament_source(
+    session: Any, raw_message: str
+) -> Any | None:
+    for candidate in _owner_workspace_tournament_candidates(raw_message):
+        try:
+            return await inspect_tournament_source(session, tournament_name=candidate)
+        except (TournamentSourceNotFoundError, TournamentSourceAmbiguousError):
+            continue
     return None
 
 
@@ -400,6 +501,123 @@ def _render_owner_pack_readiness(report: Any) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+def _render_owner_entity_folder_workspace(workspace: Any) -> str:
+    lines = [
+        workspace.headline or "Owner Entity Folder Workspace",
+        "",
+        workspace.summary,
+        "",
+        f"Estado: {workspace.status}",
+    ]
+    target = workspace.target or {}
+    target_bits = []
+    if target.get("tournament_name"):
+        target_bits.append(f"torneo={target['tournament_name']}")
+    elif target.get("tournament_slug"):
+        target_bits.append(f"torneo={target['tournament_slug']}")
+    if target.get("entity_name"):
+        target_bits.append(f"entidad={target['entity_name']}")
+    if target.get("scope"):
+        target_bits.append(f"scope={target['scope']}")
+    if target_bits:
+        lines.extend(["", "Objetivo revisado: " + " - ".join(target_bits)])
+
+    lines.extend(["", "Tarjetas del workspace:"])
+    for card in workspace.workspace_cards[:6]:
+        lines.append(f"- {card.title}: {card.status} - {card.summary}")
+        for item in card.items[:3]:
+            lines.append(f"  - {item}")
+
+    lines.extend(["", "Secciones de la carpeta:"])
+    if workspace.folder_sections:
+        for section in workspace.folder_sections[:8]:
+            lines.append(
+                f"- {section.title}: {section.status} "
+                f"({len(section.supported)} soportados / {len(section.missing)} faltantes)"
+            )
+    else:
+        lines.append("- Sin secciones vivas suficientes para esta entidad.")
+
+    lines.extend(["", "Evidencia encontrada:"])
+    if workspace.evidence:
+        lines.extend(f"- {item}" for item in workspace.evidence[:10])
+    else:
+        lines.append("- No hay evidencia viva suficiente para esta entidad/torneo.")
+
+    lines.extend(["", "Faltantes para no inventar:"])
+    if workspace.missing_fields:
+        lines.extend(f"- {item}" for item in workspace.missing_fields[:12])
+    else:
+        lines.append("- Sin faltantes detectados en el workspace read-only.")
+
+    if workspace.next_questions:
+        lines.extend(["", "Preguntas siguientes:"])
+        lines.extend(f"- {item}" for item in workspace.next_questions[:4])
+
+    if workspace.non_claims:
+        lines.extend(["", "No-claims:"])
+        lines.extend(f"- {item}" for item in workspace.non_claims[:4])
+
+    blocked = list((workspace.preview or {}).get("blocked_actions") or [])
+    lines.extend(["", "Preview / frontera de autoridad:"])
+    lines.append(
+        "- Workspace read-only; no crea carpetas, no exporta, "
+        "no notifica y no modifica datos."
+    )
+    if blocked:
+        lines.append("- Bloqueado sin autorizacion humana: " + ", ".join(blocked[:5]))
+    lines.append("- El precedente y la memoria informan; no otorgan autoridad operativa.")
+    return "\n".join(lines)
+
+
+async def _build_owner_entity_folder_workspace_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    if not _owner_entity_folder_workspace_intent(raw_message):
+        return None
+
+    source = await _inspect_owner_workspace_tournament_source(session, raw_message)
+    if source is None:
+        return None
+
+    prompts = _load_owner_needs_prompts()
+    status_report = build_owner_pack_status_report(prompts)
+    entity_name = _owner_readiness_entity_hint(raw_message)
+    workspace = build_owner_entity_folder_workspace_from_tournament_source(
+        source,
+        status_report=status_report,
+        entity_name=entity_name,
+    )
+    rendered = _render_owner_entity_folder_workspace(workspace)
+    tool_trace = [
+        {
+            "owner_entity_folder_workspace": {
+                "stage": "deterministic_read_only_owner_entity_folder_workspace",
+                "workspace_id": workspace.workspace_id,
+                "status": workspace.status,
+                "provider_called": False,
+                "writes_attempted": workspace.writes_attempted,
+                "side_effects_detected": workspace.side_effects_detected,
+                "approval_required": True,
+            },
+            "tool": "assistant_owner_entity_folder_workspace",
+            "result": workspace.to_dict(),
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
 async def _build_owner_pack_readiness_response(
@@ -1297,6 +1515,15 @@ async def run_conversation_turn(
     if specialist_preview_response is not None:
         return specialist_preview_response
 
+    owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_entity_workspace_response is not None:
+        return owner_entity_workspace_response
+
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1544,6 +1771,15 @@ async def run_message_turn_with_pending(
     )
     if specialist_preview_response is not None:
         return specialist_preview_response
+
+    owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if owner_entity_workspace_response is not None:
+        return owner_entity_workspace_response
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
