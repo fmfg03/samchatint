@@ -65,6 +65,34 @@ def _account_label(account: Optional[CuentaContable]) -> str:
     return f"{account.codigo} · {account.nombre}"
 
 
+def _debtor_name_match_score(employee_name: str, account_name: str) -> int:
+    """Score deterministic employee/account name matches.
+
+    The accounting catalog can omit middle names, e.g. `CARLOS LOZANO
+    PARDINAS` for employee `CARLOS FELIPE LOZANO PARDINAS`. Accept those
+    only when the account tokens are a clear subset of the employee tokens;
+    ambiguous ties still fail closed in resolve_employee_debtor_account.
+    """
+    if not employee_name or not account_name:
+        return 0
+    if employee_name == account_name:
+        return 1000
+    if employee_name in account_name or account_name in employee_name:
+        return 900
+    employee_tokens = [token for token in employee_name.split() if len(token) > 1]
+    account_tokens = [token for token in account_name.split() if len(token) > 1]
+    if not employee_tokens or not account_tokens:
+        return 0
+    common = set(employee_tokens).intersection(account_tokens)
+    if len(common) == len(account_tokens) and len(common) >= 3:
+        return 700 + len(common)
+    if len(common) == len(employee_tokens) and len(common) >= 3:
+        return 650 + len(common)
+    if len(common) >= 3 and len(common) >= min(len(employee_tokens), len(account_tokens)) - 1:
+        return 500 + len(common)
+    return 0
+
+
 async def resolve_employee_debtor_account(
     session: AsyncSession,
     empleado: Empleado,
@@ -72,7 +100,6 @@ async def resolve_employee_debtor_account(
     employee_name = _normalize_text(getattr(empleado, "nombre", None))
     if not employee_name:
         return None
-    tokens = [token for token in employee_name.split() if len(token) > 1]
     result = await session.execute(
         select(CuentaContable)
         .where(
@@ -83,16 +110,18 @@ async def resolve_employee_debtor_account(
         .order_by(CuentaContable.codigo.asc())
     )
     candidates = list(result.scalars().all())
-    exact_matches: list[CuentaContable] = []
-    token_matches: list[CuentaContable] = []
+    scored_matches: list[tuple[int, CuentaContable]] = []
     for account in candidates:
         account_name = _normalize_text(account.nombre)
-        if employee_name and employee_name in account_name:
-            exact_matches.append(account)
-        elif tokens and all(token in account_name for token in tokens):
-            token_matches.append(account)
-    matches = exact_matches or token_matches
-    return matches[0] if len(matches) == 1 else None
+        score = _debtor_name_match_score(employee_name, account_name)
+        if score > 0:
+            scored_matches.append((score, account))
+    if not scored_matches:
+        return None
+    scored_matches.sort(key=lambda item: (-item[0], item[1].codigo))
+    best_score = scored_matches[0][0]
+    best_matches = [account for score, account in scored_matches if score == best_score]
+    return best_matches[0] if len(best_matches) == 1 else None
 
 
 async def resolve_cuenta_debtor_empleado(
