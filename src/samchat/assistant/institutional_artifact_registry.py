@@ -294,6 +294,8 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
     InstitutionalArtifactSpec(
         artifact_id="assistant.owner_variable_answer",
         domain="owner_pack",
+        name="Owner Variable Conversational Answer",
+        purpose="Renders supported, partial, missing, conflicting or unmapped Owner Pack variable query reports into owner-facing Spanish without creating new factual claims.",
         status="wired",
         module_path="samchat.assistant.owner_variable_answer",
         entrypoint="render_owner_variable_query_answer",
