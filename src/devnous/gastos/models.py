@@ -213,6 +213,19 @@ class ExpenseReport(Base):
     origen = Column(String(50), nullable=True, index=True)
     pagado_con_amex_empresa = Column(Boolean, nullable=True, default=None, index=True)
 
+    # COI export tracking for accounting mirror workflow
+    coi_estado = Column(
+        String(30), nullable=False, default="pendiente", index=True
+    )  # pendiente | contabilizado | reversar
+    coi_exported_at = Column(DateTime(timezone=True), nullable=True)
+    coi_exported_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True, index=True
+    )
+    coi_status_updated_at = Column(DateTime(timezone=True), nullable=True)
+    coi_status_updated_by_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True, index=True
+    )
+
     # Metadata
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

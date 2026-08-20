@@ -44,6 +44,11 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("expense_reports", "edicion"),
     RequiredColumn("expense_reports", "currency"),
     RequiredColumn("expense_reports", "propina_no_deducible"),
+    RequiredColumn("expense_reports", "coi_estado"),
+    RequiredColumn("expense_reports", "coi_exported_at"),
+    RequiredColumn("expense_reports", "coi_exported_by_id"),
+    RequiredColumn("expense_reports", "coi_status_updated_at"),
+    RequiredColumn("expense_reports", "coi_status_updated_by_id"),
     RequiredColumn("documentos", "proveedor_cliente_id"),
     RequiredColumn("copa_telmex_players", "roster_index"),
     RequiredColumn("copa_telmex_players", "photo_sha256"),
@@ -1302,6 +1307,26 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "expense_reports_propina_no_deducible_column",
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS propina_no_deducible DOUBLE PRECISION NOT NULL DEFAULT 0",
+    ),
+    (
+        "expense_reports_coi_estado_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS coi_estado VARCHAR(30) NOT NULL DEFAULT 'pendiente'",
+    ),
+    (
+        "expense_reports_coi_exported_at_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS coi_exported_at TIMESTAMPTZ NULL",
+    ),
+    (
+        "expense_reports_coi_exported_by_id_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS coi_exported_by_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL",
+    ),
+    (
+        "expense_reports_coi_status_updated_at_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS coi_status_updated_at TIMESTAMPTZ NULL",
+    ),
+    (
+        "expense_reports_coi_status_updated_by_id_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS coi_status_updated_by_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL",
     ),
     (
         "copa_players_roster_index_column",

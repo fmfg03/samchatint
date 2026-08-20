@@ -3769,11 +3769,51 @@ async def _build_coi_exportable_lote_rows(
     return rows
 
 
+def _coi_estado_label(value: Any) -> str:
+    raw = (str(value or "pendiente")).strip().lower()
+    if raw == "contabilizado":
+        return "Contabilizado"
+    if raw == "reversar":
+        return "Reversar"
+    return "Pendiente"
+
+
+def _coi_estado_badge(value: Any) -> str:
+    raw = (str(value or "pendiente")).strip().lower()
+    if raw == "contabilizado":
+        color = "#166534"
+        bg = "#dcfce7"
+    elif raw == "reversar":
+        color = "#991b1b"
+        bg = "#fee2e2"
+    else:
+        color = "#92400e"
+        bg = "#fef3c7"
+    return (
+        f'<span style="display:inline-block;padding:4px 8px;border-radius:999px;'
+        f'font-size:12px;font-weight:700;color:{color};background:{bg};">'
+        f'{escape(_coi_estado_label(raw))}</span>'
+    )
+
+
+def _coi_estado_options(selected: Any) -> str:
+    current = (str(selected or "pendiente")).strip().lower()
+    options = (
+        ("pendiente", "Pendiente"),
+        ("contabilizado", "Contabilizado"),
+        ("reversar", "Reversar"),
+    )
+    return "".join(
+        f'<option value="{value}" {"selected" if value == current else ""}>{label}</option>'
+        for value, label in options
+    )
+
+
 def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
     if not rows:
         return (
-            '<tr><td colspan="9" class="muted">'
-            "No hay gastos con limpieza contable guardada (Listo COI) para este período."
+            '<tr><td colspan="11" class="muted">'
+            "No hay gastos con limpieza contable guardada (Listo COI) para este periodo."
             "</td></tr>"
         )
 
@@ -3788,23 +3828,35 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
         tipo_label = "Informe" if tipo_lote == "INFORME" else "Solicitud terceros"
         gasto_ref_raw = expense.numero_referencia or str(expense.id)[:8]
         gasto_ref = escape(gasto_ref_raw)
-        concepto = escape((expense.concepto or "—")[:120])
+        concepto = escape((expense.concepto or "-")[:120])
         monto = format_currency(expense.gasto_cantidad or 0)
         fecha_gasto = (
             expense.fecha.date().isoformat()
             if getattr(expense, "fecha", None)
-            else "—"
+            else "-"
         )
+        coi_estado = getattr(expense, "coi_estado", None) or "pendiente"
         gasto_link = f'<a href="/gastos/{expense_id}">{gasto_ref}</a>'
         coi_action = (
             f'<a href="/gastos/{expense_id}/exportar-coi.xlsx" '
             f'class="button" style="padding:8px 12px;font-size:12px;">'
-            "Generar póliza COI</a>"
+            "Generar poliza COI</a>"
+        )
+        status_form = (
+            f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense_id}/estado" '
+            f'style="display:flex;gap:6px;align-items:center;min-width:170px;">'
+            f'<input type="hidden" name="next" value="/admin/contabilidad/coi">'
+            f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
+            f'{_coi_estado_options(coi_estado)}</select>'
+            f'<button type="submit" class="button secondary" style="padding:6px 8px;font-size:12px;">Guardar</button>'
+            f'</form>'
         )
 
         rendered.append(
             f"""
         <tr>
+            <td style="text-align:center;"><input type="checkbox" form="coi-export-form" name="selected_gasto_id" value="{expense_id}" checked></td>
+            <td>{_coi_estado_badge(coi_estado)}<div style="margin-top:6px;">{status_form}</div></td>
             <td>{escape(tipo_label)}</td>
             <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
             <td>{escape(row["period_label"])}</td>
@@ -3823,7 +3875,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
 async def _collect_coi_lote_expense_cfdis(
     session: AsyncSession,
     exportable_rows: List[Dict[str, Any]],
-) -> tuple[List[Any], List[List[str]], int]:
+) -> tuple[List[Any], List[List[str]], int, set[UUIDType]]:
     """Build consolidated COI payloads in admin-table order; skip per-gasto failures."""
     manifest_rows = [
         [
@@ -3838,6 +3890,7 @@ async def _collect_coi_lote_expense_cfdis(
         ]
     ]
     expense_cfdis: List[Any] = []
+    exported_ids: set[UUIDType] = set()
     for row in exportable_rows:
         expense = row["expense"]
         documento = row["documento"]
@@ -3849,6 +3902,7 @@ async def _collect_coi_lote_expense_cfdis(
                 require_cleanup_ready=False,
             )
             expense_cfdis.append(expense_cfdi)
+            exported_ids.add(expense.id)
             manifest_rows.append(
                 [
                     str(expense.id),
@@ -3893,7 +3947,7 @@ async def _collect_coi_lote_expense_cfdis(
                     "Error al generar el Excel COI.",
                 ]
             )
-    return expense_cfdis, manifest_rows, len(expense_cfdis)
+    return expense_cfdis, manifest_rows, len(expense_cfdis), exported_ids
 
 
 @router.get("/admin/contabilidad/coi/exportar-gastos-lote.xlsx", response_model=None)
@@ -3902,6 +3956,8 @@ async def exportar_coi_gastos_lote_xlsx(
     current_empleado: Empleado = require_admin_finanzas(),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    selection_mode: Optional[str] = Query(None),
+    selected_gasto_id: Optional[List[UUIDType]] = Query(None),
 ) -> Union[Response, RedirectResponse]:
     now = datetime.utcnow()
     selected_year = year or now.year
@@ -3919,6 +3975,22 @@ async def exportar_coi_gastos_lote_xlsx(
         end_date=end_date,
     )
 
+    if selection_mode:
+        selected_ids = {str(item) for item in (selected_gasto_id or [])}
+        exportable_rows = [
+            row for row in exportable_rows
+            if str(row.get("expense").id) in selected_ids
+        ]
+        if not exportable_rows:
+            return RedirectResponse(
+                url=(
+                    f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+                    "&error_msg="
+                    + quote("Selecciona al menos una poliza/gasto para exportar a COI.")
+                ),
+                status_code=303,
+            )
+
     if not exportable_rows:
         return RedirectResponse(
             url=(
@@ -3932,7 +4004,7 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
 
-    expense_cfdis, manifest_rows, exported_count = await _collect_coi_lote_expense_cfdis(
+    expense_cfdis, manifest_rows, exported_count, exported_ids = await _collect_coi_lote_expense_cfdis(
         session,
         exportable_rows,
     )
@@ -3953,6 +4025,17 @@ async def exportar_coi_gastos_lote_xlsx(
         expense_cfdis,
         lote_manifest_rows=manifest_rows,
     )
+    if exported_ids:
+        exported_at = datetime.utcnow()
+        for row in exportable_rows:
+            expense = row.get("expense")
+            if expense and expense.id in exported_ids:
+                expense.coi_estado = "contabilizado"
+                expense.coi_exported_at = exported_at
+                expense.coi_exported_by_id = current_empleado.id
+                expense.coi_status_updated_at = exported_at
+                expense.coi_status_updated_by_id = current_empleado.id
+        await session.commit()
     filename = f"COI_Gastos_{selected_year}_{selected_month:02d}.xlsx"
     return Response(
         content=xlsx_bytes,
@@ -4164,10 +4247,13 @@ async def contabilidad_coi_view(
     <div class="card">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
             <h2 style="margin:0;">Gastos listos para COI en este periodo</h2>
-            <a
-                href="/admin/contabilidad/coi/exportar-gastos-lote.xlsx?year={selected_year}&month={selected_month}"
-                class="button"
-            >Exportar gastos COI en lote</a>
+            <form id="coi-export-form" method="GET" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                <input type="hidden" name="year" value="{selected_year}">
+                <input type="hidden" name="month" value="{selected_month}">
+                <input type="hidden" name="selection_mode" value="1">
+                <button type="submit" class="button">Exportar seleccionados</button>
+                <a href="/admin/contabilidad/coi/exportar-gastos-lote.xlsx?year={selected_year}&month={selected_month}" class="button secondary">Exportar todo</a>
+            </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
             Solo gastos con limpieza contable guardada (<strong>Listo COI</strong> en
@@ -4185,6 +4271,8 @@ async def contabilidad_coi_view(
         <table>
             <thead>
                 <tr>
+                    <th>Sel.</th>
+                    <th>Estatus COI</th>
                     <th>Tipo</th>
                     <th>Documento</th>
                     <th>Fecha periodo</th>
@@ -4226,6 +4314,44 @@ async def contabilidad_coi_view(
     </div></body></html>
     """
     return html
+
+
+@router.post("/admin/contabilidad/coi/gastos/{expense_id}/estado")
+async def actualizar_estado_coi_gasto(
+    expense_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    coi_estado: str = Form(...),
+    next: str = Form("/admin/contabilidad/coi"),
+) -> RedirectResponse:
+    allowed = {"pendiente", "contabilizado", "reversar"}
+    redirect_next = next if (next or "").startswith("/") else "/admin/contabilidad/coi"
+    estado_norm = (coi_estado or "").strip().lower()
+    if estado_norm not in allowed:
+        return RedirectResponse(
+            url=_append_error_params(redirect_next, error_msg="Estatus COI invalido."),
+            status_code=303,
+        )
+    expense = (
+        await session.execute(
+            select(ExpenseReport).where(ExpenseReport.id == expense_id)
+        )
+    ).scalar_one_or_none()
+    if expense is None:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    now = datetime.utcnow()
+    expense.coi_estado = estado_norm
+    expense.coi_status_updated_at = now
+    expense.coi_status_updated_by_id = current_empleado.id
+    if estado_norm == "contabilizado" and expense.coi_exported_at is None:
+        expense.coi_exported_at = now
+        expense.coi_exported_by_id = current_empleado.id
+    await session.commit()
+    return RedirectResponse(
+        url=_append_success_params(redirect_next, success_msg="Estatus COI actualizado."),
+        status_code=303,
+    )
 
 
 @router.get("/admin/contabilidad/manual", response_class=HTMLResponse)
@@ -14030,6 +14156,7 @@ async def gastos_terceros(
         doc_currency = currency_for(doc)
         monto_display = format_currency(monto_value, doc_currency) if doc.monto_solicitado else "—"
         fecha_pago_display = format_value(doc.fecha_pago) if doc.fecha_pago else "—"
+        fecha_aprobacion_display = (format_value(doc.aprobado_en) if getattr(doc, "aprobado_en", None) else "-")
         concepto_raw = (doc.concepto_pago or "").strip()
         concepto_display = escape(concepto_raw) if concepto_raw else "—"
         ref_ops_attr = escape(ro_terc_raw.lower())
@@ -14067,6 +14194,7 @@ async def gastos_terceros(
             <td style="white-space: nowrap;">{ro_terc_display}</td>
             <td>{solicitante_nombre}</td>
             <td>{aprobador_nombre}</td>
+            <td>{fecha_aprobacion_display}</td>
             <td>{proveedor_nombre}</td>
             <td style="text-align: right;">{monto_display}</td>
             <td>{escape(doc_currency)}</td>
@@ -14182,6 +14310,7 @@ async def gastos_terceros(
                                     <th>Referencia Operaciones</th>
                                     <th>Solicitante</th>
                                     <th>Aprobador</th>
+                                    <th>Fecha de Aprobacion</th>
                                     <th>Proveedor/Cliente</th>
                                     <th>Monto Solicitado</th>
                                     <th>Moneda</th>
@@ -14193,8 +14322,8 @@ async def gastos_terceros(
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows_html if rows_html else '<tr><td colspan="12" style="text-align: center; padding: 20px;">No hay solicitudes a terceros registradas.</td></tr>'}
-                                <tr id="terceros-no-matches" style="display:none;"><td colspan="12" style="text-align:center; padding:20px; color:#6b7280;">No hay solicitudes que coincidan con tu búsqueda.</td></tr>
+                                {rows_html if rows_html else '<tr><td colspan="13" style="text-align: center; padding: 20px;">No hay solicitudes a terceros registradas.</td></tr>'}
+                                <tr id="terceros-no-matches" style="display:none;"><td colspan="13" style="text-align:center; padding:20px; color:#6b7280;">No hay solicitudes que coincidan con tu búsqueda.</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -32440,7 +32569,8 @@ async def cuentas_de_gastos_list(
             query = (
                 select(CuentaDeGastos)
                 .options(
-                    selectinload(CuentaDeGastos.empleado),
+                    selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
                     undefer(CuentaDeGastos.currency),
                 )
             )
@@ -32453,7 +32583,8 @@ async def cuentas_de_gastos_list(
             query = (
                 select(CuentaDeGastos)
                 .options(
-                    selectinload(CuentaDeGastos.empleado),
+                    selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
                     undefer(CuentaDeGastos.currency),
                 )
                 .where(CuentaDeGastos.empleado_id == current_empleado.id)
@@ -32575,10 +32706,30 @@ async def cuentas_de_gastos_list(
         nombre_display = getattr(cuenta, "nombre", None) and (cuenta.nombre or "").strip()
         titulo_cuenta = escape(nombre_display) if nombre_display else escape(cuenta.referencia_base)
         sub_label = f"I-{escape(cuenta.referencia_base)}" + (f" · {data['num_solicitudes']} solicitudes" if data['num_solicitudes'] else "")
-        empleado_nombre = (
+        solicitante_nombre = (
             escape(cuenta.empleado.nombre)
             if cuenta.empleado and cuenta.empleado.nombre
-            else "—"
+            else "-"
+        )
+        beneficiario_obj = cuenta.beneficiario_empleado or cuenta.empleado
+        beneficiario_nombre = (
+            escape(beneficiario_obj.nombre)
+            if beneficiario_obj and beneficiario_obj.nombre
+            else "-"
+        )
+        aprobador_obj = (
+            getattr(beneficiario_obj, "aprobador", None)
+            or getattr(cuenta.empleado, "aprobador", None)
+        )
+        aprobador_nombre = (
+            escape(aprobador_obj.nombre)
+            if aprobador_obj and aprobador_obj.nombre
+            else "-"
+        )
+        fecha_aprobacion_informe = (
+            format_value(informe_doc.aprobado_en)
+            if informe_doc and informe_doc.aprobado_en
+            else "-"
         )
         ro_raw = informe_ro_by_cuenta_id.get(cuenta.id)
         ro_cell = escape(ro_raw) if ro_raw else "—"
@@ -32621,7 +32772,10 @@ async def cuentas_de_gastos_list(
             <td><strong>{titulo_cuenta}</strong><br>
                 <small style="color: #666;">{sub_label}</small>
             </td>
-            <td>{empleado_nombre}</td>
+            <td>{solicitante_nombre}</td>
+            <td>{beneficiario_nombre}</td>
+            <td>{aprobador_nombre}</td>
+            <td>{fecha_aprobacion_informe}</td>
             <td style="white-space: nowrap;">{ro_cell}</td>
             <td>{estado_badge}</td>
             <td>{data['num_expenses']} gastos</td>
@@ -32716,7 +32870,10 @@ async def cuentas_de_gastos_list(
                 <thead>
                     <tr>
                         <th>Informe de Gastos</th>
-                        <th>Empleado</th>
+                        <th>Solicitante</th>
+                        <th>Beneficiario</th>
+                        <th>Aprobador</th>
+                        <th>Fecha Aprobacion</th>
                         <th>Referencia Operaciones</th>
                         <th>Estado</th>
                         <th># Gastos</th>
@@ -32729,7 +32886,7 @@ async def cuentas_de_gastos_list(
                     </tr>
                 </thead>
                 <tbody>
-                    {rows_html if rows_html else '<tr><td colspan="11" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
+                    {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
                 </tbody>
             </table>
                     </div>
