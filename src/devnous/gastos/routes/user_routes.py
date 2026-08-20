@@ -23858,6 +23858,22 @@ async def documentos_pendientes(
             str((documento.referencia_operaciones or "").strip() or "?")
         )
         descripcion = _pending_description(documento)
+        beneficiary_provider = row_values["beneficiario"]
+        provider_value = row_values["proveedor"]
+        if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
+            beneficiary_provider = provider_value
+        actions_html = (
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
+            f'<form method="POST" action="/documentos/{documento.id}/aprobar" style="margin:0;">'
+            f'<input type="hidden" name="next" value="{next_url}">'
+            '<button type="submit" class="button primary" style="padding:6px 9px;font-size:12px;">Aprobar</button>'
+            '</form>'
+            f'<form method="POST" action="/documentos/{documento.id}/rechazar" style="margin:0;">'
+            f'<input type="hidden" name="next" value="{next_url}">'
+            '<button type="submit" class="button secondary" style="padding:6px 9px;font-size:12px;">Rechazar</button>'
+            '</form>'
+            '</div>'
+        )
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
@@ -23865,13 +23881,13 @@ async def documentos_pendientes(
             <td>{escape(_pending_torneo_display(documento))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["solicitante"])}</td>
-            <td>{escape(row_values["beneficiario"])}</td>
-            <td>{escape(row_values["proveedor"])}</td>
+            <td>{escape(beneficiary_provider)}</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["estado"])}</td>
             <td>{escape(row_values["monto_total"])}</td>
             <td>{escape(descripcion)}</td>
             <td>{escape(str(enviado_str))}</td>
+            <td>{actions_html}</td>
         </tr>
         """
 
@@ -23895,14 +23911,14 @@ async def documentos_pendientes(
             <form method="GET" action="/documentos/pendientes" class="form-grid" style="grid-template-columns: 1.5fr .8fr 1fr 1fr auto; align-items:end;">
                 <div class="form-group">
                     <label for="q">B\u00fasqueda</label>
-                    <input id="q" name="q" value="{escape(q_value)}" placeholder="Ref. operaciones, proveedor, empleado, concepto...">
+                    <input id="q" name="q" value="{escape(q_value)}" placeholder="Ref. operaciones, beneficiario/proveedor, solicitante, concepto...">
                 </div>
                 <div class="form-group">
                     <label for="tipo">Tipo</label>
                     <select id="tipo" name="tipo">{tipo_options}</select>
                 </div>
                 <div class="form-group">
-                    <label for="empleado_nombre">Empleado / beneficiario</label>
+                    <label for="empleado_nombre">Solicitante / beneficiario</label>
                     <input id="empleado_nombre" name="empleado_nombre" value="{escape(empleado_value)}" placeholder="Ej. Alicia, Roberto...">
                 </div>
                 <div class="form-group">
@@ -23928,7 +23944,7 @@ async def documentos_pendientes(
             <div class="meta-card">
                 <span>Filtros activos</span>
                 <strong>{active_filter_count}</strong>
-                <small>Busca por referencia, proveedor, empleado, torneo o descripci\u00f3n.</small>
+                <small>Busca por referencia, beneficiario/proveedor, solicitante, torneo o descripci\u00f3n.</small>
             </div>
         </div>
     """
@@ -23942,14 +23958,14 @@ async def documentos_pendientes(
                         <th>Referencia Operaciones</th>
                         <th>Torneo</th>
                         <th>ID Interno</th>
-                        <th>Empleado</th>
-                        <th>Beneficiario</th>
-                        <th>Proveedor</th>
+                        <th>Solicitante</th>
+                        <th>Beneficiario/Proveedor</th>
                         <th>Tipo</th>
                         <th>Estado</th>
                         <th>Monto Total</th>
                         <th>Descripci\u00f3n</th>
                         <th>Fecha de Env\u00edo</th>
+                        <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>

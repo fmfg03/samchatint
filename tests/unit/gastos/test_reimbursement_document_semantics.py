@@ -69,7 +69,12 @@ def test_pending_approval_contract_routes_by_beneficiary_and_shows_flash_columns
     assert "beneficiario_alias.aprobador_id == current_empleado.id" in route_source
     assert "Documento.beneficiario_empleado_id.is_(None)" in route_source
     assert "<th>Torneo</th>" in route_source
-    assert "Empleado / beneficiario" in route_source
+    assert "Solicitante / beneficiario" in route_source
+    assert "<th>Solicitante</th>" in route_source
+    assert "<th>Beneficiario/Proveedor</th>" in route_source
+    assert "<th>Acciones</th>" in route_source
+    assert '/documentos/{documento.id}/aprobar' in route_source
+    assert '/documentos/{documento.id}/rechazar' in route_source
     assert 'getattr(cuenta, "nombre", None)' in route_source
     assert "approval_subject = approval_subject_empleado(documento)" in workflow_source
 

@@ -1,3 +1,5 @@
+from devnous.gastos.services.employee_debtor_accounting_service import _debtor_name_match_score
+
 from pathlib import Path
 
 
@@ -45,3 +47,18 @@ def test_debtor_accounting_uses_cuenta_beneficiary_not_requester_for_reports():
     assert 'beneficiario_empleado_id' in source
     assert "empleado = await resolve_cuenta_debtor_empleado(session, cuenta)" in source
     assert "CuentaDeGastos.empleado_id`` is the authenticated requester/capturer" in source
+
+
+def test_debtor_account_match_allows_omitted_middle_names_but_fails_weak_matches():
+    assert _debtor_name_match_score(
+        "carlos felipe lozano pardinas",
+        "carlos lozano pardinas",
+    ) > 0
+    assert _debtor_name_match_score(
+        "jose odilon trujillo macedo",
+        "odilon trujillo macedo",
+    ) > 0
+    assert _debtor_name_match_score(
+        "carlos felipe lozano pardinas",
+        "carlos lozano",
+    ) == 0
