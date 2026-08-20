@@ -501,12 +501,16 @@ async def resolve_workflow_approval_notification_recipients(
     recipients: list[Empleado] = []
     seen: set[Any] = set()
 
-    owner = documento.empleado
-    owner_approver_id = getattr(owner, "aprobador_id", None) if owner is not None else None
-    if owner_approver_id:
-        approver = getattr(owner, "aprobador", None)
+    approval_subject = approval_subject_empleado(documento)
+    subject_approver_id = (
+        getattr(approval_subject, "aprobador_id", None)
+        if approval_subject is not None
+        else None
+    )
+    if subject_approver_id:
+        approver = getattr(approval_subject, "aprobador", None)
         if approver is None:
-            approver = await session.get(Empleado, owner_approver_id)
+            approver = await session.get(Empleado, subject_approver_id)
         if approver is not None and getattr(approver, "activo", True):
             recipients.append(approver)
             seen.add(approver.id)

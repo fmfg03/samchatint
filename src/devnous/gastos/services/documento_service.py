@@ -34,6 +34,7 @@ from .cfdi_ingestion_service import (
     ingest_cfdi_from_upload,
 )
 from .cfdi_upload_resolver import merge_cfdi_upload_bytes
+from .documento_semantics import approval_subject_empleado
 from samchat.budgets.service import resolve_budget_concept
 
 logger = logging.getLogger(__name__)
@@ -1183,10 +1184,14 @@ async def fetch_documento_aprobador_display_batch(
         if doc.id in latest_by_doc:
             display_by_doc[doc.id] = latest_by_doc[doc.id]
             continue
-        empleado = doc.empleado
-        assigned = getattr(empleado, "aprobador", None) if empleado else None
+        approval_subject = approval_subject_empleado(doc)
+        assigned = (
+            getattr(approval_subject, "aprobador", None)
+            if approval_subject is not None
+            else None
+        )
         if assigned and assigned.nombre:
             display_by_doc[doc.id] = assigned.nombre
         else:
-            display_by_doc[doc.id] = "—"
+            display_by_doc[doc.id] = "\u2014"
     return display_by_doc
