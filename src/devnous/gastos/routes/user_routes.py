@@ -32348,6 +32348,77 @@ async def adjuntar_gastos_a_cuenta(
     )
 
 
+def _informe_status_badge(label: str, *, color: str) -> str:
+    return (
+        f'<span style="background:{color};color:white;padding:2px 8px;'
+        'border-radius:4px;font-size:11px;">'
+        f'{escape(label)}</span>'
+    )
+
+
+def _derive_informe_operational_status(
+    *,
+    cuenta_estado: Optional[str],
+    informe_estado: Optional[str],
+    solicitudes: List[Any],
+    num_expenses: int,
+    total_amex: float,
+    total_pagado_empleado: float,
+    monto_entregado: float,
+    saldo: float,
+    settlement_count: int,
+) -> Tuple[str, str]:
+    """Return the user-facing operational status for an Informe de Gastos.
+
+    ``CuentaDeGastos.estado`` only says whether the capture container is open or
+    closed. Finance users need the business state: draft, in approval,
+    authorized, paid, or checked/comprobado. Keep this pure so list/detail views
+    cannot drift apart again.
+    """
+    cuenta_estado_norm = (cuenta_estado or "").strip().lower()
+    informe_estado_norm = (informe_estado or "").strip().lower()
+    paid_solicitudes = [
+        doc
+        for doc in solicitudes
+        if (getattr(doc, "estado", None) or "").strip().lower() == "pagado"
+        or getattr(doc, "pagado_en", None) is not None
+    ]
+    has_paid_solicitud = bool(paid_solicitudes) or float(monto_entregado or 0) > 0.005
+    has_settlement = int(settlement_count or 0) > 0
+    has_expenses = int(num_expenses or 0) > 0
+    has_company_amex = float(total_amex or 0) > 0.005
+    has_employee_paid = float(total_pagado_empleado or 0) > 0.005
+    is_saldado = abs(float(saldo or 0)) < 0.005
+
+    if informe_estado_norm in {"rechazado", "cancelado"}:
+        return "Cancelado", "#991b1b"
+    if informe_estado_norm == "pagado":
+        return "Pagado", "#2563eb"
+    if has_settlement and is_saldado:
+        return "Pagado", "#2563eb"
+    if informe_estado_norm == "aprobado":
+        if is_saldado and (
+            has_expenses
+            or has_paid_solicitud
+            or has_company_amex
+            or has_employee_paid
+        ):
+            return "Comprobado", "#0f766e"
+        return "Autorizado", "#1d4ed8"
+    if informe_estado_norm == "enviado":
+        return "En aprobaci\u00f3n", "#d97706"
+    if informe_estado_norm == "borrador" or cuenta_estado_norm == "abierta":
+        return "Borrador", "#64748b"
+    if cuenta_estado_norm == "cerrada":
+        return "Cerrado para captura", "#6b7280"
+    return "Sin estado", "#6b7280"
+
+
+def _render_informe_operational_status_badge(**kwargs: Any) -> str:
+    label, color = _derive_informe_operational_status(**kwargs)
+    return _informe_status_badge(label, color=color)
+
+
 @router.get("/informes-de-gastos", response_class=HTMLResponse)
 async def cuentas_de_gastos_list(
     request: Request,
@@ -32468,6 +32539,7 @@ async def cuentas_de_gastos_list(
                 'num_expenses': len(expenses),
                 'num_solicitudes': num_solicitudes,
                 'settlement_count': settled_count_list,
+                'solicitudes': solicitudes_list,
                 'informe_doc': informe_doc_by_cuenta_id.get(cuenta.id),
             })
     except (ProgrammingError, OperationalError):
@@ -32485,15 +32557,17 @@ async def cuentas_de_gastos_list(
     for data in cuenta_data:
         cuenta = data['cuenta']
         informe_doc = data.get('informe_doc')
-        informe_cancelado = bool(
-            informe_doc and informe_doc.estado == "rechazado" and cuenta.estado == "cerrada"
+        estado_badge = _render_informe_operational_status_badge(
+            cuenta_estado=cuenta.estado,
+            informe_estado=getattr(informe_doc, "estado", None),
+            solicitudes=data.get("solicitudes", []),
+            num_expenses=data["num_expenses"],
+            total_amex=data["total_amex"],
+            total_pagado_empleado=data["total_pagado_empleado"],
+            monto_entregado=data["monto_entregado"],
+            saldo=data["saldo"],
+            settlement_count=data["settlement_count"],
         )
-        if informe_cancelado:
-            estado_badge = '<span style="background:#991b1b;color:white;padding:2px 8px;border-radius:4px;font-size:11px;">Cancelado</span>'
-        elif cuenta.estado == 'abierta':
-            estado_badge = '<span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Abierta</span>'
-        else:
-            estado_badge = '<span style="background: #9e9e9e; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">Cerrada</span>'
 
         saldo_color = '#f44336' if data['saldo'] > 0 else '#4CAF50'
         saldo_label = 'A pagar' if data['saldo'] > 0 else ('A favor' if data['saldo'] < 0 else 'Saldado')
@@ -33518,8 +33592,21 @@ async def cuenta_de_gastos_detail(
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
 
-    # Estado badge
-    estado_badge = '<span style="background: #4CAF50; color: white; padding: 4px 12px; border-radius: 4px; font-size: 14px;">Abierta</span>' if cuenta.estado == 'abierta' else '<span style="background: #9e9e9e; color: white; padding: 4px 12px; border-radius: 4px; font-size: 14px;">Cerrada</span>'
+    # Estado operativo: derived from workflow, payment, settlement and proof signals.
+    estado_badge = _render_informe_operational_status_badge(
+        cuenta_estado=cuenta.estado,
+        informe_estado=getattr(informe_doc, "estado", None),
+        solicitudes=solicitudes_list,
+        num_expenses=len(active_expenses),
+        total_amex=total_amex,
+        total_pagado_empleado=total_pagado_empleado,
+        monto_entregado=monto_entregado,
+        saldo=saldo,
+        settlement_count=len(active_cuenta_reembolsos),
+    )
+    estado_badge = estado_badge.replace("font-size:11px;", "font-size:14px;").replace(
+        "padding:2px 8px;", "padding:4px 12px;"
+    )
 
     # Saldo display
     saldo_color = '#f44336' if saldo > 0 else '#4CAF50'

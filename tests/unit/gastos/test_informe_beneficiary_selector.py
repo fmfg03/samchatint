@@ -64,7 +64,7 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
 
     assert 'name="beneficiario_empleado_id"' in html
     assert 'id="beneficiario_empleado_id"' in html
-    assert "Empleado beneficiario" in html
+    assert "Es para otro beneficiario" in html
     assert "Bibiana Roman" in html
     assert 'name="proveedor_cliente_id"' in html
     assert "Cuenta bancaria del beneficiario" in html
