@@ -27,6 +27,7 @@ from .owner_pack_readiness import (
     build_owner_pack_readiness_from_scope,
 )
 from .owner_pack_status import OwnerPackStatusReport
+from .soul_wizard import build_soul_wizard_owner_pack_bridge
 
 OWNER_ENTITY_FOLDER_WORKSPACE_ONLY = "owner_entity_folder_workspace_only"
 WORKSPACE_READY_FOR_REVIEW = "ready_for_readonly_review"
@@ -227,6 +228,51 @@ def _cards(
     ]
 
 
+def _wizard_card(bridge: Mapping[str, Any]) -> OwnerEntityFolderWorkspaceCard:
+    phase_count = int(bridge.get("phase_count") or 0)
+    activity_count = int(bridge.get("activity_count") or 0)
+    status = _safe_str(bridge.get("status")) or WORKSPACE_NO_LIVE_EVIDENCE
+    items = [
+        f"Fases capturadas: {phase_count}",
+        f"Actividades capturadas: {activity_count}",
+    ]
+    missing_paths = _dedupe_str(bridge.get("missing_paths") or [])
+    if missing_paths:
+        items.append("Faltantes: " + ", ".join(missing_paths[:4]))
+    return OwnerEntityFolderWorkspaceCard(
+        card_id="soul_wizard_plan",
+        title="Plan SOUL del torneo",
+        status=status,
+        summary="Fases, fechas y actividades del Wizard disponibles como contexto Owner Pack.",
+        items=items,
+    )
+
+
+def _wizard_section(bridge: Mapping[str, Any]) -> OwnerEntityFolderWorkspaceSection:
+    phases = [_as_dict(item) for item in _as_list(bridge.get("phases"))]
+    supported = []
+    missing = []
+    evidence = []
+    for phase in phases:
+        label = _safe_str(phase.get("name")) or _safe_str(phase.get("phase_id")) or "Fase"
+        if phase.get("ready_for_owner_pack"):
+            supported.append(label)
+        else:
+            missing.append(label)
+        start_date = _safe_str(phase.get("start_date"))
+        end_date = _safe_str(phase.get("end_date"))
+        activity_count = int(phase.get("activity_count") or 0)
+        evidence.append(f"{label}: {start_date or 'sin inicio'} a {end_date or 'sin cierre'}; {activity_count} actividad(es)")
+    return OwnerEntityFolderWorkspaceSection(
+        section_id="soul_wizard_plan",
+        title="Plan SOUL: fases, fechas y actividades",
+        status=_safe_str(bridge.get("status")) or WORKSPACE_NO_LIVE_EVIDENCE,
+        supported=_dedupe_str(supported),
+        missing=_dedupe_str(missing + list(bridge.get("missing_paths") or [])),
+        evidence=_dedupe_str(evidence),
+    )
+
+
 def _preview(status: str, missing: Sequence[str]) -> dict[str, Any]:
     return {
         "preview_type": "owner_entity_folder_review",
@@ -250,24 +296,35 @@ def build_owner_entity_folder_workspace(
     readiness_report: OwnerPackReadinessReport | Mapping[str, Any],
     dossier_report: OwnerEntityDossierLiveReport | Mapping[str, Any] | None = None,
     target: Optional[Mapping[str, Any]] = None,
+    soul_wizard_payload: Optional[Mapping[str, Any]] = None,
 ) -> OwnerEntityFolderWorkspace:
     """Compose Owner Pack readiness and entity dossier into an inert workspace."""
 
     readiness = _as_dict(readiness_report)
     dossier = _as_dict(dossier_report)
+    wizard_bridge = build_soul_wizard_owner_pack_bridge(soul_wizard_payload) if soul_wizard_payload else {}
     target_payload = dict(target or readiness.get("target") or {})
     unavailable_components = [
         f"Fuente no disponible: {item}"
         for item in (dossier.get("source_summary", {}).get("unavailable_components", []) or [])
     ]
-    evidence = _dedupe_str(readiness.get("evidence_found") or [])
+    wizard_evidence = []
+    if wizard_bridge:
+        wizard_evidence.append(
+            "SOUL Wizard: "
+            f"{wizard_bridge.get('phase_count') or 0} fase(s), "
+            f"{wizard_bridge.get('activity_count') or 0} actividad(es)"
+        )
+    evidence = _dedupe_str(list(readiness.get("evidence_found") or []) + wizard_evidence)
     missing = _dedupe_str(
         list(readiness.get("missing_evidence") or [])
         + list(dossier.get("missing_evidence") or [])
         + unavailable_components
+        + [f"SOUL Wizard: {item}" for item in (wizard_bridge.get("missing_paths") or [])]
     )
     non_claims = _dedupe_str(
         list(dossier.get("non_claims") or [])
+        + list(wizard_bridge.get("non_claims") or [])
         + [
             "No afirma que la carpeta este completa si hay faltantes de evidencia.",
             "No crea, exporta ni publica carpetas del dueno.",
@@ -279,6 +336,8 @@ def build_owner_entity_folder_workspace(
     if status == WORKSPACE_READY_FOR_REVIEW and missing:
         status = WORKSPACE_PARTIAL
     sections = _readiness_sections(readiness) + _dossier_sections(dossier)
+    if wizard_bridge:
+        sections.append(_wizard_section(wizard_bridge))
     workspace_id = _workspace_id(target_payload, evidence, missing)
     summary = "Workspace read-only de carpeta por entidad preparado para revision humana."
     if status == WORKSPACE_PARTIAL:
@@ -301,7 +360,8 @@ def build_owner_entity_folder_workspace(
             evidence=evidence,
             missing=missing,
             next_questions=next_questions,
-        ),
+        )
+        + ([_wizard_card(wizard_bridge)] if wizard_bridge else []),
         folder_sections=sections,
         evidence=evidence,
         missing_fields=missing,
@@ -311,6 +371,7 @@ def build_owner_entity_folder_workspace(
         source_reports=_dedupe_str(
             list(readiness.get("source_reports") or [])
             + [_safe_str(dossier.get("report_id")), _safe_str(dossier.get("audit", {}).get("audit_id"))]
+            + [_safe_str(wizard_bridge.get("bridge_version")), _safe_str(wizard_bridge.get("draft_hash"))]
         ),
         safety_summary={
             "read_only": True,
@@ -318,6 +379,8 @@ def build_owner_entity_folder_workspace(
             "write_handlers_invoked": 0,
             "approval_required_for_durable_output": True,
             "memory_or_precedent_grants_authority": False,
+            "soul_wizard_context_accepted": bool(wizard_bridge),
+            "soul_wizard_creates_live_operations": False,
             "complete_claim_allowed": status == WORKSPACE_READY_FOR_REVIEW and not missing,
         },
         execution_status=NOT_EXECUTED,
@@ -333,6 +396,7 @@ def build_owner_entity_folder_workspace_from_tournament_source(
     status_report: OwnerPackStatusReport,
     entity_name: Optional[str] = None,
     root_dir: Any = None,
+    soul_wizard_payload: Optional[Mapping[str, Any]] = None,
 ) -> OwnerEntityFolderWorkspace:
     """Build the workspace from the conservative local tournament source."""
 
@@ -360,6 +424,7 @@ def build_owner_entity_folder_workspace_from_tournament_source(
             "tournament_slug": tournament_slug or None,
             "entity_name": entity_name or None,
         },
+        soul_wizard_payload=soul_wizard_payload,
     )
 
 

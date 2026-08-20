@@ -20,7 +20,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Literal, Mapping, Optional, Tuple
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
@@ -3317,6 +3317,7 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "tournament_id": {"type": ["string", "null"]},
                         "tournament_name": {"type": ["string", "null"]},
                         "entity_name": {"type": ["string", "null"]},
+                        "soul_wizard_payload": {"type": ["object", "null"]},
                     },
                     "required": [],
                 },
@@ -9051,10 +9052,12 @@ async def _run_read_tool(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         prompts = parse_owner_needs_eval_set(eval_path.read_text(encoding="utf-8"))
         status_report = build_owner_pack_status_report(prompts)
+        wizard_payload = args.get("soul_wizard_payload")
         return build_owner_entity_folder_workspace_from_tournament_source(
             source,
             status_report=status_report,
             entity_name=str(args.get("entity_name") or "").strip() or None,
+            soul_wizard_payload=wizard_payload if isinstance(wizard_payload, Mapping) else None,
         ).to_dict()
 
     if tool_name == "assistant_sports_operations_status":

@@ -105,6 +105,79 @@ def test_owner_entity_folder_workspace_composes_live_evidence_without_writes(tmp
     assert owner_entity_folder_workspace_contains_execution_claim(workspace) is False
 
 
+
+def _wizard_payload() -> dict:
+    return {
+        "draft_id": "copa-local-2027",
+        "tournament_name": "Copa Local",
+        "edition_year": 2027,
+        "categories": ["Sub 15"],
+        "branches": ["Varonil"],
+        "expected_entities": ["CDMX"],
+        "expected_teams": 4,
+        "required_documents": ["CURP"],
+        "eligibility_rules": ["Sin duplicidad CURP"],
+        "phases": [
+            {
+                "phase_id": "state",
+                "name": "Fase estatal",
+                "start_date": "2027-03-01",
+                "end_date": "2027-05-15",
+                "activities": [
+                    {
+                        "activity_id": "uniforms",
+                        "name": "Entrega de uniformes",
+                        "owner": "Operaciones",
+                        "due_date": "2027-04-01",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_owner_entity_folder_workspace_accepts_soul_wizard_bridge_without_writes(tmp_path: Path) -> None:
+    workspace = build_owner_entity_folder_workspace_from_tournament_source(
+        _source(),
+        status_report=_status_report(),
+        entity_name="CDMX",
+        root_dir=tmp_path,
+        soul_wizard_payload=_wizard_payload(),
+    )
+
+    assert workspace.execution_status == "not_executed"
+    assert workspace.writes_attempted == 0
+    assert workspace.side_effects_detected == 0
+    assert workspace.safety_summary["read_only"] is True
+    assert workspace.safety_summary["soul_wizard_context_accepted"] is True
+    assert workspace.safety_summary["soul_wizard_creates_live_operations"] is False
+    assert "SOUL Wizard: 1 fase(s), 1 actividad(es)" in workspace.evidence
+    cards = {card.card_id: card for card in workspace.workspace_cards}
+    assert cards["soul_wizard_plan"].status == "ready_for_review"
+    sections = {section.section_id: section for section in workspace.folder_sections}
+    assert "Fase estatal" in sections["soul_wizard_plan"].supported
+    assert "does_not_create_owner_folder" in workspace.non_claims
+    assert owner_entity_folder_workspace_contains_execution_claim(workspace) is False
+
+
+def test_owner_entity_folder_workspace_surfaces_incomplete_soul_wizard_as_missing(tmp_path: Path) -> None:
+    workspace = build_owner_entity_folder_workspace_from_tournament_source(
+        _source(),
+        status_report=_status_report(),
+        entity_name="CDMX",
+        root_dir=tmp_path,
+        soul_wizard_payload={"tournament_name": "Copa incompleta"},
+    )
+
+    assert workspace.safety_summary["soul_wizard_context_accepted"] is True
+    assert "SOUL Wizard: edition_year" in workspace.missing_fields
+    assert "SOUL Wizard: phases" in workspace.missing_fields
+    cards = {card.card_id: card for card in workspace.workspace_cards}
+    assert cards["soul_wizard_plan"].status == "incomplete"
+    assert workspace.safety_summary["complete_claim_allowed"] is False
+    assert owner_entity_folder_workspace_contains_execution_claim(workspace) is False
+
+
 def test_owner_entity_folder_workspace_requires_entity_target(tmp_path: Path) -> None:
     workspace = build_owner_entity_folder_workspace_from_tournament_source(
         _source(),

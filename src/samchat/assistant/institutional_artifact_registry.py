@@ -288,8 +288,8 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
             "assistant.sports_operations_status",
             "finance.platform_snapshot",
         ),
-        input_contract=("tournament_id xor tournament_name", "entity_name?", "scope?"),
-        output_contract=("workspace_cards", "folder_sections", "evidence", "missing_fields", "non_claims", "next_questions", "preview"),
+        input_contract=("tournament_id xor tournament_name", "entity_name?", "scope?", "soul_wizard_payload?"),
+        output_contract=("workspace_cards", "folder_sections", "soul_wizard_plan", "evidence", "missing_fields", "non_claims", "next_questions", "preview"),
         answers=(
             "Prepara la carpeta de una entidad para el Director General.",
             "Que informacion falta para la carpeta de esta entidad?",

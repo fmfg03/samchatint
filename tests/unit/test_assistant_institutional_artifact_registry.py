@@ -200,5 +200,7 @@ def test_institutional_registry_exposes_owner_entity_folder_workspace_tool() -> 
     assert "assistant.sports_operations_status" in spec.evidence_sources
     assert "finance.platform_snapshot" in spec.evidence_sources
     assert "folder_sections" in spec.output_contract
+    assert "soul_wizard_payload?" in spec.input_contract
+    assert "soul_wizard_plan" in spec.output_contract
     assert "non_claims" in spec.output_contract
     assert "no folder write" in (spec.next_wiring_step or "")
