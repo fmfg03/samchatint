@@ -81,6 +81,64 @@ def test_pending_approval_contract_routes_by_beneficiary_and_shows_flash_columns
 
 
 
+def test_document_reporting_description_uses_expense_report_purpose_for_informes():
+    documento = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="I-138907",
+        tipo="INFORME",
+        concepto_pago=None,
+        referencia_pago=None,
+        referencia_operaciones="56",
+        monto_solicitado=0,
+        monto_total=5098.66,
+        currency="MXN",
+        estado="enviado",
+        creado_en=None,
+        enviado_en=None,
+        aprobado_en=None,
+        pagado_en=None,
+        empleado=SimpleNamespace(nombre="Bibiana Roman"),
+        beneficiario_empleado=SimpleNamespace(nombre="Bibiana Roman"),
+        proveedor_cliente=None,
+        beneficiario_empleado_id=uuid4(),
+        proveedor_cliente_id=None,
+        cuenta_gastos=SimpleNamespace(nombre="Viaje a Leon scouting FN CTT"),
+    )
+
+    row_values = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row_values["concepto"] == "Viaje a Leon scouting FN CTT"
+
+
+def test_document_reporting_description_falls_back_to_payment_concept_for_requests():
+    documento = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="S-26000109",
+        tipo="SOLICITUD",
+        concepto_pago="SERVICIO DE TRANSPORTE PARA REVISION DE CAMPOS",
+        referencia_pago=None,
+        referencia_operaciones="58",
+        monto_solicitado=8700,
+        monto_total=8700,
+        currency="MXN",
+        estado="enviado",
+        creado_en=None,
+        enviado_en=None,
+        aprobado_en=None,
+        pagado_en=None,
+        empleado=SimpleNamespace(nombre="Alicia Zuniga"),
+        beneficiario_empleado=None,
+        proveedor_cliente=SimpleNamespace(nombre="Veronica Jimenez"),
+        beneficiario_empleado_id=None,
+        proveedor_cliente_id=uuid4(),
+        cuenta_gastos=None,
+    )
+
+    row_values = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row_values["concepto"] == "SERVICIO DE TRANSPORTE PARA REVISION DE CAMPOS"
+
+
 def test_workflow_notification_recipients_use_beneficiary_approval_subject() -> None:
     source = Path(tg.__file__).read_text()
     start = source.index("async def resolve_workflow_approval_notification_recipients")

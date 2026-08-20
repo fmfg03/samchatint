@@ -23821,16 +23821,6 @@ async def documentos_pendientes(
         torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
         return documento_project_name(documento, torneo) or "\u2014"
 
-    def _pending_description(documento: Documento) -> str:
-        cuenta = getattr(documento, "cuenta_gastos", None)
-        if (getattr(documento, "tipo", None) or "").strip().upper() == "INFORME":
-            return (
-                (getattr(cuenta, "nombre", None) or "").strip()
-                or (getattr(documento, "concepto_pago", None) or "").strip()
-                or "\u2014"
-            )
-        return (getattr(documento, "concepto_pago", None) or "").strip() or "\u2014"
-
     next_params = []
     if q_value:
         next_params.append(("q", q_value))
@@ -23857,7 +23847,7 @@ async def documentos_pendientes(
         referencia_operaciones = escape(
             str((documento.referencia_operaciones or "").strip() or "?")
         )
-        descripcion = _pending_description(documento)
+        descripcion = row_values["concepto"]
         beneficiary_provider = row_values["beneficiario"]
         provider_value = row_values["proveedor"]
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
@@ -24226,6 +24216,18 @@ def _documentos_todos_reporting_situation(documento: Documento) -> str:
     return "Cerrada" if estado in {"pagado", "rechazado", "cerrado"} else "Abierta"
 
 
+def _documentos_todos_reporting_description(documento: Documento) -> str:
+    """Return the quick-scan description shown in document reporting tables."""
+
+    doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
+    concepto = (getattr(documento, "concepto_pago", None) or "").strip()
+    if doc_type == "INFORME":
+        cuenta = getattr(documento, "cuenta_gastos", None)
+        cuenta_nombre = (getattr(cuenta, "nombre", None) or "").strip()
+        return cuenta_nombre or concepto or "\u2014"
+    return concepto or "\u2014"
+
+
 def _documentos_todos_reporting_row_values(
     documento: Documento, *, aprobador_nombre: str = "—"
 ) -> dict[str, Any]:
@@ -24240,7 +24242,7 @@ def _documentos_todos_reporting_row_values(
         "beneficiario": parties["beneficiario"],
         "proveedor": parties["proveedor"],
         "aprobador": aprobador_nombre or "—",
-        "concepto": getattr(documento, "concepto_pago", None) or "—",
+        "concepto": _documentos_todos_reporting_description(documento),
         "referencia_pago": getattr(documento, "referencia_pago", None) or "—",
         "referencia_operaciones": (
             getattr(documento, "referencia_operaciones", None) or "—"
@@ -24300,6 +24302,7 @@ async def documentos_todos(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.beneficiario_empleado),
         selectinload(Documento.proveedor_cliente),
+        selectinload(Documento.cuenta_gastos),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
@@ -24313,6 +24316,7 @@ async def documentos_todos(
         query = query.join(Empleado, Documento.empleado_id == Empleado.id)
     beneficiario_alias = aliased(Empleado)
     proveedor_alias = aliased(ProveedorCliente)
+    cuenta_alias = aliased(CuentaDeGastos)
     if q_value:
         query = query.outerjoin(
             beneficiario_alias,
@@ -24320,6 +24324,9 @@ async def documentos_todos(
         ).outerjoin(
             proveedor_alias,
             Documento.proveedor_cliente_id == proveedor_alias.id,
+        ).outerjoin(
+            cuenta_alias,
+            Documento.cuenta_gastos_id == cuenta_alias.id,
         )
 
     # Apply filters
@@ -24348,6 +24355,7 @@ async def documentos_todos(
                 Empleado.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),
+                cuenta_alias.nombre.ilike(q_filter),
             )
         )
 
