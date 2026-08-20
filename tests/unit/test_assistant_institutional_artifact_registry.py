@@ -173,13 +173,13 @@ def test_institutional_registry_reflects_soul_wizard_reality_sync() -> None:
     assert "explicit review/approval" in (spec.next_wiring_step or "")
 
 
-def test_institutional_registry_plans_owner_entity_folder_workspace() -> None:
+def test_institutional_registry_exposes_owner_entity_folder_workspace_tool() -> None:
     artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
 
     spec = artifacts["assistant.owner_entity_folder_workspace"]
-    assert spec.status == "planned"
+    assert spec.status == "wired"
     assert spec.authority_level == "preview_only"
-    assert spec.assistant_tool is None
+    assert spec.assistant_tool == "assistant_owner_entity_folder_workspace"
     assert "assistant.owner_entity_dossier_live" in spec.evidence_sources
     assert "assistant.owner_pack_readiness" in spec.evidence_sources
     assert "tournament.soul_snapshot" in spec.evidence_sources
