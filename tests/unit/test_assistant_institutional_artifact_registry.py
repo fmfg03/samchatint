@@ -26,6 +26,7 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
     assert "assistant.owner_entity_dossier_live" in ids
     assert "assistant.soul_wizard_contract" in ids
     assert "assistant.soul_wizard_owner_pack_bridge" in ids
+    assert "assistant.owner_variable_query" in ids
     assert "assistant.owner_entity_folder_workspace" in ids
 
     for item in ARTIFACTS:
@@ -185,6 +186,19 @@ def test_institutional_registry_exposes_soul_wizard_owner_pack_bridge() -> None:
     assert "phases" in spec.output_contract
     assert "non_claims" in spec.output_contract
     assert "folder export" in (spec.next_wiring_step or "")
+
+
+
+def test_institutional_registry_exposes_owner_variable_query_tool() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    spec = artifacts["assistant.owner_variable_query"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "read_only"
+    assert spec.assistant_tool == "assistant_owner_variable_query"
+    assert "question" in spec.input_contract
+    assert "resolutions" in spec.output_contract
+    assert "conflict_values" in spec.output_contract
 
 
 def test_institutional_registry_exposes_owner_entity_folder_workspace_tool() -> None:
