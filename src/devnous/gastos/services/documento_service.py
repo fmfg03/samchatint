@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
+from .documento_semantics import approval_subject_empleado
 from ..models import Aprobacion, Adjunto, CuentaDeGastos, Documento, Empleado, ProveedorCliente, Tournament
 from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
 from .tournament_project_visibility import visibility_validation_error
@@ -1153,7 +1154,7 @@ async def fetch_documento_aprobador_display_batch(
     """Resolve Aprobador display names for document list views.
 
     Prefer the actor on the latest aprobar/rechazar aprobacion; otherwise fall
-    back to the solicitante's assigned approver (empleado.aprobador).
+    back to the effective beneficiary's assigned approver, or requester if none.
     """
     if not documentos:
         return {}
@@ -1183,8 +1184,8 @@ async def fetch_documento_aprobador_display_batch(
         if doc.id in latest_by_doc:
             display_by_doc[doc.id] = latest_by_doc[doc.id]
             continue
-        empleado = doc.empleado
-        assigned = getattr(empleado, "aprobador", None) if empleado else None
+        approval_subject = approval_subject_empleado(doc)
+        assigned = getattr(approval_subject, "aprobador", None) if approval_subject else None
         if assigned and assigned.nombre:
             display_by_doc[doc.id] = assigned.nombre
         else:

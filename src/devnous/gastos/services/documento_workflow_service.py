@@ -20,6 +20,7 @@ from .customer_success_audit import (
     AuditRequestContext,
     record_customer_success_audit_event,
 )
+from .documento_semantics import approval_subject_empleado
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,10 @@ async def _load_documento(
 ) -> Optional[Documento]:
     result = await session.execute(
         select(Documento)
-        .options(selectinload(Documento.empleado))
+        .options(
+            selectinload(Documento.empleado),
+            selectinload(Documento.beneficiario_empleado),
+        )
         .where(Documento.id == documento_id)
     )
     return result.scalar_one_or_none()
@@ -309,15 +313,15 @@ async def transition_documento_workflow(
                 "insufficient_role",
                 "Access denied. Insufficient permissions.",
             )
-        propietario = documento.empleado
-        if propietario is not None and propietario.aprobador_id:
-            es_aprobador_asignado = propietario.aprobador_id == actor.id
+        approval_subject = approval_subject_empleado(documento)
+        if approval_subject is not None and approval_subject.aprobador_id:
+            es_aprobador_asignado = approval_subject.aprobador_id == actor.id
             es_finanzas_o_admin = actor.rol in FINANCE_ADMIN_ROLES
             if not (es_aprobador_asignado or es_finanzas_o_admin):
                 raise DocumentoWorkflowValidationError(
                     "not_assigned_approver",
-                    "No eres el aprobador asignado para este empleado. Contacta a "
-                    "finanzas o administración.",
+                    "No eres el aprobador asignado para este beneficiario. Contacta a "
+                    "finanzas o administraci\u00f3n.",
                 )
         if documento.tipo == "INFORME":
             gastos_count = await _count_active_document_expenses(
@@ -371,15 +375,15 @@ async def transition_documento_workflow(
                 "insufficient_role",
                 "Access denied. Insufficient permissions.",
             )
-        propietario = documento.empleado
-        if propietario is not None and propietario.aprobador_id:
-            es_aprobador_asignado = propietario.aprobador_id == actor.id
+        approval_subject = approval_subject_empleado(documento)
+        if approval_subject is not None and approval_subject.aprobador_id:
+            es_aprobador_asignado = approval_subject.aprobador_id == actor.id
             es_finanzas_o_admin = actor.rol in FINANCE_ADMIN_ROLES
             if not (es_aprobador_asignado or es_finanzas_o_admin):
                 raise DocumentoWorkflowValidationError(
                     "not_assigned_approver",
-                    "No eres el aprobador asignado para este empleado. Contacta a "
-                    "finanzas o administración.",
+                    "No eres el aprobador asignado para este beneficiario. Contacta a "
+                    "finanzas o administraci\u00f3n.",
                 )
         documento.estado = "rechazado"
         aprobacion_accion = "rechazar"

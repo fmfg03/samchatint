@@ -7,6 +7,8 @@ from devnous.gastos.models import Documento
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram as tg
 from devnous.gastos.services.documento_semantics import (
+    approval_subject_empleado,
+    approval_subject_empleado_id,
     effective_account_beneficiary_id,
     is_employee_reimbursement,
 )
@@ -31,6 +33,64 @@ def test_effective_account_beneficiary_falls_back_to_requester():
     )
 
     assert effective_account_beneficiary_id(cuenta) == requester_id
+
+
+def test_approval_subject_prefers_employee_beneficiary_over_requester():
+    requester = SimpleNamespace(id=uuid4(), nombre="Juan Pablo", aprobador_id=uuid4())
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Roberto Rogers", aprobador_id=uuid4())
+    documento = SimpleNamespace(
+        empleado=requester,
+        empleado_id=requester.id,
+        beneficiario_empleado=beneficiary,
+        beneficiario_empleado_id=beneficiary.id,
+    )
+
+    assert approval_subject_empleado(documento) is beneficiary
+    assert approval_subject_empleado_id(documento) == beneficiary.id
+
+
+def test_approval_subject_falls_back_to_requester_for_direct_documents():
+    requester = SimpleNamespace(id=uuid4(), nombre="Juan Pablo", aprobador_id=uuid4())
+    documento = SimpleNamespace(
+        empleado=requester,
+        empleado_id=requester.id,
+        beneficiario_empleado=None,
+        beneficiario_empleado_id=None,
+    )
+
+    assert approval_subject_empleado(documento) is requester
+    assert approval_subject_empleado_id(documento) == requester.id
+
+
+def test_pending_approval_contract_routes_by_beneficiary_and_shows_flash_columns():
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    workflow_source = Path("src/devnous/gastos/services/documento_workflow_service.py").read_text()
+
+    assert "beneficiario_alias.aprobador_id == current_empleado.id" in route_source
+    assert "Documento.beneficiario_empleado_id.is_(None)" in route_source
+    assert "<th>Torneo</th>" in route_source
+    assert "Empleado / beneficiario" in route_source
+    assert 'getattr(cuenta, "nombre", None)' in route_source
+    assert "approval_subject = approval_subject_empleado(documento)" in workflow_source
+
+
+def test_telegram_approver_queue_uses_effective_beneficiary_approver():
+    odilon_id = uuid4()
+    federico_id = uuid4()
+    requester = SimpleNamespace(nombre="Juan Pablo", aprobador_id=federico_id)
+    beneficiary = SimpleNamespace(nombre="Roberto Rogers", aprobador_id=odilon_id)
+    documento = SimpleNamespace(
+        estado="enviado",
+        empleado=requester,
+        beneficiario_empleado=beneficiary,
+    )
+
+    assert tg.approver_can_see_document_in_queue(
+        SimpleNamespace(id=odilon_id, rol="finanzas"), documento
+    ) is True
+    assert tg.approver_can_see_document_in_queue(
+        SimpleNamespace(id=federico_id, rol="finanzas"), documento
+    ) is False
 
 
 def test_legacy_system_reimbursement_is_not_a_third_party_request():

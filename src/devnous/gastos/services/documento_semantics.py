@@ -25,3 +25,24 @@ def is_employee_reimbursement(documento: Any) -> bool:
         and getattr(documento, "beneficiario_empleado_id", None)
         and concept.startswith(EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX)
     )
+
+
+def approval_subject_empleado(documento: Any) -> Any:
+    """Return the employee whose assigned approver governs approval routing.
+
+    Third-party expense reports and advances are owned by the requester, but the
+    approval lane belongs to the employee who receives/benefits from the funds.
+    Existing direct documents keep the requester as the approval subject.
+    """
+    return (
+        getattr(documento, "beneficiario_empleado", None)
+        or getattr(documento, "empleado", None)
+    )
+
+
+def approval_subject_empleado_id(documento: Any) -> Any:
+    """Return the effective employee id for approval routing without loading relations."""
+    return (
+        getattr(documento, "beneficiario_empleado_id", None)
+        or getattr(documento, "empleado_id", None)
+    )
