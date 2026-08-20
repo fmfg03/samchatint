@@ -149,8 +149,15 @@ from ..services.payment_run_service import (
     list_payment_run_items,
     parse_payment_run_date,
     require_payment_run_access,
+    require_payment_run_manager,
     update_payment_run_fecha_pago,
 )
+from ..services.documento_service import (
+    SolicitudTercerosAttachment,
+    SolicitudValidationError,
+    add_solicitud_documento_adjuntos,
+)
+from ..utils.receipt_bytes import resolve_media_type
 from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
 from ..utils.receipt_bytes import (
@@ -6994,6 +7001,7 @@ def _payment_run_badge(status: str) -> str:
         "vencida": ("#fee2e2", "#991b1b"),
         "cerrada": ("#e0e7ff", "#3730a3"),
         "pagada": ("#e2e8f0", "#334155"),
+        "en proceso de pago": ("#fef3c7", "#92400e"),
     }.get(normalized, ("#f1f5f9", "#334155"))
     return (
         f'<span style="display:inline-flex;padding:5px 9px;border-radius:999px;'
@@ -7002,7 +7010,7 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
-def _render_payment_run_items(rows: list[dict[str, Any]]) -> str:
+def _render_payment_run_items(rows: list[dict[str, Any]], *, can_close_run: bool = True) -> str:
     rendered_rows = []
     for row in rows:
         documento_id = escape(str(row.get("id") or ""))
@@ -7014,7 +7022,7 @@ def _render_payment_run_items(rows: list[dict[str, Any]]) -> str:
         checkbox = (
             f'<input type="checkbox" form="payment-run-close-form" '
             f'name="document_ids" value="{documento_id}">'
-            if can_close
+            if can_close and can_close_run
             else '<span style="color:#94a3b8;">-</span>'
         )
         if can_edit:
@@ -7032,6 +7040,14 @@ def _render_payment_run_items(rows: list[dict[str, Any]]) -> str:
             if closure_id
             else "-"
         )
+        proof_html = "-"
+        if row.get("can_upload_payment_proof"):
+            proof_html = f"""
+                <form method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago" style="display:grid;gap:8px;min-width:220px;">
+                    <input type="file" name="comprobante_pago" required>
+                    <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir testigo y marcar la solicitud como pagada?');">Subir testigo y pagar</button>
+                </form>
+            """
         rendered_rows.append(
             f"""
             <tr>
@@ -7042,11 +7058,12 @@ def _render_payment_run_items(rows: list[dict[str, Any]]) -> str:
                 <td>{fecha_html}</td>
                 <td>{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
+                <td>{proof_html}</td>
                 <td>{closure_html}</td>
             </tr>
             """
         )
-    return "".join(rendered_rows) or '<tr><td colspan="8">Sin solicitudes para este filtro.</td></tr>'
+    return "".join(rendered_rows) or '<tr><td colspan="9">Sin solicitudes para este filtro.</td></tr>'
 
 
 def _render_payment_run_closures(rows: list[dict[str, Any]]) -> str:
@@ -7086,9 +7103,12 @@ async def admin_finance_payment_run(
 
     error_msg = (request.query_params.get("error_msg") or "").strip()
     success_msg = (request.query_params.get("success_msg") or "").strip()
+    date_from_value = date_from if isinstance(date_from, str) else None
+    date_to_value = date_to if isinstance(date_to, str) else None
+    q_value = q if isinstance(q, str) else ""
     try:
-        parsed_from = parse_payment_run_date(date_from) if date_from else None
-        parsed_to = parse_payment_run_date(date_to) if date_to else None
+        parsed_from = parse_payment_run_date(date_from_value) if date_from_value else None
+        parsed_to = parse_payment_run_date(date_to_value) if date_to_value else None
     except PaymentRunValidationError as exc:
         parsed_from = None
         parsed_to = None
@@ -7099,9 +7119,19 @@ async def admin_finance_payment_run(
         status_filter=status,
         date_from=parsed_from,
         date_to=parsed_to,
-        query=(q or "").strip() or None,
+        query=(q_value or "").strip() or None,
     )
     closures = await list_payment_run_closures(session, limit=20)
+    can_close_run = can_manage_payment_run(current_empleado)
+    close_form_html = ""
+    if can_close_run:
+        close_form_html = """
+                <form id="payment-run-close-form" method="POST" action="/admin/finanzas/payment-run/closures" style="margin-top:16px;display:grid;grid-template-columns:minmax(160px,.5fr) minmax(260px,1fr) auto;gap:12px;align-items:end;">
+                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Fecha corte</label><input type="date" name="run_date"></div>
+                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Notas</label><input name="notes" placeholder="Referencia interna opcional"></div>
+                    <button class="button" type="submit" onclick="return confirm('Cerrar el corte operativo seleccionado? Las solicitudes pasaran a En Proceso de Pago.');">Cerrar corte</button>
+                </form>
+        """
     total_open = sum(float(row.get("monto") or 0) for row in rows if row.get("can_close"))
     selected_status = escape(status or "pendientes")
     alerts = ""
@@ -7134,13 +7164,13 @@ async def admin_finance_payment_run(
             {_render_admin_workspace_hero(
                 eyebrow="Payment Run",
                 title="Corte operativo de solicitudes aprobadas",
-                description="Consulta solicitudes aprobadas, ajusta solo fecha_pago y cierra el corte operativo sin registrar pagos ni generar contabilidad.",
+                description="Consulta solicitudes aprobadas, ajusta fecha_pago y cierra el corte operativo. Al cerrar, las solicitudes pasan a En Proceso de Pago y quedan bloqueadas para rechazo.",
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Pendientes</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>Cerradas</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option></select></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q or "")}" placeholder="Referencia, solicitante, beneficiario"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Pendientes</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>En proceso de pago</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option></select></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from_value or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to_value or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q_value or "")}" placeholder="Referencia, solicitante, beneficiario"></div>'
                     '<button class="button" type="submit">Filtrar</button>'
                     '</form>'
                 ),
@@ -7154,18 +7184,14 @@ async def admin_finance_payment_run(
             {alerts}
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Solicitudes del Payment Run</div>
-                <div class="workspace-section-subtitle">La unica edicion permitida aqui es fecha_pago. Cerrar captura un snapshot operativo y no marca la solicitud como pagada.</div>
+                <div class="workspace-section-subtitle">Pendientes: Benjamin ajusta fecha_pago y cierra corte. En proceso de pago: auxiliares contables suben testigo; al guardarlo se marca Pagada.</div>
                 <div style="overflow:auto;margin-top:14px;">
                     <table class="payment-table">
-                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(rows)}</tbody>
+                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
+                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run)}</tbody>
                     </table>
                 </div>
-                <form id="payment-run-close-form" method="POST" action="/admin/finanzas/payment-run/closures" style="margin-top:16px;display:grid;grid-template-columns:minmax(160px,.5fr) minmax(260px,1fr) auto;gap:12px;align-items:end;">
-                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Fecha corte</label><input type="date" name="run_date"></div>
-                    <div><label style="font-size:12px;font-weight:800;color:#475569;">Notas</label><input name="notes" placeholder="Referencia interna opcional"></div>
-                    <button class="button" type="submit" onclick="return confirm('Cerrar el corte operativo seleccionado sin registrar pago?');">Cerrar corte</button>
-                </form>
+                {close_form_html}
             </section>
             <section class="workspace-card">
                 <div class="workspace-section-title">Cortes recientes</div>
@@ -7192,7 +7218,7 @@ async def admin_finance_payment_run_update_fecha_pago(
     fecha_pago: str = Form(...),
 ) -> RedirectResponse:
     try:
-        require_payment_run_access(current_empleado)
+        require_payment_run_manager(current_empleado)
         documento = await update_payment_run_fecha_pago(
             session,
             documento_id=documento_id,
@@ -7219,7 +7245,7 @@ async def admin_finance_payment_run_close(
     run_date: Optional[str] = Form(None),
 ) -> RedirectResponse:
     try:
-        require_payment_run_access(current_empleado)
+        require_payment_run_manager(current_empleado)
         result = await close_payment_run(
             session,
             document_ids=document_ids or [],
@@ -7239,6 +7265,83 @@ async def admin_finance_payment_run_close(
     except (PaymentRunValidationError, ValueError) as exc:
         await session.rollback()
         return _payment_run_redirect(error_msg=getattr(exc, "message", str(exc)))
+
+
+@router.post("/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago")
+async def admin_finance_payment_run_upload_payment_proof(
+    documento_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    comprobante_pago: UploadFile = File(...),
+) -> RedirectResponse:
+    """Attach payment proof for an in-process Payment Run item and mark it paid."""
+    from devnous.gastos.services.documento_payment_service import (
+        DocumentoPaymentPermissionError,
+        DocumentoPaymentValidationError,
+        register_document_payment,
+    )
+
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+
+    documento = await session.get(Documento, documento_id)
+    if documento is None:
+        return _payment_run_redirect(error_msg="Solicitud no encontrada.")
+    if (documento.estado or "").strip().lower() != "en_proceso_pago":
+        return _payment_run_redirect(
+            error_msg="Solo se puede subir testigo desde En Proceso de Pago."
+        )
+    if not comprobante_pago or not comprobante_pago.filename:
+        return _payment_run_redirect(error_msg="Selecciona el testigo de pago.")
+
+    try:
+        raw = await comprobante_pago.read()
+        content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+        await add_solicitud_documento_adjuntos(
+            session,
+            documento=documento,
+            attachments=[
+                SolicitudTercerosAttachment(
+                    raw_bytes=raw,
+                    filename=comprobante_pago.filename or "comprobante_pago",
+                    mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
+                    categoria="comprobante_pago",
+                )
+            ],
+        )
+        result = await register_document_payment(
+            session,
+            documento_id=documento_id,
+            actor_id=current_empleado.id,
+        )
+        ref = result.documento.numero_referencia or str(result.documento.id)
+        return _payment_run_redirect(
+            success_msg=f"Testigo cargado y solicitud {ref} marcada como pagada."
+        )
+    except SolicitudValidationError as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=str(exc))
+    except DocumentoPaymentPermissionError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=403, detail=exc.message)
+    except DocumentoPaymentValidationError as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=exc.message)
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error uploading payment proof from payment run",
+            extra={
+                "documento_id": str(documento_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return _payment_run_redirect(
+            error_msg="No se pudo cargar el testigo ni marcar el pago."
+        )
 
 
 @router.get("/admin/finanzas/payment-run/closures/{closure_id}", response_class=HTMLResponse)
@@ -7286,7 +7389,7 @@ async def admin_finance_payment_run_closure_detail(
             {_render_admin_workspace_hero(
                 eyebrow="Corte Payment Run",
                 title=f"Corte {escape(str(closure.get('id') or ''))[:8]}",
-                description="Snapshot operativo de solicitudes incluidas en el corte. Esta vista no registra pagos.",
+                description="Snapshot operativo de solicitudes incluidas en el corte. Los pagos se completan subiendo el testigo desde Payment Run.",
                 actions_html='<a class="button secondary" href="/admin/finanzas/payment-run">Volver a Payment Run</a>',
                 side_html=(
                     '<div class="eyebrow">Resumen</div>'

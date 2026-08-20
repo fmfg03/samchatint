@@ -5067,6 +5067,16 @@ async def contabilidad_diario_view(
             </div>
         </div>
         <div class="card">
+            <h2 style="margin:0 0 8px 0;">Utilidad del cierre mensual</h2>
+            <p class="muted" style="margin:0 0 10px 0;">Esta secci&oacute;n es el sem&aacute;foro de cierre contable: muestra si el mes tiene p&oacute;lizas descuadradas, movimientos bancarios sin conciliar o partidas sin mapping antes de permitir el candado.</p>
+            <ul class="muted" style="margin:0;line-height:1.6;">
+                <li><strong>Listo para cierre:</strong> no hay bloqueadores detectados.</li>
+                <li><strong>P&oacute;lizas descuadradas:</strong> hay diferencias entre debe y haber que Contabilidad debe corregir.</li>
+                <li><strong>Banco unmatched:</strong> existen movimientos bancarios sin flujo asignado.</li>
+                <li><strong>Partidas sin mapping:</strong> falta mapear cuentas/conceptos antes de cerrar.</li>
+            </ul>
+        </div>
+        <div class="card">
             <table>
                 <thead><tr><th>Fecha</th><th>Tipo</th><th>Póliza</th><th>Beneficiario</th><th>Cuenta</th><th>Nombre cuenta</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Origen</th></tr></thead>
                 <tbody>{''.join(line_rows) if line_rows else '<tr><td colspan="10" class="muted">Sin movimientos para este período.</td></tr>'}</tbody>
@@ -9823,7 +9833,7 @@ def _can_finance_add_comprobante_pago(
         return False
     if not _empleado_departamento_finanzas(empleado):
         return False
-    return documento.estado in {"aprobado", "pagado"}
+    return documento.estado in {"aprobado", "en_proceso_pago", "pagado"}
 
 
 def _nueva_solicitud_terceros_form_url(
@@ -24560,6 +24570,7 @@ async def documentos_todos(
                     <option value="borrador" {'selected' if estado == 'borrador' else ''}>Borrador</option>
                     <option value="enviado" {'selected' if estado == 'enviado' else ''}>Enviado</option>
                     <option value="aprobado" {'selected' if estado == 'aprobado' else ''}>Aprobado</option>
+                    <option value="en_proceso_pago" {'selected' if estado == 'en_proceso_pago' else ''}>En proceso de pago</option>
                     <option value="rechazado" {'selected' if estado == 'rechazado' else ''}>Rechazado</option>
                     <option value="pagado" {'selected' if estado == 'pagado' else ''}>Pagado</option>
                 </select>
@@ -24618,7 +24629,7 @@ async def documentos_todos(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
                 description="Vista consolidada de reportería para finanzas y administración, con tipo de solicitud, solicitante, beneficiario, proveedor, referencias y montos en una sola tabla.",
-                actions_html='<a href="/panel" class="button secondary">Volver a Panel</a>',
+                actions_html=f'<a href="/panel" class="button secondary">Volver a Panel</a><a href="{bulk_href}" class="button primary">Descargar Exceles filtrados (ZIP)</a>',
                 side_html=todos_side_html,
             )}
             <div class="stack">
@@ -24674,6 +24685,145 @@ async def documentos_todos(
     </html>
     """
     return html
+
+
+
+
+async def _query_documentos_todos_for_export(
+    session: AsyncSession,
+    current_empleado: Empleado,
+    *,
+    estado: Optional[str] = None,
+    tipo: Optional[str] = None,
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
+    situacion: Optional[str] = None,
+) -> list[Documento]:
+    if current_empleado.rol not in ('coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin'):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    query_stmt = select(Documento).options(
+        selectinload(Documento.empleado),
+        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.proveedor_cliente),
+        selectinload(Documento.cuenta_gastos),
+    )
+    scope_dept = empleado_list_view_department_scope(current_empleado)
+    q_value = (q or "").strip()
+    needs_empleado_join = bool((empleado_nombre or "").strip()) or bool(scope_dept) or bool(q_value)
+    if needs_empleado_join:
+        query_stmt = query_stmt.join(Empleado, Documento.empleado_id == Empleado.id)
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    cuenta_alias = aliased(CuentaDeGastos)
+    if q_value:
+        query_stmt = query_stmt.outerjoin(
+            beneficiario_alias,
+            Documento.beneficiario_empleado_id == beneficiario_alias.id,
+        ).outerjoin(
+            proveedor_alias,
+            Documento.proveedor_cliente_id == proveedor_alias.id,
+        ).outerjoin(
+            cuenta_alias,
+            Documento.cuenta_gastos_id == cuenta_alias.id,
+        )
+
+    filters = []
+    if scope_dept:
+        filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
+    if estado and estado.strip():
+        filters.append(Documento.estado == estado.strip())
+    if tipo and tipo.strip():
+        filters.append(Documento.tipo == tipo.strip())
+    situacion_value = (situacion or "").strip().lower()
+    if situacion_value == "abiertas":
+        filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
+    elif situacion_value == "cerradas":
+        filters.append(Documento.estado.in_(["pagado", "rechazado", "cerrado"]))
+    if empleado_nombre and empleado_nombre.strip():
+        filters.append(Empleado.nombre.ilike(f'%{empleado_nombre.strip()}%'))
+    if q_value:
+        q_filter = f"%{q_value}%"
+        filters.append(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                Documento.referencia_pago.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Empleado.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+                cuenta_alias.nombre.ilike(q_filter),
+            )
+        )
+    if filters:
+        query_stmt = query_stmt.where(and_(*filters))
+    result = await session.execute(query_stmt.order_by(Documento.creado_en.desc()).limit(500))
+    return list(result.scalars().all())
+
+
+@router.get("/documentos/todos/exportar-exceles.zip", response_model=None)
+async def documentos_todos_exportar_exceles_zip(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    estado: Optional[str] = None,
+    tipo: Optional[str] = None,
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
+    situacion: Optional[str] = None,
+) -> Response:
+    """Export the same individual Excel documents in a single ZIP, honoring filters."""
+    documentos = await _query_documentos_todos_for_export(
+        session,
+        current_empleado,
+        estado=estado,
+        tipo=tipo,
+        empleado_nombre=empleado_nombre,
+        q=q,
+        situacion=situacion,
+    )
+    buffer = io.BytesIO()
+    exported = 0
+    skipped: list[str] = []
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for documento in documentos:
+            try:
+                response = await exportar_informe_gastos(
+                    documento.id,
+                    session=session,
+                    current_empleado=current_empleado,
+                )
+                if not isinstance(response, Response) or isinstance(response, RedirectResponse):
+                    skipped.append(str(documento.numero_referencia or documento.id))
+                    continue
+                filename = f"{documento.tipo or 'DOCUMENTO'}_{documento.numero_referencia or documento.id}.xlsx"
+                safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", filename)
+                zf.writestr(safe_name, response.body)
+                exported += 1
+            except Exception:
+                logger.exception(
+                    "Error exporting document into bulk Excel ZIP",
+                    extra={"documento_id": str(documento.id)},
+                )
+                skipped.append(str(documento.numero_referencia or documento.id))
+        manifest = [
+            "SamChat exportacion masiva de documentos",
+            f"Documentos consultados: {len(documentos)}",
+            f"Exceles exportados: {exported}",
+            f"Omitidos: {len(skipped)}",
+            "",
+            "Omitidos:",
+            *skipped,
+        ]
+        zf.writestr("MANIFEST.txt", "\n".join(manifest))
+    buffer.seek(0)
+    filename = f"documentos_exceles_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.zip"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/documentos/nueva-solicitud", response_class=HTMLResponse)

@@ -95,7 +95,29 @@ def can_manage_payment_run(
     return empleado_id in configured_payment_run_manager_ids(allowed_ids)
 
 
+def can_access_payment_run(
+    empleado: Any,
+    *,
+    allowed_ids: Optional[Iterable[Any]] = None,
+) -> bool:
+    """Allow managers to cut runs and Finance staff to upload payment proofs."""
+    if can_manage_payment_run(empleado, allowed_ids=allowed_ids):
+        return True
+    rol = str(getattr(empleado, "rol", "") or "").strip().lower()
+    departamento = str(getattr(empleado, "departamento", "") or "").strip().lower()
+    return rol in {"finanzas", "admin", "superadmin", "super_admin"} or departamento == "finanzas"
+
+
 def require_payment_run_access(
+    empleado: Any,
+    *,
+    allowed_ids: Optional[Iterable[Any]] = None,
+) -> None:
+    if not can_access_payment_run(empleado, allowed_ids=allowed_ids):
+        raise PaymentRunPermissionError()
+
+
+def require_payment_run_manager(
     empleado: Any,
     *,
     allowed_ids: Optional[Iterable[Any]] = None,
@@ -185,11 +207,11 @@ def _status_for_row(
     *,
     today: Optional[date] = None,
 ) -> str:
-    if row.get("closure_id"):
-        return "cerrada"
     estado = str(row.get("estado") or "").lower()
     if row.get("pagado_en") or estado == "pagado":
         return "pagada"
+    if estado == "en_proceso_pago" or row.get("closure_id"):
+        return "en proceso de pago"
     fecha_pago = row.get("fecha_pago")
     today = today or date.today()
     if isinstance(fecha_pago, date) and fecha_pago < today:
@@ -214,8 +236,9 @@ async def list_payment_run_items(
         filters.append("d.estado = 'aprobado'")
         filters.append("d.pagado_en IS NULL")
         filters.append("ci.documento_id IS NULL")
-    elif normalized_status == "cerradas":
-        filters.append("ci.documento_id IS NOT NULL")
+    elif normalized_status in {"cerradas", "en_proceso", "en_proceso_pago"}:
+        filters.append("d.estado = 'en_proceso_pago'")
+        filters.append("d.pagado_en IS NULL")
     elif normalized_status == "pagadas":
         filters.append("(d.estado = 'pagado' OR d.pagado_en IS NOT NULL)")
     elif normalized_status != "todas":
@@ -293,6 +316,7 @@ async def list_payment_run_items(
         row["status"] = _status_for_row(row)
         row["can_edit_fecha_pago"] = row["status"] in {"programada", "vencida"}
         row["can_close"] = row["status"] in {"programada", "vencida"}
+        row["can_upload_payment_proof"] = row["status"] == "en proceso de pago"
         row["monto"] = _money(row.get("monto"))
         rows.append(row)
     return rows
@@ -499,6 +523,8 @@ async def close_payment_run(
             ),
             "proveedor": getattr(documento.proveedor_cliente, "nombre", None),
         }
+        documento.estado = "en_proceso_pago"
+        session.add(documento)
         await session.execute(
             text(
                 """
