@@ -315,6 +315,75 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
     assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
 
+def _owner_workspace_source():
+    return SimpleNamespace(
+        schema_version="local.v1",
+        source_hash="sha256:test-owner-workspace",
+        domain_write_performed=False,
+        project=SimpleNamespace(
+            id="tor-ctt",
+            name="Copa Telmex Telcel de Futbol",
+            categorias=["Juvenil"],
+            etapas=["Inscripcion"],
+        ),
+        operations_link=SimpleNamespace(operations_tournament_slug="copa-telmex"),
+        observed_operations=SimpleNamespace(
+            scope_slug="copa-telmex",
+            teams_count=12,
+            players_count=180,
+            categories=["Juvenil"],
+            branches=["Varonil"],
+            states=["CDMX"],
+            municipalities=["Cuauhtemoc"],
+        ),
+        unavailable_components=["rich_tournament_dates"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_owner_entity_folder_workspace_routes_specific_entity_request_without_provider(
+    monkeypatch,
+):
+    import samchat.assistant.conversation_service as conversation_service
+
+    seen_candidates = []
+
+    async def fake_inspect(session, *, tournament_id=None, tournament_name=None):
+        assert tournament_id is None
+        seen_candidates.append(tournament_name)
+        if tournament_name in {"copa-telmex", "Copa Telmex"}:
+            return _owner_workspace_source()
+        raise conversation_service.TournamentSourceNotFoundError("not found")
+
+    monkeypatch.setattr(conversation_service, "inspect_tournament_source", fake_inspect)
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("owner entity workspace should bypass provider")
+
+    response = await _run_message(
+        "Prepara la carpeta de entidad: CDMX. Torneo Copa Telmex para el Director General",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert seen_candidates
+    assert "Owner Entity Folder Workspace" in response.assistant_message
+    assert "Objetivo revisado" in response.assistant_message
+    assert "entidad=CDMX" in response.assistant_message
+    assert "Tarjetas del workspace" in response.assistant_message
+    assert "Secciones de la carpeta" in response.assistant_message
+    assert "Faltantes para no inventar" in response.assistant_message
+    assert "Preview / frontera de autoridad" in response.assistant_message
+    assert "no crea carpetas" in response.assistant_message
+    trace = response.tool_trace[0]["owner_entity_folder_workspace"]
+    assert trace["stage"] == "deterministic_read_only_owner_entity_folder_workspace"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+    assert trace["side_effects_detected"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_entity_folder_workspace"
+
 @pytest.mark.asyncio
 async def test_owner_pack_readiness_without_tournament_requests_context():
     response = await _run_message(
@@ -348,7 +417,7 @@ async def test_owner_pack_readiness_uses_local_live_evidence_when_available(monk
         surface = OwnerPackLiveSurfaceSnapshot(
             surface_id="national_phase_folder",
             label="Carpeta fase nacional",
-            target={"tournament_name": "Copa Telmex Telcel de F?tbol"},
+            target={"tournament_name": "Copa Telmex Telcel de Futbol"},
             workspace_root="samchat_local_tournament_db",
             workspace_files_checked=["samchat_local_tournament_db"],
             workspace_files_found=["samchat_local_tournament_db"],
@@ -359,7 +428,7 @@ async def test_owner_pack_readiness_uses_local_live_evidence_when_available(monk
                     section_id="operations",
                     evidence_type="tournament",
                     status=OWNER_PACK_LIVE_SUPPORTED,
-                    value={"tournament_name": "Copa Telmex Telcel de F?tbol"},
+                    value={"tournament_name": "Copa Telmex Telcel de Futbol"},
                     source_paths=["db.tournaments.name"],
                     source_files=["samchat_local_tournament_db"],
                 )
