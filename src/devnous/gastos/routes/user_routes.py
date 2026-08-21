@@ -32838,6 +32838,10 @@ async def cuentas_de_gastos_list(
     for data in cuenta_data:
         cuenta = data['cuenta']
         informe_doc = data.get('informe_doc')
+        informe_cancelado = (
+            bool(informe_doc)
+            and str(getattr(informe_doc, "estado", "") or "").strip().lower() == "cancelado"
+        )
         estado_badge = _render_informe_operational_status_badge(
             cuenta_estado=cuenta.estado,
             informe_estado=getattr(informe_doc, "estado", None),
