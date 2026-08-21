@@ -7,10 +7,11 @@ from datetime import date
 from html import escape as escape_html
 from typing import Any, Optional
 from urllib.parse import quote
+from uuid import UUID as UUIDType
 
-from fastapi import Depends, File, Form, Query, UploadFile
+from fastapi import Depends, File, Form, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from samchat.budgets.service import (
@@ -21,6 +22,9 @@ from samchat.budgets.service import (
     build_budget_snapshot,
     budget_alias_candidates,
     copy_budget_version_forward,
+    create_budget_concept,
+    create_budget_line,
+    create_budget_version,
     ensure_budget_schema,
     import_budget_lines_upload,
     list_monthly_plan_for_lines,
@@ -28,8 +32,14 @@ from samchat.budgets.service import (
     list_budget_concepts,
     list_budget_lines,
     list_budget_versions,
+    replace_budget_line_monthly_plan,
     resolve_budget_tournament_context,
     resolve_definitive_budget_version,
+    transition_budget_version,
+    update_budget_concept,
+    update_budget_line,
+    update_budget_version_metadata,
+    validate_active_cuenta_contable_id,
 )
 from samchat.budgets.exporter import (
     generate_budget_income_xlsx,
@@ -98,6 +108,52 @@ def _select_requested_budget_version(
         ) and version_year == int(edition_year):
             return version
     return None
+
+
+def _presupuestos_redirect_url(
+    *,
+    edition_year: Optional[int] = None,
+    version_id: Optional[str] = None,
+    tournament_key: Optional[str] = None,
+    budget_view: Optional[str] = None,
+    phase_filter: Optional[str] = None,
+    success_msg: Optional[str] = None,
+    error_msg: Optional[str] = None,
+    drill_dimension: Optional[str] = None,
+    drill_value: Optional[str] = None,
+    drill_tournament: Optional[str] = None,
+    drill_document: Optional[str] = None,
+    catalog_scope: Optional[str] = None,
+    catalog_tournament_ids: Optional[list[str]] = None,
+) -> str:
+    if tournament_key:
+        return budget_tournament_detail_url(
+            tournament_key,
+            edition_year=edition_year,
+            version_id=version_id,
+            budget_view=budget_view,
+            phase_filter=phase_filter,
+            success_msg=success_msg,
+            error_msg=error_msg,
+        )
+    url = budget_dashboard_url(
+        edition_year=edition_year,
+        version_id=version_id,
+        success_msg=success_msg,
+        error_msg=error_msg,
+    )
+    extra_params: list[str] = []
+    if catalog_scope not in (None, ""):
+        extra_params.append(f"catalog_scope={quote(str(catalog_scope))}")
+    if not isinstance(catalog_tournament_ids, (list, tuple)):
+        catalog_tournament_ids = []
+    for tournament_id in catalog_tournament_ids or []:
+        if tournament_id not in (None, ""):
+            extra_params.append(f"catalog_tournament_ids={quote(str(tournament_id))}")
+    if extra_params:
+        separator = "&" if "?" in url else "?"
+        url = f"{url}{separator}{'&'.join(extra_params)}"
+    return url
 
 
 def _budget_catalog_scope_label(metadata: dict[str, Any]) -> str:
@@ -496,6 +552,7 @@ def register_presupuestos_routes(router) -> None:
     from .admin_routes import (
         _admin_workspace_styles,
         _budget_access_map,
+        _OPERATION_GENERIC_ERROR,
         _render_admin_workspace_hero,
         _require_budget_access,
         format_value,
@@ -848,6 +905,411 @@ def register_presupuestos_routes(router) -> None:
             ),
             headers=headers,
         )
+
+    @router.post("/admin/presupuestos/versiones/create")
+    async def admin_presupuestos_create_version(
+        version_name: str = Form(...),
+        notes: Optional[str] = Form(None),
+        edition_year: Optional[int] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "create")
+        try:
+            resolved_year = int(edition_year) if edition_year else date.today().year
+            version = await create_budget_version(
+                session,
+                edition_year=resolved_year,
+                version_name=version_name,
+                notes=notes,
+                created_by_empleado_id=str(current_empleado.id),
+            )
+            msg = f"Borrador creado: {version.get('version_name') or version_name}"
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=resolved_year,
+                    version_id=str(version.get("id") or ""),
+                    success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error creating budget version",
+                extra={"actor_id": str(getattr(current_empleado, "id", ""))},
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(error_msg=_OPERATION_GENERIC_ERROR),
+                status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/versiones/{version_id}/transition")
+    async def admin_presupuestos_transition_version(
+        version_id: UUIDType,
+        status: str = Form(...),
+        note: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        target_status = str(status or "").strip().lower()
+        if target_status == "approved":
+            _require_budget_access(current_empleado, "approve")
+        elif target_status == "frozen":
+            _require_budget_access(current_empleado, "freeze")
+        else:
+            _require_budget_access(current_empleado, "version_update")
+        try:
+            version = await transition_budget_version(
+                session,
+                version_id=str(version_id),
+                new_status=status,
+                actor_empleado_id=str(current_empleado.id),
+                note=note,
+            )
+            msg = (
+                f"Versión {version.get('version_name') or ''} -> "
+                f"{version.get('status') or status}"
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(success_msg=msg),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error transitioning budget version",
+                extra={
+                    "version_id": str(version_id),
+                    "status": status,
+                    "actor_id": str(getattr(current_empleado, "id", "")),
+                },
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(error_msg=_OPERATION_GENERIC_ERROR),
+                status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/versiones/{version_id}/update")
+    async def admin_presupuestos_update_version(
+        version_id: UUIDType,
+        version_name: Optional[str] = Form(None),
+        notes: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "version_update")
+        try:
+            version = await update_budget_version_metadata(
+                session,
+                version_id=str(version_id),
+                actor_empleado_id=str(current_empleado.id),
+                version_name=version_name,
+                notes=notes,
+            )
+            msg = f"Versión actualizada: {version.get('version_name') or ''}"
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    version_id=str(version_id),
+                    success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error updating budget version metadata",
+                extra={
+                    "version_id": str(version_id),
+                    "actor_id": str(getattr(current_empleado, "id", "")),
+                },
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    version_id=str(version_id),
+                    error_msg=_OPERATION_GENERIC_ERROR,
+                ),
+                status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/versiones/{version_id}/lineas/create")
+    async def admin_presupuestos_create_line(
+        version_id: UUIDType,
+        budget_concept_id: Optional[str] = Form(None),
+        tournament_id: Optional[str] = Form(None),
+        tournament_code: Optional[str] = Form(None),
+        tournament_name: Optional[str] = Form(None),
+        concept_name: Optional[str] = Form(None),
+        cuenta_contable_id: Optional[str] = Form(None),
+        account_code_final: Optional[str] = Form(None),
+        phase: Optional[str] = Form(None),
+        owner_name: Optional[str] = Form(None),
+        priority: Optional[str] = Form(None),
+        budget_amount: Optional[float] = Form(0),
+        reference_amount: Optional[float] = Form(0),
+        criteria_note: Optional[str] = Form(None),
+        observations: Optional[str] = Form(None),
+        line_direction: Optional[str] = Form(None),
+        budget_view: Optional[str] = Form(None),
+        tournament_key: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            concept_id_for_line = budget_concept_id
+            account_code_for_line = account_code_final
+            if not concept_id_for_line and str(tournament_id or "").strip():
+                created_concept = await create_budget_concept(
+                    session,
+                    tournament_id=str(tournament_id or "").strip(),
+                    concept_name=concept_name or "",
+                    scope_labels=[phase] if str(phase or "").strip() else [],
+                    cuenta_contable_id=cuenta_contable_id,
+                    budget_direction=line_direction,
+                    actor_empleado_id=str(current_empleado.id),
+                    source="admin_budget_detail_add_line",
+                    commit=False,
+                )
+                concept_id_for_line = str(created_concept.get("id") or "")
+                account_code_for_line = (
+                    str(created_concept.get("cuenta_contable_codigo") or "").strip()
+                    or account_code_for_line
+                )
+            line = await create_budget_line(
+                session,
+                version_id=str(version_id),
+                actor_empleado_id=str(current_empleado.id),
+                budget_concept_id=concept_id_for_line,
+                tournament_code=tournament_code,
+                tournament_name=tournament_name,
+                concept_name=concept_name or "",
+                line_direction=line_direction,
+                account_code_final=account_code_for_line,
+                phase=phase,
+                owner_name=owner_name,
+                priority=priority,
+                budget_amount=budget_amount or 0,
+                reference_amount=reference_amount or 0,
+                criteria_note=criteria_note,
+                observations=observations,
+            )
+            msg = f"Línea creada: {line.get('concept_name') or concept_name}"
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    version_id=str(version_id),
+                    tournament_key=tournament_key or tournament_code,
+                    budget_view=budget_view,
+                    success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error creating budget line",
+                extra={
+                    "version_id": str(version_id),
+                    "actor_id": str(getattr(current_empleado, "id", "")),
+                },
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    version_id=str(version_id),
+                    error_msg=_OPERATION_GENERIC_ERROR,
+                ),
+                status_code=303,
+            )
+
+    @router.post("/admin/presupuestos/lineas/{line_id}/update")
+    async def admin_presupuestos_update_line(
+        request: Request,
+        line_id: UUIDType,
+        version_id: str = Form(...),
+        tournament_key: Optional[str] = Form(None),
+        edition_year: Optional[int] = Form(None),
+        budget_view: Optional[str] = Form(None),
+        phase_filter: Optional[str] = Form(None),
+        budget_concept_id: Optional[str] = Form(None),
+        concept_name: Optional[str] = Form(None),
+        account_code_final: Optional[str] = Form(None),
+        cuenta_contable_id: Optional[str] = Form(None),
+        phase: Optional[str] = Form(None),
+        owner_name: Optional[str] = Form(None),
+        priority: Optional[str] = Form(None),
+        budget_amount: Optional[float] = Form(None),
+        criteria_note: Optional[str] = Form(None),
+        observations: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            form = await request.form()
+            cuenta_contable_id_raw = str(
+                cuenta_contable_id or form.get("cuenta_contable_id") or ""
+            ).strip()
+            account_code_from_form = str(
+                account_code_final or form.get("account_code_final") or ""
+            ).strip()
+            concept_cuenta_update: Optional[str] = None
+            if "cuenta_contable_id" in form or cuenta_contable_id is not None:
+                if cuenta_contable_id_raw:
+                    concept_cuenta_update = await validate_active_cuenta_contable_id(
+                        session,
+                        cuenta_contable_id_raw,
+                    )
+                    account_row = (
+                        await session.execute(
+                            text(
+                                """
+                                SELECT codigo
+                                FROM cuentas_contables
+                                WHERE CAST(id AS text) = :cuenta_contable_id
+                                LIMIT 1
+                                """
+                            ),
+                            {"cuenta_contable_id": concept_cuenta_update},
+                        )
+                    ).mappings().first()
+                    account_code_from_form = str(
+                        (account_row or {}).get("codigo") or account_code_from_form
+                    ).strip()
+
+            line_level_updates = {
+                key: value
+                for key, value in {
+                    "budget_concept_id": budget_concept_id,
+                    "concept_name": concept_name,
+                    "account_code_final": account_code_from_form or None,
+                    "phase": phase,
+                    "owner_name": owner_name,
+                    "priority": priority,
+                    "budget_amount": budget_amount,
+                    "criteria_note": criteria_note,
+                    "observations": observations,
+                }.items()
+                if value is not None
+            }
+            if concept_cuenta_update and "account_code_final" not in line_level_updates:
+                line_level_updates["account_code_final"] = (
+                    account_code_from_form or None
+                )
+            monthly_plan: dict[int, dict[str, float]] = {}
+            for key in form.keys():
+                key_str = str(key)
+                if key_str.startswith("month_") and (
+                    key_str.endswith("_expense") or key_str.endswith("_income")
+                ):
+                    try:
+                        parts = key_str.split("_")
+                        month_number = int(parts[1])
+                        field = parts[2]
+                        monthly_plan.setdefault(month_number, {})
+                        monthly_plan[month_number][
+                            "budget_expense_amount"
+                            if field == "expense"
+                            else "expected_income_amount"
+                        ] = float(form.get(key) or 0)
+                    except (TypeError, ValueError, IndexError):
+                        continue
+                elif key_str.startswith("month_"):
+                    try:
+                        month_number = int(key_str.split("_", 1)[1])
+                        monthly_plan.setdefault(month_number, {})
+                        monthly_plan[month_number]["budget_expense_amount"] = float(
+                            form.get(key) or 0
+                        )
+                    except (TypeError, ValueError):
+                        continue
+            if not line_level_updates and not monthly_plan:
+                raise ValueError("No budget line updates were provided")
+
+            if line_level_updates:
+                line = await update_budget_line(
+                    session,
+                    line_id=str(line_id),
+                    actor_empleado_id=str(current_empleado.id),
+                    updates=line_level_updates,
+                )
+            else:
+                current = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT l.id, l.concept_name, l.budget_concept_id, v.status AS version_status
+                            FROM budget_lines l
+                            JOIN budget_versions v ON v.id = l.budget_version_id
+                            WHERE l.id = :line_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"line_id": str(line_id)},
+                    )
+                ).mappings().first()
+                if not current:
+                    raise ValueError("Budget line not found")
+                from samchat.budgets.service import _editable_version_status
+
+                if not _editable_version_status(current.get("version_status")):
+                    raise ValueError(
+                        "Only draft or reforecast versions allow line edits"
+                    )
+                line = dict(current)
+
+            if concept_cuenta_update:
+                concept_id = str(line.get("budget_concept_id") or "").strip()
+                if concept_id:
+                    await update_budget_concept(
+                        session,
+                        concept_id=concept_id,
+                        cuenta_contable_id=concept_cuenta_update,
+                        cuenta_contable_provided=True,
+                        actor_empleado_id=str(current_empleado.id),
+                        commit=True,
+                    )
+
+            if monthly_plan:
+                await replace_budget_line_monthly_plan(
+                    session,
+                    budget_line_id=str(line_id),
+                    plan=monthly_plan,
+                    actor_empleado_id=str(current_empleado.id),
+                )
+                await session.commit()
+            msg = f"Línea actualizada: {line.get('concept_name') or ''}"
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=version_id,
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error updating budget line",
+                extra={
+                    "line_id": str(line_id),
+                    "version_id": version_id,
+                    "actor_id": str(getattr(current_empleado, "id", "")),
+                },
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=version_id,
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    error_msg=_OPERATION_GENERIC_ERROR,
+                ),
+                status_code=303,
+            )
 
     @router.get(
         "/admin/presupuestos/torneo/{tournament_key}", response_class=HTMLResponse

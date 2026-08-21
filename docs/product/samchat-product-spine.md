@@ -201,6 +201,8 @@ Acceptance:
   `candidate_remove_later` based on C2b/C2c route-target evidence.
 - `/admin/presupuestos/export.xlsx` is owned by `admin_budget_routes.py` as a
   canonical export route while preserving assistant/runtime artifact links.
+- Version and line mutations are owned by `admin_budget_routes.py` after C4:
+  create/update/transition versions, create lines, and update lines.
 - `/admin/presupuestos-legacy` is classified as `legacy_reference`.
 - Future cleanup options are limited to `hide`, `redirect`, `remove later`, or
   continued `document only`.
