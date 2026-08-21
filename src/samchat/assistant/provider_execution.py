@@ -15,6 +15,7 @@ from fastapi import HTTPException
 RunReadToolFn = Callable[..., Awaitable[Dict[str, Any]]]
 OllamaChatFn = Callable[..., Awaitable[Dict[str, Any]]]
 ToolPolicyEvaluatorFn = Callable[[str, Dict[str, Any], Optional[str]], Dict[str, Any]]
+DeterministicToolAnswerFn = Callable[[str, Dict[str, Any]], Optional[str]]
 
 PROVIDER_TIMEOUT_REASON = "PROVIDER_TIMEOUT"
 RUNTIME_BUDGET_REASON = "RUNTIME_BUDGET_EXCEEDED"
@@ -198,6 +199,65 @@ def _evaluate_tool_policy(
     return decision
 
 
+async def _provider_deterministic_tool_response(
+    *,
+    run_id: Any,
+    provider: str,
+    model: str,
+    route_info: Dict[str, Any],
+    normalized_mode: str,
+    raw_message: str,
+    conversation: Any,
+    current_empleado: Any,
+    session: Any,
+    tool_trace: List[Dict[str, Any]],
+    answer: str,
+    response_cache_enabled: bool,
+    cache_key: str,
+    tool_trace_has_write_intent: Callable[[List[Dict[str, Any]]], bool],
+    assistant_response_cache_set: Callable[..., None],
+    assistant_run_cls: Any,
+    assistant_message_cls: Any,
+    message_response_cls: Any,
+) -> Any:
+    assistant_msg = assistant_message_cls(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=answer,
+        tool_name=None,
+        tool_payload=None,
+    )
+    session.add(assistant_msg)
+    run = assistant_run_cls(
+        id=run_id,
+        conversation_id=conversation.id,
+        empleado_id=current_empleado.id,
+        status="completed",
+        model=f"{provider}:{model}:{route_info['route']}:{normalized_mode}",
+        user_message=raw_message,
+        assistant_message=answer,
+        tool_trace=tool_trace,
+        pending_tool_name=None,
+        pending_tool_args=None,
+        created_at=datetime.utcnow(),
+    )
+    session.add(run)
+    conversation.updated_at = datetime.utcnow()
+    await session.commit()
+    if response_cache_enabled and not tool_trace_has_write_intent(tool_trace):
+        assistant_response_cache_set(
+            key=cache_key,
+            assistant_message=answer,
+            tool_trace=tool_trace,
+        )
+    return message_response_cls(
+        assistant_message=answer,
+        run_id=str(run_id),
+        tool_trace=tool_trace,
+        pending_confirmation=None,
+    )
+
+
 async def execute_ollama_provider(
     *,
     model: str,
@@ -232,6 +292,7 @@ async def execute_ollama_provider(
     assistant_message_cls: Any,
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     ollama_messages = list(messages)
@@ -334,6 +395,32 @@ async def execute_ollama_provider(
                     bi_scope=bi_scope,
                 )
                 tool_trace.append({"tool": tool_name, "result": result})
+                deterministic_answer = (
+                    deterministic_tool_answer(tool_name, result)
+                    if deterministic_tool_answer
+                    else None
+                )
+                if deterministic_answer:
+                    return await _provider_deterministic_tool_response(
+                        run_id=run_id,
+                        provider="ollama",
+                        model=model,
+                        route_info=route_info,
+                        normalized_mode=normalized_mode,
+                        raw_message=raw_message,
+                        conversation=conversation,
+                        current_empleado=current_empleado,
+                        session=session,
+                        tool_trace=tool_trace,
+                        answer=deterministic_answer,
+                        response_cache_enabled=response_cache_enabled,
+                        cache_key=cache_key,
+                        tool_trace_has_write_intent=tool_trace_has_write_intent,
+                        assistant_response_cache_set=assistant_response_cache_set,
+                        assistant_run_cls=assistant_run_cls,
+                        assistant_message_cls=assistant_message_cls,
+                        message_response_cls=message_response_cls,
+                    )
                 ollama_messages.append(
                     {
                         "role": "tool",
@@ -431,6 +518,7 @@ async def execute_anthropic_provider(
     assistant_message_cls: Any,
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_anthropic_client()
@@ -615,6 +703,32 @@ async def execute_anthropic_provider(
                     bi_scope=bi_scope,
                 )
                 tool_trace.append({"tool": tool_name, "result": result})
+                deterministic_answer = (
+                    deterministic_tool_answer(tool_name, result)
+                    if deterministic_tool_answer
+                    else None
+                )
+                if deterministic_answer:
+                    return await _provider_deterministic_tool_response(
+                        run_id=run_id,
+                        provider="anthropic",
+                        model=model,
+                        route_info=route_info,
+                        normalized_mode=normalized_mode,
+                        raw_message=raw_message,
+                        conversation=conversation,
+                        current_empleado=current_empleado,
+                        session=session,
+                        tool_trace=tool_trace,
+                        answer=deterministic_answer,
+                        response_cache_enabled=response_cache_enabled,
+                        cache_key=cache_key,
+                        tool_trace_has_write_intent=tool_trace_has_write_intent,
+                        assistant_response_cache_set=assistant_response_cache_set,
+                        assistant_run_cls=assistant_run_cls,
+                        assistant_message_cls=assistant_message_cls,
+                        message_response_cls=message_response_cls,
+                    )
                 tool_result_blocks.append(
                     {
                         "type": "tool_result",
@@ -700,6 +814,7 @@ async def execute_openai_provider(
     assistant_message_cls: Any,
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
 ) -> Any:
     run_id = __import__("uuid").uuid4()
     client = get_openai_client(openai_api_key)
@@ -787,6 +902,32 @@ async def execute_openai_provider(
                     bi_scope=bi_scope,
                 )
                 tool_trace.append({"tool": tool_name, "result": result})
+                deterministic_answer = (
+                    deterministic_tool_answer(tool_name, result)
+                    if deterministic_tool_answer
+                    else None
+                )
+                if deterministic_answer:
+                    return await _provider_deterministic_tool_response(
+                        run_id=run_id,
+                        provider="openai",
+                        model=model,
+                        route_info=route_info,
+                        normalized_mode=normalized_mode,
+                        raw_message=raw_message,
+                        conversation=conversation,
+                        current_empleado=current_empleado,
+                        session=session,
+                        tool_trace=tool_trace,
+                        answer=deterministic_answer,
+                        response_cache_enabled=response_cache_enabled,
+                        cache_key=cache_key,
+                        tool_trace_has_write_intent=tool_trace_has_write_intent,
+                        assistant_response_cache_set=assistant_response_cache_set,
+                        assistant_run_cls=assistant_run_cls,
+                        assistant_message_cls=assistant_message_cls,
+                        message_response_cls=message_response_cls,
+                    )
                 openai_messages.append(
                     {
                         "role": "tool",
@@ -888,6 +1029,7 @@ async def execute_provider(
     assistant_message_cls: Any,
     message_response_cls: Any,
     tool_policy_evaluator: Optional[ToolPolicyEvaluatorFn] = None,
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
 ) -> Any:
     if provider == "ollama":
         return await execute_ollama_provider(
@@ -923,6 +1065,7 @@ async def execute_provider(
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
             tool_policy_evaluator=tool_policy_evaluator,
+            deterministic_tool_answer=deterministic_tool_answer,
         )
     if provider == "anthropic":
         return await execute_anthropic_provider(
@@ -966,6 +1109,7 @@ async def execute_provider(
             assistant_message_cls=assistant_message_cls,
             message_response_cls=message_response_cls,
             tool_policy_evaluator=tool_policy_evaluator,
+            deterministic_tool_answer=deterministic_tool_answer,
         )
     return await execute_openai_provider(
         model=model,
@@ -997,4 +1141,5 @@ async def execute_provider(
         assistant_message_cls=assistant_message_cls,
         message_response_cls=message_response_cls,
         tool_policy_evaluator=tool_policy_evaluator,
+        deterministic_tool_answer=deterministic_tool_answer,
     )

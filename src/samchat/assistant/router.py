@@ -143,6 +143,8 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .closeout_diagnostics import build_finance_closeout_diagnostics
+from .finance_read_answer import render_finance_read_answer
+from .finance_read_adapter import run_finance_read_adapter
 from .historical_accounting_precedent import query_historical_accounting_precedents
 from .institutional_artifact_registry import (
     build_institutional_artifact_registry_report,
@@ -2304,6 +2306,10 @@ def _assistant_system_prompt() -> str:
         "- El usuario esta autenticado.\n"
         "- Para preguntas financieras usa SOLO datos de gastos/pagos (tools de finanzas).\n"
         "- Para consultas financieras generales, prioriza finance_ops_query; usa tools especificas cuando apliquen.\n"
+        "- Para CxC AR, pre-matching AR, cashflow planning, presupuesto snapshot, "
+        "Finance Platform o guidance de exports financieros "
+        "usa assistant_finance_read; no uses db_read_universal para recomputar "
+        "esas superficies cubiertas.\n"
         "- Cuando el pedido coincida con un flujo ya cubierto por adapters canonicos, prioriza assistant_canonical_action o assistant_canonical_query sobre tools historicas separadas.\n"
         "- Flujos canonicos ya cubiertos: crear gasto desde contexto operativo, crear gasto manual, crear solicitud personal desde cuenta, crear solicitud a terceros, crear solicitud borrador desde compromiso operativo de pago, solicitar CFDI, ligar gasto a CFDI, construir preview contable de gasto, actualizar compromisos operativos y ligar movimiento bancario a gasto.\n"
         "- Usa assistant_canonical_action con action='operations.create_expense_from_context' cuando el usuario describa un gasto con torneo/fase/concepto ya conocidos.\n"
@@ -2442,7 +2448,17 @@ def _assistant_default_tournament_key() -> Optional[str]:
     return value or None
 
 
+def _assistant_deterministic_tool_answer(
+    tool_name: str,
+    result: Dict[str, Any],
+) -> Optional[str]:
+    if tool_name == "assistant_finance_read":
+        return render_finance_read_answer(result)
+    return None
+
+
 READ_TOOLS = {
+    "assistant_finance_read",
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
     "assistant_historical_accounting_precedent",
@@ -2506,6 +2522,7 @@ WRITE_TOOLS = {
 }
 
 FINANCE_READ_TOOLS = {
+    "assistant_finance_read",
     "assistant_canonical_query",
     "assistant_institutional_artifacts",
     "assistant_historical_accounting_precedent",
@@ -3143,6 +3160,58 @@ _DB_COLUMN_ALIASES: Dict[str, Dict[str, str]] = {
 
 def _tool_defs() -> List[Dict[str, Any]]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_finance_read",
+                "description": (
+                    "Consulta read-only las fuentes financieras canonicas para CxC AR, "
+                    "pre-matching AR, cashflow planning, presupuesto snapshot, "
+                    "Finance Platform y guidance de exports. No ejecuta writes, "
+                    "no usa SQL libre y no trata candidate_match como cobranza "
+                    "probada."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "intent": {
+                            "type": "string",
+                            "enum": [
+                                "ar.summary",
+                                "ar.prematching",
+                                "cashflow.summary",
+                                "budget.snapshot",
+                                "finance.platform",
+                                "finance.exports",
+                            ],
+                        },
+                        "budget_version_id": {"type": ["string", "null"]},
+                        "tournament_id": {"type": ["string", "null"]},
+                        "tournament_code": {"type": ["string", "null"]},
+                        "year": {"type": ["integer", "null"]},
+                        "month": {
+                            "type": ["integer", "null"],
+                            "minimum": 1,
+                            "maximum": 12,
+                        },
+                        "horizon_months": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 24,
+                            "default": 3,
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 500,
+                            "default": 500,
+                        },
+                    },
+                    "required": ["intent"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -9191,6 +9260,9 @@ async def _run_read_tool(
     if tool_name == "finance_ops_query":
         return await finance_ops_query(gastos_session, **args)
 
+    if tool_name == "assistant_finance_read":
+        return await run_finance_read_adapter(gastos_session, **args)
+
     if tool_name == "finance_strategy_snapshot":
         if bi_scope and not args.get("bi_scope"):
             args["bi_scope"] = bi_scope
@@ -10000,6 +10072,7 @@ async def _assistant_turn(
                 assistant_message_cls=AssistantMessage,
                 message_response_cls=MessageResponse,
                 tool_policy_evaluator=tool_policy_evaluator,
+                deterministic_tool_answer=_assistant_deterministic_tool_answer,
             )
 
         except HTTPException as exc:
