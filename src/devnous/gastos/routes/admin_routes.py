@@ -1056,6 +1056,7 @@ def render_admin_navigation(
             "ar_cxc",
         ),
         ("admin.contabilidad", "/admin/contabilidad/deudores", "Deudores", "deudores"),
+        ("admin.finanzas", "/admin/artifacts", "Artifacts", "artifacts"),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
@@ -6598,6 +6599,56 @@ async def admin_sam_inbox(
                     {''.join(item_cards)}
                 </section>
             </div>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/artifacts", response_class=HTMLResponse)
+async def admin_runtime_artifacts(
+    current_empleado: Empleado = require_admin_finanzas(),
+):
+    """Read-only runtime artifact discoverability view."""
+    from samchat.artifacts import (
+        artifact_admin_styles,
+        build_runtime_artifact_index,
+        render_runtime_artifact_index_html,
+    )
+
+    payload = build_runtime_artifact_index()
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Artifacts - Administración</title>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>{_admin_workspace_styles("1380px")}{artifact_admin_styles()}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "artifacts", subtitle="Índice read-only de artefactos runtime, exports y evidencia.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Artifact Layer",
+                title="Runtime Artifact Index",
+                description=(
+                    "Discoverability sin mutaciones: distingue assistant artifacts, "
+                    "exports de módulos, closeouts históricos y artefactos planeados."
+                ),
+                actions_html=(
+                    '<a class="button secondary" href="/assistant">Assistant</a>'
+                    '<a class="button secondary" href="/admin/finanzas">Finanzas</a>'
+                ),
+                side_html=(
+                    '<div style="font-size:13px;color:#475569;line-height:1.6;">'
+                    'Sin POST, sin archivo gestionado, sin ejecución de exports y sin '
+                    'lectura de contenido de assistant_artifacts.'
+                    '</div>'
+                ),
+            )}
+            {render_runtime_artifact_index_html(payload)}
         </div>
     </body>
     </html>

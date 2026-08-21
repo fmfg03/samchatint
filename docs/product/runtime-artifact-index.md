@@ -2,7 +2,8 @@
 
 Purpose: index artifact and export surfaces that are real in SamChat, separate
 them from evidence closeouts and planned sponsor packages, and expose gaps
-without changing runtime behavior.
+without changing runtime behavior. A4 adds a read-only admin discoverability
+view; it does not create an artifact center, execute exports, or archive files.
 
 Related taxonomy: `docs/product/artifact-taxonomy.md`.
 
@@ -10,7 +11,7 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
 
 | surface | artifact class | storage / model | route / tool | UI / discoverability | tests / evidence | authority | status | notes / gaps |
 |---|---|---|---|---|---|---|---|---|
-| Assistant saved artifacts | `runtime_saved_artifact` | `AssistantArtifact` model; `assistant_artifacts` table | `assistant_save_artifact` write tool | Conversation-scoped through assistant runtime; first-class admin UI undecided | `src/devnous/gastos/models.py`; schema guard entries; assistant tool surface | Assistant tool contract and configured confirmation/role policy | live | Does not replace exports, expediente snapshots, sponsor packages, or budget source artifacts. Archive/delete policy pending. |
+| Assistant saved artifacts | `runtime_saved_artifact` | `AssistantArtifact` model; `assistant_artifacts` table | `assistant_save_artifact` write tool | Conversation-scoped through assistant runtime; `/admin/artifacts` lists the class read-only, not content | `src/devnous/gastos/models.py`; schema guard entries; assistant tool surface; `src/samchat/artifacts/runtime_index.py` | Assistant tool contract and configured confirmation/role policy | live | Does not replace exports, expediente snapshots, sponsor packages, or budget source artifacts. Archive/delete policy pending. |
 | Assistant report export | `report_export` | Generated response from assistant run trace or supplied report payload | `POST /api/assistant/reports/export` | Assistant report/export flow; generated download | `export_assistant_report(...)`; request/report tests around export prompt and report exportability | Export allowed only when selected run/report data is exportable and scoped to current user conversation | live | Generated delivery, not artifact archive. |
 | Finance Platform export | `report_export` | Generated XLSX from Finance Platform read snapshot/exporter | `GET /admin/finanzas/export.xlsx` | Finance Platform admin view link | `admin_finance_platform_export_xlsx(...)`; Finance Platform exporter | Finance Platform read model/exporter; admin finance permissions | live | Separate from Assistant artifacts and legacy accounting cash-flow. |
 | Presupuestos review export | `report_export` | Generated XLSX budget review workbook | `GET /admin/presupuestos/export.xlsx` | Presupuestos admin pages | `admin_presupuestos_export_xlsx(...)`; budget exporter tests | Canonical Presupuestos routes and budget services | live | Exported workbook is delivery artifact; budget authority remains in budget versions/services. |
@@ -25,7 +26,8 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
 
 ## Current Gaps
 
-- `assistant_artifacts` has no approved first-class admin index UI.
+- `assistant_artifacts` has only class-level read-only admin discoverability;
+  content browsing and lifecycle controls are not approved.
 - `assistant_artifacts` archive/delete lifecycle is not defined.
 - Generated exports are delivered files, not a managed artifact archive.
 - Expedited or case snapshots do not yet have a single durable artifact index.
@@ -34,6 +36,9 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
   a cross-product artifact center.
 - Legacy accounting cash-flow export remains available as legacy/reference but
   must not be used as Finance Spine source authority.
+- `/admin/artifacts` is a read-only discoverability surface. It must not grow
+  POST routes, export execution, archive/delete lifecycle, or sponsor package
+  creation without a separate approved story/spec.
 
 ## Boundary Rules
 
