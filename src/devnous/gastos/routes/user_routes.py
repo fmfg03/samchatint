@@ -28085,6 +28085,7 @@ async def _render_solicitud_terceros_form(
         )
 
     fecha_pago_kwargs = st_fecha_pago_form_kwargs(edit_documento)
+    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
 
     preserve_uuid = None
     if preserve_torneo_id and preserve_torneo_id != "__otro__":
@@ -28134,14 +28135,17 @@ async def _render_solicitud_terceros_form(
     category_options_terceros = _html_category_options(
         categories_terceros, preserve_categorias or categories_terceros
     )
-    budget_concept_options_terceros = _html_budget_concept_options(
-        _filter_budget_concepts_for_fase(
-            tournament_budget_concepts_terceros.get(preserve_torneo_id, []),
-            preserve_fase,
-        ),
-        preserve_budget_concept_id,
-        required=False,
-    )
+    if can_manage_budget_classification:
+        budget_concept_options_terceros = _html_budget_concept_options(
+            _filter_budget_concepts_for_fase(
+                tournament_budget_concepts_terceros.get(preserve_torneo_id, []),
+                preserve_fase,
+            ),
+            preserve_budget_concept_id,
+            required=False,
+        )
+    else:
+        budget_concept_options_terceros = ""
 
     # Get active proveedores_clientes
     proveedores_result = await session.execute(
@@ -28198,6 +28202,18 @@ async def _render_solicitud_terceros_form(
     ro_terceros_value, ro_terceros_help = referencia_operaciones_form_display(
         current_empleado
     )
+    budget_concept_row_terceros = ""
+    if can_manage_budget_classification:
+        budget_concept_row_terceros = render_st_doc_row(
+            "CONCEPTO:",
+            (
+                '<select name="budget_concept_id" '
+                'id="budget_concept_id_terceros">'
+                f"{budget_concept_options_terceros}</select>"
+                "<small>Obligatoria cuando la solicitud esta ligada "
+                "a un torneo.</small>"
+            ),
+        )
 
     html = f"""
     <!DOCTYPE html>
@@ -28386,16 +28402,7 @@ async def _render_solicitud_terceros_form(
                             "PAGO URGENTE:",
                             render_pago_urgente_field(checked=preserve_pago_urgente),
                         )}
-                        {render_st_doc_row(
-                            "CONCEPTO:",
-                            (
-                                '<select name="budget_concept_id" '
-                                'id="budget_concept_id_terceros">'
-                                f"{budget_concept_options_terceros}</select>"
-                                "<small>Obligatoria cuando la solicitud esté ligada "
-                                "a un torneo.</small>"
-                            ),
-                        )}
+                        {budget_concept_row_terceros}
                         {render_st_doc_row_dual(
                             "NÚMERO DE FACTURA:",
                             (
@@ -28613,7 +28620,7 @@ async def _render_solicitud_terceros_form(
             }})();
         </script>
         {_render_category_sync_script(category_map=tournament_categories_terceros, tournament_select_id="torneo_id", category_select_id="categorias_terceros")}
-        {_render_budget_concept_sync_script(concept_map=tournament_budget_concepts_terceros, tournament_select_id="torneo_id", concept_select_id="budget_concept_id_terceros", selected_id=preserve_budget_concept_id, required=False, phase_select_id="fase_terceros")}
+        {_render_budget_concept_sync_script(concept_map=tournament_budget_concepts_terceros, tournament_select_id="torneo_id", concept_select_id="budget_concept_id_terceros", selected_id=preserve_budget_concept_id, required=False, phase_select_id="fase_terceros") if can_manage_budget_classification else ""}
         {render_pdf_file_preview_script()}
         {render_materialidades_file_picker_script()}
         {render_cfdi_solicitud_terceros_autofill_script()}
