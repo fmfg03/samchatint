@@ -14068,6 +14068,8 @@ def _presupuestos_redirect_url(
     extra_params: list[str] = []
     if catalog_scope not in (None, ""):
         extra_params.append(f"catalog_scope={quote(str(catalog_scope))}")
+    if not isinstance(catalog_tournament_ids, (list, tuple)):
+        catalog_tournament_ids = []
     for tournament_id in catalog_tournament_ids or []:
         if tournament_id not in (None, ""):
             extra_params.append(f"catalog_tournament_ids={quote(str(tournament_id))}")
@@ -14094,6 +14096,17 @@ async def admin_presupuestos_bulk_save_concepts(
 ):
     _require_budget_access(current_empleado, "line_update")
     try:
+        def _form_list(value: Any) -> list[Any]:
+            return list(value) if isinstance(value, (list, tuple)) else []
+
+        concept_ids = _form_list(concept_ids)
+        concept_names = _form_list(concept_names)
+        budget_directions = _form_list(budget_directions)
+        tournament_ids = _form_list(tournament_ids)
+        sub_proyectos = _form_list(sub_proyectos)
+        cuenta_contable_ids = _form_list(cuenta_contable_ids)
+        pasivo_cuenta_contable_ids = _form_list(pasivo_cuenta_contable_ids)
+        catalog_tournament_ids = _form_list(catalog_tournament_ids)
         rows: list[dict[str, Any]] = []
         row_count = max(
             len(concept_ids),
