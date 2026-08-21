@@ -52,6 +52,8 @@ jobs:
             "tests/unit/test_assistant_finance_query_intent.py"
             "tests/unit/test_assistant_finance_query_read_only.py"
             "tests/unit/test_assistant_finance_query_router_integration.py"
+            "tests/unit/test_assistant_finance_read_tool_wiring.py"
+            "tests/unit/test_assistant_finance_read_answer.py"
             "tests/unit/test_assistant_request_intent.py"
             "tests/unit/test_assistant_request_reports.py"
             "tests/unit/test_assistant_request_router_integration.py"
@@ -145,6 +147,8 @@ jobs:
             tests/unit/test_assistant_finance_query_intent.py \
             tests/unit/test_assistant_finance_query_read_only.py \
             tests/unit/test_assistant_finance_query_router_integration.py \
+            tests/unit/test_assistant_finance_read_tool_wiring.py \
+            tests/unit/test_assistant_finance_read_answer.py \
             tests/unit/test_assistant_request_intent.py \
             tests/unit/test_assistant_request_reports.py \
             tests/unit/test_assistant_request_router_integration.py \
