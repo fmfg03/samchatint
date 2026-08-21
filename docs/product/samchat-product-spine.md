@@ -198,8 +198,9 @@ Acceptance:
 - Canonical Presupuestos routes are classified as `canonical_owner`.
 - Remaining `/admin/presupuestos/*` handlers in `admin_routes.py` are
   classified as either `bridge_required_by_canonical_ui` or
-  `bridge_external_dependency` or `candidate_remove_later` based on C2b/C2c
-  route-target and export-catalog evidence.
+  `candidate_remove_later` based on C2b/C2c route-target evidence.
+- `/admin/presupuestos/export.xlsx` is owned by `admin_budget_routes.py` as a
+  canonical export route while preserving assistant/runtime artifact links.
 - `/admin/presupuestos-legacy` is classified as `legacy_reference`.
 - Future cleanup options are limited to `hide`, `redirect`, `remove later`, or
   continued `document only`.

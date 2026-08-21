@@ -12,7 +12,7 @@ Canonical surfaces:
 
 - `/admin/finanzas` in `src/devnous/gastos/routes/admin_routes.py`.
 - `/admin/finanzas/payment-run` and related payment-run routes in `src/devnous/gastos/routes/admin_routes.py`.
-- `/admin/presupuestos` registered through `register_presupuestos_routes(router)` in `src/devnous/gastos/routes/admin_budget_routes.py`.
+- `/admin/presupuestos` and `/admin/presupuestos/export.xlsx` registered through `register_presupuestos_routes(router)` in `src/devnous/gastos/routes/admin_budget_routes.py`.
 - `src/samchat/finance_platform/service.py` for finance action queue, cash control, accounting close, tax readiness, payment run, finance brief, and finance copilot prompts.
 - `src/samchat/budgets/service.py` for canonical budget versions, lines, concepts, monthly plan, actuals, income direction, and budget schema.
 - `src/devnous/gastos/services/cfdi_income_bridge_service.py` for PSP CFDI income candidates and budget CFDI income links.
@@ -21,7 +21,7 @@ Canonical surfaces:
 Legacy or secondary surfaces:
 
 - `/admin/presupuestos-legacy` in `src/devnous/gastos/routes/admin_routes.py`.
-- explicit `/admin/presupuestos/*` bridge action handlers still present in `src/devnous/gastos/routes/admin_routes.py` for catalog, version, import/export, and line mutations used by the canonical UI.
+- explicit `/admin/presupuestos/*` bridge action handlers still present in `src/devnous/gastos/routes/admin_routes.py` for catalog, version, import, and line mutations used by the canonical UI.
 - broad roadmap documents that mention finance capabilities without a route/service owner.
 
 Rule: new finance work should extend canonical services first. Legacy presupuesto code must not be treated as the owner for new AR, cashflow, or planning behavior unless a separate approved cleanup spec says so.
