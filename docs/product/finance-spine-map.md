@@ -234,6 +234,14 @@ Decision needed:
 
 Decision for now: `document only`.
 
+C2 route inventory and policy:
+
+- `docs/product/presupuestos-route-policy.md`
+- classifies canonical Presupuestos routes, bridge handlers that remain in
+  `admin_routes.py`, external dependency bridge handlers, candidate-remove
+  handlers that require dependency validation, and legacy reference entrypoints;
+- does not remove, hide, redirect, reorder, or mutate routes.
+
 ## D1 Presupuestos Authority Freeze
 
 Canonical owner:
@@ -387,6 +395,14 @@ F4 D1-D2 decision and S1-S3 implementation:
 Decision needed:
 
 - choose one policy for old presupuesto handlers: document only, hide from navigation, redirect, or remove in a later approved cleanup.
+
+C2 decision:
+
+- `document only` remains the active policy;
+- `docs/product/presupuestos-route-policy.md` is the route inventory for future
+  C3 cleanup;
+- C3 must choose exactly one next action: `hide`, `redirect`, `remove later`, or
+  keep `document only`.
 
 ## Validation Plan
 
