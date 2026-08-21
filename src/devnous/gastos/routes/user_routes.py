@@ -10728,6 +10728,17 @@ def _can_view_presupuestos(current_empleado: Empleado) -> bool:
     )
 
 
+def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
+    """Only finance/accounting/admin users can assign budget lines."""
+    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    department = str(getattr(current_empleado, "departamento", "") or "").strip().lower()
+    return (
+        role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
+        or department.startswith("finanza")
+        or department.startswith("contab")
+    )
+
+
 def render_top_navigation(current_empleado: Empleado, active_area: Optional[str] = None) -> str:
     """
     Render top navigation bar HTML.
@@ -15209,6 +15220,8 @@ async def nuevo_gasto_form(
             </div>
         </div>
     """
+    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    budget_classification_style = "" if can_manage_budget_classification else ' style="display:none;" aria-hidden="true"'
 
     html = f"""
     <!DOCTYPE html>
@@ -15391,7 +15404,7 @@ async def nuevo_gasto_form(
                     <small>Ingrese la descripción del gasto</small>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group"{budget_classification_style}>
                     <label for="budget_concept_search">Concepto</label>
                     <input type="text" id="budget_concept_search" list="budget_concept_options" placeholder="Escriba para buscar o seleccione de la lista" autocomplete="off" disabled>
                     <datalist id="budget_concept_options"></datalist>
@@ -15546,6 +15559,7 @@ async def nuevo_gasto_form(
             const budgetConceptSelect = document.getElementById('budget_concept_id');
             const budgetConceptSearch = document.getElementById('budget_concept_search');
             const budgetConceptOptions = document.getElementById('budget_concept_options');
+            const canManageBudgetClassification = {json.dumps(can_manage_budget_classification)};
             const uuidRegex = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
 
             function resetFaseTorneoOptions(placeholderText) {{
@@ -15618,6 +15632,12 @@ async def nuevo_gasto_form(
 
             function syncBudgetConceptOptions() {{
                 if (!budgetConceptSelect) return;
+                if (!canManageBudgetClassification) {{
+                    budgetConceptSelect.disabled = true;
+                    budgetConceptSelect.required = false;
+                    if (budgetConceptSearch) budgetConceptSearch.disabled = true;
+                    return;
+                }}
                 const tournamentId = (proyectoSelect.value || '').trim();
                 const manualProject = (proyectoManualInput.value || '').trim();
                 const fase = faseTorneoSelect ? (faseTorneoSelect.value || '').trim() : '';
@@ -16028,6 +16048,10 @@ async def crear_gasto(
         selected_tournament = None
         tournament_id = None
         budget_concept = None
+        can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+        if not can_manage_budget_classification:
+            budget_concept_id = None
+            cuenta_contable_id = None
         if proyecto and proyecto.strip():
             try:
                 selected_tournament = await session.get(Tournament, UUIDType(proyecto.strip()))
@@ -16072,30 +16096,31 @@ async def crear_gasto(
                     ),
                     status_code=303
                 )
-            if not (budget_concept_id or "").strip():
-                return RedirectResponse(
-                    url=_append_error_params(
-                        "/gastos/nuevo",
-                        error_msg="Debe seleccionar un Concepto para el torneo.",
-                    ),
-                    status_code=303,
+            if can_manage_budget_classification:
+                if not (budget_concept_id or "").strip():
+                    return RedirectResponse(
+                        url=_append_error_params(
+                            "/gastos/nuevo",
+                            error_msg="Debe seleccionar un Concepto para el torneo.",
+                        ),
+                        status_code=303,
+                    )
+                budget_concept = await resolve_budget_concept(
+                    session,
+                    budget_concept_id=budget_concept_id,
+                    tournament_id=tournament_id,
+                    tournament_code=None,
+                    fase=fase_torneo,
+                    budget_direction="expense",
                 )
-            budget_concept = await resolve_budget_concept(
-                session,
-                budget_concept_id=budget_concept_id,
-                tournament_id=tournament_id,
-                tournament_code=None,
-                fase=fase_torneo,
-                budget_direction="expense",
-            )
-            if budget_concept is None:
-                return RedirectResponse(
-                    url=_append_error_params(
-                        "/gastos/nuevo",
-                        error_msg="El Concepto no corresponde al torneo seleccionado.",
-                    ),
-                    status_code=303,
-                )
+                if budget_concept is None:
+                    return RedirectResponse(
+                        url=_append_error_params(
+                            "/gastos/nuevo",
+                            error_msg="El Concepto no corresponde al torneo seleccionado.",
+                        ),
+                        status_code=303,
+                    )
 
         # Parse amount using Decimal for precision
         try:
@@ -22906,6 +22931,8 @@ async def editar_gasto_form(
                 </small>
             </div>
         """
+    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    budget_classification_style = "" if can_manage_budget_classification else ' style="display:none;" aria-hidden="true"'
     editar_gasto_actions_html = f"""
         <a href="/gastos/{gasto_id}" class="button secondary">Volver al detalle</a>
         <a href="/informes-de-gastos" class="button secondary">Volver a informes de gastos</a>
@@ -23058,7 +23085,7 @@ async def editar_gasto_form(
                     <small>Asigne este gasto a un informe de gastos abierto, deje en blanco para desvincular o asignar después desde Mis Gastos. Si el informe actual está cerrado, solo puede desvincular o mantenerlo.</small>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group"{budget_classification_style}>
                     <label for="budget_concept_id">Concepto</label>
                     <select name="budget_concept_id" id="budget_concept_id" {disabled_attr}>
                         {budget_concept_options}
@@ -23066,7 +23093,7 @@ async def editar_gasto_form(
                     <small>Disponible cuando el informe de gastos está ligado a un torneo. No se fuerza backfill en gastos legacy.</small>
                 </div>
 
-                <div class="form-group">
+                <div class="form-group"{budget_classification_style}>
                     <label for="cuenta_contable_search">Cuenta Contable</label>
                     <input type="text" id="cuenta_contable_search" placeholder="Buscar por código o nombre..." value="{escape(current_cuenta_display)}" autocomplete="off" {disabled_attr}>
                     <input type="hidden" name="cuenta_contable_id" id="cuenta_contable_id" value="{current_cuenta_id}">
@@ -23101,6 +23128,7 @@ async def editar_gasto_form(
             // Cuenta contable search data
             const cuentasContables = {cuentas_json};
             const budgetConceptsByCuenta = {json.dumps(budget_concepts_by_cuenta)};
+            const canManageBudgetClassification = {json.dumps(can_manage_budget_classification)};
             let selectedBudgetConceptId = {json.dumps(selected_budget_concept_id)};
 
             // Cuenta contable search functionality
@@ -23165,6 +23193,10 @@ async def editar_gasto_form(
                 const cuentaSelect = document.getElementById('cuenta_gastos_id');
                 const budgetConceptSelect = document.getElementById('budget_concept_id');
                 if (!cuentaSelect || !budgetConceptSelect) return;
+                if (!canManageBudgetClassification) {{
+                    budgetConceptSelect.disabled = true;
+                    return;
+                }}
 
                 function syncBudgetConcepts() {{
                     const cuentaId = cuentaSelect.value || '';
@@ -23518,10 +23550,11 @@ async def editar_gasto(
         informe_doc = informe_res.scalar_one_or_none()
         expense.informe_documento_id = informe_doc.id if informe_doc else None
 
-    budget_concept_uuid = None
+    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    budget_concept_uuid = expense.budget_concept_id
     budget_concept = None
-    budget_concept_raw = (budget_concept_id or "").strip()
-    if budget_concept_raw:
+    budget_concept_raw = (budget_concept_id or "").strip() if can_manage_budget_classification else ""
+    if can_manage_budget_classification and budget_concept_raw:
         if not selected_cuenta_gastos or not getattr(
             selected_cuenta_gastos, "torneo_id", None
         ):
@@ -23556,7 +23589,7 @@ async def editar_gasto(
         budget_concept_uuid = UUIDType(str(budget_concept["id"]))
 
     old_budget_concept_id = expense.budget_concept_id
-    if old_budget_concept_id != budget_concept_uuid:
+    if can_manage_budget_classification and old_budget_concept_id != budget_concept_uuid:
         old_values["budget_concept_id"] = old_budget_concept_id
         new_values["budget_concept_id"] = budget_concept_uuid
         changes.append(
@@ -23565,8 +23598,11 @@ async def editar_gasto(
         )
         expense.budget_concept_id = budget_concept_uuid
 
-    manual_cuenta_raw = (cuenta_contable_id or "").strip()
-    budget_concept_changed = old_budget_concept_id != budget_concept_uuid
+    manual_cuenta_raw = (cuenta_contable_id or "").strip() if can_manage_budget_classification else ""
+    budget_concept_changed = (
+        can_manage_budget_classification
+        and old_budget_concept_id != budget_concept_uuid
+    )
     cuenta_contable_uuid = None
     cuenta = None
     should_apply_cuenta = bool(manual_cuenta_raw) or budget_concept_changed
@@ -28661,6 +28697,9 @@ async def crear_nueva_solicitud_terceros(
                 )
             )
 
+        if not _can_manage_budget_classification(current_empleado):
+            budget_concept_id = None
+
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
             session,
             empleado=current_empleado,
@@ -28922,6 +28961,9 @@ async def editar_solicitud_terceros_post(
             archivo_xml=archivo_xml,
             archivos_generales=archivos_generales,
         )
+
+        if not _can_manage_budget_classification(current_empleado):
+            budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
             session,
@@ -33436,24 +33478,31 @@ async def crear_gasto_rapido_en_informe(
             xml_data=xml_data,
         )
         owner = cuenta.empleado
-        available_budget_concepts = await _budget_concepts_for_cuenta(session, cuenta)
+        can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+        available_budget_concepts = (
+            await _budget_concepts_for_cuenta(session, cuenta)
+            if can_manage_budget_classification
+            else []
+        )
         budget_concept_raw = (
             budget_concept_id.strip()
-            if isinstance(budget_concept_id, str)
+            if can_manage_budget_classification and isinstance(budget_concept_id, str)
             else ""
         )
-        budget_concept = await resolve_budget_concept(
-            session,
-            budget_concept_id=budget_concept_raw or None,
-            tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
-            tournament_code=None,
-            fase=getattr(cuenta, "fase", None),
-            budget_direction="expense",
-        )
-        if available_budget_concepts and not budget_concept_raw:
-            raise ValueError("El concepto es requerido para este informe.")
-        if budget_concept_raw and budget_concept is None:
-            raise ValueError("El concepto no corresponde al torneo del informe.")
+        budget_concept = None
+        if can_manage_budget_classification:
+            budget_concept = await resolve_budget_concept(
+                session,
+                budget_concept_id=budget_concept_raw or None,
+                tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
+                tournament_code=None,
+                fase=getattr(cuenta, "fase", None),
+                budget_direction="expense",
+            )
+            if available_budget_concepts and not budget_concept_raw:
+                raise ValueError("El concepto es requerido para este informe.")
+            if budget_concept_raw and budget_concept is None:
+                raise ValueError("El concepto no corresponde al torneo del informe.")
         proyecto = (
             (cuenta.torneo.name or "").strip()
             if cuenta.torneo
@@ -34229,7 +34278,14 @@ async def cuenta_de_gastos_detail(
     )
     amex_bulk_form_close = "</form>" if _can_manage_amex else ""
     quick_capture_html = ""
-    quick_budget_concepts_filtered = await _budget_concepts_for_cuenta(session, cuenta)
+    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    quick_budget_concepts_filtered = (
+        await _budget_concepts_for_cuenta(session, cuenta)
+        if can_manage_budget_classification
+        else []
+    )
+    quick_budget_style = "" if can_manage_budget_classification else ' style="display:none;"'
+    quick_budget_name = "budget_concept_id" if can_manage_budget_classification else "budget_concept_id_ignored"
     quick_budget_concept_options = ""
     if quick_budget_concepts_filtered:
         quick_budget_concept_options = _html_budget_concept_options(
@@ -34256,7 +34312,7 @@ async def cuenta_de_gastos_detail(
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
                                         <th>DESCRIPCIÓN DEL GASTO</th>
-                                        <th>CONCEPTO</th>
+                                        <th{quick_budget_style}>CONCEPTO</th>
                                         <th>FECHA DEL GASTO</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
@@ -34272,7 +34328,7 @@ async def cuenta_de_gastos_detail(
                                         <td><input type="file" name="cfdi_xml" id="quick-cfdi-xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input type="file" name="cfdi_pdf" id="quick-cfdi-pdf" accept=".pdf,application/pdf"></td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
-                                        <td><select name="budget_concept_id" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered else ""}>{quick_budget_concept_options or '<option value=\"\">— Sin concepto —</option>'}</select></td>
+                                        <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>
                                         <td><input type="date" name="fecha" id="quick-fecha" required></td>
                                         <td>
                                             <input name="numero_factura" id="quick-numero-factura" list="quick-factura-options" placeholder="UUID, vale azul o no facturable">
