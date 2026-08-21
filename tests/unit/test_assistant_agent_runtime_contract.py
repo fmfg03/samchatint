@@ -52,18 +52,21 @@ async def _run_ollama_contract(
     args: dict | None = None,
     role: str = "admin",
     tool_policy_evaluator=None,
+    deterministic_tool_answer=None,
+    read_tool_result: dict | None = None,
     recorder: dict | None = None,
 ):
     payloads = list(_payloads(tool_name, args or {}))
     session = AsyncMock()
     session.add = MagicMock()
     session.commit = AsyncMock()
-    run_read_tool = AsyncMock(return_value={"ok": True})
+    run_read_tool = AsyncMock(return_value=read_tool_result or {"ok": True})
     tool_trace = []
     if recorder is not None:
         recorder["run_read_tool"] = run_read_tool
         recorder["session"] = session
         recorder["tool_trace"] = tool_trace
+        recorder["payloads"] = payloads
 
     async def ollama_chat(**_kwargs):
         return payloads.pop(0)
@@ -104,6 +107,7 @@ async def _run_ollama_contract(
         assistant_message_cls=_Record,
         message_response_cls=_Record,
         tool_policy_evaluator=tool_policy_evaluator,
+        deterministic_tool_answer=deterministic_tool_answer,
     )
     return result, tool_trace, run_read_tool, session
 
@@ -234,3 +238,32 @@ async def test_flag_on_read_allowed_for_authorized_role():
         item["assistant_policy"] for item in tool_trace if "assistant_policy" in item
     ]
     assert policy_items[-1]["decision"] == "allow"
+
+
+@pytest.mark.asyncio
+async def test_deterministic_tool_answer_short_circuits_followup_provider_call():
+    recorder = {}
+
+    def deterministic(tool_name, result):
+        if tool_name == "assistant_finance_read":
+            return f"respuesta deterministica {result['intent']}"
+        return None
+
+    result, tool_trace, run_read_tool, session = await _run_ollama_contract(
+        tool_name="assistant_finance_read",
+        args={"intent": "cashflow.summary"},
+        deterministic_tool_answer=deterministic,
+        read_tool_result={
+            "ok": True,
+            "read_only": True,
+            "intent": "cashflow.summary",
+            "payload": {"summary": {"forecast_net": 100}},
+        },
+        recorder=recorder,
+    )
+
+    assert result.assistant_message == "respuesta deterministica cashflow.summary"
+    run_read_tool.assert_awaited_once()
+    assert len(recorder["payloads"]) == 1
+    assert session.commit.await_count == 1
+    assert tool_trace[-1]["result"]["intent"] == "cashflow.summary"

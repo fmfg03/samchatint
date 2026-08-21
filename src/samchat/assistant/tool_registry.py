@@ -35,6 +35,8 @@ def _surface_for_tool(
 ) -> str:
     if name.startswith("workspace_"):
         return "workspace"
+    if name == "assistant_finance_read":
+        return "finance"
     if name.startswith("assistant_") and name not in {
         "assistant_canonical_action",
         "assistant_canonical_query",
