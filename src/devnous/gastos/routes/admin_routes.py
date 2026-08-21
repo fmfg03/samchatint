@@ -12840,6 +12840,10 @@ async def admin_perfiles_unassign(
         )
 
 
+# Presupuestos ownership boundary:
+# - The canonical dashboard/detail routes are registered from admin_budget_routes.py.
+# - This module keeps the explicit legacy UI and bridge action handlers used by
+#   the canonical UI until a separate route extraction is approved.
 @router.get("/admin/presupuestos-legacy", response_class=HTMLResponse)
 async def admin_presupuestos_legacy(
     request: Request,
@@ -14419,6 +14423,8 @@ async def admin_presupuestos_legacy(
     return HTMLResponse(content=html)
 
 
+# Presupuestos bridge actions. Do not add dashboard/detail GET ownership here;
+# register_presupuestos_routes(router) remains the canonical route owner.
 @router.post("/admin/presupuestos/import-default")
 async def admin_presupuestos_import_default(
     session: AsyncSession = Depends(get_db_session),
