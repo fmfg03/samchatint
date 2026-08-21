@@ -330,6 +330,30 @@ Acceptance:
 - Durable artifacts require a route/model/export contract.
 - Sponsor/client-facing packages require human approval.
 
+### A5. Owner/Operator Assistant Preview Consolidation
+
+Goal: classify the Claude-like owner/operator workflow as a live preview
+surface where it is actually wired, while keeping durable owner-pack artifacts,
+exports, notifications, and writes out of scope.
+
+Status: implemented as assistant preview/read-only surfaces. The conversation
+path exposes `owner.operator_workflow.preview`; the assistant tool registry
+exposes `assistant_owner_entity_folder_workspace` as `preview_only`.
+
+Acceptance:
+
+- Owner/operator workflow outputs are `assistant_proposal_preview` traces, not
+  `runtime_saved_artifact` rows.
+- `owner.operator_workflow.preview` and
+  `assistant_owner_entity_folder_workspace` remain non-authoritative:
+  `writes_attempted == 0`, no side effects, no export, no folder archive, no
+  notification, and no owner-pack state write.
+- Code that exists but is not exposed through a conversation path, route, tool,
+  permission, UI, or export remains labeled as internal/reference or
+  `available_not_wired`.
+- Durable owner-pack folders, exports, publication, archive/delete lifecycle,
+  and sponsor/client delivery require a future story/spec.
+
 ## Assistant Boundary
 
 The Assistant Boundary section is an executive index. The detailed source of
@@ -394,5 +418,5 @@ Future implementation validation should add tests only when code or route behavi
 | OQ-006 | Assistant Copilot | Should finance exports be executable or archived directly from chat after guidance is implemented? | spec_needed | P2 | story | F4 S6 implements guidance only; export authority stays with the owning product surface. |
 | OQ-007 | Artifact Layer | Should assistant artifacts receive a first-class admin UI, or remain conversation-scoped for now? | decision | P2 | story | Must preserve the Assistant Artifact Boundary either way. |
 | OQ-008 | Artifact Layer | Which sponsor/marketing proof artifacts are contractual and which are optional add-ons? | research | P2 | story | Sponsor/client-facing packages require human approval and a separate artifact story. |
-| OQ-009 | Assistant Copilot | What bounded slice, if any, should promote the coded-not-wired owner/operator assistant workflow? | research | P3 | research | Keep as preview-first or read-only unless authority is explicit. |
+| OQ-009 | Assistant Copilot | What bounded slice, if any, should promote the coded-not-wired owner/operator assistant workflow? | resolved_for_preview | P3 | validation | A5 classifies the wired path as preview-only: conversation `owner.operator_workflow.preview` plus tool `assistant_owner_entity_folder_workspace`. Future durable folders/exports need separate approval. |
 | OQ-010 | Secondary DevNous/MCP | Which Secondary DevNous/MCP components deserve promotion into the live SamChat product spine? | defer | P3 | research | Reference-only until a bounded promotion story is approved. |

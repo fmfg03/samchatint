@@ -12,6 +12,8 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
 | surface | artifact class | storage / model | route / tool | UI / discoverability | tests / evidence | authority | status | notes / gaps |
 |---|---|---|---|---|---|---|---|---|
 | Assistant saved artifacts | `runtime_saved_artifact` | `AssistantArtifact` model; `assistant_artifacts` table | `assistant_save_artifact` write tool | Conversation-scoped through assistant runtime; `/admin/artifacts` lists the class read-only, not content | `src/devnous/gastos/models.py`; schema guard entries; assistant tool surface; `src/samchat/artifacts/runtime_index.py` | Assistant tool contract and configured confirmation/role policy | live | Does not replace exports, expediente snapshots, sponsor packages, or budget source artifacts. Archive/delete policy pending. |
+| Owner/operator workflow preview | `assistant_proposal_preview` | Conversation trace only; no durable owner-pack artifact store | `owner.operator_workflow.preview` via assistant conversation routing | Assistant conversation response and tool trace; institutional artifact registry | `owner_operator_workflow.py`; `conversation_service.py`; `test_assistant_owner_operator_workflow.py`; router integration tests | Preview-only; approval required before any durable write or delivery | live/preview-only | Does not create folders, export files, notify operators, archive artifacts, or write owner-pack state. |
+| Owner Entity Folder Workspace | `assistant_proposal_preview` | Conversation/tool trace only; no folder archive or publication store | `assistant_owner_entity_folder_workspace` read tool | Assistant tool trace; institutional artifact registry | `owner_entity_folder_workspace.py`; `test_assistant_owner_entity_folder_workspace.py`; institutional registry tests | Read-only source inspection with preview-only authority | live/preview-only | Workspace cards are previews only; no folder write, export, publication, or artifact archive is authorized. |
 | Assistant report export | `report_export` | Generated response from assistant run trace or supplied report payload | `POST /api/assistant/reports/export` | Assistant report/export flow; generated download | `export_assistant_report(...)`; request/report tests around export prompt and report exportability | Export allowed only when selected run/report data is exportable and scoped to current user conversation | live | Generated delivery, not artifact archive. |
 | Finance Platform export | `report_export` | Generated XLSX from Finance Platform read snapshot/exporter | `GET /admin/finanzas/export.xlsx` | Finance Platform admin view link | `admin_finance_platform_export_xlsx(...)`; Finance Platform exporter | Finance Platform read model/exporter; admin finance permissions | live | Separate from Assistant artifacts and legacy accounting cash-flow. |
 | Presupuestos review export | `report_export` | Generated XLSX budget review workbook | `GET /admin/presupuestos/export.xlsx` | Presupuestos admin pages | `admin_presupuestos_export_xlsx(...)`; budget exporter tests | Canonical Presupuestos routes and budget services | live | Exported workbook is delivery artifact; budget authority remains in budget versions/services. |
@@ -30,6 +32,9 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
   content browsing and lifecycle controls are not approved.
 - `assistant_artifacts` archive/delete lifecycle is not defined.
 - Generated exports are delivered files, not a managed artifact archive.
+- Owner/operator workflow previews are live assistant surfaces, but they remain
+  `assistant_proposal_preview` traces. They are not saved runtime artifacts,
+  folder archives, exports, notifications, or owner-pack writes.
 - Expedited or case snapshots do not yet have a single durable artifact index.
 - Sponsor proof packages have no approved runtime model, route, export, or UI.
 - Several domain exports are discoverable only from their owning pages, not from
@@ -43,6 +48,8 @@ Related taxonomy: `docs/product/artifact-taxonomy.md`.
 ## Boundary Rules
 
 - Assistant saved artifacts are conversation-scoped runtime artifacts.
+- Owner/operator assistant previews are conversation-scoped proposal previews,
+  not `assistant_artifacts` rows and not durable owner-pack objects.
 - Report exports are owned by their domain modules.
 - Closeout files are historical evidence.
 - Budget source/export files can support budget workflows, but imported budget

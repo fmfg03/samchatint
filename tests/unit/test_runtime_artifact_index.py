@@ -11,16 +11,32 @@ def test_runtime_artifact_index_separates_artifact_classes() -> None:
     assert payload["read_only"] is True
     assert payload["summary"]["runtime_saved_artifact_count"] == 1
     assert payload["summary"]["report_export_count"] >= 5
+    assert payload["summary"]["assistant_proposal_preview_count"] == 2
     assert payload["summary"]["evidence_closeout_count"] == 1
     assert payload["summary"]["planned_artifact_count"] >= 1
 
     runtime_classes = {
         item["artifact_class"] for item in payload["runtime_saved_artifacts"]
     }
+    preview_surfaces = {
+        item["surface"]: item for item in payload["assistant_proposal_previews"]
+    }
     export_routes = {item["route_or_tool"] for item in payload["report_exports"]}
     planned_statuses = {item["status"] for item in payload["planned_artifacts"]}
 
     assert runtime_classes == {"runtime_saved_artifact"}
+    assert set(preview_surfaces) == {
+        "Owner/operator workflow preview",
+        "Owner Entity Folder Workspace",
+    }
+    assert all(
+        item["artifact_class"] == "assistant_proposal_preview"
+        for item in preview_surfaces.values()
+    )
+    assert all(
+        "archive" in item["notes"] or "archive" in item["authority"]
+        for item in preview_surfaces.values()
+    )
     assert "GET /admin/finanzas/export.xlsx" in export_routes
     assert "GET /admin/presupuestos/export.xlsx" in export_routes
     assert "POST /api/assistant/reports/export" in export_routes
@@ -35,6 +51,7 @@ def test_runtime_artifact_index_preserves_boundary_rules() -> None:
 
     assert "conversation-scoped" in rules
     assert "generated deliveries" in rules
+    assert "assistant_proposal_preview surfaces" in rules
     assert "historical evidence" in rules
     assert "does not create, archive, delete, or execute artifacts" in rules
     assert "Does not query assistant_artifacts content" in notes
@@ -48,5 +65,7 @@ def test_runtime_artifact_admin_html_labels_non_authority_surfaces() -> None:
     assert "No ejecuta exports" in html
     assert "no consulta contenido de assistant_artifacts" in html
     assert "Generated delivery, not a managed artifact archive." in html
+    assert "Owner/operator workflow preview" in html
+    assert "Does not create folders" in html
     assert "Do not claim implemented." in html
     assert "Must not be treated as live feature state." in html

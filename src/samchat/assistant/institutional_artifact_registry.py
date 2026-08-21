@@ -346,6 +346,55 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         next_wiring_step="Use workspace cards as the assistant preview surface; no folder write, export or publication without explicit approval.",
     ),
     InstitutionalArtifactSpec(
+        artifact_id="assistant.owner_operator_workflow",
+        domain="owner_pack",
+        name="Owner Operator Workflow Preview",
+        purpose=(
+            "Conversation-routed owner/operator workflow that assesses owner "
+            "needs, builds a proposed folder structure, optionally applies "
+            "safe revisions and returns a response pack without executing "
+            "effects."
+        ),
+        module_path="samchat.assistant.owner_operator_workflow",
+        entrypoint="run_owner_operator_workflow",
+        status="wired",
+        authority_level="preview_only",
+        assistant_tool="owner.operator_workflow.preview",
+        evidence_sources=(
+            "owner_needs_eval",
+            "business_diff_preview",
+            "owner_folder_builder",
+            "owner_folder_revision",
+            "owner_response_pack",
+        ),
+        input_contract=(
+            "owner context request",
+            "owner needs prompt",
+            "requested_revision?",
+        ),
+        output_contract=(
+            "assessment",
+            "preview",
+            "folder_proposal",
+            "revision?",
+            "response_pack",
+            "safety_summary",
+            "execution_status",
+            "writes_attempted",
+            "side_effects_detected",
+        ),
+        answers=(
+            "Que necesita Direccion del Owner Pack?",
+            "Prepara una respuesta o estructura propuesta para el duenio.",
+            "Que evidencia falta antes de cerrar la carpeta?",
+        ),
+        next_wiring_step=(
+            "Keep as conversation preview only; no durable folder, export, "
+            "notification, archive or owner-pack write without a separate "
+            "authority story."
+        ),
+    ),
+    InstitutionalArtifactSpec(
         artifact_id="accounting.historical_snapshot",
         domain="institutional_memory",
         name="Historical Accounting Snapshot",
