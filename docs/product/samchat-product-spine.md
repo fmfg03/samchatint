@@ -307,13 +307,16 @@ Acceptance:
 
 Goal: list current runtime artifacts and whether they have UI, export, route, DB model, tests, and authority.
 
-Status: initial index in `docs/product/runtime-artifact-index.md`.
+Status: initial index in `docs/product/runtime-artifact-index.md`; A4 adds
+read-only admin discoverability through `/admin/artifacts`.
 
 Acceptance:
 
 - `assistant_artifacts` entries have a discoverable owner surface.
 - Finance and budget exports are listed separately from assistant artifacts.
 - Proposed sponsor/marketing artifacts remain planned until approved.
+- `/admin/artifacts` does not execute exports, expose artifact content, archive
+  files, or create a cross-product artifact center.
 
 ### A3. Artifact-To-Assistant Boundary
 

@@ -21,10 +21,11 @@ Canonical surfaces:
 Legacy or secondary surfaces:
 
 - `/admin/presupuestos-legacy` in `src/devnous/gastos/routes/admin_routes.py`.
-- older `/admin/presupuestos/*` handlers still present in `src/devnous/gastos/routes/admin_routes.py`.
+- explicit `/admin/presupuestos/*` bridge action handlers still present in `src/devnous/gastos/routes/admin_routes.py` for catalog, version, import/export, and line mutations used by the canonical UI.
 - broad roadmap documents that mention finance capabilities without a route/service owner.
 
 Rule: new finance work should extend canonical services first. Legacy presupuesto code must not be treated as the owner for new AR, cashflow, or planning behavior unless a separate approved cleanup spec says so.
+The canonical dashboard/detail route owner is guarded by route-boundary tests; adding new presupuesto ownership in `admin_routes.py` requires a separate approved cleanup spec.
 
 ## Surface Map
 
@@ -35,7 +36,7 @@ Rule: new finance work should extend canonical services first. Legacy presupuest
 | Payment run | `/admin/finanzas/payment-run` and payment-run posts | live | `admin_routes.py` + documento payment services | approved unpaid documents | payment dates, closures, pay actions | cashflow AP obligations | Must not be reused as AR inverse. |
 | COI pending classification | `/admin/finanzas/coi-pendientes/clasificar` | live | `admin_routes.py` | expenses needing accounting accounts | account assignments | accounting close | Mutating accounting metadata must remain permissioned. |
 | DIOT blockers / CFDI manual links | `/admin/finanzas/diot-blockers/link-cfdi` | live | `admin_routes.py` | documents and expenses missing CFDI | manual UUID/CFDI association | tax readiness | Fiscal state is not equivalent to cash state. |
-| Canonical budgets dashboard | `/admin/presupuestos` | live | `admin_budget_routes.py` + `samchat.budgets` | budget versions, concepts, lines, monthly plan, actuals | version, metadata, line, concept, import/link actions | AR, cashflow, planning | Route namespace also has legacy handlers elsewhere. |
+| Canonical budgets dashboard | `/admin/presupuestos` | live | `admin_budget_routes.py` + `samchat.budgets` | budget versions, concepts, lines, monthly plan, actuals | version, metadata, line, concept, import/link actions | AR, cashflow, planning | Route namespace has explicit bridge action handlers guarded by boundary tests. |
 | Budget tournament detail | `/admin/presupuestos/torneo/{tournament_key}` | live | `admin_budget_routes.py` | expense/income budget lines, actuals, monthly plan | income imports, line updates, CFDI income links | AR, cashflow, project planning | Must label expense vs income directions clearly. |
 | Budget income import/export | `/admin/presupuestos/torneo/{tournament_key}/ingresos/*` | live | `admin_budget_routes.py` + budget exporter | income budget lines | income imports | AR expected-income baseline | Imported expected income is not issued invoice state. |
 | CFDI income links | `cfdi_income_bridge_service.py`; `/cfdi-ingresos/*` routes | live | `cfdi_income_bridge_service.py` + `admin_budget_routes.py` | PSP CFDI income candidates, budget links | link, upload-link, soft-unlink | AR actual/issued-income reconciliation | A CFDI link is not sufficient to prove collection timing unless cash state is defined. |
@@ -43,7 +44,7 @@ Rule: new finance work should extend canonical services first. Legacy presupuest
 | Budget actuals | `build_budget_monthly_actuals` | live | `samchat.budgets.service` | documentos, expenses, CFDI income links | none in read model | cashflow, variance, planning | Actual buckets need labels for document, expense, CFDI income, and collection. |
 | Sam Inbox finance projection | `build_sam_inbox_payload`; `_finance_items_from_platform` | live | `src/samchat/sam_inbox/service.py` | finance platform snapshot | none | operating queue, assistant routing | It is a projection, not the source of finance truth. |
 | Assistant finance adapter | finance tools in `src/samchat/assistant/router.py` and `tools.py` | live | `src/samchat/assistant/` | canonical finance routes/services/tools | governed tool calls only | assistant finance copilot | Must cite read models and not recompute parallel finance state. |
-| Presupuestos legacy | `/admin/presupuestos-legacy`; old handlers in `admin_routes.py` | obsolete_or_secondary | legacy `admin_routes.py` block | legacy budget data/views | legacy budget mutations | none until cleanup | Can confuse ownership if extended. |
+| Presupuestos legacy/actions | `/admin/presupuestos-legacy`; bridge action handlers in `admin_routes.py` | obsolete_or_secondary | legacy/bridge `admin_routes.py` block | legacy budget data/views plus canonical UI action posts | legacy or bridge mutations | none until cleanup | Must not be extended as canonical dashboard/detail ownership. |
 
 ## Finance Domains
 
