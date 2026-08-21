@@ -196,6 +196,7 @@ from samchat.budgets.service import (
     list_monthly_allocations_for_lines,
     replace_budget_line_monthly_allocations,
     replace_budget_line_monthly_plan,
+    resolve_definitive_budget_version,
     transition_budget_version,
     update_budget_line,
     update_budget_concept,
@@ -1031,6 +1032,18 @@ def render_admin_navigation(
     ]
     finanzas_items = [
         ("admin.finanzas", "/admin/finanzas", "Finanzas", "finanzas"),
+        (
+            "admin.finanzas",
+            "/admin/finanzas/cashflow",
+            "Cashflow",
+            "cashflow",
+        ),
+        (
+            "admin.finanzas",
+            "/admin/finanzas/cuentas-por-cobrar",
+            "CxC AR",
+            "ar_cxc",
+        ),
         ("admin.contabilidad", "/admin/contabilidad/deudores", "Deudores", "deudores"),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
@@ -6335,6 +6348,418 @@ async def admin_sam_inbox(
     </html>
     """
     return HTMLResponse(content=html)
+
+
+@router.get("/admin/finanzas/cashflow", response_class=HTMLResponse)
+async def admin_finance_cashflow(
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    horizon_months: int = Query(3),
+    limit: int = Query(500),
+) -> HTMLResponse:
+    """Read-only Finance Spine cashflow planning view."""
+    from samchat.cashflow import (
+        build_cashflow_planning_read_model,
+        cashflow_admin_styles,
+        render_cashflow_planning_html,
+    )
+
+    all_versions = await list_budget_versions(session)
+    resolved_year = edition_year
+    if resolved_year is None:
+        resolved_year = (
+            int(all_versions[0]["edition_year"])
+            if all_versions
+            else date.today().year
+        )
+
+    versions = await list_budget_versions(session, edition_year=resolved_year)
+    selected_version = None
+    if budget_version_id:
+        selected_version = next(
+            (item for item in versions if item["id"] == budget_version_id),
+            None,
+        )
+    if selected_version is None:
+        selected_version = await resolve_definitive_budget_version(
+            session,
+            edition_year=resolved_year,
+        )
+
+    def _cashflow_version_option(item: dict[str, Any]) -> str:
+        item_id = str(item.get("id") or "")
+        selected_id = str(selected_version.get("id") or "") if selected_version else ""
+        selected_attr = " selected" if item_id == selected_id else ""
+        label = escape(str(item.get("version_name") or item_id or "-"))
+        status = escape(str(item.get("status") or "-"))
+        return (
+            f'<option value="{escape(item_id)}"{selected_attr}>'
+            f"{label} · {status}</option>"
+        )
+
+    version_options = "".join(_cashflow_version_option(item) for item in versions)
+    year_values = sorted(
+        {
+            int(item["edition_year"])
+            for item in all_versions
+            if item.get("edition_year")
+        },
+        reverse=True,
+    )
+    if not year_values:
+        year_values = [resolved_year]
+    year_options = "".join(
+        (
+            f'<option value="{year_value}"'
+            f'{" selected" if year_value == resolved_year else ""}>'
+            f"{year_value}</option>"
+        )
+        for year_value in year_values
+    )
+
+    selected_budget_version_id = (
+        str(selected_version["id"]) if selected_version else None
+    )
+    payload = await build_cashflow_planning_read_model(
+        session,
+        budget_version_id=selected_budget_version_id,
+        edition_year=resolved_year,
+        year=year,
+        month=month,
+        horizon_months=horizon_months,
+        limit=limit,
+    )
+
+    version_select = version_options or '<option value="">Sin versiones</option>'
+    form_html = (
+        '<form method="GET" action="/admin/finanzas/cashflow" '
+        'style="display:grid;grid-template-columns:repeat(auto-fit,'
+        'minmax(180px,1fr));gap:12px;align-items:end;">'
+        f'<div><label>Año presupuesto</label><select name="edition_year">'
+        f"{year_options}</select></div>"
+        f'<div><label>Version</label><select name="budget_version_id">'
+        f"{version_select}</select></div>"
+        f'<div><label>Año cashflow</label><input name="year" type="number" '
+        f'min="2020" max="2100" value="{escape(str(year or ""))}" '
+        'placeholder="opcional"></div>'
+        f'<div><label>Mes</label><input name="month" type="number" '
+        f'min="1" max="12" value="{escape(str(month or ""))}" '
+        'placeholder="opcional"></div>'
+        f'<div><label>Horizonte</label><input name="horizon_months" '
+        f'type="number" min="1" max="24" value="{int(horizon_months or 3)}">'
+        "</div>"
+        f'<div><label>Limite</label><input name="limit" type="number" '
+        f'min="1" max="5000" value="{int(limit or 500)}"></div>'
+        '<div><button class="button" type="submit">Actualizar Cashflow</button></div>'
+        "</form>"
+    )
+    nav_html = render_admin_navigation(
+        current_empleado,
+        "cashflow",
+        subtitle="Cashflow planning read-only sobre Finance Spine.",
+    )
+    hero_html = _render_admin_workspace_hero(
+        eyebrow="Finance Spine",
+        title="Cashflow Planning",
+        description=(
+            "Vista read-only que separa caja real, obligaciones AP, plan "
+            "presupuestal, ingreso reconocido, cobranza AR probada y forecast "
+            "derivado."
+        ),
+        actions_html=form_html,
+        side_html=(
+            '<div class="eyebrow">Regla de cobranza</div>'
+            '<div style="font-size:1.05rem;font-weight:900;color:#0f172a;">'
+            "No usa candidatos AR como cobranza</div>"
+            '<div style="margin-top:8px;color:#64748b;">'
+            "Sólo accepted matches cuentan como cobranza AR probada.</div>"
+        ),
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Cashflow - Samchat</title>
+        <style>{_admin_workspace_styles("1380px")}{cashflow_admin_styles()}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {nav_html}
+            {hero_html}
+            {render_cashflow_planning_html(payload)}
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/finanzas/cuentas-por-cobrar", response_class=HTMLResponse)
+async def admin_finance_accounts_receivable(
+    request: Request,
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+    tournament_code: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    tolerance: float = Query(1.0),
+    limit: int = Query(500),
+):
+    """Read-only AR S1 consumer over budget income and PSP CFDI links."""
+    from samchat.ar import (
+        ar_admin_styles,
+        build_ar_matching_workbench,
+        build_ar_read_model,
+        render_ar_matching_workbench_html,
+        render_ar_read_model_html,
+    )
+
+    all_versions = await list_budget_versions(session)
+    resolved_year = edition_year
+    if resolved_year is None:
+        resolved_year = (
+            int(all_versions[0]["edition_year"])
+            if all_versions
+            else date.today().year
+        )
+
+    versions = await list_budget_versions(session, edition_year=resolved_year)
+    selected_version = None
+    if budget_version_id:
+        selected_version = next(
+            (item for item in versions if item["id"] == budget_version_id),
+            None,
+        )
+    if selected_version is None:
+        selected_version = await resolve_definitive_budget_version(
+            session,
+            edition_year=resolved_year,
+        )
+
+    def _ar_version_option(item: dict[str, Any]) -> str:
+        item_id = str(item.get("id") or "")
+        selected_id = str(selected_version.get("id") or "") if selected_version else ""
+        selected_attr = " selected" if item_id == selected_id else ""
+        label = escape(str(item.get("version_name") or item_id or "-"))
+        status = escape(str(item.get("status") or "-"))
+        return (
+            f'<option value="{escape(item_id)}"{selected_attr}>'
+            f"{label} · {status}</option>"
+        )
+
+    version_options = "".join(_ar_version_option(item) for item in versions)
+    year_values = sorted(
+        {
+            int(item["edition_year"])
+            for item in all_versions
+            if item.get("edition_year")
+        },
+        reverse=True,
+    )
+    if not year_values:
+        year_values = [resolved_year]
+    year_options = "".join(
+        (
+            f'<option value="{year_value}"'
+            f'{" selected" if year_value == resolved_year else ""}>'
+            f"{year_value}</option>"
+        )
+        for year_value in year_values
+    )
+
+    if selected_version:
+        payload = await build_ar_read_model(
+            session,
+            budget_version_id=str(selected_version["id"]),
+            tournament_id=tournament_id,
+            tournament_code=tournament_code,
+            limit=limit,
+        )
+        matching_payload = await build_ar_matching_workbench(
+            session,
+            budget_version_id=str(selected_version["id"]),
+            tournament_id=tournament_id,
+            tournament_code=tournament_code,
+            year=year,
+            month=month,
+            tolerance=tolerance,
+            limit=limit,
+        )
+        body_html = (
+            render_ar_read_model_html(payload)
+            + render_ar_matching_workbench_html(
+                matching_payload,
+                return_to=str(request.url),
+            )
+        )
+    else:
+        body_html = """
+            <section class="workspace-card">
+                <div class="workspace-section-title">Sin version presupuestal</div>
+                <div class="workspace-section-subtitle">
+                    No hay una version presupuestal disponible para construir AR S1.
+                </div>
+            </section>
+        """
+
+    version_select = version_options or '<option value="">Sin versiones</option>'
+    form_html = (
+        '<form method="GET" action="/admin/finanzas/cuentas-por-cobrar" '
+        'style="display:grid;grid-template-columns:repeat(auto-fit,'
+        'minmax(180px,1fr));gap:12px;align-items:end;">'
+        f'<div><label>Año</label><select name="edition_year">'
+        f"{year_options}</select></div>"
+        f'<div><label>Version</label><select name="budget_version_id">'
+        f"{version_select}</select></div>"
+        f'<div><label>Torneo ID</label><input name="tournament_id" '
+        f'value="{escape(str(tournament_id or ""))}" placeholder="opcional"></div>'
+        f'<div><label>Codigo torneo</label><input name="tournament_code" '
+        f'value="{escape(str(tournament_code or ""))}" placeholder="opcional"></div>'
+        f'<div><label>Año banco</label><input name="year" type="number" '
+        f'min="2020" max="2100" value="{escape(str(year or ""))}" '
+        'placeholder="opcional"></div>'
+        f'<div><label>Mes banco</label><input name="month" type="number" '
+        f'min="1" max="12" value="{escape(str(month or ""))}" '
+        'placeholder="opcional"></div>'
+        f'<div><label>Tolerancia</label><input name="tolerance" '
+        f'type="number" step="0.01" min="0" value="{float(tolerance or 0):.2f}">'
+        "</div>"
+        f'<div><label>Limite</label><input name="limit" type="number" '
+        f'min="1" max="5000" value="{int(limit or 500)}"></div>'
+        '<div><button class="button" type="submit">Actualizar AR</button></div>'
+        "</form>"
+    )
+    nav_html = render_admin_navigation(
+        current_empleado,
+        "ar_cxc",
+        subtitle=(
+            "Cuentas por cobrar AR S1 sobre presupuestos y CFDI de ingreso."
+        ),
+    )
+    hero_html = _render_admin_workspace_hero(
+        eyebrow="Finance Spine",
+        title="Cuentas por cobrar AR S1",
+        description=(
+            "Vista read-only de ingreso esperado, CFDI ligado y CFDI PSP sin "
+            "liga presupuestal. S1 no confirma cobranza ni calcula saldos "
+            "cobrables."
+        ),
+        actions_html=form_html,
+        side_html=(
+            '<div class="eyebrow">Estado cobranza</div>'
+            '<div style="font-size:1.2rem;font-weight:900;color:#0f172a;">'
+            "collection_unknown</div>"
+            '<div style="margin-top:8px;color:#64748b;">'
+            "Sin fuente canonica de cobro en S1</div>"
+        ),
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Cuentas por cobrar - Samchat</title>
+        <style>{_admin_workspace_styles("1380px")}{ar_admin_styles()}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {nav_html}
+            {hero_html}
+            {body_html}
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.post("/admin/finanzas/cuentas-por-cobrar/matches/accept")
+async def admin_finance_ar_match_accept(
+    budget_version_id: str = Form(...),
+    ar_item_id: str = Form(...),
+    bank_movement_id: str = Form(...),
+    ar_amount: float = Form(...),
+    acceptance_reason: str = Form(...),
+    budget_line_id: Optional[str] = Form(None),
+    cfdi_report_id: Optional[str] = Form(None),
+    payer_rfc: Optional[str] = Form(None),
+    payer_name: Optional[str] = Form(None),
+    return_to: str = Form("/admin/finanzas/cuentas-por-cobrar"),
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    """Accept a dedicated AR collection match without touching bank state."""
+    from samchat.ar.collection_matches import (
+        ARCollectionMatchError,
+        accept_ar_collection_match,
+    )
+
+    try:
+        await accept_ar_collection_match(
+            session,
+            ar_item={
+                "ar_item_id": ar_item_id,
+                "budget_version_id": budget_version_id,
+                "budget_line_id": budget_line_id,
+                "cfdi_report_id": cfdi_report_id,
+                "amount": ar_amount,
+                "payer_rfc": payer_rfc,
+                "payer_name": payer_name,
+            },
+            bank_movement_id=bank_movement_id,
+            actor_empleado_id=str(current_empleado.id),
+            acceptance_reason=acceptance_reason,
+            evidence={"source": "admin_finance_ar_match_accept"},
+        )
+        await session.commit()
+        target = return_to
+    except ARCollectionMatchError as exc:
+        await session.rollback()
+        separator = "&" if "?" in return_to else "?"
+        target = f"{return_to}{separator}error_msg={quote(str(exc))}"
+    return RedirectResponse(url=target, status_code=303)
+
+
+@router.post("/admin/finanzas/cuentas-por-cobrar/matches/{match_id}/reverse")
+async def admin_finance_ar_match_reverse(
+    match_id: str,
+    reversal_reason: str = Form(...),
+    return_to: str = Form("/admin/finanzas/cuentas-por-cobrar"),
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    """Reverse a dedicated AR collection match without deleting history."""
+    from samchat.ar.collection_matches import (
+        ARCollectionMatchError,
+        reverse_ar_collection_match,
+    )
+
+    try:
+        await reverse_ar_collection_match(
+            session,
+            match_id=match_id,
+            actor_empleado_id=str(current_empleado.id),
+            reversal_reason=reversal_reason,
+        )
+        await session.commit()
+        target = return_to
+    except ARCollectionMatchError as exc:
+        await session.rollback()
+        separator = "&" if "?" in return_to else "?"
+        target = f"{return_to}{separator}error_msg={quote(str(exc))}"
+    return RedirectResponse(url=target, status_code=303)
 
 
 @router.get("/admin/finanzas/export.xlsx", response_class=Response)
