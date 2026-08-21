@@ -34,11 +34,6 @@ ALLOWED_ADMIN_ROUTE_BUDGET_PATHS = {
     "/admin/presupuestos/conceptos/export.xlsx",
     "/admin/presupuestos/conceptos/import",
     "/admin/presupuestos/versiones/{version_id}/lineas/import",
-    "/admin/presupuestos/versiones/create",
-    "/admin/presupuestos/versiones/{version_id}/transition",
-    "/admin/presupuestos/versiones/{version_id}/update",
-    "/admin/presupuestos/versiones/{version_id}/lineas/create",
-    "/admin/presupuestos/lineas/{line_id}/update",
 }
 
 ADMIN_ROUTE_BUDGET_POLICY = {
@@ -55,19 +50,6 @@ ADMIN_ROUTE_BUDGET_POLICY = {
     "/admin/presupuestos/versiones/{version_id}/lineas/import": (
         "candidate_remove_later"
     ),
-    "/admin/presupuestos/versiones/create": "bridge_required_by_canonical_ui",
-    "/admin/presupuestos/versiones/{version_id}/transition": (
-        "bridge_required_by_canonical_ui"
-    ),
-    "/admin/presupuestos/versiones/{version_id}/update": (
-        "bridge_required_by_canonical_ui"
-    ),
-    "/admin/presupuestos/versiones/{version_id}/lineas/create": (
-        "bridge_required_by_canonical_ui"
-    ),
-    "/admin/presupuestos/lineas/{line_id}/update": (
-        "bridge_required_by_canonical_ui"
-    ),
 }
 
 CANONICAL_BUDGET_ROUTE_PATHS = {
@@ -80,7 +62,12 @@ CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/link",
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link",
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink",
+    "/admin/presupuestos/versiones/create",
     "/admin/presupuestos/versiones/copy-forward",
+    "/admin/presupuestos/versiones/{version_id}/lineas/create",
+    "/admin/presupuestos/versiones/{version_id}/transition",
+    "/admin/presupuestos/versiones/{version_id}/update",
+    "/admin/presupuestos/lineas/{line_id}/update",
 }
 
 CANONICAL_UI_BRIDGE_TARGET_SNIPPETS = {
@@ -95,21 +82,6 @@ CANONICAL_UI_BRIDGE_TARGET_SNIPPETS = {
     ),
     "/admin/presupuestos/conceptos/import": (
         "/admin/presupuestos/conceptos/import",
-    ),
-    "/admin/presupuestos/versiones/{version_id}/transition": (
-        '/admin/presupuestos/versiones/{row.get("id")}/transition',
-    ),
-    "/admin/presupuestos/versiones/create": (
-        "/admin/presupuestos/versiones/create",
-    ),
-    "/admin/presupuestos/versiones/{version_id}/update": (
-        '/admin/presupuestos/versiones/{selected_version["id"]}/update',
-    ),
-    "/admin/presupuestos/versiones/{version_id}/lineas/create": (
-        "/admin/presupuestos/versiones/{escape(str(version_id))}/lineas/create",
-    ),
-    "/admin/presupuestos/lineas/{line_id}/update": (
-        "/admin/presupuestos/lineas/{escape(line_id)}/update",
     ),
 }
 
@@ -174,9 +146,8 @@ def test_presupuestos_canonical_routes_are_registered_from_budget_module() -> No
         '@router.get(\n        "/admin/presupuestos/torneo/{tournament_key}",'
         in budget_source
     )
-    assert "from .admin_budget_routes import register_presupuestos_routes" in (
-        admin_source
-    )
+    assert "register_presupuestos_routes" in admin_source
+    assert "_presupuestos_redirect_url" in admin_source
     assert "register_presupuestos_routes(router)" in admin_source
     assert '@router.get("/admin/presupuestos", response_class=HTMLResponse)' not in (
         admin_source

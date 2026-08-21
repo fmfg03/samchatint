@@ -632,7 +632,6 @@ def test_tournament_budget_detail_splits_lines_by_direction():
 def test_tournament_budget_detail_preserves_income_expense_view():
     route_source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
     ui_source = Path("src/devnous/gastos/routes/admin_budget_ui.py").read_text()
-    admin_source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
     detail_source = route_source[
         route_source.index(
             "async def admin_presupuestos_tournament_detail"
@@ -647,7 +646,7 @@ def test_tournament_budget_detail_preserves_income_expense_view():
     assert "budget_view=selected_budget_view" in detail_source
     assert "budget_view=\"income\"" in route_source
     assert 'name="budget_view"' in ui_source
-    assert "budget_view: Optional[str] = Form(None)" in admin_source
+    assert "budget_view: Optional[str] = Form(None)" in route_source
 
 
 def test_budget_and_accounting_surfaces_link_to_sat_cfdi_workflows():
@@ -680,7 +679,7 @@ def test_budget_and_accounting_surfaces_link_to_sat_cfdi_workflows():
 
 
 def test_create_budget_line_route_creates_concept_with_direction_and_account():
-    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
     route_source = source[
         source.index(
             '@router.post("/admin/presupuestos/versiones/{version_id}/lineas/create")'
@@ -755,11 +754,11 @@ def test_budget_catalog_tournament_filter_is_wired():
     assert "selected_tournament_aliases" in active_route_source
     assert "tournaments = [" in active_route_source
 
-    assert "catalog_scope: Optional[str] = None" in source
-    assert "catalog_tournament_ids: Optional[List[str]] = None" in source
+    assert "catalog_scope: Optional[str] = None" in active_route_source
+    assert "catalog_tournament_ids: Optional[list[str]] = None" in active_route_source
     assert "catalog_tournament_ids: List[str] = Form([])" in source
-    assert "catalog_scope={quote(str(catalog_scope))}" in source
-    assert "catalog_tournament_ids={quote(str(tournament_id))}" in source
+    assert "catalog_scope={quote(str(catalog_scope))}" in active_route_source
+    assert "catalog_tournament_ids={quote(str(tournament_id))}" in active_route_source
 
 
 def test_budget_catalog_upload_supports_direction_counterpart_and_active_fields():
