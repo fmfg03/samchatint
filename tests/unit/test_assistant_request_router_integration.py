@@ -404,14 +404,14 @@ async def test_owner_variable_question_uses_live_evidence_when_available(monkeyp
         "Cuantos equipos reales tiene Copa Telmex para el dueno?"
     )
 
-    assert "Tengo una respuesta parcial" in response.assistant_message
+    assert "Si tengo ese dato" in response.assistant_message
     assert "18" in response.assistant_message
     assert "db.copa_telmex.teams" in response.assistant_message
     trace = response.tool_trace[0]["owner_variable_query"]
     assert trace["live_evidence_status"] == "resolved"
     assert trace["live_evidence_reports"] == 1
     assert trace["provider_called"] is False
-    assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "partial"
+    assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "supported"
 
 
 @pytest.mark.asyncio

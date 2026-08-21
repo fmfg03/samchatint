@@ -297,6 +297,11 @@ def build_owner_variable_query_report(
     """Resolve a natural-language owner question against Owner Pack variables."""
 
     candidates = _candidate_fields(question)
+    resolved_candidates = [
+        candidate
+        for candidate in candidates
+        if candidate.field not in {"tournament", "entity_name"}
+    ] or candidates
     source_routes = _inventory_field_sources()
     live_by_field = _field_snapshots(live_reports)
     resolutions = [
@@ -306,9 +311,9 @@ def build_owner_variable_query_report(
             soul_wizard_payload=soul_wizard_payload,
             source_routes=source_routes,
         )
-        for candidate in candidates
+        for candidate in resolved_candidates
     ]
-    status = _global_status(resolutions, candidates)
+    status = _global_status(resolutions, resolved_candidates)
     next_questions = []
     if status == OWNER_VARIABLE_UNMAPPED:
         next_questions.append("Quieres preguntar por equipos, jugadores, fases, pagos, hoteles, sede, alimentos o activaciones?")
