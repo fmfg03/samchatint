@@ -24,13 +24,17 @@ from samchat.budgets.service import (
     ensure_budget_schema,
     import_budget_lines_upload,
     list_monthly_plan_for_lines,
+    list_budget_audit_events,
     list_budget_concepts,
     list_budget_lines,
     list_budget_versions,
     resolve_budget_tournament_context,
     resolve_definitive_budget_version,
 )
-from samchat.budgets.exporter import generate_budget_income_xlsx
+from samchat.budgets.exporter import (
+    generate_budget_income_xlsx,
+    generate_budget_review_xlsx,
+)
 
 from .admin_budget_ui import (
     budget_dashboard_url,
@@ -783,6 +787,67 @@ def register_presupuestos_routes(router) -> None:
         </div></body></html>
         """
         return HTMLResponse(content=html)
+
+    @router.get("/admin/presupuestos/export.xlsx")
+    async def admin_presupuestos_export_xlsx(
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+        version_id: Optional[str] = Query(None),
+    ):
+        _require_budget_access(current_empleado, "export")
+        await ensure_budget_schema(session)
+        versions = await list_budget_versions(session, edition_year=2026)
+        selected_version = None
+        if version_id:
+            selected_version = next(
+                (item for item in versions if item["id"] == version_id), None
+            )
+        if selected_version is None and versions:
+            selected_version = versions[0]
+        snapshot = await build_budget_snapshot(
+            session=session,
+            edition_year=2026,
+            version_id=selected_version["id"] if selected_version else None,
+        )
+        lines = (
+            await list_budget_lines(
+                session,
+                version_id=selected_version["id"],
+                limit=500,
+            )
+            if selected_version
+            else []
+        )
+        audit_events = (
+            await list_budget_audit_events(
+                session,
+                version_id=selected_version["id"] if selected_version else None,
+                limit=500,
+            )
+            if _budget_access_map(current_empleado).get("audit_read")
+            else []
+        )
+        payload = generate_budget_review_xlsx(
+            snapshot=snapshot,
+            versions=versions,
+            lines=lines,
+            audit_events=audit_events,
+            selected_version=selected_version,
+        )
+        filename = "presupuesto_2026"
+        if selected_version:
+            version_name = str(
+                selected_version.get("version_name") or "version"
+            ).lower()
+            filename = f"presupuesto_2026_{version_name.replace(' ', '_')}"
+        headers = {"Content-Disposition": f'attachment; filename="{filename}.xlsx"'}
+        return Response(
+            content=payload,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            ),
+            headers=headers,
+        )
 
     @router.get(
         "/admin/presupuestos/torneo/{tournament_key}", response_class=HTMLResponse

@@ -34,7 +34,6 @@ ALLOWED_ADMIN_ROUTE_BUDGET_PATHS = {
     "/admin/presupuestos/conceptos/export.xlsx",
     "/admin/presupuestos/conceptos/import",
     "/admin/presupuestos/versiones/{version_id}/lineas/import",
-    "/admin/presupuestos/export.xlsx",
     "/admin/presupuestos/versiones/create",
     "/admin/presupuestos/versiones/{version_id}/transition",
     "/admin/presupuestos/versiones/{version_id}/update",
@@ -56,7 +55,6 @@ ADMIN_ROUTE_BUDGET_POLICY = {
     "/admin/presupuestos/versiones/{version_id}/lineas/import": (
         "candidate_remove_later"
     ),
-    "/admin/presupuestos/export.xlsx": "bridge_external_dependency",
     "/admin/presupuestos/versiones/create": "bridge_required_by_canonical_ui",
     "/admin/presupuestos/versiones/{version_id}/transition": (
         "bridge_required_by_canonical_ui"
@@ -74,6 +72,7 @@ ADMIN_ROUTE_BUDGET_POLICY = {
 
 CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos",
+    "/admin/presupuestos/export.xlsx",
     "/admin/presupuestos/torneo/{tournament_key}",
     "/admin/presupuestos/torneo/{tournament_key}/ingresos/import",
     "/admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx",
@@ -216,11 +215,11 @@ def test_admin_routes_budget_namespace_has_explicit_policy_classification() -> N
     )
     assert set(ADMIN_ROUTE_BUDGET_POLICY.values()) == {
         "bridge_required_by_canonical_ui",
-        "bridge_external_dependency",
         "candidate_remove_later",
         "legacy_reference",
     }
     assert "canonical_owner" not in set(ADMIN_ROUTE_BUDGET_POLICY.values())
+    assert "/admin/presupuestos/export.xlsx" not in ADMIN_ROUTE_BUDGET_POLICY
 
 
 def test_visible_budget_entrypoints_do_not_link_to_legacy_route() -> None:
@@ -276,17 +275,11 @@ def test_candidate_remove_later_budget_routes_are_not_canonical_ui_targets() -> 
     assert "lineas/import" not in canonical_ui_source
 
 
-def test_external_budget_export_dependencies_are_not_marked_removable() -> None:
+def test_external_budget_export_dependencies_point_to_canonical_owner_route() -> None:
     external_sources = "\n".join(
         [FINANCE_READ_ADAPTER.read_text(), RUNTIME_ARTIFACT_INDEX.read_text()]
     )
-    external_dependency_routes = {
-        route
-        for route, policy in ADMIN_ROUTE_BUDGET_POLICY.items()
-        if policy == "bridge_external_dependency"
-    }
 
-    assert external_dependency_routes == {"/admin/presupuestos/export.xlsx"}
-    for route in external_dependency_routes:
-        assert route in external_sources
-        assert ADMIN_ROUTE_BUDGET_POLICY[route] != "candidate_remove_later"
+    assert "/admin/presupuestos/export.xlsx" in external_sources
+    assert "/admin/presupuestos/export.xlsx" in CANONICAL_BUDGET_ROUTE_PATHS
+    assert "/admin/presupuestos/export.xlsx" not in ADMIN_ROUTE_BUDGET_POLICY

@@ -1,15 +1,15 @@
 # Presupuestos Route Policy
 
-Status: C2 draft policy
+Status: C3 route-owner policy
 Date: 2026-08-21
-Scope: route inventory and policy only. No runtime, schema, permission, import,
-export, or mutation behavior changes.
+Scope: route inventory and route-owner policy only. No schema, permission,
+import, export workbook format, or mutation behavior changes.
 
 ## Operating Rule
 
 `src/devnous/gastos/routes/admin_budget_routes.py` is the canonical route owner
 for the live Presupuestos dashboard, tournament detail, income budget, CFDI
-income, and copy-forward budget workflows.
+income, general budget workbook export, and copy-forward budget workflows.
 
 `src/devnous/gastos/routes/admin_routes.py` may still contain bridge action
 handlers used by canonical Presupuestos UI forms, plus legacy candidates that
@@ -22,7 +22,6 @@ authority for new AR, cashflow, planning, or assistant finance behavior.
 |---|---|---|
 | `canonical_owner` | Route is owned by the canonical Presupuestos module. | Extend only through the owning service/UI contract and tests. |
 | `bridge_required_by_canonical_ui` | Handler still lives in `admin_routes.py` but supports canonical UI form targets or generated exports. | Keep callable until route-target validation proves it can move, hide, redirect, or be removed. |
-| `bridge_external_dependency` | Handler still lives in `admin_routes.py` and is referenced by another live catalog, assistant answer, runtime artifact index, or external link. | Do not remove until the dependency is moved to a canonical owner or replaced with a compatible route. |
 | `legacy_reference` | Historical route or view retained for comparison or migration. | Do not extend for new finance lanes. |
 | `candidate_hide` | Visible legacy entrypoint that may be hidden later. | Requires route-target and navigation validation before UI changes. |
 | `candidate_redirect` | Entrypoint that may redirect to canonical routes later. | Requires parameter compatibility proof before redirect. |
@@ -33,6 +32,7 @@ authority for new AR, cashflow, planning, or assistant finance behavior.
 These routes are owned by `admin_budget_routes.py`:
 
 - `GET /admin/presupuestos`
+- `GET /admin/presupuestos/export.xlsx`
 - `GET /admin/presupuestos/torneo/{tournament_key}`
 - `POST /admin/presupuestos/torneo/{tournament_key}/ingresos/import`
 - `GET /admin/presupuestos/torneo/{tournament_key}/ingresos/export.xlsx`
@@ -45,7 +45,7 @@ These routes are owned by `admin_budget_routes.py`:
 ## Admin Routes Bridge And Legacy Inventory
 
 These routes are the only approved Presupuestos namespace routes still allowed
-inside `admin_routes.py` during C2:
+inside `admin_routes.py` during C3:
 
 | route | method | class | notes |
 |---|---|---|---|
@@ -56,7 +56,6 @@ inside `admin_routes.py` during C2:
 | `/admin/presupuestos/conceptos/export.xlsx` | GET | `bridge_required_by_canonical_ui` | Generated budget catalog export; not assistant artifact authority. |
 | `/admin/presupuestos/conceptos/import` | POST | `bridge_required_by_canonical_ui` | Bridge import action; keep permissioned. |
 | `/admin/presupuestos/versiones/{version_id}/lineas/import` | POST | `candidate_remove_later` | Legacy annual line import action; not observed as a canonical UI target in C2b. |
-| `/admin/presupuestos/export.xlsx` | GET | `bridge_external_dependency` | Generated budget workbook export referenced by assistant export guidance and runtime artifact index; extract or replace before removal. |
 | `/admin/presupuestos/versiones/create` | POST | `bridge_required_by_canonical_ui` | Bridge version creation action. |
 | `/admin/presupuestos/versiones/{version_id}/transition` | POST | `bridge_required_by_canonical_ui` | Bridge version status transition action. |
 | `/admin/presupuestos/versiones/{version_id}/update` | POST | `bridge_required_by_canonical_ui` | Bridge version metadata update action. |
@@ -98,14 +97,15 @@ C2b:
 - `/admin/presupuestos/import-default`
 - `/admin/presupuestos/versiones/{version_id}/lineas/import`
 
-External dependencies observed during C2c:
+External dependencies observed during C2c and resolved during C3:
 
 - `/admin/presupuestos/export.xlsx` is referenced by
   `assistant_finance_read` as `budget_review_xlsx`.
 - `/admin/presupuestos/export.xlsx` is referenced by the runtime artifact index
   as the Presupuestos review export.
-- Therefore `/admin/presupuestos/export.xlsx` is not removable until a canonical
-  export owner route replaces it or the dependent catalogs are updated.
+- C3 moved `/admin/presupuestos/export.xlsx` into the canonical
+  `admin_budget_routes.py` owner while preserving the public path and generated
+  workbook contract for those dependencies.
 
 Legacy visibility finding:
 
@@ -127,10 +127,9 @@ Legacy visibility finding:
 - Generated Presupuestos exports are report exports. They are not
   `assistant_artifacts` rows and are not a managed artifact archive.
 
-## Future C3 Options
+## Future Cleanup Options
 
-No C3 action is approved by this document. A later story/spec may choose one
-bounded action:
+A later story/spec may choose one bounded action:
 
 - `hide`: remove visible legacy navigation/form references while keeping routes
   callable.

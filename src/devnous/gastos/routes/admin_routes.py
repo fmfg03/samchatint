@@ -174,7 +174,6 @@ from .dependencies import (
 )
 from .auth_routes import get_password_hash
 from devnous.tournaments.config import ACTIVE_TOURNAMENT_SCOPE
-from samchat.budgets.exporter import generate_budget_review_xlsx
 from samchat.budgets.service import (
     build_budget_commitment_expense_preview,
     DEFAULT_BUDGET_ARTIFACT,
@@ -14876,59 +14875,6 @@ async def admin_presupuestos_import_lines(
             url=f"/admin/presupuestos?version_id={quote(str(version_id))}&error_msg={quote(_OPERATION_GENERIC_ERROR)}",
             status_code=303,
         )
-
-
-@router.get("/admin/presupuestos/export.xlsx")
-async def admin_presupuestos_export_xlsx(
-    session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = Depends(get_current_empleado),
-    version_id: Optional[str] = Query(None),
-):
-    _require_budget_access(current_empleado, "export")
-    await ensure_budget_schema(session)
-    versions = await list_budget_versions(session, edition_year=2026)
-    selected_version = None
-    if version_id:
-        selected_version = next(
-            (item for item in versions if item["id"] == version_id), None
-        )
-    if selected_version is None and versions:
-        selected_version = versions[0]
-    snapshot = await build_budget_snapshot(
-        session=session,
-        edition_year=2026,
-        version_id=selected_version["id"] if selected_version else None,
-    )
-    lines = (
-        await list_budget_lines(session, version_id=selected_version["id"], limit=500)
-        if selected_version
-        else []
-    )
-    audit_events = (
-        await list_budget_audit_events(
-            session,
-            version_id=selected_version["id"] if selected_version else None,
-            limit=500,
-        )
-        if _budget_access_map(current_empleado).get("audit_read")
-        else []
-    )
-    payload = generate_budget_review_xlsx(
-        snapshot=snapshot,
-        versions=versions,
-        lines=lines,
-        audit_events=audit_events,
-        selected_version=selected_version,
-    )
-    filename = "presupuesto_2026"
-    if selected_version:
-        filename = f"presupuesto_2026_{str(selected_version.get('version_name') or 'version').lower().replace(' ', '_')}"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}.xlsx"'}
-    return Response(
-        content=payload,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
-    )
 
 
 @router.post("/admin/presupuestos/versiones/create")
