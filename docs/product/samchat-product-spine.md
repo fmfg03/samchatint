@@ -82,6 +82,8 @@ Current authority evidence:
 - `/admin/presupuestos` and tournament budget detail routes are registered from `src/devnous/gastos/routes/admin_budget_routes.py`.
 - `src/samchat/finance_platform/service.py` builds read-only snapshots for action queue, cash control, accounting close, tax readiness, payment run, copilot prompts, and finance brief.
 - `src/samchat/budgets/service.py` owns canonical budget versions, lines, concepts, monthly plan, actuals, income lines, and SSOT budget catalog handling.
+- `docs/product/presupuestos-route-policy.md` classifies Presupuestos route
+  ownership, bridge handlers, and legacy references for cleanup planning.
 
 ### Artifact Layer
 
@@ -177,6 +179,32 @@ Acceptance:
 Next checkpoint:
 
 - D1 freezes `admin_budget_routes.py` as the canonical presupuesto owner and keeps legacy presupuesto handlers under a `document only` policy until a separate route cleanup is approved.
+
+### C2. Presupuestos Legacy Route Inventory And Policy
+
+Goal: make the Presupuestos route cleanup decision explicit before future AR,
+cashflow, planning, assistant finance export execution, or archive work extends
+the wrong route owner.
+
+Status: policy/inventory only. No route removal, redirect, hide, permission,
+DB, import/export, or runtime behavior change.
+
+Output:
+
+- `docs/product/presupuestos-route-policy.md`
+
+Acceptance:
+
+- Canonical Presupuestos routes are classified as `canonical_owner`.
+- Remaining `/admin/presupuestos/*` handlers in `admin_routes.py` are
+  classified as either `bridge_required_by_canonical_ui` or
+  `bridge_external_dependency` or `candidate_remove_later` based on C2b/C2c
+  route-target and export-catalog evidence.
+- `/admin/presupuestos-legacy` is classified as `legacy_reference`.
+- Future cleanup options are limited to `hide`, `redirect`, `remove later`, or
+  continued `document only`.
+- Bridge and legacy routes are explicitly non-authority for new AR, cashflow,
+  planning, or assistant finance work.
 
 ### F2. Accounts Receivable And Real Income
 
@@ -412,7 +440,7 @@ Future implementation validation should add tests only when code or route behavi
 |---|---|---|---|---:|---|---|
 | OQ-001 | Core Operations | Should `docs/product/samchat-product-spine.md` become the replacement for the missing `SAMCHAT_SSOT.md`, or remain a product document under `docs/product/`? | decision | P1 | story | Do not rename or promote until an explicit SSOT governance story is approved. |
 | OQ-002 | Finance Spine | Which finance lane should be delivered next after AR, cashflow, and finance assistant export guidance: direct export execution/archive or legacy presupuesto cleanup? | decision | P1 | story | Avoid mixing export execution or archiving with route cleanup in one scope. |
-| OQ-003 | Finance Spine | Should legacy presupuesto handlers be removed, hidden, or left as `obsolete_or_secondary` documentation references? | spec_needed | P2 | research | Requires read-only route inventory before touching handlers. |
+| OQ-003 | Finance Spine | Should legacy presupuesto handlers be removed, hidden, or left as `obsolete_or_secondary` documentation references? | inventory_ready | P2 | story | C2 adds route policy/inventory. C3 must choose one action: `hide`, `redirect`, `remove later`, or keep `document only`. |
 | OQ-004 | Assistant Copilot | Should any additional budget assistant read beyond `budget.snapshot` be added? | defer | P3 | research | `budget.snapshot` is implemented in F4 S4; new budget reads need separate scope. |
 | OQ-005 | Assistant Copilot | Should any additional Finance Platform assistant read beyond `finance.platform` be added? | defer | P3 | research | `finance.platform` is implemented in F4 S5; new platform reads need separate scope. |
 | OQ-006 | Assistant Copilot | Should finance exports be executable or archived directly from chat after guidance is implemented? | spec_needed | P2 | story | F4 S6 implements guidance only; export authority stays with the owning product surface. |
