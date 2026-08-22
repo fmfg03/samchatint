@@ -22908,8 +22908,16 @@ async def editar_gasto_form(
     # Build form HTML
     disabled_attr = "disabled" if not can_edit else ""
     motivo_required = "required" if (is_locked and is_finance_admin) else ""
-    tip_concept_tokens = ("alimento", "alimentos", "consumo", "cafeteria", "cafeteria", "restaurante", "comida", "cena", "desayuno")
-    tip_group_visible = any(token in (expense.concepto or "").lower() for token in tip_concept_tokens) or bool(expense.propina_no_deducible)
+    selected_budget_concept_label = ""
+    for concept in budget_concepts_by_cuenta.get(str(expense.cuenta_gastos_id or ""), []):
+        if str(concept.get("id") or "") == str(selected_budget_concept_id or ""):
+            selected_budget_concept_label = str(concept.get("label") or "")
+            break
+    tip_group_visible = _expense_tip_group_should_show(
+        concepto=expense.concepto,
+        budget_concept_label=selected_budget_concept_label,
+        propina_no_deducible=expense.propina_no_deducible,
+    )
     tip_group_display = "block" if tip_group_visible else "none"
 
     motivo_field_html = ""
@@ -23122,6 +23130,24 @@ async def editar_gasto_form(
             const budgetConceptsByCuenta = {json.dumps(budget_concepts_by_cuenta)};
             const canManageBudgetClassification = {json.dumps(can_manage_budget_classification)};
             let selectedBudgetConceptId = {json.dumps(selected_budget_concept_id)};
+            const expenseTipTokens = ['alimento', 'alimentos', 'consumo', 'cafeteria', 'restaurant', 'restaurante', 'comida', 'cena', 'desayuno'];
+
+            function textMatchesExpenseTip(value) {{
+                const normalized = String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                return expenseTipTokens.some(token => normalized.includes(token.normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
+            }}
+
+            function syncExpenseTipVisibility() {{
+                const propinaGroup = document.getElementById('propina-group');
+                if (!propinaGroup) return;
+                const conceptoEl = document.getElementById('concepto');
+                const budgetConceptSelect = document.getElementById('budget_concept_id');
+                const selectedConceptText = budgetConceptSelect && budgetConceptSelect.selectedOptions.length
+                    ? budgetConceptSelect.selectedOptions[0].textContent
+                    : '';
+                const shouldShow = textMatchesExpenseTip(conceptoEl ? conceptoEl.value : '') || textMatchesExpenseTip(selectedConceptText);
+                propinaGroup.style.display = shouldShow ? 'block' : 'none';
+            }}
 
             // Cuenta contable search functionality
             const searchInput = document.getElementById('cuenta_contable_search');
@@ -23207,14 +23233,24 @@ async def editar_gasto_form(
                         budgetConceptSelect.appendChild(option);
                     }});
                     budgetConceptSelect.disabled = {json.dumps(not can_edit)} || items.length === 0;
+                    syncExpenseTipVisibility();
                 }}
 
                 cuentaSelect.addEventListener('change', function() {{
                     selectedBudgetConceptId = '';
                     syncBudgetConcepts();
                 }});
+                budgetConceptSelect.addEventListener('change', function() {{
+                    selectedBudgetConceptId = budgetConceptSelect.value || '';
+                    syncExpenseTipVisibility();
+                }});
                 syncBudgetConcepts();
             }})();
+            const conceptoForTip = document.getElementById('concepto');
+            if (conceptoForTip) {{
+                conceptoForTip.addEventListener('input', syncExpenseTipVisibility);
+            }}
+            syncExpenseTipVisibility();
         </script>
     </body>
     </html>
@@ -31150,6 +31186,37 @@ async def _tournament_budget_concepts_map_for_js(
             key=lambda entry: str(entry.get("label") or "").lower(),
         )
     return by_tournament
+
+
+_EXPENSE_TIP_CONCEPT_TOKENS = (
+    "alimento",
+    "alimentos",
+    "consumo",
+    "cafeteria",
+    "restaurant",
+    "restaurante",
+    "comida",
+    "cena",
+    "desayuno",
+)
+
+
+def _matches_expense_tip_concept(value: Optional[str]) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return any(token in normalized for token in _EXPENSE_TIP_CONCEPT_TOKENS)
+
+
+def _expense_tip_group_should_show(
+    *,
+    concepto: Optional[str],
+    budget_concept_label: Optional[str] = None,
+    propina_no_deducible: Optional[float] = None,
+) -> bool:
+    """Return whether the tip capture section should be visible for an expense form."""
+    return bool(propina_no_deducible) or _matches_expense_tip_concept(
+        concepto
+    ) or _matches_expense_tip_concept(budget_concept_label)
 
 
 def _html_budget_concept_options(
