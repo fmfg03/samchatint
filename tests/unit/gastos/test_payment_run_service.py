@@ -3,6 +3,7 @@ from uuid import uuid4
 
 from devnous.gastos.services.payment_run_service import (
     DEFAULT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS,
+    can_confirm_payment_run_payment,
     can_manage_payment_run,
     configured_payment_run_manager_ids,
     parse_payment_run_date,
@@ -54,3 +55,32 @@ def test_parse_payment_run_date_from_iso_string() -> None:
     parsed = parse_payment_run_date("2026-07-31")
 
     assert parsed.isoformat() == "2026-07-31"
+
+
+def test_payment_run_payment_confirmation_is_accounting_only() -> None:
+    assert can_confirm_payment_run_payment(
+        SimpleNamespace(id=uuid4(), rol="contabilidad")
+    )
+    assert can_confirm_payment_run_payment(
+        SimpleNamespace(id=uuid4(), rol="usuario", departamento="Contabilidad")
+    )
+    assert can_confirm_payment_run_payment(
+        SimpleNamespace(
+            id=uuid4(),
+            rol="usuario",
+            permissions={"contabilidad.pagos.marcar_pagado"},
+        )
+    )
+    assert can_confirm_payment_run_payment(
+        SimpleNamespace(
+            id=uuid4(),
+            rol="usuario",
+            permissions={"admin.contabilidad.*"},
+        )
+    )
+    assert not can_confirm_payment_run_payment(
+        SimpleNamespace(id=uuid4(), rol="finanzas", departamento="finanzas")
+    )
+    assert not can_confirm_payment_run_payment(
+        SimpleNamespace(id=uuid4(), rol="operaciones", departamento="operaciones")
+    )

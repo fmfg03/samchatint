@@ -43,6 +43,12 @@ class PaymentRunPermissionError(Exception):
     message = "No tienes facultad para consultar o cerrar Payment Run."
 
 
+class PaymentRunPaymentPermissionError(PaymentRunPermissionError):
+    """Raised when an empleado cannot confirm a payment-run payment."""
+
+    message = "Solo Contabilidad puede marcar solicitudes como pagadas."
+
+
 class PaymentRunValidationError(Exception):
     """Raised when a requested Payment Run operation is invalid."""
 
@@ -95,17 +101,78 @@ def can_manage_payment_run(
     return empleado_id in configured_payment_run_manager_ids(allowed_ids)
 
 
+def _normalized_text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _employee_permissions(empleado: Any) -> set[str]:
+    raw = getattr(empleado, "effective_permissions", None)
+    if raw is None:
+        raw = getattr(empleado, "permissions", None)
+    if raw is None:
+        return set()
+    if isinstance(raw, str):
+        raw = raw.replace(";", ",").split(",")
+    try:
+        return {str(item or "").strip().lower() for item in raw if str(item or "").strip()}
+    except TypeError:
+        return set()
+
+
+def _has_any_permission(empleado: Any, *permissions: str) -> bool:
+    employee_permissions = _employee_permissions(empleado)
+    if "*" in employee_permissions or "admin.*" in employee_permissions:
+        return True
+    for permission in permissions:
+        required = permission.strip().lower()
+        if required in employee_permissions:
+            return True
+        parts = required.split(".")
+        for i in range(len(parts), 0, -1):
+            if ".".join(parts[:i]) + ".*" in employee_permissions:
+                return True
+    return False
+
+
+def can_confirm_payment_run_payment(empleado: Any) -> bool:
+    """Only Contabilidad can attach proof and mark Payment Run items as paid."""
+    if is_superadmin_role(getattr(empleado, "rol", None)):
+        return True
+    if _has_any_permission(
+        empleado,
+        "contabilidad.pagos.marcar_pagado",
+        "accounting.payments.mark_paid",
+        "admin.contabilidad.manage",
+        "contabilidad.manage",
+    ):
+        return True
+    rol = _normalized_text(getattr(empleado, "rol", ""))
+    departamento = _normalized_text(getattr(empleado, "departamento", ""))
+    return rol in {"contabilidad", "contador", "conta", "accounting"} or departamento in {
+        "contabilidad",
+        "conta",
+        "accounting",
+    }
+
+
 def can_access_payment_run(
     empleado: Any,
     *,
     allowed_ids: Optional[Iterable[Any]] = None,
 ) -> bool:
-    """Allow managers to cut runs and Finance staff to upload payment proofs."""
+    """Allow managers to cut runs, Finance to view, and Accounting to pay."""
     if can_manage_payment_run(empleado, allowed_ids=allowed_ids):
         return True
-    rol = str(getattr(empleado, "rol", "") or "").strip().lower()
-    departamento = str(getattr(empleado, "departamento", "") or "").strip().lower()
+    if can_confirm_payment_run_payment(empleado):
+        return True
+    rol = _normalized_text(getattr(empleado, "rol", ""))
+    departamento = _normalized_text(getattr(empleado, "departamento", ""))
     return rol in {"finanzas", "admin", "superadmin", "super_admin"} or departamento == "finanzas"
+
+
+def require_payment_run_payment_confirmation(empleado: Any) -> None:
+    if not can_confirm_payment_run_payment(empleado):
+        raise PaymentRunPaymentPermissionError()
 
 
 def require_payment_run_access(
