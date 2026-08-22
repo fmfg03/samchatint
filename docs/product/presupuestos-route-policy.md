@@ -1,6 +1,6 @@
 # Presupuestos Route Policy
 
-Status: C3 route-owner policy
+Status: C4 route-owner policy
 Date: 2026-08-21
 Scope: route inventory and route-owner policy only. No schema, permission,
 import, export workbook format, or mutation behavior changes.
@@ -10,6 +10,7 @@ import, export workbook format, or mutation behavior changes.
 `src/devnous/gastos/routes/admin_budget_routes.py` is the canonical route owner
 for the live Presupuestos dashboard, tournament detail, income budget, CFDI
 income, general budget workbook export, and copy-forward budget workflows.
+Version and line mutation routes are also owned by this module.
 
 `src/devnous/gastos/routes/admin_routes.py` may still contain bridge action
 handlers used by canonical Presupuestos UI forms, plus legacy candidates that
@@ -40,12 +41,17 @@ These routes are owned by `admin_budget_routes.py`:
 - `POST /admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/link`
 - `POST /admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link`
 - `POST /admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink`
+- `POST /admin/presupuestos/versiones/create`
 - `POST /admin/presupuestos/versiones/copy-forward`
+- `POST /admin/presupuestos/versiones/{version_id}/lineas/create`
+- `POST /admin/presupuestos/versiones/{version_id}/transition`
+- `POST /admin/presupuestos/versiones/{version_id}/update`
+- `POST /admin/presupuestos/lineas/{line_id}/update`
 
 ## Admin Routes Bridge And Legacy Inventory
 
 These routes are the only approved Presupuestos namespace routes still allowed
-inside `admin_routes.py` during C3:
+inside `admin_routes.py` during C4:
 
 | route | method | class | notes |
 |---|---|---|---|
@@ -56,11 +62,6 @@ inside `admin_routes.py` during C3:
 | `/admin/presupuestos/conceptos/export.xlsx` | GET | `bridge_required_by_canonical_ui` | Generated budget catalog export; not assistant artifact authority. |
 | `/admin/presupuestos/conceptos/import` | POST | `bridge_required_by_canonical_ui` | Bridge import action; keep permissioned. |
 | `/admin/presupuestos/versiones/{version_id}/lineas/import` | POST | `candidate_remove_later` | Legacy annual line import action; not observed as a canonical UI target in C2b. |
-| `/admin/presupuestos/versiones/create` | POST | `bridge_required_by_canonical_ui` | Bridge version creation action. |
-| `/admin/presupuestos/versiones/{version_id}/transition` | POST | `bridge_required_by_canonical_ui` | Bridge version status transition action. |
-| `/admin/presupuestos/versiones/{version_id}/update` | POST | `bridge_required_by_canonical_ui` | Bridge version metadata update action. |
-| `/admin/presupuestos/versiones/{version_id}/lineas/create` | POST | `bridge_required_by_canonical_ui` | Bridge line creation action. |
-| `/admin/presupuestos/lineas/{line_id}/update` | POST | `bridge_required_by_canonical_ui` | Bridge line update action. |
 
 ## Route-Target Evidence
 
@@ -85,11 +86,16 @@ Canonical UI bridge targets still used by `admin_budget_routes.py`:
 - `/admin/presupuestos/conceptos/bulk-save`
 - `/admin/presupuestos/conceptos/export.xlsx`
 - `/admin/presupuestos/conceptos/import`
+Version and line mutation bridge targets resolved during C4:
+
 - `/admin/presupuestos/versiones/{version_id}/transition`
 - `/admin/presupuestos/versiones/create`
 - `/admin/presupuestos/versiones/{version_id}/update`
 - `/admin/presupuestos/lineas/{line_id}/update`
 - `/admin/presupuestos/versiones/{version_id}/lineas/create`
+
+C4 moved these routes into `admin_budget_routes.py` while preserving public
+paths, methods, permission checks, redirects, and service calls.
 
 Legacy/candidate-remove targets not observed in the canonical UI source during
 C2b:
