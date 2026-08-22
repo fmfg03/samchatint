@@ -32140,7 +32140,7 @@ async def _sync_informe_documento_to_enviado(
         informe_doc.enviado_en = now
         aprobacion_accion = "enviar"
         aprobacion_comentario = (
-            "Enviado autom?ticamente al cerrar el informe de gastos."
+            "Enviado automaticamente al cerrar el informe de gastos."
         )
     session.add(
         Aprobacion(
@@ -35856,8 +35856,17 @@ async def cerrar_cuenta_de_gastos(
             },
             commit=True,
         )
-        if informe_doc.estado != "control_presupuestal":
-            try:
+        try:
+            if informe_doc.estado == "control_presupuestal":
+                from ..services.documento_telegram import (
+                    schedule_budget_control_telegram_notifications,
+                )
+
+                schedule_budget_control_telegram_notifications(
+                    documento_id=str(informe_doc.id),
+                    actor_id=str(current_empleado.id),
+                )
+            else:
                 from ..services.documento_telegram import (
                     schedule_document_workflow_telegram_notifications,
                 )
@@ -35866,12 +35875,12 @@ async def cerrar_cuenta_de_gastos(
                     documento_id=str(informe_doc.id),
                     action="send",
                     actor_id=str(current_empleado.id),
-                    comentario="Enviado automáticamente al cerrar el informe de gastos.",
+                    comentario="Enviado automaticamente al cerrar el informe de gastos.",
                 )
-            except Exception:
-                logger.exception(
-                    "Failed to schedule Telegram notification for informe close"
-                )
+        except Exception:
+            logger.exception(
+                "Failed to schedule Telegram notification for informe close"
+            )
 
     if informe_doc.estado == "control_presupuestal":
         success_msg = (

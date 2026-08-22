@@ -527,8 +527,15 @@ async def transition_documento_workflow(
         commit=True,
     )
 
-    if not (normalized_action == "send" and documento.estado == BUDGET_CONTROL_STATE):
-        try:
+    try:
+        if normalized_action == "send" and documento.estado == BUDGET_CONTROL_STATE:
+            from .documento_telegram import schedule_budget_control_telegram_notifications
+
+            schedule_budget_control_telegram_notifications(
+                documento_id=str(documento_uuid),
+                actor_id=str(actor.id),
+            )
+        else:
             from .documento_telegram import (
                 schedule_document_workflow_telegram_notifications,
             )
@@ -539,9 +546,9 @@ async def transition_documento_workflow(
                 actor_id=str(actor.id),
                 comentario=comentario_normalizado,
             )
-        except Exception:
-            logger.exception(
-                "Failed to schedule Telegram notifications for document workflow"
-            )
+    except Exception:
+        logger.exception(
+            "Failed to schedule Telegram notifications for document workflow"
+        )
 
     return DocumentoWorkflowResult(documento=documento, aprobacion=aprobacion)
