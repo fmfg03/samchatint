@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import aliased, selectinload
 
@@ -49,6 +49,9 @@ SUPERADMIN_ROLES = frozenset({"superadmin", "super_admin"})
 TEMP_APPROVAL_ALERT_ACTOR_EMAIL = "otrujillo@plataformasports.com"
 WORKFLOW_NOTIFICATION_MONITOR_MINUTES = 5
 WORKFLOW_NOTIFICATION_ALERT_MATCHER = "francisco"
+BUDGET_CONTROL_NOTIFICATION_TYPE = "budget_control_pending"
+BUDGET_CONTROL_EMPLOYEE_IDS = frozenset({"e3d13040-2360-420f-98a1-516440ef63c3"})
+BUDGET_CONTROL_EMPLOYEE_EMAILS = frozenset({"jlopez@plataformasports.com"})
 
 _notify_engine = None
 _notify_session_maker: Optional[async_sessionmaker[AsyncSession]] = None
@@ -111,6 +114,20 @@ def schedule_document_workflow_telegram_notifications(
     )
 
 
+def schedule_budget_control_telegram_notifications(
+    *,
+    documento_id: str,
+    actor_id: str,
+) -> None:
+    """Fire-and-forget hook when a document enters Control Presupuestal."""
+    schedule_fire_and_forget(
+        run_budget_control_telegram_notifications(
+            documento_id=documento_id,
+            actor_id=actor_id,
+        )
+    )
+
+
 def schedule_solicitud_payment_telegram_notifications(
     *,
     documento_id: str,
@@ -135,6 +152,40 @@ def schedule_solicitud_pending_payment_telegram_notifications(
             documento_id=documento_id,
         )
     )
+
+
+async def run_budget_control_telegram_notifications(
+    *,
+    documento_id: str,
+    actor_id: str,
+) -> None:
+    session_maker = get_notification_session_maker()
+    if not session_maker:
+        return
+    try:
+        doc_uuid = UUID(str(documento_id))
+        actor_uuid = UUID(str(actor_id))
+    except ValueError:
+        logger.warning(
+            "Invalid UUID for budget control telegram notification",
+            extra={"documento_id": documento_id},
+        )
+        return
+
+    async with session_maker() as session:
+        documento = await load_documento_for_telegram(session, doc_uuid)
+        if documento is None:
+            return
+        actor = await session.get(Empleado, actor_uuid)
+        try:
+            await notify_budget_control_pending_document(
+                session, documento, actor=actor
+            )
+        except Exception:
+            logger.exception(
+                "Budget control Telegram alert failed",
+                extra={"documento_id": documento_id},
+            )
 
 
 async def run_solicitud_pending_payment_telegram_notifications(
@@ -491,6 +542,39 @@ async def _active_employees_for_profiles(
                 seen.add(employee.id)
                 matched.append(employee)
     return matched
+
+
+async def resolve_budget_control_notification_recipients(
+    session: AsyncSession,
+) -> list[Empleado]:
+    """Resolve Control Presupuestal Telegram recipients, currently Juan Pablo plus finance fallback."""
+    id_values = [UUID(value) for value in BUDGET_CONTROL_EMPLOYEE_IDS]
+    email_values = [value.lower() for value in BUDGET_CONTROL_EMPLOYEE_EMAILS]
+    result = await session.execute(
+        select(Empleado)
+        .where(
+            Empleado.activo.is_(True),
+            or_(
+                Empleado.id.in_(id_values),
+                func.lower(Empleado.correo).in_(email_values),
+            ),
+        )
+        .order_by(Empleado.nombre.asc())
+    )
+    recipients = list(result.scalars().all())
+    if recipients:
+        return recipients
+
+    # Conservative fallback: if Juan Pablo's explicit record is not found, notify finance users.
+    fallback = await session.execute(
+        select(Empleado)
+        .where(
+            Empleado.activo.is_(True),
+            Empleado.rol.in_(("finanzas", "admin", "superadmin", "super_admin")),
+        )
+        .order_by(Empleado.nombre.asc())
+    )
+    return list(fallback.scalars().all())
 
 
 async def resolve_workflow_approval_notification_recipients(
@@ -870,6 +954,50 @@ async def find_documento_by_referencia_for_requester(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def notify_budget_control_pending_document(
+    session: AsyncSession,
+    documento: Documento,
+    *,
+    actor: Optional[Empleado] = None,
+) -> None:
+    """Notify Control Presupuestal that a document needs budget concept assignment."""
+    if getattr(documento, "estado", None) != "control_presupuestal":
+        return
+    recipients = await resolve_budget_control_notification_recipients(session)
+    if not recipients:
+        return
+
+    header = "*Control Presupuestal pendiente*"
+    ctx = await build_documento_telegram_context(session, documento)
+    body = format_documento_resumen_es(
+        documento, context=ctx, include_actions_hint=False
+    )
+    actor_name = getattr(actor, "nombre", None) or "-"
+    message_text = (
+        f"{header}\n\n"
+        f"{body}\n\n"
+        f"*Accion requerida* Asignar concepto presupuestal en /documentos/control-presupuestal.\n"
+        f"*Enviado por* {escape_markdown_light(actor_name)}"
+    )
+
+    for recipient in recipients:
+        chat_id = (
+            int(recipient.telegram_user_id)
+            if recipient.telegram_user_id is not None
+            else None
+        )
+        await deliver_telegram_notification(
+            session,
+            notification_type=BUDGET_CONTROL_NOTIFICATION_TYPE,
+            header_text=header,
+            text=message_text,
+            chat_id=chat_id,
+            documento_id=documento.id,
+            recipient_empleado_id=recipient.id,
+            reply_markup=None,
+        )
 
 
 async def notify_assigned_approver_new_request(

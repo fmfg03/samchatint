@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 NOTIFICATION_TYPE_LABELS: Dict[str, str] = {
     "workflow_send_approver": "Nueva solicitud de aprobación",
+    "budget_control_pending": "Control Presupuestal pendiente",
     "workflow_notification_monitor_alert": "Alerta monitor Telegram",
     "workflow_approve_requester": "Documento aprobado (solicitante)",
     "workflow_reject_requester": "Documento rechazado (solicitante)",
