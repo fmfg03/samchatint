@@ -23439,11 +23439,22 @@ async def editar_gasto(
 
     old_tip = float(expense.propina_no_deducible or 0.0)
     new_tip = float(propina_amount or 0.0)
+    tip_delta = round(new_tip - old_tip, 2)
     if round(old_tip, 2) != round(new_tip, 2):
         old_values['propina_no_deducible'] = expense.propina_no_deducible
         new_values['propina_no_deducible'] = new_tip
         changes.append(f"propina_no_deducible '{old_tip:,.2f}'->'{new_tip:,.2f}'")
         expense.propina_no_deducible = new_tip
+        old_paid_total = round(float(expense.gasto_cantidad or 0.0), 2)
+        new_paid_total = round(max(old_paid_total + tip_delta, 0.0), 2)
+        if old_paid_total != new_paid_total:
+            old_values['gasto_cantidad'] = expense.gasto_cantidad
+            new_values['gasto_cantidad'] = new_paid_total
+            changes.append(
+                f"gasto_cantidad '{old_paid_total:,.2f}'->'{new_paid_total:,.2f}' "
+                "por ajuste de propina"
+            )
+            expense.gasto_cantidad = new_paid_total
 
     old_hosp_state = expense.hospedaje_entidad_fiscal or ''
     new_hosp_state = hospedaje_state or ''
