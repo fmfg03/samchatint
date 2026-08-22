@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 APPROVER_ROLES = {"finanzas", "admin", "superadmin", "super_admin"}
 FINANCE_ADMIN_ROLES = {"finanzas", "admin"}
+BUDGET_CONTROL_STATE = "control_presupuestal"
+
+
+def documento_requires_budget_control(documento: Documento) -> bool:
+    """Return True when a document must pass through budget classification first."""
+    return documento.tipo in {"SOLICITUD", "INFORME"} and not getattr(documento, "budget_concept_id", None)
 
 
 class DocumentoWorkflowError(Exception):
@@ -289,18 +295,27 @@ async def transition_documento_workflow(
                     "El documento tipo INFORME debe tener al menos un gasto activo "
                     "antes de poder enviarse.",
                 )
-        documento.estado = "enviado"
-        documento.enviado_en = now
-        aprobacion_accion = "enviar"
-        informe_aprobador_id = await _linked_informe_approval_actor_id(
-            session, documento
-        )
-        if informe_aprobador_id is not None:
-            auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
-                documento=documento,
-                aprobador_id=informe_aprobador_id,
-                now=now,
+        if documento_requires_budget_control(documento):
+            documento.estado = BUDGET_CONTROL_STATE
+            documento.enviado_en = None
+            aprobacion_accion = "enviar_control_presupuestal"
+            comentario_normalizado = (
+                comentario_normalizado
+                or "Enviado a Control Presupuestal para asignar concepto presupuestal."
             )
+        else:
+            documento.estado = "enviado"
+            documento.enviado_en = now
+            aprobacion_accion = "enviar"
+            informe_aprobador_id = await _linked_informe_approval_actor_id(
+                session, documento
+            )
+            if informe_aprobador_id is not None:
+                auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
+                    documento=documento,
+                    aprobador_id=informe_aprobador_id,
+                    now=now,
+                )
 
     elif normalized_action == "approve":
         if documento.estado != "enviado":
@@ -512,20 +527,21 @@ async def transition_documento_workflow(
         commit=True,
     )
 
-    try:
-        from .documento_telegram import (
-            schedule_document_workflow_telegram_notifications,
-        )
+    if not (normalized_action == "send" and documento.estado == BUDGET_CONTROL_STATE):
+        try:
+            from .documento_telegram import (
+                schedule_document_workflow_telegram_notifications,
+            )
 
-        schedule_document_workflow_telegram_notifications(
-            documento_id=str(documento_uuid),
-            action=normalized_action,
-            actor_id=str(actor.id),
-            comentario=comentario_normalizado,
-        )
-    except Exception:
-        logger.exception(
-            "Failed to schedule Telegram notifications for document workflow"
-        )
+            schedule_document_workflow_telegram_notifications(
+                documento_id=str(documento_uuid),
+                action=normalized_action,
+                actor_id=str(actor.id),
+                comentario=comentario_normalizado,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to schedule Telegram notifications for document workflow"
+            )
 
     return DocumentoWorkflowResult(documento=documento, aprobacion=aprobacion)
