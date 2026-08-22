@@ -119,6 +119,31 @@ async def _linked_informe_approval_actor_id(
     return result.scalar_one_or_none()
 
 
+async def _document_has_recorded_approval(
+    session: AsyncSession, documento_id: UUID
+) -> bool:
+    result = await session.execute(
+        select(Aprobacion.id)
+        .where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == documento_id,
+            Aprobacion.accion == "aprobar",
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def _raise_if_document_already_advanced(has_recorded_approval: bool) -> None:
+    if has_recorded_approval:
+        raise DocumentoWorkflowValidationError(
+            "documento_already_advanced",
+            "El documento ya tiene una aprobacion registrada; no puede aprobarse "
+            "ni rechazarse desde la bandeja del aprobador anterior. Debe continuar "
+            "o corregirse desde el siguiente flujo operativo.",
+        )
+
+
 def _auto_approve_solicitud_with_approved_informe(
     *,
     documento: Documento,
@@ -323,6 +348,9 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede aprobarse cuando está en estado 'enviado'.",
             )
+        _raise_if_document_already_advanced(
+            await _document_has_recorded_approval(session, documento_uuid)
+        )
         if actor.rol not in APPROVER_ROLES:
             raise DocumentoWorkflowPermissionError(
                 "insufficient_role",
@@ -385,6 +413,9 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede rechazarse cuando está en estado 'enviado'.",
             )
+        _raise_if_document_already_advanced(
+            await _document_has_recorded_approval(session, documento_uuid)
+        )
         if actor.rol not in APPROVER_ROLES:
             raise DocumentoWorkflowPermissionError(
                 "insufficient_role",
