@@ -10728,15 +10728,33 @@ def _can_view_presupuestos(current_empleado: Empleado) -> bool:
     )
 
 
-def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
-    """Only finance/accounting/admin users can assign budget lines."""
+_BUDGET_CONTROL_EMPLOYEE_IDS = {
+    "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo L?pez Romero
+}
+
+_BUDGET_CONTROL_EMPLOYEE_EMAILS = {
+    "jlopez@plataformasports.com",
+}
+
+
+def _is_budget_control_user(current_empleado: Empleado) -> bool:
+    """Users allowed to classify documents before normal approval routing."""
     role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
     department = str(getattr(current_empleado, "departamento", "") or "").strip().lower()
+    email = str(getattr(current_empleado, "correo", "") or "").strip().lower()
+    empleado_id = str(getattr(current_empleado, "id", "") or "").strip().lower()
     return (
-        role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
+        empleado_id in _BUDGET_CONTROL_EMPLOYEE_IDS
+        or email in _BUDGET_CONTROL_EMPLOYEE_EMAILS
+        or role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
         or department.startswith("finanza")
         or department.startswith("contab")
     )
+
+
+def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
+    """Only Control Presupuestal, finance/accounting/admin users can assign budget lines."""
+    return _is_budget_control_user(current_empleado)
 
 
 def render_top_navigation(current_empleado: Empleado, active_area: Optional[str] = None) -> str:
@@ -13857,11 +13875,13 @@ async def panel(
     """
 
     aprobaciones_section = ""
-    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin') and "gastos.solicitudes" in visible_tool_keys:
+    if (rol in ('finanzas', 'admin', 'superadmin', 'super_admin') or _is_budget_control_user(current_empleado)) and "gastos.solicitudes" in visible_tool_keys:
         aprobaciones_links = [
             ("/documentos/pendientes", "Aprobaciones pendientes", "Valida solicitudes pendientes."),
             ("/documentos/historial-aprobador", "Historial de aprobaciones", "Consulta aprobaciones pasadas."),
         ]
+        if _is_budget_control_user(current_empleado):
+            aprobaciones_links.insert(0, ("/documentos/control-presupuestal", "Control Presupuestal", "Asigna concepto antes de enviar a aprobaci?n."))
         if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
             aprobaciones_links.append(("/documentos/pendientes-pago", "Pagos pendientes", "Gestiona documentos listos para pago."))
         aprobaciones_section = f"""
@@ -23912,6 +23932,278 @@ async def mis_documentos(
     return html
 
 
+
+async def _budget_concepts_for_document(
+    session: AsyncSession,
+    documento: Documento,
+) -> List[Dict[str, Any]]:
+    """Active budget concepts available for a document's tournament/fase context."""
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    tournament_id = getattr(documento, "torneo_id", None) or getattr(cuenta, "torneo_id", None)
+    if tournament_id is None:
+        return []
+    fase = getattr(documento, "fase", None) or getattr(cuenta, "fase", None)
+    rows = await list_budget_concepts(
+        session,
+        tournament_id=str(tournament_id),
+        budget_direction="expense",
+        active_only=True,
+        limit=500,
+    )
+    return _filter_budget_concepts_for_fase(
+        [
+            {
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("concept_name") or ""),
+                "applicable_keys": sorted(
+                    {
+                        str(key).strip()
+                        for key in (
+                            list((item.get("metadata") or {}).get("applicable_phase_keys") or [])
+                            + list((item.get("metadata") or {}).get("applicable_subproject_keys") or [])
+                        )
+                        if str(key).strip()
+                    }
+                ),
+                "global": not (
+                    (item.get("metadata") or {}).get("applicable_phase_keys")
+                    or (item.get("metadata") or {}).get("applicable_subproject_keys")
+                ),
+            }
+            for item in rows
+        ],
+        fase,
+    )
+
+
+def _document_budget_context(documento: Documento) -> tuple[Optional[str], Optional[str]]:
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    tournament_id = getattr(documento, "torneo_id", None) or getattr(cuenta, "torneo_id", None)
+    fase = getattr(documento, "fase", None) or getattr(cuenta, "fase", None)
+    return (str(tournament_id) if tournament_id else None, str(fase or "") or None)
+
+
+@router.get("/documentos/control-presupuestal", response_class=HTMLResponse)
+async def documentos_control_presupuestal(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    q: Optional[str] = None,
+) -> str:
+    """Budget-control queue: classify documents before normal approval routing."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    q_value = (q or "").strip()
+    solicitante_alias = aliased(Empleado)
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    torneo_alias = aliased(Tournament)
+    cuenta_torneo_alias = aliased(Tournament)
+
+    query = (
+        select(Documento)
+        .options(
+            selectinload(Documento.empleado),
+            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+            undefer(Documento.fase),
+        )
+        .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
+        .outerjoin(beneficiario_alias, Documento.beneficiario_empleado_id == beneficiario_alias.id)
+        .outerjoin(proveedor_alias, Documento.proveedor_cliente_id == proveedor_alias.id)
+        .outerjoin(torneo_alias, Documento.torneo_id == torneo_alias.id)
+        .outerjoin(CuentaDeGastos, Documento.cuenta_gastos_id == CuentaDeGastos.id)
+        .outerjoin(cuenta_torneo_alias, CuentaDeGastos.torneo_id == cuenta_torneo_alias.id)
+        .where(Documento.estado == "control_presupuestal")
+        .order_by(Documento.creado_en.desc())
+    )
+    if q_value:
+        q_filter = f"%{q_value}%"
+        query = query.where(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                solicitante_alias.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+                torneo_alias.name.ilike(q_filter),
+                cuenta_torneo_alias.name.ilike(q_filter),
+            )
+        )
+
+    result = await session.execute(query)
+    documentos = result.scalars().unique().all()
+
+    rows_html = ""
+    for documento in documentos:
+        row_values = _documentos_todos_reporting_row_values(documento, aprobador_nombre="?")
+        concepts = await _budget_concepts_for_document(session, documento)
+        options = _html_budget_concept_options(concepts, str(documento.budget_concept_id or ""))
+        if not options:
+            options = '<option value="">? Sin conceptos disponibles para este torneo/fase ?</option>'
+        cuenta = getattr(documento, "cuenta_gastos", None)
+        torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
+        torneo_display = documento_project_name(documento, torneo) or "?"
+        beneficiary_provider = row_values["beneficiario"]
+        provider_value = row_values["proveedor"]
+        if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
+            beneficiary_provider = provider_value
+        rows_html += f"""
+        <tr>
+            <td><a href="/documentos/{documento.id}?next={quote('/documentos/control-presupuestal')}" style="color:#0f766e;font-weight:800;text-decoration:none;">{escape(row_values['numero_referencia'])}</a></td>
+            <td>{escape(str((documento.referencia_operaciones or '').strip() or '?'))}</td>
+            <td>{escape(torneo_display)}</td>
+            <td>{escape(row_values['solicitante'])}</td>
+            <td>{escape(beneficiary_provider)}</td>
+            <td>{escape(row_values['tipo_documento'])}</td>
+            <td>{escape(row_values['monto_total'])}</td>
+            <td>{escape(row_values['concepto'])}</td>
+            <td>
+                <form method="POST" action="/documentos/{documento.id}/control-presupuestal/asignar" style="display:flex;gap:8px;align-items:center;min-width:360px;">
+                    <select name="budget_concept_id" required style="min-width:240px;">{options}</select>
+                    <input type="hidden" name="next" value="/documentos/control-presupuestal">
+                    <button type="submit" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    table_html = f"""
+        <div class="table-shell"><table>
+            <thead><tr>
+                <th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
+                <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripci?n</th><th>Concepto presupuestal</th>
+            </tr></thead>
+            <tbody>{rows_html or '<tr><td colspan="9" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
+        </table></div>
+    """
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px")}</style></head>
+    <body><div class="container">
+        {render_top_navigation(current_empleado, "operacion")}
+        {_render_workspace_hero(
+            eyebrow="Control Presupuestal",
+            title="Documentos por clasificar",
+            description="Asigna el concepto presupuestal antes de enviar la solicitud o informe al aprobador operativo correspondiente.",
+            actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
+            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{len(documentos)}</strong><small>Despu?s de asignar concepto pasan a aprobaci?n normal.</small></div></div>',
+        )}
+        <section class="surface">
+            <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
+                <div class="form-group"><label for="q">Buscar</label><input id="q" name="q" value="{escape(q_value)}" placeholder="Referencia, torneo, solicitante, beneficiario..."></div>
+                <button class="button primary" type="submit">Filtrar</button>
+                <a class="button secondary" href="/documentos/control-presupuestal">Limpiar</a>
+            </form>
+        </section>
+        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignaci?n libera el documento hacia el aprobador del beneficiario o solicitante, seg?n corresponda.</div></div></div>{table_html}</section>
+    </div></body></html>
+    """
+    return html
+
+
+@router.post("/documentos/{documento_id}/control-presupuestal/asignar")
+async def asignar_control_presupuestal(
+    documento_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    budget_concept_id: str = Form(...),
+    next: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Assign budget concept and release the document to regular approval."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    redirect_url = next or "/documentos/control-presupuestal"
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+            undefer(Documento.fase),
+        )
+        .where(Documento.id == documento_id)
+    )
+    documento = result.scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="Documento not found")
+    if documento.estado != "control_presupuestal":
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="invalid_estado", error_msg="El documento no est? pendiente de Control Presupuestal."),
+            status_code=303,
+        )
+
+    tournament_id, fase = _document_budget_context(documento)
+    budget_concept = await resolve_budget_concept(
+        session,
+        budget_concept_id=(budget_concept_id or "").strip(),
+        tournament_id=tournament_id,
+        tournament_code=None,
+        fase=fase,
+        budget_direction="expense",
+    )
+    if budget_concept is None:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="invalid_budget_concept", error_msg="El concepto no corresponde al torneo/fase del documento."),
+            status_code=303,
+        )
+
+    concept_uuid = UUIDType(str(budget_concept["id"]))
+    documento.budget_concept_id = concept_uuid
+    now = datetime.utcnow()
+    documento.estado = "enviado"
+    documento.enviado_en = now
+
+    expense_filters = [ExpenseReport.documento_id == documento.id, ExpenseReport.informe_documento_id == documento.id]
+    if documento.cuenta_gastos_id:
+        expense_filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+    if documento.gasto_generado_id:
+        expense_filters.append(ExpenseReport.id == documento.gasto_generado_id)
+    expenses_result = await session.execute(
+        select(ExpenseReport).where(
+            or_(*expense_filters),
+            ExpenseReport.estado_gasto != "cancelado",
+        )
+    )
+    for expense in expenses_result.scalars().unique().all():
+        if not getattr(expense, "budget_concept_id", None):
+            expense.budget_concept_id = concept_uuid
+
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=current_empleado.id,
+            accion="asignar_partida_presupuestal",
+            comentario=f"Concepto presupuestal asignado: {budget_concept.get('concept_name') or budget_concept_id}",
+            fecha=now,
+        )
+    )
+    await session.commit()
+
+    try:
+        from ..services.documento_telegram import schedule_document_workflow_telegram_notifications
+
+        schedule_document_workflow_telegram_notifications(
+            documento_id=str(documento.id),
+            action="send",
+            actor_id=str(current_empleado.id),
+            comentario="Control Presupuestal asign? concepto y envi? a aprobaci?n.",
+        )
+    except Exception:
+        logger.exception("Failed to schedule Telegram notification after budget control release")
+
+    return RedirectResponse(
+        url=_append_success_params(redirect_url, success_msg="Concepto asignado; documento enviado a aprobaci?n."),
+        status_code=303,
+    )
+
+
 @router.get("/documentos/pendientes", response_class=HTMLResponse)
 async def documentos_pendientes(
     request: Request,
@@ -25647,7 +25939,7 @@ async def enviar_documento(
         next: Optional redirect URL after action (from form field or query param)
     """
     try:
-        await transition_documento_workflow(
+        workflow_result = await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
@@ -25695,13 +25987,23 @@ async def enviar_documento(
             status_code=303,
         )
 
-    logger.info(f"Documento {documento_id} enviado para aprobación")
+    target_estado = getattr(getattr(workflow_result, "documento", None), "estado", "enviado")
+    logger.info(
+        "Documento %s enviado; estado=%s",
+        documento_id,
+        target_estado,
+    )
 
     # Determine redirect URL
     redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
+    success_msg = (
+        "Documento enviado a Control Presupuestal para asignar concepto."
+        if target_estado == "control_presupuestal"
+        else "Documento enviado para aprobaci?n"
+    )
     redirect_with_msg = _append_success_params(
         redirect_url,
-        success_msg="Documento enviado para aprobación",
+        success_msg=success_msg,
     )
 
     return RedirectResponse(
@@ -31826,15 +32128,27 @@ async def _sync_informe_documento_to_enviado(
         )
 
     now = datetime.utcnow()
-    informe_doc.estado = "enviado"
-    informe_doc.enviado_en = now
+    if not getattr(informe_doc, "budget_concept_id", None):
+        informe_doc.estado = "control_presupuestal"
+        informe_doc.enviado_en = None
+        aprobacion_accion = "enviar_control_presupuestal"
+        aprobacion_comentario = (
+            "Enviado a Control Presupuestal al cerrar el informe de gastos."
+        )
+    else:
+        informe_doc.estado = "enviado"
+        informe_doc.enviado_en = now
+        aprobacion_accion = "enviar"
+        aprobacion_comentario = (
+            "Enviado autom?ticamente al cerrar el informe de gastos."
+        )
     session.add(
         Aprobacion(
             tipo_entidad="documento",
             entidad_id=informe_doc.id,
             aprobador_id=actor.id,
-            accion="enviar",
-            comentario="Enviado automáticamente al cerrar el informe de gastos.",
+            accion=aprobacion_accion,
+            comentario=aprobacion_comentario,
             fecha=now,
         )
     )
@@ -35542,27 +35856,35 @@ async def cerrar_cuenta_de_gastos(
             },
             commit=True,
         )
-        try:
-            from ..services.documento_telegram import (
-                schedule_document_workflow_telegram_notifications,
-            )
+        if informe_doc.estado != "control_presupuestal":
+            try:
+                from ..services.documento_telegram import (
+                    schedule_document_workflow_telegram_notifications,
+                )
 
-            schedule_document_workflow_telegram_notifications(
-                documento_id=str(informe_doc.id),
-                action="send",
-                actor_id=str(current_empleado.id),
-                comentario="Enviado automáticamente al cerrar el informe de gastos.",
-            )
-        except Exception:
-            logger.exception(
-                "Failed to schedule Telegram notification for informe close"
-            )
+                schedule_document_workflow_telegram_notifications(
+                    documento_id=str(informe_doc.id),
+                    action="send",
+                    actor_id=str(current_empleado.id),
+                    comentario="Enviado automáticamente al cerrar el informe de gastos.",
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to schedule Telegram notification for informe close"
+                )
 
-    success_msg = (
-        "Informe cerrado y enviado para aprobación."
-        if not cuenta_was_closed
-        else "Documento de informe sincronizado y enviado para aprobación."
-    )
+    if informe_doc.estado == "control_presupuestal":
+        success_msg = (
+            "Informe cerrado y enviado a Control Presupuestal."
+            if not cuenta_was_closed
+            else "Documento de informe sincronizado y enviado a Control Presupuestal."
+        )
+    else:
+        success_msg = (
+            "Informe cerrado y enviado para aprobaci?n."
+            if not cuenta_was_closed
+            else "Documento de informe sincronizado y enviado para aprobaci?n."
+        )
     if reembolso_created:
         success_msg += (
             " Se generó una solicitud de transferencia por el saldo a favor del "
