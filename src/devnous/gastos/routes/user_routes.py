@@ -16096,15 +16096,7 @@ async def crear_gasto(
                     ),
                     status_code=303
                 )
-            if can_manage_budget_classification:
-                if not (budget_concept_id or "").strip():
-                    return RedirectResponse(
-                        url=_append_error_params(
-                            "/gastos/nuevo",
-                            error_msg="Debe seleccionar un Concepto para el torneo.",
-                        ),
-                        status_code=303,
-                    )
+            if can_manage_budget_classification and (budget_concept_id or "").strip():
                 budget_concept = await resolve_budget_concept(
                     session,
                     budget_concept_id=budget_concept_id,
@@ -33506,8 +33498,6 @@ async def crear_gasto_rapido_en_informe(
                 fase=getattr(cuenta, "fase", None),
                 budget_direction="expense",
             )
-            if available_budget_concepts and not budget_concept_raw:
-                raise ValueError("El concepto es requerido para este informe.")
             if budget_concept_raw and budget_concept is None:
                 raise ValueError("El concepto no corresponde al torneo del informe.")
         proyecto = (

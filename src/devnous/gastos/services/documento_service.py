@@ -585,24 +585,21 @@ async def create_solicitud_terceros_document(
             payload.categorias = normalize_categories(payload.categorias, torneo)
         except ValueError as exc:
             raise SolicitudValidationError("invalid_categorias", str(exc)) from exc
-        concept = await resolve_budget_concept(
-            session,
-            budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
-            tournament_id=str(payload.torneo_id),
-            tournament_code=None,
-            fase=payload.fase,
-            budget_direction="expense",
-        )
-        if payload.budget_concept_id is None:
-            raise SolicitudValidationError(
-                "missing_budget_concept",
-                "El concepto es requerido para solicitudes con torneo.",
+        concept = None
+        if payload.budget_concept_id is not None:
+            concept = await resolve_budget_concept(
+                session,
+                budget_concept_id=str(payload.budget_concept_id),
+                tournament_id=str(payload.torneo_id),
+                tournament_code=None,
+                fase=payload.fase,
+                budget_direction="expense",
             )
-        if concept is None:
-            raise SolicitudValidationError(
-                "invalid_budget_concept",
-                "El concepto no corresponde al torneo seleccionado.",
-            )
+            if concept is None:
+                raise SolicitudValidationError(
+                    "invalid_budget_concept",
+                    "El concepto no corresponde al torneo seleccionado.",
+                )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
             "missing_torneo",
@@ -943,24 +940,21 @@ async def update_solicitud_terceros_document(
             payload.categorias = normalize_categories(payload.categorias, torneo)
         except ValueError as exc:
             raise SolicitudValidationError("invalid_categorias", str(exc)) from exc
-        concept = await resolve_budget_concept(
-            session,
-            budget_concept_id=str(payload.budget_concept_id) if payload.budget_concept_id else None,
-            tournament_id=str(payload.torneo_id),
-            tournament_code=None,
-            fase=payload.fase,
-            budget_direction="expense",
-        )
-        if payload.budget_concept_id is None:
-            raise SolicitudValidationError(
-                "missing_budget_concept",
-                "El concepto es requerido para solicitudes con torneo.",
+        concept = None
+        if payload.budget_concept_id is not None:
+            concept = await resolve_budget_concept(
+                session,
+                budget_concept_id=str(payload.budget_concept_id),
+                tournament_id=str(payload.torneo_id),
+                tournament_code=None,
+                fase=payload.fase,
+                budget_direction="expense",
             )
-        if concept is None:
-            raise SolicitudValidationError(
-                "invalid_budget_concept",
-                "El concepto no corresponde al torneo seleccionado.",
-            )
+            if concept is None:
+                raise SolicitudValidationError(
+                    "invalid_budget_concept",
+                    "El concepto no corresponde al torneo seleccionado.",
+                )
     elif not (payload.proyecto_otro or "").strip():
         raise SolicitudValidationError(
             "missing_torneo",
