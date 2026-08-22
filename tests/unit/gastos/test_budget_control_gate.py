@@ -57,3 +57,23 @@ def test_budget_control_telegram_has_idempotent_outbox_type():
     assert '"budget_control_pending"' in outbox_source
     assert "Control Presupuestal pendiente" in outbox_source
     assert "resolve_budget_control_notification_recipients" in telegram_source
+
+
+def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():
+    source = Path(
+        "src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+    assert "async def _document_has_recorded_approval" in source
+    assert "def _raise_if_document_already_advanced" in source
+    assert "documento_already_advanced" in source
+
+    approve_start = source.index('elif normalized_action == "approve":')
+    reject_start = source.index('elif normalized_action == "reject":')
+    withdraw_start = source.index('elif normalized_action == "withdraw":')
+    approve_block = source[approve_start:reject_start]
+    reject_block = source[reject_start:withdraw_start]
+
+    assert "_raise_if_document_already_advanced" in approve_block
+    assert "_document_has_recorded_approval(session, documento_uuid)" in approve_block
+    assert "_raise_if_document_already_advanced" in reject_block
+    assert "_document_has_recorded_approval(session, documento_uuid)" in reject_block
