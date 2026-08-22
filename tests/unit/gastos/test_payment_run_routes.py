@@ -22,7 +22,7 @@ async def test_payment_run_page_rejects_non_finance_non_manager() -> None:
 
 
 @pytest.mark.asyncio
-async def test_payment_run_page_renders_fecha_pago_close_and_payment_proof(
+async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_for_manager(
     monkeypatch,
 ) -> None:
     empleado_id = uuid4()
@@ -94,8 +94,8 @@ async def test_payment_run_page_renders_fecha_pago_close_and_payment_proof(
     assert "/admin/finanzas/payment-run/pay" not in html
     assert "En Proceso de Pago" in html
     assert "Testigo de pago" in html
-    assert "comprobante-pago" in html
-    assert "Subir testigo y pagar" in html
+    assert "comprobante-pago" not in html
+    assert "Subir testigo y pagar" not in html
     assert "sin registrar pago" in html
 
 
@@ -129,3 +129,55 @@ async def test_payment_run_close_uses_close_service(monkeypatch) -> None:
         "doc-1",
         "doc-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_payment_run_page_renders_payment_proof_for_accounting(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_items",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": uuid4(),
+                    "numero_referencia": "S-26000100",
+                    "solicitante_nombre": "Dani",
+                    "beneficiario_nombre": "Proveedor Pago",
+                    "concepto_pago": "Hospedaje",
+                    "fecha_pago": None,
+                    "monto": Decimal("900.00"),
+                    "currency": "MXN",
+                    "status": "en proceso de pago",
+                    "can_edit_fecha_pago": False,
+                    "can_close": False,
+                    "can_upload_payment_proof": True,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_closures",
+        AsyncMock(return_value=[]),
+    )
+
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="usuario",
+            departamento="Contabilidad",
+            nombre="Dani",
+        ),
+        status="cerradas",
+        date_from=None,
+        date_to=None,
+        q=None,
+    )
+    html = response.body.decode("utf-8")
+
+    assert "comprobante-pago" in html
+    assert "Subir testigo y pagar" in html

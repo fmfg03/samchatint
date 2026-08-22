@@ -309,6 +309,7 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
+from ..services.payment_run_service import can_confirm_payment_run_payment
 from .auth_routes import get_password_hash, validate_self_service_password_change
 from samchat.accounting_historical.service import (
     build_historical_accounting_comparison,
@@ -26496,7 +26497,7 @@ async def registrar_pago(
     documento_id: UUIDType,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(get_current_empleado),
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
@@ -30254,9 +30255,9 @@ async def ver_documento(
 
     # Determine permission for payment registration
     can_register_payment = (
-        current_empleado.rol in ['finanzas', 'admin', 'superadmin', 'super_admin'] and
+        can_confirm_payment_run_payment(current_empleado) and
         documento.tipo == 'SOLICITUD' and
-        documento.estado == 'aprobado' and
+        documento.estado in {'aprobado', 'en_proceso_pago'} and
         not documento.gasto_generado_id
     )
 
@@ -31361,7 +31362,7 @@ async def ver_documento(
                     </div>
                     {f'<div class="section-note" style="margin-top:8px;">Confirma que la transferencia fue ejecutada y actualiza el estado del documento.</div>' if can_register_payment else ''}
                 </div>
-                ''' if documento.tipo == 'SOLICITUD' and current_empleado.rol in ['finanzas', 'admin', 'superadmin', 'super_admin'] else ''}
+                ''' if documento.tipo == 'SOLICITUD' and can_confirm_payment_run_payment(current_empleado) else ''}
 
                 <!-- Saldar cuenta (for approved INFORME linked to a cuenta de gastos) -->
                 {f'''

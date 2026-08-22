@@ -20,6 +20,7 @@ from .employee_debtor_accounting_service import (
 )
 from .expense_accounting_service import _resolve_project_no_deducible_account
 from .expense_service import create_expense_from_data
+from .payment_run_service import can_confirm_payment_run_payment
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +159,10 @@ async def register_document_payment(
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
         raise DocumentoPaymentValidationError("actor_not_found", "Actor not found")
-    actor_role = (actor.rol or "").strip().lower()
-    actor_department = (getattr(actor, "departamento", None) or "").strip().lower()
-    if actor_role not in FINANCE_ROLES and actor_department != "finanzas":
+    if not can_confirm_payment_run_payment(actor):
         raise DocumentoPaymentPermissionError(
             "insufficient_role",
-            "Access denied. Insufficient permissions.",
+            "Solo Contabilidad puede marcar solicitudes como pagadas.",
         )
 
     if documento.tipo != "SOLICITUD":
@@ -491,12 +490,10 @@ async def get_pending_document_payment_overview(
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
         raise DocumentoPaymentValidationError("actor_not_found", "Actor not found")
-    actor_role = (actor.rol or "").strip().lower()
-    actor_department = (getattr(actor, "departamento", None) or "").strip().lower()
-    if actor_role not in FINANCE_ROLES and actor_department != "finanzas":
+    if not can_confirm_payment_run_payment(actor):
         raise DocumentoPaymentPermissionError(
             "insufficient_role",
-            "Access denied. Insufficient permissions.",
+            "Solo Contabilidad puede marcar solicitudes como pagadas.",
         )
 
     await promote_solicitudes_ready_for_payment(session, actor_id=actor_uuid)

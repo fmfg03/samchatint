@@ -148,8 +148,10 @@ from ..services.payment_run_service import (
     list_payment_run_closures,
     list_payment_run_items,
     parse_payment_run_date,
+    can_confirm_payment_run_payment,
     require_payment_run_access,
     require_payment_run_manager,
+    require_payment_run_payment_confirmation,
     update_payment_run_fecha_pago,
 )
 from ..services.documento_service import (
@@ -7485,7 +7487,12 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
-def _render_payment_run_items(rows: list[dict[str, Any]], *, can_close_run: bool = True) -> str:
+def _render_payment_run_items(
+    rows: list[dict[str, Any]],
+    *,
+    can_close_run: bool = True,
+    can_confirm_payment: bool = False,
+) -> str:
     rendered_rows = []
     for row in rows:
         documento_id = escape(str(row.get("id") or ""))
@@ -7516,7 +7523,7 @@ def _render_payment_run_items(rows: list[dict[str, Any]], *, can_close_run: bool
             else "-"
         )
         proof_html = "-"
-        if row.get("can_upload_payment_proof"):
+        if row.get("can_upload_payment_proof") and can_confirm_payment:
             proof_html = f"""
                 <form method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" required>
@@ -7598,6 +7605,7 @@ async def admin_finance_payment_run(
     )
     closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)
+    can_confirm_payment = can_confirm_payment_run_payment(current_empleado)
     close_form_html = ""
     if can_close_run:
         close_form_html = """
@@ -7663,7 +7671,7 @@ async def admin_finance_payment_run(
                 <div style="overflow:auto;margin-top:14px;">
                     <table class="payment-table">
                         <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run)}</tbody>
+                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run, can_confirm_payment=can_confirm_payment)}</tbody>
                     </table>
                 </div>
                 {close_form_html}
@@ -7759,6 +7767,7 @@ async def admin_finance_payment_run_upload_payment_proof(
 
     try:
         require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
     except PaymentRunPermissionError as exc:
         raise HTTPException(status_code=403, detail=exc.message)
 
@@ -7893,7 +7902,7 @@ async def admin_finance_payment_run_closure_detail(
 async def admin_finance_payment_run_pay(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(get_current_empleado),
     document_ids: Optional[List[str]] = Form(None),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
@@ -7904,6 +7913,11 @@ async def admin_finance_payment_run_pay(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+
+    try:
+        require_payment_run_payment_confirmation(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
 
     ids = [str(item).strip() for item in document_ids or [] if str(item).strip()]
     base_url = "/admin/finanzas"
