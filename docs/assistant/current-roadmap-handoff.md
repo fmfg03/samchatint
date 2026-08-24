@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-053e-owner-variable-qa`
+Branch at time of writing: `codex/rqf-053f-entity-folder-workspace`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -164,7 +164,7 @@ Purpose:
 
 ### Slice 2B - Owner Pack Readiness Dashboard / respuesta navegable
 
-Status: IMPLEMENTED_PENDING_PR
+Status: CLOSED_MERGED_DEPLOYED
 
 Objective:
 
@@ -194,7 +194,7 @@ SOUL Wizard 003/004 were completed after the original handoff. SOUL now has clon
 
 ### Slice 3 - Owner Variable Q&A (RQF-053E)
 
-Status: IMPLEMENTED_LOCAL on `codex/rqf-053e-owner-variable-qa`.
+Status: CLOSED_MERGED_DEPLOYED.
 
 Closure contract:
 
@@ -205,3 +205,32 @@ Closure contract:
 - readiness questions like `Que falta para la carpeta de Jalisco?` remain on the readiness dashboard path.
 
 Focused evidence: `tests/unit/test_assistant_owner_variable_query.py`, `tests/unit/test_assistant_owner_variable_answer.py`, and `tests/unit/test_assistant_request_router_integration.py` pass locally as 39/39.
+
+
+### Slice 4 - Entity Folder Workspace (RQF-053F)
+
+Status: IMPLEMENTED_LOCAL on `codex/rqf-053f-entity-folder-workspace`.
+
+Objective:
+
+- Convert the Owner Pack preview into a legible operational folder workspace.
+
+Closure contract:
+
+- Shows an explicit `Operaciones` drawer.
+- Shows an explicit `Finanzas` drawer.
+- Shows missing fields/faltantes that block complete claims.
+- Shows available evidence.
+- Shows non-claims.
+- Shows suggested next questions.
+- Keeps export/preview read-only: no folder creation, no export, no notifications, and no business-state mutation.
+
+Implementation notes:
+
+- `src/samchat/assistant/owner_entity_folder_workspace.py` now conservatively re-buckets already discovered evidence into `operations` and `finance` sections before diagnostic sections.
+- `src/samchat/assistant/conversation_service.py` renders a human-readable workspace with Operaciones, Finanzas, Faltantes, Evidencia, No-claims, Preguntas sugeridas, and read-only authority boundary.
+- The bucketing does not infer new facts; it only reorganizes facts/evidence/missing items already present in readiness and dossier artifacts.
+
+Focused evidence:
+
+- `.venv/bin/pytest -q tests/unit/test_assistant_owner_entity_folder_workspace.py` passes locally as 6/6.

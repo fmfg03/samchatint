@@ -466,15 +466,40 @@ def _render_owner_entity_folder_workspace(workspace: Any) -> str:
         for item in card.items[:3]:
             lines.append(f"  - {item}")
 
-    lines.extend(["", "Secciones de la carpeta:"])
-    if workspace.folder_sections:
-        for section in workspace.folder_sections[:8]:
+    section_by_id = {section.section_id: section for section in workspace.folder_sections}
+
+    def append_folder_drawer(title: str, section_id: str) -> None:
+        section = section_by_id.get(section_id)
+        lines.extend(["", f"{title}:"])
+        if section is None:
+            lines.append("- Sin evidencia viva suficiente para esta gaveta.")
+            return
+        lines.append(
+            f"- Estado: {section.status} "
+            f"({len(section.supported)} soportados / {len(section.missing)} faltantes)"
+        )
+        for item in section.supported[:5]:
+            lines.append(f"- Soportado: {item}")
+        for item in section.missing[:5]:
+            lines.append(f"- Falta: {item}")
+
+    append_folder_drawer("Operaciones", "operations")
+    append_folder_drawer("Finanzas", "finance")
+
+    lines.extend(["", "Secciones de la carpeta (diagnosticas):"])
+    diagnostic_sections = [
+        section
+        for section in workspace.folder_sections
+        if section.section_id not in {"operations", "finance"}
+    ]
+    if diagnostic_sections:
+        for section in diagnostic_sections[:6]:
             lines.append(
                 f"- {section.title}: {section.status} "
                 f"({len(section.supported)} soportados / {len(section.missing)} faltantes)"
             )
     else:
-        lines.append("- Sin secciones vivas suficientes para esta entidad.")
+        lines.append("- Sin secciones vivas adicionales para esta entidad.")
 
     lines.extend(["", "Evidencia encontrada:"])
     if workspace.evidence:
@@ -489,7 +514,7 @@ def _render_owner_entity_folder_workspace(workspace: Any) -> str:
         lines.append("- Sin faltantes detectados en el workspace read-only.")
 
     if workspace.next_questions:
-        lines.extend(["", "Preguntas siguientes:"])
+        lines.extend(["", "Preguntas sugeridas:"])
         lines.extend(f"- {item}" for item in workspace.next_questions[:4])
 
     if workspace.non_claims:

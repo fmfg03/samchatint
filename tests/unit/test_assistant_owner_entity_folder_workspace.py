@@ -97,12 +97,64 @@ def test_owner_entity_folder_workspace_composes_live_evidence_without_writes(tmp
     assert workspace.status == WORKSPACE_PARTIAL
     assert workspace.workspace_cards
     assert workspace.folder_sections
+    sections = {section.section_id: section for section in workspace.folder_sections}
+    assert "operations" in sections
+    assert "finance" in sections
+    assert any("equipo" in item.lower() for item in sections["operations"].supported)
+    assert any("jugador" in item.lower() for item in sections["operations"].supported)
+    assert any("pago" in item.lower() or "finance" in item.lower() for item in sections["finance"].supported)
+    assert sections["operations"].missing
+    assert sections["finance"].missing
     assert workspace.evidence
     assert workspace.missing_fields
     assert workspace.preview["blocked_actions"]
     assert workspace.preview["execution_status"] == "not_executed"
     assert any("carpeta" in item.lower() for item in workspace.non_claims)
     assert owner_entity_folder_workspace_contains_execution_claim(workspace) is False
+
+
+def test_owner_entity_folder_workspace_render_is_legible_and_read_only(tmp_path: Path) -> None:
+    from samchat.assistant.conversation_service import _render_owner_entity_folder_workspace
+
+    entity_dir = tmp_path / "copa-local" / "entities" / "cdmx"
+    _write_json(
+        entity_dir / "operations.json",
+        {
+            "entity_name": "CDMX",
+            "tournament_slug": "copa-local",
+            "expected_teams_by_category_gender": [{"categoria": "Sub 15", "equipos": 4}],
+            "real_teams_by_category_gender": [{"categoria": "Sub 15", "equipos": 3}],
+            "players_by_category_age_gender": [{"edad": 15, "jugadores": 42}],
+        },
+    )
+    _write_json(
+        entity_dir / "finance.json",
+        {
+            "entity_name": "CDMX",
+            "operator_transfers": [{"fecha": "2026-07-01", "monto": 10000}],
+        },
+    )
+
+    workspace = build_owner_entity_folder_workspace_from_tournament_source(
+        _source(),
+        status_report=_status_report(),
+        entity_name="CDMX",
+        root_dir=tmp_path,
+    )
+
+    rendered = _render_owner_entity_folder_workspace(workspace)
+
+    assert "Operaciones:" in rendered
+    assert "Finanzas:" in rendered
+    assert "Faltantes para no inventar:" in rendered
+    assert "Evidencia encontrada:" in rendered
+    assert "No-claims:" in rendered
+    assert "Preguntas sugeridas:" in rendered
+    assert "Preview / frontera de autoridad:" in rendered
+    assert "Workspace read-only" in rendered
+    assert "no crea carpetas" in rendered
+    assert "no exporta" in rendered
+    assert "no modifica datos" in rendered
 
 
 
