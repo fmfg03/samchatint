@@ -675,8 +675,11 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
 def test_quick_expense_cfdi_autofill_keeps_xml_total_as_authority():
     script = render_cfdi_quick_expense_autofill_script()
 
+    assert "if (concepto && payload.concepto)" not in script
+    assert "CFDI leido. Se precargaron fecha, folio, montos e impuestos" in script
     assert "if (total && payload.total)" in script
     assert "total.value = payload.total" in script
+    assert "tipInput" in script
     assert "&& (!subtotal || !subtotal.value)" not in script
     assert script.count("formData.append(sourceInput.name, sourceInput.files[0]);") == 1
 
