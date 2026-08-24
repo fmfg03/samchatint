@@ -35,6 +35,50 @@ WORKSPACE_PARTIAL = "partial_live_evidence"
 WORKSPACE_NEEDS_TARGET = "needs_target_context"
 WORKSPACE_NO_LIVE_EVIDENCE = "no_live_evidence"
 
+_OPERATIONS_KEYWORDS = (
+    "operation",
+    "operacion",
+    "operaciones",
+    "team",
+    "equipo",
+    "jugador",
+    "categoria",
+    "genero",
+    "rama",
+    "ronda",
+    "fase estatal",
+    "fase nacional",
+    "torneo",
+    "municipio",
+    "estado",
+    "viaje",
+    "clasificacion",
+    "contacto",
+    "responsable",
+)
+
+_FINANCE_KEYWORDS = (
+    "finance",
+    "finanza",
+    "pago",
+    "pagos",
+    "monto",
+    "ayuda",
+    "transfer",
+    "costo",
+    "gasto",
+    "gastos",
+    "proveedor",
+    "hotel",
+    "hospedaje",
+    "seguro",
+    "medico",
+    "uniforme",
+    "balon",
+    "equipamiento",
+    "utileria",
+)
+
 
 @dataclass(frozen=True)
 class OwnerEntityFolderWorkspaceCard:
@@ -125,6 +169,97 @@ def _dedupe_str(values: Sequence[Any]) -> list[str]:
         seen.add(key)
         result.append(text)
     return result
+
+
+def _matches_any(text: Any, keywords: Sequence[str]) -> bool:
+    normalized = _safe_str(text).casefold()
+    return any(keyword.casefold() in normalized for keyword in keywords)
+
+
+def _section_status(supported: Sequence[str], missing: Sequence[str]) -> str:
+    if supported and missing:
+        return WORKSPACE_PARTIAL
+    if supported:
+        return "supported"
+    if missing:
+        return "missing"
+    return WORKSPACE_NO_LIVE_EVIDENCE
+
+
+def _bucket_section(
+    *,
+    section_id: str,
+    title: str,
+    keywords: Sequence[str],
+    base_sections: Sequence[OwnerEntityFolderWorkspaceSection],
+    global_evidence: Sequence[str],
+    global_missing: Sequence[str],
+) -> OwnerEntityFolderWorkspaceSection:
+    supported: list[str] = []
+    missing: list[str] = []
+    evidence: list[str] = []
+    for section in base_sections:
+        for item in section.supported:
+            if _matches_any(item, keywords):
+                supported.append(item)
+        for item in section.missing:
+            if _matches_any(item, keywords):
+                missing.append(item)
+        for item in section.evidence:
+            if _matches_any(item, keywords):
+                evidence.append(item)
+
+    for item in global_evidence:
+        if _matches_any(item, keywords):
+            supported.append(item)
+            evidence.append(item)
+    for item in global_missing:
+        if _matches_any(item, keywords):
+            missing.append(item)
+
+    supported = _dedupe_str(supported)
+    missing = _dedupe_str(missing)
+    evidence = _dedupe_str(evidence)
+    return OwnerEntityFolderWorkspaceSection(
+        section_id=section_id,
+        title=title,
+        status=_section_status(supported, missing),
+        supported=supported,
+        missing=missing,
+        evidence=evidence,
+    )
+
+
+def _operational_folder_sections(
+    *,
+    base_sections: Sequence[OwnerEntityFolderWorkspaceSection],
+    evidence: Sequence[str],
+    missing: Sequence[str],
+) -> list[OwnerEntityFolderWorkspaceSection]:
+    """Return owner-facing folder drawers before raw diagnostic sections.
+
+    This is a conservative re-bucketing of already-discovered fields. It does
+    not infer new facts; it only makes the workspace legible as Operaciones and
+    Finanzas for human review.
+    """
+
+    operations = _bucket_section(
+        section_id="operations",
+        title="Operaciones",
+        keywords=_OPERATIONS_KEYWORDS,
+        base_sections=base_sections,
+        global_evidence=evidence,
+        global_missing=missing,
+    )
+    finance = _bucket_section(
+        section_id="finance",
+        title="Finanzas",
+        keywords=_FINANCE_KEYWORDS,
+        base_sections=base_sections,
+        global_evidence=evidence,
+        global_missing=missing,
+    )
+    return [operations, finance]
 
 
 def _workspace_id(target: Mapping[str, Any], evidence: Sequence[str], missing: Sequence[str]) -> str:
@@ -335,7 +470,12 @@ def build_owner_entity_folder_workspace(
     status = _status(readiness, dossier)
     if status == WORKSPACE_READY_FOR_REVIEW and missing:
         status = WORKSPACE_PARTIAL
-    sections = _readiness_sections(readiness) + _dossier_sections(dossier)
+    diagnostic_sections = _readiness_sections(readiness) + _dossier_sections(dossier)
+    sections = _operational_folder_sections(
+        base_sections=diagnostic_sections,
+        evidence=evidence,
+        missing=missing,
+    ) + diagnostic_sections
     if wizard_bridge:
         sections.append(_wizard_section(wizard_bridge))
     workspace_id = _workspace_id(target_payload, evidence, missing)
