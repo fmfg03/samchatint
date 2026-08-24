@@ -24783,7 +24783,7 @@ async def documentos_control_presupuestal(
         options = _html_budget_concept_options(
             concepts,
             str(documento.budget_concept_id or ""),
-            required=False,
+            required=True,
         )
         if not options:
             options = '<option value="">— Sin conceptos disponibles para este torneo/fase —</option>'
