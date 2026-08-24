@@ -1028,6 +1028,7 @@ def render_cfdi_quick_expense_autofill_script(
     impuestos_y_retenciones_id: str = "quick-impuestos-y-retenciones",
     total_id: str = "quick-total",
     notice_id: str = "quick_cfdi_autofill_notice",
+    tip_input_id: str = "quick-propina",
 ) -> str:
     return f"""
     <script>
@@ -1044,6 +1045,7 @@ def render_cfdi_quick_expense_autofill_script(
                 {json.dumps(impuestos_y_retenciones_id)}
             );
             const total = document.getElementById({json.dumps(total_id)});
+            const tipInput = document.getElementById({json.dumps(tip_input_id)});
             const notice = document.getElementById({json.dumps(notice_id)});
             let autofillRequestId = 0;
 
@@ -1058,6 +1060,7 @@ def render_cfdi_quick_expense_autofill_script(
                     money(subtotal && subtotal.value)
                     - money(descuento && descuento.value)
                     + money(impuestosYRetenciones && impuestosYRetenciones.value)
+                    + money(tipInput && tipInput.value)
                 );
                 total.value = computed.toFixed(2);
             }}
@@ -1083,9 +1086,6 @@ def render_cfdi_quick_expense_autofill_script(
             }}
 
             function applyAutofill(payload) {{
-                if (concepto && payload.concepto) {{
-                    concepto.value = payload.concepto;
-                }}
                 if (fecha && payload.fecha) {{
                     fecha.value = payload.fecha;
                 }}
@@ -1152,7 +1152,7 @@ def render_cfdi_quick_expense_autofill_script(
                     }}
                     applyAutofill(payload.data || {{}});
                     showNotice(
-                        'Campos precargados desde el CFDI. Revise antes de guardar.',
+                        'CFDI leido. Se precargaron fecha, folio, montos e impuestos; capture/revise la descripcion.',
                         false
                     );
                 }} catch (_err) {{

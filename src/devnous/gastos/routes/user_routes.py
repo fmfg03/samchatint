@@ -33698,14 +33698,20 @@ def _quick_expense_values(
     subtotal: Optional[str],
     descuento: Optional[str],
     impuestos_y_retenciones: Optional[str],
+    propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
+    concepto_final = (concepto or "").strip()
+    propina_amount = _quick_expense_decimal(
+        propina_no_deducible,
+        "Propina",
+        required=False,
+    )
     if xml_data:
-        concepto_final = (xml_data.get("descripcion_concepto_principal") or "").strip()
         fecha_xml = xml_data.get("fecha")
-        fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else ""
-        numero_final = (xml_data.get("cfdi_uuid") or "").strip()
+        fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
+        numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
         taxes = quick_expense_tax_components_from_parsed(xml_data)
         subtotal_amount = _quick_expense_decimal(str(taxes.subtotal), "Sub total")
         descuento_amount = taxes.descuento.quantize(
@@ -33726,9 +33732,8 @@ def _quick_expense_values(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
                 "Impuestos y retenciones"
             )
-        calculated_total = xml_total
+        calculated_total = xml_total + propina_amount
     else:
-        concepto_final = (concepto or "").strip()
         fecha_final = (fecha or "").strip()
         numero_final = (numero_factura or "").strip()
         subtotal_amount = _quick_expense_decimal(subtotal, "Sub total")
@@ -33747,7 +33752,7 @@ def _quick_expense_values(
             subtotal_amount,
             descuento_amount,
             impuestos_net,
-        )
+        ) + propina_amount
         iva_amount = max(impuestos_net, Decimal("0"))
 
     if not concepto_final:
@@ -33778,6 +33783,7 @@ def _quick_expense_values(
         "impuestos_y_retenciones": impuestos_net,
         "iva": iva_amount,
         "total": calculated_total,
+        "propina_no_deducible": propina_amount,
     }
 
 
@@ -33793,6 +33799,7 @@ async def crear_gasto_rapido_en_informe(
     subtotal: Optional[str] = Form(None),
     descuento: Optional[str] = Form("0"),
     impuestos_y_retenciones: Optional[str] = Form("0"),
+    propina_no_deducible: Optional[str] = Form("0"),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
@@ -33883,6 +33890,7 @@ async def crear_gasto_rapido_en_informe(
             subtotal=subtotal,
             descuento=descuento,
             impuestos_y_retenciones=impuestos_y_retenciones,
+            propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
         )
         owner = cuenta.empleado
@@ -33932,6 +33940,7 @@ async def crear_gasto_rapido_en_informe(
             edicion=getattr(cuenta, "edicion", None),
             currency=currency_for(cuenta),
             budget_concept_id=UUIDType(str(budget_concept["id"])) if budget_concept else None,
+            propina_no_deducible=float(values["propina_no_deducible"]),
         )
         if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
             expense.pagado_con_amex_empresa = True
@@ -34163,7 +34172,7 @@ async def cuenta_de_gastos_detail(
             ).options(
                 selectinload(ExpenseReport.cuenta_contable),
                 selectinload(ExpenseReport.cfdi_report)
-            ).order_by(ExpenseReport.fecha.desc())
+            ).order_by(ExpenseReport.created_at.asc(), ExpenseReport.fecha.asc())
         )
         expenses = expenses_result.scalars().all()
     except (ProgrammingError, OperationalError):
@@ -34271,7 +34280,7 @@ async def cuenta_de_gastos_detail(
         concepto_display = escape((exp.concepto or "").strip() or "—")
         movimientos_entries.append(
             (
-                _movimiento_sort_dt(exp.fecha),
+                _movimiento_sort_dt(exp.created_at, exp.fecha),
                 f"""
         <tr style="{row_style}">
             <td>{amex_cell}</td>
@@ -34354,7 +34363,7 @@ async def cuenta_de_gastos_detail(
             )
         )
 
-    movimientos_entries.sort(key=lambda item: item[0], reverse=True)
+    movimientos_entries.sort(key=lambda item: item[0])
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
 
@@ -34705,7 +34714,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos concepto, montos e impuestos; revisa antes de guardar.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -34723,6 +34732,7 @@ async def cuenta_de_gastos_detail(
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
                                         <th>Impuestos y retenciones</th>
+                                        <th id="quick-propina-header" style="display:none;">Propina</th>
                                         <th>TOTAL</th>
                                         <th>MONEDA</th>
                                         <th>MATERIALIDADES</th>
@@ -34745,6 +34755,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td id="quick-propina-cell" style="display:none;"><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
                                         <td>
@@ -34757,6 +34768,14 @@ async def cuenta_de_gastos_detail(
                             </table>
                         </div>
                     </form>
+                    <div id="quick_cfdi_pdf_preview" class="st-file-preview" hidden style="margin-top:12px;border:1px solid #dbe2ea;border-radius:12px;overflow:hidden;background:#fff;">
+                        <div class="st-file-preview-head" style="display:flex;justify-content:space-between;gap:12px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                            <strong>Vista preliminar CFDI PDF</strong>
+                            <span id="quick_cfdi_pdf_preview_name">Sin archivo seleccionado</span>
+                        </div>
+                        <iframe id="quick_cfdi_pdf_preview_frame" class="st-file-preview-frame" title="Vista preliminar CFDI PDF" style="width:100%;height:420px;border:0;"></iframe>
+                    </div>
+                    {render_pdf_file_preview_script(input_id="quick-cfdi-pdf", container_id="quick_cfdi_pdf_preview", filename_id="quick_cfdi_pdf_preview_name", frame_id="quick_cfdi_pdf_preview_frame")}
                 </section>
         """
 
@@ -34805,6 +34824,9 @@ async def cuenta_de_gastos_detail(
             }}
             .quick-expense-table #quick-concepto {{
                 min-width:220px;
+            }}
+            .quick-expense-table #quick-propina {{
+                min-width:110px;
             }}
             .quick-expense-table input[type="file"] {{
                 min-width:180px;
@@ -34932,7 +34954,53 @@ async def cuenta_de_gastos_detail(
                 }});
             }})();
         </script>
-        {render_cfdi_quick_expense_autofill_script()}
+        <script>
+            (function() {{
+                const concept = document.getElementById('quick-concepto');
+                const budget = document.getElementById('quick-budget-concept');
+                const tipHeader = document.getElementById('quick-propina-header');
+                const tipCell = document.getElementById('quick-propina-cell');
+                const tipInput = document.getElementById('quick-propina');
+                const subtotal = document.getElementById('quick-subtotal');
+                const descuento = document.getElementById('quick-descuento');
+                const impuestos = document.getElementById('quick-impuestos-y-retenciones');
+                const total = document.getElementById('quick-total');
+                const tokens = ['alimento', 'alimentos', 'restaurante', 'restaurant', 'consumo', 'comida', 'cena', 'desayuno', 'cafeteria'];
+                function normalize(value) {{
+                    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                }}
+                function money(el) {{
+                    const parsed = Number.parseFloat((el && el.value) || '0');
+                    return Number.isFinite(parsed) ? parsed : 0;
+                }}
+                function isFood() {{
+                    const selected = budget && budget.selectedOptions && budget.selectedOptions[0] ? budget.selectedOptions[0].textContent : '';
+                    const haystack = normalize((concept && concept.value) + ' ' + selected);
+                    return tokens.some(function(token) {{ return haystack.indexOf(token) >= 0; }});
+                }}
+                function updateTotalWithTip() {{
+                    if (!total) return;
+                    const computed = money(subtotal) - money(descuento) + money(impuestos) + money(tipInput);
+                    total.value = computed.toFixed(2);
+                }}
+                function refreshTipVisibility() {{
+                    const visible = isFood() || money(tipInput) > 0;
+                    if (tipHeader) tipHeader.style.display = visible ? '' : 'none';
+                    if (tipCell) tipCell.style.display = visible ? '' : 'none';
+                    updateTotalWithTip();
+                }}
+                [concept, budget].forEach(function(el) {{
+                    if (!el) return;
+                    el.addEventListener('input', refreshTipVisibility);
+                    el.addEventListener('change', refreshTipVisibility);
+                }});
+                [subtotal, descuento, impuestos, tipInput].forEach(function(el) {{
+                    if (el) el.addEventListener('input', updateTotalWithTip);
+                }});
+                refreshTipVisibility();
+            }})();
+        </script>
+        {render_cfdi_quick_expense_autofill_script(tip_input_id="quick-propina")}
         {_render_transient_message_query_cleanup_script()}
     </body>
     </html>
