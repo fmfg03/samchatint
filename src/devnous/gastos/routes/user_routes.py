@@ -14103,23 +14103,39 @@ def _solicitud_transferencia_list_actions_html(
 ) -> str:
     """Actions shown from the solicitudes list without bypassing workflow rules."""
     detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
+    is_owner = getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+    can_edit_rejected = (
+        getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
+        and getattr(documento, "estado", None) == "rechazado"
+        and is_owner
+    )
     can_cancel_draft = (
         getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
         and getattr(documento, "estado", None) == "borrador"
-        and getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+        and is_owner
     )
-    if not can_cancel_draft:
+    if not (can_cancel_draft or can_edit_rejected):
         return detail_link
-    return (
-        '<div class="inline-actions" style="gap:6px;align-items:center;">'
-        f'{detail_link}'
+    edit_link = (
+        f'<a href="/documentos/{documento.id}/editar" class="button primary">Editar</a>'
+        if can_edit_rejected
+        else ""
+    )
+    cancel_form = (
         f'<form method="POST" action="/documentos/{documento.id}/cancelar" '
         'class="inline-form" style="display:inline;">'
         '<input type="hidden" name="next" value="/gastos-terceros">'
         '<input type="hidden" name="comentario" value="Borrador cancelado desde la bandeja de solicitudes.">'
         '<button type="submit" class="button danger" '
-        'onclick="return confirm(\'?Cancelar esta solicitud en borrador? Se conservar? el registro de auditor?a.\')">'
-        'Cancelar borrador</button></form></div>'
+        "onclick=\"return confirm('Cancelar esta solicitud en borrador? Se conservara como cancelada con registro de auditoria.')\">"
+        'Cancelar borrador</button></form>'
+        if can_cancel_draft
+        else ""
+    )
+    return (
+        '<div class="inline-actions" style="gap:6px;align-items:center;">'
+        f'{detail_link}{edit_link}{cancel_form}'
+        '</div>'
     )
 
 

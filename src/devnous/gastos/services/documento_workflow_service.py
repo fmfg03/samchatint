@@ -471,7 +471,8 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "La solicitud solo puede cancelarse en borrador.",
             )
-        documento.estado = "rechazado"
+        documento.estado = "cancelado"
+        documento.enviado_en = None
         aprobacion_accion = "cancelar"
 
     aprobacion = Aprobacion(
