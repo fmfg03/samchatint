@@ -339,9 +339,39 @@ async def test_crear_informe_submit_rejects_other_beneficiary_for_unauthorized_u
 
 
 @pytest.mark.asyncio
-async def test_sync_informe_to_enviado_records_requester_actor_not_beneficiary(monkeypatch):
+async def test_sync_informe_to_control_presupuestal_records_requester_actor_not_beneficiary(monkeypatch):
     cuenta = SimpleNamespace(id=uuid4(), empleado_id=uuid4(), beneficiario_empleado_id=uuid4())
-    informe = SimpleNamespace(id=uuid4(), estado="borrador", enviado_en=None)
+    informe = SimpleNamespace(id=uuid4(), estado="borrador", enviado_en=None, budget_concept_id=None)
+    requester_actor = SimpleNamespace(id=uuid4())
+    added = []
+    session = SimpleNamespace(add=lambda obj: added.append(obj))
+
+    async def fake_count(*_args, **_kwargs):
+        return 1
+
+    monkeypatch.setattr(user_routes, "_count_active_cuenta_expenses", fake_count)
+
+    changed = await user_routes._sync_informe_documento_to_enviado(
+        session,
+        cuenta=cuenta,
+        informe_doc=informe,
+        actor=requester_actor,
+    )
+
+    assert changed is True
+    assert informe.estado == "control_presupuestal"
+    assert informe.enviado_en is None
+    aprobaciones = [obj for obj in added if obj.__class__.__name__ == "Aprobacion"]
+    assert len(aprobaciones) == 1
+    assert aprobaciones[0].aprobador_id == requester_actor.id
+    assert aprobaciones[0].entidad_id == informe.id
+    assert aprobaciones[0].accion == "enviar_control_presupuestal"
+
+
+@pytest.mark.asyncio
+async def test_sync_informe_to_enviado_when_budget_concept_is_assigned(monkeypatch):
+    cuenta = SimpleNamespace(id=uuid4(), empleado_id=uuid4(), beneficiario_empleado_id=uuid4())
+    informe = SimpleNamespace(id=uuid4(), estado="borrador", enviado_en=None, budget_concept_id=uuid4())
     requester_actor = SimpleNamespace(id=uuid4())
     added = []
     session = SimpleNamespace(add=lambda obj: added.append(obj))
@@ -360,7 +390,9 @@ async def test_sync_informe_to_enviado_records_requester_actor_not_beneficiary(m
 
     assert changed is True
     assert informe.estado == "enviado"
+    assert informe.enviado_en is not None
     aprobaciones = [obj for obj in added if obj.__class__.__name__ == "Aprobacion"]
     assert len(aprobaciones) == 1
     assert aprobaciones[0].aprobador_id == requester_actor.id
     assert aprobaciones[0].entidad_id == informe.id
+    assert aprobaciones[0].accion == "enviar"
