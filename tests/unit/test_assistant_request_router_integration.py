@@ -329,7 +329,7 @@ async def test_owner_variable_question_uses_conversation_answer_without_provider
     )
 
     assert calls == []
-    assert "Se que variable necesitas" in response.assistant_message
+    assert "No hay dato soportado" in response.assistant_message
     assert "Equipos reales participantes" in response.assistant_message
     assert "no hay evidencia viva suficiente" in response.assistant_message
     assert "No ejecute cambios" in response.assistant_message
@@ -413,6 +413,52 @@ async def test_owner_variable_question_uses_live_evidence_when_available(monkeyp
     assert trace["provider_called"] is False
     assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "supported"
 
+
+@pytest.mark.asyncio
+async def test_owner_variable_direct_pending_payments_question_bypasses_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("canonical owner variable question should bypass provider")
+
+    response = await _run_message(
+        "Que entidades tienen pagos pendientes?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "No hay dato soportado" in response.assistant_message
+    assert "Ayudas y pagos sucesivos al operador" in response.assistant_message
+    assert "No ejecute cambios" in response.assistant_message
+    trace = response.tool_trace[0]["owner_variable_query"]
+    assert trace["stage"] == "deterministic_read_only_owner_variable_query"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
+    assert response.tool_trace[0]["result"]["conversation_answer"]["status"] == "missing"
+
+
+@pytest.mark.asyncio
+async def test_owner_readiness_folder_gap_question_extracts_entity_without_provider():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("owner readiness question should bypass provider")
+
+    response = await _run_message(
+        "Que falta para la carpeta de Jalisco?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "entidad=Jalisco" in response.assistant_message
+    assert "Faltantes" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] == 0
 
 @pytest.mark.asyncio
 async def test_unmapped_owner_like_question_falls_through_to_provider():

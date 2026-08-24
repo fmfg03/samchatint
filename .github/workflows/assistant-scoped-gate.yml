@@ -72,6 +72,8 @@ jobs:
             "tests/unit/test_assistant_business_diff_preview.py"
             "tests/unit/test_assistant_owner_folder_builder.py"
             "tests/unit/test_assistant_owner_folder_revision.py"
+            "tests/unit/test_assistant_owner_variable_query.py"
+            "tests/unit/test_assistant_owner_variable_answer.py"
             "tests/unit/test_assistant_owner_needs_eval.py"
             "tests/unit/test_assistant_owner_operator_workflow.py"
             "tests/unit/test_assistant_owner_response_pack.py"
@@ -179,6 +181,8 @@ jobs:
             tests/unit/test_assistant_business_diff_preview.py \
             tests/unit/test_assistant_owner_folder_builder.py \
             tests/unit/test_assistant_owner_folder_revision.py \
+            tests/unit/test_assistant_owner_variable_query.py \
+            tests/unit/test_assistant_owner_variable_answer.py \
             tests/unit/test_assistant_owner_needs_eval.py \
             tests/unit/test_assistant_owner_operator_workflow.py \
             tests/unit/test_assistant_owner_response_pack.py \

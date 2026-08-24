@@ -315,14 +315,14 @@ def _owner_readiness_scope_from_message(raw_message: str) -> str:
         return "marketing_activation_report"
     if "fase nacional" in normalized or "nacional" in normalized:
         return "national_phase_folder"
-    if "entidad" in normalized or "operador" in normalized:
+    if "entidad" in normalized or "operador" in normalized or "carpeta" in normalized:
         return "entity_folder"
     return "all"
 
 
 def _owner_readiness_entity_hint(raw_message: str) -> str | None:
     normalized = (raw_message or "").strip()
-    markers = ("entidad", "operador")
+    markers = ("entidad", "operador", "carpeta de", "carpeta")
     lowered = normalized.lower()
     for marker in markers:
         idx = lowered.find(marker)
@@ -591,6 +591,7 @@ def _owner_variable_query_intent(raw_message: str) -> bool:
     direct_question = any(
         token in normalized
         for token in (
+            "que",
             "cuantos",
             "cuantas",
             "cuanto",
@@ -601,19 +602,51 @@ def _owner_variable_query_intent(raw_message: str) -> bool:
             "quienes",
             "cuando",
             "donde",
-            "numero",
-            "nombre",
-            "fecha",
-            "lugar",
-            "monto",
         )
     )
-    specific_fields = {
-        candidate.field
+    specific_candidates = [
+        candidate
         for candidate in report.candidates
         if candidate.field not in {"tournament", "entity_name"}
+    ]
+    if not direct_question or not specific_candidates:
+        return False
+
+    high_signal_direct_fields = {
+        "expected_teams",
+        "real_teams",
+        "players_by_category_age_gender",
+        "round_progression",
+        "state_phase_operations",
+        "operator_payments",
+        "equipment_costs",
+        "visit_results",
+        "photographic_evidence",
+        "contracted_hotels_bed_nights",
+        "contracted_meals",
+        "sports_venue_and_fields",
+        "medical_services_description",
+        "accidents_with_transfers",
+        "staff_travel_costs",
+        "hotel_payments",
+        "provider_payments",
+        "medical_and_insurance_costs",
+        "brand_activation_evidence",
+        "brand_activation_activities",
+        "physical_supplier_attendance",
+        "sponsor_visitors",
+        "activation_result",
     }
-    return owner_context and direct_question and bool(specific_fields)
+    has_high_signal_variable = any(
+        candidate.field in high_signal_direct_fields and candidate.score >= 1
+        for candidate in specific_candidates
+    )
+    # Owner variable questions are intentionally narrow: they must map to a
+    # canonical Owner Pack field and be phrased as a factual question. Without
+    # explicit owner context, only high-signal Owner Pack fields are intercepted;
+    # this keeps Analyst Workbench prompts such as contract-risk reviews from
+    # being captured only because they mention a generic word like "fecha".
+    return owner_context or has_high_signal_variable
 
 
 async def _build_owner_variable_query_response(

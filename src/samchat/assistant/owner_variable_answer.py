@@ -90,7 +90,7 @@ def _status_headline(status: str) -> str:
     if status == OWNER_VARIABLE_CONFLICT:
         return "Hay fuentes en conflicto; no conviene usar el dato todavia."
     if status == OWNER_VARIABLE_MISSING:
-        return "Se que variable necesitas, pero no tengo evidencia viva suficiente."
+        return "No hay dato soportado todavia para esa variable."
     if status == OWNER_VARIABLE_UNMAPPED:
         return "No pude mapear la pregunta a una variable del Owner Pack."
     return "Revise la pregunta contra el Owner Pack."
@@ -211,8 +211,8 @@ def render_owner_variable_query_answer(
         )
     else:
         short_answer = (
-            "La pregunta si corresponde al Owner Pack, pero hoy no hay evidencia viva "
-            "suficiente para responderla."
+            "No hay dato soportado en este momento. La pregunta si corresponde al "
+            "Owner Pack, pero hoy no hay evidencia viva suficiente para responderla."
         )
 
     rendered_text = _build_rendered_text(
