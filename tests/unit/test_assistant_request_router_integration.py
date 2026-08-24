@@ -354,6 +354,29 @@ async def test_owner_variable_question_uses_conversation_answer_without_provider
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Que evidencia tenemos de pagos o apoyos?",
+        "Que evidencia tenemos de pagos hechos en agosto?",
+    ],
+)
+async def test_owner_payment_evidence_questions_do_not_fall_to_pending_payments(message):
+    response = await _run_message(message)
+
+    assert "Pagos pendientes" not in response.assistant_message
+    assert "solicitudes pendientes" not in response.assistant_message
+    assert "No hay dato soportado" in response.assistant_message
+    assert "No ejecute cambios" in response.assistant_message
+    trace = response.tool_trace[0]["owner_variable_query"]
+    assert trace["stage"] == "deterministic_read_only_owner_variable_query"
+    assert trace["provider_called"] is False
+    assert response.tool_trace[0]["tool"] == "assistant_owner_variable_query"
+    result = response.tool_trace[0]["result"]
+    assert result["candidates"][0]["field"] == "operator_payments"
+    assert result["conversation_answer"]["status"] == "missing"
+
+@pytest.mark.asyncio
 async def test_owner_variable_question_uses_live_evidence_when_available(monkeypatch):
     import samchat.assistant.conversation_service as conversation_service
     from samchat.assistant.owner_pack_live_evidence import (
