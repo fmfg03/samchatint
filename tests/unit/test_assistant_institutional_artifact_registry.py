@@ -204,6 +204,16 @@ def test_institutional_registry_exposes_sports_operations_status_tool() -> None:
     assert "wizard_alignment" in spec.output_contract
 
 
+def test_institutional_registry_exposes_owner_pack_export_preview_tool() -> None:
+    artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
+
+    spec = artifacts["assistant.owner_pack_export_preview"]
+    assert spec.status == "wired"
+    assert spec.authority_level == "preview_only"
+    assert spec.assistant_tool == "assistant_owner_pack_export_preview"
+    assert "non_claims" in spec.output_contract
+
+
 def test_institutional_registry_exposes_owner_entity_dossier_live_tool() -> None:
     artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
 

@@ -162,6 +162,12 @@ from .owner_pack_live_evidence import build_owner_pack_live_report_from_tourname
 from .owner_entity_dossier_live import build_owner_entity_dossier_live_from_tournament_source
 from .owner_entity_folder_workspace import build_owner_entity_folder_workspace_from_tournament_source
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
+from .owner_pack_export_preview import (
+    build_owner_pack_export_preview,
+    owner_pack_preview_csv_bytes,
+    owner_pack_preview_pdf_bytes,
+    render_owner_pack_preview_html,
+)
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
 from .owner_pack_readiness_dashboard import build_owner_pack_readiness_dashboard
 from .owner_pack_readiness_answer import render_owner_pack_readiness_answer
@@ -2468,6 +2474,7 @@ READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2533,6 +2540,7 @@ FINANCE_READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2574,6 +2582,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -3334,6 +3343,27 @@ def _tool_defs() -> List[Dict[str, Any]]:
             "function": {
                 "name": "assistant_owner_pack_readiness_dashboard",
                 "description": "Devuelve una superficie navegable read-only del Owner Pack: torneo, entity folder, fase nacional, marketing, cobertura, faltantes, fuentes y preguntas siguientes.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report"],
+                            "default": "all",
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_export_preview",
+                "description": "Genera una vista previa read-only del Owner Pack para revisar/imprimir/exportar indice: HTML, PDF e indice tipo Excel, con evidencias, faltantes y non-claims sin publicar ni escribir datos.",
                 "parameters": {
                     "type": "object",
                     "additionalProperties": False,
@@ -8975,6 +9005,35 @@ def _build_owner_pack_readiness_dashboard_payload(
     return payload
 
 
+def _build_owner_pack_export_preview_payload(
+    *,
+    scope: str = "all",
+    tournament_slug: str = "",
+    entity_name: str | None = None,
+) -> Dict[str, Any]:
+    dashboard = _build_owner_pack_readiness_dashboard_payload(
+        scope=scope,
+        tournament_slug=tournament_slug,
+        entity_name=entity_name,
+    )
+    preview = build_owner_pack_export_preview(
+        dashboard=dashboard,
+        readiness=dashboard.get("readiness"),
+        target={
+            "scope": (scope or "all").strip() or "all",
+            "tournament_slug": (tournament_slug or "").strip(),
+            "entity_name": (entity_name or "").strip(),
+        },
+    )
+    payload = preview.to_dict()
+    payload["html_preview"] = render_owner_pack_preview_html(preview)
+    payload["excel_index"] = {
+        "media_type": "text/csv; charset=utf-8",
+        "route": payload.get("formats", {}).get("excel_index", {}).get("route"),
+    }
+    return payload
+
+
 async def _run_read_tool(
     tool_name: str,
     args: Dict[str, Any],
@@ -9117,6 +9176,13 @@ async def _run_read_tool(
 
     if tool_name == "assistant_owner_pack_readiness_dashboard":
         return _build_owner_pack_readiness_dashboard_payload(
+            scope=str(args.get("scope") or "all").strip() or "all",
+            tournament_slug=str(args.get("tournament_slug") or "").strip(),
+            entity_name=str(args.get("entity_name") or "").strip() or None,
+        )
+
+    if tool_name == "assistant_owner_pack_export_preview":
+        return _build_owner_pack_export_preview_payload(
             scope=str(args.get("scope") or "all").strip() or "all",
             tournament_slug=str(args.get("tournament_slug") or "").strip(),
             entity_name=str(args.get("entity_name") or "").strip() or None,
@@ -10615,6 +10681,76 @@ async def assistant_owner_pack_readiness_dashboard(
         scope=scope,
         tournament_slug=tournament_slug,
         entity_name=entity_name or None,
+    )
+
+
+@router.get("/owner-pack/export-preview")
+async def assistant_owner_pack_export_preview(
+    scope: str = Query("all"),
+    tournament_slug: str = Query(""),
+    entity_name: str = Query(""),
+    current_empleado=Depends(get_current_empleado),
+):
+    _ = current_empleado
+    return _build_owner_pack_export_preview_payload(
+        scope=scope, tournament_slug=tournament_slug, entity_name=entity_name or None
+    )
+
+
+@router.get("/owner-pack/export-preview.html")
+async def assistant_owner_pack_export_preview_html(
+    scope: str = Query("all"),
+    tournament_slug: str = Query(""),
+    entity_name: str = Query(""),
+    print: bool = Query(False),
+    current_empleado=Depends(get_current_empleado),
+):
+    _ = current_empleado
+    payload = _build_owner_pack_export_preview_payload(
+        scope=scope, tournament_slug=tournament_slug, entity_name=entity_name or None
+    )
+    html_body = render_owner_pack_preview_html(payload, print_mode=print)
+    return Response(content=html_body, media_type="text/html; charset=utf-8")
+
+
+@router.get("/owner-pack/export-preview.csv")
+async def assistant_owner_pack_export_preview_csv(
+    scope: str = Query("all"),
+    tournament_slug: str = Query(""),
+    entity_name: str = Query(""),
+    current_empleado=Depends(get_current_empleado),
+):
+    _ = current_empleado
+    payload = _build_owner_pack_export_preview_payload(
+        scope=scope, tournament_slug=tournament_slug, entity_name=entity_name or None
+    )
+    data = owner_pack_preview_csv_bytes(payload)
+    return Response(
+        content=data,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="owner_pack_preview.csv"'},
+    )
+
+
+@router.get("/owner-pack/export-preview.pdf")
+async def assistant_owner_pack_export_preview_pdf(
+    scope: str = Query("all"),
+    tournament_slug: str = Query(""),
+    entity_name: str = Query(""),
+    current_empleado=Depends(get_current_empleado),
+):
+    _ = current_empleado
+    payload = _build_owner_pack_export_preview_payload(
+        scope=scope, tournament_slug=tournament_slug, entity_name=entity_name or None
+    )
+    try:
+        data = owner_pack_preview_pdf_bytes(payload)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="owner_pack_preview.pdf"'},
     )
 
 

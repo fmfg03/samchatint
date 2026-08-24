@@ -374,6 +374,31 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         next_wiring_step="Use workspace cards as the assistant preview surface; no folder write, export or publication without explicit approval.",
     ),
     InstitutionalArtifactSpec(
+        artifact_id="assistant.owner_pack_export_preview",
+        domain="owner_pack",
+        name="Owner Pack Export / Print Preview",
+        purpose="Read-only package preview for the owner pack: HTML/print, PDF preview and Excel-like index with evidence, missing fields and non-claims.",
+        module_path="samchat.assistant.owner_pack_export_preview",
+        entrypoint="build_owner_pack_export_preview",
+        status="wired",
+        authority_level="preview_only",
+        assistant_tool="assistant_owner_pack_export_preview",
+        evidence_sources=(
+            "assistant.owner_pack_readiness",
+            "assistant.owner_entity_folder_workspace",
+            "assistant.owner_variable_query",
+            "assistant.soul_wizard_owner_pack_bridge",
+        ),
+        input_contract=("dashboard/readiness", "workspace?", "variable_answers?", "soul_bridge?"),
+        output_contract=("html_preview", "pdf_preview", "excel_index", "evidence_links", "missing_items", "non_claims", "safety_summary"),
+        answers=(
+            "Genera una vista previa del Owner Pack.",
+            "Que contiene el paquete revisable y que falta?",
+            "Prepara el Owner Pack para imprimir sin publicarlo.",
+        ),
+        next_wiring_step="Use only as read-only preview/export surface; publication and writes remain behind explicit authority boundary.",
+    ),
+    InstitutionalArtifactSpec(
         artifact_id="assistant.owner_operator_workflow",
         domain="owner_pack",
         name="Owner Operator Workflow Preview",
@@ -594,6 +619,11 @@ ARTIFACT_CONNECTION_DECISIONS: tuple[InstitutionalArtifactConnectionDecision, ..
         artifact_id="assistant.owner_entity_folder_workspace",
         decision="connect_now",
         rationale="Es la superficie de carpeta operacional read-only que el duenio puede entender: operaciones, finanzas, evidencia, faltantes y preguntas.",
+    ),
+    InstitutionalArtifactConnectionDecision(
+        artifact_id="assistant.owner_pack_export_preview",
+        decision="connect_now",
+        rationale="Es la superficie segura de export/impresion del Owner Pack: consume readiness/workspace, muestra faltantes y non-claims, y no publica ni escribe sin autoridad.",
     ),
     InstitutionalArtifactConnectionDecision(
         artifact_id="assistant.owner_operator_workflow",
