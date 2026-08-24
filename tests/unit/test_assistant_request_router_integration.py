@@ -954,3 +954,14 @@ async def test_registration_executive_report_bypasses_provider_and_is_exportable
     trace = response.tool_trace[0]["request_intelligence_live_wiring"]
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] is False
+
+@pytest.mark.asyncio
+async def test_assistant_turn_appends_work_frame_without_displacing_primary_trace():
+    response = await _run_message("Que evidencia tenemos de pagos hechos en agosto?")
+
+    assert "owner_variable_query" in response.tool_trace[0]
+    work_frame_trace = response.tool_trace[-1]
+    assert work_frame_trace["tool"] == "assistant.work_frame"
+    assert work_frame_trace["result"]["task_kind"] == "evidence"
+    assert "pending_payment_queue" in work_frame_trace["assistant_work_frame"]["forbidden_interpretations"]
+    assert "payment_receipts" in work_frame_trace["assistant_work_frame"]["required_evidence"]
