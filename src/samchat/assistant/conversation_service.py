@@ -147,6 +147,7 @@ from .response_quality_gate import (
     evaluate_response_quality,
     render_quality_fallback,
 )
+from .work_frame import WorkFrame, build_work_frame
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
 AppendExportPromptFn = Callable[[str, Any], str]
@@ -241,6 +242,21 @@ def _response_object(
         pending_confirmation=None,
         preview_render=preview_render,
     )
+
+
+def _with_work_frame_trace(response: Any, work_frame: WorkFrame) -> Any:
+    trace = {
+        "assistant_work_frame": work_frame.to_dict(),
+        "tool": "assistant.work_frame",
+        "result": {
+            "domain": work_frame.domain,
+            "task_kind": work_frame.task_kind,
+            "confidence": work_frame.confidence,
+            "needs_clarification": work_frame.needs_clarification,
+        },
+    }
+    response.tool_trace = list(getattr(response, "tool_trace", []) or []) + [trace]
+    return response
 
 
 def _owner_prompt_sources(raw_message: str) -> list[str]:
@@ -1596,6 +1612,8 @@ async def run_conversation_turn(
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
     live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
 ) -> Any:
+    work_frame = build_work_frame(raw_message)
+
     document_response = await _build_document_upload_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1603,7 +1621,7 @@ async def run_conversation_turn(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if document_response is not None:
-        return document_response
+        return _with_work_frame_trace(document_response, work_frame)
 
     document_response = await _build_document_confirmation_response(
         raw_message=raw_message,
@@ -1613,7 +1631,7 @@ async def run_conversation_turn(
         document_action_router_executor=document_action_router_executor,
     )
     if document_response is not None:
-        return document_response
+        return _with_work_frame_trace(document_response, work_frame)
 
     if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
@@ -1626,7 +1644,7 @@ async def run_conversation_turn(
             require_live_evidence=True,
         )
         if analyst_response is not None:
-            return analyst_response
+            return _with_work_frame_trace(analyst_response, work_frame)
 
     capability_response = await _build_capability_negotiation_response(
         raw_message=raw_message,
@@ -1635,7 +1653,7 @@ async def run_conversation_turn(
         session=session,
     )
     if capability_response is not None:
-        return capability_response
+        return _with_work_frame_trace(capability_response, work_frame)
 
     case_memory_response = await _build_case_memory_response(
         raw_message=raw_message,
@@ -1644,7 +1662,7 @@ async def run_conversation_turn(
         session=session,
     )
     if case_memory_response is not None:
-        return case_memory_response
+        return _with_work_frame_trace(case_memory_response, work_frame)
 
     workspace_resume_response = await _build_operator_workspace_resume_response(
         raw_message=raw_message,
@@ -1652,7 +1670,7 @@ async def run_conversation_turn(
         session=session,
     )
     if workspace_resume_response is not None:
-        return workspace_resume_response
+        return _with_work_frame_trace(workspace_resume_response, work_frame)
 
     owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
         raw_message=raw_message,
@@ -1661,7 +1679,7 @@ async def run_conversation_turn(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_entity_workspace_response is not None:
-        return owner_entity_workspace_response
+        return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
@@ -1669,7 +1687,7 @@ async def run_conversation_turn(
         session=session,
     )
     if specialist_preview_response is not None:
-        return specialist_preview_response
+        return _with_work_frame_trace(specialist_preview_response, work_frame)
 
     owner_variable_response = await _build_owner_variable_query_response(
         raw_message=raw_message,
@@ -1678,7 +1696,7 @@ async def run_conversation_turn(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_variable_response is not None:
-        return owner_variable_response
+        return _with_work_frame_trace(owner_variable_response, work_frame)
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
@@ -1687,7 +1705,7 @@ async def run_conversation_turn(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_readiness_response is not None:
-        return owner_readiness_response
+        return _with_work_frame_trace(owner_readiness_response, work_frame)
 
 
     request_response = await _build_request_intelligence_response(
@@ -1699,7 +1717,7 @@ async def run_conversation_turn(
         finance_rows_provider=finance_rows_provider,
     )
     if request_response is not None:
-        return request_response
+        return _with_work_frame_trace(request_response, work_frame)
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
@@ -1709,7 +1727,7 @@ async def run_conversation_turn(
         finance_rows_provider=finance_rows_provider,
     )
     if finance_response is not None:
-        return finance_response
+        return _with_work_frame_trace(finance_response, work_frame)
 
     finance_platform_response = await _build_finance_platform_read_response(
         raw_message=raw_message,
@@ -1718,7 +1736,7 @@ async def run_conversation_turn(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if finance_platform_response is not None:
-        return finance_platform_response
+        return _with_work_frame_trace(finance_platform_response, work_frame)
 
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
@@ -1729,7 +1747,7 @@ async def run_conversation_turn(
         live_evidence_rows_provider=live_evidence_rows_provider,
     )
     if analyst_response is not None:
-        return analyst_response
+        return _with_work_frame_trace(analyst_response, work_frame)
 
     response = await assistant_turn(
         raw_message=raw_message,
@@ -1774,7 +1792,7 @@ async def run_conversation_turn(
             fallback_message,
             response.tool_trace,
         )
-    return response
+    return _with_work_frame_trace(response, work_frame)
 
 
 async def run_message_turn_with_pending(
@@ -1802,6 +1820,8 @@ async def run_message_turn_with_pending(
     finance_rows_provider: Optional[FinanceRowsProvider] = None,
     live_evidence_rows_provider: Optional[LiveEvidenceRowsProvider] = None,
 ) -> Any:
+    work_frame = build_work_frame(raw_message)
+
     pending_run = await latest_pending_run_for_conversation(
         session=session,
         conversation_id=conversation.id,
@@ -1822,7 +1842,7 @@ async def run_message_turn_with_pending(
                 response.assistant_message,
                 response.tool_trace,
             )
-            return response
+            return _with_work_frame_trace(response, work_frame)
         if is_explicit_rejection_message(raw_message):
             response = await confirm_pending_run(
                 run=pending_run,
@@ -1837,7 +1857,7 @@ async def run_message_turn_with_pending(
                 response.assistant_message,
                 response.tool_trace,
             )
-            return response
+            return _with_work_frame_trace(response, work_frame)
 
     receipt_advance = await advance_receipt_draft(
         raw_message=raw_message,
@@ -1850,20 +1870,21 @@ async def run_message_turn_with_pending(
     )
     if receipt_advance is not None:
         if receipt_advance.pending is not None:
-            return await build_deterministic_pending_response(
+            response = await build_deterministic_pending_response(
                 deterministic_pending=receipt_advance.pending,
                 raw_message=raw_message,
                 conversation=conversation,
                 current_empleado=current_empleado,
                 session=session,
             )
+            return _with_work_frame_trace(response, work_frame)
         await _persist_document_conversation_messages(
             raw_message=raw_message,
             assistant_message=receipt_advance.message,
             conversation=conversation,
             session=session,
         )
-        return _response_object(
+        return _with_work_frame_trace(_response_object(
             assistant_message=receipt_advance.message,
             tool_trace=[
                 {
@@ -1877,7 +1898,7 @@ async def run_message_turn_with_pending(
                     }
                 }
             ],
-        )
+        ), work_frame)
     deterministic_pending = None
     for builder in deterministic_pending_builders:
         builder_kwargs = {
@@ -1899,13 +1920,14 @@ async def run_message_turn_with_pending(
             break
 
     if deterministic_pending is not None:
-        return await build_deterministic_pending_response(
+        response = await build_deterministic_pending_response(
             deterministic_pending=deterministic_pending,
             raw_message=raw_message,
             conversation=conversation,
             current_empleado=current_empleado,
             session=session,
         )
+        return _with_work_frame_trace(response, work_frame)
 
     document_response = await _build_document_confirmation_response(
         raw_message=raw_message,
@@ -1915,7 +1937,7 @@ async def run_message_turn_with_pending(
         document_action_router_executor=document_action_router_executor,
     )
     if document_response is not None:
-        return document_response
+        return _with_work_frame_trace(document_response, work_frame)
 
     if _live_evidence_analyst_intent(raw_message, current_empleado) is not None:
         analyst_response = await _build_analyst_workbench_response(
@@ -1928,7 +1950,7 @@ async def run_message_turn_with_pending(
             require_live_evidence=True,
         )
         if analyst_response is not None:
-            return analyst_response
+            return _with_work_frame_trace(analyst_response, work_frame)
 
     capability_response = await _build_capability_negotiation_response(
         raw_message=raw_message,
@@ -1937,7 +1959,7 @@ async def run_message_turn_with_pending(
         session=session,
     )
     if capability_response is not None:
-        return capability_response
+        return _with_work_frame_trace(capability_response, work_frame)
 
     case_memory_response = await _build_case_memory_response(
         raw_message=raw_message,
@@ -1946,7 +1968,7 @@ async def run_message_turn_with_pending(
         session=session,
     )
     if case_memory_response is not None:
-        return case_memory_response
+        return _with_work_frame_trace(case_memory_response, work_frame)
 
     workspace_resume_response = await _build_operator_workspace_resume_response(
         raw_message=raw_message,
@@ -1954,7 +1976,7 @@ async def run_message_turn_with_pending(
         session=session,
     )
     if workspace_resume_response is not None:
-        return workspace_resume_response
+        return _with_work_frame_trace(workspace_resume_response, work_frame)
 
     owner_entity_workspace_response = await _build_owner_entity_folder_workspace_response(
         raw_message=raw_message,
@@ -1963,7 +1985,7 @@ async def run_message_turn_with_pending(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_entity_workspace_response is not None:
-        return owner_entity_workspace_response
+        return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
@@ -1971,7 +1993,7 @@ async def run_message_turn_with_pending(
         session=session,
     )
     if specialist_preview_response is not None:
-        return specialist_preview_response
+        return _with_work_frame_trace(specialist_preview_response, work_frame)
 
     owner_variable_response = await _build_owner_variable_query_response(
         raw_message=raw_message,
@@ -1980,7 +2002,7 @@ async def run_message_turn_with_pending(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_variable_response is not None:
-        return owner_variable_response
+        return _with_work_frame_trace(owner_variable_response, work_frame)
 
     owner_readiness_response = await _build_owner_pack_readiness_response(
         raw_message=raw_message,
@@ -1989,7 +2011,7 @@ async def run_message_turn_with_pending(
         maybe_append_export_prompt=maybe_append_export_prompt,
     )
     if owner_readiness_response is not None:
-        return owner_readiness_response
+        return _with_work_frame_trace(owner_readiness_response, work_frame)
 
 
     request_response = await _build_request_intelligence_response(
@@ -2001,7 +2023,7 @@ async def run_message_turn_with_pending(
         finance_rows_provider=finance_rows_provider,
     )
     if request_response is not None:
-        return request_response
+        return _with_work_frame_trace(request_response, work_frame)
 
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
@@ -2012,7 +2034,7 @@ async def run_message_turn_with_pending(
         live_evidence_rows_provider=live_evidence_rows_provider,
     )
     if analyst_response is not None:
-        return analyst_response
+        return _with_work_frame_trace(analyst_response, work_frame)
 
     finance_response = await _build_finance_comparison_response(
         raw_message=raw_message,
@@ -2022,7 +2044,7 @@ async def run_message_turn_with_pending(
         finance_rows_provider=finance_rows_provider,
     )
     if finance_response is not None:
-        return finance_response
+        return _with_work_frame_trace(finance_response, work_frame)
 
     return await run_conversation_turn(
         raw_message=raw_message,

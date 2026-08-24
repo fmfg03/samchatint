@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-053g-artifact-connection-review`
+Branch at time of writing: `codex/rqf-054-claude-code-runtime-gap`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -20,6 +20,7 @@ It is not a dashboard with chat. Dashboards are auxiliary surfaces. The assistan
 - Writes remain behind preview, explicit human authority, idempotency, audit, and receipt boundaries.
 - Memory/precedent informs decisions; it never grants authority.
 - Do not expand scope into hardening or infrastructure unless it protects the current slice.
+- Do not route a user question directly to a tool unless the turn can also prove that the tool result answers the actual business question.
 
 ## Main roadmap lanes
 
@@ -107,6 +108,31 @@ This lane contains customer-facing operational modules already worked in prior s
 - Materialities, CFDI totals, tips, ISH, no-deductible rules.
 
 Do not lose this lane, but the current thread focus returned to assistant/owner/SOUL after several operational bug pauses.
+
+### Lane F - Claude-Code-like assistant runtime contract
+
+Status: RQF-054A_IMPLEMENTED_PENDING_CI
+
+Reference: `docs/assistant/rqf-054-claude-code-runtime-gap.md`
+
+Why this exists:
+
+- The assistant has many useful artifacts and tools, but it can still answer like a brittle keyword router.
+- The observed failure was semantic: `evidence of payments made` was routed to `pending payments` because both share payment vocabulary.
+- Claude Code's core value is not the terminal UI; it is the governed work loop: understand task, load context, select tools, execute under policy, verify sufficiency, render a human answer, and persist continuity.
+
+Next implementation order:
+
+1. RQF-054A - WorkFrame classifier. Status: implemented in PR #220, pending CI/merge.
+2. RQF-054B - Tool candidate adjudicator. Next.
+3. RQF-054C - Sufficiency gate.
+4. RQF-054D - Unified executive renderer.
+5. RQF-054E - Claude-Code-like turn trace.
+6. RQF-054F - Regression set for executive questions.
+
+Critical invariant:
+
+- SamChat must not merely choose a route. It must prove that the selected route answers the user's business question. If it cannot prove that, it must say what evidence is missing or ask the smallest useful follow-up.
 
 ## Current branch commits to remember
 
@@ -302,3 +328,23 @@ Focused evidence:
 Next slice:
 
 - Continue with Slice 7: Persistent case memory, unless we first consolidate frontend source into the backend release packaging to eliminate this external-static-assets footgun.
+
+## 2026-08-24 RQF-054A WorkFrame
+
+Status: IMPLEMENTED_IN_PR_220_PENDING_CI
+
+What changed:
+
+- Added WorkFrame classification before assistant turn routing.
+- WorkFrame records interpreted goal, audience, domain, task kind, required evidence, forbidden interpretations, temporal scope, and read-only authority boundary.
+- WorkFrame is attached as the final tool trace so existing primary tool trace contracts remain intact.
+
+Why it matters:
+
+- `evidence of payments made` is no longer semantically equivalent to `pending payments`.
+- Broad owner readiness, concrete owner variables, finance/accounting questions, SOUL coverage, and unknown requests now have a tested frame before tool selection.
+
+Next:
+
+- RQF-054B must select and reject ToolCandidates against the WorkFrame before execution.
+- RQF-054C must verify that the selected tool result is sufficient before rendering.
