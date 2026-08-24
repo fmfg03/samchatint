@@ -20,6 +20,7 @@ It is not a dashboard with chat. Dashboards are auxiliary surfaces. The assistan
 - Writes remain behind preview, explicit human authority, idempotency, audit, and receipt boundaries.
 - Memory/precedent informs decisions; it never grants authority.
 - Do not expand scope into hardening or infrastructure unless it protects the current slice.
+- Do not route a user question directly to a tool unless the turn can also prove that the tool result answers the actual business question.
 
 ## Main roadmap lanes
 
@@ -107,6 +108,31 @@ This lane contains customer-facing operational modules already worked in prior s
 - Materialities, CFDI totals, tips, ISH, no-deductible rules.
 
 Do not lose this lane, but the current thread focus returned to assistant/owner/SOUL after several operational bug pauses.
+
+### Lane F - Claude-Code-like assistant runtime contract
+
+Status: OPEN_SPEC
+
+Reference: `docs/assistant/rqf-054-claude-code-runtime-gap.md`
+
+Why this exists:
+
+- The assistant has many useful artifacts and tools, but it can still answer like a brittle keyword router.
+- The observed failure was semantic: `evidence of payments made` was routed to `pending payments` because both share payment vocabulary.
+- Claude Code's core value is not the terminal UI; it is the governed work loop: understand task, load context, select tools, execute under policy, verify sufficiency, render a human answer, and persist continuity.
+
+Next implementation order:
+
+1. RQF-054A - WorkFrame classifier.
+2. RQF-054B - Tool candidate adjudicator.
+3. RQF-054C - Sufficiency gate.
+4. RQF-054D - Unified executive renderer.
+5. RQF-054E - Claude-Code-like turn trace.
+6. RQF-054F - Regression set for executive questions.
+
+Critical invariant:
+
+- SamChat must not merely choose a route. It must prove that the selected route answers the user's business question. If it cannot prove that, it must say what evidence is missing or ask the smallest useful follow-up.
 
 ## Current branch commits to remember
 
