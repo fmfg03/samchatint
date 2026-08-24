@@ -70,8 +70,11 @@ from .finance_query_service import (
     render_finance_comparison_result,
     run_read_only_comparison,
 )
+from .finance_accounting_qa import (
+    detect_finance_accounting_qa_intent,
+    render_finance_accounting_qa_answer,
+)
 from .finance_read_adapter import run_finance_read_adapter
-from .finance_read_answer import render_finance_read_answer
 from .receipt_workflow_draft import (
     advance_receipt_draft,
     start_receipt_draft,
@@ -1338,106 +1341,9 @@ async def _build_finance_comparison_response(
 
 
 def _finance_platform_read_intent(raw_message: str) -> bool:
-    """Detect broad finance/accounting status questions for canonical reads."""
+    """Detect finance/accounting Q and A that can be answered from canonical reads."""
 
-    normalized = normalize_request_text(raw_message)
-    if not normalized:
-        return False
-    finance_terms = (
-        "contabilidad",
-        "contable",
-        "coi",
-        "poliza",
-        "polizas",
-        "póliza",
-        "pólizas",
-        "finanzas",
-        "finance platform",
-        "cierre contable",
-        "cierre de contabilidad",
-        "cfdi",
-        "cfdis",
-        "payment run",
-        "pagos pendientes",
-        "tenemos contabilidad",
-    )
-    question_terms = (
-        "tenemos",
-        "hay",
-        "esta",
-        "está",
-        "cargada",
-        "cargado",
-        "cargadas",
-        "cargados",
-        "estado",
-        "status",
-        "listo",
-        "lista",
-        "puedo cerrar",
-        "puede cerrar",
-        "porque no",
-        "por que no",
-        "qué falta",
-        "que falta",
-        "faltan",
-        "pendiente",
-        "pendientes",
-    )
-    return any(term in normalized for term in finance_terms) and any(
-        term in normalized for term in question_terms
-    )
-
-
-def _render_finance_platform_executive_preface(result: dict[str, Any]) -> str:
-    payload = result.get("payload") or {}
-    summary = payload.get("summary") or {}
-    accounting = payload.get("accounting_close_center") or {}
-    tax = payload.get("tax_readiness") or {}
-    payment_run = payload.get("payment_run") or {}
-
-    documents = summary.get("documents") or 0
-    expenses = summary.get("expenses") or 0
-    polizas = summary.get("polizas") or 0
-    unbalanced = accounting.get("unbalanced_count") or 0
-    pending_coi = accounting.get("pending_coi_expenses_count") or 0
-    coi_ready = accounting.get("coi_ready_expenses_count") or 0
-    diot_blockers = tax.get("diot_blockers_count") or 0
-    payable_count = payment_run.get("payable_count") or 0
-
-    if documents or expenses or polizas:
-        headline = "Sí hay información financiera/contable cargada en SamChat."
-    else:
-        headline = "No encontré información financiera/contable cargada en el snapshot canónico revisado."
-
-    blockers: list[str] = []
-    if unbalanced:
-        blockers.append(f"{unbalanced} pólizas descuadradas")
-    if pending_coi:
-        blockers.append(f"{pending_coi} gastos pendientes de COI")
-    if diot_blockers:
-        blockers.append(f"{diot_blockers} bloqueos DIOT/CFDI")
-
-    if blockers:
-        status = "Pero todavía hay pendientes: " + "; ".join(blockers) + "."
-    else:
-        status = "No detecté bloqueos contables principales en este snapshot."
-
-    return "\n".join(
-        [
-            headline,
-            status,
-            "",
-            "Resumen ejecutivo read-only:",
-            f"- Documentos: {documents}.",
-            f"- Gastos: {expenses}.",
-            f"- Pólizas: {polizas}.",
-            f"- Gastos listos para COI: {coi_ready}.",
-            f"- Pagos AP pendientes en payment run: {payable_count}.",
-            "",
-            "Detalle de fuente canónica:",
-        ]
-    )
+    return detect_finance_accounting_qa_intent(raw_message) is not None
 
 
 async def _build_finance_platform_read_response(
@@ -1447,7 +1353,8 @@ async def _build_finance_platform_read_response(
     session: Any,
     maybe_append_export_prompt: MaybeAppendExportPromptFn,
 ) -> Optional[Any]:
-    if not _finance_platform_read_intent(raw_message):
+    intent = detect_finance_accounting_qa_intent(raw_message)
+    if intent is None:
         return None
 
     result = await run_finance_read_adapter(
@@ -1457,22 +1364,26 @@ async def _build_finance_platform_read_response(
         month=datetime.now().month,
         limit=500,
     )
-    detail = render_finance_read_answer(result)
-    rendered = _render_finance_platform_executive_preface(result) + "\n" + detail
+    rendered = render_finance_accounting_qa_answer(result=result, intent=intent)
     tool_trace = [
         {
-            "assistant_finance_platform_read": {
-                "stage": "deterministic_read_only_finance_platform",
+            "assistant_finance_accounting_qa": {
+                "stage": "deterministic_read_only_finance_accounting_qa",
                 "intent": "finance.platform",
+                "question_type": intent.question_type,
+                "confidence": intent.confidence,
+                "reason": intent.reason,
                 "source_function": result.get("source_function"),
                 "ok": bool(result.get("ok")),
                 "read_only": True,
                 "provider_called": False,
                 "writes_attempted": False,
+                "operational_writes": False,
             },
-            "tool": "assistant_finance_read",
+            "tool": "assistant_finance_accounting_qa",
             "result": {
                 "intent": result.get("intent"),
+                "question_type": intent.question_type,
                 "ok": bool(result.get("ok")),
                 "source_notes": result.get("source_notes") or [],
                 "safety_labels": result.get("safety_labels") or [],

@@ -29,6 +29,7 @@ pyjwt>=2.8.0
 cryptography>=41.0.0
 passlib[bcrypt]>=1.7.4
 bleach>=6.0.0  # HTML sanitization to prevent XSS attacks
+itsdangerous>=2.1.0  # Required by Starlette SessionMiddleware
 
 # Task queue (optional)
 celery>=5.3.0

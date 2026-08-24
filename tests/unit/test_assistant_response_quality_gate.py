@@ -142,5 +142,73 @@ async def test_accounting_status_uses_canonical_read_before_provider() -> None:
         )
 
     assert "Sí hay información financiera/contable cargada" in response.assistant_message
-    assert "Documentos: 3" in response.assistant_message
-    assert any("assistant_finance_platform_read" in item for item in response.tool_trace)
+    assert "3 documentos" in response.assistant_message
+    assert any("assistant_finance_accounting_qa" in item for item in response.tool_trace)
+
+
+@pytest.mark.asyncio
+async def test_payment_run_question_uses_finance_qa_before_provider() -> None:
+    async def adapter(_session, **kwargs):
+        assert kwargs["intent"] == "finance.platform"
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": "finance.platform",
+            "source_function": "test.finance.snapshot",
+            "payload": {
+                "summary": {"documents": 3, "expenses": 2, "polizas": 1},
+                "accounting_close_center": {
+                    "coi_ready_expenses_count": 2,
+                    "pending_coi_expenses_count": 0,
+                    "unbalanced_count": 0,
+                },
+                "tax_readiness": {"diot_blockers_count": 0, "status": "ready"},
+                "payment_run": {
+                    "payable_count": 1,
+                    "payable_total": 5800,
+                    "next_step": "Cerrar corte operativo",
+                    "items": [
+                        {
+                            "numero_referencia": "S-2600115",
+                            "beneficiario_nombre": "PIXO STUDIO",
+                            "monto_total": 5800,
+                        }
+                    ],
+                },
+                "period": {"year": 2026, "month": 8},
+            },
+            "source_notes": ["test snapshot"],
+            "safety_labels": ["finance_platform_read_only"],
+        }
+
+    with patch("samchat.assistant.conversation_service.run_finance_read_adapter", new=adapter):
+        response = await run_message_turn_with_pending(
+            raw_message="¿Qué está en payment run?",
+            conversation=SimpleNamespace(id="conv-payment-run", updated_at=None),
+            current_empleado=SimpleNamespace(id="emp-1"),
+            session=_FakeSession(),
+            request=None,
+            tournament_key=None,
+            bi_year=None,
+            bi_scope=None,
+            bi_segment=None,
+            assistant_mode=None,
+            openai_api_key=None,
+            latest_pending_run_for_conversation=_pending_none,
+            is_explicit_approval_message=lambda _text: False,
+            is_explicit_rejection_message=lambda _text: False,
+            confirm_pending_run=_provider_must_not_be_called,
+            deterministic_pending_builders=[],
+            build_deterministic_pending_response=_provider_must_not_be_called,
+            assistant_turn=_provider_must_not_be_called,
+            maybe_append_export_prompt=_maybe_append_export_prompt,
+        )
+
+    assert "Payment Run" in response.assistant_message
+    assert "PIXO STUDIO" in response.assistant_message
+    assert "/admin/finanzas/payment-run" in response.assistant_message
+    assert "No ejecuté cambios" in response.assistant_message
+    assert any(
+        item.get("assistant_finance_accounting_qa", {}).get("question_type") == "payment_run"
+        for item in response.tool_trace
+    )
