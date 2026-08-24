@@ -15,6 +15,10 @@ from samchat.assistant.owner_pack_readiness import (
     build_owner_pack_readiness_from_scope,
     owner_pack_readiness_contains_execution_claim,
 )
+from samchat.assistant.owner_pack_readiness_answer import (
+    OWNER_PACK_READINESS_ANSWER_ONLY,
+    render_owner_pack_readiness_answer,
+)
 from samchat.assistant.owner_pack_status import build_owner_pack_status_report
 
 
@@ -49,6 +53,13 @@ def test_owner_pack_readiness_without_tournament_is_schema_only_and_safe() -> No
     assert report.safety_summary["complete_claim_allowed"] is False
     assert "De que torneo" in report.next_questions[0]
     assert owner_pack_readiness_contains_execution_claim(report) is False
+
+    answer = render_owner_pack_readiness_answer(report)
+    assert answer.status == OWNER_PACK_SCHEMA_ONLY
+    assert answer.audit_language == OWNER_PACK_READINESS_ANSWER_ONLY
+    assert "Owner Pack" in answer.rendered_text
+    assert "Frontera de autoridad" in answer.rendered_text
+    assert '{"name"' not in answer.rendered_text
 
 
 def test_owner_pack_readiness_entity_scope_requires_entity_name(tmp_path: Path) -> None:
@@ -167,6 +178,10 @@ async def test_owner_pack_readiness_router_tool_is_read_only() -> None:
     assert payload["safety_summary"]["writes_enabled"] is False
     assert payload["writes_attempted"] == 0
     assert payload["side_effects_detected"] == 0
+    assert payload["conversation_answer"]["status"] == OWNER_PACK_NEEDS_TARGET
+    assert "Owner Pack" in payload["conversation_answer"]["rendered_text"]
+    assert "falta indicar" in payload["conversation_answer"]["rendered_text"].lower()
+    assert '{"name"' not in payload["conversation_answer"]["rendered_text"]
 
 @pytest.mark.asyncio
 async def test_owner_pack_readiness_conversation_renders_pack_del_dueno_question(monkeypatch) -> None:
@@ -191,4 +206,6 @@ async def test_owner_pack_readiness_conversation_renders_pack_del_dueno_question
     assert "assistant_owner_pack_readiness" not in response.assistant_message
     assert '{"name"' not in response.assistant_message
     assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
-
+    answer = response.tool_trace[0]["result"]["conversation_answer"]
+    assert answer["status"] == OWNER_PACK_SCHEMA_ONLY
+    assert "Frontera de autoridad" in answer["rendered_text"]

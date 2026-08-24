@@ -88,11 +88,9 @@ from .owner_entity_folder_workspace import (
 )
 from .owner_pack_live_evidence import resolve_owner_pack_live_evidence
 from .owner_pack_readiness import (
-    OWNER_PACK_NEEDS_TARGET,
-    OWNER_PACK_PARTIAL_LIVE_EVIDENCE,
-    OWNER_PACK_READY_FOR_REVIEW,
     build_owner_pack_readiness_from_scope,
 )
+from .owner_pack_readiness_answer import render_owner_pack_readiness_answer
 from .owner_pack_status import build_owner_pack_status_report
 from .owner_variable_answer import render_owner_variable_query_answer
 from .owner_variable_query import (
@@ -441,74 +439,6 @@ def _load_owner_needs_prompts() -> list[OwnerNeedsPrompt]:
     return [_owner_prompt_from_message("Necesidades del dueno para todos los torneos")]
 
 
-def _render_owner_pack_readiness(report: Any) -> str:
-    lines = [
-        report.headline,
-        "",
-        report.summary,
-        "",
-        f"Estado: {report.status} - readiness {report.readiness_score}%",
-    ]
-    target = report.target or {}
-    target_bits = []
-    if target.get("tournament_slug"):
-        target_bits.append(f"torneo={target['tournament_slug']}")
-    if target.get("entity_name"):
-        target_bits.append(f"entidad={target['entity_name']}")
-    if target.get("scope"):
-        target_bits.append(f"scope={target['scope']}")
-    if target_bits:
-        lines.extend(["", "Objetivo revisado: " + " - ".join(target_bits)])
-
-    lines.extend(["", "Superficies revisadas:"])
-    for surface in report.surfaces[:6]:
-        lines.append(
-            f"- {surface.label}: {surface.status} "
-            f"({surface.supported_field_count}/{surface.field_count} campos respaldados)"
-        )
-
-    lines.extend(["", "Evidencia encontrada:"])
-    if report.evidence_found:
-        lines.extend(f"- {item}" for item in report.evidence_found[:8])
-    else:
-        lines.append(
-            "- Aun no hay evidencia viva suficiente; "
-            "solo contrato/schema preparado."
-        )
-
-    lines.extend(["", "Faltantes para poder contestar sin inventar:"])
-    if report.missing_evidence:
-        lines.extend(f"- {item}" for item in report.missing_evidence[:12])
-    elif report.status == OWNER_PACK_NEEDS_TARGET:
-        lines.append("- Falta indicar la entidad/operador objetivo.")
-    else:
-        lines.append("- Sin faltantes detectados en el alcance solicitado.")
-
-    if report.next_actions:
-        lines.extend(["", "Siguiente paso seguro:"])
-        lines.extend(f"- {item}" for item in report.next_actions[:4])
-    if report.next_questions:
-        lines.extend(["", "Pregunta minima para avanzar:"])
-        lines.extend(f"- {item}" for item in report.next_questions[:3])
-
-    if report.status == OWNER_PACK_READY_FOR_REVIEW:
-        conclusion = "Puede presentarse como preview read-only para revision humana."
-    elif report.status == OWNER_PACK_PARTIAL_LIVE_EVIDENCE:
-        conclusion = "Se puede mostrar avance, pero no cerrar la respuesta como completa."
-    else:
-        conclusion = "Todavia no debe venderse como respuesta completa; falta contexto o evidencia."
-    lines.extend(["", f"Conclusion: {conclusion}"])
-    lines.extend(
-        [
-            "",
-            "Frontera de autoridad: esto no crea carpetas, no modifica datos, "
-            "no manda mensajes y no autoriza nada. Es diagnostico read-only; "
-            "cualquier salida durable requiere aprobacion humana.",
-        ]
-    )
-    return "\n".join(lines)
-
-
 def _render_owner_entity_folder_workspace(workspace: Any) -> str:
     lines = [
         workspace.headline or "Owner Entity Folder Workspace",
@@ -779,7 +709,7 @@ async def _build_owner_pack_readiness_response(
         entity_name=entity_name,
         extra_live_reports=live_evidence.reports,
     )
-    rendered = _render_owner_pack_readiness(report)
+    answer = render_owner_pack_readiness_answer(report)
     tool_trace = [
         {
             "owner_pack_readiness": {
@@ -799,15 +729,23 @@ async def _build_owner_pack_readiness_response(
             },
             "tool": "assistant_owner_pack_readiness",
             "live_evidence": live_evidence.to_dict(),
-            "result": report.to_dict(),
+            "result": {
+                **report.to_dict(),
+                "conversation_answer": answer.to_dict(),
+            },
         }
     ]
-    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    rendered = maybe_append_export_prompt(answer.rendered_text, tool_trace)
     await _persist_document_conversation_messages(
         raw_message=raw_message,
         assistant_message=rendered,
         conversation=conversation,
         session=session,
+        assistant_tool_payload={
+            "owner_pack_readiness": report.to_dict(),
+            "conversation_answer": answer.to_dict(),
+            "live_evidence": live_evidence.to_dict(),
+        },
     )
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 

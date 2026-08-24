@@ -162,6 +162,7 @@ from .owner_entity_dossier_live import build_owner_entity_dossier_live_from_tour
 from .owner_entity_folder_workspace import build_owner_entity_folder_workspace_from_tournament_source
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
+from .owner_pack_readiness_answer import render_owner_pack_readiness_answer
 from .owner_pack_status import build_owner_pack_status_report
 from .owner_variable_answer import render_owner_variable_query_answer
 from .owner_variable_query import build_owner_variable_query_report
@@ -9049,12 +9050,17 @@ async def _run_read_tool(
         scope = str(args.get("scope") or "all").strip() or "all"
         tournament_slug = str(args.get("tournament_slug") or "").strip()
         entity_name = str(args.get("entity_name") or "").strip() or None
-        return build_owner_pack_readiness_from_scope(
+        report = build_owner_pack_readiness_from_scope(
             status_report=status_report,
             scope=scope,
             tournament_slug=tournament_slug,
             entity_name=entity_name,
+        )
+        payload = report.to_dict()
+        payload["conversation_answer"] = render_owner_pack_readiness_answer(
+            report
         ).to_dict()
+        return payload
 
     if tool_name == "assistant_owner_variable_query":
         question = str(args.get("question") or "").strip()
