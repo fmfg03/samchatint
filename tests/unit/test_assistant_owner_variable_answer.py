@@ -119,7 +119,7 @@ def test_owner_variable_answer_keeps_missing_as_missing() -> None:
     answer = render_owner_variable_query_answer(report)
 
     assert answer.status == OWNER_VARIABLE_MISSING
-    assert "no hay evidencia viva suficiente" in answer.short_answer
+    assert "No hay dato soportado" in answer.short_answer
     assert answer.missing_lines
     assert "falta evidencia" in answer.rendered_text
     assert "No ejecute cambios" in answer.rendered_text
@@ -169,3 +169,27 @@ def test_owner_variable_answer_renders_wizard_phase_detail() -> None:
     assert answer.status == OWNER_VARIABLE_SUPPORTED
     assert "SOUL Wizard bridge" in answer.rendered_text
     assert "Copa Local" in answer.rendered_text
+
+
+def test_owner_variable_answer_says_no_data_for_pending_payments() -> None:
+    report = build_owner_variable_query_report(question="Que entidades tienen pagos pendientes?")
+
+    answer = render_owner_variable_query_answer(report)
+
+    assert answer.status == OWNER_VARIABLE_MISSING
+    assert "No hay dato soportado" in answer.rendered_text
+    assert "Ayudas y pagos sucesivos al operador" in answer.rendered_text
+    assert "No ejecute cambios" in answer.rendered_text
+    assert answer.detail_lines == []
+
+
+def test_owner_variable_answer_does_not_invent_visit_evidence() -> None:
+    report = build_owner_variable_query_report(question="Que evidencia hay de visitas?")
+
+    answer = render_owner_variable_query_answer(report)
+
+    assert answer.status == OWNER_VARIABLE_MISSING
+    assert "No hay dato soportado" in answer.rendered_text
+    assert "Resultados y gastos de visitas" in answer.rendered_text
+    assert answer.evidence_lines
+    assert answer.safety_summary["renderer_infers_missing_values"] is False

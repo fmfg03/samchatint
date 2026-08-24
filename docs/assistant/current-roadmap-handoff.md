@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-053d-owner-pack-dashboard`
+Branch at time of writing: `codex/rqf-053e-owner-variable-qa`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -191,3 +191,17 @@ Guardrails:
 ## 2026-08-17 note
 
 SOUL Wizard 003/004 were completed after the original handoff. SOUL now has clone and activation-preview support, but remains read-only infrastructure underneath the main Assistant roadmap.
+
+### Slice 3 - Owner Variable Q&A (RQF-053E)
+
+Status: IMPLEMENTED_LOCAL on `codex/rqf-053e-owner-variable-qa`.
+
+Closure contract:
+
+- concrete Owner Pack variables answer through deterministic read-only logic;
+- supported variables cite live evidence when present;
+- recognized-but-missing variables say `No hay dato soportado`;
+- no people, phones, dates, amounts, teams, categories, or visits are invented;
+- readiness questions like `Que falta para la carpeta de Jalisco?` remain on the readiness dashboard path.
+
+Focused evidence: `tests/unit/test_assistant_owner_variable_query.py`, `tests/unit/test_assistant_owner_variable_answer.py`, and `tests/unit/test_assistant_request_router_integration.py` pass locally as 39/39.

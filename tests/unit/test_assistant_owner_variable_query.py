@@ -195,3 +195,24 @@ def test_owner_variable_query_marks_incomplete_wizard_as_partial() -> None:
     assert report.status == OWNER_VARIABLE_PARTIAL
     assert report.resolutions[0].status == OWNER_VARIABLE_PARTIAL
     assert "edition_year" in report.resolutions[0].missing_reason
+
+
+def test_owner_variable_query_maps_pending_payments_without_guessing_amounts() -> None:
+    report = build_owner_variable_query_report(question="Que entidades tienen pagos pendientes?")
+
+    assert report.status == OWNER_VARIABLE_MISSING
+    assert report.candidates[0].field == "operator_payments"
+    assert report.resolutions[0].status == OWNER_VARIABLE_MISSING
+    assert report.resolutions[0].value is None
+    assert report.resolutions[0].evidence == []
+    assert report.safety_summary["fallback_to_guessing"] is False
+
+
+def test_owner_variable_query_maps_visit_evidence_without_inventing_people_or_dates() -> None:
+    report = build_owner_variable_query_report(question="Que evidencia hay de visitas?")
+
+    assert report.status == OWNER_VARIABLE_MISSING
+    assert report.candidates[0].field == "visit_results"
+    assert report.resolutions[0].value is None
+    assert report.resolutions[0].evidence == []
+    assert report.safety_summary["fallback_to_guessing"] is False
