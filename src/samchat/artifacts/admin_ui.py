@@ -64,6 +64,11 @@ def render_runtime_artifact_index_html(payload: dict[str, Any]) -> str:
             ),
             _metric("Exports", summary.get("report_export_count"), "Generados"),
             _metric(
+                "Previews",
+                summary.get("assistant_proposal_preview_count"),
+                "Sin efectos",
+            ),
+            _metric(
                 "Closeouts",
                 summary.get("evidence_closeout_count"),
                 "Historicos",
@@ -101,6 +106,13 @@ def render_runtime_artifact_index_html(payload: dict[str, Any]) -> str:
             <table class="artifact-table">
                 <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
                 <tbody>{_rows(list(payload.get("report_exports") or []))}</tbody>
+            </table>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Assistant proposal previews</div>
+            <table class="artifact-table">
+                <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
+                <tbody>{_rows(list(payload.get("assistant_proposal_previews") or []))}</tbody>
             </table>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">

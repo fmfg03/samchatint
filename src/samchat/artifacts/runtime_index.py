@@ -108,6 +108,38 @@ REPORT_EXPORTS: tuple[dict[str, str], ...] = (
     ),
 )
 
+ASSISTANT_PROPOSAL_PREVIEWS: tuple[dict[str, str], ...] = (
+    _surface(
+        surface="Owner/operator workflow preview",
+        artifact_class="assistant_proposal_preview",
+        owner="Assistant owner/operator workflow",
+        route_or_tool="owner.operator_workflow.preview",
+        status="live/preview-only",
+        authority=(
+            "Conversation-scoped preview; approval required before any durable "
+            "write or delivery."
+        ),
+        discoverability="Assistant conversation trace and institutional artifact registry.",
+        notes=(
+            "Does not create folders, export files, notify operators, archive "
+            "artifacts, or write owner-pack state."
+        ),
+    ),
+    _surface(
+        surface="Owner Entity Folder Workspace",
+        artifact_class="assistant_proposal_preview",
+        owner="Assistant Owner Pack workspace",
+        route_or_tool="assistant_owner_entity_folder_workspace",
+        status="live/preview-only",
+        authority="Read-only tournament/owner evidence with preview-only authority.",
+        discoverability="Assistant tool trace and institutional artifact registry.",
+        notes=(
+            "Workspace cards are previews only; no folder write, export, "
+            "publication, or artifact archive is authorized."
+        ),
+    ),
+)
+
 EVIDENCE_CLOSEOUTS: tuple[dict[str, str], ...] = (
     _surface(
         surface="Closeout evidence artifacts",
@@ -147,6 +179,10 @@ PLANNED_ARTIFACTS: tuple[dict[str, str], ...] = (
 BOUNDARY_RULES: tuple[str, ...] = (
     "Assistant saved artifacts are conversation-scoped runtime artifacts.",
     "Report exports are owned by their domain modules and are generated deliveries.",
+    (
+        "Owner/operator assistant previews are assistant_proposal_preview "
+        "surfaces, not runtime_saved_artifact records."
+    ),
     "Closeout files are historical evidence, not runtime product objects.",
     "Budget source/export files can support budget workflows, but imported budget versions and services hold authority.",
     "Planned sponsor packages require a separate approved implementation track.",
@@ -159,10 +195,17 @@ def build_runtime_artifact_index() -> dict[str, Any]:
 
     runtime_saved = [dict(item) for item in RUNTIME_SAVED_ARTIFACTS]
     report_exports = [dict(item) for item in REPORT_EXPORTS]
+    assistant_proposal_previews = [
+        dict(item) for item in ASSISTANT_PROPOSAL_PREVIEWS
+    ]
     evidence_closeouts = [dict(item) for item in EVIDENCE_CLOSEOUTS]
     planned_artifacts = [dict(item) for item in PLANNED_ARTIFACTS]
     all_surfaces = (
-        runtime_saved + report_exports + evidence_closeouts + planned_artifacts
+        runtime_saved
+        + report_exports
+        + assistant_proposal_previews
+        + evidence_closeouts
+        + planned_artifacts
     )
     by_status: dict[str, int] = {}
     by_class: dict[str, int] = {}
@@ -176,6 +219,7 @@ def build_runtime_artifact_index() -> dict[str, Any]:
             "surface_count": len(all_surfaces),
             "runtime_saved_artifact_count": len(runtime_saved),
             "report_export_count": len(report_exports),
+            "assistant_proposal_preview_count": len(assistant_proposal_previews),
             "evidence_closeout_count": len(evidence_closeouts),
             "planned_artifact_count": len(planned_artifacts),
             "by_status": by_status,
@@ -183,6 +227,7 @@ def build_runtime_artifact_index() -> dict[str, Any]:
         },
         "runtime_saved_artifacts": runtime_saved,
         "report_exports": report_exports,
+        "assistant_proposal_previews": assistant_proposal_previews,
         "evidence_closeouts": evidence_closeouts,
         "planned_artifacts": planned_artifacts,
         "boundary_rules": list(BOUNDARY_RULES),

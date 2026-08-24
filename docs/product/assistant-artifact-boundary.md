@@ -41,6 +41,9 @@ The assistant must not:
 - create durable artifacts without an approved route, model, export, permission,
   or tool contract;
 - treat a preview, draft, proposal, or agent handoff as an executed effect;
+- treat owner/operator workflow previews, response packs, or workspace cards as
+  durable owner-pack folders, exported files, notifications, or saved runtime
+  artifacts;
 - publish or deliver sponsor/client-facing proof packages without a separate
   approved story/spec and human approval;
 - replace the owning module's UI, export, or permission model;
@@ -83,6 +86,9 @@ Any durable artifact creation or mutation must follow this flow:
 - Sponsor packages remain planned until approved separately.
 - Agent handoffs are internal derived evidence only.
 - Closeout files are not live runtime state.
+- `owner.operator_workflow.preview` and
+  `assistant_owner_entity_folder_workspace` do not authorize folder creation,
+  export, publication, notification, archive, or owner-pack state writes.
 
 ## Pending Runtime Decisions
 

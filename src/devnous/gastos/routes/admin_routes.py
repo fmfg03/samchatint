@@ -148,8 +148,10 @@ from ..services.payment_run_service import (
     list_payment_run_closures,
     list_payment_run_items,
     parse_payment_run_date,
+    can_confirm_payment_run_payment,
     require_payment_run_access,
     require_payment_run_manager,
+    require_payment_run_payment_confirmation,
     update_payment_run_fecha_pago,
 )
 from ..services.documento_service import (
@@ -174,7 +176,6 @@ from .dependencies import (
 )
 from .auth_routes import get_password_hash
 from devnous.tournaments.config import ACTIVE_TOURNAMENT_SCOPE
-from samchat.budgets.exporter import generate_budget_review_xlsx
 from samchat.budgets.service import (
     build_budget_commitment_expense_preview,
     DEFAULT_BUDGET_ARTIFACT,
@@ -7486,7 +7487,12 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
-def _render_payment_run_items(rows: list[dict[str, Any]], *, can_close_run: bool = True) -> str:
+def _render_payment_run_items(
+    rows: list[dict[str, Any]],
+    *,
+    can_close_run: bool = True,
+    can_confirm_payment: bool = False,
+) -> str:
     rendered_rows = []
     for row in rows:
         documento_id = escape(str(row.get("id") or ""))
@@ -7517,7 +7523,7 @@ def _render_payment_run_items(rows: list[dict[str, Any]], *, can_close_run: bool
             else "-"
         )
         proof_html = "-"
-        if row.get("can_upload_payment_proof"):
+        if row.get("can_upload_payment_proof") and can_confirm_payment:
             proof_html = f"""
                 <form method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" required>
@@ -7599,6 +7605,7 @@ async def admin_finance_payment_run(
     )
     closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)
+    can_confirm_payment = can_confirm_payment_run_payment(current_empleado)
     close_form_html = ""
     if can_close_run:
         close_form_html = """
@@ -7664,7 +7671,7 @@ async def admin_finance_payment_run(
                 <div style="overflow:auto;margin-top:14px;">
                     <table class="payment-table">
                         <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run)}</tbody>
+                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run, can_confirm_payment=can_confirm_payment)}</tbody>
                     </table>
                 </div>
                 {close_form_html}
@@ -7760,6 +7767,7 @@ async def admin_finance_payment_run_upload_payment_proof(
 
     try:
         require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
     except PaymentRunPermissionError as exc:
         raise HTTPException(status_code=403, detail=exc.message)
 
@@ -7894,7 +7902,7 @@ async def admin_finance_payment_run_closure_detail(
 async def admin_finance_payment_run_pay(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(get_current_empleado),
     document_ids: Optional[List[str]] = Form(None),
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
@@ -7905,6 +7913,11 @@ async def admin_finance_payment_run_pay(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+
+    try:
+        require_payment_run_payment_confirmation(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
 
     ids = [str(item).strip() for item in document_ids or [] if str(item).strip()]
     base_url = "/admin/finanzas"
@@ -14876,59 +14889,6 @@ async def admin_presupuestos_import_lines(
             url=f"/admin/presupuestos?version_id={quote(str(version_id))}&error_msg={quote(_OPERATION_GENERIC_ERROR)}",
             status_code=303,
         )
-
-
-@router.get("/admin/presupuestos/export.xlsx")
-async def admin_presupuestos_export_xlsx(
-    session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = Depends(get_current_empleado),
-    version_id: Optional[str] = Query(None),
-):
-    _require_budget_access(current_empleado, "export")
-    await ensure_budget_schema(session)
-    versions = await list_budget_versions(session, edition_year=2026)
-    selected_version = None
-    if version_id:
-        selected_version = next(
-            (item for item in versions if item["id"] == version_id), None
-        )
-    if selected_version is None and versions:
-        selected_version = versions[0]
-    snapshot = await build_budget_snapshot(
-        session=session,
-        edition_year=2026,
-        version_id=selected_version["id"] if selected_version else None,
-    )
-    lines = (
-        await list_budget_lines(session, version_id=selected_version["id"], limit=500)
-        if selected_version
-        else []
-    )
-    audit_events = (
-        await list_budget_audit_events(
-            session,
-            version_id=selected_version["id"] if selected_version else None,
-            limit=500,
-        )
-        if _budget_access_map(current_empleado).get("audit_read")
-        else []
-    )
-    payload = generate_budget_review_xlsx(
-        snapshot=snapshot,
-        versions=versions,
-        lines=lines,
-        audit_events=audit_events,
-        selected_version=selected_version,
-    )
-    filename = "presupuesto_2026"
-    if selected_version:
-        filename = f"presupuesto_2026_{str(selected_version.get('version_name') or 'version').lower().replace(' ', '_')}"
-    headers = {"Content-Disposition": f'attachment; filename="{filename}.xlsx"'}
-    return Response(
-        content=payload,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers=headers,
-    )
 
 
 @router.post("/admin/presupuestos/versiones/create")

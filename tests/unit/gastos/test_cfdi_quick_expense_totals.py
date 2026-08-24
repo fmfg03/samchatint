@@ -58,7 +58,7 @@ def test_quick_expense_autofill_uses_xml_total_as_authority_for_128_case() -> No
     taxes = quick_expense_tax_components_from_parsed(parsed)
     autofill = autofill_quick_expense_from_parsed_cfdi(parsed)
     values = user_routes._quick_expense_values(
-        concepto=None,
+        concepto="Descripcion capturada por usuario",
         fecha=None,
         numero_factura=None,
         subtotal=None,
@@ -80,12 +80,50 @@ def test_quick_expense_autofill_uses_xml_total_as_authority_for_128_case() -> No
     assert values['total'] == Decimal('128.00')
 
 
+
+def test_quick_expense_xml_preserves_user_description_and_adds_tip_to_paid_total() -> None:
+    parsed = parse_cfdi_xml(_cfdi_xml(subtotal='180.00', traslados='28.80', total='208.80'))
+
+    values = user_routes._quick_expense_values(
+        concepto='Consumo de alimentos con cliente',
+        fecha=None,
+        numero_factura=None,
+        subtotal=None,
+        descuento=None,
+        impuestos_y_retenciones=None,
+        propina_no_deducible='40.00',
+        xml_data=parsed,
+    )
+
+    assert values['concepto'] == 'Consumo de alimentos con cliente'
+    assert values['subtotal'] == Decimal('180.00')
+    assert values['impuestos_y_retenciones'] == Decimal('28.80')
+    assert values['propina_no_deducible'] == Decimal('40.00')
+    assert values['total'] == Decimal('248.80')
+
+
+def test_quick_expense_xml_requires_user_description_even_when_cfdi_has_description() -> None:
+    parsed = parse_cfdi_xml(_cfdi_xml())
+
+    with pytest.raises(ValueError) as exc:
+        user_routes._quick_expense_values(
+            concepto='',
+            fecha=None,
+            numero_factura=None,
+            subtotal=None,
+            descuento=None,
+            impuestos_y_retenciones=None,
+            xml_data=parsed,
+        )
+
+    assert 'gasto es requerida' in str(exc.value)
+
 def test_quick_expense_xml_validation_rejects_inconsistent_total() -> None:
     parsed = parse_cfdi_xml(_cfdi_xml(total='124.00'))
 
     with pytest.raises(ValueError) as exc:
         user_routes._quick_expense_values(
-            concepto=None,
+            concepto="Descripcion capturada por usuario",
             fecha=None,
             numero_factura=None,
             subtotal=None,
@@ -155,7 +193,7 @@ def test_quick_expense_xml_with_local_lodging_tax_accepts_total() -> None:
     taxes = quick_expense_tax_components_from_parsed(parsed)
     autofill = autofill_quick_expense_from_parsed_cfdi(parsed)
     values = user_routes._quick_expense_values(
-        concepto=None,
+        concepto="Descripcion capturada por usuario",
         fecha=None,
         numero_factura=None,
         subtotal=None,

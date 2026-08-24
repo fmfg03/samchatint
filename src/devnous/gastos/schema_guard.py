@@ -1549,7 +1549,7 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "CREATE INDEX IF NOT EXISTS ix_documentos_beneficiario_proveedor_cliente_id ON documentos (beneficiario_proveedor_cliente_id)",
     ),
     (
-        "documentos_estado_check_rechazado",
+        "documentos_estado_check_workflow_states",
         """
         DO $$
         DECLARE
@@ -1561,22 +1561,77 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             WHERE conrelid = 'documentos'::regclass
               AND conname = 'documentos_estado_check';
 
-            IF current_def IS NOT NULL AND position('rechazado' in current_def) = 0 THEN
-                ALTER TABLE documentos DROP CONSTRAINT documentos_estado_check;
-                ALTER TABLE documentos
-                    ADD CONSTRAINT documentos_estado_check
-                    CHECK (
-                        estado = ANY (
-                            ARRAY[
-                                'borrador'::text,
-                                'enviado'::text,
-                                'aprobado'::text,
-                                'rechazado'::text,
-                                'pagado'::text,
-                                'cerrado'::text
-                            ]
-                        )
-                    );
+            IF current_def IS NOT NULL THEN
+                IF position('control_presupuestal' in current_def) = 0
+                   OR position('en_proceso_pago' in current_def) = 0
+                   OR position('reembolsado' in current_def) = 0
+                   OR position('aplicado' in current_def) = 0
+                   OR position('liquidado' in current_def) = 0
+                   OR position('cancelado' in current_def) = 0 THEN
+                    ALTER TABLE documentos DROP CONSTRAINT documentos_estado_check;
+                    ALTER TABLE documentos
+                        ADD CONSTRAINT documentos_estado_check
+                        CHECK (
+                            estado = ANY (
+                                ARRAY[
+                                    'borrador'::text,
+                                    'control_presupuestal'::text,
+                                    'enviado'::text,
+                                    'aprobado'::text,
+                                    'rechazado'::text,
+                                    'pagado'::text,
+                                    'cerrado'::text,
+                                    'reembolsado'::text,
+                                    'aplicado'::text,
+                                    'liquidado'::text,
+                                    'cancelado'::text,
+                                    'en_proceso_pago'::text
+                                ]
+                            )
+                        );
+                END IF;
+            END IF;
+        END $$;
+        """,
+    ),
+    (
+        "aprobaciones_accion_check_workflow_actions",
+        """
+        DO $$
+        DECLARE
+            current_def TEXT;
+        BEGIN
+            SELECT pg_get_constraintdef(oid)
+            INTO current_def
+            FROM pg_constraint
+            WHERE conrelid = 'aprobaciones'::regclass
+              AND conname = 'aprobaciones_accion_check';
+
+            IF current_def IS NOT NULL THEN
+                IF position('enviar_control_presupuestal' in current_def) = 0
+                   OR position('asignar_partida_presupuestal' in current_def) = 0
+                   OR position('reversar_a_control_presupuestal' in current_def) = 0
+                   OR position('retirar' in current_def) = 0 THEN
+                    ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_accion_check;
+                    ALTER TABLE aprobaciones
+                        ADD CONSTRAINT aprobaciones_accion_check
+                        CHECK (
+                            accion = ANY (
+                                ARRAY[
+                                    'enviar'::text,
+                                    'enviar_control_presupuestal'::text,
+                                    'asignar_partida_presupuestal'::text,
+                                    'reversar_a_control_presupuestal'::text,
+                                    'aprobar'::text,
+                                    'rechazar'::text,
+                                    'cancelar'::text,
+                                    'editar'::text,
+                                    'pagar'::text,
+                                    'retirar'::text
+                                ]
+                            )
+                        );
+                END IF;
             END IF;
         END $$;
         """,

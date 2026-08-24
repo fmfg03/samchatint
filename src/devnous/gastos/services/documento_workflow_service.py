@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 APPROVER_ROLES = {"finanzas", "admin", "superadmin", "super_admin"}
 FINANCE_ADMIN_ROLES = {"finanzas", "admin"}
+BUDGET_CONTROL_STATE = "control_presupuestal"
+
+
+def documento_requires_budget_control(documento: Documento) -> bool:
+    """Return True when a document must pass through budget classification first."""
+    return documento.tipo in {"SOLICITUD", "INFORME"} and not getattr(documento, "budget_concept_id", None)
 
 
 class DocumentoWorkflowError(Exception):
@@ -111,6 +117,31 @@ async def _linked_informe_approval_actor_id(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def _document_has_recorded_approval(
+    session: AsyncSession, documento_id: UUID
+) -> bool:
+    result = await session.execute(
+        select(Aprobacion.id)
+        .where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == documento_id,
+            Aprobacion.accion == "aprobar",
+        )
+        .limit(1)
+    )
+    return result.scalar_one_or_none() is not None
+
+
+def _raise_if_document_already_advanced(has_recorded_approval: bool) -> None:
+    if has_recorded_approval:
+        raise DocumentoWorkflowValidationError(
+            "documento_already_advanced",
+            "El documento ya tiene una aprobacion registrada; no puede aprobarse "
+            "ni rechazarse desde la bandeja del aprobador anterior. Debe continuar "
+            "o corregirse desde el siguiente flujo operativo.",
+        )
 
 
 def _auto_approve_solicitud_with_approved_informe(
@@ -289,18 +320,27 @@ async def transition_documento_workflow(
                     "El documento tipo INFORME debe tener al menos un gasto activo "
                     "antes de poder enviarse.",
                 )
-        documento.estado = "enviado"
-        documento.enviado_en = now
-        aprobacion_accion = "enviar"
-        informe_aprobador_id = await _linked_informe_approval_actor_id(
-            session, documento
-        )
-        if informe_aprobador_id is not None:
-            auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
-                documento=documento,
-                aprobador_id=informe_aprobador_id,
-                now=now,
+        if documento_requires_budget_control(documento):
+            documento.estado = BUDGET_CONTROL_STATE
+            documento.enviado_en = None
+            aprobacion_accion = "enviar_control_presupuestal"
+            comentario_normalizado = (
+                comentario_normalizado
+                or "Enviado a Control Presupuestal para asignar concepto presupuestal."
             )
+        else:
+            documento.estado = "enviado"
+            documento.enviado_en = now
+            aprobacion_accion = "enviar"
+            informe_aprobador_id = await _linked_informe_approval_actor_id(
+                session, documento
+            )
+            if informe_aprobador_id is not None:
+                auto_aprobacion = _auto_approve_solicitud_with_approved_informe(
+                    documento=documento,
+                    aprobador_id=informe_aprobador_id,
+                    now=now,
+                )
 
     elif normalized_action == "approve":
         if documento.estado != "enviado":
@@ -308,6 +348,9 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede aprobarse cuando está en estado 'enviado'.",
             )
+        _raise_if_document_already_advanced(
+            await _document_has_recorded_approval(session, documento_uuid)
+        )
         if actor.rol not in APPROVER_ROLES:
             raise DocumentoWorkflowPermissionError(
                 "insufficient_role",
@@ -370,6 +413,9 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "El documento solo puede rechazarse cuando está en estado 'enviado'.",
             )
+        _raise_if_document_already_advanced(
+            await _document_has_recorded_approval(session, documento_uuid)
+        )
         if actor.rol not in APPROVER_ROLES:
             raise DocumentoWorkflowPermissionError(
                 "insufficient_role",
@@ -425,7 +471,8 @@ async def transition_documento_workflow(
                 "invalid_estado",
                 "La solicitud solo puede cancelarse en borrador.",
             )
-        documento.estado = "rechazado"
+        documento.estado = "cancelado"
+        documento.enviado_en = None
         aprobacion_accion = "cancelar"
 
     aprobacion = Aprobacion(
@@ -513,16 +560,24 @@ async def transition_documento_workflow(
     )
 
     try:
-        from .documento_telegram import (
-            schedule_document_workflow_telegram_notifications,
-        )
+        if normalized_action == "send" and documento.estado == BUDGET_CONTROL_STATE:
+            from .documento_telegram import schedule_budget_control_telegram_notifications
 
-        schedule_document_workflow_telegram_notifications(
-            documento_id=str(documento_uuid),
-            action=normalized_action,
-            actor_id=str(actor.id),
-            comentario=comentario_normalizado,
-        )
+            schedule_budget_control_telegram_notifications(
+                documento_id=str(documento_uuid),
+                actor_id=str(actor.id),
+            )
+        else:
+            from .documento_telegram import (
+                schedule_document_workflow_telegram_notifications,
+            )
+
+            schedule_document_workflow_telegram_notifications(
+                documento_id=str(documento_uuid),
+                action=normalized_action,
+                actor_id=str(actor.id),
+                comentario=comentario_normalizado,
+            )
     except Exception:
         logger.exception(
             "Failed to schedule Telegram notifications for document workflow"

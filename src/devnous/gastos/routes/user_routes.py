@@ -309,6 +309,7 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
+from ..services.payment_run_service import can_confirm_payment_run_payment
 from .auth_routes import get_password_hash, validate_self_service_password_change
 from samchat.accounting_historical.service import (
     build_historical_accounting_comparison,
@@ -10728,15 +10729,33 @@ def _can_view_presupuestos(current_empleado: Empleado) -> bool:
     )
 
 
-def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
-    """Only finance/accounting/admin users can assign budget lines."""
+_BUDGET_CONTROL_EMPLOYEE_IDS = {
+    "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo L?pez Romero
+}
+
+_BUDGET_CONTROL_EMPLOYEE_EMAILS = {
+    "jlopez@plataformasports.com",
+}
+
+
+def _is_budget_control_user(current_empleado: Empleado) -> bool:
+    """Users allowed to classify documents before normal approval routing."""
     role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
     department = str(getattr(current_empleado, "departamento", "") or "").strip().lower()
+    email = str(getattr(current_empleado, "correo", "") or "").strip().lower()
+    empleado_id = str(getattr(current_empleado, "id", "") or "").strip().lower()
     return (
-        role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
+        empleado_id in _BUDGET_CONTROL_EMPLOYEE_IDS
+        or email in _BUDGET_CONTROL_EMPLOYEE_EMAILS
+        or role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
         or department.startswith("finanza")
         or department.startswith("contab")
     )
+
+
+def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
+    """Only Control Presupuestal, finance/accounting/admin users can assign budget lines."""
+    return _is_budget_control_user(current_empleado)
 
 
 def render_top_navigation(current_empleado: Empleado, active_area: Optional[str] = None) -> str:
@@ -13857,11 +13876,13 @@ async def panel(
     """
 
     aprobaciones_section = ""
-    if rol in ('finanzas', 'admin', 'superadmin', 'super_admin') and "gastos.solicitudes" in visible_tool_keys:
+    if (rol in ('finanzas', 'admin', 'superadmin', 'super_admin') or _is_budget_control_user(current_empleado)) and "gastos.solicitudes" in visible_tool_keys:
         aprobaciones_links = [
             ("/documentos/pendientes", "Aprobaciones pendientes", "Valida solicitudes pendientes."),
             ("/documentos/historial-aprobador", "Historial de aprobaciones", "Consulta aprobaciones pasadas."),
         ]
+        if _is_budget_control_user(current_empleado):
+            aprobaciones_links.insert(0, ("/documentos/control-presupuestal", "Control Presupuestal", "Asigna concepto antes de enviar a aprobaci?n."))
         if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
             aprobaciones_links.append(("/documentos/pendientes-pago", "Pagos pendientes", "Gestiona documentos listos para pago."))
         aprobaciones_section = f"""
@@ -14082,23 +14103,39 @@ def _solicitud_transferencia_list_actions_html(
 ) -> str:
     """Actions shown from the solicitudes list without bypassing workflow rules."""
     detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
+    is_owner = getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+    can_edit_rejected = (
+        getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
+        and getattr(documento, "estado", None) == "rechazado"
+        and is_owner
+    )
     can_cancel_draft = (
         getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
         and getattr(documento, "estado", None) == "borrador"
-        and getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+        and is_owner
     )
-    if not can_cancel_draft:
+    if not (can_cancel_draft or can_edit_rejected):
         return detail_link
-    return (
-        '<div class="inline-actions" style="gap:6px;align-items:center;">'
-        f'{detail_link}'
+    edit_link = (
+        f'<a href="/documentos/{documento.id}/editar" class="button primary">Editar</a>'
+        if can_edit_rejected
+        else ""
+    )
+    cancel_form = (
         f'<form method="POST" action="/documentos/{documento.id}/cancelar" '
         'class="inline-form" style="display:inline;">'
         '<input type="hidden" name="next" value="/gastos-terceros">'
         '<input type="hidden" name="comentario" value="Borrador cancelado desde la bandeja de solicitudes.">'
         '<button type="submit" class="button danger" '
-        'onclick="return confirm(\'?Cancelar esta solicitud en borrador? Se conservar? el registro de auditor?a.\')">'
-        'Cancelar borrador</button></form></div>'
+        "onclick=\"return confirm('Cancelar esta solicitud en borrador? Se conservara como cancelada con registro de auditoria.')\">"
+        'Cancelar borrador</button></form>'
+        if can_cancel_draft
+        else ""
+    )
+    return (
+        '<div class="inline-actions" style="gap:6px;align-items:center;">'
+        f'{detail_link}{edit_link}{cancel_form}'
+        '</div>'
     )
 
 
@@ -16096,15 +16133,7 @@ async def crear_gasto(
                     ),
                     status_code=303
                 )
-            if can_manage_budget_classification:
-                if not (budget_concept_id or "").strip():
-                    return RedirectResponse(
-                        url=_append_error_params(
-                            "/gastos/nuevo",
-                            error_msg="Debe seleccionar un Concepto para el torneo.",
-                        ),
-                        status_code=303,
-                    )
+            if can_manage_budget_classification and (budget_concept_id or "").strip():
                 budget_concept = await resolve_budget_concept(
                     session,
                     budget_concept_id=budget_concept_id,
@@ -22916,8 +22945,16 @@ async def editar_gasto_form(
     # Build form HTML
     disabled_attr = "disabled" if not can_edit else ""
     motivo_required = "required" if (is_locked and is_finance_admin) else ""
-    tip_concept_tokens = ("alimento", "alimentos", "consumo", "cafeteria", "cafeteria", "restaurante", "comida", "cena", "desayuno")
-    tip_group_visible = any(token in (expense.concepto or "").lower() for token in tip_concept_tokens) or bool(expense.propina_no_deducible)
+    selected_budget_concept_label = ""
+    for concept in budget_concepts_by_cuenta.get(str(expense.cuenta_gastos_id or ""), []):
+        if str(concept.get("id") or "") == str(selected_budget_concept_id or ""):
+            selected_budget_concept_label = str(concept.get("label") or "")
+            break
+    tip_group_visible = _expense_tip_group_should_show(
+        concepto=expense.concepto,
+        budget_concept_label=selected_budget_concept_label,
+        propina_no_deducible=expense.propina_no_deducible,
+    )
     tip_group_display = "block" if tip_group_visible else "none"
 
     motivo_field_html = ""
@@ -23130,6 +23167,24 @@ async def editar_gasto_form(
             const budgetConceptsByCuenta = {json.dumps(budget_concepts_by_cuenta)};
             const canManageBudgetClassification = {json.dumps(can_manage_budget_classification)};
             let selectedBudgetConceptId = {json.dumps(selected_budget_concept_id)};
+            const expenseTipTokens = ['alimento', 'alimentos', 'consumo', 'cafeteria', 'restaurant', 'restaurante', 'comida', 'cena', 'desayuno'];
+
+            function textMatchesExpenseTip(value) {{
+                const normalized = String(value || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                return expenseTipTokens.some(token => normalized.includes(token.normalize('NFD').replace(/[\u0300-\u036f]/g, '')));
+            }}
+
+            function syncExpenseTipVisibility() {{
+                const propinaGroup = document.getElementById('propina-group');
+                if (!propinaGroup) return;
+                const conceptoEl = document.getElementById('concepto');
+                const budgetConceptSelect = document.getElementById('budget_concept_id');
+                const selectedConceptText = budgetConceptSelect && budgetConceptSelect.selectedOptions.length
+                    ? budgetConceptSelect.selectedOptions[0].textContent
+                    : '';
+                const shouldShow = textMatchesExpenseTip(conceptoEl ? conceptoEl.value : '') || textMatchesExpenseTip(selectedConceptText);
+                propinaGroup.style.display = shouldShow ? 'block' : 'none';
+            }}
 
             // Cuenta contable search functionality
             const searchInput = document.getElementById('cuenta_contable_search');
@@ -23215,14 +23270,24 @@ async def editar_gasto_form(
                         budgetConceptSelect.appendChild(option);
                     }});
                     budgetConceptSelect.disabled = {json.dumps(not can_edit)} || items.length === 0;
+                    syncExpenseTipVisibility();
                 }}
 
                 cuentaSelect.addEventListener('change', function() {{
                     selectedBudgetConceptId = '';
                     syncBudgetConcepts();
                 }});
+                budgetConceptSelect.addEventListener('change', function() {{
+                    selectedBudgetConceptId = budgetConceptSelect.value || '';
+                    syncExpenseTipVisibility();
+                }});
                 syncBudgetConcepts();
             }})();
+            const conceptoForTip = document.getElementById('concepto');
+            if (conceptoForTip) {{
+                conceptoForTip.addEventListener('input', syncExpenseTipVisibility);
+            }}
+            syncExpenseTipVisibility();
         </script>
     </body>
     </html>
@@ -23411,11 +23476,22 @@ async def editar_gasto(
 
     old_tip = float(expense.propina_no_deducible or 0.0)
     new_tip = float(propina_amount or 0.0)
+    tip_delta = round(new_tip - old_tip, 2)
     if round(old_tip, 2) != round(new_tip, 2):
         old_values['propina_no_deducible'] = expense.propina_no_deducible
         new_values['propina_no_deducible'] = new_tip
         changes.append(f"propina_no_deducible '{old_tip:,.2f}'->'{new_tip:,.2f}'")
         expense.propina_no_deducible = new_tip
+        old_paid_total = round(float(expense.gasto_cantidad or 0.0), 2)
+        new_paid_total = round(max(old_paid_total + tip_delta, 0.0), 2)
+        if old_paid_total != new_paid_total:
+            old_values['gasto_cantidad'] = expense.gasto_cantidad
+            new_values['gasto_cantidad'] = new_paid_total
+            changes.append(
+                f"gasto_cantidad '{old_paid_total:,.2f}'->'{new_paid_total:,.2f}' "
+                "por ajuste de propina"
+            )
+            expense.gasto_cantidad = new_paid_total
 
     old_hosp_state = expense.hospedaje_entidad_fiscal or ''
     new_hosp_state = hospedaje_state or ''
@@ -23871,6 +23947,278 @@ async def mis_documentos(
     </html>
     """
     return html
+
+
+
+async def _budget_concepts_for_document(
+    session: AsyncSession,
+    documento: Documento,
+) -> List[Dict[str, Any]]:
+    """Active budget concepts available for a document's tournament/fase context."""
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    tournament_id = getattr(documento, "torneo_id", None) or getattr(cuenta, "torneo_id", None)
+    if tournament_id is None:
+        return []
+    fase = getattr(documento, "fase", None) or getattr(cuenta, "fase", None)
+    rows = await list_budget_concepts(
+        session,
+        tournament_id=str(tournament_id),
+        budget_direction="expense",
+        active_only=True,
+        limit=500,
+    )
+    return _filter_budget_concepts_for_fase(
+        [
+            {
+                "id": str(item.get("id") or ""),
+                "label": str(item.get("concept_name") or ""),
+                "applicable_keys": sorted(
+                    {
+                        str(key).strip()
+                        for key in (
+                            list((item.get("metadata") or {}).get("applicable_phase_keys") or [])
+                            + list((item.get("metadata") or {}).get("applicable_subproject_keys") or [])
+                        )
+                        if str(key).strip()
+                    }
+                ),
+                "global": not (
+                    (item.get("metadata") or {}).get("applicable_phase_keys")
+                    or (item.get("metadata") or {}).get("applicable_subproject_keys")
+                ),
+            }
+            for item in rows
+        ],
+        fase,
+    )
+
+
+def _document_budget_context(documento: Documento) -> tuple[Optional[str], Optional[str]]:
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    tournament_id = getattr(documento, "torneo_id", None) or getattr(cuenta, "torneo_id", None)
+    fase = getattr(documento, "fase", None) or getattr(cuenta, "fase", None)
+    return (str(tournament_id) if tournament_id else None, str(fase or "") or None)
+
+
+@router.get("/documentos/control-presupuestal", response_class=HTMLResponse)
+async def documentos_control_presupuestal(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    q: Optional[str] = None,
+) -> str:
+    """Budget-control queue: classify documents before normal approval routing."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    q_value = (q or "").strip()
+    solicitante_alias = aliased(Empleado)
+    beneficiario_alias = aliased(Empleado)
+    proveedor_alias = aliased(ProveedorCliente)
+    torneo_alias = aliased(Tournament)
+    cuenta_torneo_alias = aliased(Tournament)
+
+    query = (
+        select(Documento)
+        .options(
+            selectinload(Documento.empleado),
+            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+            undefer(Documento.fase),
+        )
+        .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
+        .outerjoin(beneficiario_alias, Documento.beneficiario_empleado_id == beneficiario_alias.id)
+        .outerjoin(proveedor_alias, Documento.proveedor_cliente_id == proveedor_alias.id)
+        .outerjoin(torneo_alias, Documento.torneo_id == torneo_alias.id)
+        .outerjoin(CuentaDeGastos, Documento.cuenta_gastos_id == CuentaDeGastos.id)
+        .outerjoin(cuenta_torneo_alias, CuentaDeGastos.torneo_id == cuenta_torneo_alias.id)
+        .where(Documento.estado == "control_presupuestal")
+        .order_by(Documento.creado_en.desc())
+    )
+    if q_value:
+        q_filter = f"%{q_value}%"
+        query = query.where(
+            or_(
+                Documento.numero_referencia.ilike(q_filter),
+                Documento.referencia_operaciones.ilike(q_filter),
+                Documento.concepto_pago.ilike(q_filter),
+                solicitante_alias.nombre.ilike(q_filter),
+                beneficiario_alias.nombre.ilike(q_filter),
+                proveedor_alias.nombre.ilike(q_filter),
+                torneo_alias.name.ilike(q_filter),
+                cuenta_torneo_alias.name.ilike(q_filter),
+            )
+        )
+
+    result = await session.execute(query)
+    documentos = result.scalars().unique().all()
+
+    rows_html = ""
+    for documento in documentos:
+        row_values = _documentos_todos_reporting_row_values(documento, aprobador_nombre="?")
+        concepts = await _budget_concepts_for_document(session, documento)
+        options = _html_budget_concept_options(concepts, str(documento.budget_concept_id or ""))
+        if not options:
+            options = '<option value="">? Sin conceptos disponibles para este torneo/fase ?</option>'
+        cuenta = getattr(documento, "cuenta_gastos", None)
+        torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
+        torneo_display = documento_project_name(documento, torneo) or "?"
+        beneficiary_provider = row_values["beneficiario"]
+        provider_value = row_values["proveedor"]
+        if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
+            beneficiary_provider = provider_value
+        rows_html += f"""
+        <tr>
+            <td><a href="/documentos/{documento.id}?next={quote('/documentos/control-presupuestal')}" style="color:#0f766e;font-weight:800;text-decoration:none;">{escape(row_values['numero_referencia'])}</a></td>
+            <td>{escape(str((documento.referencia_operaciones or '').strip() or '?'))}</td>
+            <td>{escape(torneo_display)}</td>
+            <td>{escape(row_values['solicitante'])}</td>
+            <td>{escape(beneficiary_provider)}</td>
+            <td>{escape(row_values['tipo_documento'])}</td>
+            <td>{escape(row_values['monto_total'])}</td>
+            <td>{escape(row_values['concepto'])}</td>
+            <td>
+                <form method="POST" action="/documentos/{documento.id}/control-presupuestal/asignar" style="display:flex;gap:8px;align-items:center;min-width:360px;">
+                    <select name="budget_concept_id" required style="min-width:240px;">{options}</select>
+                    <input type="hidden" name="next" value="/documentos/control-presupuestal">
+                    <button type="submit" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    table_html = f"""
+        <div class="table-shell"><table>
+            <thead><tr>
+                <th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
+                <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripci?n</th><th>Concepto presupuestal</th>
+            </tr></thead>
+            <tbody>{rows_html or '<tr><td colspan="9" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
+        </table></div>
+    """
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px")}</style></head>
+    <body><div class="container">
+        {render_top_navigation(current_empleado, "operacion")}
+        {_render_workspace_hero(
+            eyebrow="Control Presupuestal",
+            title="Documentos por clasificar",
+            description="Asigna el concepto presupuestal antes de enviar la solicitud o informe al aprobador operativo correspondiente.",
+            actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
+            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{len(documentos)}</strong><small>Despu?s de asignar concepto pasan a aprobaci?n normal.</small></div></div>',
+        )}
+        <section class="surface">
+            <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
+                <div class="form-group"><label for="q">Buscar</label><input id="q" name="q" value="{escape(q_value)}" placeholder="Referencia, torneo, solicitante, beneficiario..."></div>
+                <button class="button primary" type="submit">Filtrar</button>
+                <a class="button secondary" href="/documentos/control-presupuestal">Limpiar</a>
+            </form>
+        </section>
+        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignaci?n libera el documento hacia el aprobador del beneficiario o solicitante, seg?n corresponda.</div></div></div>{table_html}</section>
+    </div></body></html>
+    """
+    return html
+
+
+@router.post("/documentos/{documento_id}/control-presupuestal/asignar")
+async def asignar_control_presupuestal(
+    documento_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    budget_concept_id: str = Form(...),
+    next: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Assign budget concept and release the document to regular approval."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    redirect_url = next or "/documentos/control-presupuestal"
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+            undefer(Documento.fase),
+        )
+        .where(Documento.id == documento_id)
+    )
+    documento = result.scalar_one_or_none()
+    if documento is None:
+        raise HTTPException(status_code=404, detail="Documento not found")
+    if documento.estado != "control_presupuestal":
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="invalid_estado", error_msg="El documento no est? pendiente de Control Presupuestal."),
+            status_code=303,
+        )
+
+    tournament_id, fase = _document_budget_context(documento)
+    budget_concept = await resolve_budget_concept(
+        session,
+        budget_concept_id=(budget_concept_id or "").strip(),
+        tournament_id=tournament_id,
+        tournament_code=None,
+        fase=fase,
+        budget_direction="expense",
+    )
+    if budget_concept is None:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="invalid_budget_concept", error_msg="El concepto no corresponde al torneo/fase del documento."),
+            status_code=303,
+        )
+
+    concept_uuid = UUIDType(str(budget_concept["id"]))
+    documento.budget_concept_id = concept_uuid
+    now = datetime.utcnow()
+    documento.estado = "enviado"
+    documento.enviado_en = now
+
+    expense_filters = [ExpenseReport.documento_id == documento.id, ExpenseReport.informe_documento_id == documento.id]
+    if documento.cuenta_gastos_id:
+        expense_filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+    if documento.gasto_generado_id:
+        expense_filters.append(ExpenseReport.id == documento.gasto_generado_id)
+    expenses_result = await session.execute(
+        select(ExpenseReport).where(
+            or_(*expense_filters),
+            ExpenseReport.estado_gasto != "cancelado",
+        )
+    )
+    for expense in expenses_result.scalars().unique().all():
+        if not getattr(expense, "budget_concept_id", None):
+            expense.budget_concept_id = concept_uuid
+
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=current_empleado.id,
+            accion="asignar_partida_presupuestal",
+            comentario=f"Concepto presupuestal asignado: {budget_concept.get('concept_name') or budget_concept_id}",
+            fecha=now,
+        )
+    )
+    await session.commit()
+
+    try:
+        from ..services.documento_telegram import schedule_document_workflow_telegram_notifications
+
+        schedule_document_workflow_telegram_notifications(
+            documento_id=str(documento.id),
+            action="send",
+            actor_id=str(current_empleado.id),
+            comentario="Control Presupuestal asign? concepto y envi? a aprobaci?n.",
+        )
+    except Exception:
+        logger.exception("Failed to schedule Telegram notification after budget control release")
+
+    return RedirectResponse(
+        url=_append_success_params(redirect_url, success_msg="Concepto asignado; documento enviado a aprobaci?n."),
+        status_code=303,
+    )
 
 
 @router.get("/documentos/pendientes", response_class=HTMLResponse)
@@ -25608,7 +25956,7 @@ async def enviar_documento(
         next: Optional redirect URL after action (from form field or query param)
     """
     try:
-        await transition_documento_workflow(
+        workflow_result = await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
@@ -25656,13 +26004,23 @@ async def enviar_documento(
             status_code=303,
         )
 
-    logger.info(f"Documento {documento_id} enviado para aprobación")
+    target_estado = getattr(getattr(workflow_result, "documento", None), "estado", "enviado")
+    logger.info(
+        "Documento %s enviado; estado=%s",
+        documento_id,
+        target_estado,
+    )
 
     # Determine redirect URL
     redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
+    success_msg = (
+        "Documento enviado a Control Presupuestal para asignar concepto."
+        if target_estado == "control_presupuestal"
+        else "Documento enviado para aprobaci?n"
+    )
     redirect_with_msg = _append_success_params(
         redirect_url,
-        success_msg="Documento enviado para aprobación",
+        success_msg=success_msg,
     )
 
     return RedirectResponse(
@@ -26155,7 +26513,7 @@ async def registrar_pago(
     documento_id: UUIDType,
     request: Request,
     session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = require_admin_finanzas(),
+    current_empleado: Empleado = Depends(get_current_empleado),
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
@@ -29913,9 +30271,9 @@ async def ver_documento(
 
     # Determine permission for payment registration
     can_register_payment = (
-        current_empleado.rol in ['finanzas', 'admin', 'superadmin', 'super_admin'] and
+        can_confirm_payment_run_payment(current_empleado) and
         documento.tipo == 'SOLICITUD' and
-        documento.estado == 'aprobado' and
+        documento.estado in {'aprobado', 'en_proceso_pago'} and
         not documento.gasto_generado_id
     )
 
@@ -31020,7 +31378,7 @@ async def ver_documento(
                     </div>
                     {f'<div class="section-note" style="margin-top:8px;">Confirma que la transferencia fue ejecutada y actualiza el estado del documento.</div>' if can_register_payment else ''}
                 </div>
-                ''' if documento.tipo == 'SOLICITUD' and current_empleado.rol in ['finanzas', 'admin', 'superadmin', 'super_admin'] else ''}
+                ''' if documento.tipo == 'SOLICITUD' and can_confirm_payment_run_payment(current_empleado) else ''}
 
                 <!-- Saldar cuenta (for approved INFORME linked to a cuenta de gastos) -->
                 {f'''
@@ -31158,6 +31516,37 @@ async def _tournament_budget_concepts_map_for_js(
             key=lambda entry: str(entry.get("label") or "").lower(),
         )
     return by_tournament
+
+
+_EXPENSE_TIP_CONCEPT_TOKENS = (
+    "alimento",
+    "alimentos",
+    "consumo",
+    "cafeteria",
+    "restaurant",
+    "restaurante",
+    "comida",
+    "cena",
+    "desayuno",
+)
+
+
+def _matches_expense_tip_concept(value: Optional[str]) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return any(token in normalized for token in _EXPENSE_TIP_CONCEPT_TOKENS)
+
+
+def _expense_tip_group_should_show(
+    *,
+    concepto: Optional[str],
+    budget_concept_label: Optional[str] = None,
+    propina_no_deducible: Optional[float] = None,
+) -> bool:
+    """Return whether the tip capture section should be visible for an expense form."""
+    return bool(propina_no_deducible) or _matches_expense_tip_concept(
+        concepto
+    ) or _matches_expense_tip_concept(budget_concept_label)
 
 
 def _html_budget_concept_options(
@@ -31756,15 +32145,27 @@ async def _sync_informe_documento_to_enviado(
         )
 
     now = datetime.utcnow()
-    informe_doc.estado = "enviado"
-    informe_doc.enviado_en = now
+    if not getattr(informe_doc, "budget_concept_id", None):
+        informe_doc.estado = "control_presupuestal"
+        informe_doc.enviado_en = None
+        aprobacion_accion = "enviar_control_presupuestal"
+        aprobacion_comentario = (
+            "Enviado a Control Presupuestal al cerrar el informe de gastos."
+        )
+    else:
+        informe_doc.estado = "enviado"
+        informe_doc.enviado_en = now
+        aprobacion_accion = "enviar"
+        aprobacion_comentario = (
+            "Enviado automaticamente al cerrar el informe de gastos."
+        )
     session.add(
         Aprobacion(
             tipo_entidad="documento",
             entidad_id=informe_doc.id,
             aprobador_id=actor.id,
-            accion="enviar",
-            comentario="Enviado automáticamente al cerrar el informe de gastos.",
+            accion=aprobacion_accion,
+            comentario=aprobacion_comentario,
             fecha=now,
         )
     )
@@ -33297,14 +33698,20 @@ def _quick_expense_values(
     subtotal: Optional[str],
     descuento: Optional[str],
     impuestos_y_retenciones: Optional[str],
+    propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
+    concepto_final = (concepto or "").strip()
+    propina_amount = _quick_expense_decimal(
+        propina_no_deducible,
+        "Propina",
+        required=False,
+    )
     if xml_data:
-        concepto_final = (xml_data.get("descripcion_concepto_principal") or "").strip()
         fecha_xml = xml_data.get("fecha")
-        fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else ""
-        numero_final = (xml_data.get("cfdi_uuid") or "").strip()
+        fecha_final = fecha_xml.strftime("%Y-%m-%d") if fecha_xml else (fecha or "").strip()
+        numero_final = (xml_data.get("cfdi_uuid") or numero_factura or "").strip()
         taxes = quick_expense_tax_components_from_parsed(xml_data)
         subtotal_amount = _quick_expense_decimal(str(taxes.subtotal), "Sub total")
         descuento_amount = taxes.descuento.quantize(
@@ -33325,9 +33732,8 @@ def _quick_expense_values(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
                 "Impuestos y retenciones"
             )
-        calculated_total = xml_total
+        calculated_total = xml_total + propina_amount
     else:
-        concepto_final = (concepto or "").strip()
         fecha_final = (fecha or "").strip()
         numero_final = (numero_factura or "").strip()
         subtotal_amount = _quick_expense_decimal(subtotal, "Sub total")
@@ -33346,7 +33752,7 @@ def _quick_expense_values(
             subtotal_amount,
             descuento_amount,
             impuestos_net,
-        )
+        ) + propina_amount
         iva_amount = max(impuestos_net, Decimal("0"))
 
     if not concepto_final:
@@ -33377,6 +33783,7 @@ def _quick_expense_values(
         "impuestos_y_retenciones": impuestos_net,
         "iva": iva_amount,
         "total": calculated_total,
+        "propina_no_deducible": propina_amount,
     }
 
 
@@ -33392,6 +33799,7 @@ async def crear_gasto_rapido_en_informe(
     subtotal: Optional[str] = Form(None),
     descuento: Optional[str] = Form("0"),
     impuestos_y_retenciones: Optional[str] = Form("0"),
+    propina_no_deducible: Optional[str] = Form("0"),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
@@ -33482,6 +33890,7 @@ async def crear_gasto_rapido_en_informe(
             subtotal=subtotal,
             descuento=descuento,
             impuestos_y_retenciones=impuestos_y_retenciones,
+            propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
         )
         owner = cuenta.empleado
@@ -33506,8 +33915,6 @@ async def crear_gasto_rapido_en_informe(
                 fase=getattr(cuenta, "fase", None),
                 budget_direction="expense",
             )
-            if available_budget_concepts and not budget_concept_raw:
-                raise ValueError("El concepto es requerido para este informe.")
             if budget_concept_raw and budget_concept is None:
                 raise ValueError("El concepto no corresponde al torneo del informe.")
         proyecto = (
@@ -33533,6 +33940,7 @@ async def crear_gasto_rapido_en_informe(
             edicion=getattr(cuenta, "edicion", None),
             currency=currency_for(cuenta),
             budget_concept_id=UUIDType(str(budget_concept["id"])) if budget_concept else None,
+            propina_no_deducible=float(values["propina_no_deducible"]),
         )
         if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
             expense.pagado_con_amex_empresa = True
@@ -33764,7 +34172,7 @@ async def cuenta_de_gastos_detail(
             ).options(
                 selectinload(ExpenseReport.cuenta_contable),
                 selectinload(ExpenseReport.cfdi_report)
-            ).order_by(ExpenseReport.fecha.desc())
+            ).order_by(ExpenseReport.created_at.asc(), ExpenseReport.fecha.asc())
         )
         expenses = expenses_result.scalars().all()
     except (ProgrammingError, OperationalError):
@@ -33872,7 +34280,7 @@ async def cuenta_de_gastos_detail(
         concepto_display = escape((exp.concepto or "").strip() or "—")
         movimientos_entries.append(
             (
-                _movimiento_sort_dt(exp.fecha),
+                _movimiento_sort_dt(exp.created_at, exp.fecha),
                 f"""
         <tr style="{row_style}">
             <td>{amex_cell}</td>
@@ -33955,7 +34363,7 @@ async def cuenta_de_gastos_detail(
             )
         )
 
-    movimientos_entries.sort(key=lambda item: item[0], reverse=True)
+    movimientos_entries.sort(key=lambda item: item[0])
     movimientos_rows = "".join(row for _, row in movimientos_entries)
 
 
@@ -34306,7 +34714,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos concepto, montos e impuestos; revisa antes de guardar.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -34324,6 +34732,7 @@ async def cuenta_de_gastos_detail(
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
                                         <th>Impuestos y retenciones</th>
+                                        <th id="quick-propina-header" style="display:none;">Propina</th>
                                         <th>TOTAL</th>
                                         <th>MONEDA</th>
                                         <th>MATERIALIDADES</th>
@@ -34346,6 +34755,7 @@ async def cuenta_de_gastos_detail(
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
                                         <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
+                                        <td id="quick-propina-cell" style="display:none;"><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
                                         <td>
@@ -34358,6 +34768,14 @@ async def cuenta_de_gastos_detail(
                             </table>
                         </div>
                     </form>
+                    <div id="quick_cfdi_pdf_preview" class="st-file-preview" hidden style="margin-top:12px;border:1px solid #dbe2ea;border-radius:12px;overflow:hidden;background:#fff;">
+                        <div class="st-file-preview-head" style="display:flex;justify-content:space-between;gap:12px;padding:10px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                            <strong>Vista preliminar CFDI PDF</strong>
+                            <span id="quick_cfdi_pdf_preview_name">Sin archivo seleccionado</span>
+                        </div>
+                        <iframe id="quick_cfdi_pdf_preview_frame" class="st-file-preview-frame" title="Vista preliminar CFDI PDF" style="width:100%;height:420px;border:0;"></iframe>
+                    </div>
+                    {render_pdf_file_preview_script(input_id="quick-cfdi-pdf", container_id="quick_cfdi_pdf_preview", filename_id="quick_cfdi_pdf_preview_name", frame_id="quick_cfdi_pdf_preview_frame")}
                 </section>
         """
 
@@ -34406,6 +34824,9 @@ async def cuenta_de_gastos_detail(
             }}
             .quick-expense-table #quick-concepto {{
                 min-width:220px;
+            }}
+            .quick-expense-table #quick-propina {{
+                min-width:110px;
             }}
             .quick-expense-table input[type="file"] {{
                 min-width:180px;
@@ -34533,7 +34954,53 @@ async def cuenta_de_gastos_detail(
                 }});
             }})();
         </script>
-        {render_cfdi_quick_expense_autofill_script()}
+        <script>
+            (function() {{
+                const concept = document.getElementById('quick-concepto');
+                const budget = document.getElementById('quick-budget-concept');
+                const tipHeader = document.getElementById('quick-propina-header');
+                const tipCell = document.getElementById('quick-propina-cell');
+                const tipInput = document.getElementById('quick-propina');
+                const subtotal = document.getElementById('quick-subtotal');
+                const descuento = document.getElementById('quick-descuento');
+                const impuestos = document.getElementById('quick-impuestos-y-retenciones');
+                const total = document.getElementById('quick-total');
+                const tokens = ['alimento', 'alimentos', 'restaurante', 'restaurant', 'consumo', 'comida', 'cena', 'desayuno', 'cafeteria'];
+                function normalize(value) {{
+                    return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+                }}
+                function money(el) {{
+                    const parsed = Number.parseFloat((el && el.value) || '0');
+                    return Number.isFinite(parsed) ? parsed : 0;
+                }}
+                function isFood() {{
+                    const selected = budget && budget.selectedOptions && budget.selectedOptions[0] ? budget.selectedOptions[0].textContent : '';
+                    const haystack = normalize((concept && concept.value) + ' ' + selected);
+                    return tokens.some(function(token) {{ return haystack.indexOf(token) >= 0; }});
+                }}
+                function updateTotalWithTip() {{
+                    if (!total) return;
+                    const computed = money(subtotal) - money(descuento) + money(impuestos) + money(tipInput);
+                    total.value = computed.toFixed(2);
+                }}
+                function refreshTipVisibility() {{
+                    const visible = isFood() || money(tipInput) > 0;
+                    if (tipHeader) tipHeader.style.display = visible ? '' : 'none';
+                    if (tipCell) tipCell.style.display = visible ? '' : 'none';
+                    updateTotalWithTip();
+                }}
+                [concept, budget].forEach(function(el) {{
+                    if (!el) return;
+                    el.addEventListener('input', refreshTipVisibility);
+                    el.addEventListener('change', refreshTipVisibility);
+                }});
+                [subtotal, descuento, impuestos, tipInput].forEach(function(el) {{
+                    if (el) el.addEventListener('input', updateTotalWithTip);
+                }});
+                refreshTipVisibility();
+            }})();
+        </script>
+        {render_cfdi_quick_expense_autofill_script(tip_input_id="quick-propina")}
         {_render_transient_message_query_cleanup_script()}
     </body>
     </html>
@@ -35475,26 +35942,43 @@ async def cerrar_cuenta_de_gastos(
             commit=True,
         )
         try:
-            from ..services.documento_telegram import (
-                schedule_document_workflow_telegram_notifications,
-            )
+            if informe_doc.estado == "control_presupuestal":
+                from ..services.documento_telegram import (
+                    schedule_budget_control_telegram_notifications,
+                )
 
-            schedule_document_workflow_telegram_notifications(
-                documento_id=str(informe_doc.id),
-                action="send",
-                actor_id=str(current_empleado.id),
-                comentario="Enviado automáticamente al cerrar el informe de gastos.",
-            )
+                schedule_budget_control_telegram_notifications(
+                    documento_id=str(informe_doc.id),
+                    actor_id=str(current_empleado.id),
+                )
+            else:
+                from ..services.documento_telegram import (
+                    schedule_document_workflow_telegram_notifications,
+                )
+
+                schedule_document_workflow_telegram_notifications(
+                    documento_id=str(informe_doc.id),
+                    action="send",
+                    actor_id=str(current_empleado.id),
+                    comentario="Enviado automaticamente al cerrar el informe de gastos.",
+                )
         except Exception:
             logger.exception(
                 "Failed to schedule Telegram notification for informe close"
             )
 
-    success_msg = (
-        "Informe cerrado y enviado para aprobación."
-        if not cuenta_was_closed
-        else "Documento de informe sincronizado y enviado para aprobación."
-    )
+    if informe_doc.estado == "control_presupuestal":
+        success_msg = (
+            "Informe cerrado y enviado a Control Presupuestal."
+            if not cuenta_was_closed
+            else "Documento de informe sincronizado y enviado a Control Presupuestal."
+        )
+    else:
+        success_msg = (
+            "Informe cerrado y enviado para aprobaci?n."
+            if not cuenta_was_closed
+            else "Documento de informe sincronizado y enviado para aprobaci?n."
+        )
     if reembolso_created:
         success_msg += (
             " Se generó una solicitud de transferencia por el saldo a favor del "

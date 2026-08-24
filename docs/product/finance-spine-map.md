@@ -12,7 +12,7 @@ Canonical surfaces:
 
 - `/admin/finanzas` in `src/devnous/gastos/routes/admin_routes.py`.
 - `/admin/finanzas/payment-run` and related payment-run routes in `src/devnous/gastos/routes/admin_routes.py`.
-- `/admin/presupuestos` registered through `register_presupuestos_routes(router)` in `src/devnous/gastos/routes/admin_budget_routes.py`.
+- `/admin/presupuestos` and `/admin/presupuestos/export.xlsx` registered through `register_presupuestos_routes(router)` in `src/devnous/gastos/routes/admin_budget_routes.py`.
 - `src/samchat/finance_platform/service.py` for finance action queue, cash control, accounting close, tax readiness, payment run, finance brief, and finance copilot prompts.
 - `src/samchat/budgets/service.py` for canonical budget versions, lines, concepts, monthly plan, actuals, income direction, and budget schema.
 - `src/devnous/gastos/services/cfdi_income_bridge_service.py` for PSP CFDI income candidates and budget CFDI income links.
@@ -21,7 +21,7 @@ Canonical surfaces:
 Legacy or secondary surfaces:
 
 - `/admin/presupuestos-legacy` in `src/devnous/gastos/routes/admin_routes.py`.
-- explicit `/admin/presupuestos/*` bridge action handlers still present in `src/devnous/gastos/routes/admin_routes.py` for catalog, version, import/export, and line mutations used by the canonical UI.
+- explicit `/admin/presupuestos/*` bridge action handlers still present in `src/devnous/gastos/routes/admin_routes.py` for catalog, version, import, and line mutations used by the canonical UI.
 - broad roadmap documents that mention finance capabilities without a route/service owner.
 
 Rule: new finance work should extend canonical services first. Legacy presupuesto code must not be treated as the owner for new AR, cashflow, or planning behavior unless a separate approved cleanup spec says so.
@@ -234,6 +234,14 @@ Decision needed:
 
 Decision for now: `document only`.
 
+C2 route inventory and policy:
+
+- `docs/product/presupuestos-route-policy.md`
+- classifies canonical Presupuestos routes, bridge handlers that remain in
+  `admin_routes.py`, external dependency bridge handlers, candidate-remove
+  handlers that require dependency validation, and legacy reference entrypoints;
+- does not remove, hide, redirect, reorder, or mutate routes.
+
 ## D1 Presupuestos Authority Freeze
 
 Canonical owner:
@@ -387,6 +395,14 @@ F4 D1-D2 decision and S1-S3 implementation:
 Decision needed:
 
 - choose one policy for old presupuesto handlers: document only, hide from navigation, redirect, or remove in a later approved cleanup.
+
+C2 decision:
+
+- `document only` remains the active policy;
+- `docs/product/presupuestos-route-policy.md` is the route inventory for future
+  C3 cleanup;
+- C3 must choose exactly one next action: `hide`, `redirect`, `remove later`, or
+  keep `document only`.
 
 ## Validation Plan
 

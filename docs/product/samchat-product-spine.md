@@ -82,6 +82,8 @@ Current authority evidence:
 - `/admin/presupuestos` and tournament budget detail routes are registered from `src/devnous/gastos/routes/admin_budget_routes.py`.
 - `src/samchat/finance_platform/service.py` builds read-only snapshots for action queue, cash control, accounting close, tax readiness, payment run, copilot prompts, and finance brief.
 - `src/samchat/budgets/service.py` owns canonical budget versions, lines, concepts, monthly plan, actuals, income lines, and SSOT budget catalog handling.
+- `docs/product/presupuestos-route-policy.md` classifies Presupuestos route
+  ownership, bridge handlers, and legacy references for cleanup planning.
 
 ### Artifact Layer
 
@@ -177,6 +179,33 @@ Acceptance:
 Next checkpoint:
 
 - D1 freezes `admin_budget_routes.py` as the canonical presupuesto owner and keeps legacy presupuesto handlers under a `document only` policy until a separate route cleanup is approved.
+
+### C2. Presupuestos Legacy Route Inventory And Policy
+
+Goal: make the Presupuestos route cleanup decision explicit before future AR,
+cashflow, planning, assistant finance export execution, or archive work extends
+the wrong route owner.
+
+Status: policy/inventory only. No route removal, redirect, hide, permission,
+DB, import/export, or runtime behavior change.
+
+Output:
+
+- `docs/product/presupuestos-route-policy.md`
+
+Acceptance:
+
+- Canonical Presupuestos routes are classified as `canonical_owner`.
+- Remaining `/admin/presupuestos/*` handlers in `admin_routes.py` are
+  classified as either `bridge_required_by_canonical_ui` or
+  `candidate_remove_later` based on C2b/C2c route-target evidence.
+- `/admin/presupuestos/export.xlsx` is owned by `admin_budget_routes.py` as a
+  canonical export route while preserving assistant/runtime artifact links.
+- `/admin/presupuestos-legacy` is classified as `legacy_reference`.
+- Future cleanup options are limited to `hide`, `redirect`, `remove later`, or
+  continued `document only`.
+- Bridge and legacy routes are explicitly non-authority for new AR, cashflow,
+  planning, or assistant finance work.
 
 ### F2. Accounts Receivable And Real Income
 
@@ -330,6 +359,30 @@ Acceptance:
 - Durable artifacts require a route/model/export contract.
 - Sponsor/client-facing packages require human approval.
 
+### A5. Owner/Operator Assistant Preview Consolidation
+
+Goal: classify the Claude-like owner/operator workflow as a live preview
+surface where it is actually wired, while keeping durable owner-pack artifacts,
+exports, notifications, and writes out of scope.
+
+Status: implemented as assistant preview/read-only surfaces. The conversation
+path exposes `owner.operator_workflow.preview`; the assistant tool registry
+exposes `assistant_owner_entity_folder_workspace` as `preview_only`.
+
+Acceptance:
+
+- Owner/operator workflow outputs are `assistant_proposal_preview` traces, not
+  `runtime_saved_artifact` rows.
+- `owner.operator_workflow.preview` and
+  `assistant_owner_entity_folder_workspace` remain non-authoritative:
+  `writes_attempted == 0`, no side effects, no export, no folder archive, no
+  notification, and no owner-pack state write.
+- Code that exists but is not exposed through a conversation path, route, tool,
+  permission, UI, or export remains labeled as internal/reference or
+  `available_not_wired`.
+- Durable owner-pack folders, exports, publication, archive/delete lifecycle,
+  and sponsor/client delivery require a future story/spec.
+
 ## Assistant Boundary
 
 The Assistant Boundary section is an executive index. The detailed source of
@@ -388,11 +441,11 @@ Future implementation validation should add tests only when code or route behavi
 |---|---|---|---|---:|---|---|
 | OQ-001 | Core Operations | Should `docs/product/samchat-product-spine.md` become the replacement for the missing `SAMCHAT_SSOT.md`, or remain a product document under `docs/product/`? | decision | P1 | story | Do not rename or promote until an explicit SSOT governance story is approved. |
 | OQ-002 | Finance Spine | Which finance lane should be delivered next after AR, cashflow, and finance assistant export guidance: direct export execution/archive or legacy presupuesto cleanup? | decision | P1 | story | Avoid mixing export execution or archiving with route cleanup in one scope. |
-| OQ-003 | Finance Spine | Should legacy presupuesto handlers be removed, hidden, or left as `obsolete_or_secondary` documentation references? | spec_needed | P2 | research | Requires read-only route inventory before touching handlers. |
+| OQ-003 | Finance Spine | Should legacy presupuesto handlers be removed, hidden, or left as `obsolete_or_secondary` documentation references? | inventory_ready | P2 | story | C2 adds route policy/inventory. C3 must choose one action: `hide`, `redirect`, `remove later`, or keep `document only`. |
 | OQ-004 | Assistant Copilot | Should any additional budget assistant read beyond `budget.snapshot` be added? | defer | P3 | research | `budget.snapshot` is implemented in F4 S4; new budget reads need separate scope. |
 | OQ-005 | Assistant Copilot | Should any additional Finance Platform assistant read beyond `finance.platform` be added? | defer | P3 | research | `finance.platform` is implemented in F4 S5; new platform reads need separate scope. |
 | OQ-006 | Assistant Copilot | Should finance exports be executable or archived directly from chat after guidance is implemented? | spec_needed | P2 | story | F4 S6 implements guidance only; export authority stays with the owning product surface. |
 | OQ-007 | Artifact Layer | Should assistant artifacts receive a first-class admin UI, or remain conversation-scoped for now? | decision | P2 | story | Must preserve the Assistant Artifact Boundary either way. |
 | OQ-008 | Artifact Layer | Which sponsor/marketing proof artifacts are contractual and which are optional add-ons? | research | P2 | story | Sponsor/client-facing packages require human approval and a separate artifact story. |
-| OQ-009 | Assistant Copilot | What bounded slice, if any, should promote the coded-not-wired owner/operator assistant workflow? | research | P3 | research | Keep as preview-first or read-only unless authority is explicit. |
+| OQ-009 | Assistant Copilot | What bounded slice, if any, should promote the coded-not-wired owner/operator assistant workflow? | resolved_for_preview | P3 | validation | A5 classifies the wired path as preview-only: conversation `owner.operator_workflow.preview` plus tool `assistant_owner_entity_folder_workspace`. Future durable folders/exports need separate approval. |
 | OQ-010 | Secondary DevNous/MCP | Which Secondary DevNous/MCP components deserve promotion into the live SamChat product spine? | defer | P3 | research | Reference-only until a bounded promotion story is approved. |
