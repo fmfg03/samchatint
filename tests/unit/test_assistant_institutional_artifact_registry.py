@@ -5,8 +5,12 @@ import pytest
 import samchat.assistant.router as assistant_router
 from samchat.assistant.institutional_artifact_registry import (
     ARTIFACTS,
+    ARTIFACT_CONNECTION_DECISIONS,
+    DECISION_LABELS,
+    build_institutional_artifact_connection_review,
     build_institutional_artifact_registry_report,
     get_institutional_artifact,
+    get_institutional_artifact_connection_decision,
     list_institutional_artifacts,
 )
 
@@ -42,6 +46,62 @@ def test_institutional_artifact_registry_has_unique_ids_and_required_contracts()
             "preview_only",
             "write_requires_approval",
         }
+
+
+
+def test_institutional_artifact_connection_review_covers_every_artifact() -> None:
+    artifact_ids = {item.artifact_id for item in ARTIFACTS}
+    decision_ids = {item.artifact_id for item in ARTIFACT_CONNECTION_DECISIONS}
+
+    assert decision_ids == artifact_ids
+    assert set(DECISION_LABELS) == {
+        "connect_now",
+        "keep_internal",
+        "merge_with_another",
+        "obsolete",
+        "needs_data_first",
+    }
+
+    for item in ARTIFACT_CONNECTION_DECISIONS:
+        assert item.rationale
+        assert item.decision in DECISION_LABELS
+        if item.decision == "merge_with_another":
+            assert item.merge_target in artifact_ids
+        if item.decision == "needs_data_first":
+            assert item.data_prerequisites
+
+
+def test_institutional_artifact_connection_review_groups_actionable_verdicts() -> None:
+    review = build_institutional_artifact_connection_review()
+
+    assert review["review_id"] == "samchat_institutional_artifact_connection_review_v1"
+    assert review["read_only"] is True
+    assert review["artifact_count"] == len(ARTIFACTS)
+    assert review["decision_labels"]["connect_now"] == "conectar ahora"
+    assert "assistant.owner_entity_folder_workspace" in review["safe_to_wire_now"]
+    assert "finance.closeout_diagnostics" in review["safe_to_wire_now"]
+    assert "sports.platform_snapshot" in review["merge_queue"]
+    assert "sports.director_general_entity_dossier" in review["merge_queue"]
+    assert "assistant.owner_operator_workflow" in review["merge_queue"]
+    assert "assistant.owner_entity_dossier_audit" in review["internal_only"]
+    assert "tournament.soul_snapshot" in review["needs_data_first"]
+    assert "accounting.historical_snapshot" in review["needs_data_first"]
+    assert "sam_inbox.payload" in review["needs_data_first"]
+    assert any("does not connect new runtime tools" in item for item in review["non_claims"])
+
+    folder_item = next(
+        item for item in review["items"] if item["artifact_id"] == "assistant.owner_entity_folder_workspace"
+    )
+    assert folder_item["connection_review"]["decision"] == "connect_now"
+    assert folder_item["connection_review"]["label"] == "conectar ahora"
+
+
+def test_institutional_artifact_connection_decision_lookup() -> None:
+    decision = get_institutional_artifact_connection_decision("sam_inbox.payload")
+
+    assert decision is not None
+    assert decision.decision == "needs_data_first"
+    assert get_institutional_artifact_connection_decision("missing") is None
 
 
 def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> None:

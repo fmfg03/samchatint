@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-053f-entity-folder-workspace`
+Branch at time of writing: `codex/rqf-053g-artifact-connection-review`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -209,7 +209,7 @@ Focused evidence: `tests/unit/test_assistant_owner_variable_query.py`, `tests/un
 
 ### Slice 4 - Entity Folder Workspace (RQF-053F)
 
-Status: IMPLEMENTED_LOCAL on `codex/rqf-053f-entity-folder-workspace`.
+Status: CLOSED_MERGED_DEPLOYED.
 
 Objective:
 
@@ -234,3 +234,37 @@ Implementation notes:
 Focused evidence:
 
 - `.venv/bin/pytest -q tests/unit/test_assistant_owner_entity_folder_workspace.py` passes locally as 6/6.
+
+
+### Slice 5 - Artifact connection review (RQF-053G)
+
+Status: IMPLEMENTED_LOCAL on `codex/rqf-053g-artifact-connection-review`.
+
+Objective:
+
+- Retake the assistant-facing institutional artifact inventory with an explicit verdict per artifact.
+
+Closure contract:
+
+- Every artifact receives exactly one decision: conectar ahora, mantener interno, fusionar con otro, obsoleto, or necesita datos antes.
+- Merge decisions name a merge target.
+- Needs-data decisions name concrete data prerequisites.
+- The review is read-only and does not wire new tools, trigger writes, publish folders, or grant authority.
+
+Implementation notes:
+
+- `src/samchat/assistant/institutional_artifact_registry.py` now includes `ARTIFACT_CONNECTION_DECISIONS`.
+- `build_institutional_artifact_connection_review()` groups artifacts by decision and returns non-claims.
+- `docs/assistant/rqf-053g-artifact-connection-review.md` records the human-readable verdict table.
+
+Current verdict summary:
+
+- conectar ahora: 13
+- mantener interno: 1
+- fusionar con otro: 4
+- obsoleto: 0
+- necesita datos antes: 3
+
+Next after merge/deploy:
+
+- Use the review to choose the next connection slice, likely consolidating raw Sports/DG artifacts into the existing Owner Pack workspace rather than adding another surface.
