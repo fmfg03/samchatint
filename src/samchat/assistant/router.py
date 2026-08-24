@@ -163,6 +163,7 @@ from .owner_entity_dossier_live import build_owner_entity_dossier_live_from_tour
 from .owner_entity_folder_workspace import build_owner_entity_folder_workspace_from_tournament_source
 from .owner_pack_live_snapshot import build_owner_pack_live_snapshot_report
 from .owner_pack_readiness import build_owner_pack_readiness_from_scope
+from .owner_pack_readiness_dashboard import build_owner_pack_readiness_dashboard
 from .owner_pack_readiness_answer import render_owner_pack_readiness_answer
 from .owner_pack_status import build_owner_pack_status_report
 from .owner_variable_answer import render_owner_variable_query_answer
@@ -2466,6 +2467,7 @@ READ_TOOLS = {
     "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_pack_readiness_dashboard",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2530,6 +2532,7 @@ FINANCE_READ_TOOLS = {
     "assistant_historical_accounting_precedent",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_pack_readiness_dashboard",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -2570,6 +2573,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_institutional_artifacts",
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
+    "assistant_owner_pack_readiness_dashboard",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
     "assistant_owner_pack_live_snapshot",
@@ -3316,6 +3320,27 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "scope": {
                             "type": "string",
                             "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report", "work_plan_or_query"],
+                            "default": "all",
+                        },
+                        "tournament_slug": {"type": "string"},
+                        "entity_name": {"type": "string"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_owner_pack_readiness_dashboard",
+                "description": "Devuelve una superficie navegable read-only del Owner Pack: torneo, entity folder, fase nacional, marketing, cobertura, faltantes, fuentes y preguntas siguientes.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "scope": {
+                            "type": "string",
+                            "enum": ["all", "entity_folder", "national_phase_folder", "marketing_activation_report"],
                             "default": "all",
                         },
                         "tournament_slug": {"type": "string"},
@@ -8923,6 +8948,33 @@ async def _history_messages(
     return msgs
 
 
+def _build_owner_pack_readiness_dashboard_payload(
+    *,
+    scope: str = "all",
+    tournament_slug: str = "",
+    entity_name: str | None = None,
+) -> Dict[str, Any]:
+    eval_path = Path("docs/assistant/rqf-assistant-009e-evaluation-set.md")
+    if not eval_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail="Owner Pack eval set is not available in this release",
+        )
+    prompts = parse_owner_needs_eval_set(eval_path.read_text(encoding="utf-8"))
+    status_report = build_owner_pack_status_report(prompts)
+    readiness = build_owner_pack_readiness_from_scope(
+        status_report=status_report,
+        scope=(scope or "all").strip() or "all",
+        tournament_slug=(tournament_slug or "").strip(),
+        entity_name=(entity_name or "").strip() or None,
+    )
+    dashboard = build_owner_pack_readiness_dashboard(readiness)
+    payload = dashboard.to_dict()
+    payload["readiness"] = readiness.to_dict()
+    payload["conversation_answer"] = render_owner_pack_readiness_answer(readiness).to_dict()
+    return payload
+
+
 async def _run_read_tool(
     tool_name: str,
     args: Dict[str, Any],
@@ -9062,6 +9114,13 @@ async def _run_read_tool(
             report
         ).to_dict()
         return payload
+
+    if tool_name == "assistant_owner_pack_readiness_dashboard":
+        return _build_owner_pack_readiness_dashboard_payload(
+            scope=str(args.get("scope") or "all").strip() or "all",
+            tournament_slug=str(args.get("tournament_slug") or "").strip(),
+            entity_name=str(args.get("entity_name") or "").strip() or None,
+        )
 
     if tool_name == "assistant_owner_variable_query":
         question = str(args.get("question") or "").strip()
@@ -10540,6 +10599,23 @@ async def assistant_me(current_empleado=Depends(get_current_empleado)):
         ),
         "can_superadmin": bool(_is_superadmin(role)),
     }
+
+
+@router.get("/owner-pack/readiness-dashboard")
+async def assistant_owner_pack_readiness_dashboard(
+    scope: str = Query("all"),
+    tournament_slug: str = Query(""),
+    entity_name: str = Query(""),
+    current_empleado=Depends(get_current_empleado),
+):
+    # Authenticated read-only dashboard. Role-specific visibility can be tightened
+    # later; this endpoint performs no writes and grants no authority.
+    _ = current_empleado
+    return _build_owner_pack_readiness_dashboard_payload(
+        scope=scope,
+        tournament_slug=tournament_slug,
+        entity_name=entity_name or None,
+    )
 
 
 @router.get("/reports/tournament-registrations")
