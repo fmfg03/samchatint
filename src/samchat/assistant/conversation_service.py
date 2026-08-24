@@ -61,6 +61,8 @@ from .finance_query_service import (
     render_finance_comparison_result,
     run_read_only_comparison,
 )
+from .finance_read_adapter import run_finance_read_adapter
+from .finance_read_answer import render_finance_read_answer
 from .receipt_workflow_draft import (
     advance_receipt_draft,
     start_receipt_draft,
@@ -130,6 +132,10 @@ from .specialist_resume_guidance import (
     render_specialist_resume_guidance_markdown,
 )
 from .request_router import route_request
+from .response_quality_gate import (
+    evaluate_response_quality,
+    render_quality_fallback,
+)
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
 AppendExportPromptFn = Callable[[str, Any], str]
@@ -1390,6 +1396,159 @@ async def _build_finance_comparison_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+
+def _finance_platform_read_intent(raw_message: str) -> bool:
+    """Detect broad finance/accounting status questions for canonical reads."""
+
+    normalized = normalize_request_text(raw_message)
+    if not normalized:
+        return False
+    finance_terms = (
+        "contabilidad",
+        "contable",
+        "coi",
+        "poliza",
+        "polizas",
+        "póliza",
+        "pólizas",
+        "finanzas",
+        "finance platform",
+        "cierre contable",
+        "cierre de contabilidad",
+        "cfdi",
+        "cfdis",
+        "payment run",
+        "pagos pendientes",
+        "tenemos contabilidad",
+    )
+    question_terms = (
+        "tenemos",
+        "hay",
+        "esta",
+        "está",
+        "cargada",
+        "cargado",
+        "cargadas",
+        "cargados",
+        "estado",
+        "status",
+        "listo",
+        "lista",
+        "puedo cerrar",
+        "puede cerrar",
+        "porque no",
+        "por que no",
+        "qué falta",
+        "que falta",
+        "faltan",
+        "pendiente",
+        "pendientes",
+    )
+    return any(term in normalized for term in finance_terms) and any(
+        term in normalized for term in question_terms
+    )
+
+
+def _render_finance_platform_executive_preface(result: dict[str, Any]) -> str:
+    payload = result.get("payload") or {}
+    summary = payload.get("summary") or {}
+    accounting = payload.get("accounting_close_center") or {}
+    tax = payload.get("tax_readiness") or {}
+    payment_run = payload.get("payment_run") or {}
+
+    documents = summary.get("documents") or 0
+    expenses = summary.get("expenses") or 0
+    polizas = summary.get("polizas") or 0
+    unbalanced = accounting.get("unbalanced_count") or 0
+    pending_coi = accounting.get("pending_coi_expenses_count") or 0
+    coi_ready = accounting.get("coi_ready_expenses_count") or 0
+    diot_blockers = tax.get("diot_blockers_count") or 0
+    payable_count = payment_run.get("payable_count") or 0
+
+    if documents or expenses or polizas:
+        headline = "Sí hay información financiera/contable cargada en SamChat."
+    else:
+        headline = "No encontré información financiera/contable cargada en el snapshot canónico revisado."
+
+    blockers: list[str] = []
+    if unbalanced:
+        blockers.append(f"{unbalanced} pólizas descuadradas")
+    if pending_coi:
+        blockers.append(f"{pending_coi} gastos pendientes de COI")
+    if diot_blockers:
+        blockers.append(f"{diot_blockers} bloqueos DIOT/CFDI")
+
+    if blockers:
+        status = "Pero todavía hay pendientes: " + "; ".join(blockers) + "."
+    else:
+        status = "No detecté bloqueos contables principales en este snapshot."
+
+    return "\n".join(
+        [
+            headline,
+            status,
+            "",
+            "Resumen ejecutivo read-only:",
+            f"- Documentos: {documents}.",
+            f"- Gastos: {expenses}.",
+            f"- Pólizas: {polizas}.",
+            f"- Gastos listos para COI: {coi_ready}.",
+            f"- Pagos AP pendientes en payment run: {payable_count}.",
+            "",
+            "Detalle de fuente canónica:",
+        ]
+    )
+
+
+async def _build_finance_platform_read_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    if not _finance_platform_read_intent(raw_message):
+        return None
+
+    result = await run_finance_read_adapter(
+        session,
+        intent="finance.platform",
+        year=datetime.now().year,
+        month=datetime.now().month,
+        limit=500,
+    )
+    detail = render_finance_read_answer(result)
+    rendered = _render_finance_platform_executive_preface(result) + "\n" + detail
+    tool_trace = [
+        {
+            "assistant_finance_platform_read": {
+                "stage": "deterministic_read_only_finance_platform",
+                "intent": "finance.platform",
+                "source_function": result.get("source_function"),
+                "ok": bool(result.get("ok")),
+                "read_only": True,
+                "provider_called": False,
+                "writes_attempted": False,
+            },
+            "tool": "assistant_finance_read",
+            "result": {
+                "intent": result.get("intent"),
+                "ok": bool(result.get("ok")),
+                "source_notes": result.get("source_notes") or [],
+                "safety_labels": result.get("safety_labels") or [],
+            },
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def _build_request_intelligence_response(
     *,
     raw_message: str,
@@ -1690,6 +1849,25 @@ async def run_conversation_turn(
     if request_response is not None:
         return request_response
 
+    finance_response = await _build_finance_comparison_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+        finance_rows_provider=finance_rows_provider,
+    )
+    if finance_response is not None:
+        return finance_response
+
+    finance_platform_response = await _build_finance_platform_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_platform_response is not None:
+        return finance_platform_response
+
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1700,16 +1878,6 @@ async def run_conversation_turn(
     )
     if analyst_response is not None:
         return analyst_response
-
-    finance_response = await _build_finance_comparison_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-        maybe_append_export_prompt=maybe_append_export_prompt,
-        finance_rows_provider=finance_rows_provider,
-    )
-    if finance_response is not None:
-        return finance_response
 
     response = await assistant_turn(
         raw_message=raw_message,
@@ -1728,6 +1896,32 @@ async def run_conversation_turn(
         response.assistant_message,
         response.tool_trace,
     )
+    quality = evaluate_response_quality(response.assistant_message)
+    if not quality.ok:
+        fallback_message = render_quality_fallback(
+            user_message=raw_message,
+            reason=quality.reason,
+        )
+        quality_trace = {
+            "assistant_response_quality_gate": {
+                "stage": "post_response_display_guard",
+                "status": "blocked",
+                "reason": quality.reason,
+                "diagnostics": quality.diagnostics or {},
+                "provider_response_replaced": True,
+                "writes_attempted": False,
+            },
+            "tool": "assistant.response_quality_gate",
+            "result": {
+                "ok": False,
+                "reason": quality.reason,
+            },
+        }
+        response.tool_trace = list(response.tool_trace or []) + [quality_trace]
+        response.assistant_message = maybe_append_export_prompt(
+            fallback_message,
+            response.tool_trace,
+        )
     return response
 
 
