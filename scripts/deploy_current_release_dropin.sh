@@ -46,6 +46,7 @@ if [[ ! -x "$venv/bin/python" ]]; then
 fi
 
 "$venv/bin/python" "$release/scripts/ci/check-registration-operational-surface.py" --root "$release"
+"$venv/bin/python" "$release/scripts/ci/check-accepted-regressions.py" --root "$release"
 
 mkdir -p "$unit_dir" "$archive_root"
 archive="$archive_root/dropins-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -92,6 +93,7 @@ Environment=ASSISTANT_TASK_WORKSPACE_ROOT=/srv/samchat/workspaces/assistant-task
 Environment=ASSISTANT_TASK_WORKSPACE_TTL_SECONDS=86400
 ExecStartPre=
 ExecStartPre=$venv/bin/python $release/scripts/ci/check-registration-operational-surface.py --root $release
+ExecStartPre=$venv/bin/python $release/scripts/ci/check-accepted-regressions.py --root $release
 ExecStart=
 ExecStart=$venv/bin/python -m uvicorn copa_telmex_dashboard:app --host 127.0.0.1 --port 8000
 EOF

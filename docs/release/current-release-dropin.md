@@ -12,7 +12,9 @@ partial releases to override newer consolidated releases by alphabetical order.
 ## Deploy rule
 
 1. Build or create a release under `/srv/samchat/releases/gastos-prod-*`.
-2. Validate the release with `scripts/ci/check-registration-operational-surface.py`.
+2. Validate the release with both release gates:
+   - `scripts/ci/check-registration-operational-surface.py`
+   - `scripts/ci/check-accepted-regressions.py`
 3. Run:
 
 ```bash
@@ -27,6 +29,10 @@ The script archives all previous active `*.conf` drop-ins under:
 
 Then it writes `50-current-release.conf`, updates `/srv/samchat/current`,
 restarts `samchat-gastos.service`, and checks `/healthz` and `/readyz`.
+
+The generated drop-in also runs both gates as `ExecStartPre` checks. If a future
+release drops an accepted feature marker or an operational surface guard, systemd
+will refuse to start that release instead of silently serving a regressed build.
 
 ## Verification after every deploy
 
