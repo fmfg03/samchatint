@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-053g-artifact-connection-review`
+Branch at time of writing: `codex/rqf-054-claude-code-runtime-gap`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -111,7 +111,7 @@ Do not lose this lane, but the current thread focus returned to assistant/owner/
 
 ### Lane F - Claude-Code-like assistant runtime contract
 
-Status: OPEN_SPEC
+Status: RQF-054A_IMPLEMENTED_PENDING_CI
 
 Reference: `docs/assistant/rqf-054-claude-code-runtime-gap.md`
 
@@ -123,8 +123,8 @@ Why this exists:
 
 Next implementation order:
 
-1. RQF-054A - WorkFrame classifier.
-2. RQF-054B - Tool candidate adjudicator.
+1. RQF-054A - WorkFrame classifier. Status: implemented in PR #220, pending CI/merge.
+2. RQF-054B - Tool candidate adjudicator. Next.
 3. RQF-054C - Sufficiency gate.
 4. RQF-054D - Unified executive renderer.
 5. RQF-054E - Claude-Code-like turn trace.
@@ -328,3 +328,23 @@ Focused evidence:
 Next slice:
 
 - Continue with Slice 7: Persistent case memory, unless we first consolidate frontend source into the backend release packaging to eliminate this external-static-assets footgun.
+
+## 2026-08-24 RQF-054A WorkFrame
+
+Status: IMPLEMENTED_IN_PR_220_PENDING_CI
+
+What changed:
+
+- Added WorkFrame classification before assistant turn routing.
+- WorkFrame records interpreted goal, audience, domain, task kind, required evidence, forbidden interpretations, temporal scope, and read-only authority boundary.
+- WorkFrame is attached as the final tool trace so existing primary tool trace contracts remain intact.
+
+Why it matters:
+
+- `evidence of payments made` is no longer semantically equivalent to `pending payments`.
+- Broad owner readiness, concrete owner variables, finance/accounting questions, SOUL coverage, and unknown requests now have a tested frame before tool selection.
+
+Next:
+
+- RQF-054B must select and reject ToolCandidates against the WorkFrame before execution.
+- RQF-054C must verify that the selected tool result is sufficient before rendering.

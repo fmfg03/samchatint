@@ -1,6 +1,6 @@
 # RQF-054 — SamChat Claude-Code Runtime Gap
 
-Status: OPEN_SPEC
+Status: RQF-054A_IMPLEMENTED_PENDING_CI
 
 ## Executive summary
 
@@ -182,4 +182,21 @@ No raw tool payloads, no JSON function calls, no hidden unsupported claims.
 ## Immediate implementation slices
 
 ### RQF-054A — WorkFrame classifier
+
+## 2026-08-24 implementation note
+
+RQF-054A is implemented on branch `codex/rqf-054-claude-code-runtime-gap`:
+
+- `src/samchat/assistant/work_frame.py` adds a read-only WorkFrame classifier.
+- `conversation_service.py` appends `assistant.work_frame` as a trailing trace without displacing the primary tool trace.
+- Unit and integration coverage protects payment-evidence vs pending-payment semantics, owner readiness, finance/accounting status, SOUL data coverage, and unknown-request clarification.
+
+Local focused verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_work_frame.py tests/unit/test_assistant_request_router_integration.py
+# 39 passed
+```
+
+Next slice: RQF-054B Tool candidate adjudicator.
 
