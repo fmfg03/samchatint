@@ -1,8 +1,8 @@
 # SamChat current roadmap handoff
 
 Status: ACTIVE_CONTEXT
-Last updated: 2026-08-17
-Branch at time of writing: `codex/rqf-054-owner-pack-institutional-boards`
+Last updated: 2026-08-24
+Branch at time of writing: `codex/rqf-053d-owner-pack-dashboard`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -142,6 +142,51 @@ PYTHONPATH=src /srv/samchat/venvs/baseline-db08f745e8da7a82/bin/python -m pytest
 ```
 
 Use ASCII in scripted remote file writes when possible; prior PowerShell-to-SSH sessions can corrupt accented characters.
+
+
+## 2026-08-24 Assistant 053 slices
+
+### Slice 2A - Executive Answer Renderer
+
+Status: CLOSED_MERGED_DEPLOYED
+
+Evidence:
+
+- PR #206 merged.
+- Merge commit: `8cb26ca02937a221a0b9d22a22c4bbf3cb9a947d`.
+- Active release after deployment: `/srv/samchat/releases/gastos-prod-8cb26ca02-assistant053c-exec-answers`.
+
+Purpose:
+
+- Prevent deterministic assistant tools from surfacing raw function-call JSON as the final user-facing answer.
+- Prefer `conversation_answer.rendered_text` when present.
+- Render structured read-only operational reports as executive Spanish answers with status, evidence, gaps, next questions, and authority boundary.
+
+### Slice 2B - Owner Pack Readiness Dashboard / respuesta navegable
+
+Status: IMPLEMENTED_PENDING_PR
+
+Objective:
+
+- Provide a minimal navigable surface that shows what the Owner Pack has and what it lacks before claiming readiness.
+
+Closure contract:
+
+- Shows tournament context.
+- Shows entity folder readiness.
+- Shows national phase readiness.
+- Shows marketing readiness.
+- Shows coverage percentage or state.
+- Shows missing items.
+- Shows available sources.
+- Shows next questions.
+
+Guardrails:
+
+- Read-only only.
+- No folder creation, no durable writes, no notifications, no authority escalation.
+- A dashboard may say the pack is incomplete; that is a valid executive answer.
+- The dashboard must remain stable across scopes: all four sections appear even when one section was not evaluated in the current scope.
 
 ## 2026-08-17 note
 
