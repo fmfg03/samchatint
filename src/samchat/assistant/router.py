@@ -176,6 +176,10 @@ from .owner_variable_answer import render_owner_variable_query_answer
 from .owner_variable_query import build_owner_variable_query_report
 from .owner_response_pack import build_response_pack_from_live_snapshot
 from .sports_operations_status import build_sports_operations_status_from_tournament_source
+from .soul_data_coverage import (
+    build_soul_data_coverage_report,
+    render_soul_data_coverage_answer,
+)
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
     workspace_file_read,
@@ -2474,6 +2478,7 @@ READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_soul_data_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -2540,6 +2545,7 @@ FINANCE_READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_soul_data_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -2582,6 +2588,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_inventory",
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
+    "assistant_soul_data_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -3333,6 +3340,22 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         },
                         "tournament_slug": {"type": "string"},
                         "entity_name": {"type": "string"},
+                    },
+                    "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_soul_data_coverage",
+                "description": "Evalua en modo solo lectura si SOUL, historico contable e inbox tienen datos suficientes; devuelve faltantes, fuentes disponibles y preguntas siguientes sin ejecutar cambios.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "tournament_slug": {"type": "string"},
+                        "include_live_soul": {"type": "boolean", "default": True},
                     },
                     "required": [],
                 },
@@ -9172,6 +9195,30 @@ async def _run_read_tool(
         payload["conversation_answer"] = render_owner_pack_readiness_answer(
             report
         ).to_dict()
+        return payload
+
+    if tool_name == "assistant_soul_data_coverage":
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        include_live_soul = bool(args.get("include_live_soul", True))
+        soul_snapshot = None
+        if include_live_soul and tournament_slug:
+            try:
+                soul_snapshot = await build_tournament_soul_snapshot(
+                    tournament_key="all",
+                    tournament_slug=tournament_slug,
+                    include_media=False,
+                    include_communications=False,
+                    limit=120,
+                )
+            except Exception as exc:
+                soul_snapshot = {
+                    "soul": {},
+                    "source_error": str(exc),
+                    "tournament_name": tournament_slug,
+                }
+        report = build_soul_data_coverage_report(soul_snapshot=soul_snapshot)
+        payload = report.to_dict()
+        payload["conversation_answer"] = render_soul_data_coverage_answer(report)
         return payload
 
     if tool_name == "assistant_owner_pack_readiness_dashboard":

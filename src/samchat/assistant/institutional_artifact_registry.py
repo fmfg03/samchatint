@@ -242,6 +242,25 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         ),
     ),
     InstitutionalArtifactSpec(
+        artifact_id="assistant.soul_data_coverage",
+        domain="cross_domain",
+        name="SOUL Data Coverage",
+        purpose="Read-only needs-data-first wrapper that checks SOUL, historical COI and SAM Inbox readiness before the assistant makes executive claims.",
+        module_path="samchat.assistant.soul_data_coverage",
+        entrypoint="build_soul_data_coverage_report",
+        status="wired",
+        assistant_tool="assistant_soul_data_coverage",
+        evidence_sources=("tournament.soul_snapshot", "accounting.historical_snapshot", "sam_inbox.payload"),
+        input_contract=("tournament_slug?", "sam_inbox_payload?", "historical_manifests?"),
+        output_contract=("status", "score", "artifact_coverage", "findings", "available_sources", "next_questions", "safety"),
+        answers=(
+            "Que datos base faltan para el Owner Pack?",
+            "Que torneos no tienen SOUL completo?",
+            "Tenemos fuentes historicas COI e inbox confiables?",
+        ),
+        next_wiring_step="Feed live authenticated inbox payload once actor/role context is available in assistant tool execution.",
+    ),
+    InstitutionalArtifactSpec(
         artifact_id="assistant.owner_pack_readiness",
         domain="owner_pack",
         name="Owner Pack Readiness",
@@ -589,6 +608,11 @@ ARTIFACT_CONNECTION_DECISIONS: tuple[InstitutionalArtifactConnectionDecision, ..
         decision="needs_data_first",
         rationale="El concepto es canonico, pero la cobertura real por torneo aun es irregular; no debe prometerse un SOUL completo por torneo sin datos cargados.",
         data_prerequisites=("crear/cargar SOUL por torneo activo", "validar fases, fechas y actividades", "mapear entidades y equipos reales"),
+    ),
+    InstitutionalArtifactConnectionDecision(
+        artifact_id="assistant.soul_data_coverage",
+        decision="connect_now",
+        rationale="Cierra los needs-data-first sin inventar: audita SOUL, historico COI e inbox y obliga al asistente a declarar faltantes antes de prometer readiness.",
     ),
     InstitutionalArtifactConnectionDecision(
         artifact_id="assistant.owner_pack_readiness",
