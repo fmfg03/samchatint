@@ -1,4 +1,4 @@
-﻿"""Assistant work-frame classifier.
+"""Assistant work-frame classifier.
 
 This module is the first slice of the Claude-Code-like runtime contract. It does
 not execute tools and it does not decide business truth. It converts a raw user
