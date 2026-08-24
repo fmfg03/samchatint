@@ -1,6 +1,6 @@
 # RQF-054 — SamChat Claude-Code Runtime Gap
 
-Status: RQF-054A_IMPLEMENTED_PENDING_CI
+Status: RQF-054BC_IMPLEMENTED_PENDING_CI
 
 ## Executive summary
 
@@ -199,4 +199,23 @@ PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_work_fram
 ```
 
 Next slice: RQF-054B Tool candidate adjudicator.
+
+## 2026-08-24 implementation note - RQF-054B/C
+
+RQF-054B/C is implemented on branch `codex/rqf-054bc-tool-adjudicator-sufficiency`:
+
+- `src/samchat/assistant/tool_adjudicator.py` adds deterministic tool-candidate adjudication against the WorkFrame.
+- `src/samchat/assistant/response_sufficiency.py` adds a post-tool sufficiency gate.
+- `conversation_service.py` now appends governance traces without displacing the primary tool trace.
+- Known bad semantic path is fail-closed: historical payment evidence questions cannot be answered with pending-payment queue summaries.
+- Valid legacy surfaces remain allowed while the full tool registry mapping is completed.
+
+Focused verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_tool_adjudicator_sufficiency.py tests/unit/test_assistant_work_frame.py tests/unit/test_assistant_request_router_integration.py
+# 44 passed
+```
+
+Next slice: expand the candidate registry from hard-coded semantic invariants into the existing `tool_registry.py` metadata, then add multi-candidate read-only execution for broad questions.
 
