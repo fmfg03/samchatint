@@ -24060,7 +24060,11 @@ async def documentos_control_presupuestal(
     for documento in documentos:
         row_values = _documentos_todos_reporting_row_values(documento, aprobador_nombre="?")
         concepts = await _budget_concepts_for_document(session, documento)
-        options = _html_budget_concept_options(concepts, str(documento.budget_concept_id or ""))
+        options = _html_budget_concept_options(
+            concepts,
+            str(documento.budget_concept_id or ""),
+            required=True,
+        )
         if not options:
             options = '<option value="">? Sin conceptos disponibles para este torneo/fase ?</option>'
         cuenta = getattr(documento, "cuenta_gastos", None)
