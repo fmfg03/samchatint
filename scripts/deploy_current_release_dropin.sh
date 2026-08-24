@@ -45,6 +45,32 @@ if [[ ! -x "$venv/bin/python" ]]; then
   exit 67
 fi
 
+ensure_frontend_bundle() {
+  local target="$release/goal-fest-page/dist"
+  if [[ -f "$target/index.html" ]]; then
+    return 0
+  fi
+
+  local source=""
+  if [[ -L /srv/samchat/current && -f /srv/samchat/current/goal-fest-page/dist/index.html ]]; then
+    source="$(readlink -f /srv/samchat/current)/goal-fest-page/dist"
+  else
+    source="$(find /srv/samchat/releases -mindepth 3 -maxdepth 3 -type d -path '*/goal-fest-page/dist' -exec test -f '{}/index.html' ';' -print 2>/dev/null | sort -r | head -n 1 || true)"
+  fi
+
+  if [[ -z "$source" || ! -f "$source/index.html" ]]; then
+    echo "Release is missing goal-fest-page/dist and no reusable frontend bundle was found: $release" >&2
+    exit 68
+  fi
+
+  echo "Release missing goal-fest-page/dist; reusing frontend bundle from $source" >&2
+  mkdir -p "$release/goal-fest-page"
+  rm -rf "$target"
+  cp -a "$source" "$target"
+}
+
+ensure_frontend_bundle
+
 "$venv/bin/python" "$release/scripts/ci/check-registration-operational-surface.py" --root "$release"
 "$venv/bin/python" "$release/scripts/ci/check-accepted-regressions.py" --root "$release"
 
