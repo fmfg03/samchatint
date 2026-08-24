@@ -36,6 +36,14 @@ will refuse to start that release instead of silently serving a regressed build.
 
 ## Verification after every deploy
 
+For a machine-readable release manifest, run:
+
+```bash
+scripts/release_manifest.py --run-gates
+```
+
+Manual verification remains:
+
 ```bash
 find /etc/systemd/system/samchat-gastos.service.d -maxdepth 1 -type f -name '*.conf' -printf '%f\n'
 systemctl show samchat-gastos.service -p WorkingDirectory -p NRestarts
