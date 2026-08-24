@@ -24074,8 +24074,10 @@ async def documentos_control_presupuestal(
         provider_value = row_values["proveedor"]
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
+        select_id = f"budget_concept_{documento.id}"
         rows_html += f"""
         <tr>
+            <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
             <td><a href="/documentos/{documento.id}?next={quote('/documentos/control-presupuestal')}" style="color:#0f766e;font-weight:800;text-decoration:none;">{escape(row_values['numero_referencia'])}</a></td>
             <td>{escape(str((documento.referencia_operaciones or '').strip() or '?'))}</td>
             <td>{escape(torneo_display)}</td>
@@ -24085,23 +24087,32 @@ async def documentos_control_presupuestal(
             <td>{escape(row_values['monto_total'])}</td>
             <td>{escape(row_values['concepto'])}</td>
             <td>
-                <form method="POST" action="/documentos/{documento.id}/control-presupuestal/asignar" style="display:flex;gap:8px;align-items:center;min-width:360px;">
-                    <select name="budget_concept_id" required style="min-width:240px;">{options}</select>
-                    <input type="hidden" name="next" value="/documentos/control-presupuestal">
-                    <button type="submit" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
-                </form>
+                <div style="display:flex;gap:8px;align-items:center;min-width:420px;">
+                    <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
+                        <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
+                        <select id="{select_id}" name="budget_concept_id_{documento.id}" required style="min-width:260px;">{options}</select>
+                    </div>
+                    <button type="submit" name="single_documento_id" value="{documento.id}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                </div>
             </td>
         </tr>
         """
 
     table_html = f"""
-        <div class="table-shell"><table>
-            <thead><tr>
-                <th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
-                <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripci?n</th><th>Concepto presupuestal</th>
-            </tr></thead>
-            <tbody>{rows_html or '<tr><td colspan="9" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
-        </table></div>
+        <form method="POST" action="/documentos/control-presupuestal/asignar-lote" class="budget-control-bulk-form">
+            <input type="hidden" name="next" value="/documentos/control-presupuestal">
+            <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:12px;">
+                <button type="button" class="button secondary" data-select-all-budget>Seleccionar todo</button>
+                <button type="submit" class="button primary">Asignar seleccionados</button>
+            </div>
+            <div class="table-shell"><table>
+                <thead><tr>
+                    <th>Sel.</th><th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
+                    <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripci?n</th><th>Concepto presupuestal</th>
+                </tr></thead>
+                <tbody>{rows_html or '<tr><td colspan="10" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
+            </table></div>
+        </form>
     """
     html = f"""
     <!DOCTYPE html>
@@ -24123,25 +24134,53 @@ async def documentos_control_presupuestal(
             </form>
         </section>
         <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignaci?n libera el documento hacia el aprobador del beneficiario o solicitante, seg?n corresponda.</div></div></div>{table_html}</section>
-    </div></body></html>
+    </div>
+    <script>
+    (function() {{
+      function normalize(value) {{
+        return (value || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      }}
+      document.querySelectorAll('.budget-concept-filter').forEach(function(input) {{
+        var select = document.getElementById(input.dataset.target || '');
+        if (!select) return;
+        Array.prototype.forEach.call(select.options, function(option) {{
+          option.dataset.originalText = option.textContent || '';
+        }});
+        input.addEventListener('input', function() {{
+          var needle = normalize(input.value);
+          Array.prototype.forEach.call(select.options, function(option) {{
+            var hay = normalize(option.dataset.originalText || option.textContent || '');
+            option.hidden = Boolean(needle) && hay.indexOf(needle) === -1;
+          }});
+          if (select.selectedOptions.length && select.selectedOptions[0].hidden) {{
+            var firstVisible = Array.prototype.find.call(select.options, function(option) {{ return !option.hidden && option.value; }});
+            if (firstVisible) select.value = firstVisible.value;
+          }}
+        }});
+      }});
+      document.querySelectorAll('[data-select-all-budget]').forEach(function(button) {{
+        button.addEventListener('click', function() {{
+          var form = button.closest('form');
+          var boxes = form ? form.querySelectorAll('input[name="documento_ids"]') : [];
+          var allChecked = Array.prototype.every.call(boxes, function(box) {{ return box.checked; }});
+          boxes.forEach(function(box) {{ box.checked = !allChecked; }});
+          button.textContent = allChecked ? 'Seleccionar todo' : 'Limpiar selección';
+        }});
+      }});
+    }})();
+    </script>
+    </body></html>
     """
     return html
 
 
-@router.post("/documentos/{documento_id}/control-presupuestal/asignar")
-async def asignar_control_presupuestal(
+async def _apply_control_presupuestal_assignment(
+    session: AsyncSession,
+    *,
     documento_id: UUIDType,
-    request: Request,
-    session: AsyncSession = Depends(get_db_session),
-    current_empleado: Empleado = Depends(get_current_empleado),
-    budget_concept_id: str = Form(...),
-    next: Optional[str] = Form(None),
-) -> RedirectResponse:
-    """Assign budget concept and release the document to regular approval."""
-    if not _is_budget_control_user(current_empleado):
-        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
-
-    redirect_url = next or "/documentos/control-presupuestal"
+    budget_concept_id: str,
+    actor: Empleado,
+) -> tuple[Documento, dict[str, Any]]:
     result = await session.execute(
         select(Documento)
         .options(
@@ -24152,11 +24191,11 @@ async def asignar_control_presupuestal(
     )
     documento = result.scalar_one_or_none()
     if documento is None:
-        raise HTTPException(status_code=404, detail="Documento not found")
+        raise DocumentoWorkflowValidationError("documento_not_found", "Documento not found")
     if documento.estado != "control_presupuestal":
-        return RedirectResponse(
-            url=_append_error_params(redirect_url, error="invalid_estado", error_msg="El documento no est? pendiente de Control Presupuestal."),
-            status_code=303,
+        raise DocumentoWorkflowValidationError(
+            "invalid_estado",
+            "El documento no está pendiente de Control Presupuestal.",
         )
 
     tournament_id, fase = _document_budget_context(documento)
@@ -24169,9 +24208,9 @@ async def asignar_control_presupuestal(
         budget_direction="expense",
     )
     if budget_concept is None:
-        return RedirectResponse(
-            url=_append_error_params(redirect_url, error="invalid_budget_concept", error_msg="El concepto no corresponde al torneo/fase del documento."),
-            status_code=303,
+        raise DocumentoWorkflowValidationError(
+            "invalid_budget_concept",
+            "El concepto no corresponde al torneo/fase del documento.",
         )
 
     concept_uuid = UUIDType(str(budget_concept["id"]))
@@ -24199,28 +24238,132 @@ async def asignar_control_presupuestal(
         Aprobacion(
             tipo_entidad="documento",
             entidad_id=documento.id,
-            aprobador_id=current_empleado.id,
+            aprobador_id=actor.id,
             accion="asignar_partida_presupuestal",
             comentario=f"Concepto presupuestal asignado: {budget_concept.get('concept_name') or budget_concept_id}",
             fecha=now,
         )
     )
-    await session.commit()
+    return documento, budget_concept
 
+
+def _schedule_budget_control_release_notification(documento_id: UUIDType, actor_id: UUIDType) -> None:
     try:
         from ..services.documento_telegram import schedule_document_workflow_telegram_notifications
 
         schedule_document_workflow_telegram_notifications(
-            documento_id=str(documento.id),
+            documento_id=str(documento_id),
             action="send",
-            actor_id=str(current_empleado.id),
-            comentario="Control Presupuestal asign? concepto y envi? a aprobaci?n.",
+            actor_id=str(actor_id),
+            comentario="Control Presupuestal asignó concepto y envió a aprobación.",
         )
     except Exception:
         logger.exception("Failed to schedule Telegram notification after budget control release")
 
+
+@router.post("/documentos/{documento_id}/control-presupuestal/asignar")
+async def asignar_control_presupuestal(
+    documento_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    budget_concept_id: str = Form(...),
+    next: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Assign budget concept and release the document to regular approval."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    redirect_url = next or "/documentos/control-presupuestal"
+    try:
+        documento, _budget_concept = await _apply_control_presupuestal_assignment(
+            session,
+            documento_id=documento_id,
+            budget_concept_id=budget_concept_id,
+            actor=current_empleado,
+        )
+        await session.commit()
+    except DocumentoWorkflowValidationError as exc:
+        await session.rollback()
+        status_code = 404 if exc.code == "documento_not_found" else 303
+        if status_code == 404:
+            raise HTTPException(status_code=404, detail=exc.message)
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error=exc.code, error_msg=exc.message),
+            status_code=303,
+        )
+
+    _schedule_budget_control_release_notification(documento.id, current_empleado.id)
     return RedirectResponse(
-        url=_append_success_params(redirect_url, success_msg="Concepto asignado; documento enviado a aprobaci?n."),
+        url=_append_success_params(redirect_url, success_msg="Concepto asignado; documento enviado a aprobación."),
+        status_code=303,
+    )
+
+
+@router.post("/documentos/control-presupuestal/asignar-lote")
+async def asignar_control_presupuestal_lote(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    next: Optional[str] = Form(None),
+    single_documento_id: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Assign budget concepts to one or more selected budget-control documents."""
+    if not _is_budget_control_user(current_empleado):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    redirect_url = next or "/documentos/control-presupuestal"
+    form = await request.form()
+    raw_ids = [single_documento_id] if single_documento_id else list(form.getlist("documento_ids"))
+    documento_ids: list[UUIDType] = []
+    for raw_id in raw_ids:
+        raw_text = str(raw_id or "").strip()
+        if not raw_text:
+            continue
+        try:
+            documento_ids.append(UUIDType(raw_text))
+        except ValueError:
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error="invalid_documento_id", error_msg="Selección inválida."),
+                status_code=303,
+            )
+    if not documento_ids:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+            status_code=303,
+        )
+
+    released: list[UUIDType] = []
+    try:
+        for documento_id in documento_ids:
+            budget_concept_id = str(form.get(f"budget_concept_id_{documento_id}") or "").strip()
+            if not budget_concept_id:
+                raise DocumentoWorkflowValidationError(
+                    "missing_budget_concept",
+                    "Todos los documentos seleccionados deben tener concepto presupuestal.",
+                )
+            documento, _budget_concept = await _apply_control_presupuestal_assignment(
+                session,
+                documento_id=documento_id,
+                budget_concept_id=budget_concept_id,
+                actor=current_empleado,
+            )
+            released.append(documento.id)
+        await session.commit()
+    except DocumentoWorkflowValidationError as exc:
+        await session.rollback()
+        if exc.code == "documento_not_found":
+            raise HTTPException(status_code=404, detail=exc.message)
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error=exc.code, error_msg=exc.message),
+            status_code=303,
+        )
+
+    for documento_id in released:
+        _schedule_budget_control_release_notification(documento_id, current_empleado.id)
+    msg = f"{len(released)} documento(s) liberado(s) a aprobación."
+    return RedirectResponse(
+        url=_append_success_params(redirect_url, success_msg=msg),
         status_code=303,
     )
 
@@ -24381,18 +24524,13 @@ async def documentos_pendientes(
             beneficiary_provider = provider_value
         actions_html = (
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
-            f'<form method="POST" action="/documentos/{documento.id}/aprobar" style="margin:0;">'
-            f'<input type="hidden" name="next" value="{next_url}">'
-            '<button type="submit" class="button primary" style="padding:6px 9px;font-size:12px;">Aprobar</button>'
-            '</form>'
-            f'<form method="POST" action="/documentos/{documento.id}/rechazar" style="margin:0;">'
-            f'<input type="hidden" name="next" value="{next_url}">'
-            '<button type="submit" class="button secondary" style="padding:6px 9px;font-size:12px;">Rechazar</button>'
-            '</form>'
+            f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary" style="padding:6px 9px;font-size:12px;">Aprobar</button>'
+            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button secondary" style="padding:6px 9px;font-size:12px;">Rechazar</button>'
             '</div>'
         )
         rows_html += f"""
         <tr>
+            <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
             <td>{doc_link}</td>
             <td>{referencia_operaciones}</td>
             <td>{escape(_pending_torneo_display(documento))}</td>
@@ -24468,27 +24606,36 @@ async def documentos_pendientes(
 
     if rows_html:
         table_html = f"""
-            <div class="table-shell"><table>
-                <thead>
-                    <tr>
-                        <th>N\u00famero de Referencia</th>
-                        <th>Referencia Operaciones</th>
-                        <th>Torneo</th>
-                        <th>ID Interno</th>
-                        <th>Solicitante</th>
-                        <th>Beneficiario/Proveedor</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Monto Total</th>
-                        <th>Descripci\u00f3n</th>
-                        <th>Fecha de Env\u00edo</th>
-                        <th>Acciones</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table></div>
+            <form method="POST" action="/documentos/pendientes/accion-lote">
+                <input type="hidden" name="next" value="{escape(next_path)}">
+                <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:12px;">
+                    <button type="button" class="button secondary" data-select-all-approval>Seleccionar todo</button>
+                    <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
+                    <button type="submit" name="action" value="reject" class="button secondary">Rechazar seleccionados</button>
+                </div>
+                <div class="table-shell"><table>
+                    <thead>
+                        <tr>
+                            <th>Sel.</th>
+                            <th>Número de Referencia</th>
+                            <th>Referencia Operaciones</th>
+                            <th>Torneo</th>
+                            <th>ID Interno</th>
+                            <th>Solicitante</th>
+                            <th>Beneficiario/Proveedor</th>
+                            <th>Tipo</th>
+                            <th>Estado</th>
+                            <th>Monto Total</th>
+                            <th>Descripción</th>
+                            <th>Fecha de Envío</th>
+                            <th>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {rows_html}
+                    </tbody>
+                </table></div>
+            </form>
         """
     else:
         table_html = """
@@ -24527,10 +24674,108 @@ async def documentos_pendientes(
                 </section>
             </div>
         </div>
+        <script>
+        (function() {{
+          document.querySelectorAll('[data-select-all-approval]').forEach(function(button) {{
+            button.addEventListener('click', function() {{
+              var form = button.closest('form');
+              var boxes = form ? form.querySelectorAll('input[name="documento_ids"]') : [];
+              var allChecked = Array.prototype.every.call(boxes, function(box) {{ return box.checked; }});
+              boxes.forEach(function(box) {{ box.checked = !allChecked; }});
+              button.textContent = allChecked ? 'Seleccionar todo' : 'Limpiar selección';
+            }});
+          }});
+        }})();
+        </script>
     </body>
     </html>
     """
     return html
+
+
+@router.post("/documentos/pendientes/accion-lote")
+async def documentos_pendientes_accion_lote(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    action: str = Form(...),
+    next: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Approve or reject multiple pending documents using the canonical workflow gate."""
+    if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+
+    redirect_url = determine_redirect_url(next, None, default_to_detail=False)
+    normalized_action = (action or "").strip().lower()
+    workflow_action = {"approve": "approve", "reject": "reject"}.get(normalized_action)
+    if workflow_action is None:
+        raise HTTPException(status_code=400, detail="Acción inválida")
+
+    form = await request.form()
+    documento_ids: list[UUIDType] = []
+    for raw_id in form.getlist("documento_ids"):
+        raw_text = str(raw_id or "").strip()
+        if not raw_text:
+            continue
+        try:
+            documento_ids.append(UUIDType(raw_text))
+        except ValueError:
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error="invalid_documento_id", error_msg="Selección inválida."),
+                status_code=303,
+            )
+    if not documento_ids:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+            status_code=303,
+        )
+
+    ok_count = 0
+    errors: list[str] = []
+    for documento_id in documento_ids:
+        try:
+            await transition_documento_workflow(
+                session,
+                documento_id=documento_id,
+                actor_id=current_empleado.id,
+                action=workflow_action,
+                request_context=audit_context_from_request(request),
+            )
+            ok_count += 1
+        except DocumentoWorkflowValidationError as exc:
+            if exc.code == "documento_not_found":
+                errors.append(f"{documento_id}: no existe")
+            else:
+                errors.append(exc.message)
+        except DocumentoWorkflowPermissionError as exc:
+            errors.append(exc.message)
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error in bulk pending document action",
+                extra={"documento_id": str(documento_id), "actor_id": str(current_empleado.id), "action": workflow_action},
+            )
+            errors.append("Ocurrió un error al procesar una de las partidas.")
+
+    label = "aprobado" if workflow_action == "approve" else "rechazado"
+    if errors and ok_count == 0:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="bulk_action_failed", error_msg="No se procesó ningún documento: " + errors[0]),
+            status_code=303,
+        )
+    if errors:
+        return RedirectResponse(
+            url=_append_error_params(
+                _append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+                error="bulk_action_partial",
+                error_msg=f"{len(errors)} documento(s) no se pudieron procesar.",
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=_append_success_params(redirect_url, success_msg=f"{ok_count} documento(s) {label}(s)."),
+        status_code=303,
+    )
 
 
 @router.get("/documentos/historial-aprobador", response_class=HTMLResponse)
