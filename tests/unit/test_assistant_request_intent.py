@@ -135,9 +135,15 @@ def test_owner_pack_readiness_detects_pack_del_dueno_without_accent():
     assert is_owner_ai_readiness_request(text) is True
 
 
+def test_owner_pack_readiness_detects_broad_owner_data_question():
+    text = "ya tenemos datos para el dueño?"
+
+    assert is_owner_ai_context_request(text) is True
+    assert is_owner_ai_readiness_request(text) is True
+
+
 def test_owner_dashboard_readiness_phrase_stays_on_dashboard_route():
     text = "Ya estan preparados los tableros para el dueno, pero falta informacion?"
 
     assert is_owner_ai_context_request(text) is True
     assert is_owner_ai_readiness_request(text) is False
-

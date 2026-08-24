@@ -316,6 +316,29 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
 
 
 @pytest.mark.asyncio
+async def test_broad_owner_data_question_uses_readiness_not_unmapped_variable():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("broad owner data readiness should bypass provider")
+
+    response = await _run_message(
+        "ya tenemos datos para el dueño?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "No pude mapear" not in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
+    assert trace["provider_called"] is False
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
+
+
+@pytest.mark.asyncio
 async def test_owner_variable_question_uses_conversation_answer_without_provider():
     calls = []
 
