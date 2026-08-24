@@ -143,6 +143,7 @@ from .provider_service import (
 )
 from .case_memory import CASE_MEMORY_ARTIFACT_TYPE, score_case_memory_artifacts
 from .closeout_diagnostics import build_finance_closeout_diagnostics
+from .executive_answer_renderer import render_executive_tool_result
 from .finance_read_answer import render_finance_read_answer
 from .finance_read_adapter import run_finance_read_adapter
 from .historical_accounting_precedent import query_historical_accounting_precedents
@@ -2455,7 +2456,7 @@ def _assistant_deterministic_tool_answer(
 ) -> Optional[str]:
     if tool_name == "assistant_finance_read":
         return render_finance_read_answer(result)
-    return None
+    return render_executive_tool_result(tool_name, result)
 
 
 READ_TOOLS = {
