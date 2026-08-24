@@ -238,7 +238,7 @@ Focused evidence:
 
 ### Slice 5 - Artifact connection review (RQF-053G)
 
-Status: IMPLEMENTED_LOCAL on `codex/rqf-053g-artifact-connection-review`.
+Status: CLOSED_MERGED_DEPLOYED.
 
 Objective:
 
@@ -268,3 +268,37 @@ Current verdict summary:
 Next after merge/deploy:
 
 - Use the review to choose the next connection slice, likely consolidating raw Sports/DG artifacts into the existing Owner Pack workspace rather than adding another surface.
+
+
+### Slice 6 - Assistant UI revamp, primera pasada (RQF-053H)
+
+Status: IMPLEMENTED_STATIC_DEPLOYED.
+
+Objective:
+
+- Make the assistant feel like an operational workspace rather than a raw debug surface, without changing authority or enabling writes.
+
+Closure contract:
+
+- Conversation remains primary and raw tool traces stay collapsed.
+- Existing source cards remain visible as `Fuentes usadas`.
+- New `Artefactos` cards surface artifact/readiness/review payloads.
+- New `Faltantes` panel surfaces missing fields, missing evidence, missing items, needs-data items, and next questions.
+- New `Acciones propuestas` panel separates proposals from facts and marks them as requiring authority.
+- Assistant responses backed by tools/previews show a read-only badge.
+
+Implementation notes:
+
+- The active frontend source remains external to this backend repo at `/srv/samchat/archive/projects/goal-fest-page/src/pages/Assistant.tsx`.
+- A traceability snapshot is stored at `artifacts/rqf-053h-assistant-ui-revamp/Assistant.tsx`.
+- Static assets were built and copied to `/srv/samchat/current/goal-fest-page/dist`.
+
+Focused evidence:
+
+- `npm run build` passed in the frontend project.
+- Deployed bundle contains markers `Read-only`, `Faltantes`, `Acciones propuestas`, and `Artefactos`.
+- `/healthz` and `/readyz` returned OK after static deployment.
+
+Next slice:
+
+- Continue with Slice 7: Persistent case memory, unless we first consolidate frontend source into the backend release packaging to eliminate this external-static-assets footgun.

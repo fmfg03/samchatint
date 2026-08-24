@@ -1,0 +1,38 @@
+# RQF-053H — Assistant UI revamp, primera pasada
+
+Status: IMPLEMENTED_STATIC_DEPLOYED
+
+## Objective
+
+Make the production assistant feel like an operational workspace instead of a raw debug surface, while keeping the runtime read-only.
+
+## Implemented UI changes
+
+- Adds a read-only badge for assistant answers backed by tool payloads, traces, previews, or workspace cards.
+- Keeps raw tool traces collapsed at the bottom of the answer.
+- Promotes missing data / evidence / next questions into a visible **Faltantes** panel.
+- Promotes proposed actions into a separate **Acciones propuestas** panel with authority language.
+- Promotes detected artifacts, owner-pack readiness sections, and artifact-review buckets into **Artefactos** cards.
+- Preserves existing workspace cards, step trace, source cards, and specialist preview surfaces.
+
+## Authority boundary
+
+This slice does not enable writes, approvals, folder creation, notifications, exports, or mutations. It only changes presentation of already returned assistant data.
+
+## Frontend source and deployment note
+
+The active frontend source still lives outside this backend repo at:
+
+- `/srv/samchat/archive/projects/goal-fest-page/src/pages/Assistant.tsx`
+
+The build was generated with `npm run build` from `/srv/samchat/archive/projects/goal-fest-page` and copied to the active release static directory:
+
+- `/srv/samchat/current/goal-fest-page/dist`
+
+A snapshot of the patched `Assistant.tsx` is stored in this artifact directory to prevent losing the UI work during later branch/release consolidation.
+
+## Verification
+
+- `npm run build` passed for the frontend bundle.
+- Deployed bundle contains markers: `Read-only`, `Faltantes`, `Acciones propuestas`, `Artefactos`.
+- `/healthz` and `/readyz` returned OK after static deployment.
