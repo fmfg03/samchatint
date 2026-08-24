@@ -378,16 +378,16 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
         domain="owner_pack",
         name="Owner Operator Workflow Preview",
         purpose=(
-            "Conversation-routed owner/operator workflow that assesses owner "
-            "needs, builds a proposed folder structure, optionally applies "
-            "safe revisions and returns a response pack without executing "
-            "effects."
+            "Legacy owner/operator workflow that assesses owner needs and "
+            "builds a proposed folder structure. It is retained as an "
+            "internal benchmark/helper after Slice 7; conversation runtime "
+            "must use readiness or entity folder workspace wrappers."
         ),
         module_path="samchat.assistant.owner_operator_workflow",
         entrypoint="run_owner_operator_workflow",
-        status="wired",
+        status="available_not_wired",
         authority_level="preview_only",
-        assistant_tool="owner.operator_workflow.preview",
+        assistant_tool=None,
         evidence_sources=(
             "owner_needs_eval",
             "business_diff_preview",
@@ -417,9 +417,9 @@ ARTIFACTS: tuple[InstitutionalArtifactSpec, ...] = (
             "Que evidencia falta antes de cerrar la carpeta?",
         ),
         next_wiring_step=(
-            "Keep as conversation preview only; no durable folder, export, "
-            "notification, archive or owner-pack write without a separate "
-            "authority story."
+            "Merged into assistant.owner_pack_readiness and "
+            "assistant.owner_entity_folder_workspace; do not expose as a "
+            "conversation tool."
         ),
     ),
     InstitutionalArtifactSpec(
