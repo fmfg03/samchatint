@@ -82,6 +82,10 @@ jobs:
       run: |
         python scripts/ci/check-registration-operational-surface.py
 
+    - name: Guard accepted SamChat regressions
+      run: |
+        python scripts/ci/check-accepted-regressions.py
+
     - name: Wait for services
       run: |
         python - <<'PY'
