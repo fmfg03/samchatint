@@ -230,25 +230,15 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Estructura propuesta" in response.assistant_message
-    assert "Operaciones" in response.assistant_message
-    assert "Nombre de la entidad" in response.assistant_message
-    assert "Equipos esperados por categoria/genero" in response.assistant_message
-    assert "Finanzas" in response.assistant_message
-    assert "Ayudas y pagos sucesivos al operador" in response.assistant_message
-    assert "Checklist accionable" in response.assistant_message
-    assert "Estado de datos" in response.assistant_message
-    assert "no inventa informacion" in response.assistant_message
-    assert "Superficies disponibles" in response.assistant_message
-    assert "/admin/sports/expediente-entidades" in response.assistant_message
-    assert "Preguntas para avanzar" in response.assistant_message
-    assert "Que evidencia quieres cargar" in response.assistant_message
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
-    trace = response.tool_trace[0]["owner_operator_workflow"]
-    assert trace["stage"] == "deterministic_read_only_owner_pack"
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] == 0
-    assert trace["side_effects_detected"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
+    assert response.tool_trace[0]["tool"] != "owner.operator_workflow.preview"
 
 
 @pytest.mark.asyncio
@@ -266,15 +256,13 @@ async def test_owner_ai_owner_needs_brief_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Estructura propuesta" in response.assistant_message
-    assert "Checklist accionable" in response.assistant_message
-    assert "Estado de datos" in response.assistant_message
-    assert "no inventa informacion" in response.assistant_message
-    assert "Superficies disponibles" in response.assistant_message
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
-    trace = response.tool_trace[0]["owner_operator_workflow"]
+    trace = response.tool_trace[0]["owner_pack_readiness"]
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
 
 @pytest.mark.asyncio
@@ -283,11 +271,11 @@ async def test_owner_ai_prepared_dashboards_message_is_data_gap_aware():
         "Ya estan preparados los tableros para el dueno, pero falta informacion?"
     )
 
-    assert "Estado de datos" in response.assistant_message
-    assert "ya estan preparados" in response.assistant_message
-    assert "no inventa informacion" in response.assistant_message
-    trace = response.tool_trace[0]["owner_operator_workflow"]
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
     assert trace["provider_called"] is False
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
 
 @pytest.mark.asyncio
@@ -312,6 +300,29 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
     assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
     assert trace["provider_called"] is False
     assert trace["writes_attempted"] == 0
+    assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
+
+
+@pytest.mark.asyncio
+async def test_broad_owner_data_question_uses_readiness_not_unmapped_variable():
+    calls = []
+
+    async def provider(**kwargs):  # pragma: no cover
+        calls.append(kwargs)
+        raise AssertionError("broad owner data readiness should bypass provider")
+
+    response = await _run_message(
+        "ya tenemos datos para el dueño?",
+        assistant_turn=provider,
+    )
+
+    assert calls == []
+    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "No pude mapear" not in response.assistant_message
+    assert "Faltantes para poder contestar sin inventar" in response.assistant_message
+    trace = response.tool_trace[0]["owner_pack_readiness"]
+    assert trace["stage"] == "deterministic_read_only_owner_pack_readiness"
+    assert trace["provider_called"] is False
     assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
 
 

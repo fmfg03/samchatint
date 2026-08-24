@@ -117,13 +117,13 @@ def test_institutional_artifact_registry_distinguishes_wired_from_unwired() -> N
         "assistant.sports_operations_status",
         "assistant.owner_entity_dossier_live",
         "assistant.historical_accounting_precedent",
-        "assistant.owner_operator_workflow",
     }
     assert {item.artifact_id for item in unwired} >= {
         "accounting.historical_snapshot",
         "sam_inbox.payload",
         "assistant.owner_entity_dossier_audit",
         "assistant.sports_platform_audit",
+        "assistant.owner_operator_workflow",
     }
     assert all(item.assistant_tool or item.canonical_action for item in wired)
     assert all(item.next_wiring_step for item in unwired)
@@ -294,16 +294,17 @@ def test_institutional_registry_exposes_owner_entity_folder_workspace_tool() -> 
     assert "no folder write" in (spec.next_wiring_step or "")
 
 
-def test_institutional_registry_exposes_owner_operator_workflow_preview() -> None:
+def test_institutional_registry_keeps_owner_operator_workflow_internal_after_slice7() -> None:
     artifacts = {item.artifact_id: item for item in list_institutional_artifacts(domain="owner_pack")}
 
     spec = artifacts["assistant.owner_operator_workflow"]
-    assert spec.status == "wired"
+    assert spec.status == "available_not_wired"
     assert spec.authority_level == "preview_only"
-    assert spec.assistant_tool == "owner.operator_workflow.preview"
+    assert spec.assistant_tool is None
     assert spec.entrypoint == "run_owner_operator_workflow"
     assert "response_pack" in spec.output_contract
     assert "writes_attempted" in spec.output_contract
     assert "side_effects_detected" in spec.output_contract
-    assert "no durable folder" in (spec.next_wiring_step or "")
-    assert "export" in (spec.next_wiring_step or "")
+    assert "assistant.owner_pack_readiness" in (spec.next_wiring_step or "")
+    assert "assistant.owner_entity_folder_workspace" in (spec.next_wiring_step or "")
+    assert "do not expose" in (spec.next_wiring_step or "")

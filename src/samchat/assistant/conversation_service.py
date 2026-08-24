@@ -84,7 +84,6 @@ from .operator_workspace_resume import (
     render_operator_workspace_resume_markdown,
 )
 from .operator_workspace_snapshot import build_operator_workspace_snapshot
-from .owner_operator_workflow import run_owner_operator_workflow
 from .owner_entity_folder_workspace import (
     build_owner_entity_folder_workspace_from_tournament_source,
 )
@@ -753,7 +752,7 @@ async def _build_owner_pack_readiness_response(
     session: Any,
     maybe_append_export_prompt: MaybeAppendExportPromptFn,
 ) -> Optional[Any]:
-    if not is_owner_ai_readiness_request(raw_message):
+    if not (is_owner_ai_readiness_request(raw_message) or is_owner_ai_context_request(raw_message)):
         return None
     prompts = _load_owner_needs_prompts()
     status_report = build_owner_pack_status_report(prompts)
@@ -810,139 +809,6 @@ async def _build_owner_pack_readiness_response(
             "conversation_answer": answer.to_dict(),
             "live_evidence": live_evidence.to_dict(),
         },
-    )
-    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
-
-
-def _render_owner_operator_workflow(result: Any) -> str:
-    response_pack = result.response_pack
-    proposal = result.folder_proposal
-    sections = proposal.get("sections") or []
-    section_titles = [
-        str(section.get("title") or section.get("section_id")) for section in sections
-    ]
-    missing = list(
-        response_pack.get("missing_evidence") or proposal.get("missing_evidence") or []
-    )
-    found = list(response_pack.get("evidence_found") or [])
-
-    lines = [
-        response_pack.get("headline") or "Propuesta de trabajo para Direccion",
-        "",
-        response_pack.get("summary") or "Prepare una propuesta en modo solo lectura.",
-        "",
-        "Estructura propuesta:",
-    ]
-    if sections:
-        for section in sections:
-            title = str(section.get("title") or section.get("section_id"))
-            fields = section.get("fields") or []
-            labels = [str(field.get("label") or field.get("field")) for field in fields]
-            if labels:
-                lines.append(f"- {title}: " + "; ".join(labels))
-            else:
-                lines.append(f"- {title}")
-    elif section_titles:
-        lines.extend(f"- {title}" for title in section_titles)
-    else:
-        lines.append("- Alcance")
-
-    proposed_changes = list(response_pack.get("proposed_changes") or [])
-    if proposed_changes:
-        lines.extend(["", "Checklist accionable:"])
-        lines.extend(f"- {change}" for change in proposed_changes[:8])
-
-    lines.extend(
-        [
-            "",
-            "Estado de datos:",
-            "- Las superficies y contratos del pack del dueno ya estan preparados "
-            "en modo read-only.",
-            "- Si el torneo, entidad o evidencia real no esta cargada, el pack "
-            "muestra faltantes y no inventa informacion.",
-        ]
-    )
-
-    lines.extend(
-        [
-            "",
-            "Superficies disponibles:",
-            "- Expediente DG por entidad: /admin/sports/expediente-entidades "
-            "(read-only; requiere torneo/datos reales para poblarse).",
-        ]
-    )
-
-    lines.extend(["", "Evidencia detectada:"])
-    if found:
-        lines.extend(f"- {item}" for item in found[:8])
-    else:
-        lines.append("- Canon de necesidades del dueno / definicion de producto")
-
-    lines.extend(["", "Evidencia faltante antes de cerrar:"])
-    if missing:
-        lines.extend(f"- {item}" for item in missing[:12])
-    else:
-        lines.append("- Sin faltantes clasificados para esta pregunta conceptual")
-
-    plan = list(response_pack.get("plan") or [])
-    if plan:
-        lines.extend(["", "Siguiente paso propuesto:"])
-        lines.extend(f"- {step}" for step in plan[:4])
-
-    questions = list(response_pack.get("next_questions") or [])
-    if questions:
-        lines.extend(["", "Preguntas para avanzar:"])
-        lines.extend(f"- {question}" for question in questions[:4])
-
-    lines.extend(
-        [
-            "",
-            "Frontera de autoridad: no cree ni modifique datos. "
-            "Esto es una vista previa read-only; cualquier accion real "
-            "requiere aprobacion explicita.",
-        ]
-    )
-    return "\n".join(lines)
-
-
-async def _build_owner_operator_response(
-    *,
-    raw_message: str,
-    conversation: Any,
-    session: Any,
-    maybe_append_export_prompt: MaybeAppendExportPromptFn,
-) -> Optional[Any]:
-    if not is_owner_ai_context_request(raw_message):
-        return None
-    prompt = _owner_prompt_from_message(raw_message)
-    result = run_owner_operator_workflow(prompt)
-    rendered = _render_owner_operator_workflow(result)
-    tool_trace = [
-        {
-            "owner_operator_workflow": {
-                "stage": "deterministic_read_only_owner_pack",
-                "workflow_id": result.workflow_id,
-                "prompt_id": result.prompt_id,
-                "assessment_status": result.trace.get("assessment_status"),
-                "preview_id": result.trace.get("preview_id"),
-                "folder_id": result.trace.get("folder_id"),
-                "response_id": result.trace.get("response_id"),
-                "execution_status": result.execution_status,
-                "writes_attempted": result.writes_attempted,
-                "side_effects_detected": result.side_effects_detected,
-                "provider_called": False,
-                "approval_required": True,
-            },
-            "tool": "owner.operator_workflow.preview",
-            "result": result.to_dict(),
-        }
-    ]
-    rendered = maybe_append_export_prompt(rendered, tool_trace)
-    await _persist_document_conversation_messages(
-        raw_message=raw_message,
-        assistant_message=rendered,
-        conversation=conversation,
-        session=session,
     )
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
@@ -1829,14 +1695,6 @@ async def run_conversation_turn(
     if owner_readiness_response is not None:
         return owner_readiness_response
 
-    owner_response = await _build_owner_operator_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-        maybe_append_export_prompt=maybe_append_export_prompt,
-    )
-    if owner_response is not None:
-        return owner_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
@@ -2130,14 +1988,6 @@ async def run_message_turn_with_pending(
     if owner_readiness_response is not None:
         return owner_readiness_response
 
-    owner_response = await _build_owner_operator_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-        maybe_append_export_prompt=maybe_append_export_prompt,
-    )
-    if owner_response is not None:
-        return owner_response
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
