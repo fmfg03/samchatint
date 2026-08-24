@@ -754,6 +754,72 @@ async def test_specialist_preview_surface_attaches_read_only_live_context(monkey
 
 
 @pytest.mark.asyncio
+async def test_case_memory_save_bypasses_provider_and_persists_summary(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+
+    calls = []
+
+    async def fake_persist(session, *, conversation_id, created_by_empleado_id, message_limit=80, run_limit=30):
+        calls.append((conversation_id, created_by_empleado_id, message_limit, run_limit))
+        return {
+            "artifact_id": "artifact-1",
+            "artifact_type": "case_memory_summary",
+            "conversation_id": conversation_id,
+            "summary": {
+                "case_status": "ready_to_resume",
+                "objective": "Preparar comprobacion AMEX",
+                "documents": ["I-991520"],
+                "decisions": ["Usar memoria solo como contexto"],
+                "open_questions": [],
+                "artifacts_consulted": ["workspace_card"],
+                "last_action": "assistant: preview listo",
+                "next_step": "Revisar preview guardado",
+            },
+        }
+
+    monkeypatch.setattr(conversation_service, "persist_case_memory_summary", fake_persist)
+
+    response = await _run_message("guarda este caso")
+
+    assert calls == [("conv-request", "emp-1", 80, 30)]
+    assert "Memoria de caso guardada" in response.assistant_message
+    assert "Preparar comprobacion AMEX" in response.assistant_message
+    trace = response.tool_trace[0]
+    assert trace["tool"] == "assistant_case_memory_save"
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False
+    assert trace["safe_to_execute"] is False
+
+
+@pytest.mark.asyncio
+async def test_case_memory_resume_without_memory_fails_closed(monkeypatch):
+    import samchat.assistant.conversation_service as conversation_service
+
+    async def fake_loader(session, *, conversation_id):
+        assert conversation_id == "conv-request"
+        return {
+            "status": "no_case_memory",
+            "matched": False,
+            "conversation_id": conversation_id,
+            "writes_attempted": False,
+        }
+
+    monkeypatch.setattr(conversation_service, "load_latest_case_memory_summary", fake_loader)
+
+    response = await _run_message("retoma este caso")
+
+    assert "No encontre memoria de caso" in response.assistant_message
+    assert "no inventar continuidad" in response.assistant_message
+    assert "no ejecute acciones" in response.assistant_message
+    trace = response.tool_trace[0]
+    assert trace["tool"] == "assistant_case_memory_resume"
+    assert trace["case_memory_resume"]["matched"] is False
+    assert trace["provider_called"] is False
+    assert trace["writes_attempted"] is False
+    assert trace["safe_to_execute"] is False
+
+
+@pytest.mark.asyncio
 async def test_operator_workspace_resume_bypasses_provider_and_does_not_create_new_preview(monkeypatch):
     import samchat.assistant.conversation_service as conversation_service
     from samchat.assistant.operator_workspace_snapshot import build_operator_workspace_snapshot

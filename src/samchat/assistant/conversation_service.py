@@ -47,6 +47,15 @@ from .capability_negotiation import (
     receipt_workflow_writes_enabled,
     render_capability_response,
 )
+from .case_memory import (
+    CASE_MEMORY_RESUME_COMMAND,
+    CASE_MEMORY_SAVE_COMMAND,
+    detect_case_memory_command,
+    load_latest_case_memory_summary,
+    persist_case_memory_summary,
+    render_case_memory_resume_markdown,
+    render_case_memory_saved_markdown,
+)
 from .document_confirmation import AsyncActionRouterExecutor
 from .document_conversation import (
     extract_document_intake_result_from_text,
@@ -967,6 +976,71 @@ async def _build_specialist_preview_surface_response(
     )
 
 
+async def _build_case_memory_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    current_empleado: Any,
+    session: Any,
+) -> Optional[Any]:
+    command = detect_case_memory_command(raw_message)
+    if command is None:
+        return None
+
+    if command == CASE_MEMORY_SAVE_COMMAND:
+        result = await persist_case_memory_summary(
+            session,
+            conversation_id=str(conversation.id),
+            created_by_empleado_id=str(current_empleado.id),
+        )
+        rendered = render_case_memory_saved_markdown(result)
+        tool_trace = [
+            {
+                "tool": "assistant_case_memory_save",
+                "case_memory": result,
+                "provider_called": False,
+                "writes_attempted": False,
+                "operational_writes": False,
+                "safe_to_execute": False,
+            }
+        ]
+        await _persist_document_conversation_messages(
+            raw_message=raw_message,
+            assistant_message=rendered,
+            conversation=conversation,
+            session=session,
+            assistant_tool_payload={"case_memory_save": result},
+        )
+        return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+    if command == CASE_MEMORY_RESUME_COMMAND:
+        resolution = await load_latest_case_memory_summary(
+            session,
+            conversation_id=str(conversation.id),
+        )
+        rendered = render_case_memory_resume_markdown(resolution)
+        tool_trace = [
+            {
+                "tool": "assistant_case_memory_resume",
+                "case_memory_resume": resolution,
+                "provider_called": False,
+                "writes_attempted": False,
+                "operational_writes": False,
+                "safe_to_execute": False,
+            }
+        ]
+        await _persist_document_conversation_messages(
+            raw_message=raw_message,
+            assistant_message=rendered,
+            conversation=conversation,
+            session=session,
+            assistant_tool_payload={"case_memory_resume": resolution},
+        )
+        return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+    return None
+
+
 async def _build_operator_workspace_resume_response(
     *,
     raw_message: str,
@@ -1652,6 +1726,15 @@ async def run_conversation_turn(
     if capability_response is not None:
         return capability_response
 
+    case_memory_response = await _build_case_memory_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        current_empleado=current_empleado,
+        session=session,
+    )
+    if case_memory_response is not None:
+        return case_memory_response
+
     workspace_resume_response = await _build_operator_workspace_resume_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -1944,6 +2027,15 @@ async def run_message_turn_with_pending(
     )
     if capability_response is not None:
         return capability_response
+
+    case_memory_response = await _build_case_memory_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        current_empleado=current_empleado,
+        session=session,
+    )
+    if case_memory_response is not None:
+        return case_memory_response
 
     workspace_resume_response = await _build_operator_workspace_resume_response(
         raw_message=raw_message,

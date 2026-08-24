@@ -4,6 +4,8 @@ from uuid import uuid4
 from samchat.assistant.case_memory import (
     CASE_MEMORY_ARTIFACT_TYPE,
     build_case_memory_summary,
+    detect_case_memory_command,
+    render_case_memory_resume_markdown,
     score_case_memory_artifacts,
 )
 
@@ -85,6 +87,11 @@ def test_build_case_memory_summary_extracts_business_state() -> None:
     assert any("Pending confirmation" in item for item in summary.previews)
     assert any("Apruebo" in item for item in summary.approvals)
     assert any("Provider timeout" in item for item in summary.limitations)
+    assert summary.case_status == "waiting_context"
+    assert any("product-canon" in item for item in summary.artifacts_consulted)
+    assert summary.last_action.startswith("user: Apruebo")
+    assert summary.next_step and "Resolver pendiente" in summary.next_step
+    assert any("read-only" in item for item in summary.non_claims)
     assert summary.message_count == 4
     assert summary.run_count == 3
 
@@ -104,6 +111,10 @@ def test_case_memory_summary_markdown_is_retrievable_context() -> None:
     assert "# Assistant Case Memory Summary" in markdown
     assert "## Objective" in markdown
     assert "Crear torneo 2027" in markdown
+    assert "## Case status" in markdown
+    assert "## Last action" in markdown
+    assert "## Next step" in markdown
+    assert "## Resume hint" in markdown
     assert "## Source counts" in markdown
 
 
@@ -136,3 +147,19 @@ def test_score_case_memory_artifacts_prefers_compact_summary() -> None:
     assert results[0]["module_key"] == "expenses"
     assert results[0]["tournament_key"] == "beisbol"
     assert results[0]["score"] > 1.0
+
+
+def test_case_memory_command_detection_is_explicit() -> None:
+    assert detect_case_memory_command("Guarda este caso para retomarlo") == "save"
+    assert detect_case_memory_command("retoma este caso") == "resume"
+    assert detect_case_memory_command("sigamos") is None
+
+
+def test_case_memory_resume_without_summary_fails_closed() -> None:
+    rendered = render_case_memory_resume_markdown(
+        {"status": "no_case_memory", "matched": False}
+    )
+
+    assert "No encontre memoria de caso" in rendered
+    assert "no inventar continuidad" in rendered
+    assert "no ejecute acciones" in rendered
