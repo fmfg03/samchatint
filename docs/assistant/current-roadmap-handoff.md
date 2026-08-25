@@ -437,3 +437,28 @@ Next:
 
 - RQF-054H: executive regression suite of real questions with expected answer class, expected source class, and forbidden bad answers.
 - Keep improving candidate coverage before enabling any write/authority path.
+
+## 2026-08-25 RQF-054H Executive regression suite of real questions
+
+Status: IMPLEMENTED_LOCAL
+Branch: `codex/rqf-054g-multicandidate-readonly`
+
+What changed:
+
+- Added `src/samchat/assistant/executive_regression_suite.py` as a deterministic contract for real executive questions.
+- Added cases for Owner Pack readiness, owner payment evidence, accounting loaded, Payment Run, close blockers, CFDI gaps, and teams-by-category variable Q&A.
+- Each case records expected domain, task kind, answer class, source class, expected tools, forbidden tools, required answer terms, and forbidden answer terms.
+- The suite verifies output quality, WorkFrame classification, response sufficiency, read-only boundary, and absence of write traces.
+- The known bad outputs are now regression failures: raw tool payloads/debug JSON, unicode gibberish loops, and answering historical payment evidence with a pending-payment queue.
+
+Focused verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_executive_regression_suite.py
+# 7 passed
+```
+
+Next:
+
+- Expand the suite with captured live prompts from Francisco/Juan Pablo after each demo bug.
+- Use the suite as the acceptance gate for Owner Pack demo hardening and Finance/Accounting Q&A.
