@@ -1,6 +1,6 @@
 # RQF-054 — SamChat Claude-Code Runtime Gap
 
-Status: RQF-054DEF_IMPLEMENTED_LOCAL_PENDING_PR
+Status: RQF-054DEF_CLOSED_MERGED_DEPLOYED
 
 ## Executive summary
 
