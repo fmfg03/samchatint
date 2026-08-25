@@ -72,6 +72,7 @@ from .finance_query_service import (
     run_read_only_comparison,
 )
 from .finance_accounting_qa import (
+    FinanceAccountingQAIntent,
     detect_finance_accounting_qa_intent,
     render_finance_accounting_qa_answer,
 )
@@ -90,6 +91,10 @@ from .request_intent import (
 from .request_reports import ReadOnlyActionExecutor, run_read_only_report
 from .request_response import build_request_trace, render_request_report
 from .owner_needs_eval import OwnerNeedsPrompt, parse_owner_needs_eval_set
+from .multi_candidate_readonly import (
+    ReadOnlyCandidateResponse,
+    evaluate_readonly_candidates,
+)
 from .operator_workspace_resume import (
     build_operator_workspace_resume_response,
     detect_operator_workspace_resume_intent,
@@ -1644,6 +1649,251 @@ async def _build_analyst_workbench_response(
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
 
 
+def _multi_candidate_readonly_intent(work_frame: WorkFrame) -> bool:
+    """Return True when a turn benefits from executing several read-only candidates."""
+
+    if work_frame.needs_clarification:
+        return False
+    if work_frame.domain not in {"owner", "finance", "mixed"}:
+        return False
+    if work_frame.task_kind not in {"readiness", "evidence", "status", "diagnostic"}:
+        return False
+    # Narrow deterministic answers can still run through this path; the selector
+    # will choose one sufficient answer. The important part is that broad
+    # executive questions are no longer forced through the first keyword match.
+    return work_frame.confidence >= 0.74
+
+
+async def _owner_variable_readonly_candidate(
+    *,
+    raw_message: str,
+    session: Any,
+    work_frame: WorkFrame,
+) -> Optional[ReadOnlyCandidateResponse]:
+    if work_frame.domain not in {"owner", "mixed"}:
+        return None
+
+    scope = _owner_readiness_scope_from_message(raw_message)
+    tournament_hint = owner_ai_tournament_slug_hint(raw_message) or ""
+    entity_name = _owner_readiness_entity_hint(raw_message)
+    live_evidence = await resolve_owner_pack_live_evidence(
+        session,
+        scope=scope,
+        tournament_hint=tournament_hint,
+        entity_name=entity_name,
+    )
+    report = build_owner_variable_query_report(
+        question=raw_message,
+        live_reports=live_evidence.reports,
+    )
+    if report.status == OWNER_VARIABLE_UNMAPPED and not report.candidates:
+        return None
+
+    answer = render_owner_variable_query_answer(report)
+    tool_trace = [
+        {
+            "owner_variable_query": {
+                "stage": "multi_candidate_read_only_owner_variable_query",
+                "query_id": report.query_id,
+                "status": report.status,
+                "candidate_count": len(report.candidates),
+                "resolution_count": len(report.resolutions),
+                "provider_called": False,
+                "writes_attempted": report.writes_attempted,
+                "side_effects_detected": report.side_effects_detected,
+                "live_evidence_status": live_evidence.status,
+                "live_evidence_source": live_evidence.source,
+                "live_evidence_reports": len(live_evidence.reports),
+                "live_evidence_unresolved_reason": live_evidence.unresolved_reason,
+            },
+            "tool": "assistant_owner_variable_query",
+            "live_evidence": live_evidence.to_dict(),
+            "result": {
+                **report.to_dict(),
+                "conversation_answer": answer.to_dict(),
+            },
+        }
+    ]
+    return ReadOnlyCandidateResponse(
+        tool="assistant_owner_variable_query",
+        label="Owner variable Q&A",
+        assistant_message=answer.rendered_text,
+        tool_trace=tool_trace,
+    )
+
+
+async def _owner_readiness_readonly_candidate(
+    *,
+    raw_message: str,
+    session: Any,
+    work_frame: WorkFrame,
+) -> Optional[ReadOnlyCandidateResponse]:
+    if work_frame.domain not in {"owner", "mixed"}:
+        return None
+    if work_frame.task_kind not in {"readiness", "evidence", "status"}:
+        return None
+
+    prompts = _load_owner_needs_prompts()
+    status_report = build_owner_pack_status_report(prompts)
+    scope = _owner_readiness_scope_from_message(raw_message)
+    tournament_hint = owner_ai_tournament_slug_hint(raw_message) or ""
+    entity_name = _owner_readiness_entity_hint(raw_message)
+    live_evidence = await resolve_owner_pack_live_evidence(
+        session,
+        scope=scope,
+        tournament_hint=tournament_hint,
+        entity_name=entity_name,
+    )
+    report = build_owner_pack_readiness_from_scope(
+        status_report=status_report,
+        scope=scope,
+        tournament_slug=tournament_hint,
+        entity_name=entity_name,
+        extra_live_reports=live_evidence.reports,
+    )
+    answer = render_owner_pack_readiness_answer(report)
+    tool_trace = [
+        {
+            "owner_pack_readiness": {
+                "stage": "multi_candidate_read_only_owner_pack_readiness",
+                "readiness_id": report.readiness_id,
+                "status": report.status,
+                "readiness_score": report.readiness_score,
+                "surface_count": len(report.surfaces),
+                "provider_called": False,
+                "writes_attempted": report.writes_attempted,
+                "side_effects_detected": report.side_effects_detected,
+                "approval_required": True,
+                "live_evidence_status": live_evidence.status,
+                "live_evidence_source": live_evidence.source,
+                "live_evidence_reports": len(live_evidence.reports),
+                "live_evidence_unresolved_reason": live_evidence.unresolved_reason,
+            },
+            "tool": "assistant_owner_pack_readiness",
+            "live_evidence": live_evidence.to_dict(),
+            "result": {
+                **report.to_dict(),
+                "conversation_answer": answer.to_dict(),
+            },
+        }
+    ]
+    return ReadOnlyCandidateResponse(
+        tool="assistant_owner_pack_readiness",
+        label="Owner Pack readiness",
+        assistant_message=answer.rendered_text,
+        tool_trace=tool_trace,
+    )
+
+
+async def _finance_accounting_readonly_candidate(
+    *,
+    raw_message: str,
+    session: Any,
+    work_frame: WorkFrame,
+) -> Optional[ReadOnlyCandidateResponse]:
+    if work_frame.domain not in {"finance", "mixed"}:
+        return None
+
+    intent = detect_finance_accounting_qa_intent(raw_message)
+    if intent is None:
+        intent = FinanceAccountingQAIntent(
+            question_type="accounting_loaded",
+            confidence=0.62,
+            reason="work_frame_broad_finance_status_candidate",
+        )
+
+    result = await run_finance_read_adapter(
+        session,
+        intent="finance.platform",
+        year=datetime.now().year,
+        month=datetime.now().month,
+        limit=500,
+    )
+    rendered = render_finance_accounting_qa_answer(result=result, intent=intent)
+    tool_trace = [
+        {
+            "assistant_finance_accounting_qa": {
+                "stage": "multi_candidate_read_only_finance_accounting_qa",
+                "intent": "finance.platform",
+                "question_type": intent.question_type,
+                "confidence": intent.confidence,
+                "reason": intent.reason,
+                "source_function": result.get("source_function"),
+                "ok": bool(result.get("ok")),
+                "read_only": True,
+                "provider_called": False,
+                "writes_attempted": False,
+                "operational_writes": False,
+            },
+            "tool": "assistant_finance_accounting_qa",
+            "result": {
+                "intent": result.get("intent"),
+                "question_type": intent.question_type,
+                "ok": bool(result.get("ok")),
+                "source_notes": result.get("source_notes") or [],
+                "safety_labels": result.get("safety_labels") or [],
+            },
+        }
+    ]
+    return ReadOnlyCandidateResponse(
+        tool="assistant_finance_accounting_qa",
+        label="Finance/Accounting Q&A",
+        assistant_message=rendered,
+        tool_trace=tool_trace,
+    )
+
+
+async def _build_multi_candidate_readonly_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    work_frame: WorkFrame,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    if not _multi_candidate_readonly_intent(work_frame):
+        return None
+
+    candidate_builders = (
+        _owner_variable_readonly_candidate,
+        _owner_readiness_readonly_candidate,
+        _finance_accounting_readonly_candidate,
+    )
+    candidates: list[ReadOnlyCandidateResponse] = []
+    for builder in candidate_builders:
+        candidate = await builder(
+            raw_message=raw_message,
+            session=session,
+            work_frame=work_frame,
+        )
+        if candidate is not None:
+            candidates.append(candidate)
+
+    if len(candidates) < 2:
+        # Leave narrow, single-tool turns on their existing deterministic path.
+        return None
+
+    selection = evaluate_readonly_candidates(
+        work_frame=work_frame,
+        candidates=candidates,
+    )
+    tool_trace: list[dict[str, Any]] = []
+    if selection.selected is not None:
+        tool_trace.extend(selection.selected.tool_trace)
+    tool_trace.append(selection.trace())
+    rendered = maybe_append_export_prompt(selection.rendered_message, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+        assistant_tool_payload={
+            "multi_candidate_readonly": selection.trace().get("result"),
+        },
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def run_conversation_turn(
     *,
     raw_message: str,
@@ -1739,6 +1989,16 @@ async def run_conversation_turn(
     )
     if specialist_preview_response is not None:
         return _with_work_frame_trace(specialist_preview_response, work_frame)
+
+    multi_candidate_response = await _build_multi_candidate_readonly_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        work_frame=work_frame,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if multi_candidate_response is not None:
+        return _with_work_frame_trace(multi_candidate_response, work_frame)
 
     owner_variable_response = await _build_owner_variable_query_response(
         raw_message=raw_message,
