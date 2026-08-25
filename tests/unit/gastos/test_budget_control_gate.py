@@ -166,3 +166,46 @@ def test_admin_root_is_not_a_non_configurable_gateway() -> None:
     assert '"panel.home"' in line
     assert '"admin.root"' not in line
 
+
+
+def test_assigned_approvers_can_see_approval_inbox_without_payment_cards() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    panel_start = source.index("async def panel(")
+    panel_end = source.index("async def documentos_todos", panel_start)
+    panel_block = source[panel_start:panel_end]
+
+    assert "can_review_approvals = await _can_review_pending_approvals" in panel_block
+    assert "if can_review_approvals:" in panel_block
+    assert '"/documentos/pendientes"' in panel_block
+    assert '"/documentos/historial-aprobador"' in panel_block
+    assert "if can_manage_payments:" in panel_block
+    assert '"/documentos/pendientes-pago"' in panel_block
+
+
+def test_pending_approval_page_allows_assigned_approver_gate() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def documentos_pendientes")
+    end = source.index('@router.post("/documentos/pendientes/accion-lote")', start)
+    block = source[start:end]
+
+    assert "await _can_review_pending_approvals" in block
+    assert "current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin')" not in block
+
+
+def test_provider_client_admin_card_is_not_visible_to_all_roles_by_default() -> None:
+    source = Path("src/devnous/gastos/services/access_control_service.py").read_text()
+    start = source.index('AccessTool(\n        "admin.proveedores"')
+    end = source.index('    AccessTool(', start + 1)
+    block = source[start:end]
+
+    assert "ADMIN_ROLES" in block
+    assert "frozenset(ALL_ROLES)" not in block
+
+
+def test_authorization_strategy_money_values_are_formatted_to_two_decimals() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    assert "def _format_authorization_money_value" in source
+    assert 'format_currency(value, "MXN")' in source
+    assert 'Monto MXN: {escape(_format_authorization_money_value(inputs.get("amount_mxn")))}' in source
+    assert '("Monto MXN", _format_authorization_money_value(inputs.get("amount_mxn"))' in source
+    assert 'amount_value = _format_authorization_money_value(' in source

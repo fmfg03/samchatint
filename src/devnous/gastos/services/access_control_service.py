@@ -245,7 +245,7 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
         "Admin",
         "Catálogo de proveedores y clientes.",
         ("/admin/proveedores-clientes",),
-        frozenset(ALL_ROLES),
+        ADMIN_ROLES,
         ("ver", "crear", "editar"),
     ),
     AccessTool(
