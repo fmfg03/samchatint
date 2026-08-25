@@ -136,6 +136,99 @@ def build_tool_registry(
     return registry
 
 
+@dataclass(frozen=True)
+class SemanticAssistantToolSpec:
+    """Stable semantic metadata used by the WorkFrame adjudicator.
+
+    The provider-facing registry says whether a tool is read/write and who can
+    use it. This semantic registry says what business job a read-only tool can
+    actually answer, so the runtime can reject safe-but-wrong tools.
+    """
+
+    name: str
+    domains: tuple[str, ...]
+    task_kinds: tuple[str, ...]
+    evidence_outputs: tuple[str, ...]
+    rejected_interpretations: tuple[str, ...] = ()
+    read_only: bool = True
+
+    def to_trace(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+SEMANTIC_TOOL_REGISTRY: Dict[str, SemanticAssistantToolSpec] = {
+    "assistant_owner_pack_readiness": SemanticAssistantToolSpec(
+        name="assistant_owner_pack_readiness",
+        domains=("owner",),
+        task_kinds=("readiness", "evidence"),
+        evidence_outputs=("owner_pack_readiness", "missing_owner_pack_fields"),
+    ),
+    "assistant_owner_pack_readiness_dashboard": SemanticAssistantToolSpec(
+        name="assistant_owner_pack_readiness_dashboard",
+        domains=("owner",),
+        task_kinds=("readiness", "evidence"),
+        evidence_outputs=("owner_pack_readiness", "coverage", "missing_items"),
+    ),
+    "assistant_owner_entity_folder_workspace": SemanticAssistantToolSpec(
+        name="assistant_owner_entity_folder_workspace",
+        domains=("owner",),
+        task_kinds=("readiness", "evidence"),
+        evidence_outputs=("entity_folder", "operations_evidence", "finance_evidence"),
+    ),
+    "assistant_owner_variable_query": SemanticAssistantToolSpec(
+        name="assistant_owner_variable_query",
+        domains=("owner", "mixed"),
+        task_kinds=("evidence", "status"),
+        evidence_outputs=("owner_variable_source", "live_evidence_or_missing_reason"),
+        rejected_interpretations=("pending_payment_queue",),
+    ),
+    "assistant_finance_accounting_qa": SemanticAssistantToolSpec(
+        name="assistant_finance_accounting_qa",
+        domains=("finance", "mixed"),
+        task_kinds=("status", "diagnostic", "evidence"),
+        evidence_outputs=("finance_accounting_snapshot", "blocking_items", "module_routes"),
+        rejected_interpretations=("owner_pack_readiness",),
+    ),
+    "finance.read_only_comparison": SemanticAssistantToolSpec(
+        name="finance.read_only_comparison",
+        domains=("finance",),
+        task_kinds=("diagnostic", "status"),
+        evidence_outputs=("finance_comparison_rows",),
+    ),
+    "receipts.cfdi_matching_overview": SemanticAssistantToolSpec(
+        name="receipts.cfdi_matching_overview",
+        domains=("finance",),
+        task_kinds=("evidence", "diagnostic", "status"),
+        evidence_outputs=("cfdi_matching_status", "unlinked_cfdis"),
+    ),
+    "receipts.pending_payment_overview": SemanticAssistantToolSpec(
+        name="receipts.pending_payment_overview",
+        domains=("finance",),
+        task_kinds=("status",),
+        evidence_outputs=("pending_payment_queue",),
+        rejected_interpretations=("historical_payment_evidence",),
+    ),
+}
+
+
+def get_semantic_tool_spec(name: str | None) -> Optional[SemanticAssistantToolSpec]:
+    return SEMANTIC_TOOL_REGISTRY.get(str(name or "").strip())
+
+
+def semantic_tool_matches_work_frame(
+    *,
+    name: str | None,
+    domain: str,
+    task_kind: str,
+) -> bool:
+    spec = get_semantic_tool_spec(name)
+    if spec is None:
+        return False
+    domain_matches = domain in spec.domains or "mixed" in spec.domains
+    task_matches = task_kind in spec.task_kinds or "unknown" in spec.task_kinds
+    return domain_matches and task_matches
+
+
 def get_tool_spec(
     registry: Mapping[str, AssistantToolSpec],
     name: str,

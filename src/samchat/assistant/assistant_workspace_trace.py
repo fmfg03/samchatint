@@ -362,3 +362,81 @@ def build_specialist_workspace_source_panel(
         ]
     )
     return sources
+
+
+
+def build_assistant_work_turn_trace(
+    *,
+    work_frame: Mapping[str, Any],
+    primary_tool: str,
+    adjudication: Mapping[str, Any] | None,
+    sufficiency: Mapping[str, Any] | None,
+    rendered: bool,
+) -> Dict[str, Any]:
+    """Build a Claude-Code-like visible trace for a single assistant turn."""
+
+    adjudication = adjudication or {}
+    sufficiency = sufficiency or {}
+    accepted = bool(adjudication.get("accepted", True))
+    sufficient = bool(sufficiency.get("ok", True))
+    steps = [
+        {
+            "step_id": "understand_work_frame",
+            "title": "Entender solicitud",
+            "status": "complete",
+            "summary": work_frame.get("interpreted_goal") or "Solicitud interpretada.",
+            "data": {
+                "domain": work_frame.get("domain"),
+                "task_kind": work_frame.get("task_kind"),
+                "confidence": work_frame.get("confidence"),
+                "required_evidence": work_frame.get("required_evidence") or [],
+            },
+        },
+        {
+            "step_id": "adjudicate_tool_candidate",
+            "title": "Validar herramienta candidata",
+            "status": "complete" if accepted else "blocked",
+            "summary": adjudication.get("reason") or "Herramienta evaluada contra el trabajo solicitado.",
+            "data": {
+                "tool": primary_tool,
+                "accepted": accepted,
+                "rejected_interpretations": adjudication.get("rejected_interpretations") or [],
+            },
+        },
+        {
+            "step_id": "verify_answer_sufficiency",
+            "title": "Verificar suficiencia",
+            "status": "complete" if sufficient else "blocked",
+            "summary": sufficiency.get("reason") or "Respuesta verificada contra la pregunta del usuario.",
+            "data": {
+                "safe_to_render": sufficient,
+                "action": sufficiency.get("action"),
+                "diagnostics": sufficiency.get("diagnostics") or {},
+            },
+        },
+        {
+            "step_id": "render_executive_answer",
+            "title": "Redactar respuesta ejecutiva",
+            "status": "complete" if rendered else "skipped",
+            "summary": "Respuesta normalizada para usuario humano; sin payload crudo de herramienta.",
+            "data": {"rendered": bool(rendered)},
+        },
+        {
+            "step_id": "hold_read_only_boundary",
+            "title": "Mantener frontera read-only",
+            "status": "blocked",
+            "summary": "No se ejecutan cambios sin preview, autorizacion, idempotencia y auditoria.",
+            "data": {
+                "writes_attempted": False,
+                "authority_boundary": work_frame.get("authority_boundary") or "read_only",
+            },
+        },
+    ]
+    return {
+        "tool": "assistant.work_turn_trace",
+        "assistant_work_turn_trace": {
+            "stage": "claude_code_like_work_loop",
+            "steps": steps,
+        },
+        "result": {"steps": steps},
+    }

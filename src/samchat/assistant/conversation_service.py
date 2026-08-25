@@ -37,6 +37,7 @@ from .analyst_workbench import (
     run_analyst_workbench,
 )
 from .assistant_workspace_trace import (
+    build_assistant_work_turn_trace,
     build_specialist_workspace_source_panel,
     build_specialist_workspace_step_trace,
 )
@@ -153,6 +154,7 @@ from .response_sufficiency import (
     render_sufficiency_gap_answer,
 )
 from .tool_adjudicator import build_tool_adjudication_trace
+from .work_turn_renderer import render_work_turn_answer
 from .work_frame import WorkFrame, build_work_frame
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -265,24 +267,35 @@ def _primary_tool_name(tool_trace: list[dict[str, Any]]) -> str:
 def _with_work_frame_trace(response: Any, work_frame: WorkFrame) -> Any:
     tool_trace = list(getattr(response, "tool_trace", []) or [])
     primary_tool = _primary_tool_name(tool_trace)
+    adjudication_trace: dict[str, Any] | None = None
     if primary_tool:
-        tool_trace.append(
-            build_tool_adjudication_trace(
-                work_frame=work_frame,
-                tool=primary_tool,
-            )
+        adjudication_trace = build_tool_adjudication_trace(
+            work_frame=work_frame,
+            tool=primary_tool,
         )
+        tool_trace.append(adjudication_trace)
     sufficiency = evaluate_response_sufficiency(
         work_frame=work_frame,
         assistant_message=str(getattr(response, "assistant_message", "") or ""),
         tool_trace=tool_trace,
     )
-    if not sufficiency.ok:
-        response.assistant_message = render_sufficiency_gap_answer(
-            work_frame=work_frame,
-            result=sufficiency,
+    response.assistant_message, rendered = render_work_turn_answer(
+        current_message=str(getattr(response, "assistant_message", "") or ""),
+        work_frame=work_frame,
+        sufficiency=sufficiency,
+        tool_trace=tool_trace,
+    )
+    sufficiency_trace = build_response_sufficiency_trace(result=sufficiency)
+    tool_trace.append(sufficiency_trace)
+    tool_trace.append(
+        build_assistant_work_turn_trace(
+            work_frame=work_frame.to_dict(),
+            primary_tool=primary_tool,
+            adjudication=(adjudication_trace or {}).get("result"),
+            sufficiency=sufficiency_trace.get("result"),
+            rendered=rendered,
         )
-    tool_trace.append(build_response_sufficiency_trace(result=sufficiency))
+    )
     trace = {
         "assistant_work_frame": work_frame.to_dict(),
         "tool": "assistant.work_frame",
