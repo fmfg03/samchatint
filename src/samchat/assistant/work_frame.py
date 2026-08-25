@@ -238,7 +238,28 @@ def build_work_frame(raw_message: str) -> WorkFrame:
             answer_contract=_answer_contract(audience="owner", domain="owner", task_kind="evidence"),
         )
 
-    if _contains_any(text, pending_payment_terms):
+    pending_payment_signal = _contains_any(text, pending_payment_terms) and (
+        _contains_any(text, payment_terms)
+        or "payment run" in text
+        or "programacion de pagos" in text
+    )
+    if pending_payment_signal and _contains_any(text, owner_terms):
+        return WorkFrame(
+            frame_id=_frame_id(message),
+            user_message=message,
+            interpreted_goal="Answer an Owner Pack payment-support variable from supported evidence or state the gap.",
+            audience="owner",
+            domain="owner",
+            task_kind="evidence",
+            confidence=0.82,
+            explicit_entities=entities,
+            temporal_scope=temporal,
+            required_evidence=("owner_variable_source", "payment_status_by_entity", "live_evidence_or_missing_reason"),
+            forbidden_interpretations=("invented_entity_payment_status", "unsupported_amount"),
+            answer_contract=_answer_contract(audience="owner", domain="owner", task_kind="evidence"),
+        )
+
+    if pending_payment_signal and not _contains_any(text, ("cfdi", "cfdis", "factura", "facturas")):
         return WorkFrame(
             frame_id=_frame_id(message),
             user_message=message,

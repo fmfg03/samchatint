@@ -331,7 +331,7 @@ Next slice:
 
 ## 2026-08-24 RQF-054A WorkFrame
 
-Status: IMPLEMENTED_IN_PR_220_PENDING_CI
+Status: MERGED_AND_DEPLOYED
 
 What changed:
 
@@ -346,5 +346,31 @@ Why it matters:
 
 Next:
 
-- RQF-054B must select and reject ToolCandidates against the WorkFrame before execution.
-- RQF-054C must verify that the selected tool result is sufficient before rendering.
+- RQF-054B/C are implemented in branch `codex/rqf-054bc-tool-adjudicator-sufficiency`: tool candidate adjudication plus response sufficiency gate. Focused tests: 44 passed. Next step is CI/PR/merge/deploy, then expand candidate mapping into `tool_registry.py`.
+
+
+## 2026-08-24 RQF-054B/C Tool Adjudicator + Sufficiency Gate
+
+Status: IMPLEMENTED_LOCAL_PENDING_PR
+
+Current branch: `codex/rqf-054bc-tool-adjudicator-sufficiency`
+
+What changed:
+
+- Tools are now judged as candidates against the WorkFrame before the final answer is trusted.
+- The sufficiency gate can replace an answer with a bounded gap response if the tool/result does not answer the user's actual business question.
+- The known bad path is covered: asking for evidence of payments already made cannot be answered by `receipts.pending_payment_overview`.
+- Primary tool trace remains at index 0; governance traces are appended so existing UI contracts remain stable.
+
+Focused verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_tool_adjudicator_sufficiency.py tests/unit/test_assistant_work_frame.py tests/unit/test_assistant_request_router_integration.py
+# 44 passed
+```
+
+Next after PR/merge/deploy:
+
+- Expand candidate registry using `tool_registry.py` metadata instead of only hard-coded invariants.
+- Add multi-candidate read-only execution for broad executive questions.
+- Keep writes disabled until authority path design is closed.

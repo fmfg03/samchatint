@@ -147,6 +147,12 @@ from .response_quality_gate import (
     evaluate_response_quality,
     render_quality_fallback,
 )
+from .response_sufficiency import (
+    build_response_sufficiency_trace,
+    evaluate_response_sufficiency,
+    render_sufficiency_gap_answer,
+)
+from .tool_adjudicator import build_tool_adjudication_trace
 from .work_frame import WorkFrame, build_work_frame
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
@@ -244,7 +250,39 @@ def _response_object(
     )
 
 
+def _primary_tool_name(tool_trace: list[dict[str, Any]]) -> str:
+    for trace in tool_trace:
+        tool = str(trace.get("tool") or "").strip()
+        if tool and not tool.startswith("assistant."):
+            return tool
+    for trace in tool_trace:
+        tool = str(trace.get("tool") or "").strip()
+        if tool:
+            return tool
+    return ""
+
+
 def _with_work_frame_trace(response: Any, work_frame: WorkFrame) -> Any:
+    tool_trace = list(getattr(response, "tool_trace", []) or [])
+    primary_tool = _primary_tool_name(tool_trace)
+    if primary_tool:
+        tool_trace.append(
+            build_tool_adjudication_trace(
+                work_frame=work_frame,
+                tool=primary_tool,
+            )
+        )
+    sufficiency = evaluate_response_sufficiency(
+        work_frame=work_frame,
+        assistant_message=str(getattr(response, "assistant_message", "") or ""),
+        tool_trace=tool_trace,
+    )
+    if not sufficiency.ok:
+        response.assistant_message = render_sufficiency_gap_answer(
+            work_frame=work_frame,
+            result=sufficiency,
+        )
+    tool_trace.append(build_response_sufficiency_trace(result=sufficiency))
     trace = {
         "assistant_work_frame": work_frame.to_dict(),
         "tool": "assistant.work_frame",
@@ -255,7 +293,7 @@ def _with_work_frame_trace(response: Any, work_frame: WorkFrame) -> Any:
             "needs_clarification": work_frame.needs_clarification,
         },
     }
-    response.tool_trace = list(getattr(response, "tool_trace", []) or []) + [trace]
+    response.tool_trace = tool_trace + [trace]
     return response
 
 
