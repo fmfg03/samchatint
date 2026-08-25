@@ -111,7 +111,7 @@ Do not lose this lane, but the current thread focus returned to assistant/owner/
 
 ### Lane F - Claude-Code-like assistant runtime contract
 
-Status: RQF-054D/E/F_IMPLEMENTED_LOCAL_PENDING_PR
+Status: RQF-054D/E/F_CLOSED_MERGED_DEPLOYED
 
 Reference: `docs/assistant/rqf-054-claude-code-runtime-gap.md`
 
@@ -126,8 +126,8 @@ Implementation order and current state:
 1. RQF-054A - WorkFrame classifier. Status: merged/deployed in PR #220.
 2. RQF-054B - Tool candidate adjudicator. Status: merged/deployed in PR #221.
 3. RQF-054C - Sufficiency gate. Status: merged/deployed in PR #221. Active release before this slice: `/srv/samchat/releases/gastos-prod-40ebe85d-rqf054bc-sufficiency`.
-4. RQF-054D - Unified executive renderer. Status: implemented locally on `codex/rqf-054def-executive-workloop`, pending PR/CI.
-5. RQF-054E - Claude-Code-like turn trace. Status: implemented locally on `codex/rqf-054def-executive-workloop`, pending PR/CI.
+4. RQF-054D - Unified executive renderer. Status: implemented locally on `codex/rqf-054def-executive-workloop`, merged/deployed in PR #222.
+5. RQF-054E - Claude-Code-like turn trace. Status: implemented locally on `codex/rqf-054def-executive-workloop`, merged/deployed in PR #222.
 6. RQF-054F - Regression set for executive questions. Status: partially advanced through semantic registry and focused tests; next slice should add broad multi-candidate read-only execution plus a stable executive regression set.
 
 Critical invariant:
@@ -380,9 +380,11 @@ Next after PR/merge/deploy:
 
 ## 2026-08-24 RQF-054D/E/F foundation
 
-Status: IMPLEMENTED_LOCAL_PENDING_PR
+Status: CLOSED_MERGED_DEPLOYED
 
-Current branch: `codex/rqf-054def-executive-workloop`
+PR: #222
+Merge commit: `53dc8ee6da3c9023a2b505f0da75400b847701f4`
+Active release after deployment: `/srv/samchat/releases/gastos-prod-53dc8ee6-rqf054def-workloop`
 
 What changed:
 
@@ -399,5 +401,4 @@ Focused verification:
 
 Next:
 
-- Open PR, run CI, merge, and deploy from `origin/main`.
-- Then implement multi-candidate read-only execution and an executive regression pack for owner/finance/accounting questions.
+- Implement multi-candidate read-only execution and an executive regression pack for owner/finance/accounting questions.
