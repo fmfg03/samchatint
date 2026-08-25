@@ -588,7 +588,23 @@ async def execute_anthropic_provider(
                     }
                 }
             )
-            raise HTTPException(status_code=504, detail=RUNTIME_BUDGET_REASON)
+            return await _provider_controlled_failure_response(
+                run_id=run_id,
+                reason=RUNTIME_BUDGET_REASON,
+                provider="anthropic",
+                model=model,
+                route_info=route_info,
+                normalized_mode=normalized_mode,
+                raw_message=raw_message,
+                conversation=conversation,
+                current_empleado=current_empleado,
+                session=session,
+                tool_trace=tool_trace,
+                assistant_run_cls=assistant_run_cls,
+                assistant_message_cls=assistant_message_cls,
+                message_response_cls=message_response_cls,
+                deterministic_tool_answer=deterministic_tool_answer,
+            )
         call_timeout = min(provider_timeout_seconds, remaining_budget)
         call_started = time.monotonic()
         try:
