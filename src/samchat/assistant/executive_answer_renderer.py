@@ -96,6 +96,129 @@ def _first_text(mapping: Mapping[str, Any], keys: Sequence[str]) -> str | None:
     return None
 
 
+def _format_money(value: Any, *, currency: str = 'MXN') -> str:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+    return f'{currency} ${amount:,.2f}'
+
+
+def _format_pct(value: Any) -> str | None:
+    if value is None:
+        return None
+    try:
+        return f'{float(value):,.2f}%'
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_finance_realtime_report(result: Mapping[str, Any]) -> str:
+    title = _first_text(result, ('title',)) or 'Reporte financiero en tiempo real'
+    period = _first_mapping(result.get('period')) or {}
+    totals = _first_mapping(result.get('totals')) or {}
+    budget = _first_mapping(result.get('budget')) or {}
+    projection = _first_mapping(result.get('projection')) or {}
+    breakdown = _first_mapping(result.get('breakdown')) or {}
+    raw_items = breakdown.get('items')
+    items = raw_items if isinstance(raw_items, Sequence) and not isinstance(raw_items, (str, bytes)) else []
+    raw_group_by = str(breakdown.get('group_by') or 'agrupador')
+    group_by = raw_group_by.replace('_', ' ')
+    currency = str(totals.get('moneda') or 'MXN')
+
+    actual_total = totals.get('gasto_total', 0)
+    registros = int(totals.get('registros') or 0)
+    budget_total = budget.get('budget_total')
+    variance = budget.get('variance_amount')
+    variance_pct = _format_pct(budget.get('variance_pct'))
+    projected_total = projection.get('projected_total')
+    run_rate_daily = projection.get('run_rate_daily')
+
+    lines: list[str] = [str(title)]
+    if period.get('from') or period.get('to'):
+        lines.append(
+            f"\nPeriodo: {period.get('from') or 'inicio no definido'} "
+            f"a {period.get('to') or 'fin no definido'}."
+        )
+
+    lines.append(
+        f"\nRespuesta corta: encontré {registros} movimientos por "
+        f"{_format_money(actual_total, currency=currency)} en el periodo consultado."
+    )
+
+    if budget_total is not None:
+        budget_line = (
+            f"Presupuesto/base comparativa: {_format_money(budget_total, currency=currency)}; "
+            f"variación: {_format_money(variance, currency=currency)}"
+        )
+        if variance_pct:
+            budget_line += f" ({variance_pct})."
+        else:
+            budget_line += "."
+        lines.append(f"\nLectura presupuestal: {budget_line}")
+    else:
+        lines.append(
+            "\nLectura presupuestal: no tengo presupuesto/base comparativa "
+            "en el payload de esta consulta."
+        )
+
+    if projected_total is not None:
+        lines.append(
+            f"\nProyección run-rate: {_format_money(projected_total, currency=currency)} "
+            f"para el cierre del periodo."
+        )
+        if run_rate_daily is not None:
+            lines.append(
+                f"Run-rate diario observado: {_format_money(run_rate_daily, currency=currency)}."
+            )
+
+    if items:
+        lines.append(f"\nPrincipales grupos por {group_by}:")
+        for item in list(items)[:6]:
+            if not isinstance(item, Mapping):
+                continue
+            label = (
+                item.get(raw_group_by)
+                or item.get('label')
+                or item.get('name')
+                or item.get('key')
+                or '(sin nombre)'
+            )
+            monto = item.get('monto', 0)
+            n = item.get('registros')
+            suffix = f" · {int(n)} registros" if n is not None else ""
+            lines.append(f"- {label}: {_format_money(monto, currency=currency)}{suffix}")
+
+    comparison = result.get('comparison_yoy')
+    if isinstance(comparison, Sequence) and not isinstance(comparison, (str, bytes)) and comparison:
+        lines.append("\nComparativo histórico:")
+        for item in list(comparison)[:3]:
+            if not isinstance(item, Mapping):
+                continue
+            item_period = _first_mapping(item.get('period')) or {}
+            delta_pct = _format_pct(item.get('delta_vs_current_pct'))
+            delta_text = _format_money(item.get('delta_vs_current_amount'), currency=currency)
+            line = (
+                f"- {item_period.get('from') or 'periodo previo'} "
+                f"a {item_period.get('to') or 'n/a'}: "
+                f"{_format_money(item.get('total'), currency=currency)}; "
+                f"diferencia vs actual {delta_text}"
+            )
+            if delta_pct:
+                line += f" ({delta_pct})"
+            lines.append(line)
+
+    lines.append(
+        "\nFaltantes / cautelas: la proyección es derivada de registros actuales; "
+        "si faltan gastos, pagos, CFDI o partidas por capturar, el cierre real puede cambiar."
+    )
+    lines.append("Frontera de autoridad: esto es lectura y análisis; no ejecuté cambios ni registré movimientos.")
+    lines.append(
+        "Trazabilidad: respuesta generada directamente desde finance_realtime_report, "
+        "sin depender de una segunda respuesta del proveedor."
+    )
+    return '\n'.join(lines)
+
 def _has_structured_signal(result: Mapping[str, Any]) -> bool:
     return any(key in result and result.get(key) not in (None, '', [], {}) for key in _STRUCTURED_KEYS)
 
@@ -155,6 +278,13 @@ def render_executive_tool_result(tool_name: str, result: Mapping[str, Any]) -> s
     direct = _first_text(result, _SIMPLE_TEXT_KEYS)
     if direct:
         return direct
+
+    if tool_name == 'finance_realtime_report' and (
+        isinstance(result.get('totals'), Mapping)
+        or isinstance(result.get('projection'), Mapping)
+        or isinstance(result.get('breakdown'), Mapping)
+    ):
+        return _render_finance_realtime_report(result)
 
     if _has_structured_signal(result):
         return _render_structured_result(tool_name, result)
