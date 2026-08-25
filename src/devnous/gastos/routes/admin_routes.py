@@ -13828,7 +13828,7 @@ async def admin_presupuestos_legacy(
                     <input type="text" name="phase" value="{escape(str(line.get('phase') or ''))}" placeholder="Fase" {'disabled' if not access.get("line_update") else ''}>
                     <input type="text" name="owner_name" value="{escape(str(line.get('owner_name') or ''))}" placeholder="Responsable" {'disabled' if not access.get("line_update") else ''}>
                     <input type="text" name="priority" value="{escape(str(line.get('priority') or ''))}" placeholder="Prioridad" {'disabled' if not access.get("line_update") else ''}>
-                    <input type="number" step="0.01" min="0" name="budget_amount" value="{float(line.get('budget_amount') or 0):.2f}" placeholder="Monto" {'disabled' if not access.get("line_update") else ''}>
+                    <input type="number" step="0.01" min="0" name="budget_amount" value="{float(line.get('budget_amount') or 0):.2f}" placeholder="Monto total" {'disabled' if not access.get("line_update") else ''}>
                     {_render_monthly_budget_inputs(str(line.get('id') or ''))}
                     <textarea name="criteria_note" rows="2" placeholder="Criterio" {'disabled' if not access.get("line_update") else ''}>{escape(str(line.get('criteria_note') or ''))}</textarea>
                     <textarea name="observations" rows="2" placeholder="Observaciones" {'disabled' if not access.get("line_update") else ''}>{escape(str(line.get('observations') or ''))}</textarea>

@@ -25,7 +25,7 @@ ACTION_KEYS = (
     "exportar",
     "administrar",
 )
-NON_CONFIGURABLE_GATEWAY_TOOL_KEYS = frozenset({"panel.home", "admin.root"})
+NON_CONFIGURABLE_GATEWAY_TOOL_KEYS = frozenset({"panel.home"})
 
 
 @dataclass(frozen=True)
