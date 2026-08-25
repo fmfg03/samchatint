@@ -493,7 +493,7 @@ def render_budget_partida_matrix(
                         <div style="flex:1;">
                             <div style="font-weight:800;color:#0f172a;">{escape(str(line.get("concept_name") or ""))}</div>
                             <div style="font-size:12px;color:#64748b;margin-top:4px;">
-                                Anual plan: ${float(line.get("budget_amount") or 0):,.2f}
+                                Monto total: ${float(line.get("budget_amount") or 0):,.2f}
                             </div>
                             {cuenta_field_html if not can_edit else ""}
                         </div>
@@ -510,8 +510,8 @@ def render_budget_partida_matrix(
                             <thead>
                                 <tr style="background:#f8fafc;">
                                     <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Concepto</th>
-                                    {''.join(f'<th style="padding:6px;border-bottom:1px solid #e2e8f0;">{label}</th>' for label in MONTH_SHORT)}
-                                    <th style="padding:6px;border-bottom:1px solid #e2e8f0;">Total</th>
+                                    <th style="padding:6px;border-bottom:1px solid #e2e8f0;">Monto total</th>
+                                    {''.join(f'<th style="padding:6px;border-bottom:1px solid #e2e8f0;">Semana {idx}</th>' for idx, _label in enumerate(MONTH_SHORT, start=1))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -569,7 +569,7 @@ def render_budget_partida_matrix(
                         value = 0.0
                         cells.append(f'<td style="padding:6px;text-align:right;">—</td>')
                     total += value
-                cells.append(f'<td style="padding:6px;text-align:right;font-weight:800;">${total:,.2f}</td>')
+                cells.insert(1, f'<td style="padding:6px;text-align:right;font-weight:800;">${total:,.2f}</td>')
                 return f"<tr>{''.join(cells)}</tr>"
 
             if clean_mode in {"full", "expenses"}:
@@ -598,13 +598,13 @@ def render_budget_partida_matrix(
                     f'<span>Ingreso esperado: <strong>${plan_income_total:,.2f}</strong></span>'
                     f'<span>Ingreso real: <strong>${real_income_total:,.2f}</strong></span>'
                 )
-                button_label = "Guardar ingreso mensual"
+                button_label = "Guardar ingreso por semanas"
             elif clean_mode == "expenses":
                 summary_html = (
                     f'<span>Presupuesto gasto: <strong>${plan_expense_total:,.2f}</strong></span>'
                     f'<span>Gasto real: <strong>${real_expense_total:,.2f}</strong></span>'
                 )
-                button_label = "Guardar gasto mensual"
+                button_label = "Guardar gasto por semanas"
             else:
                 net_plan = plan_income_total - plan_expense_total
                 net_real = real_income_total - real_expense_total
@@ -612,7 +612,7 @@ def render_budget_partida_matrix(
                     f'<span>Neto plan: <strong>${net_plan:,.2f}</strong></span>'
                     f'<span>Neto real: <strong>${net_real:,.2f}</strong></span>'
                 )
-                button_label = "Guardar plan mensual"
+                button_label = "Guardar plan por semanas"
 
             html_parts.append(
                 f"""

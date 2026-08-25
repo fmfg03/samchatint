@@ -118,3 +118,51 @@ def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
     assert "workflow_action" in block
     assert 'workflow_action = {"approve": "approve", "reject": "reject"}' in block
     assert "DocumentoWorkflowPermissionError" in block
+
+
+def test_solicitud_owner_edit_window_extends_until_budget_assignment() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("def _is_pre_budget_edit_window")
+    end = source.index("def _can_edit_solicitud_terceros", start)
+    block = source[start:end]
+    assert 'estado == "control_presupuestal"' in block
+    assert "not _budget_concept_assigned(documento)" in block
+
+
+def test_solicitud_update_service_uses_same_pre_budget_edit_window() -> None:
+    source = Path("src/devnous/gastos/services/documento_service.py").read_text()
+    start = source.index("async def update_solicitud_terceros_document")
+    end = source.index("proveedor_result =", start)
+    block = source[start:end]
+    assert 'estado_norm == "control_presupuestal"' in block
+    assert 'not getattr(documento, "budget_concept_id", None)' in block
+
+
+def test_top_navigation_uses_access_control_for_admin_and_operations_links() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("def render_top_navigation")
+    end = source.index('links_html = "".join', start)
+    block = source[start:end]
+    assert 'links: list[tuple[str, str, str]] = []' in block
+    assert 'can_nav("admin.root"' in block
+    assert 'can_nav("panel.operaciones"' in block
+    assert 'links = [\n        ("/panel"' not in block
+
+
+def test_budget_matrix_labels_total_before_weeks() -> None:
+    source = Path("src/devnous/gastos/routes/admin_budget_ui.py").read_text()
+    assert "Monto total" in source
+    assert "Semana {idx}" in source
+    assert "Guardar gasto por semanas" in source
+
+
+def test_admin_root_is_not_a_non_configurable_gateway() -> None:
+    source = Path("src/devnous/gastos/services/access_control_service.py").read_text()
+    line = next(
+        line
+        for line in source.splitlines()
+        if line.startswith("NON_CONFIGURABLE_GATEWAY_TOOL_KEYS")
+    )
+    assert '"panel.home"' in line
+    assert '"admin.root"' not in line
+

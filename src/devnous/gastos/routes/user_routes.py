@@ -9743,6 +9743,18 @@ def _is_solicitud_terceros(documento: Documento) -> bool:
     )
 
 
+def _budget_concept_assigned(documento: Documento) -> bool:
+    return bool(getattr(documento, "budget_concept_id", None))
+
+
+def _is_pre_budget_edit_window(documento: Documento) -> bool:
+    """User-editable window before Control Presupuestal assigns a budget concept."""
+    estado = (getattr(documento, "estado", None) or "").strip().lower()
+    if estado in {"borrador", "rechazado"}:
+        return not _budget_concept_assigned(documento)
+    return estado == "control_presupuestal" and not _budget_concept_assigned(documento)
+
+
 def _can_edit_solicitud_terceros(
     documento: Documento,
     empleado: Empleado,
@@ -9751,7 +9763,7 @@ def _can_edit_solicitud_terceros(
 ) -> bool:
     return (
         _is_solicitud_terceros(documento)
-        and documento.estado in {"borrador", "rechazado"}
+        and _is_pre_budget_edit_window(documento)
         and documento.empleado_id == empleado.id
         and not solicitud_cancelada
     )
@@ -10793,10 +10805,7 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
             </form>
         </div>
         """
-    links = [
-        ("/panel", "Panel de administración", "panel"),
-        ("/panel/operaciones-console", "Operaciones", "operacion"),
-    ]
+    links: list[tuple[str, str, str]] = []
     visible_tool_keys = set(getattr(current_empleado, "visible_tool_keys", set()) or set())
 
     def can_nav(tool_key: str, fallback_roles: tuple[str, ...]) -> bool:
@@ -10804,8 +10813,12 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
             return True
         if visible_tool_keys:
             return tool_key in visible_tool_keys
-        return current_empleado.rol in fallback_roles
+        return role_norm in fallback_roles
 
+    if can_nav("admin.root", ("admin", "superadmin", "super_admin")):
+        links.append(("/panel", "Panel de administración", "panel"))
+    if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
+        links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
     if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
         links.append(("/admin/contabilidad/estado", "Contabilidad", "contabilidad"))
     if can_nav("admin.nomina", ('finanzas', 'admin', 'superadmin', 'super_admin')):
@@ -28553,7 +28566,7 @@ async def editar_solicitud_terceros_form(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ) -> str:
-    """Edit a SOLICITUD a terceros while it remains in borrador or rechazado."""
+    """Edit a SOLICITUD a terceros before Control Presupuestal assigns concept."""
     doc_result = await session.execute(
         select(Documento)
         .options(
@@ -28571,7 +28584,7 @@ async def editar_solicitud_terceros_form(
         return RedirectResponse(
             url=_append_error_params(
                 f"/documentos/{documento_id}",
-                error_msg="Solo puede editar solicitudes propias en borrador o rechazadas.",
+                error_msg="Solo puede editar solicitudes propias antes de que Control Presupuestal asigne concepto.",
             ),
             status_code=303,
         )
@@ -29553,7 +29566,7 @@ async def editar_solicitud_terceros_post(
     pago_urgente: Optional[str] = Form(None),
     cfdi_compartido_confirmado: Optional[str] = Form(None),
 ) -> RedirectResponse:
-    """Update a SOLICITUD a terceros in borrador or rechazado."""
+    """Update a SOLICITUD a terceros before Control Presupuestal assigns concept."""
     doc_result = await session.execute(
         select(Documento).where(Documento.id == documento_id)
     )
@@ -29564,7 +29577,7 @@ async def editar_solicitud_terceros_post(
         return RedirectResponse(
             url=_append_error_params(
                 f"/documentos/{documento_id}",
-                error_msg="Solo puede editar solicitudes propias en borrador o rechazadas.",
+                error_msg="Solo puede editar solicitudes propias antes de que Control Presupuestal asigne concepto.",
             ),
             status_code=303,
         )
@@ -32289,6 +32302,19 @@ async def _informe_documento_for_cuenta(
     return r.scalar_one_or_none()
 
 
+def _can_edit_cuenta_before_budget_assignment(
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+) -> bool:
+    """Allow edits after close only while linked INFORME waits for Control Presupuestal."""
+    if (getattr(cuenta, "estado", None) or "").strip().lower() == "abierta":
+        return True
+    if informe_doc is None:
+        return False
+    estado = (getattr(informe_doc, "estado", None) or "").strip().lower()
+    return estado == "control_presupuestal" and not _budget_concept_assigned(informe_doc)
+
+
 def _safe_internal_next(next_param: Optional[str], fallback: str) -> str:
     if next_param:
         next_url = unquote(next_param).strip()
@@ -34902,7 +34928,7 @@ async def cuenta_de_gastos_detail(
         {informe_support_actions_html}
         {coi_actions_html}
         {diot_actions_html}
-        {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if cuenta.estado == 'abierta' and _can_manage_cuenta else ''}
+        {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if _can_manage_cuenta and _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc) else ''}
         {cerrar_informe_form_html}
         {cancelar_borrador_form_html}
     """
@@ -35281,11 +35307,12 @@ async def editar_cuenta_de_gastos_form(
         return _schema_outdated_html_response()
     if not cuenta or (current_empleado.rol not in ("admin", "finanzas") and cuenta.empleado_id != current_empleado.id):
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if cuenta.estado != "abierta":
+    informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
+    if not _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc):
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe cerrado.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
             ),
             status_code=303,
         )
@@ -35456,11 +35483,12 @@ async def editar_cuenta_de_gastos_submit(
         return _schema_outdated_html_response()
     if not cuenta or (current_empleado.rol not in ("admin", "finanzas") and cuenta.empleado_id != current_empleado.id):
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if cuenta.estado != "abierta":
+    informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
+    if not _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc):
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe cerrado.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
             ),
             status_code=303,
         )

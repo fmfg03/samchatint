@@ -877,7 +877,7 @@ async def update_solicitud_terceros_document(
     documento: Documento,
     payload: SolicitudTercerosPayload,
 ) -> Documento:
-    """Update an editable SOLICITUD a terceros in borrador or rechazado.
+    """Update an editable SOLICITUD a terceros before budget concept assignment.
 
     Rejected solicitudes return to borrador when saved so the owner can re-send.
     """
@@ -886,10 +886,15 @@ async def update_solicitud_terceros_document(
             "invalid_documento",
             "Solo se pueden editar solicitudes.",
         )
-    if documento.estado not in {"borrador", "rechazado"}:
+    estado_norm = (documento.estado or "").strip().lower()
+    editable_before_budget = (
+        estado_norm in {"borrador", "rechazado"}
+        or estado_norm == "control_presupuestal"
+    ) and not getattr(documento, "budget_concept_id", None)
+    if not editable_before_budget:
         raise SolicitudValidationError(
             "invalid_estado",
-            "Solo se pueden editar solicitudes en borrador o rechazadas.",
+            "Solo se pueden editar solicitudes antes de que Control Presupuestal asigne concepto.",
         )
     if documento.empleado_id != payload.empleado_id:
         raise SolicitudValidationError(
