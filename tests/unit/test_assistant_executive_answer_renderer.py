@@ -57,3 +57,49 @@ def test_executive_renderer_ignores_raw_tool_call_text() -> None:
     result = {"message": '{"name":"assistant_owner_pack_readiness","arguments":{"scope":"all"}}'}
 
     assert render_executive_tool_result("assistant_owner_pack_readiness", result) is None
+
+
+
+def test_executive_renderer_renders_finance_realtime_report_without_provider_roundtrip() -> None:
+    result = {
+        "title": "Proyección de cierre 2026",
+        "period": {"from": "2026-01-01", "to": "2026-12-31"},
+        "totals": {"gasto_total": 12500.5, "registros": 7, "moneda": "MXN"},
+        "budget": {
+            "budget_total": 20000.0,
+            "variance_amount": 7499.5,
+            "variance_pct": -37.5,
+            "source": "solicitudes",
+        },
+        "projection": {
+            "mode": "run_rate",
+            "run_rate_daily": 250.01,
+            "projected_total": 91003.64,
+        },
+        "breakdown": {
+            "group_by": "departamento",
+            "items": [
+                {"departamento": "Operaciones", "registros": 4, "monto": 10000.0},
+                {"departamento": "Finanzas", "registros": 3, "monto": 2500.5},
+            ],
+        },
+        "comparison_yoy": [
+            {
+                "period": {"from": "2025-01-01", "to": "2025-12-31"},
+                "total": 9000.0,
+                "delta_vs_current_amount": 3500.5,
+                "delta_vs_current_pct": 38.89,
+            }
+        ],
+    }
+
+    answer = _assistant_deterministic_tool_answer("finance_realtime_report", result)
+
+    assert answer is not None
+    assert "Proyección de cierre 2026" in answer
+    assert "7 movimientos" in answer
+    assert "MXN $12,500.50" in answer
+    assert "Proyección run-rate: MXN $91,003.64" in answer
+    assert "Operaciones: MXN $10,000.00" in answer
+    assert "sin depender de una segunda respuesta del proveedor" in answer
+    assert '{"name"' not in answer

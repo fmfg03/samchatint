@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from samchat.assistant.provider_execution import (
     PROVIDER_TIMEOUT_REASON,
+    RUNTIME_BUDGET_REASON,
     execute_anthropic_provider,
 )
 
@@ -157,3 +158,77 @@ async def test_anthropic_provider_timeout_is_controlled_and_traced(
         step.get("provider_error", {}).get("reason") == PROVIDER_TIMEOUT_REASON
         for step in tool_trace
     )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_timeout_returns_latest_deterministic_tool_answer(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_AGENT_PROVIDER_TIMEOUT_SECONDS", "0.05")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_TOTAL_BUDGET_SECONDS", "1")
+    monkeypatch.setenv("ASSISTANT_AGENT_PROVIDER_MAX_CONCURRENCY", "1")
+    tool_trace = [
+        {"tool": "assistant_owner_pack_readiness", "args": {"scope": "entity_folder"}},
+        {
+            "tool": "assistant_owner_pack_readiness",
+            "result": {"conversation_answer": {"rendered_text": "Owner Pack: 42% listo"}},
+        },
+    ]
+    response = SimpleNamespace(content=[SimpleNamespace(type="text", text="late")])
+    client = DummyClient(delay=0.2, response=response)
+
+    def deterministic_tool_answer(tool_name, result):
+        answer = (result.get("conversation_answer") or {}).get("rendered_text")
+        if answer:
+            return answer
+        return None
+
+    kwargs = _base_kwargs(client=client, tool_trace=tool_trace)
+    kwargs["deterministic_tool_answer"] = deterministic_tool_answer
+
+    result = await execute_anthropic_provider(**kwargs)
+
+    assert result.pending_confirmation is None
+    assert result.assistant_message == "Owner Pack: 42% listo"
+    assert any(
+        step.get("provider_error", {}).get("reason") == PROVIDER_TIMEOUT_REASON
+        for step in tool_trace
+    )
+    persisted_run = next(item for item in kwargs["session"].added if isinstance(item, DummyRun))
+    assert persisted_run.assistant_message == "Owner Pack: 42% listo"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_runtime_budget_returns_latest_deterministic_tool_answer(monkeypatch):
+    monkeypatch.setenv("ASSISTANT_AGENT_PROVIDER_TIMEOUT_SECONDS", "2")
+    monkeypatch.setenv("ASSISTANT_AGENT_RUNTIME_TOTAL_BUDGET_SECONDS", "0.01")
+    monkeypatch.setenv("ASSISTANT_AGENT_PROVIDER_MAX_CONCURRENCY", "1")
+    tool_trace = [
+        {
+            "tool": "finance_realtime_report",
+            "result": {"conversation_answer": {"rendered_text": "Cierre proyectado listo"}},
+        },
+    ]
+    response = SimpleNamespace(content=[SimpleNamespace(type="text", text="should not run")])
+    client = DummyClient(delay=0, response=response)
+
+    async def slow_history_messages(*args, **kwargs):
+        await asyncio.sleep(0.03)
+        return []
+
+    def deterministic_tool_answer(tool_name, result):
+        return (result.get("conversation_answer") or {}).get("rendered_text")
+
+    kwargs = _base_kwargs(client=client, tool_trace=tool_trace)
+    kwargs["history_messages"] = slow_history_messages
+    kwargs["deterministic_tool_answer"] = deterministic_tool_answer
+
+    result = await execute_anthropic_provider(**kwargs)
+
+    assert result.pending_confirmation is None
+    assert result.assistant_message == "Cierre proyectado listo"
+    assert any(
+        step.get("provider_error", {}).get("reason") == RUNTIME_BUDGET_REASON
+        for step in tool_trace
+    )
+    persisted_run = next(item for item in kwargs["session"].added if isinstance(item, DummyRun))
+    assert persisted_run.status == "provider_timeout"
+    assert persisted_run.assistant_message == "Cierre proyectado listo"

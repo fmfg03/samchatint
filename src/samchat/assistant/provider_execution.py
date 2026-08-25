@@ -123,6 +123,24 @@ def _pending_summary(tool_name: str, args: Dict[str, Any]) -> str:
     )
 
 
+def _latest_deterministic_tool_trace_answer(
+    *,
+    tool_trace: List[Dict[str, Any]],
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn],
+) -> Optional[str]:
+    if deterministic_tool_answer is None:
+        return None
+    for step in reversed(tool_trace):
+        tool_name = step.get("tool")
+        result = step.get("result")
+        if not tool_name or not isinstance(result, dict):
+            continue
+        answer = deterministic_tool_answer(str(tool_name), result)
+        if answer:
+            return answer
+    return None
+
+
 async def _provider_controlled_failure_response(
     *,
     run_id: Any,
@@ -139,8 +157,13 @@ async def _provider_controlled_failure_response(
     assistant_run_cls: Any,
     assistant_message_cls: Any,
     message_response_cls: Any,
+    deterministic_tool_answer: Optional[DeterministicToolAnswerFn] = None,
 ) -> Any:
-    message = (
+    fallback_answer = _latest_deterministic_tool_trace_answer(
+        tool_trace=tool_trace,
+        deterministic_tool_answer=deterministic_tool_answer,
+    )
+    message = fallback_answer or (
         "El proveedor del asistente tardó demasiado en responder. "
         "No ejecuté acciones ni cambios; intenta de nuevo con una consulta más corta."
     )
@@ -565,7 +588,23 @@ async def execute_anthropic_provider(
                     }
                 }
             )
-            raise HTTPException(status_code=504, detail=RUNTIME_BUDGET_REASON)
+            return await _provider_controlled_failure_response(
+                run_id=run_id,
+                reason=RUNTIME_BUDGET_REASON,
+                provider="anthropic",
+                model=model,
+                route_info=route_info,
+                normalized_mode=normalized_mode,
+                raw_message=raw_message,
+                conversation=conversation,
+                current_empleado=current_empleado,
+                session=session,
+                tool_trace=tool_trace,
+                assistant_run_cls=assistant_run_cls,
+                assistant_message_cls=assistant_message_cls,
+                message_response_cls=message_response_cls,
+                deterministic_tool_answer=deterministic_tool_answer,
+            )
         call_timeout = min(provider_timeout_seconds, remaining_budget)
         call_started = time.monotonic()
         try:
@@ -621,6 +660,7 @@ async def execute_anthropic_provider(
                     assistant_run_cls=assistant_run_cls,
                     assistant_message_cls=assistant_message_cls,
                     message_response_cls=message_response_cls,
+                    deterministic_tool_answer=deterministic_tool_answer,
                 )
             raise
         blocks = getattr(resp, "content", []) or []
