@@ -2,7 +2,7 @@
 
 Status: ACTIVE_CONTEXT
 Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-054-claude-code-runtime-gap`
+Branch at time of writing: `codex/rqf-054def-executive-workloop`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
 
@@ -111,7 +111,7 @@ Do not lose this lane, but the current thread focus returned to assistant/owner/
 
 ### Lane F - Claude-Code-like assistant runtime contract
 
-Status: RQF-054A_IMPLEMENTED_PENDING_CI
+Status: RQF-054D/E/F_IMPLEMENTED_LOCAL_PENDING_PR
 
 Reference: `docs/assistant/rqf-054-claude-code-runtime-gap.md`
 
@@ -121,14 +121,14 @@ Why this exists:
 - The observed failure was semantic: `evidence of payments made` was routed to `pending payments` because both share payment vocabulary.
 - Claude Code's core value is not the terminal UI; it is the governed work loop: understand task, load context, select tools, execute under policy, verify sufficiency, render a human answer, and persist continuity.
 
-Next implementation order:
+Implementation order and current state:
 
-1. RQF-054A - WorkFrame classifier. Status: implemented in PR #220, pending CI/merge.
-2. RQF-054B - Tool candidate adjudicator. Next.
-3. RQF-054C - Sufficiency gate.
-4. RQF-054D - Unified executive renderer.
-5. RQF-054E - Claude-Code-like turn trace.
-6. RQF-054F - Regression set for executive questions.
+1. RQF-054A - WorkFrame classifier. Status: merged/deployed in PR #220.
+2. RQF-054B - Tool candidate adjudicator. Status: merged/deployed in PR #221.
+3. RQF-054C - Sufficiency gate. Status: merged/deployed in PR #221. Active release before this slice: `/srv/samchat/releases/gastos-prod-40ebe85d-rqf054bc-sufficiency`.
+4. RQF-054D - Unified executive renderer. Status: implemented locally on `codex/rqf-054def-executive-workloop`, pending PR/CI.
+5. RQF-054E - Claude-Code-like turn trace. Status: implemented locally on `codex/rqf-054def-executive-workloop`, pending PR/CI.
+6. RQF-054F - Regression set for executive questions. Status: partially advanced through semantic registry and focused tests; next slice should add broad multi-candidate read-only execution plus a stable executive regression set.
 
 Critical invariant:
 
@@ -346,14 +346,16 @@ Why it matters:
 
 Next:
 
-- RQF-054B/C are implemented in branch `codex/rqf-054bc-tool-adjudicator-sufficiency`: tool candidate adjudication plus response sufficiency gate. Focused tests: 44 passed. Next step is CI/PR/merge/deploy, then expand candidate mapping into `tool_registry.py`.
+- RQF-054B/C were merged/deployed in PR #221.
+- RQF-054D/E plus semantic registry foundation are implemented locally on `codex/rqf-054def-executive-workloop`; focused verification is 93 passed. Next step is PR/CI/merge/deploy.
 
 
 ## 2026-08-24 RQF-054B/C Tool Adjudicator + Sufficiency Gate
 
-Status: IMPLEMENTED_LOCAL_PENDING_PR
+Status: MERGED_AND_DEPLOYED
 
-Current branch: `codex/rqf-054bc-tool-adjudicator-sufficiency`
+PR: #221
+Active release after deployment: `/srv/samchat/releases/gastos-prod-40ebe85d-rqf054bc-sufficiency`
 
 What changed:
 
@@ -371,6 +373,31 @@ PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_tool_adju
 
 Next after PR/merge/deploy:
 
-- Expand candidate registry using `tool_registry.py` metadata instead of only hard-coded invariants.
-- Add multi-candidate read-only execution for broad executive questions.
+- Expand candidate registry using `tool_registry.py` metadata instead of only hard-coded invariants. Done locally in RQF-054D/E/F foundation.
+- Add multi-candidate read-only execution for broad executive questions. Pending next slice.
 - Keep writes disabled until authority path design is closed.
+
+
+## 2026-08-24 RQF-054D/E/F foundation
+
+Status: IMPLEMENTED_LOCAL_PENDING_PR
+
+Current branch: `codex/rqf-054def-executive-workloop`
+
+What changed:
+
+- Added semantic assistant tool registry metadata to reduce brittle keyword routing.
+- The tool adjudicator now accepts/rejects candidates against WorkFrame domain and task-kind using registry metadata.
+- Added a unified WorkTurn renderer that renders sufficiency gaps, blocks raw tool payloads, appends the read-only authority boundary, and preserves controlled deterministic surfaces.
+- Added `assistant.work_turn_trace` so the UI can show the Claude-Code-like loop as steps rather than debug traces.
+- Kept the primary business tool trace first and `assistant.work_frame` final for compatibility.
+
+Focused verification:
+
+- Py compile passed for changed assistant modules.
+- Focused assistant suite passed: 93/93.
+
+Next:
+
+- Open PR, run CI, merge, and deploy from `origin/main`.
+- Then implement multi-candidate read-only execution and an executive regression pack for owner/finance/accounting questions.

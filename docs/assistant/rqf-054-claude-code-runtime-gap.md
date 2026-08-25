@@ -1,6 +1,6 @@
 # RQF-054 — SamChat Claude-Code Runtime Gap
 
-Status: RQF-054BC_IMPLEMENTED_PENDING_CI
+Status: RQF-054DEF_IMPLEMENTED_LOCAL_PENDING_PR
 
 ## Executive summary
 
@@ -219,3 +219,37 @@ PYTHONPATH=src .venv/bin/python -m pytest -q tests/unit/test_assistant_tool_adju
 
 Next slice: expand the candidate registry from hard-coded semantic invariants into the existing `tool_registry.py` metadata, then add multi-candidate read-only execution for broad questions.
 
+
+
+## 2026-08-24 implementation note - RQF-054D/E/F foundation
+
+RQF-054D/E plus the semantic-registry foundation for RQF-054F are implemented on branch `codex/rqf-054def-executive-workloop`:
+
+- `tool_registry.py` now exposes a semantic assistant tool registry with domain, task-kind, evidence-output, rejected-interpretation, and read-only metadata.
+- `tool_adjudicator.py` uses the semantic registry to accept or reject candidates against the WorkFrame instead of relying only on ad-hoc hard-coded mappings.
+- `work_turn_renderer.py` adds a unified WorkTurn renderer that appends a read-only authority boundary, blocks raw tool payloads, preserves controlled deterministic surfaces, and renders sufficiency gaps when evidence is not enough.
+- `assistant_workspace_trace.py` adds `assistant.work_turn_trace`, a UI-facing Claude-Code-like work loop trace: understand frame, adjudicate candidate, verify sufficiency, render executive answer, hold read-only boundary.
+- `conversation_service.py` appends governance traces without displacing the primary business tool trace and keeps `assistant.work_frame` as the final trace.
+
+Focused verification:
+
+```bash
+PYTHONPATH=src .venv/bin/python -m py_compile \
+  src/samchat/assistant/tool_registry.py \
+  src/samchat/assistant/tool_adjudicator.py \
+  src/samchat/assistant/assistant_workspace_trace.py \
+  src/samchat/assistant/work_turn_renderer.py \
+  src/samchat/assistant/conversation_service.py
+
+PYTHONPATH=src .venv/bin/python -m pytest -q \
+  tests/unit/test_assistant_tool_adjudicator_sufficiency.py \
+  tests/unit/test_assistant_executive_answer_renderer.py \
+  tests/unit/test_assistant_work_frame.py \
+  tests/unit/test_assistant_request_router_integration.py \
+  tests/unit/test_assistant_document_live_wiring.py \
+  tests/unit/test_assistant_document_runtime_smoke.py \
+  tests/unit/test_assistant_analyst_routing_integration.py
+# 93 passed
+```
+
+Next slice: multi-candidate read-only execution for broad executive questions plus a stable executive-regression set.

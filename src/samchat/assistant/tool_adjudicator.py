@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any
 
+from .tool_registry import get_semantic_tool_spec, semantic_tool_matches_work_frame
 from .work_frame import WorkFrame
 
 
@@ -89,58 +90,27 @@ def adjudicate_tool_candidate(
             rejected_interpretations=forbidden,
         )
 
-    if work_frame.domain == "owner":
-        if work_frame.task_kind == "readiness" and tool_name in {
-            "assistant_owner_pack_readiness",
-            "assistant_owner_entity_folder_workspace",
-        }:
-            return ToolCandidateDecision(
-                tool=tool_name,
-                accepted=True,
-                reason="owner_readiness_candidate_matches_work_frame",
-                work_frame_domain=work_frame.domain,
-                work_frame_task_kind=work_frame.task_kind,
-                required_evidence=required,
-                rejected_interpretations=forbidden,
-            )
-        if work_frame.task_kind == "evidence" and tool_name in {
-            "assistant_owner_variable_query",
-            "assistant_owner_entity_folder_workspace",
-        }:
-            return ToolCandidateDecision(
-                tool=tool_name,
-                accepted=True,
-                reason="owner_evidence_candidate_matches_work_frame",
-                work_frame_domain=work_frame.domain,
-                work_frame_task_kind=work_frame.task_kind,
-                required_evidence=required,
-                rejected_interpretations=forbidden,
-            )
-
-    if work_frame.domain == "finance" and tool_name in {
-        "assistant_finance_accounting_qa",
-        "finance.read_only_comparison",
-        "receipts.cfdi_matching_overview",
-        "receipts.pending_payment_overview",
-    }:
+    semantic_spec = get_semantic_tool_spec(tool_name)
+    if semantic_spec and semantic_tool_matches_work_frame(
+        name=tool_name,
+        domain=work_frame.domain,
+        task_kind=work_frame.task_kind,
+    ):
         return ToolCandidateDecision(
             tool=tool_name,
             accepted=True,
-            reason="finance_candidate_matches_work_frame",
+            reason="semantic_registry_candidate_matches_work_frame",
             work_frame_domain=work_frame.domain,
             work_frame_task_kind=work_frame.task_kind,
-            required_evidence=required,
+            required_evidence=tuple(semantic_spec.evidence_outputs or required),
             rejected_interpretations=forbidden,
         )
 
-    if work_frame.domain == "mixed" and tool_name in {
-        "assistant_owner_variable_query",
-        "assistant_finance_accounting_qa",
-    }:
+    if semantic_spec and work_frame.domain != "unknown":
         return ToolCandidateDecision(
             tool=tool_name,
-            accepted=True,
-            reason="mixed_domain_read_only_candidate_matches_work_frame",
+            accepted=False,
+            reason="semantic_registry_candidate_does_not_match_work_frame",
             work_frame_domain=work_frame.domain,
             work_frame_task_kind=work_frame.task_kind,
             required_evidence=required,
