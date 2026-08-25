@@ -10103,6 +10103,18 @@ def format_currency(value, currency: str = "MXN") -> str:
         return str(value)
 
 
+def _format_authorization_money_value(value: Any) -> str:
+    """Format advisory authorization amounts without leaking binary float noise."""
+    if value is None:
+        return "--"
+    if isinstance(value, str) and not value.strip():
+        return "--"
+    try:
+        return format_currency(value, "MXN")
+    except Exception:
+        return str(value)
+
+
 def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN") -> str:
     status = str(aux.get("status") or "pendiente")
     status_labels = {
@@ -10763,6 +10775,29 @@ def _is_budget_control_user(current_empleado: Empleado) -> bool:
         or department.startswith("finanza")
         or department.startswith("contab")
     )
+
+
+async def _can_review_pending_approvals(
+    session: AsyncSession, current_empleado: Empleado
+) -> bool:
+    """True when the user should see the approval inbox without granting admin modules."""
+    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    if role in {"finanzas", "admin", "superadmin", "super_admin"}:
+        return True
+    empleado_id = getattr(current_empleado, "id", None)
+    if not empleado_id:
+        return False
+    try:
+        result = await session.execute(
+            select(Empleado.id).where(Empleado.aprobador_id == empleado_id).limit(1)
+        )
+        return result.scalar_one_or_none() is not None
+    except Exception:
+        logger.exception(
+            "Failed to determine pending approval visibility",
+            extra={"empleado_id": str(empleado_id)},
+        )
+        return False
 
 
 def _can_manage_budget_classification(current_empleado: Empleado) -> bool:
@@ -13889,14 +13924,19 @@ async def panel(
     """
 
     aprobaciones_section = ""
-    if (rol in ('finanzas', 'admin', 'superadmin', 'super_admin') or _is_budget_control_user(current_empleado)) and "gastos.solicitudes" in visible_tool_keys:
-        aprobaciones_links = [
-            ("/documentos/pendientes", "Aprobaciones pendientes", "Valida solicitudes pendientes."),
-            ("/documentos/historial-aprobador", "Historial de aprobaciones", "Consulta aprobaciones pasadas."),
-        ]
-        if _is_budget_control_user(current_empleado):
-            aprobaciones_links.insert(0, ("/documentos/control-presupuestal", "Control Presupuestal", "Asigna concepto antes de enviar a aprobaci?n."))
-        if rol in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+    can_review_approvals = await _can_review_pending_approvals(session, current_empleado)
+    can_budget_control = _is_budget_control_user(current_empleado)
+    can_manage_payments = rol in ('finanzas', 'admin', 'superadmin', 'super_admin')
+    if (can_review_approvals or can_budget_control or can_manage_payments) and "gastos.solicitudes" in visible_tool_keys:
+        aprobaciones_links = []
+        if can_budget_control:
+            aprobaciones_links.append(("/documentos/control-presupuestal", "Control Presupuestal", "Asigna concepto antes de enviar a aprobación."))
+        if can_review_approvals:
+            aprobaciones_links.extend([
+                ("/documentos/pendientes", "Aprobaciones pendientes", "Valida solicitudes pendientes."),
+                ("/documentos/historial-aprobador", "Historial de aprobaciones", "Consulta aprobaciones pasadas."),
+            ])
+        if can_manage_payments:
             aprobaciones_links.append(("/documentos/pendientes-pago", "Pagos pendientes", "Gestiona documentos listos para pago."))
         aprobaciones_section = f"""
             <section class="surface">
@@ -24395,14 +24435,14 @@ async def documentos_pendientes(
     Show documentos in estado 'enviado' that are pending approval.
 
     Access control:
-    - Only finanzas or admin can access (plus superadmin)
-    - Superadmin sees ALL documentos with estado 'enviado'
-    - Finanzas/admin see documentos where they are the effective beneficiary's
-      assigned approver. If a document has no beneficiary employee, approval
-      falls back to the requester/owner.
+    - Superadmin sees ALL documentos with estado 'enviado'.
+    - Finanzas/admin and assigned approvers can access the inbox.
+    - Non-superadmin users only see documents routed to their approval scope.
+      If a document has no beneficiary employee, approval falls back to the
+      requester/owner.
     """
 
-    if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+    if not await _can_review_pending_approvals(session, current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     q_value = (q or "").strip()
@@ -30247,7 +30287,7 @@ async def _render_document_authorization_pre_send_preview(
             </div>
             <div class="notice info">
                 <strong>Si se envia ahora:</strong> la matriz sugeriria {escape(str(rule_label))}.<br>
-                <small>Area: {escape(str(inputs.get("area") or "--"))} - Tipo: {escape(str(inputs.get("erogation_type") or "--"))} - Monto MXN: {escape(str(inputs.get("amount_mxn") or "--"))}</small>
+                <small>Area: {escape(str(inputs.get("area") or "--"))} - Tipo: {escape(str(inputs.get("erogation_type") or "--"))} - Monto MXN: {escape(_format_authorization_money_value(inputs.get("amount_mxn")))}</small>
             </div>
             {fallback_html}
             <div style="margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
@@ -30356,7 +30396,7 @@ async def _render_document_authorization_strategy_evidence(
     area_label = rule.get("area_label") or inputs.get("area") or inputs.get("area_key") or "--"
     erogation_label = rule.get("erogation_label") or inputs.get("erogation_type") or inputs.get("erogation_key") or "--"
     amount_mode = rule.get("amount_mode") or "--"
-    amount_value = rule.get("amount_value") or inputs.get("amount_mxn") or "--"
+    amount_value = _format_authorization_money_value(rule.get("amount_value") or inputs.get("amount_mxn"))
 
     input_cards = "".join(
         f'''
@@ -30369,7 +30409,7 @@ async def _render_document_authorization_strategy_evidence(
         for label, value, note in [
             ("Area", inputs.get("area") or inputs.get("area_key") or "--", "Origen operativo inferido."),
             ("Tipo de erogacion", inputs.get("erogation_type") or inputs.get("erogation_key") or "--", "Clasificacion usada para la matriz."),
-            ("Monto MXN", inputs.get("amount_mxn") or "--", "Base de rango de autorizacion."),
+            ("Monto MXN", _format_authorization_money_value(inputs.get("amount_mxn")), "Base de rango de autorizacion."),
             ("Factura", "Si" if inputs.get("has_invoice") else "No", "Determina tratamiento deducible/no deducible."),
             ("Presupuesto", "Si" if inputs.get("is_budgeted") else "No", "Cruce contra concepto."),
             ("Urgente", "Si" if inputs.get("is_urgent") else "No", "Excepcion operativa de prioridad."),
