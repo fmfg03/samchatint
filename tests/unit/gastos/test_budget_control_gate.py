@@ -280,6 +280,8 @@ def test_budget_control_assignment_eager_loads_deferred_account_budget_context()
     block = source[start:end]
 
     assert ".undefer(CuentaDeGastos.torneo_id)" in block
+    assert ".undefer(CuentaDeGastos.fase)" in block
+    assert "tournament_id, fase = _document_budget_context(documento)" in block
 
 
 def test_budget_control_informe_expense_order_uses_capture_reference_not_expense_date() -> None:
