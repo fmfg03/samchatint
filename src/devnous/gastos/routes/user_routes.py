@@ -18428,6 +18428,7 @@ async def contabilidad_cash_flow_view(
     month: Optional[int] = Query(None),
     horizon_days: int = Query(30),
     dias_credito: int = Query(30),
+    periodo: str = Query("semanal"),
 ) -> str:
     """Read-only operational cash-flow snapshot built from bank reconciliation, payment requests and SAT CFDI."""
     now = datetime.utcnow()
@@ -18436,6 +18437,9 @@ async def contabilidad_cash_flow_view(
     selected_month = month or now.month
     horizon_days = max(15, min(int(horizon_days or 30), 180))
     dias_credito = max(0, min(int(dias_credito or 30), 365))
+    periodo = (periodo or "semanal").lower().strip()
+    if periodo not in {"semanal", "mensual", "trimestral", "semestral", "anual"}:
+        periodo = "semanal"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
     horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
 
@@ -18639,6 +18643,106 @@ async def contabilidad_cash_flow_view(
     projected_position = bank_net + forecast_in_30 - forecast_out_30
     conservative_position = projected_position - payable_unprocessed_total
 
+    def _cashflow_period_key(target_date: Optional[date]) -> Tuple[str, str, date]:
+        if isinstance(target_date, datetime):
+            clean_date = target_date.date()
+        else:
+            clean_date = target_date or today
+        if periodo == "semanal":
+            start = clean_date - timedelta(days=clean_date.weekday())
+            end = start + timedelta(days=6)
+            return (start.isoformat(), f"{start.strftime('%d/%m')}–{end.strftime('%d/%m')}", start)
+        if periodo == "mensual":
+            start = date(clean_date.year, clean_date.month, 1)
+            return (f"{clean_date.year:04d}-{clean_date.month:02d}", f"{clean_date.year:04d}-{clean_date.month:02d}", start)
+        if periodo == "trimestral":
+            quarter = ((clean_date.month - 1) // 3) + 1
+            start = date(clean_date.year, ((quarter - 1) * 3) + 1, 1)
+            return (f"{clean_date.year:04d}-T{quarter}", f"{clean_date.year:04d} T{quarter}", start)
+        if periodo == "semestral":
+            semester = 1 if clean_date.month <= 6 else 2
+            start = date(clean_date.year, 1 if semester == 1 else 7, 1)
+            return (f"{clean_date.year:04d}-S{semester}", f"{clean_date.year:04d} S{semester}", start)
+        start = date(clean_date.year, 1, 1)
+        return (f"{clean_date.year:04d}", f"{clean_date.year:04d}", start)
+
+    executive_buckets: Dict[str, Dict[str, Any]] = {}
+
+    def _cashflow_bucket(target_date: Optional[date]) -> Dict[str, Any]:
+        key, label, sort_date = _cashflow_period_key(target_date)
+        return executive_buckets.setdefault(
+            key,
+            {
+                "label": label,
+                "sort_date": sort_date,
+                "actual_in": 0.0,
+                "actual_out": 0.0,
+                "expected_in": 0.0,
+                "committed_out": 0.0,
+                "detected_payables": 0.0,
+                "actual_count": 0,
+                "receivable_count": 0,
+                "committed_count": 0,
+                "payable_count": 0,
+            },
+        )
+
+    for movement in bank_movements:
+        bucket = _cashflow_bucket(movement.fecha)
+        amount = float(movement.importe or 0)
+        if (movement.signo or "").strip() == "+":
+            bucket["actual_in"] += amount
+        elif (movement.signo or "").strip() == "-":
+            bucket["actual_out"] += amount
+        bucket["actual_count"] += 1
+
+    for row in receivable_rows:
+        bucket = _cashflow_bucket(row.get("due_date"))
+        bucket["expected_in"] += float(row.get("saldo") or 0)
+        bucket["receivable_count"] += 1
+
+    for doc in committed_docs:
+        bucket = _cashflow_bucket(doc.fecha_pago)
+        bucket["committed_out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["committed_count"] += 1
+
+    for row in payable_unprocessed_rows:
+        cfdi_date = row["cfdi"].fecha.date() if row["cfdi"].fecha else None
+        bucket = _cashflow_bucket(cfdi_date)
+        bucket["detected_payables"] += float(row.get("amount") or 0)
+        bucket["payable_count"] += 1
+
+    executive_rows = []
+    running_forecast = 0.0
+    for bucket in sorted(executive_buckets.values(), key=lambda item: item["sort_date"]):
+        actual_net = float(bucket["actual_in"] or 0) - float(bucket["actual_out"] or 0)
+        forecast_net = actual_net + float(bucket["expected_in"] or 0) - float(bucket["committed_out"] or 0) - float(bucket["detected_payables"] or 0)
+        running_forecast += forecast_net
+        executive_rows.append(
+            f"<tr>"
+            f"<td>{escape(bucket['label'])}</td>"
+            f"<td>{format_currency(bucket['actual_in'])}<br><span class='muted'>{bucket['actual_count']} movs banco</span></td>"
+            f"<td>{format_currency(bucket['actual_out'])}</td>"
+            f"<td>{format_currency(actual_net)}</td>"
+            f"<td>{format_currency(bucket['expected_in'])}<br><span class='muted'>{bucket['receivable_count']} CxC</span></td>"
+            f"<td>{format_currency(bucket['committed_out'])}<br><span class='muted'>{bucket['committed_count']} docs</span></td>"
+            f"<td>{format_currency(bucket['detected_payables'])}<br><span class='muted'>{bucket['payable_count']} CFDI</span></td>"
+            f"<td>{format_currency(forecast_net)}</td>"
+            f"<td>{format_currency(running_forecast)}</td>"
+            f"</tr>"
+        )
+    executive_cashflow_rows = "".join(executive_rows)
+    period_options = "".join(
+        f'<option value="{value}" {"selected" if value == periodo else ""}>{label}</option>'
+        for value, label in [
+            ("semanal", "Semanal"),
+            ("mensual", "Mensual"),
+            ("trimestral", "Trimestral"),
+            ("semestral", "Semestral"),
+            ("anual", "Anual"),
+        ]
+    )
+
     bucket_defs = [
         ("vencido", "Vencido", None, -1),
         ("d0_7", "0–7 días", 0, 7),
@@ -18747,6 +18851,7 @@ async def contabilidad_cash_flow_view(
     th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
     th {{ background:#f3f4f6; }}
     .pill {{ display:inline-block; padding:4px 10px; border-radius:999px; color:#fff; background:{risk_color}; font-weight:700; }}
+    .exec-note {{ background:#ecfeff; border:1px solid #a5f3fc; border-radius:12px; padding:12px 14px; color:#164e63; }}
     </style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
@@ -18758,12 +18863,13 @@ async def contabilidad_cash_flow_view(
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
                 <div><label>Horizonte</label><br><input type="number" min="15" max="180" name="horizon_days" value="{horizon_days}" style="width:110px;"> días</div>
                 <div><label>Días crédito CxC</label><br><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}" style="width:110px;"> días</div>
+                <div><label>Periodo ejecutivo</label><br><select name="periodo">{period_options}</select></div>
                 <div><button type="submit" class="button">Actualizar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/conciliacion?year={selected_year}&month={selected_month}">Ir a conciliación</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar?dias_credito={dias_credito}">Ver CxC</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cuentas-por-pagar">Ver CxP</a></div>
                 <div><a class="button secondary" href="/admin/contabilidad/tesoreria-matches?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Sugerir matches</a></div>
-                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}">Exportar Excel</a></div>
+                <div><a class="button secondary" href="/admin/contabilidad/cash-flow/export.xlsx?year={selected_year}&month={selected_month}&horizon_days={horizon_days}&dias_credito={dias_credito}&periodo={periodo}">Exportar Excel</a></div>
             </form>
         </div>
         <div class="grid">
@@ -18785,6 +18891,11 @@ async def contabilidad_cash_flow_view(
             <div class="metric light"><div class="label">CxP sin captura</div><div class="value">{format_currency(payable_unprocessed_total)}</div><div class="muted">{len(payable_unprocessed_rows)} CFDI recibidos no operados</div></div>
             <div class="metric light"><div class="label">CFDI recibidos SAT</div><div class="value">{format_currency(received_total)}</div><div class="muted">{len(received_cfdis)} facturas recibidas</div></div>
             <div class="metric light"><div class="label">Banco sin conciliar</div><div class="value">{format_currency(bank_unmatched_amount)}</div><div class="muted">{len(bank_unmatched)} movimientos</div></div>
+        </div>
+        <div class="card">
+            <h2 style="margin:0 0 12px 0;">Tablero ejecutivo por periodo</h2>
+            <p class="exec-note" style="margin:0 0 12px 0;">Agrupa caja real bancaria, cobros esperados, pagos comprometidos y pasivo detectado para una lectura ejecutiva de real/comprometido vs flujo esperado. Es read-only.</p>
+            <table><thead><tr><th>Periodo</th><th>Entradas reales</th><th>Salidas reales</th><th>Neto real</th><th>Cobros esperados</th><th>Pagos comprometidos</th><th>CxP detectada</th><th>Neto proyectado</th><th>Acumulado</th></tr></thead><tbody>{executive_cashflow_rows or '<tr><td colspan="9" class="muted">Sin datos para el periodo seleccionado.</td></tr>'}</tbody></table>
         </div>
         <div class="card">
             <h2 style="margin:0 0 12px 0;">Calendario de liquidez</h2>
