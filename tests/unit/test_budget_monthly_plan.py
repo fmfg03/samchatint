@@ -236,7 +236,7 @@ def test_render_add_tournament_line_form_income_variant_has_no_phase_field():
         ],
     )
 
-    assert 'id="presupuesto-ingresos"' not in html
+    assert 'id="presupuesto-ingresos"' in html
     assert "Agregar partida de ingreso" in html
     assert "Agregar partida al torneo" not in html
     assert "Ej. Inscripción, patrocinio, recuperación" in html
@@ -371,6 +371,73 @@ def test_render_cfdi_income_bridge_panel_explains_missing_income_lines():
     assert "Primero agrega o importa partidas de ingreso" in html
     assert "Sin partidas de ingreso disponibles" in html
 
+
+
+def test_render_budget_executive_dashboard_rolls_up_monthly_expense_view():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
+
+    html = render_budget_executive_dashboard(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Balones",
+                "budget_concept_id": "concept-1",
+            }
+        ],
+        plan_map={
+            "line-1": {
+                1: {"budget_expense_amount": 1000.0},
+                2: {"budget_expense_amount": 500.0},
+            }
+        },
+        actuals_map={
+            "concept-1": {
+                1: {"real_expense_cash": 200.0, "committed_unpaid": 100.0},
+                2: {"real_expense_cash": 50.0, "committed_unpaid": 25.0},
+            }
+        },
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="expenses",
+        budget_period="monthly",
+    )
+
+    assert "Tablero ejecutivo de presupuesto" in html
+    assert "Mensual" in html
+    assert "Enero 2026" in html
+    assert "$1,500.00" in html
+    assert "$250.00" in html
+    assert "$125.00" in html
+    assert "$1,125.00" in html
+    assert "25.0%" in html
+    assert 'name="budget_period"' in html
+    assert 'value="monthly" selected' in html
+
+
+def test_render_budget_executive_dashboard_supports_quarter_semester_annual_options():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
+
+    html = render_budget_executive_dashboard(
+        [],
+        plan_map={},
+        actuals_map={},
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="income",
+        budget_period="annual",
+    )
+
+    assert "Semanal" in html
+    assert "Mensual" in html
+    assert "Trimestral" in html
+    assert "Semestral" in html
+    assert "Anual" in html
+    assert "Variación" in html
+    assert "2026" in html
+    assert "$0.00" in html
+    assert "read-only" in html
 
 def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections import OrderedDict
+from datetime import date, timedelta
 from html import escape
 from typing import Any, Optional
 from urllib.parse import quote
@@ -41,6 +43,7 @@ def budget_tournament_detail_url(
     phase_filter: Optional[str] = None,
     show_committed: bool = True,
     show_yoy: bool = False,
+    budget_period: Optional[str] = None,
     success_msg: Optional[str] = None,
     error_msg: Optional[str] = None,
 ) -> str:
@@ -52,6 +55,7 @@ def budget_tournament_detail_url(
         ("phase_filter", phase_filter),
         ("show_committed", "1" if show_committed else "0"),
         ("show_yoy", "1" if show_yoy else "0"),
+        ("budget_period", budget_period),
         ("success_msg", success_msg),
         ("error_msg", error_msg),
     ]:
@@ -120,6 +124,7 @@ def render_budget_matrix_filters(
     selected_phase_filter: str = "",
     show_committed: bool = True,
     budget_view: str = "expenses",
+    budget_period: str = "weekly",
     visible_count: int,
     total_count: int,
 ) -> str:
@@ -159,6 +164,7 @@ def render_budget_matrix_filters(
         <input type="hidden" name="show_committed" value="{"1" if show_committed else "0"}">
         <input type="hidden" name="version_id" value="{escape(version_id)}">
         <input type="hidden" name="budget_view" value="{escape(budget_view)}">
+        <input type="hidden" name="budget_period" value="{escape(budget_period)}">
         <div>
             <label for="matrix-edition-year" style="display:block;font-size:12px;font-weight:700;color:#475569;margin-bottom:6px;">
                 Año edición
@@ -180,12 +186,237 @@ def render_budget_matrix_filters(
         </div>
         <div style="grid-column:1/-1;font-size:12px;color:#64748b;line-height:1.55;">
             {count_note}
-            La matriz partida × mes es la <strong>fuente única operativa</strong> para el año
+            La matriz partida × semana es la <strong>fuente única operativa</strong> para el año
             <strong>{edition_year}</strong>.
             Las partidas y cuentas contables provienen del catálogo SSOT compartido con
             solicitudes de transferencia y captura rápida de gastos.
         </div>
     </form>
+    """
+
+
+_EXECUTIVE_MONTH_LABELS_ES = {
+    1: "Enero",
+    2: "Febrero",
+    3: "Marzo",
+    4: "Abril",
+    5: "Mayo",
+    6: "Junio",
+    7: "Julio",
+    8: "Agosto",
+    9: "Septiembre",
+    10: "Octubre",
+    11: "Noviembre",
+    12: "Diciembre",
+}
+
+
+_BUDGET_EXECUTIVE_PERIODS: tuple[tuple[str, str], ...] = (
+    ("weekly", "Semanal"),
+    ("monthly", "Mensual"),
+    ("quarterly", "Trimestral"),
+    ("semester", "Semestral"),
+    ("annual", "Anual"),
+)
+
+
+def _clean_budget_period(value: Optional[str]) -> str:
+    clean = str(value or "weekly").strip().lower()
+    return clean if clean in {key for key, _ in _BUDGET_EXECUTIVE_PERIODS} else "weekly"
+
+
+def _budget_week_bounds(edition_year: int, week_number: int) -> tuple[date, date]:
+    week = max(1, min(BUDGET_WEEK_COUNT, int(week_number)))
+    jan1 = date(int(edition_year), 1, 1)
+    dec31 = date(int(edition_year), 12, 31)
+    if week == 1:
+        start = jan1
+    else:
+        days_to_next_monday = 7 if jan1.isoweekday() == 1 else 8 - jan1.isoweekday()
+        start = jan1 + timedelta(days=days_to_next_monday + ((week - 2) * 7))
+    end = min(start + timedelta(days=6), dec31)
+    return start, end
+
+
+def _budget_period_bucket(edition_year: int, week_number: int, period: str) -> tuple[str, str]:
+    start, end = _budget_week_bounds(edition_year, week_number)
+    if period == "monthly":
+        return f"{start.year}-{start.month:02d}", f"{_EXECUTIVE_MONTH_LABELS_ES[start.month]} {start.year}"
+    if period == "quarterly":
+        quarter = ((start.month - 1) // 3) + 1
+        return f"{start.year}-Q{quarter}", f"T{quarter} {start.year}"
+    if period == "semester":
+        half = 1 if start.month <= 6 else 2
+        return f"{start.year}-S{half}", f"Semestre {half} {start.year}"
+    if period == "annual":
+        return str(start.year), str(start.year)
+    return f"week-{week_number:02d}", f"Semana {week_number} ({start.strftime('%d/%m')}–{end.strftime('%d/%m')})"
+
+
+def _budget_execution_style(percent: float) -> str:
+    if percent <= 90:
+        return "color:#166534;font-weight:800;"
+    if percent <= 105:
+        return "color:#92400e;font-weight:800;"
+    return "color:#991b1b;font-weight:800;"
+
+
+def _budget_available_style(value: float, *, income_view: bool = False) -> str:
+    if income_view:
+        return "color:#166534;font-weight:800;" if value >= 0 else "color:#991b1b;font-weight:800;"
+    return "color:#166534;font-weight:800;" if value >= 0 else "color:#991b1b;font-weight:800;"
+
+
+def _sum_budget_line_periods(
+    lines: list[dict[str, Any]],
+    *,
+    plan_map: dict[str, dict[int, dict[str, float]]],
+    actuals_map: dict[str, dict[int, dict[str, float]]],
+    edition_year: int,
+    period: str,
+    budget_view: str,
+) -> list[dict[str, Any]]:
+    buckets: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    for week in range(1, BUDGET_WEEK_COUNT + 1):
+        bucket_key, bucket_label = _budget_period_bucket(edition_year, week, period)
+        if bucket_key not in buckets:
+            buckets[bucket_key] = {
+                "label": bucket_label,
+                "budget": 0.0,
+                "real": 0.0,
+                "committed": 0.0,
+            }
+        bucket = buckets[bucket_key]
+        for line in lines:
+            line_id = str(line.get("id") or "")
+            concept_id = str(line.get("budget_concept_id") or "")
+            actual_key = concept_id or "__unassigned__"
+            plan = plan_map.get(line_id, {})
+            actuals = actuals_map.get(actual_key, actuals_map.get("__unassigned__", {}))
+            week_plan = plan.get(week, {})
+            week_actual = actuals.get(week, {})
+            if budget_view == "income":
+                bucket["budget"] += float(week_plan.get("expected_income_amount") or 0)
+                bucket["real"] += float(week_actual.get("real_income") or 0)
+            else:
+                bucket["budget"] += float(week_plan.get("budget_expense_amount") or 0)
+                bucket["real"] += float(week_actual.get("real_expense_cash") or 0)
+                bucket["committed"] += float(week_actual.get("committed_unpaid") or 0)
+    return list(buckets.values())
+
+
+def render_budget_executive_dashboard(
+    lines: list[dict[str, Any]],
+    *,
+    plan_map: dict[str, dict[int, dict[str, float]]],
+    actuals_map: dict[str, dict[int, dict[str, float]]],
+    tournament_key: str,
+    edition_year: int,
+    version_id: str,
+    budget_view: str = "expenses",
+    budget_period: str = "weekly",
+    phase_filter: Optional[str] = None,
+    show_committed: bool = True,
+) -> str:
+    """Render a read-only executive rollup over the weekly budget matrix."""
+    clean_period = _clean_budget_period(budget_period)
+    clean_view = "income" if str(budget_view or "").lower() == "income" else "expenses"
+    buckets = _sum_budget_line_periods(
+        lines,
+        plan_map=plan_map,
+        actuals_map=actuals_map,
+        edition_year=edition_year,
+        period=clean_period,
+        budget_view=clean_view,
+    )
+    total_budget = sum(float(item["budget"] or 0) for item in buckets)
+    total_real = sum(float(item["real"] or 0) for item in buckets)
+    total_committed = sum(float(item["committed"] or 0) for item in buckets)
+    available = total_budget - total_real - (total_committed if clean_view == "expenses" else 0)
+    execution = ((total_real + (total_committed if clean_view == "expenses" else 0)) / total_budget * 100) if total_budget else 0.0
+
+    period_options = "".join(
+        f'<option value="{escape(key)}" {"selected" if key == clean_period else ""}>{escape(label)}</option>'
+        for key, label in _BUDGET_EXECUTIVE_PERIODS
+    )
+    rows: list[str] = []
+    for item in buckets:
+        budget = float(item["budget"] or 0)
+        real = float(item["real"] or 0)
+        committed = float(item["committed"] or 0)
+        period_available = budget - real - (committed if clean_view == "expenses" else 0)
+        period_execution = ((real + (committed if clean_view == "expenses" else 0)) / budget * 100) if budget else 0.0
+        rows.append(
+            f"""
+            <tr>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:800;color:#0f172a;">{escape(str(item['label']))}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${budget:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${real:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">{('$' + format(committed, ',.2f')) if clean_view == 'expenses' else '—'}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_available_style(period_available, income_view=clean_view == "income")}">${period_available:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_execution_style(period_execution)}">{period_execution:.1f}%</td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append(
+            '<tr><td colspan="6" style="padding:14px;color:#64748b;">Sin partidas para los filtros actuales.</td></tr>'
+        )
+
+    form_action = f"/admin/presupuestos/torneo/{quote(str(tournament_key))}"
+    committed_hidden = "1" if show_committed else "0"
+    phase_hidden = (
+        f'<input type="hidden" name="phase_filter" value="{escape(str(phase_filter), quote=True)}">'
+        if phase_filter
+        else ""
+    )
+    view_label = "Ingresos" if clean_view == "income" else "Gastos"
+    available_label = "Variación" if clean_view == "income" else "Disponible"
+    return f"""
+    <section class="workspace-card" id="tablero-ejecutivo-presupuesto" style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+            <div>
+                <div class="workspace-section-title">Tablero ejecutivo de presupuesto</div>
+                <div class="workspace-section-subtitle">Vista read-only de {escape(view_label.lower())}: real y comprometido contra presupuesto, agregada desde la matriz semanal.</div>
+            </div>
+            <form method="GET" action="{form_action}" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
+                <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                <input type="hidden" name="version_id" value="{escape(str(version_id), quote=True)}">
+                <input type="hidden" name="budget_view" value="{escape(clean_view, quote=True)}">
+                <input type="hidden" name="show_committed" value="{committed_hidden}">
+                {phase_hidden}
+                <label style="display:grid;gap:4px;font-size:12px;font-weight:800;color:#475569;">
+                    Periodo
+                    <select name="budget_period" style="min-width:180px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;">
+                        {period_options}
+                    </select>
+                </label>
+                <button type="submit" class="button">Actualizar tablero</button>
+            </form>
+        </div>
+        <div class="meta-grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
+            <div class="meta-card"><span>Presupuesto</span><strong>${total_budget:,.2f}</strong></div>
+            <div class="meta-card"><span>Real</span><strong>${total_real:,.2f}</strong></div>
+            <div class="meta-card"><span>Comprometido</span><strong>{('$' + format(total_committed, ',.2f')) if clean_view == 'expenses' else '—'}</strong></div>
+            <div class="meta-card"><span>{available_label}</span><strong>${available:,.2f}</strong></div>
+            <div class="meta-card"><span>Avance</span><strong>{execution:.1f}%</strong></div>
+        </div>
+        <div style="overflow-x:auto;margin-top:14px;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                    <tr style="background:#0f766e;color:#fff;">
+                        <th style="padding:10px;text-align:left;">Periodo</th>
+                        <th style="padding:10px;text-align:right;">Presupuesto</th>
+                        <th style="padding:10px;text-align:right;">Real</th>
+                        <th style="padding:10px;text-align:right;">Comprometido</th>
+                        <th style="padding:10px;text-align:right;">{available_label}</th>
+                        <th style="padding:10px;text-align:right;">% ejecución</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </div>
+    </section>
     """
 
 
@@ -442,6 +673,7 @@ def render_budget_partida_matrix(
     cuentas_contables: Optional[list[dict[str, Any]]] = None,
     matrix_mode: str = "full",
     budget_view: str = "expenses",
+    budget_period: str = "weekly",
 ) -> str:
     if not lines:
         if filtered_empty:
@@ -503,6 +735,7 @@ def render_budget_partida_matrix(
                         {f'<input type="hidden" name="edition_year" value="{int(edition_year)}">' if edition_year is not None else ""}
                         {f'<input type="hidden" name="phase_filter" value="{escape(str(phase_filter))}">' if phase_filter else ""}
                         <input type="hidden" name="budget_view" value="{escape(budget_view)}">
+        <input type="hidden" name="budget_period" value="{escape(budget_period)}">
                         {cuenta_field_html if can_edit else ""}
                         <div style="overflow-x:auto;">
                         <table style="width:100%;border-collapse:collapse;font-size:11px;">
@@ -642,6 +875,7 @@ def render_budget_detail_section_nav(
     selected_view: str = "expenses",
     phase_filter: Optional[str] = None,
     show_committed: bool = True,
+    budget_period: Optional[str] = None,
 ) -> str:
     if not tournament_key:
         return """
@@ -657,6 +891,7 @@ def render_budget_detail_section_nav(
         budget_view="expenses",
         phase_filter=phase_filter,
         show_committed=show_committed,
+        budget_period=budget_period,
     )
     income_url = budget_tournament_detail_url(
         tournament_key,
@@ -665,6 +900,7 @@ def render_budget_detail_section_nav(
         budget_view="income",
         phase_filter=phase_filter,
         show_committed=show_committed,
+        budget_period=budget_period,
     )
     expenses_class = "button" if selected_view != "income" else "button secondary"
     income_class = "button" if selected_view == "income" else "button secondary"
