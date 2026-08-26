@@ -192,6 +192,7 @@ from ..services.documento_payment_service import (
 )
 from ..services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+    approval_subject_empleado,
     effective_account_beneficiary_id,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
@@ -27877,7 +27878,12 @@ async def exportar_informe_gastos(
         select(Documento)
         .options(
             selectinload(Documento.proveedor_cliente),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos)
+                .undefer(CuentaDeGastos.torneo_id)
+                .undefer(CuentaDeGastos.fase)
+                .selectinload(CuentaDeGastos.torneo),
             undefer(Documento.fase),
         )
         .where(Documento.id == documento_id)
@@ -30631,12 +30637,17 @@ async def ver_documento(
             parsed = urlparse(referer)
             return_url = parsed.path + ("?" + parsed.query if parsed.query else "")
 
-    # Load documento with relationships (including proveedor_cliente, beneficiario_empleado)
+    # Load documento with relationships (including project context inherited by informes).
     doc_result = await session.execute(
         select(Documento)
         .options(
             selectinload(Documento.proveedor_cliente),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos)
+                .undefer(CuentaDeGastos.torneo_id)
+                .undefer(CuentaDeGastos.fase)
+                .selectinload(CuentaDeGastos.torneo),
             undefer(Documento.fase),
         )
         .where(Documento.id == documento_id)
@@ -30676,17 +30687,18 @@ async def ver_documento(
     )
     empleado = empleado_result.scalar_one_or_none()
 
-    # Determine permission for approval actions
+    # Determine permission for approval actions. Mirror the canonical workflow
+    # subject: beneficiary approver first, requester approver only as fallback.
     can_approve_or_reject = False
-    if documento.estado == 'enviado' and current_empleado.rol in ['finanzas', 'admin', 'superadmin', 'super_admin']:
-        # Check if user is assigned approver or has override role
-        if empleado and empleado.aprobador_id:
-            es_aprobador_asignado = (empleado.aprobador_id == current_empleado.id)
+    if documento.estado == 'enviado':
+        approval_subject = approval_subject_empleado(documento) or empleado
+        if approval_subject and getattr(approval_subject, "aprobador_id", None):
+            es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
             es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
-            can_approve_or_reject = es_aprobador_asignado or es_finanzas_o_admin
+            es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
+            can_approve_or_reject = es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
         else:
-            # No specific approver assigned, allow any coordinator/finanzas/admin
-            can_approve_or_reject = True
+            can_approve_or_reject = current_empleado.rol in ("finanzas", "admin", "superadmin", "super_admin")
 
     # Determine permission for payment registration
     can_register_payment = (
@@ -30696,9 +30708,9 @@ async def ver_documento(
         not documento.gasto_generado_id
     )
 
-    # Load torneo if linked
-    torneo = None
-    if documento.torneo_id:
+    # Load torneo if linked. Informes may inherit project context from CuentaDeGastos.
+    torneo = getattr(documento, "torneo", None)
+    if torneo is None and documento.torneo_id:
         torneo_result = await session.execute(
             select(Tournament).where(Tournament.id == documento.torneo_id)
         )
@@ -30708,10 +30720,18 @@ async def ver_documento(
     cuenta_saldo_ctx: Optional[Dict[str, Any]] = None
     if documento.tipo == "INFORME" and documento.cuenta_gastos_id:
         cuenta_vinculada_result = await session.execute(
-            select(CuentaDeGastos).where(CuentaDeGastos.id == documento.cuenta_gastos_id)
+            select(CuentaDeGastos)
+            .options(
+                selectinload(CuentaDeGastos.torneo),
+                undefer(CuentaDeGastos.torneo_id),
+                undefer(CuentaDeGastos.fase),
+            )
+            .where(CuentaDeGastos.id == documento.cuenta_gastos_id)
         )
         cuenta_vinculada = cuenta_vinculada_result.scalar_one_or_none()
         if cuenta_vinculada is not None:
+            if torneo is None:
+                torneo = getattr(cuenta_vinculada, "torneo", None)
             cuenta_saldo_ctx = await _compute_cuenta_saldo_context(
                 session, documento.cuenta_gastos_id
             )
@@ -31143,7 +31163,28 @@ async def ver_documento(
         workflow_class = "warn"
     estado_display_detail = "cancelada" if solicitud_cancelada else documento.estado
 
+    detail_approval_actions_html = ""
+    if can_approve_or_reject:
+        next_input = f'<input type="hidden" name="next" value="{escape(return_url)}">' if return_url else ""
+        approve_form = (
+            f'<form method="POST" action="/documentos/{documento_id}/aprobar" class="inline-form">'
+            f'{next_input}'
+            '<button type="submit" class="button primary">Aprobar</button>'
+            '</form>'
+        )
+        reject_form = (
+            f'<form method="POST" action="/documentos/{documento_id}/rechazar" class="inline-form" '
+            'onsubmit="var c=prompt(\'Motivo de rechazo\'); if(!c) return false; this.querySelector(\'[name=comentario]\').value=c; return true;">'
+            f'{next_input}'
+            '<input type="hidden" name="comentario" value="">'
+            '<button type="submit" class="button danger">Rechazar</button>'
+            '</form>'
+        )
+        detail_approval_actions_html = approve_form + reject_form
+
     return_links = []
+    if detail_approval_actions_html:
+        return_links.append(detail_approval_actions_html)
     if can_edit_solicitud_terceros:
         return_links.append(
             f'<a href="/documentos/{documento_id}/editar" class="button secondary">Editar solicitud</a>'
@@ -31170,6 +31211,9 @@ async def ver_documento(
     ro_doc_raw = (documento.referencia_operaciones or "").strip()
     ro_doc_display = escape(ro_doc_raw) if ro_doc_raw else "—"
     fase_doc_display = documento_fase_display(documento)
+    if not fase_doc_display and cuenta_vinculada is not None:
+        fase_doc_display = str(getattr(cuenta_vinculada, "fase", None) or "").strip()
+    project_doc_display = documento_project_name(documento, torneo)
 
     summary_cards = f"""
         <section class="meta-grid" style="margin-bottom:16px;">
@@ -31203,7 +31247,7 @@ async def ver_documento(
             </div>
             <div class="meta-grid">
                 <div class="meta-card"><span>Empleado</span><strong>{empleado.nombre if empleado else 'N/A'}</strong><small>Solicitante del documento.</small></div>
-                <div class="meta-card"><span>Proyecto</span><strong>{documento_project_name(documento, torneo) or 'N/A'}</strong><small>{'Proyecto capturado manualmente.' if getattr(documento, 'proyecto_otro', None) else 'Proyecto ligado al documento.'}</small></div>
+                <div class="meta-card"><span>Proyecto</span><strong>{escape(project_doc_display or 'N/A')}</strong><small>{'Proyecto capturado manualmente.' if getattr(documento, 'proyecto_otro', None) else 'Proyecto ligado al documento.'}</small></div>
                 <div class="meta-card"><span>Fase/Subproyecto</span><strong>{escape(fase_doc_display or "—")}</strong><small>Clasificación opcional del proyecto.</small></div>
                 <div class="meta-card"><span>Categorías</span><strong>{escape(", ".join(getattr(documento, "categorias", None) or []) or "—")}</strong><small>Clasificación del proyecto.</small></div>
                 <div class="meta-card"><span>Edición</span><strong>{escape(str(getattr(documento, "edicion", None) or "—"))}</strong><small>Edición del torneo.</small></div>
