@@ -24079,6 +24079,7 @@ async def documentos_control_presupuestal(
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id),
             selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
             undefer(Documento.fase),
         )
