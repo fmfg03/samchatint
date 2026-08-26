@@ -31462,10 +31462,19 @@ async def ver_documento(
         approval_subject = approval_subject_empleado(documento) or empleado
         if approval_subject and getattr(approval_subject, "aprobador_id", None):
             es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
+            es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
             es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
-            can_approve_or_reject = es_aprobador_asignado or es_superadmin
+            can_approve_or_reject = es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
         else:
-            can_approve_or_reject = current_empleado.rol in ("superadmin", "super_admin")
+            can_approve_or_reject = current_empleado.rol in ("finanzas", "admin", "superadmin", "super_admin")
+
+    # Determine permission for payment registration
+    can_register_payment = (
+        can_confirm_payment_run_payment(current_empleado) and
+        documento.tipo == 'SOLICITUD' and
+        documento.estado in {'aprobado', 'en_proceso_pago'} and
+        not documento.gasto_generado_id
+    )
 
     # Load torneo if linked. Informes may inherit project context from CuentaDeGastos.
     torneo = getattr(documento, "torneo", None)
