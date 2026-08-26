@@ -4060,13 +4060,15 @@ async def import_budget_lines_upload(
             "budget_amount": budget_amount,
         }
         monthly_plan: dict[int, dict[str, float]] = {}
-        for month in range(1, 13):
+        for month in range(1, BUDGET_WEEK_COUNT + 1):
             month_value = _pick_upload_value(
                 row,
-                f"mes_{month}",
+                f"semana_{month}",
+                f"week_{month}",
+                f"week_{month}_{clean_direction}",
                 f"month_{month}",
                 f"month_{month}_{clean_direction}",
-                _MONTH_LABELS_ES.get(month, str(month)),
+                budget_period_label(month),
             )
             if month_value in (None, ""):
                 continue
@@ -6168,6 +6170,8 @@ async def build_budget_snapshot(
     }
 
 
+BUDGET_WEEK_COUNT = 52
+
 _MONTH_LABELS_ES = {
     1: "Ene",
     2: "Feb",
@@ -6182,13 +6186,42 @@ _MONTH_LABELS_ES = {
     11: "Nov",
     12: "Dic",
 }
+_WEEK_LABELS_ES = {week: f"Semana {week}" for week in range(1, BUDGET_WEEK_COUNT + 1)}
+
+
+def budget_period_label(period_number: int) -> str:
+    period = int(period_number)
+    return _WEEK_LABELS_ES.get(period, f"Semana {period}")
 
 
 def month_labels_es(month_numbers: list[int]) -> list[dict[str, Any]]:
+    # Historical API name retained for compatibility. The active budget grid
+    # now stores weekly periods in the legacy month_number column.
     return [
-        {"month_number": month, "label": _MONTH_LABELS_ES.get(month, str(month))}
+        {"month_number": month, "label": budget_period_label(month)}
         for month in month_numbers
     ]
+
+
+def _budget_week_number_sql(date_sql: str) -> str:
+    """Return SQL for Plataforma budget week number, capped to 52.
+
+    Week 1 starts on Jan 1 even if incomplete. Subsequent weeks start on
+    Monday; the final period is capped at week 52 so every date in the year
+    remains visible in the 52-column budget grid.
+    """
+    jan1 = f"DATE_TRUNC('year', ({date_sql})::date)::date"
+    jan1_isodow = f"EXTRACT(ISODOW FROM {jan1})::int"
+    days_to_next_monday = (
+        f"CASE WHEN {jan1_isodow} = 1 THEN 7 ELSE 8 - {jan1_isodow} END"
+    )
+    first_monday_after_week1 = f"({jan1} + ({days_to_next_monday}))"
+    return (
+        "LEAST(52, CASE "
+        f"WHEN ({date_sql})::date < {first_monday_after_week1} THEN 1 "
+        f"ELSE 2 + FLOOR((({date_sql})::date - {first_monday_after_week1}) / 7)::int "
+        "END)"
+    )
 
 
 async def list_budget_line_monthly_allocations(
@@ -6217,9 +6250,7 @@ async def list_budget_line_monthly_allocations(
     return [
         {
             "month_number": int(row["month_number"]),
-            "label": _MONTH_LABELS_ES.get(
-                int(row["month_number"]), str(row["month_number"])
-            ),
+            "label": budget_period_label(int(row["month_number"])),
             "allocated_amount": round(_safe_decimal(row["allocated_amount"]), 2),
         }
         for row in rows
@@ -6281,7 +6312,7 @@ async def replace_budget_line_monthly_allocations(
     )
     for month_number in sorted(allocations.keys()):
         month_int = int(month_number)
-        if month_int < 1 or month_int > 12:
+        if month_int < 1 or month_int > BUDGET_WEEK_COUNT:
             raise ValueError(f"Invalid month number: {month_int}")
         amount = round(_safe_decimal(allocations[month_number]), 2)
         await session.execute(
@@ -6309,11 +6340,11 @@ async def replace_budget_line_monthly_allocations(
 
 def distribute_even_monthly_allocations(budget_amount: float) -> dict[int, float]:
     total = round(_safe_decimal(budget_amount), 2)
-    base = round(total / 12.0, 2)
-    allocations = {month: base for month in range(1, 13)}
+    base = round(total / float(BUDGET_WEEK_COUNT), 2)
+    allocations = {week: base for week in range(1, BUDGET_WEEK_COUNT + 1)}
     remainder = round(total - sum(allocations.values()), 2)
     if remainder:
-        allocations[12] = round(allocations[12] + remainder, 2)
+        allocations[BUDGET_WEEK_COUNT] = round(allocations[BUDGET_WEEK_COUNT] + remainder, 2)
     return allocations
 
 
@@ -6380,7 +6411,7 @@ async def list_budget_lines_with_monthly(
                 "monthly_allocations": [
                     {
                         "month_number": month,
-                        "label": _MONTH_LABELS_ES.get(month, str(month)),
+                        "label": budget_period_label(month),
                         "allocated_amount": amount,
                     }
                     for month, amount in sorted(monthly.items())
@@ -6512,7 +6543,7 @@ def _merge_monthly_actual(
     month_number: int,
     **values: float,
 ) -> None:
-    if month_number < 1 or month_number > 12:
+    if month_number < 1 or month_number > BUDGET_WEEK_COUNT:
         return
     bucket = store[concept_key][month_number]
     for key, value in values.items():
@@ -6608,7 +6639,7 @@ async def replace_budget_line_monthly_plan(
     expense_allocations: dict[int, float] = {}
     for month_number in sorted(plan.keys()):
         month_int = int(month_number)
-        if month_int < 1 or month_int > 12:
+        if month_int < 1 or month_int > BUDGET_WEEK_COUNT:
             raise ValueError(f"Invalid month number: {month_int}")
         payload = plan[month_int] if isinstance(plan[month_int], dict) else {}
         expense_amount = round(
@@ -6664,7 +6695,7 @@ async def replace_budget_line_monthly_plan(
     return [
         {
             "month_number": month,
-            "label": _MONTH_LABELS_ES.get(month, str(month)),
+            "label": budget_period_label(month),
             "budget_expense_amount": values.get("budget_expense_amount", 0.0),
             "expected_income_amount": values.get("expected_income_amount", 0.0),
         }
@@ -6735,7 +6766,7 @@ async def build_budget_monthly_actuals(
                     f"""
                 SELECT
                     COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    EXTRACT(MONTH FROM COALESCE(d.fecha_pago, DATE(d.pagado_en)))::int AS month_number,
+                    LEAST(52, CASE WHEN (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date < (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date - (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(COALESCE(d.monto_total, d.monto_solicitado, 0)), 0) AS paid_total
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
@@ -6770,7 +6801,7 @@ async def build_budget_monthly_actuals(
                     f"""
                 SELECT
                     COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    EXTRACT(MONTH FROM DATE(d.creado_en))::int AS month_number,
+                    LEAST(52, CASE WHEN (DATE(d.creado_en))::date < (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((DATE(d.creado_en))::date - (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(CASE
                         WHEN d.estado IN ('aprobado', 'pagado', 'cerrado')
                         THEN COALESCE(d.monto_solicitado, d.monto_total, 0)
@@ -6811,12 +6842,47 @@ async def build_budget_monthly_actuals(
                     f"""
                 SELECT
                     COALESCE(CAST(e.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    EXTRACT(MONTH FROM COALESCE(
+                    LEAST(52, CASE WHEN (COALESCE(
                         pay_doc.fecha_pago,
                         DATE(pay_doc.pagado_en),
                         inf_doc.fecha_pago,
                         DATE(inf_doc.pagado_en)
-                    ))::int AS month_number,
+                    ))::date < (DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date - (DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
+                        pay_doc.fecha_pago,
+                        DATE(pay_doc.pagado_en),
+                        inf_doc.fecha_pago,
+                        DATE(inf_doc.pagado_en)
+                    ))::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(e.gasto_cantidad), 0) AS paid_total
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
@@ -6860,7 +6926,7 @@ async def build_budget_monthly_actuals(
                     """
                 SELECT
                     COALESCE(CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    EXTRACT(MONTH FROM COALESCE(b.paid_at, b.created_at))::int AS month_number,
+                    LEAST(52, CASE WHEN (COALESCE(b.paid_at, b.created_at))::date < (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(b.paid_at, b.created_at))::date - (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(b.actual_amount), 0) AS income_total
                 FROM budget_income_bridge b
                 JOIN budget_lines l ON l.id = b.budget_line_id
@@ -6914,7 +6980,7 @@ async def build_budget_monthly_actuals(
                     f"""
                 SELECT
                     COALESCE(CAST(b.budget_concept_id AS text), CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    EXTRACT(MONTH FROM b.income_date)::int AS month_number,
+                    LEAST(52, CASE WHEN (b.income_date)::date < (DATE_TRUNC('year', (b.income_date)::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((b.income_date)::date - (DATE_TRUNC('year', (b.income_date)::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(b.amount), 0) AS income_total
                 FROM budget_cfdi_income_links b
                 JOIN budget_lines l ON l.id = b.budget_line_id

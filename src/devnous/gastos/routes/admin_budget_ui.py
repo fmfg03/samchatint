@@ -7,9 +7,8 @@ from html import escape
 from typing import Any, Optional
 from urllib.parse import quote
 
-from samchat.budgets.service import month_labels_es
+from samchat.budgets.service import BUDGET_WEEK_COUNT
 
-MONTH_SHORT = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 GENERAL_PHASE_FILTER = "__general__"
 
 
@@ -511,7 +510,7 @@ def render_budget_partida_matrix(
                                 <tr style="background:#f8fafc;">
                                     <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Concepto</th>
                                     <th style="padding:6px;border-bottom:1px solid #e2e8f0;">Monto total</th>
-                                    {''.join(f'<th style="padding:6px;border-bottom:1px solid #e2e8f0;">Semana {idx}</th>' for idx, _label in enumerate(MONTH_SHORT, start=1))}
+                                    {''.join(f'<th style="padding:6px;border-bottom:1px solid #e2e8f0;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -521,7 +520,7 @@ def render_budget_partida_matrix(
             def _row(label: str, row_kind: str, *, editable: bool = False) -> str:
                 cells = [f'<td style="padding:6px;font-weight:700;color:#475569;">{escape(label)}</td>']
                 total = 0.0
-                for month in range(1, 13):
+                for month in range(1, BUDGET_WEEK_COUNT + 1):
                     month_plan = plan.get(month, {})
                     month_actual = actuals.get(month, {})
                     if row_kind == "expense_plan":
@@ -582,16 +581,16 @@ def render_budget_partida_matrix(
                 html_parts.append(_row("Comprometido no pagado", "committed"))
 
             plan_expense_total = sum(
-                float(plan.get(m, {}).get("budget_expense_amount") or 0) for m in range(1, 13)
+                float(plan.get(m, {}).get("budget_expense_amount") or 0) for m in range(1, BUDGET_WEEK_COUNT + 1)
             )
             plan_income_total = sum(
-                float(plan.get(m, {}).get("expected_income_amount") or 0) for m in range(1, 13)
+                float(plan.get(m, {}).get("expected_income_amount") or 0) for m in range(1, BUDGET_WEEK_COUNT + 1)
             )
             real_expense_total = sum(
-                float(actuals.get(m, {}).get("real_expense_cash") or 0) for m in range(1, 13)
+                float(actuals.get(m, {}).get("real_expense_cash") or 0) for m in range(1, BUDGET_WEEK_COUNT + 1)
             )
             real_income_total = sum(
-                float(actuals.get(m, {}).get("real_income") or 0) for m in range(1, 13)
+                float(actuals.get(m, {}).get("real_income") or 0) for m in range(1, BUDGET_WEEK_COUNT + 1)
             )
             if clean_mode == "income":
                 summary_html = (

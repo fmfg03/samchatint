@@ -18,9 +18,29 @@ from samchat.budgets.service import (
 
 def test_distribute_even_monthly_allocations_sums_to_total():
     allocations = distribute_even_monthly_allocations(1200.0)
-    assert len(allocations) == 12
+    assert len(allocations) == 52
     assert round(sum(allocations.values()), 2) == 1200.0
 
+
+
+
+def test_merge_monthly_actual_accepts_budget_week_52_and_ignores_53():
+    store = _monthly_actual_store()
+    _merge_monthly_actual(
+        store,
+        concept_key="concept-1",
+        month_number=52,
+        real_expense_cash=75.0,
+    )
+    _merge_monthly_actual(
+        store,
+        concept_key="concept-1",
+        month_number=53,
+        real_expense_cash=25.0,
+    )
+
+    assert store["concept-1"][52]["real_expense_cash"] == 75.0
+    assert 53 not in store["concept-1"]
 
 def test_merge_monthly_actual_buckets_by_concept_and_month():
     store = _monthly_actual_store()
@@ -387,7 +407,9 @@ def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     assert 'name="cuenta_contable_id"' in html
     assert 'name="account_code_final"' in html
     assert "5300-001-006 - AGUINALDO" in html
-    assert "Guardar plan mensual" in html
+    assert "Guardar plan por semanas" in html
+    assert "Semana 52" in html
+    assert 'name="month_52_expense"' in html
 
 
 def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
@@ -429,7 +451,7 @@ def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
     assert "Gasto real (caja)" in html
     assert "Ingreso esperado" not in html
     assert "Ingreso real" not in html
-    assert "Guardar gasto mensual" in html
+    assert "Guardar gasto por semanas" in html
 
 
 def test_render_budget_partida_matrix_income_mode_hides_expense_rows():
@@ -473,7 +495,7 @@ def test_render_budget_partida_matrix_income_mode_hides_expense_rows():
     assert "Presupuesto gasto" not in html
     assert "Gasto real (caja)" not in html
     assert "Comprometido no pagado" not in html
-    assert "Guardar ingreso mensual" in html
+    assert "Guardar ingreso por semanas" in html
 
 
 def test_render_budget_partida_matrix_income_mode_empty_state_is_income_specific():
