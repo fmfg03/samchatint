@@ -24144,7 +24144,7 @@ async def documentos_control_presupuestal(
                 <div style="display:flex;gap:8px;align-items:center;min-width:420px;">
                     <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
                         <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
-                        <select id="{select_id}" name="budget_concept_id_{documento.id}" required style="min-width:260px;">{options}</select>
+                        <select id="{select_id}" name="budget_concept_id_{documento.id}" style="min-width:260px;">{options}</select>
                     </div>
                     <button type="submit" name="single_documento_id" value="{documento.id}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
                 </div>
