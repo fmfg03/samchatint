@@ -24350,7 +24350,9 @@ async def _apply_control_presupuestal_assignment(
     result = await session.execute(
         select(Documento)
         .options(
-            selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.torneo_id)
+            .undefer(CuentaDeGastos.fase),
             undefer(Documento.fase),
         )
         .where(Documento.id == documento_id)
