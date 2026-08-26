@@ -44,6 +44,7 @@ from .admin_budget_ui import (
     render_cfdi_income_bridge_panel,
     render_add_tournament_line_form,
     render_budget_detail_section_nav,
+    render_budget_executive_dashboard,
     render_budget_matrix_filters,
     render_budget_partida_matrix,
     render_tournament_dashboard_cards,
@@ -862,6 +863,7 @@ def register_presupuestos_routes(router) -> None:
         phase_filter: Optional[str] = Query(None),
         show_committed: int = Query(1),
         show_yoy: int = Query(0),
+        budget_period: str = Query("weekly"),
         success_msg: Optional[str] = Query(None),
         error_msg: Optional[str] = Query(None),
     ):
@@ -1052,6 +1054,7 @@ def register_presupuestos_routes(router) -> None:
             selected_phase_filter=selected_phase_filter,
             show_committed=bool(show_committed),
             budget_view=selected_budget_view,
+            budget_period=budget_period,
             visible_count=active_visible_count,
             total_count=active_total_count,
         )
@@ -1182,8 +1185,21 @@ def register_presupuestos_routes(router) -> None:
                 selected_view=selected_budget_view,
                 phase_filter=selected_phase_filter or None,
                 show_committed=bool(show_committed),
+                budget_period=budget_period,
             )}
             {success_html}{error_html}
+            {render_budget_executive_dashboard(
+                filtered_income_lines if selected_budget_view == "income" else filtered_expense_lines,
+                plan_map=plan_map,
+                actuals_map=actuals_map,
+                tournament_key=tournament_key,
+                edition_year=resolved_year,
+                version_id=str(selected_version["id"]),
+                budget_view=selected_budget_view,
+                budget_period=budget_period,
+                phase_filter=selected_phase_filter or None,
+                show_committed=bool(show_committed),
+            )}
             {active_budget_section_html}
         </div></body></html>
         """
