@@ -836,11 +836,11 @@ async def load_documento_for_telegram(
 
 
 def approver_can_see_document_in_queue(empleado: Empleado, documento: Documento) -> bool:
-    if empleado.rol not in APPROVER_QUEUE_ROLES:
-        return False
+    """Current actionable Telegram approval guard for stale inline buttons."""
     if documento.estado != "enviado":
         return False
-    if empleado.rol in SUPERADMIN_ROLES:
+    role = (getattr(empleado, "rol", "") or "").strip().lower()
+    if role in SUPERADMIN_ROLES:
         return True
     approval_subject = approval_subject_empleado(documento)
     if approval_subject is None:
@@ -858,8 +858,6 @@ async def query_pending_documentos_for_approver(
     *,
     limit: int = 30,
 ) -> List[Documento]:
-    if empleado.rol not in APPROVER_QUEUE_ROLES:
-        return []
     base_opts = (
         selectinload(Documento.empleado),
         selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
@@ -867,7 +865,8 @@ async def query_pending_documentos_for_approver(
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
     )
-    if empleado.rol in SUPERADMIN_ROLES:
+    role = (getattr(empleado, "rol", "") or "").strip().lower()
+    if role in SUPERADMIN_ROLES:
         result = await session.execute(
             select(Documento)
             .options(*base_opts)
