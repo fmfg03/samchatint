@@ -136,12 +136,6 @@ class TelegramDocumentRuntime:
                 "⚠️ Tu Telegram no está vinculado a un empleado activo.",
             )
             return
-        if empleado.rol not in gastos_tg.APPROVER_QUEUE_ROLES:
-            await self.gateway.send_message(
-                chat_id,
-                "⚠️ No tienes permisos para ver la bandeja de aprobaciones.",
-            )
-            return
         session_maker = self.gateway._resolve_auth_session_maker()
         if not session_maker:
             await self.gateway.send_message(
@@ -294,11 +288,31 @@ class TelegramDocumentRuntime:
             return True
 
         if prefix == gastos_tg.CB_APPROVE:
+            async with session_maker() as session:
+                doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
+                if not doc or not gastos_tg.approver_can_see_document_in_queue(empleado, doc):
+                    await self.gateway.answer_callback_query(callback_id, "Ya no está pendiente")
+                    await self.gateway.send_message(
+                        chat_id,
+                        "ℹ️ Este documento ya no está pendiente para tu aprobación. "
+                        "Si volvió a revisión después de un rechazo de Finanzas, abre /pendientes para tomar la versión vigente.",
+                    )
+                    return True
             await self.gateway.answer_callback_query(callback_id, "Procesando…")
             await self.execute_approve(chat_id, empleado, doc_uuid)
             return True
 
         if prefix == gastos_tg.CB_REJECT:
+            async with session_maker() as session:
+                doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
+                if not doc or not gastos_tg.approver_can_see_document_in_queue(empleado, doc):
+                    await self.gateway.answer_callback_query(callback_id, "Ya no está pendiente")
+                    await self.gateway.send_message(
+                        chat_id,
+                        "ℹ️ Este documento ya no está pendiente para tu aprobación. "
+                        "Usa /pendientes para ver solo las solicitudes vigentes.",
+                    )
+                    return True
             self.gateway._gastos_reject_pending[int(user_id)] = str(doc_uuid)
             await self.gateway.answer_callback_query(callback_id)
             await self.gateway.send_message(

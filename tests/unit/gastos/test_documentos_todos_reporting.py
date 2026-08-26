@@ -138,3 +138,44 @@ def test_document_detail_expenses_table_exposes_edit_actions():
     assert 'href="/gastos/{expense.id}/editar"' in expenses_table_flow
     assert "<th>Acciones</th>" in text
     assert 'colspan="9"' in text
+
+
+
+def test_budget_control_is_named_operator_only_not_role_or_department():
+    allowed = SimpleNamespace(
+        id="e3d13040-2360-420f-98a1-516440ef63c3",
+        nombre="Juan Pablo López Romero",
+        correo="jlopez@plataformasports.com",
+        rol="empleado",
+        departamento="operaciones",
+    )
+    luis = SimpleNamespace(
+        id=uuid4(),
+        nombre="Luis Angel Orozco",
+        correo="luis@example.com",
+        rol="empleado",
+        departamento="direccion",
+    )
+    denied_finance_role = SimpleNamespace(
+        id=uuid4(),
+        nombre="Odilon Trujillo Macedo",
+        correo="odilon@example.com",
+        rol="finanzas",
+        departamento="contabilidad",
+    )
+
+    assert user_routes._is_budget_control_user(allowed) is True
+    assert user_routes._is_budget_control_user(luis) is True
+    assert user_routes._is_budget_control_user(denied_finance_role) is False
+
+
+def test_control_presupuestal_selects_are_not_globally_required():
+    source = "src/devnous/gastos/routes/user_routes.py"
+    text = open(source, encoding="utf-8").read()
+    start = text.index("async def documentos_control_presupuestal")
+    end = text.index("async def _apply_control_presupuestal_assignment", start)
+    control_view = text[start:end]
+
+    assert "required=False" in control_view
+    assert "Todos los documentos" in text[text.index("operaciones_section"):text.index("aprobaciones_section")]
+    assert "Descripción" in control_view

@@ -9686,6 +9686,41 @@ def documento_project_name(documento: Documento, torneo: Optional[Tournament]) -
     return ""
 
 
+async def _load_related_document_project_context(
+    session: AsyncSession, documento: Documento
+) -> tuple[Optional[Tournament], str]:
+    """Fallback project/fase from sibling documents that share referencia_operaciones."""
+    ref_ops = str(getattr(documento, "referencia_operaciones", None) or "").strip()
+    if not ref_ops:
+        return None, ""
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.torneo),
+            selectinload(Documento.cuenta_gastos)
+                .undefer(CuentaDeGastos.torneo_id)
+                .undefer(CuentaDeGastos.fase)
+                .selectinload(CuentaDeGastos.torneo),
+            undefer(Documento.fase),
+        )
+        .outerjoin(CuentaDeGastos, Documento.cuenta_gastos_id == CuentaDeGastos.id)
+        .where(
+            Documento.id != documento.id,
+            Documento.referencia_operaciones == ref_ops,
+            or_(Documento.torneo_id.isnot(None), CuentaDeGastos.torneo_id.isnot(None)),
+        )
+        .order_by(Documento.creado_en.asc())
+        .limit(1)
+    )
+    sibling = result.scalar_one_or_none()
+    if sibling is None:
+        return None, ""
+    sibling_cuenta = getattr(sibling, "cuenta_gastos", None)
+    torneo = getattr(sibling, "torneo", None) or getattr(sibling_cuenta, "torneo", None)
+    fase = str(getattr(sibling, "fase", None) or getattr(sibling_cuenta, "fase", None) or "").strip()
+    return torneo, fase
+
+
 def _solicitud_header_date(documento: Documento):
     """Mirror Excel E4 date source, normalized to a CDMX calendar date."""
     if documento.cuenta_gastos_id and documento.creado_en:
@@ -10756,27 +10791,48 @@ def _can_view_presupuestos(current_empleado: Empleado) -> bool:
 
 
 _BUDGET_CONTROL_EMPLOYEE_IDS = {
-    "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo L?pez Romero
+    "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo Lopez Romero
 }
 
 _BUDGET_CONTROL_EMPLOYEE_EMAILS = {
     "jlopez@plataformasports.com",
 }
 
+_BUDGET_CONTROL_EMPLOYEE_NAMES = {
+    "juan pablo lopez",
+    "juan pablo lopez romero",
+    "luis angel",
+    "luis angel orozco",
+    "francisco fernandez",
+    "francisco m fernandez",
+}
+
+
+def _employee_matches_named_access(empleado: Empleado, allowed_names: set[str]) -> bool:
+    normalized = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
+    if not normalized:
+        return False
+    for allowed_raw in allowed_names:
+        allowed = _normalize_employee_identity_text(allowed_raw)
+        if normalized == allowed or normalized.startswith(f"{allowed} ") or allowed.startswith(f"{normalized} "):
+            return True
+    return False
+
 
 def _is_budget_control_user(current_empleado: Empleado) -> bool:
     """Users allowed to classify documents before normal approval routing."""
-    role = str(getattr(current_empleado, "rol", "") or "").strip().lower()
-    department = str(getattr(current_empleado, "departamento", "") or "").strip().lower()
     email = str(getattr(current_empleado, "correo", "") or "").strip().lower()
     empleado_id = str(getattr(current_empleado, "id", "") or "").strip().lower()
     return (
         empleado_id in _BUDGET_CONTROL_EMPLOYEE_IDS
         or email in _BUDGET_CONTROL_EMPLOYEE_EMAILS
-        or role in {"finanzas", "contabilidad", "admin", "superadmin", "super_admin"}
-        or department.startswith("finanza")
-        or department.startswith("contab")
+        or _employee_matches_named_access(current_empleado, _BUDGET_CONTROL_EMPLOYEE_NAMES)
     )
+
+
+def _is_configuration_panel_user(current_empleado: Empleado) -> bool:
+    """Users allowed to see configuration modules in the home panel."""
+    return _is_budget_control_user(current_empleado)
 
 
 async def _can_review_pending_approvals(
@@ -13920,6 +13976,7 @@ async def panel(
                     ("gastos.informes", "/informes-de-gastos", "Informe de Gastos", "Administra solicitudes e informes."),
                     ("gastos.solicitudes", "/gastos-terceros", "Solicitudes de transferencia", "Revisa solicitudes a proveedores o terceros."),
                     ("gastos.solicitudes", "/beneficiarios/altas", "Alta de beneficiarios", "Solicita y da seguimiento a nuevas cuentas destino."),
+                    ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
                 ], visible_tool_keys), "tone-blue")}
             </div>
         </section>
@@ -13980,10 +14037,11 @@ async def panel(
             </section>
         """
 
-    configuracion_cards = filter_cards_by_tools([
+    configuracion_cards = []
+    if _is_configuration_panel_user(current_empleado):
+        configuracion_cards = filter_cards_by_tools([
         ("admin.proveedores", "/admin/proveedores-clientes", "Proveedores y clientes", "Gestionar catálogo comercial."),
         ("admin.torneos", "/admin/torneos", "Torneos y Proyectos", "Gestionar torneos y proyectos."),
-        ("gastos.solicitudes", "/documentos/todos", "Todos los documentos", "Vista global de documentos."),
         ("admin.finanzas", "/admin/finanzas", "Administración financiera", "Abrir consola financiera para administradores."),
         ("admin.empleados", "/admin/empleados", "Empleados", "Gestionar empleados y permisos."),
         ("admin.perfiles", "/admin/perfiles", "Perfiles ad-hoc", "Crear perfiles personalizados y asignarlos a usuarios."),
@@ -24230,7 +24288,7 @@ async def documentos_control_presupuestal(
         options = _html_budget_concept_options(
             concepts,
             str(documento.budget_concept_id or ""),
-            required=True,
+            required=False,
         )
         if not options:
             options = '<option value="">? Sin conceptos disponibles para este torneo/fase ?</option>'
@@ -24275,7 +24333,7 @@ async def documentos_control_presupuestal(
             <div class="table-shell"><table>
                 <thead><tr>
                     <th>Sel.</th><th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
-                    <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripci?n</th><th>Concepto presupuestal</th>
+                    <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripción</th><th>Concepto presupuestal</th>
                 </tr></thead>
                 <tbody>{rows_html or '<tr><td colspan="10" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
             </table></div>
@@ -24291,7 +24349,7 @@ async def documentos_control_presupuestal(
             title="Documentos por clasificar",
             description="Asigna el concepto presupuestal antes de enviar la solicitud o informe al aprobador operativo correspondiente.",
             actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
-            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{len(documentos)}</strong><small>Despu?s de asignar concepto pasan a aprobaci?n normal.</small></div></div>',
+            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{len(documentos)}</strong><small>Después de asignar concepto pasan a aprobación normal.</small></div></div>',
         )}
         <section class="surface">
             <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
@@ -24300,7 +24358,7 @@ async def documentos_control_presupuestal(
                 <a class="button secondary" href="/documentos/control-presupuestal">Limpiar</a>
             </form>
         </section>
-        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignaci?n libera el documento hacia el aprobador del beneficiario o solicitante, seg?n corresponda.</div></div></div>{table_html}</section>
+        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignación libera el documento hacia el aprobador del beneficiario o solicitante, según corresponda.</div></div></div>{table_html}</section>
     </div>
     <script>
     (function() {{
@@ -30694,11 +30752,10 @@ async def ver_documento(
         approval_subject = approval_subject_empleado(documento) or empleado
         if approval_subject and getattr(approval_subject, "aprobador_id", None):
             es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
-            es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
             es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
-            can_approve_or_reject = es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
+            can_approve_or_reject = es_aprobador_asignado or es_superadmin
         else:
-            can_approve_or_reject = current_empleado.rol in ("finanzas", "admin", "superadmin", "super_admin")
+            can_approve_or_reject = current_empleado.rol in ("superadmin", "super_admin")
 
     # Determine permission for payment registration
     can_register_payment = (
@@ -31214,6 +31271,13 @@ async def ver_documento(
     if not fase_doc_display and cuenta_vinculada is not None:
         fase_doc_display = str(getattr(cuenta_vinculada, "fase", None) or "").strip()
     project_doc_display = documento_project_name(documento, torneo)
+    if not project_doc_display:
+        related_torneo, related_fase = await _load_related_document_project_context(session, documento)
+        if related_torneo is not None:
+            torneo = related_torneo
+            project_doc_display = documento_project_name(documento, torneo)
+        if not fase_doc_display and related_fase:
+            fase_doc_display = related_fase
 
     summary_cards = f"""
         <section class="meta-grid" style="margin-bottom:16px;">
