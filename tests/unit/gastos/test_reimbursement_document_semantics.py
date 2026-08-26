@@ -11,6 +11,7 @@ from devnous.gastos.services.documento_semantics import (
     approval_subject_empleado_id,
     effective_account_beneficiary_id,
     is_employee_reimbursement,
+    reimbursement_concept_from_cuenta,
 )
 
 
@@ -109,6 +110,55 @@ def test_document_reporting_description_uses_expense_report_purpose_for_informes
 
     assert row_values["concepto"] == "Viaje a Leon scouting FN CTT"
 
+
+
+
+def test_reimbursement_concept_from_cuenta_includes_report_description():
+    cuenta = SimpleNamespace(
+        referencia_base="773309",
+        nombre="LTTB Envio de uniformes de la Fases Estatal Campeche BRA",
+    )
+
+    assert reimbursement_concept_from_cuenta(cuenta) == (
+        "Reembolso de saldo a favor — "
+        "LTTB Envio de uniformes de la Fases Estatal Campeche BRA — I-773309"
+    )
+
+
+def test_document_reporting_description_expands_legacy_reimbursement_from_linked_report():
+    documento = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="S-26000143",
+        tipo="SOLICITUD",
+        concepto_pago="Reembolso de saldo a favor — I-773309",
+        referencia_pago=None,
+        referencia_operaciones="92",
+        monto_solicitado=1495.21,
+        monto_total=1495.21,
+        currency="MXN",
+        estado="control_presupuestal",
+        creado_en=None,
+        enviado_en=None,
+        aprobado_en=None,
+        pagado_en=None,
+        empleado=SimpleNamespace(nombre="Bibiana Roman"),
+        beneficiario_empleado=SimpleNamespace(nombre="Bibiana Roman"),
+        proveedor_cliente=None,
+        beneficiario_empleado_id=uuid4(),
+        proveedor_cliente_id=None,
+        cuenta_gastos_id=uuid4(),
+        cuenta_gastos=SimpleNamespace(
+            referencia_base="773309",
+            nombre="LTTB Envio de uniformes de la Fases Estatal Campeche BRA",
+        ),
+    )
+
+    row_values = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row_values["concepto"] == (
+        "Reembolso de saldo a favor — "
+        "LTTB Envio de uniformes de la Fases Estatal Campeche BRA — I-773309"
+    )
 
 def test_document_reporting_description_falls_back_to_payment_concept_for_requests():
     documento = SimpleNamespace(

@@ -16,6 +16,26 @@ def effective_account_beneficiary_id(cuenta: Any) -> Any:
     )
 
 
+def reimbursement_concept_from_cuenta(cuenta: Any) -> str:
+    """Build the SOLICITUD concept for an employee reimbursement from an expense report.
+
+    Keep the legacy prefix so existing reimbursement detection remains stable,
+    while carrying the user-entered report motive/description for quick review.
+    """
+    prefix = EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX
+    if cuenta is None:
+        return prefix
+
+    report_ref = str(getattr(cuenta, "referencia_base", None) or "").strip()
+    report_description = str(getattr(cuenta, "nombre", None) or "").strip()
+    parts = [prefix]
+    if report_description:
+        parts.append(report_description)
+    if report_ref:
+        parts.append(f"I-{report_ref}")
+    return " — ".join(parts)
+
+
 def is_employee_reimbursement(documento: Any) -> bool:
     """Identify system-generated employee reimbursements, including legacy rows."""
     concept = str(getattr(documento, "concepto_pago", None) or "").strip()
