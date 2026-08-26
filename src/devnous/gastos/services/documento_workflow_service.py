@@ -351,21 +351,22 @@ async def transition_documento_workflow(
         _raise_if_document_already_advanced(
             await _document_has_recorded_approval(session, documento_uuid)
         )
-        if actor.rol not in APPROVER_ROLES:
-            raise DocumentoWorkflowPermissionError(
-                "insufficient_role",
-                "Access denied. Insufficient permissions.",
-            )
         approval_subject = approval_subject_empleado(documento)
         if approval_subject is not None and approval_subject.aprobador_id:
             es_aprobador_asignado = approval_subject.aprobador_id == actor.id
             es_finanzas_o_admin = actor.rol in FINANCE_ADMIN_ROLES
-            if not (es_aprobador_asignado or es_finanzas_o_admin):
+            es_superadmin = actor.rol in {"superadmin", "super_admin"}
+            if not (es_aprobador_asignado or es_finanzas_o_admin or es_superadmin):
                 raise DocumentoWorkflowValidationError(
                     "not_assigned_approver",
                     "No eres el aprobador asignado para este beneficiario. Contacta a "
                     "finanzas o administraci\u00f3n.",
                 )
+        elif actor.rol not in APPROVER_ROLES:
+            raise DocumentoWorkflowPermissionError(
+                "insufficient_role",
+                "Access denied. Insufficient permissions.",
+            )
         if documento.tipo == "INFORME":
             gastos_count = await _count_active_document_expenses(
                 session,
@@ -416,21 +417,22 @@ async def transition_documento_workflow(
         _raise_if_document_already_advanced(
             await _document_has_recorded_approval(session, documento_uuid)
         )
-        if actor.rol not in APPROVER_ROLES:
-            raise DocumentoWorkflowPermissionError(
-                "insufficient_role",
-                "Access denied. Insufficient permissions.",
-            )
         approval_subject = approval_subject_empleado(documento)
         if approval_subject is not None and approval_subject.aprobador_id:
             es_aprobador_asignado = approval_subject.aprobador_id == actor.id
             es_finanzas_o_admin = actor.rol in FINANCE_ADMIN_ROLES
-            if not (es_aprobador_asignado or es_finanzas_o_admin):
+            es_superadmin = actor.rol in {"superadmin", "super_admin"}
+            if not (es_aprobador_asignado or es_finanzas_o_admin or es_superadmin):
                 raise DocumentoWorkflowValidationError(
                     "not_assigned_approver",
                     "No eres el aprobador asignado para este beneficiario. Contacta a "
                     "finanzas o administraci\u00f3n.",
                 )
+        elif actor.rol not in APPROVER_ROLES:
+            raise DocumentoWorkflowPermissionError(
+                "insufficient_role",
+                "Access denied. Insufficient permissions.",
+            )
         documento.estado = "rechazado"
         aprobacion_accion = "rechazar"
         await _reopen_informe_de_gastos_on_reject(session, documento)

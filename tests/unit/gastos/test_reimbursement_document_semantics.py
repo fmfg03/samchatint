@@ -550,3 +550,47 @@ def test_systemd_timer_runs_workflow_monitor_every_five_minutes() -> None:
     assert "scripts/monitor_telegram_workflow_notifications.py" in service
     assert "SAMCHAT_ENV_FILE=/etc/samchat/samchat.env" in service
     assert "--older-than-minutes 5" in service
+
+
+
+def test_document_detail_approval_actions_use_beneficiary_subject() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def ver_documento")
+    end = source.index("    # Determine permission for payment registration", start)
+    block = source[start:end]
+
+    assert "approval_subject = approval_subject_empleado(documento) or empleado" in block
+    assert "approval_subject.aprobador_id == current_empleado.id" in block
+    assert "empleado.aprobador_id == current_empleado.id" not in block
+
+
+def test_document_detail_inherits_project_context_from_expense_account() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def ver_documento")
+    end = source.index("authorization_strategy_html =", start)
+    block = source[start:end]
+
+    assert "selectinload(Documento.cuenta_gastos)" in block
+    assert ".undefer(CuentaDeGastos.torneo_id)" in block
+    assert ".undefer(CuentaDeGastos.fase)" in block
+    assert "selectinload(CuentaDeGastos.torneo)" in block
+    assert 'torneo = getattr(cuenta_vinculada, "torneo", None)' in block
+    assert 'fase_doc_display = str(getattr(cuenta_vinculada, "fase", None)' in block
+    assert "project_doc_display = documento_project_name(documento, torneo)" in block
+
+
+
+def test_document_workflow_allows_assigned_non_admin_approver_before_role_gate() -> None:
+    source = Path("src/devnous/gastos/services/documento_workflow_service.py").read_text()
+    approve_start = source.index('    elif normalized_action == "approve":')
+    reject_start = source.index('    elif normalized_action == "reject":')
+    withdraw_start = source.index('    elif normalized_action == "withdraw":')
+    approve_block = source[approve_start:reject_start]
+    reject_block = source[reject_start:withdraw_start]
+
+    for block in (approve_block, reject_block):
+        subject_pos = block.index("approval_subject = approval_subject_empleado(documento)")
+        role_gate_pos = block.index("elif actor.rol not in APPROVER_ROLES")
+        assert subject_pos < role_gate_pos
+        assert "es_aprobador_asignado = approval_subject.aprobador_id == actor.id" in block
+        assert "es_superadmin = actor.rol in" in block
