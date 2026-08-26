@@ -209,3 +209,14 @@ def test_authorization_strategy_money_values_are_formatted_to_two_decimals() -> 
     assert 'Monto MXN: {escape(_format_authorization_money_value(inputs.get("amount_mxn")))}' in source
     assert '("Monto MXN", _format_authorization_money_value(inputs.get("amount_mxn"))' in source
     assert 'amount_value = _format_authorization_money_value(' in source
+
+
+def test_budget_control_assignment_eager_loads_deferred_account_budget_context() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def _apply_control_presupuestal_assignment")
+    end = source.index("def _schedule_budget_control_release_notification", start)
+    block = source[start:end]
+
+    assert ".undefer(CuentaDeGastos.torneo_id)" in block
+    assert ".undefer(CuentaDeGastos.fase)" in block
+    assert "tournament_id, fase = _document_budget_context(documento)" in block
