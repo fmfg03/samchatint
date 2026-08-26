@@ -194,6 +194,7 @@ from ..services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
     effective_account_beneficiary_id,
     is_employee_reimbursement,
+    reimbursement_concept_from_cuenta,
 )
 from ..services.cuenta_settlement_service import (
     CuentaSettlementPermissionError,
@@ -25158,11 +25159,13 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
 
     doc_type = (getattr(documento, "tipo", None) or "").strip().upper()
     concepto = (getattr(documento, "concepto_pago", None) or "").strip()
+    cuenta = getattr(documento, "cuenta_gastos", None)
     if doc_type == "INFORME":
-        cuenta = getattr(documento, "cuenta_gastos", None)
         cuenta_nombre = (getattr(cuenta, "nombre", None) or "").strip()
-        return cuenta_nombre or concepto or "\u2014"
-    return concepto or "\u2014"
+        return cuenta_nombre or concepto or "—"
+    if is_employee_reimbursement(documento) and cuenta is not None:
+        return reimbursement_concept_from_cuenta(cuenta) or concepto or "—"
+    return concepto or "—"
 
 
 def _documentos_todos_reporting_row_values(
@@ -36265,9 +36268,7 @@ async def cerrar_cuenta_de_gastos(
                         cuenta_id=cuenta_id,
                         empleado_id=cuenta.empleado_id,
                         monto_solicitado=abs(saldo_raw),
-                        concepto_pago=(
-                            f"Reembolso de saldo a favor — I-{cuenta.referencia_base}"
-                        ),
+                        concepto_pago=reimbursement_concept_from_cuenta(cuenta),
                         proveedor_cliente_id=str(proveedor_uuid),
                         budget_concept_id=(
                             str(informe_doc.budget_concept_id)
