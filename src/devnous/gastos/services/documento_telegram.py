@@ -825,7 +825,7 @@ async def load_documento_for_telegram(
         select(Documento)
         .options(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -862,7 +862,7 @@ async def query_pending_documentos_for_approver(
         return []
     base_opts = (
         selectinload(Documento.empleado),
-        selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -915,7 +915,7 @@ async def query_documentos_for_requester(
         select(Documento)
         .options(
             selectinload(Documento.empleado),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -940,7 +940,7 @@ async def find_documento_by_referencia_for_requester(
         select(Documento)
         .options(
             selectinload(Documento.empleado),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -1155,13 +1155,13 @@ async def monitor_workflow_telegram_notifications(
         select(Documento)
         .options(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
-            selectinload(Documento.beneficiario_empleado),
+            selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
         )
         .where(
-            Documento.tipo == "SOLICITUD",
+            Documento.tipo.in_(("SOLICITUD", "INFORME")),
             Documento.estado == "enviado",
             Documento.enviado_en.isnot(None),
             Documento.enviado_en < cutoff,
