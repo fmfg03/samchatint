@@ -27,6 +27,22 @@ from .expense_accounting_service import build_expense_accounting_preview
 
 DEBTOR_ACCOUNT_ROOT_CODE = "1170-001-000"
 DEBTOR_ACCOUNT_PREFIX = "1170-001-"
+DEBTOR_SOCIO_ACCOUNT_ROOT_CODE = "1170-002-000"
+DEBTOR_SOCIO_ACCOUNT_PREFIX = "1170-002-"
+# Current catalog: 1170-001 = employees, 1170-002 = socios.
+# Keep 1700 aliases tolerant for historical wording in support requests.
+DEBTOR_ACCOUNT_PREFIXES = (
+    DEBTOR_ACCOUNT_PREFIX,
+    DEBTOR_SOCIO_ACCOUNT_PREFIX,
+    "1700-001-",
+    "1700-002-",
+)
+DEBTOR_ACCOUNT_ROOT_CODES = (
+    DEBTOR_ACCOUNT_ROOT_CODE,
+    DEBTOR_SOCIO_ACCOUNT_ROOT_CODE,
+    "1700-001-000",
+    "1700-002-000",
+)
 DEBTOR_ORIGINS = {
     "deudores_anticipo",
     "deudores_comprobacion",
@@ -100,12 +116,16 @@ async def resolve_employee_debtor_account(
     employee_name = _normalize_text(getattr(empleado, "nombre", None))
     if not employee_name:
         return None
+    prefix_filters = [
+        CuentaContable.codigo.like(f"{prefix}%")
+        for prefix in DEBTOR_ACCOUNT_PREFIXES
+    ]
     result = await session.execute(
         select(CuentaContable)
         .where(
             CuentaContable.activo.is_(True),
-            CuentaContable.codigo.like(f"{DEBTOR_ACCOUNT_PREFIX}%"),
-            CuentaContable.codigo != DEBTOR_ACCOUNT_ROOT_CODE,
+            or_(*prefix_filters),
+            CuentaContable.codigo.notin_(DEBTOR_ACCOUNT_ROOT_CODES),
         )
         .order_by(CuentaContable.codigo.asc())
     )

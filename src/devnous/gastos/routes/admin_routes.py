@@ -1063,8 +1063,16 @@ def render_admin_navigation(
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
     ]
     if can_manage_payment_run(current_empleado):
-        finanzas_items.append(
-            ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run")
+        finanzas_items.extend(
+            [
+                ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run"),
+                (
+                    "admin.finanzas",
+                    "/admin/finanzas/payment-history",
+                    "Historial de pagos",
+                    "payment_history",
+                ),
+            ]
         )
     catalogos_items = [
         ("admin.empleados", "/admin/empleados", "Empleados", "empleados"),
@@ -6234,6 +6242,10 @@ async def admin_finance_platform(
                         {_sports_card("Items", payment_run.get("payable_count", 0), "Autorizados sin pago")}
                         {_sports_card("Total", f'${float(payment_run.get("payable_total") or 0):,.2f}', str(payment_run.get("next_step") or "-"))}
                     </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                        <a class="button secondary" href="/admin/finanzas/payment-run">Abrir Payment Run</a>
+                        <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
+                    </div>
                     <form method="POST" action="/admin/finanzas/payment-run/pay" style="margin-top:16px;">
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
@@ -7497,6 +7509,7 @@ def _render_payment_run_items(
     for row in rows:
         documento_id = escape(str(row.get("id") or ""))
         referencia = escape(str(row.get("numero_referencia") or documento_id))
+        referencia_operaciones = escape(str(row.get("referencia_operaciones") or "—"))
         fecha_pago = row.get("fecha_pago")
         fecha_value = fecha_pago.isoformat() if hasattr(fecha_pago, "isoformat") else ""
         can_edit = bool(row.get("can_edit_fecha_pago"))
@@ -7535,6 +7548,7 @@ def _render_payment_run_items(
             <tr>
                 <td>{checkbox}</td>
                 <td><strong>{referencia}</strong><div style="color:#64748b;font-size:12px;">{escape(str(row.get("concepto_pago") or ""))[:120]}</div></td>
+                <td>{referencia_operaciones}</td>
                 <td>{escape(str(row.get("solicitante_nombre") or "-"))}</td>
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
                 <td>{fecha_html}</td>
@@ -7545,7 +7559,7 @@ def _render_payment_run_items(
             </tr>
             """
         )
-    return "".join(rendered_rows) or '<tr><td colspan="9">Sin solicitudes para este filtro.</td></tr>'
+    return "".join(rendered_rows) or '<tr><td colspan="10">Sin solicitudes para este filtro.</td></tr>'
 
 
 def _render_payment_run_closures(rows: list[dict[str, Any]]) -> str:
@@ -7670,7 +7684,7 @@ async def admin_finance_payment_run(
                 <div class="workspace-section-subtitle">Pendientes: Benjamin ajusta fecha_pago y cierra corte. En proceso de pago: auxiliares contables suben testigo; al guardarlo se marca Pagada.</div>
                 <div style="overflow:auto;margin-top:14px;">
                     <table class="payment-table">
-                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
+                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
                         <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run, can_confirm_payment=can_confirm_payment)}</tbody>
                     </table>
                 </div>
@@ -7682,6 +7696,130 @@ async def admin_finance_payment_run(
                     <table class="payment-table">
                         <thead><tr><th>Corte</th><th>Cerrado</th><th>Fecha corte</th><th>Items</th><th>Total</th><th>Cerro</th></tr></thead>
                         <tbody>{_render_payment_run_closures(closures)}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(html)
+
+
+
+def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
+    rendered_rows = []
+    for row in rows:
+        documento_id = escape(str(row.get("id") or ""))
+        referencia = escape(str(row.get("numero_referencia") or documento_id))
+        referencia_operaciones = escape(str(row.get("referencia_operaciones") or "—"))
+        solicitante = escape(str(row.get("solicitante_nombre") or "-"))
+        beneficiario = escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))
+        fecha_aprobacion = escape(str(row.get("aprobado_en") or "-")[:10])
+        fecha_programacion = escape(str(row.get("fecha_pago") or "-")[:10])
+        fecha_pagada = escape(str(row.get("pagado_en") or "-")[:10])
+        concepto = escape(str(row.get("concepto_pago") or ""))[:180]
+        rendered_rows.append(
+            f"""
+            <tr>
+                <td><a href="/documentos/{documento_id}">{referencia}</a><div style="color:#64748b;font-size:12px;">{concepto}</div></td>
+                <td>{referencia_operaciones}</td>
+                <td>{solicitante}</td>
+                <td>{beneficiario}</td>
+                <td>{fecha_aprobacion}</td>
+                <td>{fecha_programacion}</td>
+                <td>{fecha_pagada}</td>
+                <td>{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
+                <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
+            </tr>
+            """
+        )
+    return "".join(rendered_rows) or '<tr><td colspan="9">Sin pagos para este filtro.</td></tr>'
+
+
+@router.get("/admin/finanzas/payment-history", response_class=HTMLResponse)
+async def admin_finance_payment_history(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    status: str = Query("todas"),
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    q: Optional[str] = Query(None),
+) -> HTMLResponse:
+    """Payment Run history for vencidas, programadas, en proceso and paid requests."""
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+
+    error_msg = (request.query_params.get("error_msg") or "").strip()
+    try:
+        parsed_from = parse_payment_run_date(date_from) if date_from else None
+        parsed_to = parse_payment_run_date(date_to) if date_to else None
+    except PaymentRunValidationError as exc:
+        parsed_from = None
+        parsed_to = None
+        error_msg = error_msg or exc.message
+    rows = await list_payment_run_items(
+        session,
+        status_filter=status or "todas",
+        date_from=parsed_from,
+        date_to=parsed_to,
+        query=(q or "").strip() or None,
+        limit=500,
+    )
+    total_amount = sum(float(row.get("monto") or 0) for row in rows)
+    selected_status = escape(status or "todas")
+    alerts = f'<div class="alert alert-error">{escape(error_msg)}</div>' if error_msg else ""
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Historial de pagos - Samchat</title>
+        <style>
+            {_admin_workspace_styles("1480px")}
+            .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            input, select {{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; }}
+            .alert {{ border-radius:14px; padding:12px 14px; margin-bottom:14px; font-weight:700; }}
+            .alert-error {{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "payment_history", subtitle="Historial de pagos: vencidas, programadas, en proceso y pagadas.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Payment Run",
+                title="Historial de pagos",
+                description="Consulta solicitudes vencidas, programadas, en proceso de pago y pagadas con fechas clave y trazabilidad operativa.",
+                actions_html=(
+                    '<form method="GET" action="/admin/finanzas/payment-history" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Programadas/vencidas</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>En proceso de pago</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option></select></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q or "")}" placeholder="Referencia, op., solicitante, beneficiario"></div>'
+                    '<button class="button" type="submit">Filtrar</button>'
+                    '<a class="button secondary" href="/admin/finanzas/payment-history">Limpiar</a>'
+                    '</form>'
+                ),
+                side_html=(
+                    '<div class="eyebrow">Vista actual</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{len(rows)} solicitudes</div>'
+                    f'<div style="margin-top:8px;color:#64748b;">Monto filtrado: {_payment_run_money(total_amount)}</div>'
+                ),
+            )}
+            {alerts}
+            <section class="workspace-card">
+                <div class="workspace-section-title">Solicitudes por estado de pago</div>
+                <div class="workspace-section-subtitle">Incluye fecha de aprobación, fecha programada, fecha pagada, solicitante y beneficiario.</div>
+                <div style="overflow:auto;margin-top:14px;">
+                    <table class="payment-table">
+                        <thead><tr><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha Aprobación</th><th>Fecha Programación</th><th>Fecha Pagada</th><th>Monto</th><th>Estado</th></tr></thead>
+                        <tbody>{_render_payment_history_rows(rows)}</tbody>
                     </table>
                 </div>
             </section>

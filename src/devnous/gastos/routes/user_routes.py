@@ -4271,6 +4271,11 @@ async def contabilidad_coi_view(
             <div class="box"><div class="label">Documentos</div><div class="value">{len(exportable_document_ids)}</div></div>
             <div class="box"><div class="label">Gastos listos</div><div class="value">{exportable_ready_expenses}</div></div>
         </div>
+        <div style=display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;>
+            <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=INFORME&situacion=cerradas">Descargar informes de gastos</a>
+            <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=SOLICITUD&situacion=cerradas">Descargar solicitudes de transferencia</a>
+            <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?situacion=cerradas">Descargar todo cerrado</a>
+        </div>
         <table>
             <thead>
                 <tr>
@@ -9214,6 +9219,14 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
 }
 
 
+_COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES = {
+    "jose odilon trujillo macedo",
+    "luis angel orozco colin",
+    "federico gonzalez y vega",
+    "federico gonzalez niembro",
+}
+
+
 def _normalize_employee_identity_text(value: Any) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
@@ -9235,6 +9248,23 @@ def _third_party_requester_name_matches(nombre: str) -> bool:
         if len(normalized.split()) >= 3 and allowed.startswith(f"{normalized} "):
             return True
     return False
+
+
+def _is_company_amex_allowed_beneficiary(empleado: Optional[Empleado]) -> bool:
+    if not empleado:
+        return False
+    normalized = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
+    if not normalized:
+        return False
+    return normalized in {
+        _normalize_employee_identity_text(name)
+        for name in _COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES
+    }
+
+
+def _cuenta_allows_company_amex(cuenta: CuentaDeGastos) -> bool:
+    beneficiary = getattr(cuenta, "beneficiario_empleado", None) or getattr(cuenta, "empleado", None)
+    return _is_company_amex_allowed_beneficiary(beneficiary)
 
 
 def _has_explicit_third_party_employee_request_permission(empleado: Empleado) -> bool:
@@ -10193,8 +10223,9 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
         missing_note = (
             '<div class="notice warn" style="margin:12px 0;">'
             "Este empleado no tiene una subcuenta activa bajo "
-            "1170-001-* en el catálogo contable. Contabilidad debe crearla "
-            f"manualmente para {_format_empleado_display_name(empleado)}."
+            "1170-001-* (empleados) o 1170-002-* (socios) en el catálogo "
+            "contable. Contabilidad debe crearla manualmente para "
+            f"{_format_empleado_display_name(empleado)}."
             "</div>"
         )
     return f"""
@@ -10210,7 +10241,7 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
             </div>
             {missing_note}
             <div class="meta-grid" style="margin-top:14px;">
-                <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloque 1170-001</small></div>
+                <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloques 1170-001 / 1170-002</small></div>
                 <div class="meta-card"><span>Debe deudores</span><strong>{format_currency(aux.get("debe") or 0, currency)}</strong><small>Cargos al empleado</small></div>
                 <div class="meta-card"><span>Haber deudores</span><strong>{format_currency(aux.get("haber") or 0, currency)}</strong><small>Comprobaciones/devoluciones</small></div>
                 <div class="meta-card"><span>Saldo contable</span><strong>{format_currency(aux.get("saldo") or 0, currency)}</strong><small>Debe quedar en cero al liquidar</small></div>
@@ -24424,6 +24455,35 @@ async def documentos_control_presupuestal(
           button.textContent = allChecked ? 'Seleccionar todo' : 'Limpiar selección';
         }});
       }});
+      document.querySelectorAll('.budget-control-bulk-form').forEach(function(form) {{
+        form.addEventListener('submit', function(event) {{
+          var submitter = event.submitter || document.activeElement;
+          var singleId = submitter && submitter.name === 'single_documento_id' ? submitter.value : '';
+          var selectedIds = singleId ? [singleId] : Array.prototype.map.call(
+            form.querySelectorAll('input[name="documento_ids"]:checked'),
+            function(box) {{ return box.value; }}
+          );
+          if (!singleId && selectedIds.length === 0) {{
+            event.preventDefault();
+            alert('Selecciona al menos un documento para asignar.');
+            return;
+          }}
+          form.querySelectorAll('select[name^="budget_concept_id_"]').forEach(function(select) {{
+            var documentoId = select.name.replace('budget_concept_id_', '');
+            var isTarget = selectedIds.indexOf(documentoId) !== -1;
+            if (!isTarget) {{
+              select.disabled = true;
+              return;
+            }}
+            select.disabled = false;
+            if (!select.value) {{
+              event.preventDefault();
+              select.focus();
+              alert('Selecciona un concepto presupuestal para cada documento marcado.');
+            }}
+          }});
+        }});
+      }});
     }})();
     </script>
     </body></html>
@@ -29950,6 +30010,12 @@ async def agregar_documento_adjuntos(
     archivos: List[UploadFile] = File(...),
 ) -> RedirectResponse:
     """Append files to an existing solicitud document."""
+    from devnous.gastos.services.documento_payment_service import (
+        DocumentoPaymentPermissionError,
+        DocumentoPaymentValidationError,
+        register_document_payment,
+    )
+
     doc_result = await session.execute(
         select(Documento).where(Documento.id == documento_id)
     )
@@ -30038,6 +30104,14 @@ async def agregar_documento_adjuntos(
             documento=documento,
             attachments=uploads,
         )
+        payment_registered = False
+        if categoria_norm == "comprobante_pago":
+            await register_document_payment(
+                session,
+                documento_id=documento.id,
+                actor_id=current_empleado.id,
+            )
+            payment_registered = True
     except SolicitudValidationError as exc:
         await session.rollback()
         return RedirectResponse(
@@ -30045,6 +30119,24 @@ async def agregar_documento_adjuntos(
                 f"/documentos/{documento_id}",
                 error=exc.code,
                 error_msg=str(exc),
+            ),
+            status_code=303,
+        )
+    except DocumentoPaymentPermissionError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/documentos/{documento_id}",
+                error_msg=exc.message,
+            ),
+            status_code=303,
+        )
+    except DocumentoPaymentValidationError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/documentos/{documento_id}",
+                error_msg=exc.message,
             ),
             status_code=303,
         )
@@ -30071,10 +30163,15 @@ async def agregar_documento_adjuntos(
             status_code=303,
         )
 
+    success_detail = f"{count} archivo(s) adjuntado(s) exitosamente."
+    if categoria_norm == "comprobante_pago" and payment_registered:
+        success_detail = (
+            f"{count} comprobante(s) de pago adjuntado(s) y solicitud marcada como pagada."
+        )
     return RedirectResponse(
         url=_append_success_params(
             f"/documentos/{documento_id}",
-            success_msg=f"{count} archivo(s) adjuntado(s) exitosamente.",
+            success_msg=success_detail,
         ),
         status_code=303,
     )
@@ -33731,6 +33828,10 @@ def _render_informe_operational_status_badge(**kwargs: Any) -> str:
 @router.get("/informes-de-gastos", response_class=HTMLResponse)
 async def cuentas_de_gastos_list(
     request: Request,
+    q: Optional[str] = Query(None),
+    estado: Optional[str] = Query(None),
+    empleado_nombre: Optional[str] = Query(None),
+    torneo_nombre: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ) -> str:
@@ -33751,6 +33852,10 @@ async def cuentas_de_gastos_list(
                 .options(
                     selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
                     selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.torneo),
+                    undefer(CuentaDeGastos.tipo_cuenta),
+                    undefer(CuentaDeGastos.torneo_id),
+                    undefer(CuentaDeGastos.fase),
                     undefer(CuentaDeGastos.currency),
                 )
             )
@@ -33765,6 +33870,10 @@ async def cuentas_de_gastos_list(
                 .options(
                     selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
                     selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.torneo),
+                    undefer(CuentaDeGastos.tipo_cuenta),
+                    undefer(CuentaDeGastos.torneo_id),
+                    undefer(CuentaDeGastos.fase),
                     undefer(CuentaDeGastos.currency),
                 )
                 .where(CuentaDeGastos.empleado_id == current_empleado.id)
@@ -33855,6 +33964,84 @@ async def cuentas_de_gastos_list(
             })
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
+
+    def _informe_filter_blob(item: Dict[str, Any]) -> str:
+        cuenta = item["cuenta"]
+        informe_doc = item.get("informe_doc")
+        beneficiario = getattr(cuenta, "beneficiario_empleado", None) or getattr(cuenta, "empleado", None)
+        aprobador = getattr(beneficiario, "aprobador", None) or getattr(getattr(cuenta, "empleado", None), "aprobador", None)
+        parts = [
+            getattr(cuenta, "nombre", None),
+            getattr(cuenta, "referencia_base", None),
+            getattr(cuenta, "estado", None),
+            getattr(cuenta, "motivo_gasto", None),
+            getattr(cuenta, "descripcion", None),
+            getattr(cuenta, "tipo_gasto", None),
+            getattr(getattr(cuenta, "empleado", None), "nombre", None),
+            getattr(beneficiario, "nombre", None),
+            getattr(aprobador, "nombre", None),
+            getattr(informe_doc, "numero_referencia", None),
+            getattr(informe_doc, "referencia_operaciones", None),
+            getattr(informe_doc, "estado", None),
+            getattr(getattr(cuenta, "proyecto", None), "nombre", None),
+            getattr(getattr(cuenta, "fase", None), "nombre", None),
+        ]
+        for sol in item.get("solicitudes", []):
+            parts.extend([
+                getattr(sol, "numero_referencia", None),
+                getattr(sol, "referencia_operaciones", None),
+                getattr(sol, "concepto", None),
+                getattr(sol, "descripcion", None),
+                getattr(sol, "estado", None),
+            ])
+        return _normalize_employee_identity_text(" ".join(str(p or "") for p in parts))
+
+    def _estado_filter_value(item: Dict[str, Any]) -> str:
+        cuenta = item["cuenta"]
+        informe_doc = item.get("informe_doc")
+        informe_estado = str(getattr(informe_doc, "estado", "") or "").strip().lower()
+        cuenta_estado = str(getattr(cuenta, "estado", "") or "").strip().lower()
+        if informe_estado == "cancelado":
+            return "cancelado"
+        if informe_estado in {"aprobado", "pagado", "reembolsado", "cerrado", "liquidado"}:
+            return informe_estado
+        if informe_estado in {"enviado", "en_revision", "en revisión"}:
+            return "en_revision"
+        if cuenta_estado == "cerrada":
+            return "cerrado"
+        if cuenta_estado == "abierta":
+            return "abierta"
+        return informe_estado or cuenta_estado or ""
+
+    q_norm = _normalize_employee_identity_text(q or "")
+    empleado_norm = _normalize_employee_identity_text(empleado_nombre or "")
+    torneo_norm = _normalize_employee_identity_text(torneo_nombre or "")
+    estado_norm = (estado or "").strip().lower()
+    filtered_cuenta_data = []
+    for item in cuenta_data:
+        blob = _informe_filter_blob(item)
+        cuenta = item["cuenta"]
+        solicitante_blob = _normalize_employee_identity_text(getattr(getattr(cuenta, "empleado", None), "nombre", ""))
+        beneficiario_blob = _normalize_employee_identity_text(getattr(getattr(cuenta, "beneficiario_empleado", None) or getattr(cuenta, "empleado", None), "nombre", ""))
+        proyecto_blob = _normalize_employee_identity_text(
+            " ".join(
+                str(p or "")
+                for p in (
+                    getattr(getattr(cuenta, "proyecto", None), "nombre", None),
+                    getattr(getattr(cuenta, "fase", None), "nombre", None),
+                )
+            )
+        )
+        if q_norm and q_norm not in blob:
+            continue
+        if empleado_norm and empleado_norm not in f"{solicitante_blob} {beneficiario_blob}":
+            continue
+        if torneo_norm and torneo_norm not in proyecto_blob:
+            continue
+        if estado_norm and _estado_filter_value(item) != estado_norm:
+            continue
+        filtered_cuenta_data.append(item)
+    cuenta_data = filtered_cuenta_data
 
     saldo_totals: Dict[str, Decimal] = {}
     for item in cuenta_data:
@@ -34003,6 +34190,45 @@ async def cuentas_de_gastos_list(
         if request.query_params.get("msg")
         else ""
     )
+    q_value = escape(q or "")
+    estado_value = escape(estado or "")
+    empleado_value = escape(empleado_nombre or "")
+    torneo_value = escape(torneo_nombre or "")
+    estado_options = [
+        ("", "Todos"),
+        ("abierta", "Abierta"),
+        ("en_revision", "En revisión"),
+        ("aprobado", "Aprobado"),
+        ("pagado", "Pagado"),
+        ("reembolsado", "Reembolsado"),
+        ("cerrado", "Cerrado"),
+        ("liquidado", "Liquidado"),
+        ("cancelado", "Cancelado"),
+    ]
+    estado_options_html = "".join(
+        f'<option value="{escape(value)}" {"selected" if value == estado_value else ""}>{escape(label)}</option>'
+        for value, label in estado_options
+    )
+    filters_active = sum(1 for value in (q_value, estado_value, empleado_value, torneo_value) if value)
+    cuentas_filters_html = f'''
+                <section class="surface">
+                    <div class="section-head">
+                        <div>
+                            <h2>Buscar informes</h2>
+                            <div class="section-note">Filtra por referencia de operaciones, solicitante, beneficiario, torneo, concepto o estado.</div>
+                        </div>
+                        <span class="badge">{filters_active} filtros activos</span>
+                    </div>
+                    <form method="GET" action="/informes-de-gastos" class="form-grid" style="grid-template-columns:2fr 1fr 1.4fr 1.4fr auto auto;align-items:end;">
+                        <label>Búsqueda<br><input type="text" name="q" value="{q_value}" placeholder="Ref., concepto, descripción..."></label>
+                        <label>Estado<br><select name="estado">{estado_options_html}</select></label>
+                        <label>Solicitante / beneficiario<br><input type="text" name="empleado_nombre" value="{empleado_value}" placeholder="Ej. Alicia, Bibiana..."></label>
+                        <label>Torneo / fase<br><input type="text" name="torneo_nombre" value="{torneo_value}" placeholder="Ej. Telmex, Béisbol..."></label>
+                        <button class="button primary" type="submit">Filtrar</button>
+                        <a class="button secondary" href="/informes-de-gastos">Limpiar</a>
+                    </form>
+                </section>
+    '''
 
     html = f"""
     <!DOCTYPE html>
@@ -34042,6 +34268,7 @@ async def cuentas_de_gastos_list(
             </section>
             <div class="stack">
                 {cuentas_notice_html}
+                {cuentas_filters_html}
                 <section class="surface">
                     <div class="section-head">
                         <div>
@@ -34635,6 +34862,25 @@ async def actualizar_gastos_amex_en_informe(
             ),
             status_code=303,
         )
+    cuenta_result = await session.execute(
+        select(CuentaDeGastos)
+        .where(CuentaDeGastos.id == cuenta_id)
+        .options(
+            selectinload(CuentaDeGastos.empleado),
+            selectinload(CuentaDeGastos.beneficiario_empleado),
+        )
+    )
+    cuenta = cuenta_result.scalar_one_or_none()
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
+    if not _cuenta_allows_company_amex(cuenta):
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/informes-de-gastos/{cuenta_id}",
+                error_msg="AMEX empresa sólo aplica para Odilón, Luis Ángel y los Federicos.",
+            ),
+            status_code=303,
+        )
     try:
         parsed_ids = [UUIDType(value) for value in expense_ids]
         if amex_action == "p1218_fee_interest":
@@ -34731,6 +34977,7 @@ async def cuenta_de_gastos_detail(
     )
     _can_manage_amex = (
         (current_empleado.rol or "").strip().lower() in FINANCE_AMEX_ROLES
+        and _cuenta_allows_company_amex(cuenta)
     )
 
     try:
