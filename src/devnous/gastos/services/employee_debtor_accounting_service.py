@@ -14,6 +14,8 @@ from sqlalchemy.orm import selectinload
 from ..models import (
     AccountingPoliza,
     AccountingPolizaLine,
+    BudgetConcept,
+    CFDIReport,
     CuentaContable,
     CuentaDeGastos,
     Documento,
@@ -23,26 +25,25 @@ from ..models import (
 )
 from .amex_expense_service import employee_paid_sql_condition
 from .expense_accounting_service import build_expense_accounting_preview
+from .expense_accounting_service import _resolve_project_no_deducible_account
 
 
 DEBTOR_ACCOUNT_ROOT_CODE = "1170-001-000"
 DEBTOR_ACCOUNT_PREFIX = "1170-001-"
 DEBTOR_SOCIO_ACCOUNT_ROOT_CODE = "1170-002-000"
 DEBTOR_SOCIO_ACCOUNT_PREFIX = "1170-002-"
-# Current catalog: 1170-001 = employees, 1170-002 = socios.
-# Keep 1700 aliases tolerant for historical wording in support requests.
+# Canonical catalog: 1170-001 = employees, 1170-002 = socios.  New postings do
+# not tolerate the historical 1700 typo: accepting it would silently post to a
+# different chart-of-accounts branch.
 DEBTOR_ACCOUNT_PREFIXES = (
     DEBTOR_ACCOUNT_PREFIX,
     DEBTOR_SOCIO_ACCOUNT_PREFIX,
-    "1700-001-",
-    "1700-002-",
 )
 DEBTOR_ACCOUNT_ROOT_CODES = (
     DEBTOR_ACCOUNT_ROOT_CODE,
     DEBTOR_SOCIO_ACCOUNT_ROOT_CODE,
-    "1700-001-000",
-    "1700-002-000",
 )
+SANTANDER_BANK_ACCOUNT_CODE = "1120-001-001"
 DEBTOR_ORIGINS = {
     "deudores_anticipo",
     "deudores_comprobacion",
@@ -58,6 +59,7 @@ class DebtorPostingResult:
     poliza: Optional[AccountingPoliza] = None
     debtor_account: Optional[CuentaContable] = None
     bank_account: Optional[CuentaContable] = None
+    liability_account: Optional[CuentaContable] = None
 
 
 def _money(value: Any) -> Decimal:
@@ -167,28 +169,176 @@ async def resolve_cuenta_debtor_empleado(
 async def resolve_default_bank_account(
     session: AsyncSession,
 ) -> Optional[CuentaContable]:
-    result = await session.execute(
-        select(CuentaContable)
-        .where(CuentaContable.activo.is_(True), CuentaContable.tipo == "banco")
-        .order_by(CuentaContable.codigo.asc())
-        .limit(1)
-    )
-    account = result.scalar_one_or_none()
-    if account is not None:
-        return account
+    """Resolve the single canonical Santander account, or fail closed.
+
+    Accounting postings must never fall back to the first account whose type is
+    ``banco``: the catalog also contains parent/summary accounts and other banks.
+    """
     result = await session.execute(
         select(CuentaContable)
         .where(
             CuentaContable.activo.is_(True),
-            or_(
-                CuentaContable.nombre.ilike("%banco%"),
-                CuentaContable.nombre.ilike("%transfer%"),
-            ),
+            CuentaContable.codigo == SANTANDER_BANK_ACCOUNT_CODE,
         )
-        .order_by(CuentaContable.codigo.asc())
-        .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+def _event_poliza_number(event: str, entity_id: UUID) -> str:
+    """Stable event identity (event type + complete entity UUID)."""
+    return f"LAM-{event}-{entity_id}"
+
+
+async def _existing_event_poliza(
+    session: AsyncSession,
+    *,
+    origen: str,
+    numero_poliza: str,
+    legacy_numero_poliza: Optional[str] = None,
+) -> Optional[AccountingPoliza]:
+    existing = await _existing_poliza(
+        session, origen=origen, numero_poliza=numero_poliza
+    )
+    if existing is None and legacy_numero_poliza:
+        existing = await _existing_poliza(
+            session,
+            origen=origen,
+            numero_poliza=legacy_numero_poliza,
+        )
+    return existing
+
+
+def _account_from_preview(value: Any) -> tuple[Optional[str], Optional[UUID]]:
+    account = value or {}
+    code = str(account.get("codigo") or "").strip() or None
+    raw_id = account.get("cuenta_contable_id")
+    try:
+        account_id = UUID(str(raw_id)) if raw_id else None
+    except (TypeError, ValueError):
+        account_id = None
+    return code, account_id
+
+
+def _preview_expense_lines(
+    *,
+    preview: dict[str, Any],
+    expense: ExpenseReport,
+    counterpart: CuentaContable,
+    meta: dict[str, Any],
+) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Translate the canonical accounting preview into balanced journal lines.
+
+    Every non-zero tax component must carry an explicit account binding.  This
+    is intentionally fail-closed; no generic account is substituted here.
+    """
+    taxes = preview.get("taxes") or {}
+    concept = str(getattr(expense, "concepto", None) or "Gasto")
+    base_account = getattr(expense, "cuenta_contable", None)
+    base_amount = _money(taxes.get("base_gasto"))
+    lines: list[dict[str, Any]] = []
+
+    if base_amount > 0:
+        if base_account is None:
+            return [], "missing_expense_account"
+        lines.append(
+            {
+                "cuenta_codigo": base_account.codigo,
+                "cuenta_contable_id": base_account.id,
+                "concepto": concept,
+                "debe": base_amount,
+                "haber": 0,
+                "raw_row_json": {**meta, "movement": "debe_gasto"},
+            }
+        )
+
+    iva_amount = _money(taxes.get("iva_trasladado"))
+    if iva_amount > 0:
+        code, account_id = _account_from_preview(taxes.get("iva_account"))
+        if not code or account_id is None:
+            return [], "missing_iva_account"
+        lines.append(
+            {
+                "cuenta_codigo": code,
+                "cuenta_contable_id": account_id,
+                "concepto": f"IVA acreditable - {concept}",
+                "debe": iva_amount,
+                "haber": 0,
+                "raw_row_json": {**meta, "movement": "debe_iva"},
+            }
+        )
+
+    for item in list(taxes.get("impuestos_locales") or []):
+        amount = _money(item.get("importe"))
+        if amount <= 0:
+            continue
+        code, account_id = _account_from_preview(item.get("account"))
+        if not code or account_id is None:
+            return [], "missing_local_tax_account"
+        lines.append(
+            {
+                "cuenta_codigo": code,
+                "cuenta_contable_id": account_id,
+                "concepto": f"{item.get('label') or 'Impuesto local'} - {concept}",
+                "debe": amount,
+                "haber": 0,
+                "raw_row_json": {**meta, "movement": "debe_impuesto_local"},
+            }
+        )
+
+    for item in list(taxes.get("gastos_no_deducibles") or []):
+        amount = _money(item.get("importe"))
+        if amount <= 0:
+            continue
+        code, account_id = _account_from_preview(item.get("account"))
+        if not code or account_id is None:
+            return [], "missing_non_deductible_account"
+        lines.append(
+            {
+                "cuenta_codigo": code,
+                "cuenta_contable_id": account_id,
+                "concepto": f"{item.get('label') or 'No deducible'} - {concept}",
+                "debe": amount,
+                "haber": 0,
+                "raw_row_json": {**meta, "movement": "debe_no_deducible"},
+            }
+        )
+
+    for item in list(taxes.get("retenciones") or []):
+        amount = _money(item.get("importe"))
+        if amount <= 0:
+            continue
+        code, account_id = _account_from_preview(item.get("account"))
+        if not code or account_id is None:
+            return [], "missing_retention_account"
+        lines.append(
+            {
+                "cuenta_codigo": code,
+                "cuenta_contable_id": account_id,
+                "concepto": f"Retención {item.get('label') or 'impuesto'} - {concept}",
+                "debe": 0,
+                "haber": amount,
+                "raw_row_json": {**meta, "movement": "haber_retencion"},
+            }
+        )
+
+    net_credit = _money(taxes.get("neto_contrapartida"))
+    if net_credit <= 0:
+        return [], "invalid_counterpart_amount"
+    lines.append(
+        {
+            "cuenta_codigo": counterpart.codigo,
+            "cuenta_contable_id": counterpart.id,
+            "concepto": concept,
+            "debe": 0,
+            "haber": net_credit,
+            "raw_row_json": {**meta, "movement": "haber_contrapartida"},
+        }
+    )
+    debit = sum((_money(line.get("debe")) for line in lines), Decimal("0.00"))
+    credit = sum((_money(line.get("haber")) for line in lines), Decimal("0.00"))
+    if debit != credit:
+        return [], f"unbalanced_preview:{debit}:{credit}"
+    return lines, None
 
 
 async def _existing_poliza(
@@ -269,6 +419,248 @@ def _common_meta(
     }
 
 
+async def _load_budget_accounts(
+    session: AsyncSession,
+    documento: Documento,
+) -> tuple[Optional[BudgetConcept], Optional[CuentaContable], Optional[CuentaContable]]:
+    concept_id = getattr(documento, "budget_concept_id", None)
+    if concept_id is None:
+        return None, None, None
+    result = await session.execute(
+        select(BudgetConcept)
+        .options(
+            selectinload(BudgetConcept.cuenta_contable),
+            selectinload(BudgetConcept.pasivo_cuenta_contable),
+        )
+        .where(BudgetConcept.id == concept_id, BudgetConcept.active.is_(True))
+    )
+    concept = result.scalar_one_or_none()
+    if concept is None:
+        return None, None, None
+    expense_account = getattr(concept, "cuenta_contable", None)
+    liability_account = getattr(concept, "pasivo_cuenta_contable", None)
+    if expense_account is not None and not getattr(expense_account, "activo", True):
+        expense_account = None
+    if liability_account is not None and not getattr(liability_account, "activo", True):
+        liability_account = None
+    return concept, expense_account, liability_account
+
+
+async def ensure_provider_approval_posting(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+) -> DebtorPostingResult:
+    """Accrue an approved third-party request against its budget liability.
+
+    Employee reimbursement/advance documents may carry a provider mirror for UI
+    compatibility.  They are explicitly excluded here and remain no-op on
+    approval as required by the accounting flow.
+    """
+    if (
+        getattr(documento, "tipo", None) != "SOLICITUD"
+        or getattr(documento, "proveedor_cliente_id", None) is None
+        or getattr(documento, "beneficiario_empleado_id", None) is not None
+    ):
+        return DebtorPostingResult(status="skipped", reason="not_provider_request")
+
+    numero_poliza = _event_poliza_number("PROV-APR", documento.id)
+    existing = await _existing_event_poliza(
+        session,
+        origen="proveedor_aprobacion",
+        numero_poliza=numero_poliza,
+    )
+    if existing is not None:
+        return DebtorPostingResult(status="exists", poliza=existing)
+
+    concept, expense_account, liability = await _load_budget_accounts(
+        session, documento
+    )
+    if concept is None:
+        return DebtorPostingResult(status="pending", reason="missing_budget_concept")
+    if expense_account is None:
+        return DebtorPostingResult(status="pending", reason="missing_expense_account")
+    if liability is None:
+        return DebtorPostingResult(status="pending", reason="missing_budget_liability")
+
+    amount = _money(documento.monto_solicitado or documento.monto_total)
+    if amount <= 0:
+        return DebtorPostingResult(status="skipped", reason="invalid_amount")
+    cfdi = None
+    if getattr(documento, "cfdi_report_id", None):
+        cfdi = await session.get(CFDIReport, documento.cfdi_report_id)
+
+    synthetic = ExpenseReport(
+        proyecto=str(getattr(concept, "tournament_name", None) or "Solicitud"),
+        concepto=str(
+            getattr(documento, "concepto_pago", None)
+            or getattr(documento, "notas", None)
+            or "Solicitud a proveedor"
+        ),
+        gasto_cantidad=float(amount),
+        fecha=getattr(documento, "aprobado_en", None) or datetime.utcnow(),
+        tipo_gasto="manual",
+        metodo_pago=getattr(documento, "metodo_pago", None) or "TRANSFERENCIA",
+        iva=None,
+        budget_concept_id=concept.id,
+        cuenta_contable_id=expense_account.id,
+        cfdi_report_id=getattr(documento, "cfdi_report_id", None),
+    )
+    synthetic.cuenta_contable = expense_account
+    synthetic.cfdi_report = cfdi
+
+    # Without CFDI the whole request is non-deductible until a factura is linked.
+    if cfdi is None:
+        no_deductible = await _resolve_project_no_deducible_account(
+            session, [], synthetic
+        )
+        if no_deductible is None:
+            return DebtorPostingResult(
+                status="pending", reason="missing_non_deductible_account"
+            )
+        synthetic.cuenta_contable_id = no_deductible.id
+        synthetic.cuenta_contable = no_deductible
+
+    preview = await build_expense_accounting_preview(
+        session,
+        synthetic,
+        contra_cuenta_contable_id=str(liability.id),
+        contra_cuenta_codigo=liability.codigo,
+    )
+    meta = {
+        "origin": "proveedor_aprobacion",
+        "documento_id": str(documento.id),
+        "budget_concept_id": str(concept.id),
+        "event": "provider_approved",
+    }
+    lines, error = _preview_expense_lines(
+        preview=preview,
+        expense=synthetic,
+        counterpart=liability,
+        meta=meta,
+    )
+    if error:
+        return DebtorPostingResult(status="pending", reason=error)
+    concepto = f"Proveedor aprobado - {documento.numero_referencia or documento.id}"
+    poliza = await _create_poliza(
+        session,
+        origen="proveedor_aprobacion",
+        numero_poliza=numero_poliza,
+        fecha=getattr(documento, "aprobado_en", None) or datetime.utcnow(),
+        beneficiario_nombre=str(
+            getattr(getattr(documento, "proveedor_cliente", None), "nombre", None)
+            or "Proveedor"
+        ),
+        concepto=concepto,
+        lines=lines,
+    )
+    return DebtorPostingResult(
+        status="created", poliza=poliza, liability_account=liability
+    )
+
+
+async def ensure_provider_payment_posting(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    fecha_pago: date | datetime,
+) -> DebtorPostingResult:
+    if (
+        getattr(documento, "tipo", None) != "SOLICITUD"
+        or getattr(documento, "proveedor_cliente_id", None) is None
+        or getattr(documento, "beneficiario_empleado_id", None) is not None
+    ):
+        return DebtorPostingResult(status="skipped", reason="not_provider_request")
+    numero_poliza = _event_poliza_number("PROV-PAY", documento.id)
+    existing = await _existing_event_poliza(
+        session,
+        origen="proveedor_pago",
+        numero_poliza=numero_poliza,
+    )
+    if existing is not None:
+        return DebtorPostingResult(status="exists", poliza=existing)
+
+    # Legacy approved documents may predate the approval hook.  Materialize the
+    # missing accrual in the same transaction before clearing it; never clear a
+    # liability that has no source posting.
+    approval = await ensure_provider_approval_posting(session, documento=documento)
+    if approval.status == "pending":
+        return approval
+    _, _, liability = await _load_budget_accounts(session, documento)
+    if liability is None:
+        return DebtorPostingResult(status="pending", reason="missing_budget_liability")
+    bank = await resolve_default_bank_account(session)
+    if bank is None:
+        return DebtorPostingResult(status="pending", reason="missing_santander_account")
+
+    # The payable equals the credit posted to the configured liability account.
+    approval_poliza = approval.poliza
+    if approval_poliza is None:
+        approval_poliza = await _existing_poliza(
+            session,
+            origen="proveedor_aprobacion",
+            numero_poliza=_event_poliza_number("PROV-APR", documento.id),
+        )
+    if approval_poliza is None:
+        return DebtorPostingResult(status="pending", reason="missing_provider_accrual")
+    amount = sum(
+        (
+            _money(line.haber)
+            for line in list(getattr(approval_poliza, "lines", None) or [])
+            if str(getattr(line, "cuenta_codigo", "")) == liability.codigo
+        ),
+        Decimal("0.00"),
+    )
+    if amount <= 0:
+        return DebtorPostingResult(status="pending", reason="missing_liability_credit")
+    fecha_dt = (
+        fecha_pago
+        if isinstance(fecha_pago, datetime)
+        else datetime.combine(fecha_pago, datetime.min.time())
+    )
+    concepto = f"Pago a proveedor - {documento.numero_referencia or documento.id}"
+    meta = {
+        "origin": "proveedor_pago",
+        "documento_id": str(documento.id),
+        "event": "provider_paid",
+    }
+    poliza = await _create_poliza(
+        session,
+        origen="proveedor_pago",
+        numero_poliza=numero_poliza,
+        fecha=fecha_dt,
+        beneficiario_nombre=str(
+            getattr(getattr(documento, "proveedor_cliente", None), "nombre", None)
+            or "Proveedor"
+        ),
+        concepto=concepto,
+        lines=[
+            {
+                "cuenta_codigo": liability.codigo,
+                "cuenta_contable_id": liability.id,
+                "concepto": concepto,
+                "debe": amount,
+                "haber": 0,
+                "raw_row_json": {**meta, "movement": "debe_pasivo"},
+            },
+            {
+                "cuenta_codigo": bank.codigo,
+                "cuenta_contable_id": bank.id,
+                "concepto": concepto,
+                "debe": 0,
+                "haber": amount,
+                "raw_row_json": {**meta, "movement": "haber_banco"},
+            },
+        ],
+    )
+    return DebtorPostingResult(
+        status="created",
+        poliza=poliza,
+        bank_account=bank,
+        liability_account=liability,
+    )
+
+
 async def ensure_debtor_payment_posting_for_document(
     session: AsyncSession,
     *,
@@ -285,9 +677,12 @@ async def ensure_debtor_payment_posting_for_document(
         and getattr(documento, "beneficiario_empleado_id", None) is None
     ):
         return DebtorPostingResult(status="skipped", reason="not_employee_cuenta_payment")
-    numero_poliza = f"DEU-PAG-{str(documento.id)[:8]}"
-    existing = await _existing_poliza(
-        session, origen="deudores_anticipo", numero_poliza=numero_poliza
+    numero_poliza = _event_poliza_number("DEU-PAY", documento.id)
+    existing = await _existing_event_poliza(
+        session,
+        origen="deudores_anticipo",
+        numero_poliza=numero_poliza,
+        legacy_numero_poliza=f"DEU-PAG-{str(documento.id)[:8]}",
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
@@ -297,7 +692,7 @@ async def ensure_debtor_payment_posting_for_document(
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
     bank = await resolve_default_bank_account(session)
     if bank is None:
-        return DebtorPostingResult(status="pending", reason="missing_bank_account")
+        return DebtorPostingResult(status="pending", reason="missing_santander_account")
 
     amount = _money(documento.monto_solicitado or documento.monto_total)
     if amount <= 0:
@@ -353,9 +748,12 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     cuenta_gastos_id = getattr(informe_documento, "cuenta_gastos_id", None)
     if cuenta_gastos_id is None or informe_documento.tipo != "INFORME":
         return DebtorPostingResult(status="skipped", reason="not_informe_cuenta")
-    numero_poliza = f"DEU-COMP-{str(cuenta_gastos_id)[:8]}"
-    existing = await _existing_poliza(
-        session, origen="deudores_comprobacion", numero_poliza=numero_poliza
+    numero_poliza = _event_poliza_number("DEU-COMP", informe_documento.id)
+    existing = await _existing_event_poliza(
+        session,
+        origen="deudores_comprobacion",
+        numero_poliza=numero_poliza,
+        legacy_numero_poliza=f"DEU-COMP-{str(cuenta_gastos_id)[:8]}",
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
@@ -401,63 +799,40 @@ async def ensure_debtor_comprobacion_posting_for_informe(
                 reason=f"expense_missing_account:{expense.id}",
                 debtor_account=debtor,
             )
-        preview = await build_expense_accounting_preview(session, expense)
-        taxes = preview.get("taxes") or {}
-        total = _money(getattr(expense, "gasto_cantidad", 0))
-        iva_amount = _money(taxes.get("iva_trasladado"))
-        iva_account = taxes.get("iva_account") or {}
-        if iva_amount > 0 and not iva_account.get("cuenta_contable_id"):
+        preview = await build_expense_accounting_preview(
+            session,
+            expense,
+            contra_cuenta_contable_id=str(debtor.id),
+            contra_cuenta_codigo=debtor.codigo,
+        )
+        expense_meta = {**meta_base, "expense_id": str(expense.id)}
+        expense_lines, error = _preview_expense_lines(
+            preview=preview,
+            expense=expense,
+            counterpart=debtor,
+            meta=expense_meta,
+        )
+        if error:
             return DebtorPostingResult(
                 status="pending",
-                reason=f"expense_missing_iva_account:{expense.id}",
+                reason=f"expense_accounting_incomplete:{expense.id}:{error}",
                 debtor_account=debtor,
             )
-        expense_amount = total - iva_amount if iva_amount > 0 else total
-        if expense_amount > 0:
-            lines.append(
-                {
-                    "cuenta_codigo": expense.cuenta_contable.codigo,
-                    "cuenta_contable_id": expense.cuenta_contable.id,
-                    "concepto": expense.concepto or "Comprobación de gastos",
-                    "debe": expense_amount,
-                    "haber": 0,
-                    "raw_row_json": {
-                        **meta_base,
-                        "movement": "debe_gasto",
-                        "expense_id": str(expense.id),
-                    },
-                }
-            )
-        if iva_amount > 0:
-            lines.append(
-                {
-                    "cuenta_codigo": iva_account["codigo"],
-                    "cuenta_contable_id": UUID(str(iva_account["cuenta_contable_id"])),
-                    "concepto": f"IVA acreditable - {expense.concepto or expense.id}",
-                    "debe": iva_amount,
-                    "haber": 0,
-                    "raw_row_json": {
-                        **meta_base,
-                        "movement": "debe_iva",
-                        "expense_id": str(expense.id),
-                    },
-                }
-            )
-        total_credit += total
+        lines.extend(expense_lines)
+        total_credit += sum(
+            (
+                _money(line.get("haber"))
+                for line in expense_lines
+                if line.get("cuenta_codigo") == debtor.codigo
+            ),
+            Decimal("0.00"),
+        )
     if total_credit <= 0:
         return DebtorPostingResult(status="skipped", reason="invalid_total")
 
     concepto = f"Comprobación de gastos - I-{getattr(cuenta, 'referencia_base', cuenta_gastos_id)}"
-    lines.append(
-        {
-            "cuenta_codigo": debtor.codigo,
-            "cuenta_contable_id": debtor.id,
-            "concepto": concepto,
-            "debe": 0,
-            "haber": total_credit,
-            "raw_row_json": {**meta_base, "movement": "haber_deudor"},
-        }
-    )
+    # Each expense already includes its own exact debtor credit, keeping the
+    # evidence binding and fiscal split local to that expense.
     poliza = await _create_poliza(
         session,
         origen="deudores_comprobacion",
@@ -478,9 +853,12 @@ async def ensure_debtor_settlement_posting(
 ) -> DebtorPostingResult:
     if (reembolso.estado or "") == "cancelado":
         return DebtorPostingResult(status="skipped", reason="cancelled")
-    numero_poliza = f"DEU-LIQ-{str(reembolso.id)[:8]}"
-    existing = await _existing_poliza(
-        session, origen="deudores_devolucion", numero_poliza=numero_poliza
+    numero_poliza = _event_poliza_number("DEU-LIQ", reembolso.id)
+    existing = await _existing_event_poliza(
+        session,
+        origen="deudores_devolucion",
+        numero_poliza=numero_poliza,
+        legacy_numero_poliza=f"DEU-LIQ-{str(reembolso.id)[:8]}",
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
@@ -492,7 +870,7 @@ async def ensure_debtor_settlement_posting(
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
     bank = await resolve_default_bank_account(session)
     if bank is None:
-        return DebtorPostingResult(status="pending", reason="missing_bank_account")
+        return DebtorPostingResult(status="pending", reason="missing_santander_account")
     amount = _money(reembolso.monto)
     if amount <= 0:
         return DebtorPostingResult(status="skipped", reason="invalid_amount")
