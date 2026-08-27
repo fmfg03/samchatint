@@ -179,3 +179,58 @@ def test_control_presupuestal_selects_are_not_globally_required():
     assert "required=False" in control_view
     assert "Todos los documentos" in text[text.index("operaciones_section"):text.index("aprobaciones_section")]
     assert "Descripción" in control_view
+
+
+def test_documentos_todos_is_available_to_active_authenticated_users() -> None:
+    active_user = SimpleNamespace(id=uuid4(), activo=True, rol="empleado")
+    inactive_user = SimpleNamespace(id=uuid4(), activo=False, rol="empleado")
+    anonymousish_user = SimpleNamespace(id=None, activo=True, rol="empleado")
+
+    assert user_routes._can_view_documentos_todos(active_user) is True
+    assert user_routes._can_view_documentos_todos(inactive_user) is False
+    assert user_routes._can_view_documentos_todos(anonymousish_user) is False
+
+
+def test_pending_approval_summary_shows_accumulated_amount() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def documentos_pendientes")
+    end = source.index('@router.post("/documentos/pendientes/accion-lote")', start)
+    block = source[start:end]
+
+    assert "pending_amount_by_currency" in block
+    assert "Monto acumulado" in block
+    assert "pending_amount_display" in block
+
+
+def test_historial_and_bulk_pending_actions_use_approver_visibility_gate() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    bulk_start = source.index("async def documentos_pendientes_accion_lote")
+    bulk_end = source.index('@router.get("/documentos/historial-aprobador"', bulk_start)
+    history_start = bulk_end
+    history_end = source.index("# Build query based on role", history_start)
+
+    assert "await _can_review_pending_approvals" in source[bulk_start:bulk_end]
+    assert "await _can_review_pending_approvals" in source[history_start:history_end]
+
+
+def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def _render_solicitud_terceros_form")
+    end = source.index('@router.post("/documentos/nueva-solicitud-terceros")', start)
+    block = source[start:end]
+
+    assert "budget_concept_row_terceros = """ in block
+    assert "CONCEPTO:" not in block
+    assert "budget_concept_id_terceros" not in block
+
+
+def test_solicitud_terceros_create_and_edit_force_budget_control_assignment() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    create_start = source.index("async def crear_nueva_solicitud_terceros")
+    edit_start = source.index("async def editar_solicitud_terceros_post")
+    create_block = source[create_start:edit_start]
+    edit_end = source.index('@router.post("/documentos/{documento_id}/adjuntos")', edit_start)
+    edit_block = source[edit_start:edit_end]
+
+    assert "budget_concept_id = None" in create_block
+    assert "budget_concept_id = None" in edit_block

@@ -10835,6 +10835,15 @@ def _is_configuration_panel_user(current_empleado: Empleado) -> bool:
     return _is_budget_control_user(current_empleado)
 
 
+def _can_view_documentos_todos(current_empleado: Empleado) -> bool:
+    """Global document index is a Gastos lookup surface for active users."""
+    if current_empleado is None:
+        return False
+    if getattr(current_empleado, "activo", True) is False:
+        return False
+    return bool(getattr(current_empleado, "id", None))
+
+
 async def _can_review_pending_approvals(
     session: AsyncSession, current_empleado: Empleado
 ) -> bool:
@@ -14037,6 +14046,28 @@ async def panel(
             </section>
         """
 
+    ejecutivo_cards = []
+    if _is_budget_control_user(current_empleado):
+        ejecutivo_cards.append(("/admin/presupuestos", "Tablero ejecutivo de presupuestos", "Real, comprometido y presupuesto por torneo, concepto y periodo."))
+    if "admin.finanzas" in visible_tool_keys or _is_budget_control_user(current_empleado):
+        ejecutivo_cards.append(("/admin/contabilidad/cash-flow", "Cash Flow", "Entradas, salidas y cartera para lectura ejecutiva."))
+    ejecutivo_section = ""
+    if ejecutivo_cards:
+        ejecutivo_section = f"""
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Dirección</div>
+                        <h2>Tableros ejecutivos</h2>
+                        <div class="section-note">Presupuestos y flujo de efectivo como módulo independiente de consulta ejecutiva.</div>
+                    </div>
+                </div>
+                <div class="action-grid">
+                    {build_link_cards(ejecutivo_cards, "tone-green")}
+                </div>
+            </section>
+        """
+
     configuracion_cards = []
     if _is_configuration_panel_user(current_empleado):
         configuracion_cards = filter_cards_by_tools([
@@ -14154,6 +14185,7 @@ async def panel(
                 {operaciones_section}
                 {aprobaciones_section}
                 {soporte_section}
+                {ejecutivo_section}
                 {configuracion_section}
             </div>
         </div>
@@ -24815,6 +24847,21 @@ async def documentos_pendientes(
         </section>
     """
 
+    pending_amount_by_currency: dict[str, Decimal] = {}
+    for documento in documentos:
+        row_currency = currency_for(documento)
+        try:
+            row_amount = Decimal(str(getattr(documento, "monto_total", None) or getattr(documento, "monto_solicitado", None) or 0))
+        except (InvalidOperation, ValueError, TypeError):
+            row_amount = Decimal("0")
+        pending_amount_by_currency[row_currency] = (
+            pending_amount_by_currency.get(row_currency, Decimal("0")) + row_amount
+        )
+    pending_amount_display = " · ".join(
+        format_currency(amount, currency)
+        for currency, amount in sorted(pending_amount_by_currency.items())
+    ) or format_currency(Decimal("0"), "MXN")
+
     pendientes_side_html = f"""
         <div class="eyebrow">Bandeja de aprobaci\u00f3n</div>
         <div class="meta-grid">
@@ -24822,6 +24869,11 @@ async def documentos_pendientes(
                 <span>Pendientes</span>
                 <strong>{len(documentos)}</strong>
                 <small>Documentos esperando tu decisi\u00f3n con los filtros actuales.</small>
+            </div>
+            <div class="meta-card">
+                <span>Monto acumulado</span>
+                <strong>{pending_amount_display}</strong>
+                <small>Suma de documentos pendientes con los filtros actuales.</small>
             </div>
             <div class="meta-card">
                 <span>Filtros activos</span>
@@ -24929,7 +24981,7 @@ async def documentos_pendientes_accion_lote(
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Approve or reject multiple pending documents using the canonical workflow gate."""
-    if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+    if not await _can_review_pending_approvals(session, current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     redirect_url = determine_redirect_url(next, None, default_to_detail=False)
@@ -25020,8 +25072,7 @@ async def historial_aprobador(
     - Admin/superadmin: see all approvals/rejections in the system
     """
 
-    # Check role - only finanzas or admin can access
-    if current_empleado.rol not in ('finanzas', 'admin', 'superadmin', 'super_admin'):
+    if not await _can_review_pending_approvals(session, current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     # Build query based on role
@@ -25294,8 +25345,7 @@ async def documentos_todos(
     - Supports filtering by estado, tipo, situacion, empleado_nombre, and reporting search
     """
 
-    # Check role
-    if current_empleado.rol not in ('coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin'):
+    if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     # Build base query
@@ -25561,7 +25611,7 @@ async def _query_documentos_todos_for_export(
     q: Optional[str] = None,
     situacion: Optional[str] = None,
 ) -> list[Documento]:
-    if current_empleado.rol not in ('coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin'):
+    if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     query_stmt = select(Documento).options(
@@ -29043,18 +29093,9 @@ async def _render_solicitud_terceros_form(
     ro_terceros_value, ro_terceros_help = referencia_operaciones_form_display(
         current_empleado
     )
+    # El concepto presupuestal ya no se captura al crear solicitudes.
+    # Flujo canonico: usuario captura operacion -> Control Presupuestal asigna.
     budget_concept_row_terceros = ""
-    if can_manage_budget_classification:
-        budget_concept_row_terceros = render_st_doc_row(
-            "CONCEPTO:",
-            (
-                '<select name="budget_concept_id" '
-                'id="budget_concept_id_terceros">'
-                f"{budget_concept_options_terceros}</select>"
-                "<small>Obligatoria cuando la solicitud esta ligada "
-                "a un torneo.</small>"
-            ),
-        )
 
     html = f"""
     <!DOCTYPE html>
@@ -29461,7 +29502,6 @@ async def _render_solicitud_terceros_form(
             }})();
         </script>
         {_render_category_sync_script(category_map=tournament_categories_terceros, tournament_select_id="torneo_id", category_select_id="categorias_terceros")}
-        {_render_budget_concept_sync_script(concept_map=tournament_budget_concepts_terceros, tournament_select_id="torneo_id", concept_select_id="budget_concept_id_terceros", selected_id=preserve_budget_concept_id, required=False, phase_select_id="fase_terceros") if can_manage_budget_classification else ""}
         {render_pdf_file_preview_script()}
         {render_materialidades_file_picker_script()}
         {render_cfdi_solicitud_terceros_autofill_script()}
@@ -29545,8 +29585,8 @@ async def crear_nueva_solicitud_terceros(
                 )
             )
 
-        if not _can_manage_budget_classification(current_empleado):
-            budget_concept_id = None
+        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
             session,
@@ -29810,8 +29850,8 @@ async def editar_solicitud_terceros_post(
             archivos_generales=archivos_generales,
         )
 
-        if not _can_manage_budget_classification(current_empleado):
-            budget_concept_id = None
+        # Toda solicitud entra primero a Control Presupuestal; la partida se asigna ahi.
+        budget_concept_id = None
 
         fase_err, fase_final = await _validate_solicitud_terceros_fase(
             session,

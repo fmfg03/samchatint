@@ -163,26 +163,23 @@ def required_attachment_categories(
     provider_person_type: Optional[str] = None,
 ) -> set[str]:
     if target_tipo == "proveedor":
-        person_type = normalize_provider_person_type(
+        # Operaciones pidió que comprobante de domicilio, INE y contrato/convenio
+        # sean opcionales para Persona Moral y Persona Física. La constancia fiscal
+        # y carátula bancaria siguen siendo los soportes mínimos para alta/pago.
+        normalize_provider_person_type(
             target_tipo,
             provider_person_type,
         )
-        required = {
+        return {
             "constancia_situacion_fiscal",
-            "comprobante_domicilio_fiscal_comercial",
             "caratula_estado_cuenta",
-            "contrato_convenio_plataforma",
         }
-        if person_type == "persona_moral":
-            required.add("ine_apoderado_legal")
-        else:
-            required.add("ine_titular_constancia")
-        return required
     if target_tipo == "operadores_regionales":
+        # El contrato con Plataforma Sports es opcional; INE y carátula siguen
+        # siendo los mínimos operativos para identidad y pago.
         return {
             "ine_colaborador_externo",
             "caratula_estado_cuenta",
-            "contrato_plataforma",
         }
     if target_tipo == "participante_torneo":
         if participant_is_minor is None:
@@ -190,8 +187,9 @@ def required_attachment_categories(
                 "missing_participant_age",
                 "Indique si el participante es mayor o menor de edad.",
             )
+        # Credencial/registro del torneo o escolar es opcional. Se conservan los
+        # soportes de identidad y expediente médico como requisitos mínimos.
         required = {
-            "credencial_participante",
             "caratula_estado_cuenta",
             "expediente_atencion_medica",
         }
