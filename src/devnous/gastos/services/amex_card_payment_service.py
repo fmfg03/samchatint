@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..models import AmexCardAccount, Aprobacion, Documento, Empleado
+from .amex_accounting_posting_service import amex_payment_card_marker
 from .amex_expense_service import FINANCE_AMEX_ROLES
 from .documento_service import generate_documento_reference_number
 from .payment_run_service import parse_payment_run_date, PaymentRunValidationError
@@ -154,6 +155,7 @@ async def create_amex_card_payment_request(
         notas=(
             "Solicitud generada desde Conciliación AMEX para Payment Run. "
             f"Tarjeta: {label}; terminación: {card.last4}; cuenta pasivo: {liability_code}."
+            f"\n{amex_payment_card_marker(card.id)}"
         ),
         enviado_en=now,
         aprobado_en=now,

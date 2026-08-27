@@ -107,6 +107,7 @@ from ..services.amex_reconciliation_notification_service import (
     AmexReconciliationNotificationError,
     notify_amex_reconciliation_validated,
 )
+from ..services.amex_accounting_posting_service import ensure_amex_reconciliation_posting
 from ..services.amex_cfdi_matching_service import (
     is_pase_expense,
     suggest_amex_cfdi_matches,
@@ -17602,6 +17603,17 @@ async def amex_conciliacion_validate_notify(
         if card_account is None:
             raise AmexReconciliationNotificationError(
                 "La tarjeta AMEX seleccionada no existe o no esta activa."
+            )
+        posting = await ensure_amex_reconciliation_posting(
+            session,
+            year=selected_year,
+            month=selected_month,
+            card_account=card_account,
+        )
+        if posting.status == "pending":
+            raise AmexReconciliationNotificationError(
+                "No se puede validar la conciliación AMEX hasta completar su "
+                f"configuración contable ({posting.reason or 'incompleta'})."
             )
         result = await notify_amex_reconciliation_validated(
             session,

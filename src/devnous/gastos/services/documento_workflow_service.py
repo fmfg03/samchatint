@@ -13,8 +13,10 @@ from sqlalchemy.orm import selectinload
 from ..models import Aprobacion, CuentaDeGastos, Documento, Empleado, ExpenseReport
 from ..utils.mexico_city_dates import utc_now
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
+from .amex_accounting_posting_service import ensure_amex_report_approval_posting
 from .employee_debtor_accounting_service import (
     ensure_debtor_comprobacion_posting_for_informe,
+    ensure_provider_approval_posting,
 )
 from .customer_success_audit import (
     AuditRequestContext,
@@ -402,10 +404,37 @@ async def transition_documento_workflow(
         documento.aprobado_en = now
         assign_fecha_pago_on_solicitud_approval(documento)
         if documento.tipo == "INFORME":
-            await ensure_debtor_comprobacion_posting_for_informe(
+            amex_posting = await ensure_amex_report_approval_posting(
                 session,
                 informe_documento=documento,
             )
+            if amex_posting.status == "pending":
+                raise DocumentoWorkflowValidationError(
+                    "accounting_posting_pending",
+                    "No se puede aprobar el informe AMEX hasta completar su configuraci\u00f3n "
+                    f"contable ({amex_posting.reason or 'incompleta'}).",
+                )
+            posting = await ensure_debtor_comprobacion_posting_for_informe(
+                session,
+                informe_documento=documento,
+            )
+            if posting.status == "pending":
+                raise DocumentoWorkflowValidationError(
+                    "accounting_posting_pending",
+                    "No se puede aprobar el informe hasta completar su configuraci\u00f3n "
+                    f"contable ({posting.reason or 'incompleta'}).",
+                )
+        elif documento.tipo == "SOLICITUD":
+            posting = await ensure_provider_approval_posting(
+                session,
+                documento=documento,
+            )
+            if posting.status == "pending":
+                raise DocumentoWorkflowValidationError(
+                    "accounting_posting_pending",
+                    "No se puede aprobar la solicitud hasta completar su configuraci\u00f3n "
+                    f"contable ({posting.reason or 'incompleta'}).",
+                )
         aprobacion_accion = "aprobar"
 
     elif normalized_action == "reject":

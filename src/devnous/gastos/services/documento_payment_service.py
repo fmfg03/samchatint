@@ -13,10 +13,15 @@ from sqlalchemy.orm import selectinload
 
 from ..models import Aprobacion, Documento, Empleado, Reembolso, Tournament
 from .cfdi_expense_link_service import link_expense_to_cfdi_if_manual_uuid_set
+from .amex_accounting_posting_service import (
+    ensure_amex_payment_posting,
+    parse_amex_payment_card_id,
+)
 from .documento_workflow_service import promote_solicitudes_ready_for_payment
 from .documento_semantics import is_employee_reimbursement
 from .employee_debtor_accounting_service import (
     ensure_debtor_payment_posting_for_document,
+    ensure_provider_payment_posting,
 )
 from .expense_accounting_service import _resolve_project_no_deducible_account
 from .expense_service import create_expense_from_data
@@ -186,6 +191,47 @@ async def register_document_payment(
             "El documento debe tener un monto solicitado válido.",
         )
 
+    fecha_pago = documento.fecha_pago if documento.fecha_pago else date.today()
+    fecha_pago_dt = datetime.combine(fecha_pago, datetime.min.time())
+    metodo_pago = documento.metodo_pago if documento.metodo_pago else "TRANSFERENCIA"
+
+    amex_card_payment_id = parse_amex_payment_card_id(documento)
+    if amex_card_payment_id is not None:
+        posting = await ensure_amex_payment_posting(
+            session,
+            documento=documento,
+            payment_date=fecha_pago,
+        )
+        if posting.status == "pending":
+            raise DocumentoPaymentValidationError(
+                "accounting_posting_pending",
+                "No se puede registrar el pago AMEX hasta completar su configuraci\u00f3n "
+                f"contable ({posting.reason or 'incompleta'}).",
+            )
+        documento.estado = "pagado"
+        documento.pagado_en = datetime.utcnow()
+        aprobacion = Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=actor.id,
+            accion="pagar",
+            comentario="Pago AMEX marcado como pagado contra pasivo de tarjeta.",
+            fecha=datetime.utcnow(),
+        )
+        session.add(aprobacion)
+        await session.commit()
+        await session.refresh(documento)
+        await session.refresh(aprobacion)
+        _schedule_solicitud_paid_telegram_notifications(
+            documento_id=documento.id,
+            actor_id=actor.id,
+        )
+        return DocumentoPagoResult(
+            documento=documento,
+            aprobacion=aprobacion,
+            expense=None,
+        )
+
     has_proveedor = documento.proveedor_cliente_id is not None
     has_beneficiario = documento.beneficiario_empleado_id is not None
     if not has_proveedor and not has_beneficiario:
@@ -195,16 +241,22 @@ async def register_document_payment(
         )
     if has_proveedor and has_beneficiario:
         if documento.cuenta_gastos_id:
-            documento.estado = "pagado"
-            documento.pagado_en = datetime.utcnow()
             beneficiary = documento.beneficiario_empleado
             if beneficiary is not None:
-                await ensure_debtor_payment_posting_for_document(
+                posting = await ensure_debtor_payment_posting_for_document(
                     session,
                     documento=documento,
                     empleado=beneficiary,
                     fecha_pago=documento.fecha_pago or date.today(),
                 )
+                if posting.status == "pending":
+                    raise DocumentoPaymentValidationError(
+                        "accounting_posting_pending",
+                        "No se puede registrar el pago hasta completar su configuraci\u00f3n "
+                        f"contable ({posting.reason or 'incompleta'}).",
+                    )
+            documento.estado = "pagado"
+            documento.pagado_en = datetime.utcnow()
             aprobacion = Aprobacion(
                 tipo_entidad="documento",
                 entidad_id=documento.id,
@@ -258,11 +310,18 @@ async def register_document_payment(
         if torneo:
             proyecto = torneo.name
 
-    fecha_pago = documento.fecha_pago if documento.fecha_pago else date.today()
-    fecha_pago_dt = datetime.combine(fecha_pago, datetime.min.time())
-    metodo_pago = documento.metodo_pago if documento.metodo_pago else "TRANSFERENCIA"
-
     if has_proveedor:
+        posting = await ensure_provider_payment_posting(
+            session,
+            documento=documento,
+            fecha_pago=fecha_pago,
+        )
+        if posting.status == "pending":
+            raise DocumentoPaymentValidationError(
+                "accounting_posting_pending",
+                "No se puede registrar el pago hasta completar su configuraci\u00f3n "
+                f"contable ({posting.reason or 'incompleta'}).",
+            )
         proveedor_nombre = (
             documento.proveedor_cliente.nombre if documento.proveedor_cliente else "Proveedor"
         )
@@ -336,16 +395,22 @@ async def register_document_payment(
         flow_type = "personal"
 
     expense.documento_id = documento.id
-    documento.estado = "pagado"
-    documento.pagado_en = datetime.utcnow()
-    documento.gasto_generado_id = expense.id
     if has_beneficiario and beneficiario_empleado is not None:
-        await ensure_debtor_payment_posting_for_document(
+        posting = await ensure_debtor_payment_posting_for_document(
             session,
             documento=documento,
             empleado=beneficiario_empleado,
             fecha_pago=fecha_pago,
         )
+        if posting.status == "pending":
+            raise DocumentoPaymentValidationError(
+                "accounting_posting_pending",
+                "No se puede registrar el pago hasta completar su configuraci\u00f3n "
+                f"contable ({posting.reason or 'incompleta'}).",
+            )
+    documento.estado = "pagado"
+    documento.pagado_en = datetime.utcnow()
+    documento.gasto_generado_id = expense.id
 
     # Propagate CFDI capture from the solicitud (if any) to the generated expense so the
     # standard cfdi_uuid_manual → cfdi_report_id linking pipeline can auto-match when the
