@@ -195,6 +195,7 @@ from ..services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
     approval_subject_empleado,
     effective_account_beneficiary_id,
+    effective_account_provider_beneficiary_id,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
@@ -34969,6 +34970,7 @@ async def cuenta_de_gastos_detail(
                 selectinload(CuentaDeGastos.torneo),
                 selectinload(CuentaDeGastos.empleado),
                 selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
             )
         )
         cuenta = cuenta_result.scalar_one_or_none()
@@ -35242,20 +35244,26 @@ async def cuenta_de_gastos_detail(
     cerrar_informe_form_html = ""
     if informe_doc_can_close:
         if saldo < 0:
-            beneficiary_id = effective_account_beneficiary_id(cuenta)
-            beneficiary_result = await session.execute(
-                select(Empleado).where(Empleado.id == beneficiary_id)
-            )
-            beneficiary_empleado = beneficiary_result.scalar_one_or_none()
-            if beneficiary_empleado is not None:
-                bank_options_html = await _html_empleado_bank_account_options(
-                    session=session, empleado=beneficiary_empleado
+            provider_beneficiary = getattr(cuenta, "beneficiario_proveedor_cliente", None)
+            if provider_beneficiary is not None:
+                bank_options_html = _html_single_proveedor_bank_account_options(
+                    provider_beneficiary
                 )
             else:
-                bank_options_html = (
-                    '<option value="" disabled selected data-is-placeholder="true">'
-                    "— Seleccione cuenta bancaria —</option>"
+                beneficiary_id = effective_account_beneficiary_id(cuenta)
+                beneficiary_result = await session.execute(
+                    select(Empleado).where(Empleado.id == beneficiary_id)
                 )
+                beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+                if beneficiary_empleado is not None:
+                    bank_options_html = await _html_empleado_bank_account_options(
+                        session=session, empleado=beneficiary_empleado
+                    )
+                else:
+                    bank_options_html = (
+                        '<option value="" disabled selected data-is-placeholder="true">'
+                        "— Seleccione cuenta bancaria —</option>"
+                    )
             cerrar_informe_form_html = (
                 f'<form method="POST" action="/informes-de-gastos/{cuenta.id}/cerrar" '
                 'style="display:inline-block;text-align:left;vertical-align:top;">'
@@ -35418,12 +35426,16 @@ async def cuenta_de_gastos_detail(
     solicitante_display = (
         solicitante_cuenta.nombre if solicitante_cuenta is not None else "â€”"
     )
+    beneficiario_proveedor_cuenta = getattr(cuenta, "beneficiario_proveedor_cliente", None)
     beneficiario_cuenta = (
         getattr(cuenta, "beneficiario_empleado", None) or solicitante_cuenta
     )
-    beneficiario_display = (
-        beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "â€”"
-    )
+    if beneficiario_proveedor_cuenta is not None:
+        beneficiario_display = beneficiario_proveedor_cuenta.nombre or "â€”"
+    else:
+        beneficiario_display = (
+            beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "â€”"
+        )
     clasificacion_info = (
         f'<p class="section-note" style="margin:8px 0 0;"><strong>Solicita:</strong> '
         f'{escape(solicitante_display)} &nbsp;| &nbsp;<strong>Beneficiario:</strong> '
@@ -36625,31 +36637,24 @@ async def cerrar_cuenta_de_gastos(
         saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta_id)
         saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
         if saldo_raw < -0.005:
+            provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
             beneficiary_id = effective_account_beneficiary_id(cuenta)
-            existing_reembolso = await session.execute(
-                select(Documento.id)
-                .where(
-                    Documento.cuenta_gastos_id == cuenta_id,
-                    Documento.tipo == "SOLICITUD",
-                    Documento.beneficiario_empleado_id == beneficiary_id,
-                    Documento.concepto_pago.like("Reembolso de saldo a favor%"),
-                    Documento.estado.notin_(["rechazado", "cancelado"]),
+            existing_filters = [
+                Documento.cuenta_gastos_id == cuenta_id,
+                Documento.tipo == "SOLICITUD",
+                Documento.concepto_pago.like("Reembolso de saldo a favor%"),
+                Documento.estado.notin_(["rechazado", "cancelado"]),
+            ]
+            if provider_beneficiary_id is not None:
+                existing_filters.append(
+                    Documento.beneficiario_proveedor_cliente_id == provider_beneficiary_id
                 )
-                .limit(1)
+            else:
+                existing_filters.append(Documento.beneficiario_empleado_id == beneficiary_id)
+            existing_reembolso = await session.execute(
+                select(Documento.id).where(*existing_filters).limit(1)
             )
             if existing_reembolso.scalar_one_or_none() is None:
-                owner_result = await session.execute(
-                    select(Empleado).where(Empleado.id == beneficiary_id)
-                )
-                beneficiary_empleado = owner_result.scalar_one_or_none()
-                matches = (
-                    await _get_matching_bank_accounts_for_empleado(
-                        session=session, empleado=beneficiary_empleado
-                    )
-                    if beneficiary_empleado is not None
-                    else []
-                )
-                allowed_ids = {prov.id for prov, _ in matches}
                 proveedor_uuid: Optional[UUIDType] = None
                 proveedor_raw = (proveedor_cliente_id or "").strip()
                 if proveedor_raw:
@@ -36657,21 +36662,61 @@ async def cerrar_cuenta_de_gastos(
                         proveedor_uuid = UUIDType(proveedor_raw)
                     except (ValueError, TypeError):
                         proveedor_uuid = None
-                if proveedor_uuid is None or proveedor_uuid not in allowed_ids:
-                    return RedirectResponse(
-                        url=_append_query_params(
-                            redirect_url,
-                            {
-                                "error": "invalid_bank_account",
-                                "error_msg": (
-                                    "Seleccione una cuenta bancaria válida del "
-                                    "beneficiario para el reembolso del saldo a favor "
-                                    "antes de cerrar el informe."
-                                ),
-                            },
-                        ),
-                        status_code=303,
+                if provider_beneficiary_id is not None:
+                    provider_result = await session.execute(
+                        select(ProveedorCliente).where(
+                            and_(
+                                ProveedorCliente.id == provider_beneficiary_id,
+                                ProveedorCliente.activo == True,
+                            )
+                        )
                     )
+                    provider_beneficiary = provider_result.scalar_one_or_none()
+                    if (
+                        provider_beneficiary is None
+                        or proveedor_uuid != provider_beneficiary_id
+                    ):
+                        return RedirectResponse(
+                            url=_append_query_params(
+                                redirect_url,
+                                {
+                                    "error": "invalid_bank_account",
+                                    "error_msg": (
+                                        "Seleccione la cuenta bancaria del operador "
+                                        "regional beneficiario antes de cerrar el informe."
+                                    ),
+                                },
+                            ),
+                            status_code=303,
+                        )
+                else:
+                    owner_result = await session.execute(
+                        select(Empleado).where(Empleado.id == beneficiary_id)
+                    )
+                    beneficiary_empleado = owner_result.scalar_one_or_none()
+                    matches = (
+                        await _get_matching_bank_accounts_for_empleado(
+                            session=session, empleado=beneficiary_empleado
+                        )
+                        if beneficiary_empleado is not None
+                        else []
+                    )
+                    allowed_ids = {prov.id for prov, _ in matches}
+                    if proveedor_uuid is None or proveedor_uuid not in allowed_ids:
+                        return RedirectResponse(
+                            url=_append_query_params(
+                                redirect_url,
+                                {
+                                    "error": "invalid_bank_account",
+                                    "error_msg": (
+                                        "Seleccione una cuenta bancaria válida del "
+                                        "beneficiario para el reembolso del saldo a favor "
+                                        "antes de cerrar el informe."
+                                    ),
+                                },
+                            ),
+                            status_code=303,
+                        )
                 try:
                     payload = build_solicitud_personal_payload(
                         cuenta_id=cuenta_id,

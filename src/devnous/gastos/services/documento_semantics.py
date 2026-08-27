@@ -9,11 +9,21 @@ EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX = "Reembolso de saldo a favor"
 
 
 def effective_account_beneficiary_id(cuenta: Any) -> Any:
-    """Return who must receive funds without changing report ownership."""
+    """Return the employee beneficiary without changing report ownership."""
     return (
         getattr(cuenta, "beneficiario_empleado_id", None)
         or getattr(cuenta, "empleado_id", None)
     )
+
+
+def effective_account_provider_beneficiary_id(cuenta: Any) -> Any:
+    """Return provider/operator beneficiary id when the report is for a non-employee."""
+    return getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+
+
+def account_uses_provider_beneficiary(cuenta: Any) -> bool:
+    """True when reimbursement/bank account must resolve against provider/operator."""
+    return effective_account_provider_beneficiary_id(cuenta) is not None
 
 
 def reimbursement_concept_from_cuenta(cuenta: Any) -> str:
