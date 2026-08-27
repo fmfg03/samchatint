@@ -717,33 +717,38 @@ def render_budget_partida_matrix(
                 line,
                 can_edit=can_edit,
             )
+            budget_amount_value = float(line.get("budget_amount") or 0)
             html_parts.append(
                 f"""
-                <div style="border:1px solid #dbe2ea;border-radius:14px;background:#fff;padding:12px;margin-bottom:12px;">
-                    <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
-                        <div style="flex:1;">
-                            <div style="font-weight:800;color:#0f172a;">{escape(str(line.get("concept_name") or ""))}</div>
-                            <div style="font-size:12px;color:#64748b;margin-top:4px;">
-                                Monto total: ${float(line.get("budget_amount") or 0):,.2f}
+                <div class="budget-excel-line-card" style="border:1px solid #dbe2ea;border-radius:14px;background:#fff;padding:12px;margin-bottom:12px;">
+                    <form method="POST" action="/admin/presupuestos/lineas/{escape(line_id)}/update" style="margin-top:0;">
+                        <div style="display:grid;grid-template-columns:minmax(240px,1.2fr) minmax(180px,.6fr) minmax(280px,1fr) auto;gap:10px;align-items:end;margin-bottom:10px;">
+                            <div>
+                                <label style="display:block;font-size:11px;font-weight:800;color:#475569;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;">Concepto</label>
+                                <div style="font-weight:800;color:#0f172a;padding:9px 0;">{escape(str(line.get("concept_name") or ""))}</div>
                             </div>
-                            {cuenta_field_html if not can_edit else ""}
+                            <div>
+                                <label for="budget-amount-{escape(line_id)}" style="display:block;font-size:11px;font-weight:800;color:#475569;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;">Monto total</label>
+                                <input id="budget-amount-{escape(line_id)}" class="budget-line-total" type="number" step="0.01" min="0" name="budget_amount" value="{budget_amount_value:.2f}" data-line-id="{escape(line_id)}" style="width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font-weight:800;box-sizing:border-box;"{disabled}>
+                            </div>
+                            <div>{cuenta_field_html if can_edit else _render_matrix_cuenta_field(line_id, line, can_edit=False)}</div>
+                            <div>
+                                {f'<button type="button" class="budget-spread-evenly" data-line-id="{escape(line_id)}" data-budget-target-kind="{"income" if clean_mode == "income" else "expense"}" style="background:#e0f2fe;color:#075985;border:1px solid #bae6fd;border-radius:999px;padding:8px 12px;font-size:12px;font-weight:800;cursor:pointer;white-space:nowrap;">Distribuir total</button>' if can_edit else ''}
+                            </div>
                         </div>
-                    </div>
-                    <form method="POST" action="/admin/presupuestos/lineas/{escape(line_id)}/update" style="margin-top:10px;">
                         <input type="hidden" name="version_id" value="{escape(version_id)}">
                         <input type="hidden" name="tournament_key" value="{escape(tournament_key)}">
                         {f'<input type="hidden" name="edition_year" value="{int(edition_year)}">' if edition_year is not None else ""}
                         {f'<input type="hidden" name="phase_filter" value="{escape(str(phase_filter))}">' if phase_filter else ""}
                         <input type="hidden" name="budget_view" value="{escape(budget_view)}">
         <input type="hidden" name="budget_period" value="{escape(budget_period)}">
-                        {cuenta_field_html if can_edit else ""}
-                        <div style="overflow-x:auto;">
-                        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                        <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:12px;">
+                        <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:11px;">
                             <thead>
                                 <tr style="background:#f8fafc;">
-                                    <th style="text-align:left;padding:6px;border-bottom:1px solid #e2e8f0;">Concepto</th>
-                                    <th style="padding:6px;border-bottom:1px solid #e2e8f0;">Monto total</th>
-                                    {''.join(f'<th style="padding:6px;border-bottom:1px solid #e2e8f0;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
+                                    <th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:0;background:#f8fafc;z-index:2;min-width:150px;">Renglón</th>
+                                    <th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:150px;background:#f8fafc;z-index:2;min-width:96px;">Monto total</th>
+                                    {''.join(f'<th title="{escape(_budget_period_bucket(int(edition_year or date.today().year), idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">S{idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -751,7 +756,7 @@ def render_budget_partida_matrix(
             )
 
             def _row(label: str, row_kind: str, *, editable: bool = False) -> str:
-                cells = [f'<td style="padding:6px;font-weight:700;color:#475569;">{escape(label)}</td>']
+                cells = [f'<td style="padding:6px 10px;font-weight:700;color:#475569;position:sticky;left:0;background:#fff;z-index:1;min-width:150px;">{escape(label)}</td>']
                 total = 0.0
                 for month in range(1, BUDGET_WEEK_COUNT + 1):
                     month_plan = plan.get(month, {})
@@ -761,8 +766,8 @@ def render_budget_partida_matrix(
                         if editable:
                             cells.append(
                                 f'<td style="padding:4px;"><input type="number" step="0.01" min="0" '
-                                f'name="month_{month}_expense" value="{value:.2f}" '
-                                f'style="width:72px;padding:4px;border:1px solid #cbd5e1;border-radius:6px;"{disabled}></td>'
+                                f'name="month_{month}_expense" value="{value:.2f}" data-budget-week-input="{escape(line_id)}" data-budget-week-kind="expense" '
+                                f'style="width:76px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;"{disabled}></td>'
                             )
                         else:
                             cells.append(
@@ -773,8 +778,8 @@ def render_budget_partida_matrix(
                         if editable:
                             cells.append(
                                 f'<td style="padding:4px;"><input type="number" step="0.01" min="0" '
-                                f'name="month_{month}_income" value="{value:.2f}" '
-                                f'style="width:72px;padding:4px;border:1px solid #cbd5e1;border-radius:6px;"{disabled}></td>'
+                                f'name="month_{month}_income" value="{value:.2f}" data-budget-week-input="{escape(line_id)}" data-budget-week-kind="income" '
+                                f'style="width:76px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;text-align:right;"{disabled}></td>'
                             )
                         else:
                             cells.append(
@@ -801,7 +806,7 @@ def render_budget_partida_matrix(
                         value = 0.0
                         cells.append(f'<td style="padding:6px;text-align:right;">—</td>')
                     total += value
-                cells.insert(1, f'<td style="padding:6px;text-align:right;font-weight:800;">${total:,.2f}</td>')
+                cells.insert(1, f'<td style="padding:6px 10px;text-align:right;font-weight:800;position:sticky;left:150px;background:#fff;z-index:1;min-width:96px;">${total:,.2f}</td>')
                 return f"<tr>{''.join(cells)}</tr>"
 
             if clean_mode in {"full", "expenses"}:
@@ -861,11 +866,49 @@ def render_budget_partida_matrix(
             )
         html_parts.append("</div>")
 
+    if can_edit:
+        html_parts.append(_render_budget_matrix_spreadsheet_script())
     if can_edit and cuentas_contables:
         html_parts.append(_render_matrix_cuenta_search_script(cuentas_contables))
 
     return "".join(html_parts)
 
+
+
+def _render_budget_matrix_spreadsheet_script() -> str:
+    return """
+    <script>
+      (function() {
+        function parseAmount(value) {
+          const n = Number((value || "").toString().replace(/,/g, ""));
+          return Number.isFinite(n) ? n : 0;
+        }
+        document.querySelectorAll(".budget-spread-evenly").forEach(function(button) {
+          button.addEventListener("click", function() {
+            const lineId = button.getAttribute("data-line-id") || "";
+            const kind = button.getAttribute("data-budget-target-kind") || "expense";
+            const totalInput = document.querySelector('.budget-line-total[data-line-id="' + lineId + '"]');
+            const weekInputs = Array.from(document.querySelectorAll('[data-budget-week-input="' + lineId + '"][data-budget-week-kind="' + kind + '"]'));
+            if (!totalInput || weekInputs.length === 0) {
+              return;
+            }
+            const total = parseAmount(totalInput.value);
+            const base = Math.floor((total / weekInputs.length) * 100) / 100;
+            let assigned = 0;
+            weekInputs.forEach(function(input, index) {
+              let value = base;
+              if (index === weekInputs.length - 1) {
+                value = Math.round((total - assigned) * 100) / 100;
+              } else {
+                assigned += base;
+              }
+              input.value = value.toFixed(2);
+            });
+          });
+        });
+      })();
+    </script>
+    """
 
 def render_budget_detail_section_nav(
     *,

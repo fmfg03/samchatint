@@ -475,6 +475,9 @@ def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     assert 'name="account_code_final"' in html
     assert "5300-001-006 - AGUINALDO" in html
     assert "Guardar plan por semanas" in html
+    assert "Distribuir total" in html
+    assert 'name="budget_amount"' in html
+    assert 'data-budget-week-kind="expense"' in html
     assert "Semana 52" in html
     assert 'name="month_52_expense"' in html
 
