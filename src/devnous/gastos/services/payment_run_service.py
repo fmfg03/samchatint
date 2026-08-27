@@ -325,6 +325,7 @@ async def list_payment_run_items(
             (
                 d.numero_referencia ILIKE :query
                 OR d.concepto_pago ILIKE :query
+                OR CAST(d.referencia_operaciones AS TEXT) ILIKE :query
                 OR e.nombre ILIKE :query
                 OR b.nombre ILIKE :query
                 OR pc.nombre ILIKE :query
@@ -349,8 +350,10 @@ async def list_payment_run_items(
             SELECT
                 d.id,
                 d.numero_referencia,
+                d.referencia_operaciones,
                 d.estado,
                 d.fecha_pago,
+                d.aprobado_en,
                 d.pagado_en,
                 d.pago_urgente,
                 d.concepto_pago,

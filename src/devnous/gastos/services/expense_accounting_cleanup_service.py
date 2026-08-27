@@ -22,8 +22,8 @@ from samchat.assistant.historical_accounting_precedent import (
 
 from ..models import CFDIReport, CuentaContable, ExpenseReport
 
-DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "1120-001-001"
-DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "BANCO SANTANDER 65506206424"
+DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO = "2120-000-000"
+DEFAULT_CLEANUP_CONTRA_CUENTA_NOMBRE = "ACREEDORES DIVERSOS"
 from .budget_concept_account_service import cleanup_expense_loader_options
 from .expense_accounting_service import build_expense_accounting_preview
 from .hospedaje_tax_service import normalize_hospedaje_rate, normalize_hospedaje_state
@@ -173,7 +173,7 @@ async def build_historical_precedent_evidence(
 def resolve_default_cleanup_contra_cuenta(
     cuentas: Iterable[CuentaContable],
 ) -> Optional[CuentaContable]:
-    """Return the standard Santander bank account used as cleanup contrapartida."""
+    """Return the standard liability account used as cleanup contrapartida."""
 
     for cuenta in cuentas:
         if cuenta.codigo == DEFAULT_CLEANUP_CONTRA_CUENTA_CODIGO:
