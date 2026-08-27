@@ -7,9 +7,11 @@ from devnous.gastos.models import Documento
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram as tg
 from devnous.gastos.services.documento_semantics import (
+    account_uses_provider_beneficiary,
     approval_subject_empleado,
     approval_subject_empleado_id,
     effective_account_beneficiary_id,
+    effective_account_provider_beneficiary_id,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
@@ -35,6 +37,29 @@ def test_effective_account_beneficiary_falls_back_to_requester():
 
     assert effective_account_beneficiary_id(cuenta) == requester_id
 
+
+
+def test_effective_account_provider_beneficiary_detects_operator():
+    provider_id = uuid4()
+    cuenta = SimpleNamespace(
+        empleado_id=uuid4(),
+        beneficiario_empleado_id=None,
+        beneficiario_proveedor_cliente_id=provider_id,
+    )
+
+    assert effective_account_provider_beneficiary_id(cuenta) == provider_id
+    assert account_uses_provider_beneficiary(cuenta) is True
+
+
+def test_effective_account_provider_beneficiary_is_absent_for_employee_report():
+    cuenta = SimpleNamespace(
+        empleado_id=uuid4(),
+        beneficiario_empleado_id=uuid4(),
+        beneficiario_proveedor_cliente_id=None,
+    )
+
+    assert effective_account_provider_beneficiary_id(cuenta) is None
+    assert account_uses_provider_beneficiary(cuenta) is False
 
 def test_approval_subject_prefers_employee_beneficiary_over_requester():
     requester = SimpleNamespace(id=uuid4(), nombre="Juan Pablo", aprobador_id=uuid4())
@@ -594,3 +619,16 @@ def test_document_workflow_allows_assigned_non_admin_approver_before_role_gate()
         assert subject_pos < role_gate_pos
         assert "es_aprobador_asignado = approval_subject.aprobador_id == actor.id" in block
         assert "es_superadmin = actor.rol in" in block
+
+
+def test_operator_beneficiary_reimbursement_is_preserved_in_service_and_route():
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    service_source = Path("src/devnous/gastos/services/documento_service.py").read_text()
+
+    assert "effective_account_provider_beneficiary_id(cuenta)" in route_source
+    assert "_html_single_proveedor_bank_account_options" in route_source
+    assert "Documento.beneficiario_proveedor_cliente_id == provider_beneficiary_id" in route_source
+    assert "cuenta_provider_beneficiary_id" in service_source
+    assert "beneficiario_empleado_id=(" in service_source
+    assert "beneficiario_proveedor_cliente_id=cuenta_provider_beneficiary_id" in service_source
+    assert "Seleccione la cuenta bancaria del operador regional beneficiario" in service_source

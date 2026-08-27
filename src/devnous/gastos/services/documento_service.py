@@ -1061,6 +1061,10 @@ async def create_solicitud_personal_document(
             "El concepto no corresponde al torneo del informe.",
         )
 
+    cuenta_provider_beneficiary_id = getattr(
+        cuenta, "beneficiario_proveedor_cliente_id", None
+    )
+
     selected_proveedor = None
     if payload.proveedor_cliente_id is not None:
         proveedor_result = await session.execute(
@@ -1077,6 +1081,15 @@ async def create_solicitud_personal_document(
                 "invalid_proveedor",
                 "Proveedor/Cliente inválido o inactivo.",
             )
+
+    if cuenta_provider_beneficiary_id is not None and (
+        selected_proveedor is None
+        or selected_proveedor.id != cuenta_provider_beneficiary_id
+    ):
+        raise SolicitudValidationError(
+            "invalid_proveedor",
+            "Seleccione la cuenta bancaria del operador regional beneficiario.",
+        )
 
     informe_result = await session.execute(
         select(Documento)
@@ -1120,11 +1133,14 @@ async def create_solicitud_personal_document(
         pago_urgente=payload.pago_urgente,
         referencia_operaciones=ro_shared or None,
         beneficiario_empleado_id=(
-            getattr(cuenta, "beneficiario_empleado_id", None) or payload.empleado_id
+            None
+            if cuenta_provider_beneficiary_id is not None
+            else (getattr(cuenta, "beneficiario_empleado_id", None) or payload.empleado_id)
         ),
         proveedor_cliente_id=(
             selected_proveedor.id if selected_proveedor is not None else None
         ),
+        beneficiario_proveedor_cliente_id=cuenta_provider_beneficiary_id,
         cuenta_gastos_id=cuenta.id,
         budget_concept_id=payload.budget_concept_id,
         referencia_base=cuenta.referencia_base,
