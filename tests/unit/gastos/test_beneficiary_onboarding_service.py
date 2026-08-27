@@ -75,23 +75,7 @@ def _attachment(category: str) -> svc.BeneficiaryOnboardingAttachmentInput:
     )
 
 
-def test_provider_moral_requires_full_tax_bank_and_contract_package() -> None:
-    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
-        svc.validate_required_attachments(
-            target_tipo="proveedor",
-            provider_person_type="persona_moral",
-            participant_is_minor=None,
-            attachments=[
-                _attachment("constancia_situacion_fiscal"),
-                _attachment("comprobante_domicilio_fiscal_comercial"),
-                _attachment("caratula_estado_cuenta"),
-                _attachment("contrato_convenio_plataforma"),
-            ],
-        )
-
-    assert exc.value.code == "missing_required_attachment"
-    assert "INE del apoderado legal" in exc.value.message
-
+def test_provider_moral_requires_only_tax_and_bank_minimum_package() -> None:
     validated = svc.validate_required_attachments(
         target_tipo="proveedor",
         provider_person_type="persona_moral",
@@ -112,23 +96,36 @@ def test_provider_moral_requires_full_tax_bank_and_contract_package() -> None:
         "contrato_convenio_plataforma",
     }
 
+    minimum = svc.validate_required_attachments(
+        target_tipo="proveedor",
+        provider_person_type="persona_moral",
+        participant_is_minor=None,
+        attachments=[
+            _attachment("constancia_situacion_fiscal"),
+            _attachment("caratula_estado_cuenta"),
+        ],
+    )
+    assert {item.categoria for item in minimum} == {
+        "constancia_situacion_fiscal",
+        "caratula_estado_cuenta",
+    }
 
-def test_provider_fisica_requires_owner_ine_package() -> None:
-    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
-        svc.validate_required_attachments(
-            target_tipo="proveedor",
-            provider_person_type="persona_fisica",
-            participant_is_minor=None,
-            attachments=[
-                _attachment("constancia_situacion_fiscal"),
-                _attachment("comprobante_domicilio_fiscal_comercial"),
-                _attachment("caratula_estado_cuenta"),
-                _attachment("contrato_convenio_plataforma"),
-            ],
-        )
 
-    assert exc.value.code == "missing_required_attachment"
-    assert "INE del titular de la constancia fiscal" in exc.value.message
+def test_provider_fisica_requires_only_tax_and_bank_minimum_package() -> None:
+    validated = svc.validate_required_attachments(
+        target_tipo="proveedor",
+        provider_person_type="persona_fisica",
+        participant_is_minor=None,
+        attachments=[
+            _attachment("constancia_situacion_fiscal"),
+            _attachment("caratula_estado_cuenta"),
+        ],
+    )
+
+    assert {item.categoria for item in validated} == {
+        "constancia_situacion_fiscal",
+        "caratula_estado_cuenta",
+    }
 
 
 def test_provider_requires_person_type() -> None:
@@ -142,20 +139,7 @@ def test_provider_requires_person_type() -> None:
     assert exc.value.code == "missing_provider_person_type"
 
 
-def test_operator_requires_ine_bank_statement_and_contract() -> None:
-    with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
-        svc.validate_required_attachments(
-            target_tipo="operadores_regionales",
-            participant_is_minor=None,
-            attachments=[
-                _attachment("ine_colaborador_externo"),
-                _attachment("caratula_estado_cuenta"),
-            ],
-        )
-
-    assert exc.value.code == "missing_required_attachment"
-    assert "Contrato con Plataforma Sports" in exc.value.message
-
+def test_operator_requires_ine_and_bank_statement_contract_optional() -> None:
     validated = svc.validate_required_attachments(
         target_tipo="operadores_regionales",
         participant_is_minor=None,
@@ -171,8 +155,21 @@ def test_operator_requires_ine_bank_statement_and_contract() -> None:
         "contrato_plataforma",
     }
 
+    minimum = svc.validate_required_attachments(
+        target_tipo="operadores_regionales",
+        participant_is_minor=None,
+        attachments=[
+            _attachment("ine_colaborador_externo"),
+            _attachment("caratula_estado_cuenta"),
+        ],
+    )
+    assert {item.categoria for item in minimum} == {
+        "ine_colaborador_externo",
+        "caratula_estado_cuenta",
+    }
 
-def test_participant_adult_requires_ine_credential_bank_statement_and_case_file() -> None:
+
+def test_participant_adult_requires_ine_bank_statement_and_case_file_credential_optional() -> None:
     with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
         svc.validate_required_attachments(
             target_tipo="participante_torneo",
@@ -200,8 +197,23 @@ def test_participant_adult_requires_ine_credential_bank_statement_and_case_file(
         "expediente_atencion_medica",
     }
 
+    minimum = svc.validate_required_attachments(
+        target_tipo="participante_torneo",
+        participant_is_minor=False,
+        attachments=[
+            _attachment("ine_participante"),
+            _attachment("caratula_estado_cuenta"),
+            _attachment("expediente_atencion_medica"),
+        ],
+    )
+    assert {item.categoria for item in minimum} == {
+        "ine_participante",
+        "caratula_estado_cuenta",
+        "expediente_atencion_medica",
+    }
 
-def test_participant_minor_requires_tutor_credential_bank_statement_and_case_file() -> None:
+
+def test_participant_minor_requires_tutor_bank_statement_and_case_file_credential_optional() -> None:
     with pytest.raises(svc.BeneficiaryOnboardingError) as exc:
         svc.validate_required_attachments(
             target_tipo="participante_torneo",
@@ -213,7 +225,7 @@ def test_participant_minor_requires_tutor_credential_bank_statement_and_case_fil
         )
 
     assert exc.value.code == "missing_required_attachment"
-    assert "Credencial del torneo o escolar" in exc.value.message
+    assert "Expediente del caso" in exc.value.message
 
 
 def test_employee_requires_only_bank_statement() -> None:
