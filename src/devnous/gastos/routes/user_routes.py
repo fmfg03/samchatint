@@ -9293,8 +9293,10 @@ def _can_request_for_other_employee(empleado: Empleado) -> bool:
     empleado_id = str(getattr(empleado, "id", "") or "")
     correo = (getattr(empleado, "correo", "") or "").strip().lower()
     nombre = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
+    role_norm = (getattr(empleado, "rol", "") or "").strip().lower()
     return bool(
-        empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
+        role_norm == "finanzas"
+        or empleado_id in _THIRD_PARTY_EMPLOYEE_REQUESTER_IDS
         or correo in _THIRD_PARTY_EMPLOYEE_REQUESTER_EMAILS
         or _third_party_requester_name_matches(nombre)
         or _has_explicit_third_party_employee_request_permission(empleado)

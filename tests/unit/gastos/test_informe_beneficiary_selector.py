@@ -71,6 +71,70 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
     assert "Cuenta bancaria del beneficiario" in html
     assert "El responsable" in html and "aprobador" in html
 
+
+@pytest.mark.asyncio
+async def test_crear_informe_form_shows_petty_cash_for_finance_role(monkeypatch):
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="DANIEL DOMINGUEZ SANCHEZ",
+        correo="ddominguez@plataformasports.com",
+        rol="finanzas",
+        permissions=set(),
+    )
+    benjamin = SimpleNamespace(
+        id=uuid4(),
+        nombre="BENJAMIN JIMENEZ VIGUERAS",
+        correo="bjimenez@plataformasports.com",
+    )
+    torneo = SimpleNamespace(id=uuid4(), name="Proyecto Demo")
+
+    async def fake_resolve(*_args, **_kwargs):
+        return requester
+
+    async def fake_active_empleados(*_args, **_kwargs):
+        return [requester]
+
+    async def fake_tournaments(*_args, **_kwargs):
+        return [torneo]
+
+    monkeypatch.setattr(
+        user_routes, "_resolve_active_beneficiary_empleado", fake_resolve
+    )
+    monkeypatch.setattr(
+        user_routes, "_active_beneficiary_empleados", fake_active_empleados
+    )
+    monkeypatch.setattr(
+        user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_active_regional_operator_beneficiaries",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_resolve_petty_cash_benjamin_employee",
+        AsyncMock(return_value=benjamin),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_html_empleado_bank_account_options",
+        AsyncMock(return_value='<option value="bank-1" selected>Cuenta gastos</option>'),
+    )
+    monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
+    monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
+
+    html = await user_routes.crear_cuenta_de_gastos_form(
+        request=SimpleNamespace(query_params=_QueryParams({})),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert "Es para caja chica" in html
+    assert 'value="caja_chica_usd"' in html
+    assert 'value="caja_chica_pesos"' in html
+
+
 @pytest.mark.asyncio
 async def test_crear_informe_form_allows_regional_operator_for_authorized_user(monkeypatch):
     requester = _authorized_requester()
@@ -234,6 +298,18 @@ async def test_crear_informe_submit_caja_chica_uses_benjamin_bank_and_alternate_
     assert captured["beneficiario_cuenta_bancaria"] is bank
     assert captured["beneficiario_operador"] is None
     assert captured["beneficiario_alterno_tipo"] == "caja_chica_usd"
+
+
+def test_finance_role_can_request_petty_cash_without_profile_assignment():
+    requester = SimpleNamespace(
+        id=uuid4(),
+        nombre="DANIEL DOMINGUEZ SANCHEZ",
+        correo="ddominguez@plataformasports.com",
+        rol="finanzas",
+        permissions=set(),
+    )
+
+    assert user_routes._can_request_for_other_employee(requester) is True
 
 
 @pytest.mark.asyncio

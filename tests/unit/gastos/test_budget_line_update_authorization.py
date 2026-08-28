@@ -194,6 +194,12 @@ def test_employee_beneficiary_preset_grants_only_third_party_request_token() -> 
     assert not any(token.startswith("admin") for token in preset["permissions"])
 
 
+def test_finance_preset_grants_employee_beneficiary_request() -> None:
+    preset = admin_routes._PROFILE_PRESETS["finanzas"]
+
+    assert "finance.employee_beneficiary.request" in preset["permissions"]
+
+
 def test_budget_profile_presets_do_not_grant_mutation_outside_superadmin() -> None:
     assert not any(
         token.startswith("budgets.line.update") or token.startswith("budgets.version.update")
