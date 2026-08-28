@@ -26037,6 +26037,21 @@ async def documentos_todos(
         </tr>
         """
 
+    bulk_params = {
+        key: value
+        for key, value in {
+            "q": q_value,
+            "estado": (estado or "").strip(),
+            "tipo": (tipo or "").strip(),
+            "situacion": situacion_value,
+            "empleado_nombre": (empleado_nombre or "").strip(),
+        }.items()
+        if value
+    }
+    bulk_href = "/documentos/todos/exportar-exceles.zip"
+    if bulk_params:
+        bulk_href = f"{bulk_href}?{urlencode(bulk_params)}"
+
     # Build filter form HTML
     filter_form_html = f"""
     <form method="GET" action="/documentos/todos" class="surface" style="margin-bottom: 0;">
