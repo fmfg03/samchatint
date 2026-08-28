@@ -23165,6 +23165,22 @@ async def editar_gasto_form(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
+    linked_informe_url = (
+        f"/informes-de-gastos/{expense.cuenta_gastos_id}"
+        if expense.cuenta_gastos_id
+        else ""
+    )
+    safe_return_to = _safe_internal_next(
+        request.query_params.get("return_to"),
+        linked_informe_url or f"/gastos/{gasto_id}",
+    )
+    edit_form_url = f"/gastos/{gasto_id}/editar"
+    if safe_return_to != f"/gastos/{gasto_id}":
+        edit_form_url = _append_query_params(
+            edit_form_url,
+            {"return_to": safe_return_to},
+        )
+
     # Check access: owner OR finanzas/admin
     is_owner = expense.empleado_id == current_empleado.id
     is_finance_admin = current_empleado.rol in ('finanzas', 'admin', 'superadmin', 'super_admin')
@@ -23178,7 +23194,7 @@ async def editar_gasto_form(
         error_msg = "No se puede editar un gasto cancelado."
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}",
+                safe_return_to,
                 error_msg=error_msg,
             ),
             status_code=303
@@ -23419,7 +23435,17 @@ async def editar_gasto_form(
         """
     can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
     budget_classification_style = "" if can_manage_budget_classification else ' style="display:none;" aria-hidden="true"'
+    return_to_input_html = (
+        f'<input type="hidden" name="return_to" value="{escape(safe_return_to)}">'
+    )
+    report_return_button_html = ""
+    if safe_return_to.startswith("/informes-de-gastos/"):
+        report_return_button_html = (
+            f'<a href="{escape(safe_return_to)}" class="button secondary">'
+            "Volver al informe de gastos</a>"
+        )
     editar_gasto_actions_html = f"""
+        {report_return_button_html}
         <a href="/gastos/{gasto_id}" class="button secondary">Volver al detalle</a>
         <a href="/informes-de-gastos" class="button secondary">Volver a informes de gastos</a>
     """
@@ -23513,7 +23539,8 @@ async def editar_gasto_form(
             {message_html}
             {lock_banner_html}
             <section class="surface">
-            <form method="POST" action="/gastos/{gasto_id}/editar">
+            <form method="POST" action="{edit_form_url}">
+                {return_to_input_html}
                 <div class="form-group">
                     <label for="concepto">Concepto *</label>
                     <input type="text" name="concepto" id="concepto" value="{expense.concepto or ''}" required {disabled_attr}>
@@ -23606,7 +23633,7 @@ async def editar_gasto_form(
                 {motivo_field_html}
 
                 <button type="submit" class="button primary" {disabled_attr}>Guardar cambios</button>
-                <a href="/gastos/{gasto_id}" class="button secondary">Cancelar</a>
+                <a href="{escape(safe_return_to)}" class="button secondary">Cancelar</a>
             </form>
             </section>
             </div>
@@ -23767,6 +23794,7 @@ async def editar_gasto(
     cfdi_uuid_manual: Optional[str] = Form(None),
     cfdi_qr_or_url: Optional[str] = Form(None),
     motivo: Optional[str] = Form(None),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """
     Handle expense edit submission.
@@ -23785,6 +23813,22 @@ async def editar_gasto(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
+    linked_informe_url = (
+        f"/informes-de-gastos/{expense.cuenta_gastos_id}"
+        if expense.cuenta_gastos_id
+        else ""
+    )
+    safe_return_to = _safe_internal_next(
+        return_to,
+        linked_informe_url or f"/gastos/{gasto_id}",
+    )
+    edit_form_url = f"/gastos/{gasto_id}/editar"
+    if safe_return_to != f"/gastos/{gasto_id}":
+        edit_form_url = _append_query_params(
+            edit_form_url,
+            {"return_to": safe_return_to},
+        )
+
     # Check access: owner OR finanzas/admin
     is_owner = expense.empleado_id == current_empleado.id
     is_finance_admin = current_empleado.rol in ('finanzas', 'admin', 'superadmin', 'super_admin')
@@ -23796,7 +23840,7 @@ async def editar_gasto(
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="No se puede editar un gasto cancelado.",
             ),
             status_code=303
@@ -23827,7 +23871,7 @@ async def editar_gasto(
         if is_locked:
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg="Este gasto está bloqueado y no puede ser editado.",
                 ),
                 status_code=303
@@ -23839,7 +23883,7 @@ async def editar_gasto(
             if not motivo or not motivo.strip():
                 return RedirectResponse(
                     url=_append_error_params(
-                        f"/gastos/{gasto_id}/editar",
+                        edit_form_url,
                         error_msg="Se requiere un motivo para editar gastos bloqueados.",
                     ),
                     status_code=303
@@ -23851,7 +23895,7 @@ async def editar_gasto(
     if not concepto:
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="El concepto no puede estar vacío.",
             ),
             status_code=303
@@ -23864,7 +23908,7 @@ async def editar_gasto(
     if propina_no_deducible and propina_amount is None:
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="El monto de propina es invalido.",
             ),
             status_code=303
@@ -23875,7 +23919,7 @@ async def editar_gasto(
     if hospedaje_tasa_impuesto and hospedaje_rate is None:
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="La tasa de hospedaje es inválida.",
             ),
             status_code=303
@@ -23884,7 +23928,7 @@ async def editar_gasto(
     if hospedaje_impuesto_monto and hospedaje_amount is None:
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="El monto del impuesto de hospedaje es inválido.",
             ),
             status_code=303
@@ -23899,7 +23943,7 @@ async def editar_gasto(
         if not ultimos_4_digitos.isdigit() or len(ultimos_4_digitos) != 4:
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg="Los últimos 4 dígitos deben ser exactamente 4 números.",
                 ),
                 status_code=303
@@ -24003,7 +24047,7 @@ async def editar_gasto(
         except (ValueError, TypeError):
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg="Informe de gastos inválido.",
                 ),
                 status_code=303,
@@ -24052,7 +24096,7 @@ async def editar_gasto(
         if not cuenta_gastos:
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg="Informe de gastos no encontrado.",
                 ),
                 status_code=303,
@@ -24060,7 +24104,7 @@ async def editar_gasto(
         if cuenta_gastos.estado != "abierta":
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg="El informe de gastos está cerrado; elija otro o desvincule.",
                 ),
                 status_code=303,
@@ -24102,7 +24146,7 @@ async def editar_gasto(
     if requested_company_amex and not company_amex_allowed:
         return RedirectResponse(
             url=_append_error_params(
-                f"/gastos/{gasto_id}/editar",
+                edit_form_url,
                 error_msg="AMEX empresa solo aplica para Odilon, Luis Angel y los Federicos.",
             ),
             status_code=303,
@@ -24133,7 +24177,7 @@ async def editar_gasto(
         ):
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg=(
                         "El concepto solo puede asignarse a un informe "
                         "de gastos con torneo."
@@ -24151,7 +24195,7 @@ async def editar_gasto(
         if budget_concept is None:
             return RedirectResponse(
                 url=_append_error_params(
-                    f"/gastos/{gasto_id}/editar",
+                    edit_form_url,
                     error_msg=(
                         "El concepto no corresponde al torneo del "
                         "informe de gastos."
@@ -24196,7 +24240,7 @@ async def editar_gasto(
                 if not cuenta:
                     return RedirectResponse(
                         url=_append_error_params(
-                            f"/gastos/{gasto_id}/editar",
+                            edit_form_url,
                             error_msg="Cuenta contable inválida o inactiva",
                         ),
                         status_code=303,
@@ -24204,7 +24248,7 @@ async def editar_gasto(
             except ValueError:
                 return RedirectResponse(
                     url=_append_error_params(
-                        f"/gastos/{gasto_id}/editar",
+                        edit_form_url,
                         error_msg="Cuenta contable inválida",
                     ),
                     status_code=303,
@@ -24226,7 +24270,7 @@ async def editar_gasto(
                 except ValueError as exc:
                     return RedirectResponse(
                         url=_append_error_params(
-                            f"/gastos/{gasto_id}/editar",
+                            edit_form_url,
                             error_msg=str(exc)[:180],
                         ),
                         status_code=303,
@@ -24265,7 +24309,13 @@ async def editar_gasto(
         extracted_uuid = extract_uuid_from_qr_or_url(cfdi_qr_or_url.strip())
         if not extracted_uuid:
             return RedirectResponse(
-                url=f"/gastos/{gasto_id}/editar?error_msg={quote('No se pudo extraer un UUID válido del enlace/QR CFDI proporcionado')}",
+                url=_append_error_params(
+                    edit_form_url,
+                    error_msg=(
+                        "No se pudo extraer un UUID válido del enlace/QR "
+                        "CFDI proporcionado"
+                    ),
+                ),
                 status_code=303
             )
         raw_cfdi = extracted_uuid
@@ -24276,7 +24326,13 @@ async def editar_gasto(
         except ValueError:
             if not is_cfdi_uuid_prefix_candidate(raw_cfdi):
                 return RedirectResponse(
-                    url=f"/gastos/{gasto_id}/editar?error_msg={quote('UUID CFDI inválido. Debe ser un UUID válido o los primeros 8 caracteres del folio fiscal.')}",
+                    url=_append_error_params(
+                        edit_form_url,
+                        error_msg=(
+                            "UUID CFDI inválido. Debe ser un UUID válido o "
+                            "los primeros 8 caracteres del folio fiscal."
+                        ),
+                    ),
                     status_code=303
                 )
             canon = raw_cfdi.strip().upper()
@@ -24303,7 +24359,10 @@ async def editar_gasto(
     # If no changes, don't save or create audit record
     if not changes:
         return RedirectResponse(
-            url=f"/gastos/{gasto_id}?error_msg={quote('No se detectaron cambios para guardar.')}",
+            url=_append_error_params(
+                edit_form_url,
+                error_msg="No se detectaron cambios para guardar.",
+            ),
             status_code=303
         )
 
@@ -24327,7 +24386,10 @@ async def editar_gasto(
     logger.info(f"Gasto {gasto_id} edited by empleado {current_empleado.id}: {', '.join(changes)}")
 
     return RedirectResponse(
-        url=f"/gastos/{gasto_id}?success_msg={quote('Gasto actualizado exitosamente.')}",
+        url=_append_success_params(
+            safe_return_to,
+            success_msg="Gasto actualizado exitosamente.",
+        ),
         status_code=303
     )
 
