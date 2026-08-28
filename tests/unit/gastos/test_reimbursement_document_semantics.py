@@ -1,7 +1,10 @@
+from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID, uuid4
+
+from openpyxl import load_workbook
 
 from devnous.gastos.models import Documento
 from devnous.gastos.routes import user_routes
@@ -14,6 +17,10 @@ from devnous.gastos.services.documento_semantics import (
     effective_account_provider_beneficiary_id,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
+)
+from devnous.gastos.utils.excel_exports import (
+    INFORME_AUTORIZADO_ROW,
+    create_informe_excel,
 )
 
 
@@ -632,3 +639,80 @@ def test_operator_beneficiary_reimbursement_is_preserved_in_service_and_route():
     assert "beneficiario_empleado_id=(" in service_source
     assert "beneficiario_proveedor_cliente_id=cuenta_provider_beneficiary_id" in service_source
     assert "Seleccione la cuenta bancaria del operador regional beneficiario" in service_source
+
+
+def test_informe_excel_uses_real_authorizer_not_requester() -> None:
+    workbook = load_workbook(
+        BytesIO(
+            create_informe_excel(
+                numero_referencia="I-775379",
+                empleado_nombre="Bibiana Roman",
+                beneficiario_nombre="Carlos Lozano",
+                autorizado_por_nombre="Odilon Rodriguez",
+                expenses=[
+                    {
+                        "concepto": "Taxi",
+                        "fecha": "2026-08-26",
+                        "no_factura": "ABC",
+                        "importe_sin_iva": 100,
+                        "iva": 16,
+                        "total": 116,
+                    }
+                ],
+            )
+        )
+    )
+
+    assert workbook.active.cell(row=INFORME_AUTORIZADO_ROW, column=4).value == (
+        "Odilon Rodriguez"
+    )
+
+
+def test_informe_excel_leaves_authorizer_blank_before_approval() -> None:
+    workbook = load_workbook(
+        BytesIO(
+            create_informe_excel(
+                numero_referencia="I-775379",
+                empleado_nombre="Bibiana Roman",
+                beneficiario_nombre="Carlos Lozano",
+                expenses=[
+                    {
+                        "concepto": "Taxi",
+                        "fecha": "2026-08-26",
+                        "no_factura": "ABC",
+                        "importe_sin_iva": 100,
+                        "iva": 16,
+                        "total": 116,
+                    }
+                ],
+            )
+        )
+    )
+
+    assert workbook.active.cell(row=INFORME_AUTORIZADO_ROW, column=4).value in (
+        None,
+        "",
+    )
+
+
+def test_reimbursement_request_is_created_when_closed_informe_is_approved() -> None:
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    service_source = Path("src/devnous/gastos/services/documento_service.py").read_text()
+
+    assert (
+        "async def _ensure_reembolso_solicitud_for_approved_informe"
+        in route_source
+    )
+    assert 'informe_doc.estado != "aprobado"' in route_source
+    assert 'saldo_raw >= -0.005' in route_source
+    assert (
+        'Documento.concepto_pago.like("Reembolso de saldo a favor%")'
+        in route_source
+    )
+    assert "allow_closed_cuenta=True" in route_source
+    assert "await _ensure_reembolso_solicitud_for_approved_informe(" in route_source
+    assert "allow_closed_cuenta: bool = False" in service_source
+    assert (
+        'cuenta.estado == "cerrada" and not payload.allow_closed_cuenta'
+        in service_source
+    )

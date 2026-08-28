@@ -334,6 +334,7 @@ def create_informe_excel(
     currency: str = "MXN",
     solicitante_nombre: Optional[str] = None,
     beneficiario_nombre: Optional[str] = None,
+    autorizado_por_nombre: Optional[str] = None,
     **kwargs: Any,
 ) -> bytes:
     """
@@ -347,6 +348,7 @@ def create_informe_excel(
         empleado_nombre: Name of person who verifies (Nombre de la persona que comprueba)
         solicitante_nombre: User who owns and submits the report.
         beneficiario_nombre: Employee on whose behalf the report is made.
+        autorizado_por_nombre: Employee who approved/authorized the report.
         fecha_documento: Document date string (YYYY-MM-DD)
         expenses: List of dicts with keys: concepto, fecha, no_factura (CFDI UUID), importe_sin_iva, iva, total
         cantidad_entregada: Sum of paid solicitudes (Cantidad Entregada)
@@ -454,8 +456,9 @@ def create_informe_excel(
         ws.cell(row=row_saldo, column=7, value="a favor de empleado" if saldo_cuenta >= 0 else "a favor de empresa")
 
     # Autorizado por (4599: D54 = name)
-    if empleado_nombre:
-        ws.cell(row=row_autorizado, column=4, value=empleado_nombre)
+    _clear_cell(ws, row_autorizado, 4)
+    if autorizado_por_nombre:
+        ws.cell(row=row_autorizado, column=4, value=autorizado_por_nombre)
 
     local_label, viaje_label, nacional_label, extranjero_label = _informe_template_tipo_labels(tipo_cuenta)
     ws.cell(row=11, column=3, value=local_label)

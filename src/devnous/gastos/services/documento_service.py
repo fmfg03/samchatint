@@ -131,6 +131,7 @@ class SolicitudPersonalPayload:
     proveedor_cliente_id: Optional[UUID] = None
     budget_concept_id: Optional[UUID] = None
     pago_urgente: bool = False
+    allow_closed_cuenta: bool = False
 
 
 def _parse_optional_budget_concept_uuid(value: Optional[str]) -> Optional[UUID]:
@@ -408,6 +409,7 @@ def build_solicitud_personal_payload(
     proveedor_cliente_id: Optional[str] = None,
     budget_concept_id: Optional[str] = None,
     pago_urgente: bool = False,
+    allow_closed_cuenta: bool = False,
 ) -> SolicitudPersonalPayload:
     try:
         cuenta_uuid = (
@@ -459,6 +461,7 @@ def build_solicitud_personal_payload(
         proveedor_cliente_id=proveedor_uuid,
         budget_concept_id=_parse_optional_budget_concept_uuid(budget_concept_id),
         pago_urgente=bool(pago_urgente),
+        allow_closed_cuenta=bool(allow_closed_cuenta),
     )
 
 
@@ -1047,7 +1050,7 @@ async def create_solicitud_personal_document(
             "Empleado no encontrado.",
         )
 
-    if cuenta.estado == "cerrada":
+    if cuenta.estado == "cerrada" and not payload.allow_closed_cuenta:
         raise SolicitudValidationError(
             "cuenta_cerrada",
             "La cuenta de gastos está cerrada.",
