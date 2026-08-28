@@ -88,10 +88,58 @@ def test_budget_control_page_has_searchable_bulk_assignment_controls():
 
     assert "budget-concept-filter" in block
     assert "data-target" in block
-    assert "documento_ids" in block
+    assert "budget_item_ids" in block
     assert "/documentos/control-presupuestal/asignar-lote" in block
     assert "data-select-all-budget" in block
     assert "Asignar seleccionados" in block
+
+
+def test_linked_personal_solicitud_bypasses_budget_control():
+    documento = SimpleNamespace(tipo="SOLICITUD", budget_concept_id=None, cuenta_gastos_id=uuid4())
+    assert documento_requires_budget_control(documento) is False
+
+
+def test_budget_control_page_expands_informes_by_expense_lines():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def documentos_control_presupuestal")
+    end = source.index("async def _apply_control_presupuestal_assignment", start)
+    block = source[start:end]
+
+    assert "budget_item_ids" in block
+    assert '_budget_control_item_key("expense", expense.id)' in block
+    assert "INFORME / PARTIDA" in block
+    assert "_active_informe_expenses_for_document" in block
+    assert "Documento.cuenta_gastos_id.is_(None)" in block
+
+
+def test_budget_control_page_has_reject_control():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def documentos_control_presupuestal")
+    end = source.index("async def _apply_control_presupuestal_assignment", start)
+    block = source[start:end]
+
+    assert "reject_documento_id" in block
+    assert "Rechazar" in block
+    assert "_reject_control_presupuestal_document" in source
+
+
+def test_solicitud_terceros_edit_excludes_linked_expense_requests():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("def _is_solicitud_terceros")
+    end = source.index("def _budget_concept_assigned", start)
+    block = source[start:end]
+
+    assert "cuenta_gastos_id" in block
+
+
+def test_budget_assignment_rejects_linked_personal_solicitud():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def _apply_control_presupuestal_assignment")
+    end = source.index("async def _apply_control_presupuestal_expense_assignment", start)
+    block = source[start:end]
+
+    assert "_is_linked_personal_solicitud(documento)" in block
+    assert "linked_solicitud_not_budget_controlled" in block
 
 
 def test_pending_approval_page_has_bulk_selection_controls():
@@ -218,5 +266,13 @@ def test_budget_control_assignment_eager_loads_deferred_account_budget_context()
     block = source[start:end]
 
     assert ".undefer(CuentaDeGastos.torneo_id)" in block
-    assert ".undefer(CuentaDeGastos.fase)" in block
-    assert "tournament_id, fase = _document_budget_context(documento)" in block
+
+
+def test_budget_control_informe_expense_order_uses_capture_reference_not_expense_date() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def _active_informe_expenses_for_document")
+    end = source.index("async def _informe_documento_for_expense", start)
+    block = source[start:end]
+
+    assert "ExpenseReport.numero_referencia.asc()" in block
+    assert "ExpenseReport.fecha.asc()" not in block

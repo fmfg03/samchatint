@@ -32,8 +32,20 @@ BUDGET_CONTROL_STATE = "control_presupuestal"
 
 
 def documento_requires_budget_control(documento: Documento) -> bool:
-    """Return True when a document must pass through budget classification first."""
-    return documento.tipo in {"SOLICITUD", "INFORME"} and not getattr(documento, "budget_concept_id", None)
+    """Return True when a document must pass through budget classification first.
+
+    Standalone supplier/third-party payment requests and expense reports need
+    budget classification before approval. Personal requests generated from an
+    expense report (advance/reimbursement/AMEX settlement) inherit budget from
+    the report lines, so they must not pass through Control Presupuestal again.
+    """
+    if getattr(documento, "budget_concept_id", None):
+        return False
+    if documento.tipo == "INFORME":
+        return True
+    if documento.tipo == "SOLICITUD":
+        return getattr(documento, "cuenta_gastos_id", None) is None
+    return False
 
 
 class DocumentoWorkflowError(Exception):

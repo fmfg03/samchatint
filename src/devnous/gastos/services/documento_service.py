@@ -1064,6 +1064,11 @@ async def create_solicitud_personal_document(
     cuenta_provider_beneficiary_id = getattr(
         cuenta, "beneficiario_proveedor_cliente_id", None
     )
+    cuenta_employee_beneficiary_id = getattr(cuenta, "beneficiario_empleado_id", None)
+    is_operator_beneficiary = (
+        cuenta_provider_beneficiary_id is not None
+        and cuenta_employee_beneficiary_id is None
+    )
 
     selected_proveedor = None
     if payload.proveedor_cliente_id is not None:
@@ -1082,7 +1087,7 @@ async def create_solicitud_personal_document(
                 "Proveedor/Cliente inválido o inactivo.",
             )
 
-    if cuenta_provider_beneficiary_id is not None and (
+    if is_operator_beneficiary and (
         selected_proveedor is None
         or selected_proveedor.id != cuenta_provider_beneficiary_id
     ):
@@ -1134,16 +1139,18 @@ async def create_solicitud_personal_document(
         referencia_operaciones=ro_shared or None,
         beneficiario_empleado_id=(
             None
-            if cuenta_provider_beneficiary_id is not None
-            else (getattr(cuenta, "beneficiario_empleado_id", None) or payload.empleado_id)
+            if is_operator_beneficiary
+            else (cuenta_employee_beneficiary_id or payload.empleado_id)
         ),
         proveedor_cliente_id=(
             selected_proveedor.id if selected_proveedor is not None else None
         ),
         beneficiario_proveedor_cliente_id=cuenta_provider_beneficiary_id,
+        beneficiario_alterno_tipo=getattr(cuenta, "beneficiario_alterno_tipo", None),
         cuenta_gastos_id=cuenta.id,
         budget_concept_id=payload.budget_concept_id,
         referencia_base=cuenta.referencia_base,
+        torneo_id=getattr(cuenta, "torneo_id", None),
         fase=((getattr(cuenta, "fase", None) or "").strip() or None),
         categorias=list(getattr(cuenta, "categorias", None) or []),
         edicion=getattr(cuenta, "edicion", None),

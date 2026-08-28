@@ -1864,6 +1864,7 @@ class Documento(Base):
         nullable=True,
         index=True,
     )
+    beneficiario_alterno_tipo = Column(String(40), nullable=True, index=True)
     notas = Column(Text, nullable=True)
     creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     enviado_en = Column(DateTime(timezone=True), nullable=True)
@@ -2363,6 +2364,7 @@ class CuentaDeGastos(Base):
         nullable=True,
         index=True,
     )
+    beneficiario_alterno_tipo = Column(String(40), nullable=True, index=True)
     referencia_base = Column(Text, nullable=False, index=True)
     nombre = Column(
         Text, nullable=True

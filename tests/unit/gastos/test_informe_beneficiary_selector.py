@@ -46,6 +46,7 @@ async def test_crear_informe_form_shows_employee_beneficiary_selector_for_author
     monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
     monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", AsyncMock(return_value=[]))
+    monkeypatch.setattr(user_routes, "_resolve_petty_cash_benjamin_employee", AsyncMock(return_value=None))
     monkeypatch.setattr(
         user_routes,
         "_html_empleado_bank_account_options",
@@ -103,6 +104,7 @@ async def test_crear_informe_form_allows_regional_operator_for_authorized_user(m
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
     monkeypatch.setattr(user_routes, "_resolve_active_regional_operator_beneficiary", fake_resolve_operator)
     monkeypatch.setattr(user_routes, "_active_regional_operator_beneficiaries", fake_active_operators)
+    monkeypatch.setattr(user_routes, "_resolve_petty_cash_benjamin_employee", AsyncMock(return_value=None))
     monkeypatch.setattr(user_routes, "_cuenta_etapas_map_for_js", lambda _torneos: {})
     monkeypatch.setattr(user_routes, "_tournament_categories_map_for_js", lambda _torneos: {})
 
@@ -180,6 +182,61 @@ async def test_crear_informe_submit_preserves_requester_owner_and_selected_regio
 
 
 @pytest.mark.asyncio
+async def test_crear_informe_submit_caja_chica_uses_benjamin_bank_and_alternate_type(monkeypatch):
+    requester = _authorized_requester()
+    benjamin = SimpleNamespace(id=uuid4(), nombre="GRACIANO BENJAMIN JIMENEZ VIGUERAS")
+    bank = SimpleNamespace(id=uuid4(), nombre="GRACIANO BENJAMIN JIMENEZ VIGUERAS", banco="Santander")
+    torneo_id = uuid4()
+    cuenta_id = uuid4()
+    captured = {}
+
+    async def fake_validate(*_args, **_kwargs):
+        return None, "local", torneo_id, "Nacional"
+
+    async def fake_metadata(*_args, **_kwargs):
+        return None, ["Varonil"], 2026, "MXN"
+
+    async def fake_create(_session, **kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(id=cuenta_id), None
+
+    monkeypatch.setattr(user_routes, "_resolve_petty_cash_benjamin_employee", AsyncMock(return_value=benjamin))
+    monkeypatch.setattr(user_routes, "_resolve_active_regional_operator_beneficiary", AsyncMock(return_value=None))
+    monkeypatch.setattr(user_routes, "_resolve_selected_beneficiary_bank_account", AsyncMock(return_value=bank))
+    monkeypatch.setattr(user_routes, "_validate_cuenta_informe_proyecto_fields", fake_validate)
+    monkeypatch.setattr(user_routes, "_validate_expense_metadata_for_tournament", fake_metadata)
+    monkeypatch.setattr(user_routes, "_create_cuenta_de_gastos_with_informe", fake_create)
+
+    async def async_form():
+        return {
+            "nombre": "Caja chica dólares",
+            "tipo_cuenta": "local",
+            "torneo_id": str(torneo_id),
+            "fase": "Nacional",
+            "categorias": ["Varonil"],
+            "edicion": "2026",
+            "currency": "MXN",
+            "beneficiario_alterno_tipo": "caja_chica_usd",
+            "proveedor_cliente_id": str(bank.id),
+        }
+
+    response = await user_routes.crear_cuenta_de_gastos_submit(
+        request=SimpleNamespace(form=async_form),
+        session=SimpleNamespace(),
+        current_empleado=requester,
+    )
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/informes-de-gastos/{cuenta_id}?")
+    assert captured["empleado"] is requester
+    assert captured["beneficiario"] is benjamin
+    assert captured["beneficiario_cuenta_bancaria"] is bank
+    assert captured["beneficiario_operador"] is None
+    assert captured["beneficiario_alterno_tipo"] == "caja_chica_usd"
+
+
+@pytest.mark.asyncio
 async def test_crear_informe_submit_rejects_employee_and_regional_operator_together():
     requester = _authorized_requester()
     operator_id = uuid4()
@@ -224,6 +281,7 @@ async def test_crear_informe_form_locks_beneficiary_to_self_for_unauthorized_use
     monkeypatch.setattr(user_routes, "_resolve_active_beneficiary_empleado", fake_resolve)
     monkeypatch.setattr(user_routes, "_active_beneficiary_empleados", fake_active_empleados)
     monkeypatch.setattr(user_routes, "fetch_active_tournaments_for_empleado", fake_tournaments)
+    monkeypatch.setattr(user_routes, "_resolve_petty_cash_benjamin_employee", AsyncMock(return_value=None))
     monkeypatch.setattr(
         user_routes,
         "_html_empleado_bank_account_options",

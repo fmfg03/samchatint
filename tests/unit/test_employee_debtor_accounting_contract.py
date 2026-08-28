@@ -62,3 +62,13 @@ def test_debtor_account_match_allows_omitted_middle_names_but_fails_weak_matches
         "carlos felipe lozano pardinas",
         "carlos lozano",
     ) == 0
+
+
+def test_debtor_accounting_supports_petty_cash_alternate_accounts_without_changing_normal_debtors():
+    source = read("src/devnous/gastos/services/employee_debtor_accounting_service.py")
+
+    assert '"caja_chica_usd": "1110-001-001"' in source
+    assert '"caja_chica_pesos": "1110-001-002"' in source
+    assert "resolve_cuenta_debtor_account" in source
+    assert "beneficiario_alterno_tipo" in source
+    assert "return await resolve_employee_debtor_account(session, empleado)" in source

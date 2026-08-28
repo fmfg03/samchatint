@@ -748,7 +748,7 @@ def render_budget_partida_matrix(
                                 <tr style="background:#f8fafc;">
                                     <th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:0;background:#f8fafc;z-index:2;min-width:150px;">Renglón</th>
                                     <th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:150px;background:#f8fafc;z-index:2;min-width:96px;">Monto total</th>
-                                    {''.join(f'<th title="{escape(_budget_period_bucket(int(edition_year or date.today().year), idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">S{idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
+                                    {''.join(f'<th title="{escape(_budget_period_bucket(int(edition_year or date.today().year), idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
                                 </tr>
                             </thead>
                             <tbody>

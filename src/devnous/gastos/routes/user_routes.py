@@ -360,6 +360,10 @@ def _parse_optional_money_form(value: Optional[str]) -> Optional[float]:
         return None
 
 
+def _form_checkbox_checked(value: Optional[str]) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "on", "yes", "si", "sí"}
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
@@ -9306,6 +9310,82 @@ def _beneficiary_selection_allowed(
     )
 
 
+PETTY_CASH_BENEFICIARY_TYPES = {
+    "caja_chica_usd": {
+        "label": "CAJA CHICA USD",
+        "debtor_account_code": "1110-001-001",
+        "description": "Caja chica en dólares; usa las cuentas bancarias de Benjamín.",
+    },
+    "caja_chica_pesos": {
+        "label": "CAJA CHICA PESOS",
+        "debtor_account_code": "1110-001-002",
+        "description": "Caja chica en pesos; usa las cuentas bancarias de Benjamín.",
+    },
+}
+
+PETTY_CASH_BENJAMIN_NAMES = {
+    "benjamin jimenez vigueras",
+    "graciano benjamin jimenez vigueras",
+}
+
+
+def _normalize_beneficiario_alterno_tipo(raw: Optional[str]) -> Optional[str]:
+    value = (str(raw or "").strip().lower())
+    return value if value in PETTY_CASH_BENEFICIARY_TYPES else None
+
+
+async def _resolve_petty_cash_benjamin_employee(
+    session: AsyncSession,
+) -> Optional[Empleado]:
+    r = await session.execute(
+        select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre.asc())
+    )
+    for empleado in r.scalars().all():
+        normalized = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
+        if normalized in PETTY_CASH_BENJAMIN_NAMES:
+            return empleado
+    return None
+
+
+def _petty_cash_beneficiary_control_html(
+    *,
+    requester: Empleado,
+    selected_type: Optional[str],
+    benjamin: Optional[Empleado],
+) -> str:
+    if not _can_request_for_other_employee(requester):
+        return ""
+    selected_type = _normalize_beneficiario_alterno_tipo(selected_type)
+    benjamin_label = (
+        (benjamin.nombre or benjamin.correo or str(benjamin.id))
+        if benjamin is not None
+        else "BENJAMIN JIMENEZ VIGUERAS"
+    )
+    boxes = []
+    for type_key, config in PETTY_CASH_BENEFICIARY_TYPES.items():
+        checked = " checked" if selected_type == type_key else ""
+        benjamin_id = str(benjamin.id) if benjamin is not None else ""
+        boxes.append(
+            f'<label style="display:flex;align-items:flex-start;gap:8px;margin:0;font-weight:800;">'
+            f'<input type="checkbox" class="petty-cash-toggle beneficiary-mode-toggle" '
+            f'name="beneficiario_alterno_tipo" value="{escape(type_key)}" '
+            f'data-beneficiary-mode="petty-cash" data-benjamin-id="{benjamin_id}"{checked}> '
+            f'<span>{escape(config["label"])}<br>'
+            f'<small style="font-weight:500;color:#64748b;">{escape(config["description"])}</small></span>'
+            f'</label>'
+        )
+    return (
+        '<div class="petty-cash-beneficiary-control" '
+        'style="border:1px solid #fed7aa;background:#fff7ed;border-radius:12px;'
+        'padding:12px 14px;margin:0 0 10px 0;display:grid;gap:10px;">'
+        '<strong>Es para caja chica</strong>'
+        + "".join(boxes)
+        + f'<small>Las solicitudes vinculadas quedan a nombre de {escape(benjamin_label)}; '
+        'la cuenta contable de caja chica se determina por el tipo seleccionado.</small>'
+        '</div>'
+    )
+
+
 def _beneficiary_employee_control_html(
     *,
     requester: Empleado,
@@ -9715,6 +9795,10 @@ def documento_project_name(documento: Documento, torneo: Optional[Tournament]) -
         return manual_project
     if torneo and torneo.name:
         return torneo.name
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    cuenta_torneo = getattr(cuenta, "torneo", None)
+    if cuenta_torneo and getattr(cuenta_torneo, "name", None):
+        return cuenta_torneo.name
     return ""
 
 
@@ -9800,6 +9884,9 @@ async def _resolve_solicitud_approval_display_name(
 def documento_fase_display(documento: Documento) -> str:
     try:
         raw = getattr(documento, "fase", None)
+        if raw is None or not str(raw).strip():
+            cuenta = getattr(documento, "cuenta_gastos", None)
+            raw = getattr(cuenta, "fase", None)
         return (str(raw).strip() if raw is not None else "") or ""
     except (ProgrammingError, OperationalError, Exception):
         return ""
@@ -9809,6 +9896,7 @@ def _is_solicitud_terceros(documento: Documento) -> bool:
     return (
         documento.tipo == "SOLICITUD"
         and documento.proveedor_cliente_id is not None
+        and getattr(documento, "cuenta_gastos_id", None) is None
     )
 
 
@@ -10840,6 +10928,14 @@ _BUDGET_CONTROL_EMPLOYEE_NAMES = {
     "francisco m fernandez",
 }
 
+_CONFIGURATION_PANEL_EMPLOYEE_NAMES = {
+    "juan pablo lopez",
+    "juan pablo lopez romero",
+    "luis angel",
+    "luis angel orozco",
+    "luis angel orozco colin",
+}
+
 
 def _employee_matches_named_access(empleado: Empleado, allowed_names: set[str]) -> bool:
     normalized = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
@@ -10864,8 +10960,13 @@ def _is_budget_control_user(current_empleado: Empleado) -> bool:
 
 
 def _is_configuration_panel_user(current_empleado: Empleado) -> bool:
-    """Users allowed to see configuration modules in the home panel."""
-    return _is_budget_control_user(current_empleado)
+    """Only Juan Pablo and Luis Ángel can see configuration/catalog modules."""
+    if current_empleado is None or getattr(current_empleado, "activo", True) is False:
+        return False
+    return _employee_matches_named_access(
+        current_empleado,
+        _CONFIGURATION_PANEL_EMPLOYEE_NAMES,
+    )
 
 
 def _can_view_documentos_todos(current_empleado: Empleado) -> bool:
@@ -23151,6 +23252,8 @@ async def editar_gasto_form(
                 undefer(CuentaDeGastos.torneo_id),
                 undefer(CuentaDeGastos.fase),
                 selectinload(CuentaDeGastos.torneo),
+                selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
             )
             .where(
                 CuentaDeGastos.empleado_id == expense_owner_id,
@@ -23171,6 +23274,8 @@ async def editar_gasto_form(
                     undefer(CuentaDeGastos.torneo_id),
                     undefer(CuentaDeGastos.fase),
                     selectinload(CuentaDeGastos.torneo),
+                    selectinload(CuentaDeGastos.beneficiario_empleado),
+                    selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
                 )
                 .where(
                     CuentaDeGastos.id == expense.cuenta_gastos_id,
@@ -23256,6 +23361,23 @@ async def editar_gasto_form(
         propina_no_deducible=expense.propina_no_deducible,
     )
     tip_group_display = "block" if tip_group_visible else "none"
+
+    selected_cuenta_for_amex = extra_linked if extra_linked and expense.cuenta_gastos_id == extra_linked.id else open_by_id.get(expense.cuenta_gastos_id)
+    current_company_amex = is_company_amex_expense(expense)
+    company_amex_edit_allowed = bool(selected_cuenta_for_amex and _cuenta_allows_company_amex(selected_cuenta_for_amex))
+    company_amex_checked = "checked" if current_company_amex else ""
+    company_amex_disabled = "disabled" if disabled_attr else ""
+    company_amex_edit_html = ""
+    if company_amex_edit_allowed or current_company_amex:
+        company_amex_edit_html = f"""
+                <div class="form-group" style="border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff;">
+                    <label style="display:flex;align-items:center;gap:10px;margin-bottom:8px;color:#0f172a;">
+                        <input type="checkbox" name="pagado_con_amex_empresa" value="1" {company_amex_checked} {company_amex_disabled}>
+                        Pago con AMEX empresa
+                    </label>
+                    <small>Marcalo solo cuando el gasto se pago con AMEX empresa. Si fue reembolso, dejalo desmarcado.</small>
+                </div>
+        """
 
     motivo_field_html = ""
     if is_locked and is_finance_admin:
@@ -23375,6 +23497,8 @@ async def editar_gasto_form(
                     <input type="text" name="metodo_pago" id="metodo_pago" value="{expense.metodo_pago or ''}" {disabled_attr} maxlength="50">
                     <small>Ejemplo: Efectivo, Tarjeta Personal, Tarjeta de Empresa</small>
                 </div>
+
+                {company_amex_edit_html}
 
                 <div id="propina-group" style="display:{tip_group_display}; border:1px solid #bfdbfe; border-radius:10px; padding:14px; background:#eff6ff; margin-bottom:14px;">
                     <div style="font-weight:700; color:#1e3a8a; margin-bottom:8px;">Propina no deducible</div>
@@ -23603,6 +23727,7 @@ async def editar_gasto(
     current_empleado: Empleado = Depends(get_current_empleado),
     concepto: str = Form(...),
     metodo_pago: Optional[str] = Form(None),
+    pagado_con_amex_empresa: Optional[str] = Form(None),
     propina_no_deducible: Optional[str] = Form(None),
     hospedaje_entidad_fiscal: Optional[str] = Form(None),
     hospedaje_tasa_impuesto: Optional[str] = Form(None),
@@ -23873,6 +23998,8 @@ async def editar_gasto(
             .options(
                 undefer(CuentaDeGastos.torneo_id),
                 undefer(CuentaDeGastos.fase),
+                selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
             )
             .where(
                 CuentaDeGastos.id == target_cg_uuid,
@@ -23886,6 +24013,8 @@ async def editar_gasto(
             .options(
                 undefer(CuentaDeGastos.torneo_id),
                 undefer(CuentaDeGastos.fase),
+                selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
             )
             .where(
                 CuentaDeGastos.id == target_cg_uuid,
@@ -23925,6 +24054,47 @@ async def editar_gasto(
         )
         informe_doc = informe_res.scalar_one_or_none()
         expense.informe_documento_id = informe_doc.id if informe_doc else None
+
+    linked_cuenta_for_amex = selected_cuenta_gastos
+    if linked_cuenta_for_amex is None and expense.cuenta_gastos_id:
+        linked_res = await session.execute(
+            select(CuentaDeGastos)
+            .options(
+                selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
+            )
+            .where(CuentaDeGastos.id == expense.cuenta_gastos_id)
+        )
+        linked_cuenta_for_amex = linked_res.scalar_one_or_none()
+
+    requested_company_amex = _form_checkbox_checked(pagado_con_amex_empresa)
+    current_company_amex = is_company_amex_expense(expense)
+    company_amex_allowed = bool(
+        linked_cuenta_for_amex and _cuenta_allows_company_amex(linked_cuenta_for_amex)
+    )
+    if requested_company_amex and not company_amex_allowed:
+        return RedirectResponse(
+            url=_append_error_params(
+                f"/gastos/{gasto_id}/editar",
+                error_msg="AMEX empresa solo aplica para Odilon, Luis Angel y los Federicos.",
+            ),
+            status_code=303,
+        )
+    if current_company_amex != requested_company_amex:
+        old_values["pagado_con_amex_empresa"] = current_company_amex
+        new_values["pagado_con_amex_empresa"] = requested_company_amex
+        changes.append(
+            "pagado_con_amex_empresa "
+            f"'{ 'si' if current_company_amex else 'no' }'->'{ 'si' if requested_company_amex else 'no' }'"
+        )
+        expense.pagado_con_amex_empresa = requested_company_amex
+    if requested_company_amex and (expense.metodo_pago or "").strip().upper() != "TARJETA CREDITO AMEX":
+        old_values["metodo_pago"] = expense.metodo_pago
+        new_values["metodo_pago"] = "TARJETA CREDITO AMEX"
+        changes.append(
+            f"metodo_pago '{expense.metodo_pago or '(vacio)'}'->'TARJETA CREDITO AMEX'"
+        )
+        expense.metodo_pago = "TARJETA CREDITO AMEX"
 
     can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
     budget_concept_uuid = expense.budget_concept_id
@@ -24300,6 +24470,113 @@ def _document_budget_context(documento: Documento) -> tuple[Optional[str], Optio
     return (str(tournament_id) if tournament_id else None, str(fase or "") or None)
 
 
+def _is_linked_personal_solicitud(documento: Documento) -> bool:
+    """Requests generated from an expense report are not budget-control documents."""
+    return documento.tipo == "SOLICITUD" and getattr(documento, "cuenta_gastos_id", None) is not None
+
+
+def _budget_control_item_key(kind: str, item_id: UUIDType) -> str:
+    return f"{kind}:{item_id}"
+
+
+def _unique_expenses(expenses: list[ExpenseReport]) -> list[ExpenseReport]:
+    seen: set[UUIDType] = set()
+    unique: list[ExpenseReport] = []
+    for expense in expenses:
+        if expense.id in seen:
+            continue
+        seen.add(expense.id)
+        unique.append(expense)
+    return unique
+
+
+async def _active_informe_expenses_for_document(
+    session: AsyncSession,
+    documento: Documento,
+) -> list[ExpenseReport]:
+    filters = [
+        ExpenseReport.documento_id == documento.id,
+        ExpenseReport.informe_documento_id == documento.id,
+    ]
+    if getattr(documento, "cuenta_gastos_id", None):
+        filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+    result = await session.execute(
+        select(ExpenseReport)
+        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
+        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
+    )
+    return _unique_expenses(list(result.scalars().unique().all()))
+
+
+async def _informe_documento_for_expense(
+    session: AsyncSession,
+    expense: ExpenseReport,
+) -> Optional[Documento]:
+    candidate_ids = [
+        getattr(expense, "informe_documento_id", None),
+        getattr(expense, "documento_id", None),
+    ]
+    for candidate_id in candidate_ids:
+        if not candidate_id:
+            continue
+        documento = await session.get(Documento, candidate_id)
+        if documento is not None and documento.tipo == "INFORME":
+            return documento
+    if getattr(expense, "cuenta_gastos_id", None):
+        result = await session.execute(
+            select(Documento)
+            .where(Documento.tipo == "INFORME", Documento.cuenta_gastos_id == expense.cuenta_gastos_id)
+            .order_by(Documento.creado_en.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+    return None
+
+
+async def _informe_budget_assignment_complete(session: AsyncSession, documento: Documento) -> bool:
+    expenses = await _active_informe_expenses_for_document(session, documento)
+    return bool(expenses) and all(getattr(expense, "budget_concept_id", None) for expense in expenses)
+
+
+async def _reject_control_presupuestal_document(
+    session: AsyncSession,
+    *,
+    documento_id: UUIDType,
+    actor: Empleado,
+) -> Documento:
+    documento = await session.get(Documento, documento_id)
+    if documento is None:
+        raise DocumentoWorkflowValidationError("documento_not_found", "Documento not found")
+    if documento.estado != "control_presupuestal":
+        raise DocumentoWorkflowValidationError(
+            "invalid_estado",
+            "El documento no está pendiente de Control Presupuestal.",
+        )
+    now = datetime.utcnow()
+    if documento.tipo == "INFORME":
+        documento.estado = "borrador"
+        documento.enviado_en = None
+        if documento.cuenta_gastos_id:
+            cuenta = await session.get(CuentaDeGastos, documento.cuenta_gastos_id)
+            if cuenta is not None:
+                cuenta.estado = "abierta"
+                cuenta.closed_at = None
+    else:
+        documento.estado = "rechazado"
+        documento.enviado_en = None
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=actor.id,
+            accion="rechazar_control_presupuestal",
+            comentario="Control Presupuestal regresó el documento para corrección antes de aprobación.",
+            fecha=now,
+        )
+    )
+    return documento
+
+
 @router.get("/documentos/control-presupuestal", response_class=HTMLResponse)
 async def documentos_control_presupuestal(
     request: Request,
@@ -24336,7 +24613,10 @@ async def documentos_control_presupuestal(
         .outerjoin(torneo_alias, Documento.torneo_id == torneo_alias.id)
         .outerjoin(CuentaDeGastos, Documento.cuenta_gastos_id == CuentaDeGastos.id)
         .outerjoin(cuenta_torneo_alias, CuentaDeGastos.torneo_id == cuenta_torneo_alias.id)
-        .where(Documento.estado == "control_presupuestal")
+        .where(
+            Documento.estado == "control_presupuestal",
+            or_(Documento.tipo != "SOLICITUD", Documento.cuenta_gastos_id.is_(None)),
+        )
         .order_by(Documento.creado_en.desc())
     )
     if q_value:
@@ -24358,16 +24638,9 @@ async def documentos_control_presupuestal(
     documentos = result.scalars().unique().all()
 
     rows_html = ""
+    item_count = 0
     for documento in documentos:
         row_values = _documentos_todos_reporting_row_values(documento, aprobador_nombre="?")
-        concepts = await _budget_concepts_for_document(session, documento)
-        options = _html_budget_concept_options(
-            concepts,
-            str(documento.budget_concept_id or ""),
-            required=False,
-        )
-        if not options:
-            options = '<option value="">? Sin conceptos disponibles para este torneo/fase ?</option>'
         cuenta = getattr(documento, "cuenta_gastos", None)
         torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
         torneo_display = documento_project_name(documento, torneo) or "?"
@@ -24375,10 +24648,60 @@ async def documentos_control_presupuestal(
         provider_value = row_values["proveedor"]
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
-        select_id = f"budget_concept_{documento.id}"
+
+        if documento.tipo == "INFORME":
+            for expense in await _active_informe_expenses_for_document(session, documento):
+                item_count += 1
+                item_key = _budget_control_item_key("expense", expense.id)
+                concepts = await _budget_concepts_for_document(session, documento)
+                options = _html_budget_concept_options(
+                    concepts,
+                    str(getattr(expense, "budget_concept_id", None) or ""),
+                    required=False,
+                )
+                if not options:
+                    options = '<option value="">— Sin conceptos disponibles para este torneo/fase —</option>'
+                select_id = f"budget_concept_{item_key}".replace(":", "_")
+                description = (getattr(expense, "concepto", None) or row_values["concepto"] or "?").strip()
+                rows_html += f"""
+                <tr>
+                    <td><input type="checkbox" name="budget_item_ids" value="{item_key}" aria-label="Seleccionar {escape(row_values['numero_referencia'])} partida {escape(description)}"></td>
+                    <td><a href="/documentos/{documento.id}?next={quote('/documentos/control-presupuestal')}" style="color:#0f766e;font-weight:800;text-decoration:none;">{escape(row_values['numero_referencia'])}</a></td>
+                    <td>{escape(str((documento.referencia_operaciones or '').strip() or '?'))}</td>
+                    <td>{escape(torneo_display)}</td>
+                    <td>{escape(row_values['solicitante'])}</td>
+                    <td>{escape(beneficiary_provider)}</td>
+                    <td>INFORME / PARTIDA</td>
+                    <td>{format_currency(float(getattr(expense, 'gasto_cantidad', 0) or 0), currency_for(documento))}</td>
+                    <td>{escape(description)}</td>
+                    <td>
+                        <div style="display:flex;gap:8px;align-items:center;min-width:470px;">
+                            <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
+                                <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
+                                <select id="{select_id}" name="budget_concept_id_{item_key}" style="min-width:260px;">{options}</select>
+                            </div>
+                            <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar partida</button>
+                            <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
+                        </div>
+                    </td>
+                </tr>
+                """
+            continue
+
+        item_count += 1
+        item_key = _budget_control_item_key("doc", documento.id)
+        concepts = await _budget_concepts_for_document(session, documento)
+        options = _html_budget_concept_options(
+            concepts,
+            str(documento.budget_concept_id or ""),
+            required=False,
+        )
+        if not options:
+            options = '<option value="">— Sin conceptos disponibles para este torneo/fase —</option>'
+        select_id = f"budget_concept_{item_key}".replace(":", "_")
         rows_html += f"""
         <tr>
-            <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
+            <td><input type="checkbox" name="budget_item_ids" value="{item_key}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
             <td><a href="/documentos/{documento.id}?next={quote('/documentos/control-presupuestal')}" style="color:#0f766e;font-weight:800;text-decoration:none;">{escape(row_values['numero_referencia'])}</a></td>
             <td>{escape(str((documento.referencia_operaciones or '').strip() or '?'))}</td>
             <td>{escape(torneo_display)}</td>
@@ -24388,12 +24711,13 @@ async def documentos_control_presupuestal(
             <td>{escape(row_values['monto_total'])}</td>
             <td>{escape(row_values['concepto'])}</td>
             <td>
-                <div style="display:flex;gap:8px;align-items:center;min-width:420px;">
+                <div style="display:flex;gap:8px;align-items:center;min-width:470px;">
                     <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
                         <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
-                        <select id="{select_id}" name="budget_concept_id_{documento.id}" style="min-width:260px;">{options}</select>
+                        <select id="{select_id}" name="budget_concept_id_{item_key}" style="min-width:260px;">{options}</select>
                     </div>
-                    <button type="submit" name="single_documento_id" value="{documento.id}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                    <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                    <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
                 </div>
             </td>
         </tr>
@@ -24425,7 +24749,7 @@ async def documentos_control_presupuestal(
             title="Documentos por clasificar",
             description="Asigna el concepto presupuestal antes de enviar la solicitud o informe al aprobador operativo correspondiente.",
             actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
-            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{len(documentos)}</strong><small>Después de asignar concepto pasan a aprobación normal.</small></div></div>',
+            side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{item_count}</strong><small>Las solicitudes ligadas a informes no duplican presupuesto.</small></div></div>',
         )}
         <section class="surface">
             <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
@@ -24434,7 +24758,7 @@ async def documentos_control_presupuestal(
                 <a class="button secondary" href="/documentos/control-presupuestal">Limpiar</a>
             </form>
         </section>
-        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">La asignación libera el documento hacia el aprobador del beneficiario o solicitante, según corresponda.</div></div></div>{table_html}</section>
+        <section class="surface"><div class="section-head"><div><h2>Bandeja de Control Presupuestal</h2><div class="section-note">Los informes se clasifican por partida; anticipos y reembolsos ligados no duplican afectación presupuestal.</div></div></div>{table_html}</section>
     </div>
     <script>
     (function() {{
@@ -24462,7 +24786,7 @@ async def documentos_control_presupuestal(
       document.querySelectorAll('[data-select-all-budget]').forEach(function(button) {{
         button.addEventListener('click', function() {{
           var form = button.closest('form');
-          var boxes = form ? form.querySelectorAll('input[name="documento_ids"]') : [];
+          var boxes = form ? form.querySelectorAll('input[name="budget_item_ids"]') : [];
           var allChecked = Array.prototype.every.call(boxes, function(box) {{ return box.checked; }});
           boxes.forEach(function(box) {{ box.checked = !allChecked; }});
           button.textContent = allChecked ? 'Seleccionar todo' : 'Limpiar selección';
@@ -24471,19 +24795,25 @@ async def documentos_control_presupuestal(
       document.querySelectorAll('.budget-control-bulk-form').forEach(function(form) {{
         form.addEventListener('submit', function(event) {{
           var submitter = event.submitter || document.activeElement;
-          var singleId = submitter && submitter.name === 'single_documento_id' ? submitter.value : '';
+          if (submitter && submitter.name === 'reject_documento_id') {{
+            if (!confirm('¿Rechazar/regresar este documento desde Control Presupuestal?')) {{
+              event.preventDefault();
+            }}
+            return;
+          }}
+          var singleId = submitter && submitter.name === 'single_item_id' ? submitter.value : '';
           var selectedIds = singleId ? [singleId] : Array.prototype.map.call(
-            form.querySelectorAll('input[name="documento_ids"]:checked'),
+            form.querySelectorAll('input[name="budget_item_ids"]:checked'),
             function(box) {{ return box.value; }}
           );
           if (!singleId && selectedIds.length === 0) {{
             event.preventDefault();
-            alert('Selecciona al menos un documento para asignar.');
+            alert('Selecciona al menos una partida o documento para asignar.');
             return;
           }}
           form.querySelectorAll('select[name^="budget_concept_id_"]').forEach(function(select) {{
-            var documentoId = select.name.replace('budget_concept_id_', '');
-            var isTarget = selectedIds.indexOf(documentoId) !== -1;
+            var itemId = select.name.replace('budget_concept_id_', '');
+            var isTarget = selectedIds.indexOf(itemId) !== -1;
             if (!isTarget) {{
               select.disabled = true;
               return;
@@ -24492,7 +24822,7 @@ async def documentos_control_presupuestal(
             if (!select.value) {{
               event.preventDefault();
               select.focus();
-              alert('Selecciona un concepto presupuestal para cada documento marcado.');
+              alert('Selecciona un concepto presupuestal para cada elemento marcado.');
             }}
           }});
         }});
@@ -24529,6 +24859,11 @@ async def _apply_control_presupuestal_assignment(
             "invalid_estado",
             "El documento no está pendiente de Control Presupuestal.",
         )
+    if _is_linked_personal_solicitud(documento):
+        raise DocumentoWorkflowValidationError(
+            "linked_solicitud_not_budget_controlled",
+            "Las solicitudes ligadas a informes no pasan por Control Presupuestal para evitar doble afectación.",
+        )
 
     tournament_id, fase = _document_budget_context(documento)
     budget_concept = await resolve_budget_concept(
@@ -24551,20 +24886,19 @@ async def _apply_control_presupuestal_assignment(
     documento.estado = "enviado"
     documento.enviado_en = now
 
-    expense_filters = [ExpenseReport.documento_id == documento.id, ExpenseReport.informe_documento_id == documento.id]
-    if documento.cuenta_gastos_id:
-        expense_filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
-    if documento.gasto_generado_id:
-        expense_filters.append(ExpenseReport.id == documento.gasto_generado_id)
-    expenses_result = await session.execute(
-        select(ExpenseReport).where(
-            or_(*expense_filters),
-            ExpenseReport.estado_gasto != "cancelado",
+    if documento.tipo != "INFORME":
+        expense_filters = [ExpenseReport.documento_id == documento.id]
+        if documento.gasto_generado_id:
+            expense_filters.append(ExpenseReport.id == documento.gasto_generado_id)
+        expenses_result = await session.execute(
+            select(ExpenseReport).where(
+                or_(*expense_filters),
+                ExpenseReport.estado_gasto != "cancelado",
+            )
         )
-    )
-    for expense in expenses_result.scalars().unique().all():
-        if not getattr(expense, "budget_concept_id", None):
-            expense.budget_concept_id = concept_uuid
+        for expense in expenses_result.scalars().unique().all():
+            if not getattr(expense, "budget_concept_id", None):
+                expense.budget_concept_id = concept_uuid
 
     session.add(
         Aprobacion(
@@ -24577,6 +24911,86 @@ async def _apply_control_presupuestal_assignment(
         )
     )
     return documento, budget_concept
+
+
+async def _apply_control_presupuestal_expense_assignment(
+    session: AsyncSession,
+    *,
+    expense_id: UUIDType,
+    budget_concept_id: str,
+    actor: Empleado,
+) -> tuple[Documento, dict[str, Any], bool]:
+    expense = await session.get(ExpenseReport, expense_id)
+    if expense is None:
+        raise DocumentoWorkflowValidationError("expense_not_found", "Partida de gasto no encontrada.")
+    documento = await _informe_documento_for_expense(session, expense)
+    if documento is None:
+        raise DocumentoWorkflowValidationError("documento_not_found", "Informe de gastos no encontrado.")
+    if documento.estado != "control_presupuestal":
+        raise DocumentoWorkflowValidationError(
+            "invalid_estado",
+            "El informe no está pendiente de Control Presupuestal.",
+        )
+
+    result = await session.execute(
+        select(Documento)
+        .options(
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.torneo_id)
+            .undefer(CuentaDeGastos.fase),
+            undefer(Documento.fase),
+        )
+        .where(Documento.id == documento.id)
+    )
+    documento = result.scalar_one()
+    tournament_id, fase = _document_budget_context(documento)
+    budget_concept = await resolve_budget_concept(
+        session,
+        budget_concept_id=(budget_concept_id or "").strip(),
+        tournament_id=tournament_id,
+        tournament_code=None,
+        fase=fase,
+        budget_direction="expense",
+    )
+    if budget_concept is None:
+        raise DocumentoWorkflowValidationError(
+            "invalid_budget_concept",
+            "El concepto no corresponde al torneo/fase del informe.",
+        )
+
+    concept_uuid = UUIDType(str(budget_concept["id"]))
+    expense.budget_concept_id = concept_uuid
+    now = datetime.utcnow()
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=actor.id,
+            accion="asignar_partida_presupuestal_linea",
+            comentario=(
+                f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
+                f"{budget_concept.get('concept_name') or budget_concept_id}"
+            ),
+            fecha=now,
+        )
+    )
+
+    released = await _informe_budget_assignment_complete(session, documento)
+    if released:
+        documento.budget_concept_id = concept_uuid
+        documento.estado = "enviado"
+        documento.enviado_en = now
+        session.add(
+            Aprobacion(
+                tipo_entidad="documento",
+                entidad_id=documento.id,
+                aprobador_id=actor.id,
+                accion="asignar_partidas_presupuestales",
+                comentario="Todas las partidas del informe tienen concepto presupuestal; documento enviado a aprobación.",
+                fecha=now,
+            )
+        )
+    return documento, budget_concept, released
 
 
 def _schedule_budget_control_release_notification(documento_id: UUIDType, actor_id: UUIDType) -> None:
@@ -24638,49 +25052,112 @@ async def asignar_control_presupuestal_lote(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     next: Optional[str] = Form(None),
+    single_item_id: Optional[str] = Form(None),
     single_documento_id: Optional[str] = Form(None),
+    reject_documento_id: Optional[str] = Form(None),
 ) -> RedirectResponse:
-    """Assign budget concepts to one or more selected budget-control documents."""
+    """Assign budget concepts to one or more selected budget-control items."""
     if not _is_budget_control_user(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     redirect_url = next or "/documentos/control-presupuestal"
-    form = await request.form()
-    raw_ids = [single_documento_id] if single_documento_id else list(form.getlist("documento_ids"))
-    documento_ids: list[UUIDType] = []
-    for raw_id in raw_ids:
-        raw_text = str(raw_id or "").strip()
-        if not raw_text:
-            continue
+    if reject_documento_id:
         try:
-            documento_ids.append(UUIDType(raw_text))
+            documento_id = UUIDType(str(reject_documento_id).strip())
         except ValueError:
             return RedirectResponse(
                 url=_append_error_params(redirect_url, error="invalid_documento_id", error_msg="Selección inválida."),
                 status_code=303,
             )
-    if not documento_ids:
+        try:
+            await _reject_control_presupuestal_document(
+                session,
+                documento_id=documento_id,
+                actor=current_empleado,
+            )
+            await session.commit()
+        except DocumentoWorkflowValidationError as exc:
+            await session.rollback()
+            if exc.code == "documento_not_found":
+                raise HTTPException(status_code=404, detail=exc.message)
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error=exc.code, error_msg=exc.message),
+                status_code=303,
+            )
         return RedirectResponse(
-            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+            url=_append_success_params(redirect_url, success_msg="Documento regresado para corrección."),
             status_code=303,
         )
 
-    released: list[UUIDType] = []
-    try:
-        for documento_id in documento_ids:
-            budget_concept_id = str(form.get(f"budget_concept_id_{documento_id}") or "").strip()
-            if not budget_concept_id:
-                raise DocumentoWorkflowValidationError(
-                    "missing_budget_concept",
-                    "Todos los documentos seleccionados deben tener concepto presupuestal.",
-                )
-            documento, _budget_concept = await _apply_control_presupuestal_assignment(
-                session,
-                documento_id=documento_id,
-                budget_concept_id=budget_concept_id,
-                actor=current_empleado,
+    form = await request.form()
+    raw_items = [single_item_id] if single_item_id else list(form.getlist("budget_item_ids"))
+    if single_documento_id and not single_item_id:
+        raw_items = [f"doc:{single_documento_id}"]
+    if not raw_items:
+        raw_items = [f"doc:{raw_id}" for raw_id in form.getlist("documento_ids")]
+
+    items: list[tuple[str, UUIDType, str]] = []
+    for raw_item in raw_items:
+        raw_text = str(raw_item or "").strip()
+        if not raw_text:
+            continue
+        if ":" in raw_text:
+            kind, raw_id = raw_text.split(":", 1)
+        else:
+            kind, raw_id = "doc", raw_text
+        kind = kind.strip()
+        if kind not in {"doc", "expense"}:
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error="invalid_item", error_msg="Selección inválida."),
+                status_code=303,
             )
-            released.append(documento.id)
+        try:
+            item_id = UUIDType(raw_id.strip())
+        except ValueError:
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error="invalid_item_id", error_msg="Selección inválida."),
+                status_code=303,
+            )
+        item_key = _budget_control_item_key(kind, item_id)
+        budget_concept_id = str(form.get(f"budget_concept_id_{item_key}") or "").strip()
+        if not budget_concept_id:
+            return RedirectResponse(
+                url=_append_error_params(
+                    redirect_url,
+                    error="missing_budget_concept",
+                    error_msg="Todos los elementos seleccionados deben tener concepto presupuestal.",
+                ),
+                status_code=303,
+            )
+        items.append((kind, item_id, budget_concept_id))
+    if not items:
+        return RedirectResponse(
+            url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un elemento."),
+            status_code=303,
+        )
+
+    released: set[UUIDType] = set()
+    assigned_count = 0
+    try:
+        for kind, item_id, budget_concept_id in items:
+            if kind == "expense":
+                documento, _budget_concept, did_release = await _apply_control_presupuestal_expense_assignment(
+                    session,
+                    expense_id=item_id,
+                    budget_concept_id=budget_concept_id,
+                    actor=current_empleado,
+                )
+                if did_release:
+                    released.add(documento.id)
+            else:
+                documento, _budget_concept = await _apply_control_presupuestal_assignment(
+                    session,
+                    documento_id=item_id,
+                    budget_concept_id=budget_concept_id,
+                    actor=current_empleado,
+                )
+                released.add(documento.id)
+            assigned_count += 1
         await session.commit()
     except DocumentoWorkflowValidationError as exc:
         await session.rollback()
@@ -24693,7 +25170,10 @@ async def asignar_control_presupuestal_lote(
 
     for documento_id in released:
         _schedule_budget_control_release_notification(documento_id, current_empleado.id)
-    msg = f"{len(released)} documento(s) liberado(s) a aprobación."
+    if released:
+        msg = f"{assigned_count} elemento(s) asignado(s); {len(released)} documento(s) liberado(s) a aprobación."
+    else:
+        msg = f"{assigned_count} partida(s) asignada(s). El informe se liberará cuando todas tengan concepto."
     return RedirectResponse(
         url=_append_success_params(redirect_url, success_msg=msg),
         status_code=303,
@@ -30925,7 +31405,7 @@ async def ver_documento(
 
     cuenta_vinculada = None
     cuenta_saldo_ctx: Optional[Dict[str, Any]] = None
-    if documento.tipo == "INFORME" and documento.cuenta_gastos_id:
+    if documento.cuenta_gastos_id:
         cuenta_vinculada_result = await session.execute(
             select(CuentaDeGastos)
             .options(
@@ -30939,9 +31419,10 @@ async def ver_documento(
         if cuenta_vinculada is not None:
             if torneo is None:
                 torneo = getattr(cuenta_vinculada, "torneo", None)
-            cuenta_saldo_ctx = await _compute_cuenta_saldo_context(
-                session, documento.cuenta_gastos_id
-            )
+            if documento.tipo == "INFORME":
+                cuenta_saldo_ctx = await _compute_cuenta_saldo_context(
+                    session, documento.cuenta_gastos_id
+                )
 
     # Load related expenses (exclude cancelled).
     # For INFORME: also include expenses linked via informe_documento_id (cuenta-based attach).
@@ -32611,6 +33092,7 @@ async def _create_cuenta_de_gastos_with_informe(
     beneficiario: Optional[Empleado],
     beneficiario_operador: Optional[ProveedorCliente] = None,
     beneficiario_cuenta_bancaria: Optional[ProveedorCliente] = None,
+    beneficiario_alterno_tipo: Optional[str] = None,
     nombre: Optional[str] = None,
     tipo_cuenta: str,
     torneo_id: UUIDType,
@@ -32644,6 +33126,7 @@ async def _create_cuenta_de_gastos_with_informe(
             beneficiario_proveedor_cliente_id=(
                 beneficiario_proveedor.id if beneficiario_proveedor else None
             ),
+            beneficiario_alterno_tipo=beneficiario_alterno_tipo,
             referencia_base=referencia_base_final,
             nombre=nombre,
             estado="abierta",
@@ -32668,6 +33151,7 @@ async def _create_cuenta_de_gastos_with_informe(
             beneficiario_proveedor_cliente_id=(
                 beneficiario_proveedor.id if beneficiario_proveedor else None
             ),
+            beneficiario_alterno_tipo=beneficiario_alterno_tipo,
             tipo="INFORME",
             numero_referencia=f"I-{referencia_base_final}",
             estado="borrador",
@@ -32923,7 +33407,13 @@ async def crear_cuenta_de_gastos_form(
         "beneficiario_empleado_id", ""
     )
     preserve_operador = request.query_params.get("beneficiario_operador_id", "")
+    preserve_alterno_tipo = _normalize_beneficiario_alterno_tipo(
+        request.query_params.get("beneficiario_alterno_tipo")
+    )
     preserve_proveedor = request.query_params.get("proveedor_cliente_id", "")
+    if preserve_alterno_tipo:
+        preserve_operador = ""
+        preserve_beneficiario = ""
     beneficiario = await _resolve_active_beneficiary_empleado(
         session,
         preserve_beneficiario,
@@ -32951,6 +33441,7 @@ async def crear_cuenta_de_gastos_form(
         title="Es para otro beneficiario",
         use_activation=True,
     )
+    petty_cash_benjamin = await _resolve_petty_cash_benjamin_employee(session)
     regional_operator: Optional[ProveedorCliente] = None
     regional_operator_control = ""
     if _can_request_for_other_employee(current_empleado):
@@ -32969,7 +33460,18 @@ async def crear_cuenta_de_gastos_form(
             select_id="beneficiario_operador_id_informe",
             use_activation=True,
         )
-    if regional_operator is not None:
+    petty_cash_control = _petty_cash_beneficiary_control_html(
+        requester=current_empleado,
+        selected_type=preserve_alterno_tipo,
+        benjamin=petty_cash_benjamin,
+    )
+    if preserve_alterno_tipo and petty_cash_benjamin is not None:
+        bank_account_options = await _html_empleado_bank_account_options(
+            session,
+            petty_cash_benjamin,
+            selected_id=preserve_proveedor or None,
+        )
+    elif regional_operator is not None:
         bank_account_options = _html_single_proveedor_bank_account_options(
             regional_operator
         )
@@ -33063,6 +33565,7 @@ async def crear_cuenta_de_gastos_form(
                 <div class="form-group">
                     <label>Beneficiario del informe</label>
                     {regional_operator_control}
+                    {petty_cash_control}
                     {beneficiary_employee_control}
                 </div>
                 <div class="form-group" id="informe-bank-account-group">
@@ -33195,7 +33698,18 @@ async def crear_cuenta_de_gastos_form(
 
                     var operatorToggle = document.getElementById("beneficiario_operador_id_informe_enabled");
                     var employeeToggle = document.getElementById("beneficiario_empleado_id_enabled");
+                    var pettyToggles = Array.prototype.slice.call(document.querySelectorAll(".petty-cash-toggle"));
                     var defaultEmployeeId = employeeSelect && employeeSelect.dataset ? (employeeSelect.dataset.defaultBeneficiaryId || employeeSelect.value || "") : "";
+
+                    function selectedPettyToggle() {{
+                        return pettyToggles.find(function(toggle) {{ return toggle.checked; }}) || null;
+                    }}
+
+                    function clearPettyToggles(exceptToggle) {{
+                        pettyToggles.forEach(function(toggle) {{
+                            if (toggle !== exceptToggle) toggle.checked = false;
+                        }});
+                    }}
 
                     function setOperatorDisabled(disabled) {{
                         if (!operatorSelect) return;
@@ -33205,6 +33719,7 @@ async def crear_cuenta_de_gastos_form(
 
                     function resetToRequester() {{
                         if (operatorSelect) operatorSelect.value = "";
+                        clearPettyToggles(null);
                         if (employeeSelect && employeeSelect.tagName === "SELECT" && defaultEmployeeId) employeeSelect.value = defaultEmployeeId;
                         setOperatorDisabled(true);
                         setEmployeeDisabled(true);
@@ -33214,9 +33729,22 @@ async def crear_cuenta_de_gastos_form(
                     function applyBeneficiaryMode() {{
                         var operatorEnabled = !!(operatorToggle && operatorToggle.checked);
                         var employeeEnabled = !!(employeeToggle && employeeToggle.checked);
+                        var pettyToggle = selectedPettyToggle();
+
+                        if (pettyToggle) {{
+                            if (operatorToggle) operatorToggle.checked = false;
+                            if (employeeToggle) employeeToggle.checked = false;
+                            if (operatorSelect) operatorSelect.value = "";
+                            if (employeeSelect && employeeSelect.tagName === "SELECT") employeeSelect.value = pettyToggle.dataset.benjaminId || defaultEmployeeId;
+                            setOperatorDisabled(true);
+                            setEmployeeDisabled(true);
+                            loadEmployeeAccounts();
+                            return;
+                        }}
 
                         if (operatorEnabled) {{
                             if (employeeToggle) employeeToggle.checked = false;
+                            clearPettyToggles(null);
                             setEmployeeDisabled(true);
                             setOperatorDisabled(false);
                             if (operatorSelect && operatorSelect.value) {{
@@ -33231,6 +33759,7 @@ async def crear_cuenta_de_gastos_form(
 
                         if (employeeEnabled) {{
                             if (operatorToggle) operatorToggle.checked = false;
+                            clearPettyToggles(null);
                             if (operatorSelect) operatorSelect.value = "";
                             setOperatorDisabled(true);
                             setEmployeeDisabled(false);
@@ -33253,16 +33782,32 @@ async def crear_cuenta_de_gastos_form(
                     }}
                     if (operatorToggle) {{
                         operatorToggle.addEventListener("change", function() {{
-                            if (operatorToggle.checked && employeeToggle) employeeToggle.checked = false;
+                            if (operatorToggle.checked) {{
+                                if (employeeToggle) employeeToggle.checked = false;
+                                clearPettyToggles(null);
+                            }}
                             applyBeneficiaryMode();
                         }});
                     }}
                     if (employeeToggle) {{
                         employeeToggle.addEventListener("change", function() {{
-                            if (employeeToggle.checked && operatorToggle) operatorToggle.checked = false;
+                            if (employeeToggle.checked) {{
+                                if (operatorToggle) operatorToggle.checked = false;
+                                clearPettyToggles(null);
+                            }}
                             applyBeneficiaryMode();
                         }});
                     }}
+                    pettyToggles.forEach(function(toggle) {{
+                        toggle.addEventListener("change", function() {{
+                            if (toggle.checked) {{
+                                clearPettyToggles(toggle);
+                                if (operatorToggle) operatorToggle.checked = false;
+                                if (employeeToggle) employeeToggle.checked = false;
+                            }}
+                            applyBeneficiaryMode();
+                        }});
+                    }});
                     applyBeneficiaryMode();
                 }})();
             </script>
@@ -33299,12 +33844,29 @@ async def crear_cuenta_de_gastos_submit(
     beneficiario_operador_id_raw = (
         form_data.get("beneficiario_operador_id") or ""
     ).strip()
+    beneficiario_alterno_tipo = _normalize_beneficiario_alterno_tipo(
+        form_data.get("beneficiario_alterno_tipo")
+    )
     proveedor_cliente_id_raw = (form_data.get("proveedor_cliente_id") or "").strip()
+    if beneficiario_alterno_tipo:
+        beneficiario_empleado_id_raw = ""
     preserve_beneficiary_params = {
         "beneficiario_empleado_id": beneficiario_empleado_id_raw,
         "beneficiario_operador_id": beneficiario_operador_id_raw,
+        "beneficiario_alterno_tipo": beneficiario_alterno_tipo or "",
         "proveedor_cliente_id": proveedor_cliente_id_raw,
     }
+    if beneficiario_alterno_tipo and beneficiario_operador_id_raw:
+        return RedirectResponse(
+            url=_append_query_params(
+                "/informes-de-gastos/crear",
+                {
+                    "error_msg": "Seleccione caja chica u operador regional, no ambos.",
+                    **preserve_beneficiary_params,
+                },
+            ),
+            status_code=303,
+        )
     if beneficiario_empleado_id_raw and beneficiario_operador_id_raw:
         return RedirectResponse(
             url=_append_query_params(
@@ -33319,6 +33881,17 @@ async def crear_cuenta_de_gastos_submit(
             status_code=303,
         )
     beneficiario_operador: Optional[ProveedorCliente] = None
+    if beneficiario_alterno_tipo and not _can_request_for_other_employee(current_empleado):
+        return RedirectResponse(
+            url=_append_query_params(
+                "/informes-de-gastos/crear",
+                {
+                    "error_msg": "No tienes permiso para crear informes de caja chica.",
+                    **preserve_beneficiary_params,
+                },
+            ),
+            status_code=303,
+        )
     if beneficiario_operador_id_raw:
         if not _can_request_for_other_employee(current_empleado):
             return RedirectResponse(
@@ -33347,7 +33920,9 @@ async def crear_cuenta_de_gastos_submit(
                 status_code=303,
             )
     beneficiario = None
-    if beneficiario_operador is None:
+    if beneficiario_alterno_tipo:
+        beneficiario = await _resolve_petty_cash_benjamin_employee(session)
+    elif beneficiario_operador is None:
         beneficiario = await _resolve_active_beneficiary_empleado(
             session,
             beneficiario_empleado_id_raw,
@@ -33426,6 +34001,8 @@ async def crear_cuenta_de_gastos_submit(
                 "&beneficiario_operador_id="
                 f"{quote(beneficiario_operador_id_raw)}"
             )
+        if beneficiario_alterno_tipo:
+            base += f"&beneficiario_alterno_tipo={quote(beneficiario_alterno_tipo)}"
         if proveedor_cliente_id_raw:
             base += f"&proveedor_cliente_id={quote(proveedor_cliente_id_raw)}"
         return RedirectResponse(url=base, status_code=303)
@@ -33451,6 +34028,7 @@ async def crear_cuenta_de_gastos_submit(
         beneficiario=beneficiario,
         beneficiario_operador=beneficiario_operador,
         beneficiario_cuenta_bancaria=beneficiario_cuenta_bancaria,
+        beneficiario_alterno_tipo=beneficiario_alterno_tipo,
         nombre=nombre_val,
         tipo_cuenta=tipo_ok,
         torneo_id=torneo_id_uuid,
@@ -34620,6 +35198,7 @@ async def crear_gasto_rapido_en_informe(
     descuento: Optional[str] = Form("0"),
     impuestos_y_retenciones: Optional[str] = Form("0"),
     propina_no_deducible: Optional[str] = Form("0"),
+    pagado_con_amex_empresa: Optional[str] = Form(None),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
@@ -34742,6 +35321,10 @@ async def crear_gasto_rapido_en_informe(
             if cuenta.torneo
             else f"Informe I-{cuenta.referencia_base}"
         )
+        quick_company_amex_requested = _form_checkbox_checked(pagado_con_amex_empresa)
+        if quick_company_amex_requested and not _cuenta_allows_company_amex(cuenta):
+            raise ValueError("AMEX empresa sólo aplica para Odilón, Luis Ángel y los Federicos.")
+
         expense = await create_expense_from_data(
             session=session,
             empleado_id=cuenta.empleado_id,
@@ -34762,9 +35345,11 @@ async def crear_gasto_rapido_en_informe(
             budget_concept_id=UUIDType(str(budget_concept["id"])) if budget_concept else None,
             propina_no_deducible=float(values["propina_no_deducible"]),
         )
-        if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
+        if quick_company_amex_requested:
             expense.pagado_con_amex_empresa = True
             expense.metodo_pago = "TARJETA CREDITO AMEX"
+        else:
+            expense.pagado_con_amex_empresa = False
 
         expense.numero_factura = values["numero_factura"]
         expense.cuenta_gastos_id = cuenta.id
@@ -35559,6 +36144,14 @@ async def cuenta_de_gastos_detail(
             None,
             required=True,
         )
+    quick_company_amex_allowed = _cuenta_allows_company_amex(cuenta)
+    quick_company_amex_header = "<th>AMEX empresa</th>" if quick_company_amex_allowed else ""
+    quick_company_amex_cell = (
+        '<td><label style="display:flex;align-items:center;gap:8px;font-weight:700;white-space:nowrap;">'
+        '<input type="checkbox" name="pagado_con_amex_empresa" value="1"> AMEX empresa</label></td>'
+        if quick_company_amex_allowed
+        else ""
+    )
     if _can_quick_capture_expense(cuenta, informe_doc, current_empleado):
         quick_capture_html = f"""
                 <section class="surface">
@@ -35586,6 +36179,7 @@ async def cuenta_de_gastos_detail(
                                         <th id="quick-propina-header" style="display:none;">Propina</th>
                                         <th>TOTAL</th>
                                         <th>MONEDA</th>
+                                        {quick_company_amex_header}
                                         <th>MATERIALIDADES</th>
                                         <th>Acción</th>
                                     </tr>
@@ -35609,6 +36203,7 @@ async def cuenta_de_gastos_detail(
                                         <td id="quick-propina-cell" style="display:none;"><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
                                         <td><input type="text" value="{escape(currency_for(cuenta))}" readonly></td>
+                                        {quick_company_amex_cell}
                                         <td>
                                             <input type="file" name="archivos_generales" multiple
                                                 accept=".pdf,.xml,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv,.doc,.docx,.xls,.xlsx,application/pdf,application/xml,text/xml,image/*,text/plain,text/csv,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
