@@ -9996,12 +9996,12 @@ def _can_finance_add_comprobante_pago(
     *,
     solicitud_cancelada: bool = False,
 ) -> bool:
-    """Accounting payment closers may attach proof after approval or once paid."""
+    """Accounting payment closers attach proof only after payment-run cutoff."""
     if solicitud_cancelada or not _is_solicitud_terceros(documento):
         return False
     if not can_confirm_payment_run_payment(empleado):
         return False
-    return documento.estado in {"aprobado", "en_proceso_pago", "pagado"}
+    return documento.estado == "en_proceso_pago"
 
 
 def _nueva_solicitud_terceros_form_url(
@@ -27649,95 +27649,17 @@ async def registrar_pago(
     current_empleado: Empleado = Depends(get_current_empleado),
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
-    """
-    Register payment for a SOLICITUD and automatically generate an ExpenseReport.
-    Only allowed for tipo = 'SOLICITUD' and estado = 'aprobado'.
-    Only finanzas/admin can access this route.
-
-    Args:
-        next: Optional redirect URL after action (from form field or query param)
-    """
-    try:
-        result = await register_document_payment(
-            session,
-            documento_id=documento_id,
-            actor_id=current_empleado.id,
-        )
-    except DocumentoPaymentPermissionError as exc:
-        raise HTTPException(status_code=403, detail=exc.message)
-    except DocumentoPaymentValidationError as exc:
-        if exc.code == "documento_not_found":
-            raise HTTPException(status_code=404, detail=exc.message)
-        redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
-        return RedirectResponse(
-            url=_append_error_params(
-                redirect_url,
-                error=exc.code,
-                error_msg=exc.message,
-            ),
-            status_code=303,
-        )
-    except Exception:
-        await session.rollback()
-        logger.exception(
-            "Unexpected error registering documento payment",
-            extra={
-                "documento_id": str(documento_id),
-                "actor_id": str(current_empleado.id),
-            },
-        )
-        redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
-        return RedirectResponse(
-            url=_append_error_params(
-                redirect_url,
-                error="unexpected_documento_payment",
-                error_msg=(
-                    "Ocurrió un error al registrar la operación. "
-                    "Intente nuevamente."
-                ),
-            ),
-            status_code=303,
-        )
-
-    logger.info(
-        "Pago registrado para documento %s%s",
-        documento_id,
-        f": gasto {result.expense.id} generado" if result.expense else "",
-    )
-    await record_customer_success_audit_event(
-        session,
-        action="solicitud.payment.registered",
-        actor_empleado_id=current_empleado.id,
-        target_empleado_id=result.documento.empleado_id,
-        documento_id=result.documento.id,
-        documento_referencia=result.documento.numero_referencia,
-        entity_type="documento",
-        entity_id=result.documento.id,
-        request=request,
-        summary=(
-            f"{current_empleado.nombre} registró pago de "
-            f"{result.documento.numero_referencia}"
-        ),
-        metadata={
-            "expense_id": str(result.expense.id) if result.expense else None,
-            "aprobacion_id": str(result.aprobacion.id),
-        },
-        commit=True,
-    )
-
-    # Determine redirect URL (default to /documentos/pendientes-pago for finanzas workflows)
+    """Legacy endpoint: payment confirmation now requires proof upload."""
     redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
-    if result.expense is not None:
-        success_msg = quote(
-            f"Pago registrado exitosamente. Gasto {result.expense.numero_referencia} generado automáticamente."
-        )
-    else:
-        success_msg = quote("Solicitud marcada como pagada exitosamente.")
-    redirect_with_msg = f"{redirect_url}{'&' if '?' in redirect_url else '?'}success_msg={success_msg}"
-
     return RedirectResponse(
-        url=redirect_with_msg,
-        status_code=303
+        url=_append_error_params(
+            redirect_url,
+            error="payment_proof_required",
+            error_msg=(
+                "El pago se confirma adjuntando comprobante desde Programación de Pagos."
+            ),
+        ),
+        status_code=303,
     )
 
 
@@ -31446,14 +31368,6 @@ async def ver_documento(
         else:
             can_approve_or_reject = current_empleado.rol in ("superadmin", "super_admin")
 
-    # Determine permission for payment registration
-    can_register_payment = (
-        can_confirm_payment_run_payment(current_empleado) and
-        documento.tipo == 'SOLICITUD' and
-        documento.estado in {'aprobado', 'en_proceso_pago'} and
-        not documento.gasto_generado_id
-    )
-
     # Load torneo if linked. Informes may inherit project context from CuentaDeGastos.
     torneo = getattr(documento, "torneo", None)
     if torneo is None and documento.torneo_id:
@@ -32580,22 +32494,8 @@ async def ver_documento(
                 </div>
                 ''' if can_approve_or_reject else ''}
 
-                <!-- Marcar pagado (for SOLICITUD) -->
-                {f'''
-                <div>
-                    <div class="inline-actions">
-                    {f'<a href="/gastos/{documento.gasto_generado_id}" class="button secondary">Ver gasto generado</a>' if documento.gasto_generado_id else ''}
-                    {f'''
-                    <form method="POST" action="/documentos/{documento_id}/registrar-pago" class="inline-form">
-                        {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
-                        <button type="submit" class="button primary">Marcar pagado</button>
-                    </form>
-                    ''' if can_register_payment else ''}
-                    {f'<div class="status-chip ok">Pagado</div>' if documento.estado == 'pagado' else ''}
-                    </div>
-                    {f'<div class="section-note" style="margin-top:8px;">Confirma que la transferencia fue ejecutada y actualiza el estado del documento.</div>' if can_register_payment else ''}
-                </div>
-                ''' if documento.tipo == 'SOLICITUD' and can_confirm_payment_run_payment(current_empleado) else ''}
+                {f'<div><a href="/gastos/{documento.gasto_generado_id}" class="button secondary">Ver gasto generado</a></div>' if documento.tipo == 'SOLICITUD' and documento.gasto_generado_id else ''}
+                {f'<div class="status-chip ok">Pagado</div>' if documento.tipo == 'SOLICITUD' and documento.estado == 'pagado' else ''}
 
                 <!-- Saldar cuenta (for approved INFORME linked to a cuenta de gastos) -->
                 {f'''
