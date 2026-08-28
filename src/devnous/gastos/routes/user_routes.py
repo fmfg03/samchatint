@@ -11043,13 +11043,15 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     visible_tool_keys = set(getattr(current_empleado, "visible_tool_keys", set()) or set())
 
     def can_nav(tool_key: str, fallback_roles: tuple[str, ...]) -> bool:
+        if tool_key == "panel.home":
+            return True
         if is_superadmin:
             return True
         if visible_tool_keys:
             return tool_key in visible_tool_keys
         return role_norm in fallback_roles
 
-    if can_nav("admin.root", ("admin", "superadmin", "super_admin")):
+    if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))

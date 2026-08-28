@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+from devnous.gastos.routes import user_routes
 from devnous.gastos.services.documento_workflow_service import documento_requires_budget_control
 
 
@@ -192,9 +193,22 @@ def test_top_navigation_uses_access_control_for_admin_and_operations_links() -> 
     end = source.index('links_html = "".join', start)
     block = source[start:end]
     assert 'links: list[tuple[str, str, str]] = []' in block
-    assert 'can_nav("admin.root"' in block
+    assert 'can_nav("panel.home"' in block
     assert 'can_nav("panel.operaciones"' in block
     assert 'links = [\n        ("/panel"' not in block
+
+
+def test_top_navigation_keeps_admin_panel_return_for_non_superadmin_profiles() -> None:
+    empleado = SimpleNamespace(
+        nombre="Dani",
+        rol="finanzas",
+        visible_tool_keys={"admin.contabilidad"},
+    )
+
+    html = user_routes.render_top_navigation(empleado, "contabilidad")
+
+    assert 'href="/panel"' in html
+    assert "Panel de administración" in html
 
 
 def test_budget_matrix_labels_total_before_weeks() -> None:
