@@ -65,6 +65,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("empleados", "aprobador_id"),
     RequiredColumn("documentos", "beneficiario_empleado_id"),
     RequiredColumn("documentos", "beneficiario_proveedor_cliente_id"),
+    RequiredColumn("documentos", "beneficiario_alterno_tipo"),
     RequiredColumn("documentos", "fecha_pago"),
     RequiredColumn("documentos", "concepto_pago"),
     RequiredColumn("documentos", "numero_factura"),
@@ -85,6 +86,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("cuentas_de_gastos", "currency"),
     RequiredColumn("cuentas_de_gastos", "beneficiario_empleado_id"),
     RequiredColumn("cuentas_de_gastos", "beneficiario_proveedor_cliente_id"),
+    RequiredColumn("cuentas_de_gastos", "beneficiario_alterno_tipo"),
     RequiredColumn("tournaments", "etapas"),
     RequiredColumn("tournaments", "categorias"),
     RequiredColumn("access_profiles", "id"),
@@ -1541,12 +1543,28 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_proveedor_cliente_id ON cuentas_de_gastos (beneficiario_proveedor_cliente_id)",
     ),
     (
+        "cuentas_de_gastos_beneficiario_alterno_tipo_column",
+        "ALTER TABLE IF EXISTS cuentas_de_gastos ADD COLUMN IF NOT EXISTS beneficiario_alterno_tipo VARCHAR(40) NULL",
+    ),
+    (
+        "cuentas_de_gastos_beneficiario_alterno_tipo_index",
+        "CREATE INDEX IF NOT EXISTS ix_cuentas_de_gastos_beneficiario_alterno_tipo ON cuentas_de_gastos (beneficiario_alterno_tipo)",
+    ),
+    (
         "documentos_beneficiario_proveedor_cliente_id_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS beneficiario_proveedor_cliente_id UUID NULL REFERENCES proveedores_clientes(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
     (
         "documentos_beneficiario_proveedor_cliente_id_index",
         "CREATE INDEX IF NOT EXISTS ix_documentos_beneficiario_proveedor_cliente_id ON documentos (beneficiario_proveedor_cliente_id)",
+    ),
+    (
+        "documentos_beneficiario_alterno_tipo_column",
+        "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS beneficiario_alterno_tipo VARCHAR(40) NULL",
+    ),
+    (
+        "documentos_beneficiario_alterno_tipo_index",
+        "CREATE INDEX IF NOT EXISTS ix_documentos_beneficiario_alterno_tipo ON documentos (beneficiario_alterno_tipo)",
     ),
     (
         "documentos_estado_check_workflow_states",

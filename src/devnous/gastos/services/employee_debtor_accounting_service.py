@@ -43,6 +43,11 @@ DEBTOR_ACCOUNT_ROOT_CODES = (
     DEBTOR_ACCOUNT_ROOT_CODE,
     DEBTOR_SOCIO_ACCOUNT_ROOT_CODE,
 )
+PETTY_CASH_DEBTOR_ACCOUNT_CODES = {
+    "caja_chica_usd": "1110-001-001",
+    "caja_chica_pesos": "1110-001-002",
+}
+PETTY_CASH_DEBTOR_ACCOUNT_CODE_SET = set(PETTY_CASH_DEBTOR_ACCOUNT_CODES.values())
 SANTANDER_BANK_ACCOUNT_CODE = "1120-001-001"
 DEBTOR_ORIGINS = {
     "deudores_anticipo",
@@ -75,6 +80,16 @@ def _normalize_text(value: Any) -> str:
     normalized = unicodedata.normalize("NFKD", raw)
     ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     return " ".join(ascii_text.split())
+
+
+def _normalize_petty_cash_type(value: object) -> Optional[str]:
+    raw = str(value or "").strip().lower()
+    return raw if raw in PETTY_CASH_DEBTOR_ACCOUNT_CODES else None
+
+
+def _is_debtor_or_petty_cash_line_code(value: object) -> bool:
+    code = str(value or "")
+    return code.startswith(DEBTOR_ACCOUNT_PREFIXES) or code in PETTY_CASH_DEBTOR_ACCOUNT_CODE_SET
 
 
 def _account_label(account: Optional[CuentaContable]) -> str:
@@ -164,6 +179,28 @@ async def resolve_cuenta_debtor_empleado(
     if owner_id is None:
         return None
     return await session.get(Empleado, owner_id)
+
+
+async def resolve_cuenta_debtor_account(
+    session: AsyncSession,
+    cuenta: CuentaDeGastos | None,
+    empleado: Empleado | None,
+) -> Optional[CuentaContable]:
+    petty_cash_type = _normalize_petty_cash_type(
+        getattr(cuenta, "beneficiario_alterno_tipo", None) if cuenta is not None else None
+    )
+    if petty_cash_type:
+        code = PETTY_CASH_DEBTOR_ACCOUNT_CODES[petty_cash_type]
+        result = await session.execute(
+            select(CuentaContable).where(
+                CuentaContable.codigo == code,
+                CuentaContable.activo.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+    if empleado is None:
+        return None
+    return await resolve_employee_debtor_account(session, empleado)
 
 
 async def resolve_default_bank_account(
@@ -687,7 +724,7 @@ async def ensure_debtor_payment_posting_for_document(
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
 
-    debtor = await resolve_employee_debtor_account(session, empleado)
+    debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
     bank = await resolve_default_bank_account(session)
@@ -762,7 +799,7 @@ async def ensure_debtor_comprobacion_posting_for_informe(
     empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     if empleado is None:
         return DebtorPostingResult(status="pending", reason="missing_employee")
-    debtor = await resolve_employee_debtor_account(session, empleado)
+    debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
 
@@ -865,7 +902,7 @@ async def ensure_debtor_settlement_posting(
     empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     if empleado is None:
         return DebtorPostingResult(status="pending", reason="missing_employee")
-    debtor = await resolve_employee_debtor_account(session, empleado)
+    debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
         return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
     bank = await resolve_default_bank_account(session)
@@ -943,11 +980,7 @@ async def build_cuenta_debtor_auxiliary(
 ) -> dict[str, Any]:
     cuenta = await session.get(CuentaDeGastos, cuenta_id)
     empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
-    debtor = (
-        await resolve_employee_debtor_account(session, empleado)
-        if empleado is not None
-        else None
-    )
+    debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     line_conditions = [
         AccountingPoliza.origen.in_(DEBTOR_ORIGINS),
         AccountingPolizaLine.raw_row_json.contains({"cuenta_gastos_id": str(cuenta_id)}),
@@ -965,8 +998,8 @@ async def build_cuenta_debtor_auxiliary(
             )
         )
     ).scalars().all()
-    debe = sum(float(line.debe or 0) for line in lines if line.cuenta_codigo.startswith(DEBTOR_ACCOUNT_PREFIX))
-    haber = sum(float(line.haber or 0) for line in lines if line.cuenta_codigo.startswith(DEBTOR_ACCOUNT_PREFIX))
+    debe = sum(float(line.debe or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
+    haber = sum(float(line.haber or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
     saldo = round(debe - haber, 2)
     status = "saldado" if abs(saldo) < 0.01 and lines else "pendiente"
     if debtor is None:
@@ -1043,7 +1076,7 @@ async def build_debtors_admin_snapshot(
                 "movimientos": 0,
             },
         )
-        if str(line.cuenta_codigo or "").startswith(DEBTOR_ACCOUNT_PREFIX):
+        if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo):
             bucket["cuenta_codigo"] = line.cuenta_codigo
             bucket["cuenta_nombre"] = ""
             bucket["debe"] += float(line.debe or 0)
@@ -1116,6 +1149,7 @@ async def list_employees_missing_debtor_account(
 __all__ = [
     "DEBTOR_ACCOUNT_PREFIX",
     "DEBTOR_ACCOUNT_ROOT_CODE",
+    "PETTY_CASH_DEBTOR_ACCOUNT_CODES",
     "build_cuenta_debtor_auxiliary",
     "build_debtors_admin_snapshot",
     "ensure_debtor_comprobacion_posting_for_informe",
@@ -1123,5 +1157,6 @@ __all__ = [
     "ensure_debtor_settlement_posting",
     "list_employees_missing_debtor_account",
     "resolve_employee_debtor_account",
+    "resolve_cuenta_debtor_account",
     "resolve_cuenta_debtor_empleado",
 ]
