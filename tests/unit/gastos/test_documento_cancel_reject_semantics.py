@@ -38,6 +38,28 @@ def test_solicitud_list_exposes_edit_for_rejected_owner():
     assert 'Cancelar borrador' in helper
 
 
+def test_rejected_solicitud_owner_can_edit_even_with_budget_concept():
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from devnous.gastos.routes import user_routes
+
+    owner_id = uuid4()
+    documento = SimpleNamespace(
+        tipo="SOLICITUD",
+        estado="rechazado",
+        empleado_id=owner_id,
+        proveedor_cliente_id=uuid4(),
+        cuenta_gastos_id=None,
+        beneficiario_empleado_id=None,
+        concepto_pago="Servicios rechazados",
+        budget_concept_id=uuid4(),
+    )
+    actor = SimpleNamespace(id=owner_id, rol="empleado")
+
+    assert user_routes._can_edit_solicitud_terceros(documento, actor) is True
+
+
 def test_update_rejected_solicitud_returns_to_draft_after_edit():
     source = (
         ROOT
@@ -51,3 +73,4 @@ def test_update_rejected_solicitud_returns_to_draft_after_edit():
     assert 'if documento.estado == "rechazado":' in source
     assert 'documento.estado = "borrador"' in source
     assert 'documento.enviado_en = None' in source
+    assert 'documento.budget_concept_id = None' in source

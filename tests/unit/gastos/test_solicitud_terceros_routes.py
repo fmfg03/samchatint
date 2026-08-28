@@ -684,6 +684,49 @@ def test_quick_expense_cfdi_autofill_keeps_xml_total_as_authority():
     assert script.count("formData.append(sourceInput.name, sourceInput.files[0]);") == 1
 
 
+def test_comprobante_pago_attachment_is_registered_atomically_with_payment() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def agregar_documento_adjuntos")
+    end = source.index('@router.post("/documentos/{documento_id}/adjuntos/{adjunto_id}/eliminar")', start)
+    handler = source[start:end]
+
+    assert 'if categoria_norm == "comprobante_pago":' in handler
+    assert "commit=False" in handler
+    assert "await register_document_payment(" in handler
+    assert "payment_registered = True" in handler
+
+
+def test_quick_expense_form_exposes_air_supplement_facturas() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    assert 'id="quick-air-supplements"' in source
+    assert "Partidas aéreas adicionales" in source
+    assert "Asiento preferencial" in source
+    assert "Exceso de equipaje" in source
+    assert 'name="asiento_preferencial_cfdi_xml"' in source
+    assert 'name="asiento_preferencial_cfdi_pdf"' in source
+    assert 'name="exceso_equipaje_cfdi_xml"' in source
+    assert 'name="exceso_equipaje_cfdi_pdf"' in source
+    assert "airTokens" in source
+    assert "isAir()" in source
+
+
+def test_quick_expense_route_creates_air_supplement_expenses() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def crear_gasto_rapido_en_informe")
+    end = source.index('@router.post("/informes-de-gastos/{cuenta_id}/gastos/amex")', start)
+    handler = source[start:end]
+
+    assert "asiento_preferencial_cfdi_xml" in handler
+    assert "exceso_equipaje_cfdi_xml" in handler
+    assert "async def _create_air_supplement_expense" in handler
+    assert "label=\"Asiento preferencial\"" in handler
+    assert "label=\"Exceso de equipaje\"" in handler
+    assert "requiere cargar su factura PDF o XML" in handler
+    assert "supplement_expense.cuenta_gastos_id = cuenta.id" in handler
+    assert "supplement_expense.informe_documento_id = informe_doc.id" in handler
+
+
 def test_materialidades_picker_contract_keeps_files_verifiable_before_submit() -> None:
     html = render_materialidades_file_picker_html()
     script = render_materialidades_file_picker_script()

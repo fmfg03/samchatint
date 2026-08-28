@@ -816,6 +816,7 @@ async def add_solicitud_documento_adjuntos(
     *,
     documento: Documento,
     attachments: list[SolicitudTercerosAttachment],
+    commit: bool = True,
 ) -> int:
     """Append validated attachments to an existing SOLICITUD document."""
     if not attachments:
@@ -825,7 +826,8 @@ async def add_solicitud_documento_adjuntos(
         documento=documento,
         attachments=attachments,
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     return len(attachments)
 
 
@@ -888,14 +890,16 @@ async def update_solicitud_terceros_document(
         )
     estado_norm = (documento.estado or "").strip().lower()
     editable_before_budget = (
-        estado_norm in {"borrador", "rechazado"}
+        estado_norm == "borrador"
         or estado_norm == "control_presupuestal"
     ) and not getattr(documento, "budget_concept_id", None)
+    editable_rejected = estado_norm == "rechazado"
     if not editable_before_budget:
-        raise SolicitudValidationError(
-            "invalid_estado",
-            "Solo se pueden editar solicitudes antes de que Control Presupuestal asigne concepto.",
-        )
+        if not editable_rejected:
+            raise SolicitudValidationError(
+                "invalid_estado",
+                "Solo se pueden editar solicitudes antes de que Control Presupuestal asigne concepto.",
+            )
     if documento.empleado_id != payload.empleado_id:
         raise SolicitudValidationError(
             "invalid_empleado",
@@ -993,6 +997,7 @@ async def update_solicitud_terceros_document(
     if documento.estado == "rechazado":
         documento.estado = "borrador"
         documento.enviado_en = None
+        documento.budget_concept_id = None
 
     new_attachments = _payload_solicitud_terceros_attachments(payload)
     if new_attachments:

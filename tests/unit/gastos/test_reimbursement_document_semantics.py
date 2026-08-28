@@ -231,8 +231,8 @@ def test_documento_approver_display_uses_beneficiary_approval_subject() -> None:
     start = source.index("async def fetch_documento_aprobador_display_batch")
     block = source[start:]
 
-    assert "approval_subject = approval_subject_empleado(doc)" in block
-    assert "assigned = (" in block
+    assert "subject_id = approval_subject_empleado_id(doc)" in block
+    assert "assigned = empleado.aprobador" in block
     assert "empleado = doc.empleado" not in block
 
 def test_telegram_approver_queue_uses_effective_beneficiary_approver():

@@ -4277,10 +4277,10 @@ async def contabilidad_coi_view(
             <div class="box"><div class="label">Documentos</div><div class="value">{len(exportable_document_ids)}</div></div>
             <div class="box"><div class="label">Gastos listos</div><div class="value">{exportable_ready_expenses}</div></div>
         </div>
-        <div style=display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
             <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=INFORME&situacion=cerradas">Descargar informes de gastos</a>
             <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=SOLICITUD&situacion=cerradas">Descargar solicitudes de transferencia</a>
-            <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?situacion=cerradas">Descargar todo cerrado</a>
+            <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?situacion=cerradas">Descargar todo</a>
         </div>
         <table>
             <thead>
@@ -9907,8 +9907,10 @@ def _budget_concept_assigned(documento: Documento) -> bool:
 def _is_pre_budget_edit_window(documento: Documento) -> bool:
     """User-editable window before Control Presupuestal assigns a budget concept."""
     estado = (getattr(documento, "estado", None) or "").strip().lower()
-    if estado in {"borrador", "rechazado"}:
+    if estado == "borrador":
         return not _budget_concept_assigned(documento)
+    if estado == "rechazado":
+        return True
     return estado == "control_presupuestal" and not _budget_concept_assigned(documento)
 
 
@@ -9988,20 +9990,16 @@ def _removable_solicitud_adjunto_ids(
     return removable
 
 
-def _empleado_departamento_finanzas(empleado: Empleado) -> bool:
-    return (getattr(empleado, "departamento", None) or "").strip() == "Finanzas"
-
-
 def _can_finance_add_comprobante_pago(
     documento: Documento,
     empleado: Empleado,
     *,
     solicitud_cancelada: bool = False,
 ) -> bool:
-    """Finanzas department may attach payment proof after approval or once paid."""
+    """Accounting payment closers may attach proof after approval or once paid."""
     if solicitud_cancelada or not _is_solicitud_terceros(documento):
         return False
-    if not _empleado_departamento_finanzas(empleado):
+    if not can_confirm_payment_run_payment(empleado):
         return False
     return documento.estado in {"aprobado", "en_proceso_pago", "pagado"}
 
@@ -14497,6 +14495,7 @@ async def gastos_terceros(
         concepto_raw = (doc.concepto_pago or "").strip()
         concepto_display = escape(concepto_raw) if concepto_raw else "—"
         ref_ops_attr = escape(ro_terc_raw.lower())
+        solicitante_attr = escape(solicitante_nombre.lower())
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
         estado_display = escape(doc.estado.upper())
@@ -14520,13 +14519,19 @@ async def gastos_terceros(
         registrar_pago_link = _solicitud_transferencia_list_actions_html(
             doc, current_empleado
         )
+        accion_attr_parts = ["ver detalle"]
+        if "/editar" in registrar_pago_link:
+            accion_attr_parts.append("editar")
+        if "/cancelar" in registrar_pago_link:
+            accion_attr_parts.append("cancelar borrador")
+        accion_attr = escape(" ".join(accion_attr_parts))
 
         archivos_terc = html_documento_archivos_cell(
             doc.id, terceros_adj_meta.get(doc.id, [])
         )
 
         rows_html += f"""
-        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-proveedor="{proveedor_attr}">
+        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-accion="{accion_attr}">
             <td>{doc_link}</td>
             <td style="white-space: nowrap;">{ro_terc_display}</td>
             <td>{solicitante_nombre}</td>
@@ -14635,8 +14640,16 @@ async def gastos_terceros(
                             <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
+                            <label for="terceros-search-solicitante" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Solicitante</label>
+                            <input type="search" id="terceros-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
                             <label for="terceros-search-concepto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Concepto</label>
                             <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Acción</label>
+                            <input type="search" id="terceros-search-accion" placeholder="Ej. editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
@@ -14669,9 +14682,11 @@ async def gastos_terceros(
                     (function() {{
                         var refInput = document.getElementById('terceros-search-ref');
                         var proveedorInput = document.getElementById('terceros-search-proveedor');
+                        var solicitanteInput = document.getElementById('terceros-search-solicitante');
                         var conInput = document.getElementById('terceros-search-concepto');
+                        var accionInput = document.getElementById('terceros-search-accion');
                         var table = document.getElementById('terceros-table');
-                        if (!table || (!refInput && !proveedorInput && !conInput)) return;
+                        if (!table || (!refInput && !proveedorInput && !solicitanteInput && !conInput && !accionInput)) return;
                         var noMatches = document.getElementById('terceros-no-matches');
                         var rows = table.querySelectorAll('tbody tr[data-ref-ops]');
                         function normalizeText(value) {{
@@ -14686,16 +14701,22 @@ async def gastos_terceros(
                         function applyFilter() {{
                             var qRef = normalizeText(refInput && refInput.value);
                             var qProveedor = normalizeText(proveedorInput && proveedorInput.value);
+                            var qSolicitante = normalizeText(solicitanteInput && solicitanteInput.value);
                             var qCon = normalizeText(conInput && conInput.value);
+                            var qAccion = normalizeText(accionInput && accionInput.value);
                             var visible = 0;
                             rows.forEach(function(row) {{
                                 var ref = normalizeText(row.getAttribute('data-ref-ops'));
                                 var proveedor = normalizeText(row.getAttribute('data-proveedor'));
+                                var solicitante = normalizeText(row.getAttribute('data-solicitante'));
                                 var con = normalizeText(row.getAttribute('data-concepto'));
+                                var accion = normalizeText(row.getAttribute('data-accion'));
                                 var matchRef = !qRef || ref === qRef;
                                 var matchProveedor = !qProveedor || proveedor.indexOf(qProveedor) !== -1;
+                                var matchSolicitante = !qSolicitante || solicitante.indexOf(qSolicitante) !== -1;
                                 var matchCon = !qCon || con.indexOf(qCon) !== -1;
-                                var match = matchRef && matchProveedor && matchCon;
+                                var matchAccion = !qAccion || accion.indexOf(qAccion) !== -1;
+                                var match = matchRef && matchProveedor && matchSolicitante && matchCon && matchAccion;
                                 row.style.display = match ? '' : 'none';
                                 if (match) visible++;
                             }});
@@ -14705,7 +14726,9 @@ async def gastos_terceros(
                         }}
                         if (refInput) refInput.addEventListener('input', applyFilter);
                         if (proveedorInput) proveedorInput.addEventListener('input', applyFilter);
+                        if (solicitanteInput) solicitanteInput.addEventListener('input', applyFilter);
                         if (conInput) conInput.addEventListener('input', applyFilter);
+                        if (accionInput) accionInput.addEventListener('input', applyFilter);
                     }})();
                 </script>
             </div>
@@ -26079,6 +26102,20 @@ async def documentos_todos(
             </div>
         </div>
     """
+    bulk_params = {
+        key: value
+        for key, value in {
+            "estado": (estado or "").strip(),
+            "tipo": (tipo or "").strip(),
+            "empleado_nombre": (empleado_nombre or "").strip(),
+            "q": q_value,
+            "situacion": situacion_value,
+        }.items()
+        if value
+    }
+    bulk_href = "/documentos/todos/exportar-exceles.zip"
+    if bulk_params:
+        bulk_href += "?" + urlencode(bulk_params)
 
     html = f"""
     <!DOCTYPE html>
@@ -30592,19 +30629,26 @@ async def agregar_documento_adjuntos(
                 status_code=303,
             )
 
-        count = await add_solicitud_documento_adjuntos(
-            session,
-            documento=documento,
-            attachments=uploads,
-        )
         payment_registered = False
         if categoria_norm == "comprobante_pago":
+            count = await add_solicitud_documento_adjuntos(
+                session,
+                documento=documento,
+                attachments=uploads,
+                commit=False,
+            )
             await register_document_payment(
                 session,
                 documento_id=documento.id,
                 actor_id=current_empleado.id,
             )
             payment_registered = True
+        else:
+            count = await add_solicitud_documento_adjuntos(
+                session,
+                documento=documento,
+                attachments=uploads,
+            )
     except SolicitudValidationError as exc:
         await session.rollback()
         return RedirectResponse(
@@ -32707,6 +32751,24 @@ def _expense_tip_group_should_show(
     ) or _matches_expense_tip_concept(budget_concept_label)
 
 
+_EXPENSE_AIR_CONCEPT_TOKENS = (
+    "avion",
+    "aereo",
+    "aerea",
+    "aerolinea",
+    "boleto de avion",
+    "transporte aereo",
+    "vuelo",
+    "vuelos",
+)
+
+
+def _matches_expense_air_concept(value: Optional[str]) -> bool:
+    normalized = unicodedata.normalize("NFKD", str(value or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return any(token in normalized for token in _EXPENSE_AIR_CONCEPT_TOKENS)
+
+
 def _html_budget_concept_options(
     concepts: List[Dict[str, str]],
     selected_id: Optional[str],
@@ -34443,6 +34505,7 @@ async def cuentas_de_gastos_list(
                 .options(
                     selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
                     selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
                     selectinload(CuentaDeGastos.torneo),
                     undefer(CuentaDeGastos.tipo_cuenta),
                     undefer(CuentaDeGastos.torneo_id),
@@ -34461,6 +34524,7 @@ async def cuentas_de_gastos_list(
                 .options(
                     selectinload(CuentaDeGastos.empleado).selectinload(Empleado.aprobador),
                     selectinload(CuentaDeGastos.beneficiario_empleado).selectinload(Empleado.aprobador),
+                    selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
                     selectinload(CuentaDeGastos.torneo),
                     undefer(CuentaDeGastos.tipo_cuenta),
                     undefer(CuentaDeGastos.torneo_id),
@@ -34570,6 +34634,7 @@ async def cuentas_de_gastos_list(
             getattr(cuenta, "tipo_gasto", None),
             getattr(getattr(cuenta, "empleado", None), "nombre", None),
             getattr(beneficiario, "nombre", None),
+            getattr(getattr(cuenta, "beneficiario_proveedor_cliente", None), "nombre", None),
             getattr(aprobador, "nombre", None),
             getattr(informe_doc, "numero_referencia", None),
             getattr(informe_doc, "referencia_operaciones", None),
@@ -34679,6 +34744,12 @@ async def cuentas_de_gastos_list(
             if beneficiario_obj and beneficiario_obj.nombre
             else "-"
         )
+        proveedor_obj = getattr(cuenta, "beneficiario_proveedor_cliente", None)
+        proveedor_filter_raw = (
+            getattr(proveedor_obj, "nombre", None)
+            or getattr(beneficiario_obj, "nombre", None)
+            or ""
+        )
         aprobador_obj = (
             getattr(beneficiario_obj, "aprobador", None)
             or getattr(cuenta.empleado, "aprobador", None)
@@ -34729,8 +34800,16 @@ async def cuentas_de_gastos_list(
                 'onclick="return confirm(\'¿Cancelar este informe vacío? Se conservará el registro de auditoría.\')">'
                 'Cancelar borrador</button></form>'
             )
+        accion_attr_parts = ["ver"]
+        if cerrar_cell:
+            accion_attr_parts.append("cerrar")
+        if cancelar_borrador_cell:
+            accion_attr_parts.append("cancelar borrador")
+        solicitante_attr = escape(solicitante_nombre.lower())
+        proveedor_attr = escape(proveedor_filter_raw.lower())
+        accion_attr = escape(" ".join(accion_attr_parts))
         rows_html += f"""
-        <tr>
+        <tr data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-accion="{accion_attr}">
             <td><strong>{titulo_cuenta}</strong><br>
                 <small style="color: #666;">{sub_label}</small>
             </td>
@@ -34867,8 +34946,22 @@ async def cuentas_de_gastos_list(
                             <div class="section-note">Empieza por los informes abiertos y luego baja a su detalle y sus movimientos.</div>
                         </div>
                     </div>
+                    <div class="informes-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
+                        <div>
+                            <label for="informes-search-solicitante" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Solicitante</label>
+                            <input type="search" id="informes-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="informes-search-proveedor" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Proveedor</label>
+                            <input type="search" id="informes-search-proveedor" placeholder="Proveedor o beneficiario..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
+                        </div>
+                        <div>
+                            <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Acción</label>
+                            <input type="search" id="informes-search-accion" placeholder="Ej. ver, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
+                        </div>
+                    </div>
                     <div class="table-shell">
-            <table>
+            <table id="informes-table">
                 <thead>
                     <tr>
                         <th>Informe de Gastos</th>
@@ -34889,12 +34982,56 @@ async def cuentas_de_gastos_list(
                 </thead>
                 <tbody>
                     {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
+                    <tr id="informes-no-matches" style="display:none;"><td colspan="14" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
                 </tbody>
             </table>
                     </div>
                 </section>
             </div>
         </div>
+        <script>
+            (function() {{
+                var solicitanteInput = document.getElementById('informes-search-solicitante');
+                var proveedorInput = document.getElementById('informes-search-proveedor');
+                var accionInput = document.getElementById('informes-search-accion');
+                var table = document.getElementById('informes-table');
+                if (!table || (!solicitanteInput && !proveedorInput && !accionInput)) return;
+                var noMatches = document.getElementById('informes-no-matches');
+                var rows = table.querySelectorAll('tbody tr[data-solicitante]');
+                function normalizeText(value) {{
+                    return (value || '')
+                        .toString()
+                        .normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g, '')
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, ' ')
+                        .trim();
+                }}
+                function applyFilter() {{
+                    var qSolicitante = normalizeText(solicitanteInput && solicitanteInput.value);
+                    var qProveedor = normalizeText(proveedorInput && proveedorInput.value);
+                    var qAccion = normalizeText(accionInput && accionInput.value);
+                    var visible = 0;
+                    rows.forEach(function(row) {{
+                        var solicitante = normalizeText(row.getAttribute('data-solicitante'));
+                        var proveedor = normalizeText(row.getAttribute('data-proveedor'));
+                        var accion = normalizeText(row.getAttribute('data-accion'));
+                        var matchSolicitante = !qSolicitante || solicitante.indexOf(qSolicitante) !== -1;
+                        var matchProveedor = !qProveedor || proveedor.indexOf(qProveedor) !== -1;
+                        var matchAccion = !qAccion || accion.indexOf(qAccion) !== -1;
+                        var match = matchSolicitante && matchProveedor && matchAccion;
+                        row.style.display = match ? '' : 'none';
+                        if (match) visible++;
+                    }});
+                    if (noMatches) {{
+                        noMatches.style.display = (rows.length > 0 && visible === 0) ? '' : 'none';
+                    }}
+                }}
+                if (solicitanteInput) solicitanteInput.addEventListener('input', applyFilter);
+                if (proveedorInput) proveedorInput.addEventListener('input', applyFilter);
+                if (accionInput) accionInput.addEventListener('input', applyFilter);
+            }})();
+        </script>
     </body>
     </html>
     """
@@ -35202,6 +35339,16 @@ async def crear_gasto_rapido_en_informe(
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
+    asiento_preferencial_cfdi_xml: Optional[UploadFile] = File(None),
+    asiento_preferencial_cfdi_pdf: Optional[UploadFile] = File(None),
+    asiento_preferencial_numero_factura: Optional[str] = Form(None),
+    asiento_preferencial_subtotal: Optional[str] = Form(None),
+    asiento_preferencial_impuestos_y_retenciones: Optional[str] = Form("0"),
+    exceso_equipaje_cfdi_xml: Optional[UploadFile] = File(None),
+    exceso_equipaje_cfdi_pdf: Optional[UploadFile] = File(None),
+    exceso_equipaje_numero_factura: Optional[str] = Form(None),
+    exceso_equipaje_subtotal: Optional[str] = Form(None),
+    exceso_equipaje_impuestos_y_retenciones: Optional[str] = Form("0"),
 ) -> RedirectResponse:
     redirect_base = f"/informes-de-gastos/{cuenta_id}"
     try:
@@ -35396,6 +35543,151 @@ async def crear_gasto_rapido_en_informe(
                 categoria="cfdi_xml",
                 origen="user_upload",
             )
+
+        async def _create_air_supplement_expense(
+            *,
+            label: str,
+            invoice_number: Optional[str],
+            subtotal_raw: Optional[str],
+            impuestos_raw: Optional[str],
+            xml_upload: Optional[UploadFile],
+            pdf_upload: Optional[UploadFile],
+        ) -> bool:
+            has_entry = any(
+                [
+                    (invoice_number or "").strip(),
+                    (subtotal_raw or "").strip(),
+                    xml_upload is not None and bool(xml_upload.filename),
+                    pdf_upload is not None and bool(pdf_upload.filename),
+                ]
+            )
+            if not has_entry:
+                return False
+            if not (
+                (xml_upload is not None and bool(xml_upload.filename))
+                or (pdf_upload is not None and bool(pdf_upload.filename))
+            ):
+                raise ValueError(f"{label} requiere cargar su factura PDF o XML.")
+
+            supplement_xml: Optional[bytes] = None
+            if xml_upload is not None and xml_upload.filename:
+                supplement_xml = await xml_upload.read()
+                if supplement_xml and len(supplement_xml) > MAX_SOLICITUD_ATTACHMENT_BYTES:
+                    raise ValueError(f"El CFDI XML de {label} excede el tamaño máximo permitido")
+                if supplement_xml and not supplement_xml.strip():
+                    supplement_xml = None
+
+            supplement_pdf: Optional[bytes] = None
+            if pdf_upload is not None and pdf_upload.filename:
+                supplement_pdf = await pdf_upload.read()
+                if not supplement_pdf:
+                    raise ValueError(f"El CFDI PDF de {label} está vacío")
+                if len(supplement_pdf) > MAX_SOLICITUD_PDF_BYTES:
+                    raise ValueError(f"El CFDI PDF de {label} excede el tamaño máximo permitido")
+                if not is_pdf_content(supplement_pdf):
+                    raise ValueError(f"El archivo CFDI PDF de {label} debe ser un PDF válido")
+
+            supplement_cfdi, supplement_error = resolve_cfdi_upload(
+                xml_bytes=supplement_xml,
+                pdf_bytes=supplement_pdf,
+            )
+            if supplement_error:
+                raise ValueError(supplement_error)
+            supplement_values = _quick_expense_values(
+                concepto=label,
+                fecha=values["fecha"].strftime("%Y-%m-%d"),
+                numero_factura=invoice_number,
+                subtotal=subtotal_raw,
+                descuento="0",
+                impuestos_y_retenciones=impuestos_raw,
+                propina_no_deducible="0",
+                xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
+            )
+            supplement_expense = await create_expense_from_data(
+                session=session,
+                empleado_id=cuenta.empleado_id,
+                nombre_enviador=owner.nombre if owner else None,
+                proyecto=proyecto,
+                concepto=supplement_values["concepto"],
+                gasto_cantidad=float(supplement_values["total"]),
+                fecha=supplement_values["fecha"],
+                tipo_gasto="manual",
+                departamento=(owner.departamento if owner else None) or "Operaciones",
+                fase_torneo=(cuenta.fase or "").strip() or "No Aplica",
+                iva=float(supplement_values["iva"]),
+                origen="informe_quick_entry",
+                skip_initial_tocino=True,
+                categorias=list(getattr(cuenta, "categorias", None) or []),
+                edicion=getattr(cuenta, "edicion", None),
+                currency=currency_for(cuenta),
+                budget_concept_id=UUIDType(str(budget_concept["id"])) if budget_concept else None,
+                propina_no_deducible=0.0,
+            )
+            if is_company_amex_account(cuenta.beneficiario_proveedor_cliente):
+                supplement_expense.pagado_con_amex_empresa = True
+                supplement_expense.metodo_pago = "TARJETA CREDITO AMEX"
+            supplement_expense.numero_factura = supplement_values["numero_factura"]
+            supplement_expense.cuenta_gastos_id = cuenta.id
+            supplement_expense.referencia_base = cuenta.referencia_base
+            supplement_expense.informe_documento_id = informe_doc.id
+
+            if supplement_cfdi is not None:
+                ingestion = await ingest_cfdi_from_upload(
+                    session,
+                    xml_bytes=supplement_xml,
+                    pdf_bytes=supplement_pdf,
+                    source="user_upload",
+                    entity=supplement_expense,
+                    numero_referencia=getattr(supplement_expense, "numero_referencia", None),
+                )
+                if ingestion is not None:
+                    supplement_expense.numero_factura = ingestion.cfdi_uuid
+            elif supplement_values["numero_factura"]:
+                supplement_expense.cfdi_uuid_manual = supplement_values["numero_factura"]
+                await link_expense_to_cfdi_if_manual_uuid_set(
+                    session, supplement_expense, clear_report_if_no_match=False
+                )
+
+            if supplement_pdf is not None:
+                await create_adjunto_record(
+                    session,
+                    gasto_id=supplement_expense.id,
+                    ruta_archivo=base64.b64encode(supplement_pdf).decode("ascii"),
+                    tipo_archivo="application/pdf",
+                    nombre_archivo=(pdf_upload.filename if pdf_upload else None) or "cfdi.pdf",
+                    mime_type="application/pdf",
+                    categoria="cfdi_pdf",
+                    origen="user_upload",
+                )
+            if supplement_xml is not None:
+                await create_adjunto_record(
+                    session,
+                    gasto_id=supplement_expense.id,
+                    ruta_archivo=base64.b64encode(supplement_xml).decode("ascii"),
+                    tipo_archivo="application/xml",
+                    nombre_archivo=(xml_upload.filename if xml_upload else None) or "cfdi.xml",
+                    mime_type="application/xml",
+                    categoria="cfdi_xml",
+                    origen="user_upload",
+                )
+            return True
+
+        await _create_air_supplement_expense(
+            label="Asiento preferencial",
+            invoice_number=asiento_preferencial_numero_factura,
+            subtotal_raw=asiento_preferencial_subtotal,
+            impuestos_raw=asiento_preferencial_impuestos_y_retenciones,
+            xml_upload=asiento_preferencial_cfdi_xml,
+            pdf_upload=asiento_preferencial_cfdi_pdf,
+        )
+        await _create_air_supplement_expense(
+            label="Exceso de equipaje",
+            invoice_number=exceso_equipaje_numero_factura,
+            subtotal_raw=exceso_equipaje_subtotal,
+            impuestos_raw=exceso_equipaje_impuestos_y_retenciones,
+            xml_upload=exceso_equipaje_cfdi_xml,
+            pdf_upload=exceso_equipaje_cfdi_pdf,
+        )
 
         for raw_bytes, mime_type, filename, categoria in materialidades:
             await create_adjunto_record(
@@ -36222,6 +36514,42 @@ async def cuenta_de_gastos_detail(
                         <iframe id="quick_cfdi_pdf_preview_frame" class="st-file-preview-frame" title="Vista preliminar CFDI PDF" style="width:100%;height:420px;border:0;"></iframe>
                     </div>
                     {render_pdf_file_preview_script(input_id="quick-cfdi-pdf", container_id="quick_cfdi_pdf_preview", filename_id="quick_cfdi_pdf_preview_name", frame_id="quick_cfdi_pdf_preview_frame")}
+                    <div id="quick-air-supplements" class="notice info" hidden style="margin-top:12px;background:#f8fafc;color:#334155;border:1px solid #dbe2ea;border-radius:12px;padding:12px 14px;">
+                        <strong>Partidas aéreas adicionales</strong>
+                        <div class="section-note" style="margin:6px 0 10px;">Registra cada concepto con su propia factura cuando el cargo AMEX incluye vuelo, asiento o equipaje.</div>
+                        <div class="table-shell quick-air-shell">
+                            <table class="quick-air-table">
+                                <thead>
+                                    <tr>
+                                        <th>Concepto</th>
+                                        <th>CFDI XML</th>
+                                        <th>CFDI PDF</th>
+                                        <th>No. Factura</th>
+                                        <th>Sub total</th>
+                                        <th>Impuestos y retenciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Asiento preferencial</td>
+                                        <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
+                                        <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_pdf" accept=".pdf,application/pdf"></td>
+                                        <td><input form="quick-expense-form" name="asiento_preferencial_numero_factura" placeholder="UUID o folio"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="asiento_preferencial_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" step="0.01" name="asiento_preferencial_impuestos_y_retenciones" value="0"></td>
+                                    </tr>
+                                    <tr>
+                                        <td>Exceso de equipaje</td>
+                                        <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
+                                        <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_pdf" accept=".pdf,application/pdf"></td>
+                                        <td><input form="quick-expense-form" name="exceso_equipaje_numero_factura" placeholder="UUID o folio"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="exceso_equipaje_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" step="0.01" name="exceso_equipaje_impuestos_y_retenciones" value="0"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </section>
         """
 
@@ -36276,6 +36604,21 @@ async def cuenta_de_gastos_detail(
             }}
             .quick-expense-table input[type="file"] {{
                 min-width:180px;
+            }}
+            .quick-air-table {{
+                min-width:980px;
+            }}
+            .quick-air-table th {{
+                white-space:nowrap;
+                font-size:12px;
+            }}
+            .quick-air-table input {{
+                width:100%;
+                min-width:140px;
+                box-sizing:border-box;
+                padding:8px;
+                border:1px solid #cbd5e1;
+                border-radius:6px;
             }}
             .notice.warn {{
                 background:#fef2f2;
@@ -36407,11 +36750,13 @@ async def cuenta_de_gastos_detail(
                 const tipHeader = document.getElementById('quick-propina-header');
                 const tipCell = document.getElementById('quick-propina-cell');
                 const tipInput = document.getElementById('quick-propina');
+                const airSupplements = document.getElementById('quick-air-supplements');
                 const subtotal = document.getElementById('quick-subtotal');
                 const descuento = document.getElementById('quick-descuento');
                 const impuestos = document.getElementById('quick-impuestos-y-retenciones');
                 const total = document.getElementById('quick-total');
                 const tokens = ['alimento', 'alimentos', 'restaurante', 'restaurant', 'consumo', 'comida', 'cena', 'desayuno', 'cafeteria'];
+                const airTokens = ['avion', 'aereo', 'aerea', 'aerolinea', 'boleto de avion', 'transporte aereo', 'vuelo', 'vuelos'];
                 function normalize(value) {{
                     return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
                 }}
@@ -36424,6 +36769,11 @@ async def cuenta_de_gastos_detail(
                     const haystack = normalize((concept && concept.value) + ' ' + selected);
                     return tokens.some(function(token) {{ return haystack.indexOf(token) >= 0; }});
                 }}
+                function isAir() {{
+                    const selected = budget && budget.selectedOptions && budget.selectedOptions[0] ? budget.selectedOptions[0].textContent : '';
+                    const haystack = normalize((concept && concept.value) + ' ' + selected);
+                    return airTokens.some(function(token) {{ return haystack.indexOf(token) >= 0; }});
+                }}
                 function updateTotalWithTip() {{
                     if (!total) return;
                     const computed = money(subtotal) - money(descuento) + money(impuestos) + money(tipInput);
@@ -36433,6 +36783,7 @@ async def cuenta_de_gastos_detail(
                     const visible = isFood() || money(tipInput) > 0;
                     if (tipHeader) tipHeader.style.display = visible ? '' : 'none';
                     if (tipCell) tipCell.style.display = visible ? '' : 'none';
+                    if (airSupplements) airSupplements.hidden = !isAir();
                     updateTotalWithTip();
                 }}
                 [concept, budget].forEach(function(el) {{

@@ -127,6 +127,33 @@ def test_documentos_todos_filter_form_preserves_q_field():
     assert "Referencia, proveedor, beneficiario, concepto" in text
 
 
+def test_documentos_todos_bulk_zip_href_is_built_from_filters():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert "bulk_params = {" in route
+    assert '"estado": (estado or "").strip()' in route
+    assert '"tipo": (tipo or "").strip()' in route
+    assert '"empleado_nombre": (empleado_nombre or "").strip()' in route
+    assert '"q": q_value' in route
+    assert '"situacion": situacion_value' in route
+    assert 'bulk_href = "/documentos/todos/exportar-exceles.zip"' in route
+    assert "urlencode(bulk_params)" in route
+
+
+def test_proceso_contable_exposes_bulk_document_excel_downloads():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    assert 'style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"' in text
+    assert "Descargar informes de gastos" in text
+    assert "Descargar solicitudes de transferencia" in text
+    assert "Descargar todo" in text
+    assert "/documentos/todos/exportar-exceles.zip?tipo=INFORME&situacion=cerradas" in text
+    assert "/documentos/todos/exportar-exceles.zip?tipo=SOLICITUD&situacion=cerradas" in text
+
+
 def test_document_detail_expenses_table_exposes_edit_actions():
     source = "src/devnous/gastos/routes/user_routes.py"
     text = open(source, encoding="utf-8").read()
@@ -180,6 +207,38 @@ def test_control_presupuestal_selects_are_not_globally_required():
     assert "required=False" in control_view
     assert "Todos los documentos" in text[text.index("operaciones_section"):text.index("aprobaciones_section")]
     assert "Descripción" in control_view
+
+
+def test_solicitudes_transferencia_header_filters_include_solicitante_and_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def gastos_terceros(")
+    end = text.index('@router.get("/gastos-terceros/solicitar-anticipo"', start)
+    route = text[start:end]
+
+    assert 'data-solicitante="{solicitante_attr}"' in route
+    assert 'data-accion="{accion_attr}"' in route
+    assert 'id="terceros-search-solicitante"' in route
+    assert 'id="terceros-search-accion"' in route
+    assert "matchSolicitante" in route
+    assert "matchAccion" in route
+
+
+def test_informes_de_gastos_header_filters_include_solicitante_provider_and_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def cuentas_de_gastos_list(")
+    end = text.index('@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"', start)
+    route = text[start:end]
+
+    assert 'class="informes-filter-bar"' in route
+    assert 'data-solicitante="{solicitante_attr}"' in route
+    assert 'data-proveedor="{proveedor_attr}"' in route
+    assert 'data-accion="{accion_attr}"' in route
+    assert 'id="informes-search-solicitante"' in route
+    assert 'id="informes-search-proveedor"' in route
+    assert 'id="informes-search-accion"' in route
+    assert "matchSolicitante" in route
+    assert "matchProveedor" in route
+    assert "matchAccion" in route
 
 
 def test_documentos_todos_is_available_to_active_authenticated_users() -> None:
