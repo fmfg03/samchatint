@@ -27245,14 +27245,23 @@ async def aprobar_documento(
     Args:
         next: Optional redirect URL after action (from form field or query param)
     """
+    reembolso_created = False
+    reembolso_warning = None
     try:
-        await transition_documento_workflow(
+        workflow_result = await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
             action="approve",
             comentario=comentario,
             request_context=audit_context_from_request(request),
+        )
+        reembolso_created, reembolso_warning = (
+            await _ensure_reembolso_solicitud_for_approved_informe(
+                session,
+                informe_doc=workflow_result.documento,
+                request=request,
+            )
         )
     except DocumentoWorkflowPermissionError as exc:
         if exc.code == "insufficient_role":
@@ -27311,9 +27320,17 @@ async def aprobar_documento(
         next_param=next,
         default_to_detail=True,
     )
+    success_msg = "Documento aprobado exitosamente"
+    if reembolso_created:
+        success_msg += (
+            ". Se generó una solicitud de transferencia por el saldo a favor "
+            "del empleado"
+        )
+    if reembolso_warning:
+        success_msg += f". {reembolso_warning}"
     redirect_with_msg = _append_success_params(
         redirect_url,
-        success_msg="Documento aprobado exitosamente",
+        success_msg=success_msg,
     )
 
     return RedirectResponse(
@@ -28757,11 +28774,27 @@ async def exportar_informe_gastos(
                     motivo_del_gasto_export = (cuenta_obj.nombre or "").strip() or None
             except (ProgrammingError, OperationalError):
                 pass  # keep "local"
+        autorizado_por_nombre = ""
+        aprobacion_result = await session.execute(
+            select(Aprobacion)
+            .options(selectinload(Aprobacion.aprobador))
+            .where(
+                Aprobacion.tipo_entidad == "documento",
+                Aprobacion.entidad_id == documento.id,
+                Aprobacion.accion == "aprobar",
+            )
+            .order_by(Aprobacion.fecha.desc())
+            .limit(1)
+        )
+        aprobacion_doc = aprobacion_result.scalar_one_or_none()
+        if aprobacion_doc and aprobacion_doc.aprobador:
+            autorizado_por_nombre = aprobacion_doc.aprobador.nombre or ""
         excel_bytes_informe = create_informe_excel(
             numero_referencia=documento.numero_referencia,
             empleado_nombre=empleado_nombre,
             solicitante_nombre=empleado_nombre,
             beneficiario_nombre=beneficiario_nombre,
+            autorizado_por_nombre=autorizado_por_nombre or None,
             fecha_documento=fecha_documento_str,
             expenses=expense_rows,
             cantidad_entregada=cantidad_entregada,
@@ -37872,6 +37905,142 @@ def _can_submit_settlement(
             "admin", "finanzas", "superadmin", "super_admin"
         }
     return False
+
+
+async def _ensure_reembolso_solicitud_for_approved_informe(
+    session: AsyncSession,
+    *,
+    informe_doc: Documento,
+    request: Request,
+) -> Tuple[bool, Optional[str]]:
+    """Create the missing reimbursement SOLICITUD for an approved expense report."""
+    if (
+        informe_doc.tipo != "INFORME"
+        or informe_doc.estado != "aprobado"
+        or not informe_doc.cuenta_gastos_id
+    ):
+        return False, None
+
+    cuenta_result = await session.execute(
+        select(CuentaDeGastos)
+        .where(CuentaDeGastos.id == informe_doc.cuenta_gastos_id)
+        .options(
+            undefer(CuentaDeGastos.torneo_id),
+            undefer(CuentaDeGastos.fase),
+        )
+    )
+    cuenta = cuenta_result.scalar_one_or_none()
+    if cuenta is None:
+        return (
+            False,
+            "No se pudo generar la solicitud de reembolso: informe sin cuenta "
+            "vinculada.",
+        )
+
+    saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta.id)
+    saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
+    if saldo_raw >= -0.005:
+        return False, None
+
+    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
+    beneficiary_id = effective_account_beneficiary_id(cuenta)
+    existing_filters = [
+        Documento.cuenta_gastos_id == cuenta.id,
+        Documento.tipo == "SOLICITUD",
+        Documento.concepto_pago.like("Reembolso de saldo a favor%"),
+        Documento.estado.notin_(["rechazado", "cancelado"]),
+    ]
+    if provider_beneficiary_id is not None:
+        existing_filters.append(
+            Documento.beneficiario_proveedor_cliente_id == provider_beneficiary_id
+        )
+    else:
+        existing_filters.append(Documento.beneficiario_empleado_id == beneficiary_id)
+
+    existing_reembolso = await session.execute(
+        select(Documento.id).where(*existing_filters).limit(1)
+    )
+    if existing_reembolso.scalar_one_or_none() is not None:
+        return False, None
+
+    proveedor_uuid: Optional[UUIDType] = provider_beneficiary_id
+    if proveedor_uuid is None:
+        beneficiary_result = await session.execute(
+            select(Empleado).where(Empleado.id == beneficiary_id)
+        )
+        beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+        matches = (
+            await _get_matching_bank_accounts_for_empleado(
+                session=session,
+                empleado=beneficiary_empleado,
+            )
+            if beneficiary_empleado is not None
+            else []
+        )
+        if len(matches) != 1:
+            return (
+                False,
+                "No se generó la solicitud de reembolso porque el beneficiario "
+                "no tiene una única cuenta bancaria activa seleccionable.",
+            )
+        proveedor_uuid = matches[0][0].id
+
+    try:
+        payload = build_solicitud_personal_payload(
+            cuenta_id=cuenta.id,
+            empleado_id=cuenta.empleado_id,
+            monto_solicitado=abs(saldo_raw),
+            concepto_pago=reimbursement_concept_from_cuenta(cuenta),
+            proveedor_cliente_id=str(proveedor_uuid),
+            budget_concept_id=(
+                str(informe_doc.budget_concept_id)
+                if informe_doc.budget_concept_id
+                else None
+            ),
+            allow_closed_cuenta=True,
+        )
+        new_solicitud = await create_solicitud_personal_document(session, payload)
+        await transition_documento_workflow(
+            session,
+            documento_id=new_solicitud.id,
+            actor_id=cuenta.empleado_id,
+            action="send",
+            comentario=(
+                "Generada al aprobar el informe "
+                "(saldo a favor del empleado)."
+            ),
+            request_context=audit_context_from_request(request),
+        )
+    except SolicitudValidationError as exc:
+        await session.rollback()
+        return False, f"No se pudo generar la solicitud de reembolso: {str(exc)}"
+    except (DocumentoWorkflowPermissionError, DocumentoWorkflowValidationError) as exc:
+        await session.rollback()
+        return (
+            False,
+            "La solicitud de reembolso se creó pero no pudo enviarse: "
+            f"{exc.message}",
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Failed to auto-create reimbursement solicitud on informe approval",
+            extra={
+                "cuenta_id": str(cuenta.id),
+                "documento_id": str(informe_doc.id),
+            },
+        )
+        return (
+            False,
+            "No se pudo generar automáticamente la solicitud de reembolso.",
+        )
+
+    logger.info(
+        "Auto-created reimbursement solicitud %s for approved informe %s",
+        new_solicitud.id,
+        informe_doc.id,
+    )
+    return True, None
 
 
 @router.get("/informes-de-gastos/{cuenta_id}/saldar", response_class=HTMLResponse)
