@@ -581,7 +581,7 @@ def test_systemd_timer_runs_workflow_monitor_every_five_minutes() -> None:
 def test_document_detail_approval_actions_use_beneficiary_subject() -> None:
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
     start = source.index("async def ver_documento")
-    end = source.index("    # Determine permission for payment registration", start)
+    end = source.index("    # Load torneo if linked.", start)
     block = source[start:end]
 
     assert "approval_subject = approval_subject_empleado(documento) or empleado" in block

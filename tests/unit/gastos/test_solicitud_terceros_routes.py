@@ -696,6 +696,37 @@ def test_comprobante_pago_attachment_is_registered_atomically_with_payment() -> 
     assert "payment_registered = True" in handler
 
 
+def test_comprobante_pago_attachment_requires_payment_run_cutoff() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("def _can_finance_add_comprobante_pago")
+    end = source.index("def _nueva_solicitud_terceros_form_url", start)
+    helper = source[start:end]
+
+    assert 'return documento.estado == "en_proceso_pago"' in helper
+    assert '"aprobado", "en_proceso_pago", "pagado"' not in helper
+
+
+def test_document_detail_does_not_render_manual_mark_paid_button() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def ver_documento")
+    end = source.index("# =============================================================================\n# CUENTAS DE GASTOS ROUTES", start)
+    detail = source[start:end]
+
+    assert "Marcar pagado" not in detail
+    assert "/documentos/{documento_id}/registrar-pago" not in detail
+
+
+def test_manual_register_payment_endpoint_is_blocked() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def registrar_pago")
+    end = source.index('@router.post("/documentos/{documento_id}/registrar-reembolso")', start)
+    endpoint = source[start:end]
+
+    assert "payment_proof_required" in endpoint
+    assert "El pago se confirma adjuntando comprobante" in endpoint
+    assert "await register_document_payment(" not in endpoint
+
+
 def test_quick_expense_form_exposes_air_supplement_facturas() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
 

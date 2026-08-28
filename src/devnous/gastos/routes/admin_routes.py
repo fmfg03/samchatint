@@ -472,6 +472,8 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "accounting.reconciliation.*",
             "finance.solicitudes.read",
             "finance.payments.read",
+            "contabilidad.pagos.marcar_pagado",
+            "finance.employee_beneficiary.request",
             "executive.reports.read",
         ],
     },
@@ -6043,7 +6045,6 @@ async def admin_finance_platform(
     payable_rows = "".join(
         f"""
         <tr>
-            <td><input type="checkbox" name="document_ids" value="{escape(str(item.get("id") or ""))}"></td>
             <td>{escape(str(item.get("numero_referencia") or item.get("id") or "-"))}</td>
             <td>{escape(str(item.get("tipo") or "-"))}</td>
             <td>{escape(str(item.get("beneficiario_nombre") or item.get("proveedor_nombre") or "-"))}</td>
@@ -6246,15 +6247,10 @@ async def admin_finance_platform(
                         <a class="button secondary" href="/admin/finanzas/payment-run">Abrir Payment Run</a>
                         <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
                     </div>
-                    <form method="POST" action="/admin/finanzas/payment-run/pay" style="margin-top:16px;">
-                        <input type="hidden" name="year" value="{current_year}">
-                        <input type="hidden" name="month" value="{current_month}">
-                        <table class="finance-table">
-                            <thead><tr><th></th><th>Referencia</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
-                            <tbody>{payable_rows or '<tr><td colspan="6">Sin pagos pendientes.</td></tr>'}</tbody>
-                        </table>
-                        <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not payable_items else ''}>Registrar seleccionados como pagados</button>
-                    </form>
+                    <table class="finance-table" style="margin-top:16px;">
+                        <thead><tr><th>Referencia</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
+                        <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
+                    </table>
                 </div>
                 <div class="workspace-card">
                     <div class="workspace-section-title">COI pendientes</div>
@@ -7610,9 +7606,16 @@ async def admin_finance_payment_run(
         parsed_to = None
         error_msg = error_msg or exc.message
 
-    rows = await list_payment_run_items(
+    approved_rows = await list_payment_run_items(
         session,
-        status_filter=status,
+        status_filter="pendientes",
+        date_from=parsed_from,
+        date_to=parsed_to,
+        query=(q_value or "").strip() or None,
+    )
+    proof_rows = await list_payment_run_items(
+        session,
+        status_filter="cerradas",
         date_from=parsed_from,
         date_to=parsed_to,
         query=(q_value or "").strip() or None,
@@ -7629,8 +7632,10 @@ async def admin_finance_payment_run(
                     <button class="button" type="submit" onclick="return confirm('Cerrar el corte operativo seleccionado? Las solicitudes pasaran a En Proceso de Pago.');">Cerrar corte</button>
                 </form>
         """
-    total_open = sum(float(row.get("monto") or 0) for row in rows if row.get("can_close"))
+    total_open = sum(float(row.get("monto") or 0) for row in approved_rows if row.get("can_close"))
+    total_proof = sum(float(row.get("monto") or 0) for row in proof_rows)
     selected_status = escape(status or "pendientes")
+    total_rows = len(approved_rows) + len(proof_rows)
     alerts = ""
     if success_msg:
         alerts += f'<div class="alert alert-success">{escape(success_msg)}</div>'
@@ -7661,10 +7666,10 @@ async def admin_finance_payment_run(
             {_render_admin_workspace_hero(
                 eyebrow="Payment Run",
                 title="Corte operativo de solicitudes aprobadas",
-                description="Consulta solicitudes aprobadas, ajusta fecha_pago y cierra el corte operativo. Al cerrar, las solicitudes pasan a En Proceso de Pago y quedan bloqueadas para rechazo.",
+                description="Consulta solicitudes aprobadas, ajusta fecha_pago y cierra el corte operativo. Al cerrar, las solicitudes pasan a En Proceso de Pago para que Contabilidad adjunte el comprobante.",
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Pendientes</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>En proceso de pago</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option></select></div>'
+                    f'<input type="hidden" name="status" value="{selected_status}">'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from_value or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to_value or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q_value or "")}" placeholder="Referencia, solicitante, beneficiario"></div>'
@@ -7673,22 +7678,32 @@ async def admin_finance_payment_run(
                 ),
                 side_html=(
                     '<div class="eyebrow">Vista actual</div>'
-                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{len(rows)} solicitudes</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{total_rows} solicitudes</div>'
                     f'<div style="margin-top:8px;color:#64748b;">Cerrables en filtro: {_payment_run_money(total_open)}</div>'
-                    '<div style="margin-top:12px;"><span style="display:inline-flex;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:900;text-transform:uppercase;background:#ecfeff;color:#155e75;">sin registrar pago</span></div>'
+                    f'<div style="margin-top:8px;color:#64748b;">Comprobantes pendientes: {_payment_run_money(total_proof)}</div>'
                 ),
             )}
             {alerts}
             <section class="workspace-card" style="margin-bottom:18px;">
-                <div class="workspace-section-title">Solicitudes del Payment Run</div>
-                <div class="workspace-section-subtitle">Pendientes: Benjamin ajusta fecha_pago y cierra corte. En proceso de pago: auxiliares contables suben testigo; al guardarlo se marca Pagada.</div>
+                <div class="workspace-section-title">Solicitudes aprobadas para corte</div>
+                <div class="workspace-section-subtitle">Benjamín ajusta fecha_pago y cierra corte. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
                 <div style="overflow:auto;margin-top:14px;">
                     <table class="payment-table">
                         <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(rows, can_close_run=can_close_run, can_confirm_payment=can_confirm_payment)}</tbody>
+                        <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False)}</tbody>
                     </table>
                 </div>
                 {close_form_html}
+            </section>
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
+                <div class="workspace-section-subtitle">Dani, Sebas, Jacquie y usuarios de Contabilidad adjuntan el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
+                <div style="overflow:auto;margin-top:14px;">
+                    <table class="payment-table">
+                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
+                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
+                    </table>
+                </div>
             </section>
             <section class="workspace-card">
                 <div class="workspace-section-title">Cortes recientes</div>
@@ -7933,6 +7948,7 @@ async def admin_finance_payment_run_upload_payment_proof(
                     categoria="comprobante_pago",
                 )
             ],
+            commit=False,
         )
         result = await register_document_payment(
             session,
@@ -8045,91 +8061,14 @@ async def admin_finance_payment_run_pay(
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
 ) -> RedirectResponse:
-    """Register selected approved SOLICITUDES as paid from Finance Platform."""
-    from devnous.gastos.services.documento_payment_service import (
-        DocumentoPaymentPermissionError,
-        DocumentoPaymentValidationError,
-        register_document_payment,
-    )
-
-    try:
-        require_payment_run_payment_confirmation(current_empleado)
-    except PaymentRunPermissionError as exc:
-        raise HTTPException(status_code=403, detail=exc.message)
-
-    ids = [str(item).strip() for item in document_ids or [] if str(item).strip()]
-    base_url = "/admin/finanzas"
-    query_parts = []
-    if year:
-        query_parts.append(f"year={int(year)}")
-    if month:
-        query_parts.append(f"month={int(month)}")
-    redirect_url = base_url + (("?" + "&".join(query_parts)) if query_parts else "")
-    separator = "&" if "?" in redirect_url else "?"
-
-    if not ids:
-        return RedirectResponse(
-            url=(
-                f"{redirect_url}{separator}"
-                f"error_msg={quote('Selecciona al menos una SOLICITUD aprobada.')}"
-            ),
-            status_code=303,
-        )
-
-    paid_refs: list[str] = []
-    failures: list[str] = []
-    for documento_id in ids:
-        try:
-            result = await register_document_payment(
-                session,
-                documento_id=documento_id,
-                actor_id=current_empleado.id,
-            )
-            paid_refs.append(
-                str(
-                    result.documento.numero_referencia
-                    or result.documento.id
-                    or documento_id
-                )
-            )
-        except DocumentoPaymentPermissionError as exc:
-            raise HTTPException(status_code=403, detail=exc.message)
-        except DocumentoPaymentValidationError as exc:
-            failures.append(f"{documento_id}: {exc.message}")
-        except ValueError as exc:
-            failures.append(f"{documento_id}: ID inválido ({exc})")
-        except Exception:
-            await session.rollback()
-            logger.exception(
-                "Unexpected error registering payment from finance payment run",
-                extra={
-                    "documento_id": str(documento_id),
-                    "actor_id": str(current_empleado.id),
-                },
-            )
-            failures.append(
-                f"{documento_id}: Error inesperado al registrar el pago"
-            )
-
-    if paid_refs and not failures:
-        message = f"Pagos registrados: {', '.join(paid_refs)}."
-        return RedirectResponse(
-            url=f"{redirect_url}{separator}success_msg={quote(message)}",
-            status_code=303,
-        )
-    if paid_refs and failures:
-        message = (
-            f"Pagos registrados: {', '.join(paid_refs)}. "
-            f"Pendientes: {'; '.join(failures[:3])}"
-        )
-        return RedirectResponse(
-            url=f"{redirect_url}{separator}success_msg={quote(message)}",
-            status_code=303,
-        )
+    """Legacy endpoint: payment confirmation now requires proof upload."""
+    base_url = "/admin/finanzas/payment-run"
     return RedirectResponse(
         url=(
-            f"{redirect_url}{separator}"
-            f"error_msg={quote('No se registró ningún pago. ' + '; '.join(failures[:3]))}"
+            f"{base_url}?error_msg="
+            + quote(
+                "El pago se confirma adjuntando comprobante desde Programación de Pagos."
+            )
         ),
         status_code=303,
     )
