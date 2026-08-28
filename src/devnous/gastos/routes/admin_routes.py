@@ -459,6 +459,7 @@ _PROFILE_PRESETS: dict[str, dict[str, Any]] = {
             "finance.solicitudes.*",
             "finance.payments.*",
             "finance.reimbursements.*",
+            "finance.employee_beneficiary.request",
             "executive.reports.read",
         ],
     },
