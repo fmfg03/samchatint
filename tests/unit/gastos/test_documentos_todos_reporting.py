@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 from devnous.gastos.routes import user_routes
+from devnous.gastos.services import documento_service
 from devnous.gastos.services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
 )
@@ -234,3 +235,60 @@ def test_solicitud_terceros_create_and_edit_force_budget_control_assignment() ->
 
     assert "budget_concept_id = None" in create_block
     assert "budget_concept_id = None" in edit_block
+
+
+class _LazyAprobadorBomb:
+    @property
+    def aprobador(self):  # pragma: no cover - only exercised on regression
+        raise AssertionError("aprobador relation must be resolved in batch")
+
+
+class _FakeScalars:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalars(self._rows)
+
+
+class _FakeAprobadorSession:
+    def __init__(self, employee):
+        self._employee = employee
+        self.calls = 0
+
+    async def execute(self, _statement):
+        self.calls += 1
+        if self.calls == 1:
+            return _FakeResult([])
+        return _FakeResult([self._employee])
+
+
+async def test_fetch_documento_aprobador_display_batch_does_not_lazy_load_subject_approver():
+    empleado_id = uuid4()
+    documento = _doc(
+        empleado_id=empleado_id,
+        empleado=_LazyAprobadorBomb(),
+        beneficiario_empleado_id=None,
+        beneficiario_empleado=None,
+    )
+    session = _FakeAprobadorSession(
+        SimpleNamespace(
+            id=empleado_id,
+            aprobador=SimpleNamespace(nombre="Odilon Aprobador"),
+        )
+    )
+
+    display = await documento_service.fetch_documento_aprobador_display_batch(
+        session, [documento]
+    )
+
+    assert display[documento.id] == "Odilon Aprobador"
+    assert session.calls == 2

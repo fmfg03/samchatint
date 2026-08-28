@@ -34,7 +34,7 @@ from .cfdi_ingestion_service import (
     ingest_cfdi_from_upload,
 )
 from .cfdi_upload_resolver import merge_cfdi_upload_bytes
-from .documento_semantics import approval_subject_empleado
+from .documento_semantics import approval_subject_empleado_id
 from samchat.budgets.service import resolve_budget_concept
 
 logger = logging.getLogger(__name__)
@@ -1201,19 +1201,31 @@ async def fetch_documento_aprobador_display_batch(
         if aprobador and aprobador.nombre:
             latest_by_doc[aprobacion.entidad_id] = aprobador.nombre
 
+    subject_ids_by_doc: Dict[UUID, UUID] = {}
+    for doc in documentos:
+        if doc.id in latest_by_doc:
+            continue
+        subject_id = approval_subject_empleado_id(doc)
+        if subject_id:
+            subject_ids_by_doc[doc.id] = subject_id
+
+    assigned_by_subject: Dict[UUID, str] = {}
+    if subject_ids_by_doc:
+        employees_result = await session.execute(
+            select(Empleado)
+            .options(selectinload(Empleado.aprobador))
+            .where(Empleado.id.in_(set(subject_ids_by_doc.values())))
+        )
+        for empleado in employees_result.scalars().all():
+            assigned = empleado.aprobador
+            if assigned and assigned.nombre:
+                assigned_by_subject[empleado.id] = assigned.nombre
+
     display_by_doc: Dict[UUID, str] = {}
     for doc in documentos:
         if doc.id in latest_by_doc:
             display_by_doc[doc.id] = latest_by_doc[doc.id]
             continue
-        approval_subject = approval_subject_empleado(doc)
-        assigned = (
-            getattr(approval_subject, "aprobador", None)
-            if approval_subject is not None
-            else None
-        )
-        if assigned and assigned.nombre:
-            display_by_doc[doc.id] = assigned.nombre
-        else:
-            display_by_doc[doc.id] = "\u2014"
+        subject_id = subject_ids_by_doc.get(doc.id)
+        display_by_doc[doc.id] = assigned_by_subject.get(subject_id, "—")
     return display_by_doc
