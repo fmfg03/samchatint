@@ -154,6 +154,91 @@ def test_proceso_contable_exposes_bulk_document_excel_downloads():
     assert "/documentos/todos/exportar-exceles.zip?tipo=SOLICITUD&situacion=cerradas" in text
 
 
+def test_gastos_workspace_nav_shows_allowed_cross_links_and_active_page():
+    empleado = SimpleNamespace(
+        rol="empleado",
+        visible_tool_keys={"gastos.informes", "gastos.solicitudes"},
+    )
+
+    html = user_routes._gastos_workspace_nav_html(empleado, "solicitudes")
+
+    assert 'href="/informes-de-gastos"' in html
+    assert "Informes de gastos" in html
+    assert 'href="/gastos-terceros"' in html
+    assert "Solicitudes de transferencia" in html
+    assert 'href="/documentos/todos"' in html
+    assert 'href="/beneficiarios/altas"' in html
+    assert 'aria-current="page"' in html
+
+
+def test_gastos_workspace_nav_filters_unauthorized_links():
+    empleado = SimpleNamespace(
+        rol="empleado",
+        visible_tool_keys={"gastos.informes"},
+    )
+
+    html = user_routes._gastos_workspace_nav_html(empleado, "informes")
+
+    assert 'href="/informes-de-gastos"' in html
+    assert 'href="/gastos-terceros"' not in html
+    assert 'href="/documentos/todos"' not in html
+    assert 'href="/beneficiarios/altas"' not in html
+
+
+def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    terceros = text[
+        text.index("async def gastos_terceros(") :
+        text.index(
+            '@router.get("/gastos-terceros/solicitar-anticipo"',
+            text.index("async def gastos_terceros("),
+        )
+    ]
+    informes = text[
+        text.index("async def cuentas_de_gastos_list(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
+            text.index("async def cuentas_de_gastos_list("),
+        )
+    ]
+    informe_detail = text[
+        text.index("async def cuenta_de_gastos_detail(") :
+        text.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            text.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    documento_detail = text[
+        text.index("async def ver_documento(") :
+        text.index(
+            '@router.get("/api/informes-de-gastos/activas"',
+            text.index("async def ver_documento("),
+        )
+    ]
+    documentos_todos = text[
+        text.index("async def documentos_todos(") :
+        text.index(
+            "async def _query_documentos_todos_for_export",
+            text.index("async def documentos_todos("),
+        )
+    ]
+    beneficiarios = text[
+        text.index("def _beneficiary_onboarding_page(") :
+        text.index(
+            '@router.get("/beneficiarios/altas/nueva"',
+            text.index("def _beneficiary_onboarding_page("),
+        )
+    ]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in terceros
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
+    assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
+
+
 def test_document_detail_expenses_table_exposes_edit_actions():
     source = "src/devnous/gastos/routes/user_routes.py"
     text = open(source, encoding="utf-8").read()
