@@ -185,6 +185,21 @@ def test_gastos_workspace_nav_filters_unauthorized_links():
     assert 'href="/beneficiarios/altas"' not in html
 
 
+def test_gastos_breadcrumb_html_escapes_labels_and_optional_links():
+    html = user_routes._gastos_breadcrumb_html(
+        [
+            ("Informes <gastos>", "/informes-de-gastos?x=<bad>"),
+            ("I-123", None),
+        ]
+    )
+
+    assert 'aria-label="Ruta de navegación"' in html
+    assert 'href="/informes-de-gastos?x=&lt;bad&gt;"' in html
+    assert "Informes &lt;gastos&gt;" in html
+    assert "<span>I-123</span>" in html
+    assert "&rsaquo;" in html
+
+
 def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
 
@@ -275,6 +290,74 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
+
+
+def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    documento_detail = text[
+        text.index("async def ver_documento(") :
+        text.index(
+            '@router.get("/api/informes-de-gastos/activas"',
+            text.index("async def ver_documento("),
+        )
+    ]
+    informe_detail = text[
+        text.index("async def cuenta_de_gastos_detail(") :
+        text.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            text.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    informe_edit = text[
+        text.index("async def editar_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+            text.index("async def editar_cuenta_de_gastos_form("),
+        )
+    ]
+    informe_nueva_solicitud = text[
+        text.index("async def nueva_solicitud_desde_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/nueva-solicitud")',
+            text.index("async def nueva_solicitud_desde_cuenta_form("),
+        )
+    ]
+    informe_saldar = text[
+        text.index("async def saldar_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/saldar")',
+            text.index("async def saldar_cuenta_form("),
+        )
+    ]
+    informe_reembolso = text[
+        text.index("async def ver_reembolso_cuenta(") :
+        text.index(
+            '@router.post(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"',
+            text.index("async def ver_reembolso_cuenta("),
+        )
+    ]
+
+    assert '_gastos_breadcrumb_html([' in documento_detail
+    assert '("Todos los documentos", "/documentos/todos")' in documento_detail
+    assert "(documento.numero_referencia, None)" in documento_detail
+
+    assert '_gastos_breadcrumb_html([' in informe_detail
+    assert '(f"I-{cuenta.referencia_base}", None)' in informe_detail
+
+    for route_source, leaf in [
+        (informe_edit, "Editar"),
+        (informe_nueva_solicitud, "Nueva solicitud"),
+        (informe_saldar, "Liquidación"),
+        (informe_reembolso, "Liquidación"),
+    ]:
+        assert '_gastos_breadcrumb_html([' in route_source
+        assert '("Informes de gastos", "/informes-de-gastos")' in route_source
+        assert (
+            '(f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}")'
+            in route_source
+        )
+        assert f'("{leaf}", None)' in route_source
 
 
 def test_accounting_cleanup_is_labeled_as_coi_policies():

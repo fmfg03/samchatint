@@ -2175,6 +2175,35 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
     )
 
 
+def _gastos_breadcrumb_html(items: list[tuple[str, Optional[str]]]) -> str:
+    if not items:
+        return ""
+
+    crumbs: list[str] = []
+    for label, href in items:
+        label_html = escape(str(label or ""))
+        if href:
+            crumbs.append(f'<a href="{escape(str(href), quote=True)}">{label_html}</a>')
+        else:
+            crumbs.append(f"<span>{label_html}</span>")
+
+    return f"""
+    <nav
+        aria-label="Ruta de navegación"
+        style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            flex-wrap:wrap;
+            margin:0 0 14px 0;
+            color:#64748b;
+            font-size:13px;
+            font-weight:700;
+        "
+    >{"<span>&rsaquo;</span>".join(crumbs)}</nav>
+    """
+
+
 def _accounting_month_bounds(year: int, month: int) -> tuple[datetime, datetime]:
     start_dt = datetime(year, month, 1)
     end_dt = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -34014,6 +34043,10 @@ async def ver_documento(
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
             {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                (documento.numero_referencia, None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Documentos",
                 title=f"Documento {documento.numero_referencia}",
@@ -38291,6 +38324,10 @@ async def cuenta_de_gastos_detail(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Informe de gastos {titulo_cuenta}",
@@ -38582,6 +38619,11 @@ async def editar_cuenta_de_gastos_form(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Editar", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Informes de gastos",
                 title="Editar informe de gastos",
@@ -38991,6 +39033,11 @@ async def nueva_solicitud_desde_cuenta_form(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Nueva solicitud", None),
+            ])}
             <h1 style="margin-top:0;">Nueva solicitud de transferencia</h1>
             <p class="informe-context">Informe: {escape(cuenta.referencia_base)}</p>
             {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
@@ -39886,6 +39933,11 @@ async def saldar_cuenta_form(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Liquidación", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Saldar cuenta I-{escape(cuenta.referencia_base)}",
@@ -40161,6 +40213,11 @@ async def ver_reembolso_cuenta(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Liquidación", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Liquidación",
                 title=escape(tipo_label),
