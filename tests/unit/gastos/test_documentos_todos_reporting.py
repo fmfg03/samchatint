@@ -230,10 +230,48 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("def _beneficiary_onboarding_page("),
         )
     ]
+    informe_edit = text[
+        text.index("async def editar_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+            text.index("async def editar_cuenta_de_gastos_form("),
+        )
+    ]
+    informe_nueva_solicitud = text[
+        text.index("async def nueva_solicitud_desde_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/nueva-solicitud")',
+            text.index("async def nueva_solicitud_desde_cuenta_form("),
+        )
+    ]
+    informe_saldar = text[
+        text.index("async def saldar_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/saldar")',
+            text.index("async def saldar_cuenta_form("),
+        )
+    ]
+    informe_reembolso = text[
+        text.index("async def ver_reembolso_cuenta(") :
+        text.index(
+            '@router.post(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"',
+            text.index("async def ver_reembolso_cuenta("),
+        )
+    ]
 
     assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in terceros
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "informes")'
+        in informe_nueva_solicitud
+    )
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_saldar
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "informes")'
+        in informe_reembolso
+    )
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
@@ -300,6 +338,37 @@ def test_action_labels_are_specific_for_reports_and_requests():
             source.index("async def cuenta_de_gastos_detail("),
         )
     ]
+
+
+def test_informe_detail_uses_human_status_and_single_back_action():
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    detail = source[
+        source.index("async def cuenta_de_gastos_detail(") :
+        source.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            source.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    solicitudes_section = detail[
+        detail.index('solicitudes_section_rows += (') :
+        detail.index(
+            'nueva_solicitud_btn_html =',
+            detail.index('solicitudes_section_rows += ('),
+        )
+    ]
+    detail_actions = detail[
+        detail.index('detail_actions_html = f"""') :
+        detail.index(
+            'detail_side_html = f"""',
+            detail.index('detail_actions_html = f"""'),
+        )
+    ]
+
+    assert "_documento_human_status_badge(d.estado)" in solicitudes_section
+    assert "escape(d.estado or '-')" not in solicitudes_section
+    assert detail_actions.count('href="/informes-de-gastos"') == 1
+    assert "Volver a mis informes" in detail_actions
+    assert "Abrir informes de gastos" not in detail_actions
 
 
 def test_document_detail_expenses_table_exposes_edit_actions():

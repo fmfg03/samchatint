@@ -37898,7 +37898,8 @@ async def cuenta_de_gastos_detail(
         )
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
-            f"{escape(d.numero_referencia)}</a></td><td>{escape(d.estado or '-')}</td>"
+            f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
             f"<td>{d.creado_en.strftime('%Y-%m-%d') if d.creado_en else '-'}</td>"
@@ -38034,7 +38035,6 @@ async def cuenta_de_gastos_detail(
             )
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
-        <a href="/informes-de-gastos" class="button secondary">Abrir informes de gastos</a>
         {informe_support_actions_html}
         {coi_actions_html}
         {diot_actions_html}
@@ -38581,6 +38581,7 @@ async def editar_cuenta_de_gastos_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             {_render_workspace_hero(
                 eyebrow="Informes de gastos",
                 title="Editar informe de gastos",
@@ -38989,6 +38990,7 @@ async def nueva_solicitud_desde_cuenta_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             <h1 style="margin-top:0;">Nueva solicitud de transferencia</h1>
             <p class="informe-context">Informe: {escape(cuenta.referencia_base)}</p>
             {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
@@ -39883,6 +39885,7 @@ async def saldar_cuenta_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Saldar cuenta I-{escape(cuenta.referencia_base)}",
@@ -40157,6 +40160,7 @@ async def ver_reembolso_cuenta(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             {_render_workspace_hero(
                 eyebrow="Liquidación",
                 title=escape(tipo_label),
