@@ -17,7 +17,11 @@ from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 import json
 
-from devnous.config import DevNousConfig
+devnous_config = pytest.importorskip(
+    "devnous.config",
+    reason="legacy DevNous config module is not present in this runtime",
+)
+DevNousConfig = devnous_config.DevNousConfig
 
 
 @pytest.fixture

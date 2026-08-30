@@ -17,7 +17,11 @@ from typing import List
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from devnous.config import config
+devnous_config = pytest.importorskip(
+    "devnous.config",
+    reason="legacy DevNous config module is not present in this runtime",
+)
+config = devnous_config.config
 
 
 @pytest.fixture

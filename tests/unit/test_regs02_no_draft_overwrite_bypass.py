@@ -3,6 +3,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+IGNORED_SCAN_PARTS = {
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "htmlcov",
+    "venv",
+}
 MUTABLE_FIELDS = (
     "ocr_raw",
     "extraction",
@@ -21,6 +30,8 @@ def test_no_registration_draft_field_is_overwritten_outside_versioning_module():
     )
     violations = []
     for path in ROOT.rglob("*.py"):
+        if any(part in IGNORED_SCAN_PARTS for part in path.parts):
+            continue
         if path.name == "draft_versioning.py" or "tests" in path.parts:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
