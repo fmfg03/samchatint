@@ -57,6 +57,33 @@ sink that writes only inside the already existing temporary review session:
    authorized operator cohort has been confirmed. Enabling it requires a
    restart of the web dashboard service, not the registration bot.
 
+## Phase 1 production activation
+
+On 2026-08-31, the registration bot was activated for the approved Phase 1
+shadow rollout through a final systemd drop-in:
+
+- `/etc/systemd/system/samchat-registration-bot.service.d/zzzzzzzzz-ctt-shadow-phase1.conf`
+- `CTT_RESPONSES_ROLLOUT=shadow`
+- `CTT_SHADOW_REVIEW_HANDOFF=on`
+- `CTT_SHADOW_MINIMUM_PLAYERS=16`
+
+Verification at activation time:
+
+- `samchat-registration-bot.service` was active and running from
+  `/srv/samchat/releases/registration-bea7b679a2deffbb`.
+- `samchat-gastos.service` remained active with `CTT_CANONICAL_PROMOTION=off`.
+- The canonical extractor files and `config/layout_ctt_2026.json` were present
+  in the active registration release.
+- Zaubern registration gate `/health` returned `status=ready` with
+  `fail_closed=true`.
+- Related unit verification passed:
+  `./scripts/pytestw tests/unit/test_ctt_canary.py tests/unit/test_ctt_shadow_observer.py tests/unit/test_ctt_review_handoff.py tests/unit/test_registration_intake_bot.py tests/unit/test_registration_operational_surface.py`
+
+Phase 1 is operationally enabled, but the rollout is not quality-complete until
+a real two- or three-page cedula confirms a sanitized `CTT shadow report`, a
+`CTT canonical review handoff: persisted=true` log entry, and a visible
+canonical comparison sidecar without direct `Team` or `Player` writes.
+
 ## Controlled canonical promotion
 
 PR10 adds a field-level adoption step without making the sidecar authoritative:
