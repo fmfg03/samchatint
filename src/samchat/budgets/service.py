@@ -1927,6 +1927,13 @@ async def resolve_definitive_budget_version(
 ) -> Optional[dict[str, Any]]:
     """Return the single operational budget version for an edition year."""
     versions = await list_budget_versions(session, edition_year=edition_year)
+    return resolve_definitive_budget_version_from_versions(versions)
+
+
+def resolve_definitive_budget_version_from_versions(
+    versions: list[dict[str, Any]],
+) -> Optional[dict[str, Any]]:
+    """Return the operational budget version from an already-loaded list."""
     if not versions:
         return None
 
@@ -5117,8 +5124,10 @@ async def list_budget_versions(
     session: AsyncSession,
     *,
     edition_year: Optional[int] = None,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     filters = []
     params: dict[str, Any] = {}
     if edition_year is not None:
