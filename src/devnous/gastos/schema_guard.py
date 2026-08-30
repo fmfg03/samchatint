@@ -1627,8 +1627,15 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
 
             IF current_def IS NOT NULL THEN
                 IF position('enviar_control_presupuestal' in current_def) = 0
-                   OR position('asignar_partida_presupuestal' in current_def) = 0
+                   OR position('rechazar_control_presupuestal' in current_def) = 0
+                   OR position('''asignar_partida_presupuestal''::text' in current_def) = 0
+                   OR position('asignar_partida_presupuestal_linea' in current_def) = 0
+                   OR position('asignar_partidas_presupuestales' in current_def) = 0
                    OR position('reversar_a_control_presupuestal' in current_def) = 0
+                   OR position('aprobar_area' in current_def) = 0
+                   OR position('rechazar_area' in current_def) = 0
+                   OR position('aprobar_final' in current_def) = 0
+                   OR position('rechazar_final' in current_def) = 0
                    OR position('retirar' in current_def) = 0 THEN
                     ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_accion_check;
                     ALTER TABLE aprobaciones
@@ -1638,13 +1645,20 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                                 ARRAY[
                                     'enviar'::text,
                                     'enviar_control_presupuestal'::text,
+                                    'rechazar_control_presupuestal'::text,
                                     'asignar_partida_presupuestal'::text,
+                                    'asignar_partida_presupuestal_linea'::text,
+                                    'asignar_partidas_presupuestales'::text,
                                     'reversar_a_control_presupuestal'::text,
                                     'aprobar'::text,
                                     'rechazar'::text,
                                     'cancelar'::text,
                                     'editar'::text,
                                     'pagar'::text,
+                                    'aprobar_area'::text,
+                                    'rechazar_area'::text,
+                                    'aprobar_final'::text,
+                                    'rechazar_final'::text,
                                     'retirar'::text
                                 ]
                             )

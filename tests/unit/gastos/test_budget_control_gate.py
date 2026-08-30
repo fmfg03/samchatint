@@ -21,6 +21,10 @@ def test_document_with_budget_concept_goes_to_regular_approval():
     assert documento_requires_budget_control(documento) is False
 
 
+def test_nomina_employee_route_imports_payment_profile_model():
+    assert user_routes.PayrollEmployeePaymentProfile.__name__ == "PayrollEmployeePaymentProfile"
+
+
 def test_budget_control_send_schedules_control_presupuestal_telegram():
     source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"
@@ -58,6 +62,29 @@ def test_budget_control_telegram_has_idempotent_outbox_type():
     assert '"budget_control_pending"' in outbox_source
     assert "Control Presupuestal pendiente" in outbox_source
     assert "resolve_budget_control_notification_recipients" in telegram_source
+
+
+def test_aprobaciones_action_constraint_admits_current_audit_actions():
+    schema_guard = Path("src/devnous/gastos/schema_guard.py").read_text()
+
+    required_actions = {
+        "enviar_control_presupuestal",
+        "rechazar_control_presupuestal",
+        "asignar_partida_presupuestal",
+        "asignar_partida_presupuestal_linea",
+        "asignar_partidas_presupuestales",
+        "reversar_a_control_presupuestal",
+        "aprobar_area",
+        "rechazar_area",
+        "aprobar_final",
+        "rechazar_final",
+        "retirar",
+    }
+
+    repair_block = schema_guard[schema_guard.index("IF current_def IS NOT NULL"):]
+    for action in required_actions:
+        assert f"'{action}'::text" in schema_guard
+        assert action in repair_block
 
 
 def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():

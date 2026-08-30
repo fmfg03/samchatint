@@ -4087,7 +4087,7 @@ async def finance_unmapped_alias(request: Request):
 @app.get("/telmex/", include_in_schema=False)
 @app.get("/telmex/{path:path}", include_in_schema=False)
 async def copa_telmex_spa(path: str = ""):
-    if not copa_telmex_dist_dir.exists():
+    if copa_telmex_dist_dir is None or not copa_telmex_dist_dir.exists():
         raise HTTPException(status_code=404, detail="Copa Telmex frontend not deployed")
     target = _resolve_spa_file(copa_telmex_dist_dir, path)
     headers = {}

@@ -82,6 +82,17 @@ def test_explicit_cors_origin_can_enable_local_development(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_telmex_spa_missing_dist_returns_404_instead_of_500(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard, "copa_telmex_dist_dir", None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await dashboard.copa_telmex_spa()
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "Copa Telmex frontend not deployed"
+
+
+@pytest.mark.asyncio
 async def test_html_middleware_preserves_body_and_repeated_cookies() -> None:
     async def _chunks():
         yield b"<html><head></head><body>ok</body></html>"
