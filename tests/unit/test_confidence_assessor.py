@@ -25,6 +25,46 @@ from devnous.debate.confidence_assessor import (
 from devnous.models import ConversationMessage
 
 
+@pytest.fixture
+def confidence_assessor():
+    return AgentConfidenceAssessor()
+
+
+@pytest.fixture
+def sample_agent_responses():
+    return {
+        'agent_1': {
+            'response': 'Database indexing is the preferred optimization path',
+            'confidence': 0.82,
+            'reasoning': 'The query workload is read heavy',
+            'priority_score': 0.8
+        },
+        'agent_2': {
+            'response': 'Indexing and query optimization should improve database performance',
+            'confidence': 0.78,
+            'reasoning': 'Existing access patterns point to indexes',
+            'priority_score': 0.76
+        },
+        'agent_3': {
+            'response': 'Optimize database reads with targeted indexes',
+            'confidence': 0.80,
+            'reasoning': 'Indexes reduce repeated table scans',
+            'priority_score': 0.79
+        }
+    }
+
+
+@pytest.fixture
+def sample_conversation_messages():
+    return [
+        ConversationMessage(
+            conversation_id="confidence-test",
+            sender="user",
+            content="How should we improve this decision?"
+        )
+    ]
+
+
 @pytest.mark.asyncio
 class TestAgentConfidenceAssessor:
     """Test suite for AgentConfidenceAssessor component."""
