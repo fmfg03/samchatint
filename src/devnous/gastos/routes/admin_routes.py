@@ -202,6 +202,7 @@ from samchat.budgets.service import (
     list_monthly_allocations_for_lines,
     replace_budget_line_monthly_allocations,
     resolve_definitive_budget_version,
+    resolve_definitive_budget_version_from_versions,
     update_budget_concept,
     update_budget_line,
 )
@@ -6863,7 +6864,7 @@ async def admin_finance_accounts_receivable(
         render_ar_read_model_html,
     )
 
-    all_versions = await list_budget_versions(session)
+    all_versions = await list_budget_versions(session, ensure_schema=False)
     resolved_year = edition_year
     if resolved_year is None:
         resolved_year = (
@@ -6872,7 +6873,11 @@ async def admin_finance_accounts_receivable(
             else date.today().year
         )
 
-    versions = await list_budget_versions(session, edition_year=resolved_year)
+    versions = await list_budget_versions(
+        session,
+        edition_year=resolved_year,
+        ensure_schema=False,
+    )
     selected_version = None
     if budget_version_id:
         selected_version = next(
@@ -6880,10 +6885,7 @@ async def admin_finance_accounts_receivable(
             None,
         )
     if selected_version is None:
-        selected_version = await resolve_definitive_budget_version(
-            session,
-            edition_year=resolved_year,
-        )
+        selected_version = resolve_definitive_budget_version_from_versions(versions)
 
     def _ar_version_option(item: dict[str, Any]) -> str:
         item_id = str(item.get("id") or "")
