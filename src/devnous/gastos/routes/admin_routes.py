@@ -187,6 +187,7 @@ from samchat.budgets.service import (
     build_budget_snapshot,
     bulk_save_budget_concepts,
     clear_budget_concept_scope_for_tournament,
+    create_budget_line,
     ensure_budget_schema,
     hide_budget_concept,
     import_budget_artifact,
@@ -202,6 +203,7 @@ from samchat.budgets.service import (
     replace_budget_line_monthly_allocations,
     resolve_definitive_budget_version,
     update_budget_concept,
+    update_budget_line,
 )
 from samchat.sam_inbox import build_sam_inbox_payload
 from samchat.assistant.soul_wizard import (
@@ -23956,6 +23958,65 @@ async def asignar_cuenta_contable(
         logger.error(f"Error assigning cuenta contable: {e}", exc_info=True)
         await session.rollback()
         return PlainTextResponse(f"Error: {str(e)}", status_code=500)
+
+
+async def admin_presupuestos_create_line(
+    version_id: UUIDType,
+    concept_name: Optional[str] = None,
+    budget_amount: Optional[float] = 0,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    """Legacy direct-call bridge; canonical route lives in admin_budget_routes."""
+    _require_budget_access(current_empleado, "line_update")
+    await create_budget_line(
+        session,
+        version_id=str(version_id),
+        actor_empleado_id=str(current_empleado.id),
+        concept_name=concept_name or "",
+        budget_amount=budget_amount or 0,
+    )
+    return RedirectResponse(
+        url=_presupuestos_redirect_url(version_id=str(version_id)),
+        status_code=303,
+    )
+
+
+async def admin_presupuestos_update_line(
+    request: Request,
+    line_id: UUIDType,
+    version_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    """Legacy direct-call bridge; canonical route lives in admin_budget_routes."""
+    _require_budget_access(current_empleado, "line_update")
+    form = await request.form()
+    updates = {
+        key: form.get(key)
+        for key in (
+            "budget_concept_id",
+            "concept_name",
+            "account_code_final",
+            "phase",
+            "owner_name",
+            "priority",
+            "budget_amount",
+            "criteria_note",
+            "observations",
+        )
+        if key in form
+    }
+    await update_budget_line(
+        session,
+        line_id=str(line_id),
+        actor_empleado_id=str(current_empleado.id),
+        updates=updates,
+    )
+    return RedirectResponse(
+        url=_presupuestos_redirect_url(version_id=version_id),
+        status_code=303,
+    )
 
 
 from .admin_budget_routes import _presupuestos_redirect_url, register_presupuestos_routes
