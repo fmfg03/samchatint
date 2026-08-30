@@ -223,6 +223,17 @@ def test_solicitudes_transferencia_header_filters_include_solicitante_and_action
     assert "matchAccion" in route
 
 
+def test_solicitudes_transferencia_header_does_not_show_anticipo_cta():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def gastos_terceros(")
+    end = text.index('@router.get("/gastos-terceros/solicitar-anticipo"', start)
+    route = text[start:end]
+
+    assert "Solicitud a terceros" in route
+    assert "Solicitar Anticipo" not in route
+    assert "/gastos-terceros/solicitar-anticipo" not in route
+
+
 def test_informes_de_gastos_header_filters_include_solicitante_provider_and_action():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def cuentas_de_gastos_list(")
@@ -233,6 +244,17 @@ def test_informes_de_gastos_header_filters_include_solicitante_provider_and_acti
     assert 'data-solicitante="{solicitante_attr}"' in route
     assert 'data-proveedor="{proveedor_attr}"' in route
     assert 'data-accion="{accion_attr}"' in route
+
+
+def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def cuentas_de_gastos_list(")
+    end = text.index('@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"', start)
+    route = text[start:end]
+
+    assert 'style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;"' in route
+    assert 'style="display:inline-flex;margin:0;"' in route
+    assert 'white-space:nowrap;' in route
     assert 'id="informes-search-solicitante"' in route
     assert 'id="informes-search-proveedor"' in route
     assert 'id="informes-search-accion"' in route

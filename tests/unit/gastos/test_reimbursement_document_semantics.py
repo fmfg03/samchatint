@@ -20,6 +20,8 @@ from devnous.gastos.services.documento_semantics import (
 )
 from devnous.gastos.utils.excel_exports import (
     INFORME_AUTORIZADO_ROW,
+    INFORME_SALDO_ROW,
+    create_informe_csv,
     create_informe_excel,
 )
 
@@ -716,6 +718,36 @@ def test_informe_excel_leaves_authorizer_blank_before_approval() -> None:
         None,
         "",
     )
+
+
+def test_informe_excel_labels_negative_saldo_as_employee_favorable() -> None:
+    workbook = load_workbook(
+        BytesIO(
+            create_informe_excel(
+                numero_referencia="I-775379",
+                empleado_nombre="Bibiana Roman",
+                saldo_cuenta=-250.75,
+                expenses=[],
+            )
+        )
+    )
+
+    assert workbook.active.cell(row=INFORME_SALDO_ROW, column=6).value == 250.75
+    assert workbook.active.cell(row=INFORME_SALDO_ROW, column=7).value == (
+        "a favor del empleado"
+    )
+
+
+def test_informe_csv_labels_negative_saldo_as_employee_favorable() -> None:
+    csv_text = create_informe_csv(
+        numero_referencia="I-775379",
+        empleado_nombre="Bibiana Roman",
+        saldo_cuenta=-250.75,
+        expenses=[],
+    )
+
+    assert "a favor del empleado" in csv_text
+    assert "a favor de empleado" not in csv_text
 
 
 def test_reimbursement_request_is_created_when_closed_informe_is_approved() -> None:

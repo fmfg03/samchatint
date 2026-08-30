@@ -120,6 +120,8 @@ def test_budget_control_page_has_searchable_bulk_assignment_controls():
     assert "/documentos/control-presupuestal/asignar-lote" in block
     assert "data-select-all-budget" in block
     assert "Asignar seleccionados" in block
+    assert 'name="bulk_action" value="reject_selected"' in block
+    assert "Rechazar seleccionados" in block
 
 
 def test_linked_personal_solicitud_bypasses_budget_control():
@@ -149,6 +151,21 @@ def test_budget_control_page_has_reject_control():
     assert "reject_documento_id" in block
     assert "Rechazar" in block
     assert "_reject_control_presupuestal_document" in source
+
+
+def test_budget_control_bulk_reject_does_not_require_budget_concepts():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def asignar_control_presupuestal_lote")
+    end = source.index("@router.get(\"/documentos/pendientes\"", start)
+    block = source[start:end]
+
+    bulk_reject_start = block.index('if bulk_action == "reject_selected":')
+    assignment_start = block.index("items: list[tuple[str, UUIDType, str]]")
+    bulk_reject_block = block[bulk_reject_start:assignment_start]
+
+    assert "_reject_control_presupuestal_document" in bulk_reject_block
+    assert "_informe_documento_for_expense" in bulk_reject_block
+    assert "budget_concept_id" not in bulk_reject_block
 
 
 def test_solicitud_terceros_edit_excludes_linked_expense_requests():

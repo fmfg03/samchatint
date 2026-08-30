@@ -14897,7 +14897,6 @@ async def gastos_terceros(
     )
     hero_actions_html = """
         <a href="/documentos/nueva-solicitud-terceros" class="button primary">Solicitud a terceros</a>
-        <a href="/gastos-terceros/solicitar-anticipo" class="button secondary">Solicitar Anticipo</a>
     """
     if can_manage_pending_payments:
         hero_actions_html += """
@@ -26248,6 +26247,7 @@ async def documentos_control_presupuestal(
             <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:12px;">
                 <button type="button" class="button secondary" data-select-all-budget>Seleccionar todo</button>
                 <button type="submit" class="button primary">Asignar seleccionados</button>
+                <button type="submit" name="bulk_action" value="reject_selected" class="button secondary">Rechazar seleccionados</button>
             </div>
             <div class="table-shell"><table>
                 <thead><tr>
@@ -26320,14 +26320,21 @@ async def documentos_control_presupuestal(
             }}
             return;
           }}
+          var bulkAction = submitter && submitter.name === 'bulk_action' ? submitter.value : '';
           var singleId = submitter && submitter.name === 'single_item_id' ? submitter.value : '';
           var selectedIds = singleId ? [singleId] : Array.prototype.map.call(
             form.querySelectorAll('input[name="budget_item_ids"]:checked'),
             function(box) {{ return box.value; }}
           );
-          if (!singleId && selectedIds.length === 0) {{
+          if (selectedIds.length === 0) {{
             event.preventDefault();
-            alert('Selecciona al menos una partida o documento para asignar.');
+            alert('Selecciona al menos una partida o documento.');
+            return;
+          }}
+          if (bulkAction === 'reject_selected') {{
+            if (!confirm('¿Rechazar/regresar los documentos seleccionados desde Control Presupuestal?')) {{
+              event.preventDefault();
+            }}
             return;
           }}
           form.querySelectorAll('select[name^="budget_concept_id_"]').forEach(function(select) {{
@@ -26574,6 +26581,7 @@ async def asignar_control_presupuestal_lote(
     single_item_id: Optional[str] = Form(None),
     single_documento_id: Optional[str] = Form(None),
     reject_documento_id: Optional[str] = Form(None),
+    bulk_action: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Assign budget concepts to one or more selected budget-control items."""
     if not _is_budget_control_user(current_empleado):
@@ -26614,6 +26622,74 @@ async def asignar_control_presupuestal_lote(
         raw_items = [f"doc:{single_documento_id}"]
     if not raw_items:
         raw_items = [f"doc:{raw_id}" for raw_id in form.getlist("documento_ids")]
+
+    if bulk_action == "reject_selected":
+        documento_ids: set[UUIDType] = set()
+        for raw_item in raw_items:
+            raw_text = str(raw_item or "").strip()
+            if not raw_text:
+                continue
+            if ":" in raw_text:
+                kind, raw_id = raw_text.split(":", 1)
+            else:
+                kind, raw_id = "doc", raw_text
+            kind = kind.strip()
+            if kind not in {"doc", "expense"}:
+                return RedirectResponse(
+                    url=_append_error_params(redirect_url, error="invalid_item", error_msg="Selección inválida."),
+                    status_code=303,
+                )
+            try:
+                item_id = UUIDType(raw_id.strip())
+            except ValueError:
+                return RedirectResponse(
+                    url=_append_error_params(redirect_url, error="invalid_item_id", error_msg="Selección inválida."),
+                    status_code=303,
+                )
+            if kind == "expense":
+                expense = await session.get(ExpenseReport, item_id)
+                if expense is None:
+                    return RedirectResponse(
+                        url=_append_error_params(redirect_url, error="expense_not_found", error_msg="Partida de gasto no encontrada."),
+                        status_code=303,
+                    )
+                documento = await _informe_documento_for_expense(session, expense)
+                if documento is None:
+                    return RedirectResponse(
+                        url=_append_error_params(redirect_url, error="documento_not_found", error_msg="Informe de gastos no encontrado."),
+                        status_code=303,
+                    )
+                documento_ids.add(documento.id)
+            else:
+                documento_ids.add(item_id)
+        if not documento_ids:
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error="empty_selection", error_msg="Selecciona al menos un documento."),
+                status_code=303,
+            )
+        try:
+            for documento_id in documento_ids:
+                await _reject_control_presupuestal_document(
+                    session,
+                    documento_id=documento_id,
+                    actor=current_empleado,
+                )
+            await session.commit()
+        except DocumentoWorkflowValidationError as exc:
+            await session.rollback()
+            if exc.code == "documento_not_found":
+                raise HTTPException(status_code=404, detail=exc.message)
+            return RedirectResponse(
+                url=_append_error_params(redirect_url, error=exc.code, error_msg=exc.message),
+                status_code=303,
+            )
+        return RedirectResponse(
+            url=_append_success_params(
+                redirect_url,
+                success_msg=f"{len(documento_ids)} documento(s) regresado(s) para corrección.",
+            ),
+            status_code=303,
+        )
 
     items: list[tuple[str, UUIDType, str]] = []
     for raw_item in raw_items:
@@ -36267,7 +36343,7 @@ async def cuentas_de_gastos_list(
         ):
             cerrar_cell = (
                 '<form method="POST" action="/informes-de-gastos/' + str(cuenta.id)
-                + '/cerrar" style="display: inline;"><button type="submit" style="background: #ff9800; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px;" onclick="return confirm(\'¿Cerrar este informe de gastos? No podrás agregar más gastos.\')">Cerrar</button></form>'
+                + '/cerrar" style="display:inline-flex;margin:0;"><button type="submit" style="background: #ff9800; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; white-space:nowrap;" onclick="return confirm(\'¿Cerrar este informe de gastos? No podrás agregar más gastos.\')">Cerrar</button></form>'
             )
         cancelar_borrador_cell = ''
         if (
@@ -36281,9 +36357,9 @@ async def cuentas_de_gastos_list(
         ):
             cancelar_borrador_cell = (
                 '<form method="POST" action="/informes-de-gastos/' + str(cuenta.id)
-                + '/cancelar-borrador" style="display:inline;margin-left:6px;">'
+                + '/cancelar-borrador" style="display:inline-flex;margin:0;">'
                 '<button type="submit" style="background:#991b1b;color:white;border:none;'
-                'padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;" '
+                'padding:5px 10px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;" '
                 'onclick="return confirm(\'¿Cancelar este informe vacío? Se conservará el registro de auditoría.\')">'
                 'Cancelar borrador</button></form>'
             )
@@ -36315,9 +36391,11 @@ async def cuentas_de_gastos_list(
             </td>
             <td>{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td>
-                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; margin-right: 10px;">Ver</a>
+                <div class="inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
+                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Ver</a>
                 {cerrar_cell}
                 {cancelar_borrador_cell}
+                </div>
             </td>
         </tr>
         """

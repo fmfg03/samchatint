@@ -354,7 +354,7 @@ def create_informe_excel(
         fecha_documento: Document date string (YYYY-MM-DD)
         expenses: List of dicts with keys: concepto, fecha, no_factura (CFDI UUID), importe_sin_iva, iva, total
         cantidad_entregada: Sum of paid solicitudes (Cantidad Entregada)
-        saldo_cuenta: Cuenta saldo (Dif. A Pagar y/o Reembolso / SALDO). G49: "a favor de empleado" if >= 0 else "a favor de empresa"
+        saldo_cuenta: Cuenta saldo (Dif. A Pagar y/o Reembolso / SALDO). G49: "a favor del empleado" if < 0 else "a favor de empresa"
         tipo_cuenta: local|viaje|nacional|extranjero - row 11 selected label is shown as (X)
         referencia_operaciones: Document referencia operaciones (cell G22)
         motivo_del_gasto: Expense reason from cuenta nombre (merged cell B21:F22)
@@ -470,7 +470,7 @@ def create_informe_excel(
     # Dif. A Pagar y/o Reembolso / SALDO (4599: B49 label, F49 amount, G49 "a favor de...")
     if saldo_cuenta is not None:
         ws.cell(row=row_saldo, column=6, value=round(abs(saldo_cuenta), 2))
-        ws.cell(row=row_saldo, column=7, value="a favor de empleado" if saldo_cuenta >= 0 else "a favor de empresa")
+        ws.cell(row=row_saldo, column=7, value="a favor del empleado" if saldo_cuenta < 0 else "a favor de empresa")
 
     # Autorizado por (4599: D54 = name)
     _clear_cell(ws, row_autorizado, 4)
@@ -511,7 +511,7 @@ def create_informe_csv(
     total_sub = sum((e.get("importe_sin_iva") or 0) for e in expenses)
     total_iva = sum((e.get("iva") or 0) for e in expenses)
     total_total = sum((e.get("total") or 0) for e in expenses)
-    saldo_label = "a favor de empleado" if saldo_cuenta is not None and saldo_cuenta >= 0 else "a favor de empresa"
+    saldo_label = "a favor del empleado" if saldo_cuenta is not None and saldo_cuenta < 0 else "a favor de empresa"
     local_x, viaje_x = _informe_template_tipo_marks(tipo_cuenta)
 
     def empty_row(cols: int = 8) -> List[str]:
