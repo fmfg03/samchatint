@@ -14967,7 +14967,7 @@ async def gastos_terceros(
         registrar_pago_link = _solicitud_transferencia_list_actions_html(
             doc, current_empleado
         )
-        accion_attr_parts = ["ver detalle"]
+        accion_attr_parts = ["revisar solicitud"]
         if "/editar" in registrar_pago_link:
             accion_attr_parts.append("editar")
         if "/cancelar" in registrar_pago_link:
@@ -15097,7 +15097,7 @@ async def gastos_terceros(
                         </div>
                         <div>
                             <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Acción</label>
-                            <input type="search" id="terceros-search-accion" placeholder="Ej. editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                            <input type="search" id="terceros-search-accion" placeholder="Ej. revisar solicitud, editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
@@ -36636,7 +36636,7 @@ async def cuentas_de_gastos_list(
                         </div>
                         <div>
                             <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Acción</label>
-                            <input type="search" id="informes-search-accion" placeholder="Ej. ver, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
+                            <input type="search" id="informes-search-accion" placeholder="Ej. abrir informe, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">

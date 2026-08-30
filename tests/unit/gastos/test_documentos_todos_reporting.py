@@ -593,6 +593,8 @@ def test_solicitudes_transferencia_header_filters_include_solicitante_and_action
     assert 'data-accion="{accion_attr}"' in route
     assert 'id="terceros-search-solicitante"' in route
     assert 'id="terceros-search-accion"' in route
+    assert 'placeholder="Ej. revisar solicitud, editar, cancelar..."' in route
+    assert 'accion_attr_parts = ["revisar solicitud"]' in route
     assert "matchSolicitante" in route
     assert "matchAccion" in route
 
@@ -618,6 +620,9 @@ def test_informes_de_gastos_header_filters_include_solicitante_provider_and_acti
     assert 'data-solicitante="{solicitante_attr}"' in route
     assert 'data-proveedor="{proveedor_attr}"' in route
     assert 'data-accion="{accion_attr}"' in route
+    assert 'placeholder="Ej. abrir informe, cerrar, cancelar..."' in route
+    assert 'placeholder="Ej. ver, cerrar, cancelar..."' not in route
+    assert 'accion_attr_parts = ["abrir informe"]' in route
 
 
 def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
