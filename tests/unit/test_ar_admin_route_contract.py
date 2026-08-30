@@ -33,6 +33,22 @@ def test_admin_route_consumes_canonical_ar_read_model():
     assert "DELETE " not in route_body.upper()
 
 
+def test_admin_ar_route_does_not_run_budget_schema_ddl_on_get():
+    source = ADMIN_ROUTES.read_text()
+    route_body = source.split(
+        "async def admin_finance_accounts_receivable",
+        maxsplit=1,
+    )[1].split(
+        '@router.get("/admin/finanzas/export.xlsx"',
+        maxsplit=1,
+    )[0]
+
+    assert "ensure_budget_schema(" not in route_body
+    assert "resolve_definitive_budget_version(" not in route_body
+    assert "ensure_schema=False" in route_body
+    assert "resolve_definitive_budget_version_from_versions" in route_body
+
+
 def test_admin_routes_expose_ar_collection_match_posts():
     source = ADMIN_ROUTES.read_text()
 
