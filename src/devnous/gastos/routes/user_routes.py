@@ -36751,7 +36751,7 @@ async def cancelar_informe_vacio_borrador(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta.id}",
-                error_msg="El informe no tiene documento principal; contacte a soporte.",
+                error_msg="El informe no tiene documento principal; contacta a soporte.",
             ),
             status_code=303,
         )
@@ -37955,7 +37955,7 @@ async def cuenta_de_gastos_detail(
                 <div class="table-shell">
                 <table>
                     <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="6" style="text-align: center; color: #666;">No hay solicitudes. Cree una desde el botón anterior.</td></tr>'}</tbody>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="6" style="text-align: center; color: #666;">No hay solicitudes. Crea una desde el botón anterior.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -37992,17 +37992,17 @@ async def cuenta_de_gastos_detail(
     if solicitante_cuenta is None and cuenta.empleado_id == current_empleado.id:
         solicitante_cuenta = current_empleado
     solicitante_display = (
-        solicitante_cuenta.nombre if solicitante_cuenta is not None else "â€”"
+        solicitante_cuenta.nombre if solicitante_cuenta is not None else "—"
     )
     beneficiario_proveedor_cuenta = getattr(cuenta, "beneficiario_proveedor_cliente", None)
     beneficiario_cuenta = (
         getattr(cuenta, "beneficiario_empleado", None) or solicitante_cuenta
     )
     if beneficiario_proveedor_cuenta is not None:
-        beneficiario_display = beneficiario_proveedor_cuenta.nombre or "â€”"
+        beneficiario_display = beneficiario_proveedor_cuenta.nombre or "—"
     else:
         beneficiario_display = (
-            beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "â€”"
+            beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "—"
         )
     clasificacion_info = (
         f'<p class="section-note" style="margin:8px 0 0;"><strong>Solicita:</strong> '
@@ -38140,7 +38140,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario. La propina se suma al total pagado y se clasifica como No Deducible.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripción la captura el usuario. La propina se suma al total pagado y se clasifica como No Deducible.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -38532,7 +38532,7 @@ async def editar_cuenta_de_gastos_form(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobación.",
             ),
             status_code=303,
         )
@@ -38714,7 +38714,7 @@ async def editar_cuenta_de_gastos_submit(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobación.",
             ),
             status_code=303,
         )
@@ -39515,9 +39515,9 @@ async def cerrar_cuenta_de_gastos(
         )
     else:
         success_msg = (
-            "Informe cerrado y enviado para aprobaci?n."
+            "Informe cerrado y enviado para aprobación."
             if not cuenta_was_closed
-            else "Documento de informe sincronizado y enviado para aprobaci?n."
+            else "Documento de informe sincronizado y enviado para aprobación."
         )
     if reembolso_created:
         success_msg += (

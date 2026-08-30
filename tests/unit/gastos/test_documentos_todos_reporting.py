@@ -360,6 +360,72 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
         assert f'("{leaf}", None)' in route_source
 
 
+def test_informe_document_visible_copy_has_clean_spanish_encoding():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    blocks = [
+        text[
+            text.index("async def ver_documento(") :
+            text.index(
+                '@router.get("/api/informes-de-gastos/activas"',
+                text.index("async def ver_documento("),
+            )
+        ],
+        text[
+            text.index("async def cuenta_de_gastos_detail(") :
+            text.index(
+                '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+                text.index("async def cuenta_de_gastos_detail("),
+            )
+        ],
+        text[
+            text.index("async def cancelar_informe_vacio_borrador(") :
+            text.index(
+                "def _can_quick_capture_expense",
+                text.index("async def cancelar_informe_vacio_borrador("),
+            )
+        ],
+        text[
+            text.index("async def editar_cuenta_de_gastos_form(") :
+            text.index(
+                '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+                text.index("async def editar_cuenta_de_gastos_form("),
+            )
+        ],
+        text[
+            text.index("async def editar_cuenta_de_gastos_submit(") :
+            text.index(
+                '@router.post("/api/informes-de-gastos/cfdi-autofill"',
+                text.index("async def editar_cuenta_de_gastos_submit("),
+            )
+        ],
+        text[
+            text.index("async def cerrar_cuenta_de_gastos(") :
+            text.index(
+                "async def _ensure_reembolso_solicitud_for_approved_informe",
+                text.index("async def cerrar_cuenta_de_gastos("),
+            )
+        ],
+    ]
+    scoped = "\n".join(blocks)
+
+    for broken_text in [
+        "aprobaci?n",
+        "â€”",
+        "descripcion la captura",
+        "Cree una desde",
+        "contacte a soporte",
+    ]:
+        assert broken_text not in scoped
+
+    for corrected_text in [
+        "aprobación",
+        "descripción la captura",
+        "Crea una desde",
+        "contacta a soporte",
+    ]:
+        assert corrected_text in scoped
+
+
 def test_accounting_cleanup_is_labeled_as_coi_policies():
     admin_source = open(
         "src/devnous/gastos/routes/admin_routes.py", encoding="utf-8"
