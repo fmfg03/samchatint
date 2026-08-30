@@ -15899,8 +15899,8 @@ async def nuevo_gasto_form(
             </div>
         </div>
     """
-    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
-    budget_classification_style = "" if can_manage_budget_classification else ' style="display:none;" aria-hidden="true"'
+    can_manage_budget_classification = False
+    budget_classification_style = ' style="display:none;" aria-hidden="true"'
 
     html = f"""
     <!DOCTYPE html>
@@ -16087,7 +16087,7 @@ async def nuevo_gasto_form(
                     <label for="budget_concept_search">Concepto</label>
                     <input type="text" id="budget_concept_search" list="budget_concept_options" placeholder="Escriba para buscar o seleccione de la lista" autocomplete="off" disabled>
                     <datalist id="budget_concept_options"></datalist>
-                    <select name="budget_concept_id" id="budget_concept_id" disabled>
+                    <select name="budget_concept_id_ignored" id="budget_concept_id" disabled>
                         <option value="">— Seleccione primero un torneo —</option>
                     </select>
                     <small>Escriba para filtrar o elija en el dropdown. Obligatoria cuando el gasto se registra contra un torneo del catálogo.</small>
@@ -16727,10 +16727,8 @@ async def crear_gasto(
         selected_tournament = None
         tournament_id = None
         budget_concept = None
-        can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
-        if not can_manage_budget_classification:
-            budget_concept_id = None
-            cuenta_contable_id = None
+        budget_concept_id = None
+        cuenta_contable_id = None
         if proyecto and proyecto.strip():
             try:
                 selected_tournament = await session.get(Tournament, UUIDType(proyecto.strip()))
@@ -16775,23 +16773,6 @@ async def crear_gasto(
                     ),
                     status_code=303
                 )
-            if can_manage_budget_classification and (budget_concept_id or "").strip():
-                budget_concept = await resolve_budget_concept(
-                    session,
-                    budget_concept_id=budget_concept_id,
-                    tournament_id=tournament_id,
-                    tournament_code=None,
-                    fase=fase_torneo,
-                    budget_direction="expense",
-                )
-                if budget_concept is None:
-                    return RedirectResponse(
-                        url=_append_error_params(
-                            "/gastos/nuevo",
-                            error_msg="El Concepto no corresponde al torneo seleccionado.",
-                        ),
-                        status_code=303,
-                    )
 
         # Parse amount using Decimal for precision
         try:
@@ -24864,8 +24845,8 @@ async def editar_gasto_form(
                 </small>
             </div>
         """
-    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
-    budget_classification_style = "" if can_manage_budget_classification else ' style="display:none;" aria-hidden="true"'
+    can_manage_budget_classification = False
+    budget_classification_style = ' style="display:none;" aria-hidden="true"'
     return_to_input_html = (
         f'<input type="hidden" name="return_to" value="{escape(safe_return_to)}">'
     )
@@ -25033,7 +25014,7 @@ async def editar_gasto_form(
 
                 <div class="form-group"{budget_classification_style}>
                     <label for="budget_concept_id">Concepto</label>
-                    <select name="budget_concept_id" id="budget_concept_id" {disabled_attr}>
+                    <select name="budget_concept_id_ignored" id="budget_concept_id" {disabled_attr}>
                         {budget_concept_options}
                     </select>
                     <small>Disponible cuando el informe de gastos está ligado a un torneo. No se fuerza backfill en gastos legacy.</small>
@@ -25616,7 +25597,7 @@ async def editar_gasto(
         )
         expense.metodo_pago = "TARJETA CREDITO AMEX"
 
-    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    can_manage_budget_classification = False
     budget_concept_uuid = expense.budget_concept_id
     budget_concept = None
     budget_concept_raw = (budget_concept_id or "").strip() if can_manage_budget_classification else ""
@@ -36970,29 +36951,7 @@ async def crear_gasto_rapido_en_informe(
         )
         await _ensure_expense_tip_schema(session)
         owner = cuenta.empleado
-        can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
-        available_budget_concepts = (
-            await _budget_concepts_for_cuenta(session, cuenta)
-            if can_manage_budget_classification
-            else []
-        )
-        budget_concept_raw = (
-            budget_concept_id.strip()
-            if can_manage_budget_classification and isinstance(budget_concept_id, str)
-            else ""
-        )
         budget_concept = None
-        if can_manage_budget_classification:
-            budget_concept = await resolve_budget_concept(
-                session,
-                budget_concept_id=budget_concept_raw or None,
-                tournament_id=str(cuenta.torneo_id) if getattr(cuenta, "torneo_id", None) else None,
-                tournament_code=None,
-                fase=getattr(cuenta, "fase", None),
-                budget_direction="expense",
-            )
-            if budget_concept_raw and budget_concept is None:
-                raise ValueError("El concepto no corresponde al torneo del informe.")
         budget_concept_label = str((budget_concept or {}).get("label") or "")
         if values["propina_no_deducible"] > 0 and not _is_alimentos_tip_context(
             values.get("concepto"),
@@ -37960,14 +37919,14 @@ async def cuenta_de_gastos_detail(
     )
     amex_bulk_form_close = "</form>" if _can_manage_amex else ""
     quick_capture_html = ""
-    can_manage_budget_classification = _can_manage_budget_classification(current_empleado)
+    can_manage_budget_classification = False
     quick_budget_concepts_filtered = (
         await _budget_concepts_for_cuenta(session, cuenta)
         if can_manage_budget_classification
         else []
     )
-    quick_budget_style = "" if can_manage_budget_classification else ' style="display:none;"'
-    quick_budget_name = "budget_concept_id" if can_manage_budget_classification else "budget_concept_id_ignored"
+    quick_budget_style = ' style="display:none;"'
+    quick_budget_name = "budget_concept_id_ignored"
     quick_budget_concept_options = ""
     if quick_budget_concepts_filtered:
         quick_budget_concept_options = _html_budget_concept_options(

@@ -296,6 +296,59 @@ def test_solicitud_terceros_create_and_edit_force_budget_control_assignment() ->
     assert "budget_concept_id = None" in edit_block
 
 
+def test_operaciones_gasto_form_hides_budget_concept_selector() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def nuevo_gasto_form")
+    end = source.index('@router.post("/gastos/nuevo")', start)
+    block = source[start:end]
+
+    assert "can_manage_budget_classification = False" in block
+    assert 'style="display:none;" aria-hidden="true"' in block
+    assert 'name="budget_concept_id_ignored"' in block
+    assert 'name="budget_concept_id"' not in block
+
+
+def test_operaciones_gasto_create_ignores_budget_concept_payload() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def crear_gasto(")
+    end = source.index('@router.get("/gastos/carga-masiva-amex"', start)
+    block = source[start:end]
+
+    assert "budget_concept_id = None" in block
+    assert "cuenta_contable_id = None" in block
+    assert "resolve_budget_concept" not in block
+
+
+def test_operaciones_gasto_edit_hides_and_ignores_budget_concept() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    form_start = source.index("async def editar_gasto_form")
+    post_start = source.index('@router.post("/gastos/{gasto_id}/editar")', form_start)
+    form_block = source[form_start:post_start]
+    post_end = source.index("@router.get(\"/informes-de-gastos", post_start)
+    post_block = source[post_start:post_end]
+
+    assert "can_manage_budget_classification = False" in form_block
+    assert 'name="budget_concept_id_ignored"' in form_block
+    assert 'name="budget_concept_id"' not in form_block
+    assert "can_manage_budget_classification = False" in post_block
+
+
+def test_informe_quick_capture_hides_and_ignores_budget_concept() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    detail_start = source.index("async def cuenta_de_gastos_detail")
+    detail_end = source.index('@router.get("/informes-de-gastos/{cuenta_id}/editar"', detail_start)
+    detail_block = source[detail_start:detail_end]
+    quick_start = source.index("async def crear_gasto_rapido_en_informe")
+    quick_end = source.index('@router.post("/informes-de-gastos/{cuenta_id}/gastos/amex")', quick_start)
+    quick_block = source[quick_start:quick_end]
+
+    assert "can_manage_budget_classification = False" in detail_block
+    assert 'quick_budget_name = "budget_concept_id_ignored"' in detail_block
+    assert '"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""' in detail_block
+    assert "resolve_budget_concept" not in quick_block
+    assert "budget_concept = None" in quick_block
+
+
 class _LazyAprobadorBomb:
     @property
     def aprobador(self):  # pragma: no cover - only exercised on regression
