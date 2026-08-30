@@ -1,10 +1,70 @@
 # SamChat current roadmap handoff
 
 Status: ACTIVE_CONTEXT
-Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-054def-executive-workloop`
+Last updated: 2026-08-31
+Branch at time of reconciliation: `codex/feature-consolidation-20260830`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
+
+## 2026-08-31 roadmap reconciliation
+
+This reconciliation is the current entry point for assistant roadmap work.
+It separates product direction, repository evidence, runtime evidence, and
+remaining gaps so future slices do not infer production capability from a doc
+heading, branch name, or release directory name alone.
+
+Current active runtime checked during reconciliation:
+
+- Service: `samchat-gastos.service`
+- WorkingDirectory: `/srv/samchat/releases/gastos-prod-42bf8d6a-expense-report-controls`
+- Health: `/healthz` and `/readyz` returned healthy.
+- Important nuance: the active release name is expense-report-oriented, but its
+  loaded source contains the assistant WorkFrame, work-turn trace,
+  multi-candidate read-only, executive regression, and Owner Entity Folder
+  Workspace modules.
+
+Clean-room architecture boundary:
+
+- `/root/claudeleaked` is an architecture reference only.
+- Do not copy source, names, or implementation details from it into SamChat.
+- Transferable patterns are the governed work loop, candidate tool selection,
+  policy checks, context/memory selection, visible traces, sufficiency
+  verification, preview/approval boundaries, and auditable execution receipts.
+- A Claude-Code-like pattern is accepted only when it improves SamChat's real
+  operational cycle over gastos, CFDI, Owner Pack, tournaments, SOUL, and
+  authorization boundaries.
+
+| Slice | Product capability | Repo evidence | Runtime evidence | Remaining gap | Authority posture |
+| --- | --- | --- | --- | --- | --- |
+| RQF-054A | WorkFrame classifier | `src/samchat/assistant/work_frame.py`; tests in `tests/unit/test_assistant_work_frame.py` | Present in active release source | Keep extending real business phrases as failures are found | Read-only |
+| RQF-054B/C | Tool candidate adjudicator and sufficiency gate | `tool_adjudicator.py`, `response_sufficiency.py`, focused tests | Present in active release source | Continue mapping tools through semantic metadata instead of ad hoc keywords | Read-only |
+| RQF-054D/E/F | Executive renderer, work-turn trace, semantic registry foundation | `work_turn_renderer.py`, `assistant_workspace_trace.py`, `tool_registry.py` | Present in active release source | Keep broadening source-backed rendered answers; do not render raw payloads | Read-only |
+| RQF-054G | Multi-candidate read-only execution | `multi_candidate_readonly.py`; focused local verification passed 2026-08-31 | Present in active release source | Reconcile historical `IMPLEMENTED_LOCAL` labels with PR/release evidence before claiming formal closure | Read-only |
+| RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; focused local verification passed 2026-08-31 | Present in active release source as source module | Promote from local regression contract into demo/canary gate with captured live prompts | Read-only |
+| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; UI follow-ups tracked | Prior static deployment evidence exists; runtime assets must be rechecked before UI claims | Close continuity/error-state/rollback/source-builder follow-ups before calling UI polished | Read-only/proposal |
+| SOUL Wizard 001-004 | Tournament SOUL draft, clone, activation preview | `soul_wizard.py`; mini-roadmap closed | Source present; coverage remains data-dependent | One reliable SOUL per tournament before complete Owner Pack claims | Preview-only, no operational writes |
+| Owner Pack workspace | Read-only entity folder readiness/evidence workspace | `owner_pack_*`, `owner_entity_folder_workspace.py`, owner variable Q&A | Present in active release source | Improve tournament/entity data coverage; report missing fields instead of completing gaps | Read-only/proposal |
+
+Next execution order:
+
+1. Keep this roadmap reconciliation current whenever runtime/source status
+   changes.
+2. Convert RQF-054H into the acceptance gate for assistant demo hardening:
+   captured real prompts, expected source class, forbidden bad answers,
+   provider/latency/timeout evidence, and pass/fail canary results.
+3. Close high-priority Assistant UI follow-ups that affect continuity and trust:
+   historical conversation rendering, failed-vs-empty dashboard states, frontend
+   rollback notes, and trace/source builder boundary tests.
+4. Improve SOUL and Owner Pack coverage per tournament/entity before promising
+   complete folders.
+5. Only after the read-only loop is stable, design one narrow write-capable path
+   with versioned preview, explicit human approval, idempotency, audit trail,
+   execution receipt, and rollback evidence.
+
+Current non-goal: no production write path is enabled by this roadmap
+reconciliation. SamChat may investigate, render evidence, show gaps, and propose
+actions, but durable effects remain blocked until a separately approved
+authority slice exists.
 
 ## Product north star
 
