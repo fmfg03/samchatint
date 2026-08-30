@@ -1086,7 +1086,7 @@ def render_admin_navigation(
         ("admin.finanzas", "/admin/artifacts", "Artifacts", "artifacts"),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "limpieza"),
     ]
     if can_manage_payment_run(current_empleado):
         finanzas_items.extend(
@@ -3044,7 +3044,7 @@ async def admin_dashboard(
                             for href, title, description in filter_cards_by_tools(
                                 [
                                     ("admin.finanzas", "/admin/finanzas", "Cierre del mes", "Prioriza pagos, COI, DIOT y pólizas del periodo activo."),
-                                    ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+                                    ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
                                     ("admin.contabilidad", "/admin/contabilidad/estado", "Estado contable", "Resumen mensual de COI, auxiliar, banco y conciliación."),
                                     ("admin.gastos.expenses", "/admin/gastos/expenses", "Gastos", "Tabla global de gastos, filtros operativos y exportaciones."),
                                     ("presupuestos.ingresos", "/admin/presupuestos", "Ingresos", "Vincula CFDI PSP a torneo, fase y partida para alimentar Ingreso real."),
@@ -22969,7 +22969,7 @@ async def gastos_sin_cuenta_contable(
                         <section class="cleanup-card cleanup-action-card">
                             <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:8px;">Guardar fila</div>
                             <p class="muted-mini" style="margin:0 0 12px;">Guarda CFDI, impuestos y cuentas contables de este gasto sin afectar las demas filas.</p>
-                            <button class="btn-asignar" data-gasto-id="{gasto.id}" style="padding: 10px 16px; background: #0f766e; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; width:100%;">Guardar limpieza contable</button>
+                            <button class="btn-asignar" data-gasto-id="{gasto.id}" style="padding: 10px 16px; background: #0f766e; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; width:100%;">Guardar preparación COI</button>
                         </section>
                     </div>
                 </div>
@@ -23022,7 +23022,7 @@ async def gastos_sin_cuenta_contable(
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Centro de Limpieza Contable - Admin</title>
+        <title>Pólizas COI - Admin</title>
         <style>
             {_admin_workspace_styles("1760px")}
             .status-banner {{
@@ -23258,11 +23258,11 @@ async def gastos_sin_cuenta_contable(
     </head>
     <body>
         <div class="container">
-            {render_admin_navigation(current_empleado, "limpieza", subtitle="Limpia gastos para COI desde la misma consola financiera: CFDI, cuentas contables y desglose fiscal.")}
+            {render_admin_navigation(current_empleado, "limpieza", subtitle="Prepara pólizas COI desde la misma consola financiera: CFDI, cuentas contables y desglose fiscal.")}
             {_render_admin_workspace_hero(
                 eyebrow="Contabilidad",
-                title="Centro de Limpieza Contable",
-                description="Bandeja de clasificación para completar CFDI, cuenta de cargo, contrapartida y campos fiscales existentes antes de exportar a COI.",
+                title="Pólizas COI",
+                description="Bandeja de preparación para completar CFDI, cuenta de cargo, contrapartida y campos fiscales existentes antes de exportar a COI.",
                 actions_html=hero_actions_html,
                 side_html=hero_side_html,
             )}
@@ -23328,7 +23328,7 @@ async def gastos_sin_cuenta_contable(
                     <div class="review-toolbar">
                         <div>
                             <div class="eyebrow">Acciones</div>
-                            <h2 style="margin:0;">Resolver limpieza contable</h2>
+                            <h2 style="margin:0;">Preparar pólizas COI</h2>
                             <div class="section-note">Puedes aceptar sugerencias de alta confianza y guardar por fila la cuenta de cargo, contrapartida, CFDI y campos fiscales editables.</div>
                         </div>
                         <div class="toolbar-actions">
@@ -23361,12 +23361,12 @@ async def gastos_sin_cuenta_contable(
                                     <th>Monto / Metodo</th>
                                     <th>Cuenta</th>
                                     <th>CFDI</th>
-                                    <th>Estado limpieza</th>
+                                    <th>Estado COI</th>
                                     <th>Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {rows_html if rows_html else '<tr><td colspan="10" style="text-align: center; padding: 40px;">No hay gastos pendientes de limpieza contable</td></tr>'}
+                                {rows_html if rows_html else '<tr><td colspan="10" style="text-align: center; padding: 40px;">No hay gastos pendientes de preparación COI</td></tr>'}
                             </tbody>
                         </table>
                     </div>
@@ -23724,19 +23724,19 @@ async def gastos_sin_cuenta_contable(
                             this.style.cursor = 'default';
                             window.sessionStorage.setItem(
                                 'cleanupContableFlash',
-                                'Limpieza contable guardada correctamente. La bandeja se actualizó con los datos vigentes.'
+                                'Preparación COI guardada correctamente. La bandeja se actualizó con los datos vigentes.'
                             );
                             setTimeout(() => window.location.reload(), 450);
                         }} else {{
                             const error = await response.text();
                             alert('Error al guardar configuración contable: ' + error);
                             this.disabled = false;
-                            this.textContent = 'Guardar limpieza contable';
+                            this.textContent = 'Guardar preparación COI';
                         }}
                     }} catch (e) {{
                         alert('Error de red: ' + e.message);
                         this.disabled = false;
-                        this.textContent = 'Guardar limpieza contable';
+                        this.textContent = 'Guardar preparación COI';
                     }}
                 }});
             }});

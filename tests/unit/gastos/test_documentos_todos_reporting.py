@@ -239,6 +239,69 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
 
 
+def test_accounting_cleanup_is_labeled_as_coi_policies():
+    admin_source = open(
+        "src/devnous/gastos/routes/admin_routes.py", encoding="utf-8"
+    ).read()
+    user_source = open(
+        "src/devnous/gastos/routes/user_routes.py", encoding="utf-8"
+    ).read()
+    nav_start = admin_source.index("def render_admin_navigation")
+    nav_end = admin_source.index("def _render_admin_error_page", nav_start)
+    coi_start = admin_source.index("async def gastos_sin_cuenta_contable")
+    coi_end = admin_source.index(
+        '@router.post("/admin/gastos/{gasto_id}/asignar-cuenta-contable"',
+        coi_start,
+    )
+    admin_surface = admin_source[nav_start:nav_end] + admin_source[coi_start:coi_end]
+
+    assert "Pólizas COI" in admin_surface
+    assert "Preparar pólizas COI" in admin_surface
+    assert "Guardar preparación COI" in admin_surface
+    assert "Centro de Limpieza Contable" not in admin_surface
+    assert "Limpieza contable" not in admin_surface
+    assert "Pólizas COI" in user_source
+
+
+def test_document_status_helper_uses_human_operational_labels():
+    assert user_routes._documento_human_status("borrador") == (
+        "Borrador",
+        "Te falta enviarlo",
+        "muted",
+    )
+    assert user_routes._documento_human_status("control_presupuestal") == (
+        "Control presupuestal",
+        "Pendiente de asignación presupuestal",
+        "warn",
+    )
+    assert user_routes._documento_human_status("rechazado") == (
+        "Rechazado",
+        "Requiere corrección",
+        "error",
+    )
+
+
+def test_action_labels_are_specific_for_reports_and_requests():
+    request_doc = SimpleNamespace(id=uuid4(), tipo="SOLICITUD", estado="enviado")
+    html = user_routes._solicitud_transferencia_list_actions_html(
+        request_doc,
+        SimpleNamespace(id=uuid4(), rol="empleado"),
+    )
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    assert "Revisar solicitud" in html
+    assert "Abrir informe" in source
+    assert "Abrir gasto" in source
+    assert "Abrir reembolso" in source
+    assert ">Ver</a>" not in source[
+        source.index("async def cuenta_de_gastos_detail(") :
+        source.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            source.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+
+
 def test_document_detail_expenses_table_exposes_edit_actions():
     source = "src/devnous/gastos/routes/user_routes.py"
     text = open(source, encoding="utf-8").read()

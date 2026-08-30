@@ -4055,7 +4055,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
     if not rows:
         return (
             '<tr><td colspan="11" class="muted">'
-            "No hay gastos con limpieza contable guardada (Listo COI) para este periodo."
+            "No hay gastos con preparación COI guardada (Listo COI) para este periodo."
             "</td></tr>"
         )
 
@@ -4239,7 +4239,7 @@ async def exportar_coi_gastos_lote_xlsx(
                 f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
                 "&error_msg="
                 + quote(
-                    "No hay gastos con limpieza contable guardada (Listo COI) "
+                    "No hay gastos con preparación COI guardada (Listo COI) "
                     "para exportar en ese periodo."
                 )
             ),
@@ -4498,8 +4498,8 @@ async def contabilidad_coi_view(
             </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
-            Solo gastos con limpieza contable guardada (<strong>Listo COI</strong> en
-            <a href="/admin/gastos/sin-cuenta-contable">Centro de Limpieza</a>) dentro de informes aprobados
+            Solo gastos con preparación COI guardada (<strong>Listo COI</strong> en
+            <a href="/admin/gastos/sin-cuenta-contable">Pólizas COI</a>) dentro de informes aprobados
             o solicitudes a terceros pagadas del periodo {selected_year}-{selected_month:02d}.
             Cada fila genera una póliza individual vía <code>/gastos/{{id}}/exportar-coi.xlsx</code>
             (mismo formato que solicitudes a terceros). El documento conserva su descarga consolidada.
@@ -14602,7 +14602,7 @@ async def panel(
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
         ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
         ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
@@ -14761,12 +14761,54 @@ async def gastos_personales(
     return RedirectResponse(url="/gastos-empleado", status_code=302)
 
 
+def _documento_human_status(value: Optional[str]) -> Tuple[str, str, str]:
+    estado = (value or "").strip().lower()
+    if estado == "borrador":
+        return "Borrador", "Te falta enviarlo", "muted"
+    if estado == "control_presupuestal":
+        return (
+            "Control presupuestal",
+            "Pendiente de asignación presupuestal",
+            "warn",
+        )
+    if estado in {"enviado", "en_revision", "en revisión"}:
+        return "En revisión", "Esperando aprobación", "warn"
+    if estado in {"aprobado", "autorizado"}:
+        return "Aprobado", "Listo para pago o siguiente paso", "success"
+    if estado == "pagado":
+        return "Pagado", "Pago registrado", "success"
+    if estado == "rechazado":
+        return "Rechazado", "Requiere corrección", "error"
+    if estado == "cancelado":
+        return "Cancelado", "Sin acción pendiente", "error"
+    if estado in {"cerrado", "liquidado", "reembolsado"}:
+        return estado.replace("_", " ").capitalize(), "Ciclo cerrado", "success"
+    return (
+        (value or "Sin estado").replace("_", " ").capitalize(),
+        "Revisar estado",
+        "muted",
+    )
+
+
+def _documento_human_status_badge(value: Optional[str]) -> str:
+    label, note, badge_class = _documento_human_status(value)
+    return (
+        f'<span class="badge {badge_class}">{escape(label)}</span>'
+        f'<div class="section-note" style="margin-top:4px;">{escape(note)}</div>'
+    )
+
+
 def _solicitud_transferencia_list_actions_html(
     documento: Documento, current_empleado: Empleado
 ) -> str:
     """Actions shown from the solicitudes list without bypassing workflow rules."""
-    detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
-    is_owner = getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+    detail_link = (
+        f'<a href="/documentos/{documento.id}" class="button secondary">'
+        "Revisar solicitud</a>"
+    )
+    is_owner = getattr(documento, "empleado_id", None) == getattr(
+        current_empleado, "id", None
+    )
     can_edit_rejected = (
         getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
         and getattr(documento, "estado", None) == "rechazado"
@@ -14884,16 +14926,7 @@ async def gastos_terceros(
         solicitante_attr = escape(solicitante_nombre.lower())
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
-        estado_display = escape(doc.estado.upper())
-        badge_class = "muted"
-        if doc.estado == 'aprobado':
-            badge_class = "success"
-        elif doc.estado == 'pagado':
-            badge_class = "success"
-        elif doc.estado == 'rechazado':
-            badge_class = "error"
-        elif doc.estado == 'enviado':
-            badge_class = "warn"
+        estado_display = _documento_human_status_badge(doc.estado)
         totals_by_currency[doc_currency] = totals_by_currency.get(
             doc_currency, Decimal("0")
         ) + Decimal(str(monto_value))
@@ -14929,7 +14962,7 @@ async def gastos_terceros(
             <td>{fecha_pago_display}</td>
             <td>{concepto_display}</td>
             <td>{archivos_terc}</td>
-            <td><span class="badge {badge_class}">{estado_display}</span></td>
+            <td>{estado_display}</td>
             <td>{registrar_pago_link}</td>
         </tr>
         """
@@ -29492,8 +29525,8 @@ async def _build_documento_coi_bundle(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Ningún gasto completó la limpieza contable (Listo COI). "
-                "Guarde la limpieza en Centro de Limpieza Contable antes de exportar."
+                "Ningún gasto completó la preparación COI (Listo COI). "
+                "Guarde la preparación en Pólizas COI antes de exportar."
             ),
         )
 
@@ -33501,24 +33534,10 @@ async def ver_documento(
             </div>
         """
 
-    workflow_badge = "Borrador"
-    workflow_class = "info"
-    if solicitud_cancelada:
-        workflow_badge = "Cancelada"
-        workflow_class = "warn"
-    elif documento.estado == "enviado":
-        workflow_badge = "En revisión"
-        workflow_class = "warn"
-    elif documento.estado == "aprobado":
-        workflow_badge = "Aprobado"
-        workflow_class = "ok"
-    elif documento.estado == "pagado":
-        workflow_badge = "Pagado"
-        workflow_class = "ok"
-    elif documento.estado == "rechazado":
-        workflow_badge = "Rechazado"
-        workflow_class = "warn"
-    estado_display_detail = "cancelada" if solicitud_cancelada else documento.estado
+    workflow_badge, workflow_note, workflow_class = _documento_human_status(
+        "cancelado" if solicitud_cancelada else documento.estado
+    )
+    estado_display_detail = workflow_badge
 
     detail_approval_actions_html = ""
     if can_approve_or_reject:
@@ -33589,7 +33608,7 @@ async def ver_documento(
             <div class="meta-card">
                 <span>Estado</span>
                 <strong>{estado_display_detail}</strong>
-                <small>Flujo vigente del documento.</small>
+                <small>{escape(workflow_note)}</small>
             </div>
             <div class="meta-card">
                 <span>Monto total</span>
@@ -34011,7 +34030,8 @@ async def ver_documento(
                         </div>
                         <div class="doc-hero-flujo-below">
                             <div class="eyebrow">Estado del flujo</div>
-                            <div class="status-chip {workflow_class}" style="margin-top:6px;">{workflow_badge}</div>
+                            <div style="margin-top:6px;"><span class="badge {workflow_class}">{workflow_badge}</span></div>
+                            <div class="section-note" style="margin-top:6px;">{escape(workflow_note)}</div>
                             <div class="meta-grid">
                                 <div class="meta-card">
                                     <span>Gastos asociados</span>
@@ -36020,10 +36040,21 @@ async def adjuntar_gastos_a_cuenta(
 
 
 def _informe_status_badge(label: str, *, color: str) -> str:
+    note_by_label = {
+        "Borrador": "Te falta enviarlo",
+        "En aprobación": "Esperando aprobación",
+        "Autorizado": "Listo para pago o siguiente paso",
+        "Comprobado": "Comprobado con movimientos registrados",
+        "Pagado": "Pago registrado",
+        "Cancelado": "Sin acción pendiente",
+        "Cerrado para captura": "Pendiente de revisión",
+    }
+    note = note_by_label.get(label, "Revisar estado")
     return (
         f'<span style="background:{color};color:white;padding:2px 8px;'
         'border-radius:4px;font-size:11px;">'
         f'{escape(label)}</span>'
+        f'<div class="section-note" style="margin-top:4px;">{escape(note)}</div>'
     )
 
 
@@ -36412,7 +36443,7 @@ async def cuentas_de_gastos_list(
                 'onclick="return confirm(\'¿Cancelar este informe vacío? Se conservará el registro de auditoría.\')">'
                 'Cancelar borrador</button></form>'
             )
-        accion_attr_parts = ["ver"]
+        accion_attr_parts = ["abrir informe"]
         if cerrar_cell:
             accion_attr_parts.append("cerrar")
         if cancelar_borrador_cell:
@@ -36441,7 +36472,7 @@ async def cuentas_de_gastos_list(
             <td>{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td>
                 <div class="inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
-                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Ver</a>
+                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Abrir informe</a>
                 {cerrar_cell}
                 {cancelar_borrador_cell}
                 </div>
@@ -37591,12 +37622,12 @@ async def cuenta_de_gastos_detail(
         if exp.estado_gasto == 'cancelado':
             return (
                 f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
-                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
                 f'</div>'
             )
         return (
             f'<div class="inline-actions" style="gap:8px;justify-content:flex-end;white-space:nowrap;">'
-            f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+            f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
             f'<a href="/gastos/{exp.id}/editar" style="color:#0f766e;text-decoration:none;">Editar</a>'
             f'<form method="POST" action="/gastos/{exp.id}/cancelar" style="display:inline;" '
             f"onsubmit=\"return confirm('¿Eliminar este gasto del informe? Se marcará como cancelado y quedará en auditoría.');\">"
@@ -37656,9 +37687,9 @@ async def cuenta_de_gastos_detail(
             <td>{fecha_str}</td>
             <td>{format_currency(doc.monto_solicitado, currency_for(doc))}</td>
             <td>{escape(currency_for(doc))}</td>
-            <td>{escape(doc.estado or '-')}</td>
+            <td>{_documento_human_status_badge(doc.estado)}</td>
             <td>{arch_s}</td>
-            <td><a href="/documentos/{doc.id}" style="color: #4CAF50; text-decoration: none;">Ver</a></td>
+            <td><a href="/documentos/{doc.id}" style="color: #4CAF50; text-decoration: none;">Revisar solicitud</a></td>
         </tr>
         """,
             )
@@ -37701,7 +37732,7 @@ async def cuenta_de_gastos_detail(
             <td>{escape(getattr(r, "moneda", None) or currency_for(cuenta))}</td>
             <td>{escape((r.estado or '-').capitalize())}</td>
             <td>{r_arch_cell}</td>
-            <td><a href="/informes-de-gastos/{cuenta.id}/reembolsos/{r.id}" style="color: #4CAF50; text-decoration: none;">Ver</a></td>
+            <td><a href="/informes-de-gastos/{cuenta.id}/reembolsos/{r.id}" style="color: #4CAF50; text-decoration: none;">Abrir reembolso</a></td>
         </tr>
         """,
             )
