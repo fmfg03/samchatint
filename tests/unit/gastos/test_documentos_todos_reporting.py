@@ -420,7 +420,6 @@ def test_informe_document_visible_copy_has_clean_spanish_encoding():
     for corrected_text in [
         "aprobación",
         "descripción la captura",
-        "Crea una desde",
         "contacta a soporte",
     ]:
         assert corrected_text in scoped
@@ -515,6 +514,15 @@ def test_informe_detail_uses_human_status_and_single_back_action():
 
     assert "_documento_human_status_badge(d.estado)" in solicitudes_section
     assert "escape(d.estado or '-')" not in solicitudes_section
+    assert "Revisar solicitud" in solicitudes_section
+    assert '<th>Acción</th>' in detail
+    assert 'colspan="7"' in detail
+    assert (
+        "Estas solicitudes son salidas de efectivo vinculadas al informe; "
+        "afectan el saldo cuando Finanzas registra el pago."
+    ) in detail
+    assert "Crea una desde el botón anterior" not in detail
+    assert "No hay solicitudes de transferencia vinculadas a este informe." in detail
     assert detail_actions.count('href="/informes-de-gastos"') == 1
     assert "Volver a mis informes" in detail_actions
     assert "Abrir informes de gastos" not in detail_actions

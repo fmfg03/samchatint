@@ -37936,7 +37936,8 @@ async def cuenta_de_gastos_detail(
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
             f"<td>{d.creado_en.strftime('%Y-%m-%d') if d.creado_en else '-'}</td>"
-            f"<td>{arch_cell}</td></tr>"
+            f"<td>{arch_cell}</td>"
+            f'<td><a href="/documentos/{d.id}" style="color: #4CAF50; text-decoration: none;">Revisar solicitud</a></td></tr>'
         )
     nueva_solicitud_btn_html = (
         f'<a href="/informes-de-gastos/{cuenta.id}/nueva-solicitud" class="button primary" style="margin-bottom: 15px;">Crear nueva solicitud</a>'
@@ -37948,14 +37949,14 @@ async def cuenta_de_gastos_detail(
                 <div class="section-head">
                     <div>
                         <h2>Solicitudes de transferencia</h2>
-                        <div class="section-note">Crea nuevas salidas de efectivo directamente desde este informe.</div>
+                        <div class="section-note">Estas solicitudes son salidas de efectivo vinculadas al informe; afectan el saldo cuando Finanzas registra el pago.</div>
                     </div>
                 </div>
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="6" style="text-align: center; color: #666;">No hay solicitudes. Crea una desde el botón anterior.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
