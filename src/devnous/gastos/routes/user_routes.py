@@ -1367,6 +1367,7 @@ def _render_domain_subnav(
         f"""
         <a
             href="{href}"
+            {'aria-current="page"' if key == active else ''}
             style="
                 text-decoration:none;
                 border-radius:999px;
@@ -2125,6 +2126,50 @@ def _contabilidad_subnav(active: str) -> str:
     return _render_domain_subnav(
         title="Contabilidad",
         description="Parte de estado mensual, navega a COI y baja hasta conciliación y cargas fuente.",
+        items=items,
+        active=active,
+    )
+
+
+def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
+    visible_tool_keys = set(
+        getattr(current_empleado, "visible_tool_keys", set()) or set()
+    )
+    role_norm = str(getattr(current_empleado, "rol", "") or "").strip().lower()
+    is_superadmin = role_norm in {"superadmin", "super_admin"}
+
+    def can_show(tool_key: str, fallback_roles: tuple[str, ...]) -> bool:
+        if is_superadmin:
+            return True
+        if visible_tool_keys:
+            return tool_key in visible_tool_keys
+        return role_norm in fallback_roles
+
+    items: list[tuple[str, str, str]] = []
+    if can_show(
+        "gastos.informes", ("empleado", "coordinador", "finanzas", "admin")
+    ):
+        items.append(("/informes-de-gastos", "Informes de gastos", "informes"))
+    if can_show(
+        "gastos.solicitudes", ("empleado", "coordinador", "finanzas", "admin")
+    ):
+        items.extend(
+            [
+                ("/gastos-terceros", "Solicitudes de transferencia", "solicitudes"),
+                ("/documentos/todos", "Todos los documentos", "documentos"),
+                ("/beneficiarios/altas", "Alta de beneficiarios", "beneficiarios"),
+            ]
+        )
+
+    if not items:
+        return ""
+
+    return _render_domain_subnav(
+        title="Gastos",
+        description=(
+            "Cambia entre informes, solicitudes, documentos y beneficiarios "
+            "sin volver al panel."
+        ),
         items=items,
         active=active,
     )
@@ -12999,6 +13044,7 @@ def _beneficiary_onboarding_page(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "beneficiarios")}
             <section class="surface">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
                     <div>
@@ -14930,6 +14976,7 @@ async def gastos_terceros(
     <body>
         <div class="container">
             {nav}
+            {_gastos_workspace_nav_html(current_empleado, "solicitudes")}
             {_render_workspace_hero(
                 eyebrow="Operaciones",
                 title="Solicitudes de transferencia",
@@ -27716,6 +27763,7 @@ async def documentos_todos(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
             {_render_workspace_hero(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
@@ -33946,6 +33994,7 @@ async def ver_documento(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
             {_render_workspace_hero(
                 eyebrow="Documentos",
                 title=f"Documento {documento.numero_referencia}",
@@ -36477,6 +36526,7 @@ async def cuentas_de_gastos_list(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title="Informes de gastos",
@@ -38209,6 +38259,7 @@ async def cuenta_de_gastos_detail(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Informe de gastos {titulo_cuenta}",
