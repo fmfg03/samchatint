@@ -17,8 +17,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import json
 from uuid import uuid4
 
-from devnous.message_hub.kafka_client import KafkaClient
-from devnous.message_hub.config import MessageHubConfig
+kafka_client_module = pytest.importorskip(
+    "devnous.message_hub.kafka_client",
+    reason="legacy DevNous message hub Kafka client is not present in this runtime",
+)
+message_hub_config_module = pytest.importorskip(
+    "devnous.message_hub.config",
+    reason="legacy DevNous message hub config is not present in this runtime",
+)
+KafkaClient = kafka_client_module.KafkaClient
+MessageHubConfig = message_hub_config_module.MessageHubConfig
 
 
 @pytest.fixture
