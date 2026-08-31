@@ -209,6 +209,7 @@ async def build_ar_matching_workbench(
     month: Optional[int] = None,
     tolerance: float = 1.0,
     limit: int = 500,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     """Build read-only AR pre-matching candidates without collection authority."""
 
@@ -220,6 +221,7 @@ async def build_ar_matching_workbench(
         tournament_id=tournament_id,
         tournament_code=tournament_code,
         limit=row_limit,
+        ensure_schema=ensure_schema,
     )
     bank_inflows = await list_candidate_bank_inflows(
         session,
@@ -231,6 +233,7 @@ async def build_ar_matching_workbench(
         session,
         budget_version_id=budget_version_id,
         include_reversed=False,
+        ensure_schema=ensure_schema,
     )
     accepted_item_ids = {
         _safe_str(match.get("ar_item_id")) for match in accepted_matches
