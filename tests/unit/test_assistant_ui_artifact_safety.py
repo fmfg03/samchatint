@@ -10,6 +10,9 @@ ARTIFACT_053H = Path("artifacts/rqf-053h-assistant-ui-revamp/Assistant.tsx")
 README_053A = Path("artifacts/rqf-053a-assistant-workspace-cards-ui/README.md")
 README_053B = Path("artifacts/rqf-053b-assistant-step-trace-sources/README.md")
 README_053H = Path("artifacts/rqf-053h-assistant-ui-revamp/README.md")
+RUNTIME_DEPLOY_053H = Path(
+    "artifacts/rqf-053h-assistant-ui-runtime-deploy"
+)
 
 
 def _source() -> str:
@@ -170,3 +173,25 @@ def test_assistant_ui_artifacts_document_external_deploy_boundary():
     assert active_assistant_path in readme_053b
     assert "No write execution" in readme_053a
     assert "No writes" in readme_053b
+
+
+def test_assistant_ui_runtime_deploy_receipt_captures_053h_assets():
+    readme = (RUNTIME_DEPLOY_053H / "README.md").read_text(encoding="utf-8")
+    predeploy = (RUNTIME_DEPLOY_053H / "predeploy-assets.txt").read_text(
+        encoding="utf-8"
+    )
+    postdeploy = (RUNTIME_DEPLOY_053H / "postdeploy-assets.txt").read_text(
+        encoding="utf-8"
+    )
+
+    assert "DEPLOYED_STATIC_ASSETS" in readme
+    assert "Assistant-BxnXzIWk.js" in predeploy
+    assert "Assistant-Cj-wzq_B.js" in postdeploy
+    assert "Assistant-Cj-wzq_B.js" in readme
+    assert "Cargando historial" in readme
+    assert "No se pudo cargar el panel ejecutivo" in readme
+    assert "external_session_id" in readme
+    assert "/healthz" in readme
+    assert "/readyz" in readme
+    assert "dist.rollback-20260831-rqf053h" in readme
+    assert "rsync -a --delete" in readme

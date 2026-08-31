@@ -41,7 +41,7 @@ Clean-room architecture boundary:
 | RQF-054D/E/F | Executive renderer, work-turn trace, semantic registry foundation | `work_turn_renderer.py`, `assistant_workspace_trace.py`, `tool_registry.py` | Present in active release source | Keep broadening source-backed rendered answers; do not render raw payloads | Read-only |
 | RQF-054G | Multi-candidate read-only execution | `multi_candidate_readonly.py`; focused local verification passed 2026-08-31 | Present in active release source | Reconcile historical `IMPLEMENTED_LOCAL` labels with PR/release evidence before claiming formal closure | Read-only |
 | RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; fixture demo/canary gate artifact captured under `artifacts/rqf-054h-executive-canary-gate/` | Present in active release source as source module | Live authenticated canary remains pending explicit auth/runtime target | Read-only |
-| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; PR #151 follow-ups FU4/FU6/FU7/FU8/FU9 closed in repository artifacts/tests | Prior static deployment evidence exists; runtime assets must be rechecked before UI claims | Apply artifact to external active frontend, rebuild static assets, capture rollback receipt, and verify runtime bundle before polished UI claims | Read-only/proposal |
+| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; PR #151 follow-ups FU4/FU6/FU7/FU8/FU9 closed in repository artifacts/tests | Runtime static deploy completed 2026-08-31; receipt under `artifacts/rqf-053h-assistant-ui-runtime-deploy/`; active asset `Assistant-Cj-wzq_B.js` verified with history, executive-error, and `external_session_id` markers | Legacy URL/localStorage API-key intake remains a separate credential-surface hardening gap; live authenticated canary still pending explicit auth/runtime target | Read-only/proposal |
 | SOUL Wizard 001-004 | Tournament SOUL draft, clone, activation preview | `soul_wizard.py`; mini-roadmap closed | Source present; coverage remains data-dependent | One reliable SOUL per tournament before complete Owner Pack claims | Preview-only, no operational writes |
 | Owner Pack workspace | Read-only entity folder readiness/evidence workspace | `owner_pack_*`, `owner_entity_folder_workspace.py`, owner variable Q&A | Present in active release source | Improve tournament/entity data coverage; report missing fields instead of completing gaps | Read-only/proposal |
 
@@ -51,9 +51,9 @@ Next execution order:
    changes.
 2. Run the RQF-054H live authenticated canary when credentials and runtime
    target are explicitly approved; fixture gate evidence is already captured.
-3. When UI deployment is approved, apply the reconciled Assistant artifact to
-   the external active frontend, rebuild static assets, capture rollback
-   evidence, and verify the runtime `/assistant` bundle.
+3. Close the separate assistant credential-surface hardening slice for legacy
+   URL/localStorage API-key intake before making stronger runtime security
+   claims about the UI.
 4. Improve SOUL and Owner Pack coverage per tournament/entity before promising
    complete folders.
 5. Only after the read-only loop is stable, design one narrow write-capable path
