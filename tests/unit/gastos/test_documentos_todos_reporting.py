@@ -243,6 +243,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def nuevo_gasto_form("),
         )
     ]
+    gasto_detail = text[
+        text.index("async def ver_gasto(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/solicitar-cfdi")',
+            text.index("async def ver_gasto("),
+        )
+    ]
     gasto_edit = text[
         text.index("async def editar_gasto_form(") :
         text.index(
@@ -271,11 +278,25 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def documentos_todos("),
         )
     ]
+    mis_documentos = text[
+        text.index("async def mis_documentos(") :
+        text.index(
+            '@router.get("/documentos/control-presupuestal"',
+            text.index("async def mis_documentos("),
+        )
+    ]
     beneficiarios = text[
         text.index("def _beneficiary_onboarding_page(") :
         text.index(
             '@router.get("/beneficiarios/altas/nueva"',
             text.index("def _beneficiary_onboarding_page("),
+        )
+    ]
+    beneficiario_nuevo = text[
+        text.index("async def beneficiary_onboarding_new_form(") :
+        text.index(
+            '@router.post("/beneficiarios/altas/nueva")',
+            text.index("async def beneficiary_onboarding_new_form("),
         )
     ]
     informe_edit = text[
@@ -311,6 +332,7 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_crear
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_nuevo
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_edit
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
@@ -325,7 +347,12 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     )
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in mis_documentos
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "beneficiarios")'
+        in beneficiario_nuevo
+    )
 
 
 def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
@@ -357,6 +384,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
         text.index(
             '@router.post("/gastos/nuevo")',
             text.index("async def nuevo_gasto_form("),
+        )
+    ]
+    gasto_detail = text[
+        text.index("async def ver_gasto(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/solicitar-cfdi")',
+            text.index("async def ver_gasto("),
         )
     ]
     gasto_edit = text[
@@ -394,6 +428,27 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def ver_reembolso_cuenta("),
         )
     ]
+    beneficiario_nuevo = text[
+        text.index("async def beneficiary_onboarding_new_form(") :
+        text.index(
+            '@router.post("/beneficiarios/altas/nueva")',
+            text.index("async def beneficiary_onboarding_new_form("),
+        )
+    ]
+    beneficiarios = text[
+        text.index("def _beneficiary_onboarding_page(") :
+        text.index(
+            '@router.get("/beneficiarios/altas/nueva"',
+            text.index("def _beneficiary_onboarding_page("),
+        )
+    ]
+    mis_documentos = text[
+        text.index("async def mis_documentos(") :
+        text.index(
+            '@router.get("/documentos/control-presupuestal"',
+            text.index("async def mis_documentos("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -410,10 +465,28 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '("Informes de gastos", "/informes-de-gastos")' in gasto_nuevo
     assert '("Registrar nuevo gasto", None)' in gasto_nuevo
 
+    assert '_gastos_breadcrumb_html([' in gasto_detail
+    assert '("Informes de gastos", "/informes-de-gastos")' in gasto_detail
+    assert "(expense.numero_referencia, None)" in gasto_detail
+
     assert '_gastos_breadcrumb_html([' in gasto_edit
     assert '("Informes de gastos", "/informes-de-gastos")' in gasto_edit
     assert '(expense.numero_referencia, f"/gastos/{gasto_id}")' in gasto_edit
     assert '("Editar", None)' in gasto_edit
+
+    assert '_gastos_breadcrumb_html([' in beneficiario_nuevo
+    assert '("Alta de beneficiarios", "/beneficiarios/altas")' in beneficiario_nuevo
+    assert '("Nueva alta", None)' in beneficiario_nuevo
+
+    assert "_gastos_breadcrumb_html(breadcrumb_items)" in beneficiarios
+    assert 'breadcrumb_items = [("Alta de beneficiarios", None)]' in beneficiarios
+    assert '("Alta de beneficiarios", "/beneficiarios/altas")' in beneficiarios
+    assert '("Autorización área", None)' in beneficiarios
+    assert '("Palomita final", None)' in beneficiarios
+
+    assert "_gastos_breadcrumb_html([" in mis_documentos
+    assert '("Mis documentos", None)' in mis_documentos
+    assert "Volver a informes de gastos" not in mis_documentos
 
     for route_source, leaf in [
         (informe_edit, "Editar"),

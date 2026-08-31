@@ -13057,6 +13057,19 @@ def _beneficiary_onboarding_page(
     actions: str,
     message: str = "",
 ) -> str:
+    if actions == "area":
+        breadcrumb_items = [
+            ("Alta de beneficiarios", "/beneficiarios/altas"),
+            ("Autorización área", None),
+        ]
+    elif actions == "final":
+        breadcrumb_items = [
+            ("Alta de beneficiarios", "/beneficiarios/altas"),
+            ("Palomita final", None),
+        ]
+    else:
+        breadcrumb_items = [("Alta de beneficiarios", None)]
+
     return f"""
     <!DOCTYPE html>
     <html>
@@ -13074,6 +13087,7 @@ def _beneficiary_onboarding_page(
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
             {_gastos_workspace_nav_html(current_empleado, "beneficiarios")}
+            {_gastos_breadcrumb_html(breadcrumb_items)}
             <section class="surface">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
                     <div>
@@ -13153,6 +13167,11 @@ async def beneficiary_onboarding_new_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "beneficiarios")}
+            {_gastos_breadcrumb_html([
+                ("Alta de beneficiarios", "/beneficiarios/altas"),
+                ("Nueva alta", None),
+            ])}
             <section class="surface">
                 <h1 style="margin-top:0;">Solicitar alta de beneficiario</h1>
                 {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
@@ -24327,6 +24346,11 @@ async def ver_gasto(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (expense.numero_referencia, None),
+            ])}
             <h1>💰 Gasto: {expense.numero_referencia}</h1>
 
             {message_html}
@@ -25991,7 +26015,6 @@ async def mis_documentos(
         """
     mis_docs_actions_html = """
         <a href="/documentos/nueva-solicitud" class="button primary">Nueva solicitud</a>
-        <a href="/informes-de-gastos" class="button secondary">Volver a informes de gastos</a>
         <a href="/informes-de-gastos" class="button secondary">Abrir informes</a>
     """
     mis_docs_side_html = f"""
@@ -26015,6 +26038,10 @@ async def mis_documentos(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Mis documentos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Documentos",
                 title="Mis documentos",
