@@ -24327,6 +24327,11 @@ async def ver_gasto(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (expense.numero_referencia, None),
+            ])}
             <h1>💰 Gasto: {expense.numero_referencia}</h1>
 
             {message_html}

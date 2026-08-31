@@ -243,6 +243,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def nuevo_gasto_form("),
         )
     ]
+    gasto_detail = text[
+        text.index("async def ver_gasto(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/solicitar-cfdi")',
+            text.index("async def ver_gasto("),
+        )
+    ]
     gasto_edit = text[
         text.index("async def editar_gasto_form(") :
         text.index(
@@ -311,6 +318,7 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_crear
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_nuevo
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_edit
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
@@ -357,6 +365,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
         text.index(
             '@router.post("/gastos/nuevo")',
             text.index("async def nuevo_gasto_form("),
+        )
+    ]
+    gasto_detail = text[
+        text.index("async def ver_gasto(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/solicitar-cfdi")',
+            text.index("async def ver_gasto("),
         )
     ]
     gasto_edit = text[
@@ -409,6 +424,10 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '_gastos_breadcrumb_html([' in gasto_nuevo
     assert '("Informes de gastos", "/informes-de-gastos")' in gasto_nuevo
     assert '("Registrar nuevo gasto", None)' in gasto_nuevo
+
+    assert '_gastos_breadcrumb_html([' in gasto_detail
+    assert '("Informes de gastos", "/informes-de-gastos")' in gasto_detail
+    assert "(expense.numero_referencia, None)" in gasto_detail
 
     assert '_gastos_breadcrumb_html([' in gasto_edit
     assert '("Informes de gastos", "/informes-de-gastos")' in gasto_edit
