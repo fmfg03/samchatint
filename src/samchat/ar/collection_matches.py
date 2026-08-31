@@ -383,10 +383,12 @@ async def list_ar_collection_matches(
     *,
     budget_version_id: str,
     include_reversed: bool = False,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
     """List AR collection matches for a budget version."""
 
-    await ensure_ar_collection_match_schema(session)
+    if ensure_schema:
+        await ensure_ar_collection_match_schema(session)
     status_filter = "" if include_reversed else "AND status = :status"
     params: dict[str, Any] = {
         "budget_version_id": budget_version_id,

@@ -146,6 +146,7 @@ async def build_ar_read_model(
     tournament_id: Optional[str] = None,
     tournament_code: Optional[str] = None,
     limit: int = 500,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
     """Build a read-only AR S1 projection without asserting collection state."""
 
@@ -161,9 +162,14 @@ async def build_ar_read_model(
         tournament_code=clean_tournament_code,
         line_direction="income",
         limit=row_limit,
+        ensure_schema=ensure_schema,
     )
     line_ids = [_safe_str(line.get("id")) for line in income_lines if line.get("id")]
-    monthly_plan = await list_monthly_plan_for_lines(session, line_ids=line_ids)
+    monthly_plan = await list_monthly_plan_for_lines(
+        session,
+        line_ids=line_ids,
+        ensure_schema=ensure_schema,
+    )
     links = await list_budget_cfdi_income_links(
         session,
         budget_version_id=clean_version_id,
@@ -173,11 +179,13 @@ async def build_ar_read_model(
         session,
         budget_version_id=clean_version_id,
         limit=min(row_limit, 500),
+        ensure_schema=ensure_schema,
     )
     collection_matches = await list_ar_collection_matches(
         session,
         budget_version_id=clean_version_id,
         include_reversed=False,
+        ensure_schema=ensure_schema,
     )
     matches_by_item = {
         _safe_str(match.get("ar_item_id")): match for match in collection_matches

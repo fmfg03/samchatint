@@ -72,6 +72,7 @@ async def test_ar_read_model_groups_expected_income_lines():
         tournament_code=None,
         line_direction="income",
         limit=500,
+        ensure_schema=True,
     )
     assert result["read_only"] is True
     assert result["expected_income"][0]["expected_income_amount"] == 1200.0
@@ -341,3 +342,40 @@ async def test_ar_read_model_marks_active_match_as_collected():
     assert linked["outstanding_amount"] == 0.0
     assert linked["outstanding_amount_status"] == "known"
     assert result["collection_gaps"] == []
+
+
+@pytest.mark.asyncio
+async def test_ar_read_model_can_skip_schema_ensure_for_render_paths():
+    session = object()
+    with (
+        patch(
+            "samchat.ar.service.list_budget_lines",
+            new=AsyncMock(return_value=[]),
+        ) as list_lines,
+        patch(
+            "samchat.ar.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ) as list_monthly,
+        patch(
+            "samchat.ar.service.list_budget_cfdi_income_links",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "samchat.ar.service.list_psp_cfdi_income_candidates",
+            new=AsyncMock(return_value=[]),
+        ) as list_candidates,
+        patch(
+            "samchat.ar.service.list_ar_collection_matches",
+            new=AsyncMock(return_value=[]),
+        ) as list_matches,
+    ):
+        await build_ar_read_model(
+            session,
+            budget_version_id="version-1",
+            ensure_schema=False,
+        )
+
+    assert list_lines.await_args.kwargs["ensure_schema"] is False
+    assert list_monthly.await_args.kwargs["ensure_schema"] is False
+    assert list_candidates.await_args.kwargs["ensure_schema"] is False
+    assert list_matches.await_args.kwargs["ensure_schema"] is False
