@@ -664,6 +664,23 @@ def test_gastos_list_tables_use_consistent_spanish_copy():
         assert legacy not in scoped
 
 
+def test_pendientes_pago_uses_human_status_and_explicit_payment_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_pendientes_pago(")
+    end = text.index(
+        '@router.get("/documentos/nueva-solicitud-terceros"',
+        start,
+    )
+    route = text[start:end]
+
+    assert "_documento_human_status_badge(documento.estado)" in route
+    assert "<th>Acción</th>" in route
+    assert "Revisar para pago" in route
+    assert 'next_url = quote("/documentos/pendientes-pago")' in route
+    assert "<td>{documento.estado}</td>" not in route
+    assert "<strong>Detalle</strong>" not in route
+
+
 def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def cuentas_de_gastos_list(")

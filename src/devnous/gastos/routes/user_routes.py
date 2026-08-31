@@ -30885,6 +30885,7 @@ async def documentos_pendientes_pago(
         # Link to documento detail with next parameter
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+        pay_review_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">Revisar para pago</a>'
 
         # Shortened internal ID (first 8 characters)
         doc_id_short = str(documento.id)[:8]
@@ -30906,12 +30907,13 @@ async def documentos_pendientes_pago(
             <td>{documento.tipo}</td>
             <td>{tipo_solicitud}</td>
             <td>{beneficiario_nombre}</td>
-            <td>{documento.estado}</td>
+            <td>{_documento_human_status_badge(documento.estado)}</td>
             <td>{format_currency(doc_amount, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
             <td>{fecha_pago_display}</td>
             <td>{aprobado_str}</td>
             <td>{cfdi_cell}</td>
+            <td>{pay_review_link}</td>
         </tr>
         """
 
@@ -30925,6 +30927,7 @@ async def documentos_pendientes_pago(
         )
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+        pay_review_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">Revisar para pago</a>'
         doc_id_short = str(documento.id)[:8]
         doc_currency = currency_for(documento)
         pending_totals[doc_currency] = pending_totals.get(doc_currency, Decimal("0")) + Decimal(str(saldo_pendiente))
@@ -30939,12 +30942,13 @@ async def documentos_pendientes_pago(
             <td>{documento.tipo}</td>
             <td>Reembolso informe</td>
             <td>{beneficiario_nombre}</td>
-            <td>{documento.estado}</td>
+            <td>{_documento_human_status_badge(documento.estado)}</td>
             <td>{format_currency(saldo_pendiente, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
             <td>—</td>
             <td>{aprobado_str}</td>
             <td>{cfdi_cell}</td>
+            <td>{pay_review_link}</td>
         </tr>
         """
 
@@ -31010,7 +31014,7 @@ async def documentos_pendientes_pago(
                 </div>
                 <div class="meta-card">
                     <span>Flujo sugerido</span>
-                    <strong>Detalle</strong>
+                    <strong>Revisar para pago</strong>
                     <small>Entra a cada documento para registrar pago y generar gasto.</small>
                 </div>
             </section>
@@ -31040,6 +31044,7 @@ async def documentos_pendientes_pago(
                                     <th>Fecha de pago</th>
                                     <th>Fecha de aprobación</th>
                                     <th>CFDI</th>
+                                    <th>Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
