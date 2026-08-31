@@ -522,3 +522,34 @@ Next:
 
 - Expand the suite with captured live prompts from Francisco/Juan Pablo after each demo bug.
 - Use the suite as the acceptance gate for Owner Pack demo hardening and Finance/Accounting Q&A.
+
+## 2026-08-31 RQF-054H gate/canary runner
+
+Status: IMPLEMENTED_LOCAL_PENDING_PR
+
+What changed:
+
+- Added `scripts/run_assistant_executive_canary.py`.
+- Default fixture mode evaluates all current RQF-054H executive cases without
+  HTTP, providers, credentials, or business writes.
+- Live mode is opt-in and requires cookie or bearer auth before calling
+  `/api/assistant`; credential values are never printed.
+- Each canary row records case id, prompt, pass/fail, failures, HTTP status,
+  latency, timeout flag, provider/model if present, tool count, tools, pending
+  confirmation, write detection, and authority posture.
+- Provider timeout, pending confirmation, or write trace fails the case even if
+  the response is otherwise controlled.
+
+Verification:
+
+```bash
+./scripts/pytestw tests/unit/test_assistant_executive_canary.py tests/unit/test_assistant_executive_regression_suite.py -q
+./.venv/bin/python scripts/run_assistant_executive_canary.py --fixture
+```
+
+Next:
+
+- Run live mode only with an authenticated session and record the JSON result as
+  canary evidence.
+- Add Francisco/Juan Pablo demo prompts after each observed failure, then use
+  this runner as the acceptance gate for assistant demo hardening.
