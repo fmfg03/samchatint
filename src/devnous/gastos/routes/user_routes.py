@@ -13057,6 +13057,19 @@ def _beneficiary_onboarding_page(
     actions: str,
     message: str = "",
 ) -> str:
+    if actions == "area":
+        breadcrumb_items = [
+            ("Alta de beneficiarios", "/beneficiarios/altas"),
+            ("Autorización área", None),
+        ]
+    elif actions == "final":
+        breadcrumb_items = [
+            ("Alta de beneficiarios", "/beneficiarios/altas"),
+            ("Palomita final", None),
+        ]
+    else:
+        breadcrumb_items = [("Alta de beneficiarios", None)]
+
     return f"""
     <!DOCTYPE html>
     <html>
@@ -13074,6 +13087,7 @@ def _beneficiary_onboarding_page(
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
             {_gastos_workspace_nav_html(current_empleado, "beneficiarios")}
+            {_gastos_breadcrumb_html(breadcrumb_items)}
             <section class="surface">
                 <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
                     <div>

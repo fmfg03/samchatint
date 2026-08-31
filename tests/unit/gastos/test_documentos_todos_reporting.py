@@ -427,6 +427,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def beneficiary_onboarding_new_form("),
         )
     ]
+    beneficiarios = text[
+        text.index("def _beneficiary_onboarding_page(") :
+        text.index(
+            '@router.get("/beneficiarios/altas/nueva"',
+            text.index("def _beneficiary_onboarding_page("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -455,6 +462,12 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '_gastos_breadcrumb_html([' in beneficiario_nuevo
     assert '("Alta de beneficiarios", "/beneficiarios/altas")' in beneficiario_nuevo
     assert '("Nueva alta", None)' in beneficiario_nuevo
+
+    assert "_gastos_breadcrumb_html(breadcrumb_items)" in beneficiarios
+    assert 'breadcrumb_items = [("Alta de beneficiarios", None)]' in beneficiarios
+    assert '("Alta de beneficiarios", "/beneficiarios/altas")' in beneficiarios
+    assert '("Autorización área", None)' in beneficiarios
+    assert '("Palomita final", None)' in beneficiarios
 
     for route_source, leaf in [
         (informe_edit, "Editar"),
