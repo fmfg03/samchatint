@@ -87,6 +87,25 @@ def test_aprobaciones_action_constraint_admits_current_audit_actions():
         assert action in repair_block
 
 
+def test_aprobaciones_tipo_entidad_constraint_admits_beneficiary_onboarding():
+    schema_guard = Path("src/devnous/gastos/schema_guard.py").read_text()
+    service = Path(
+        "src/devnous/gastos/services/beneficiary_onboarding_service.py"
+    ).read_text()
+
+    assert 'tipo_entidad="beneficiary_onboarding"' in service
+    assert "aprobaciones_tipo_entidad_check_beneficiary_onboarding" in schema_guard
+    repair_start = schema_guard.index(
+        "aprobaciones_tipo_entidad_check_beneficiary_onboarding"
+    )
+    repair_block = schema_guard[repair_start:]
+
+    assert "aprobaciones_tipo_entidad_check" in repair_block
+    assert "'documento'::text" in repair_block
+    assert "'gasto'::text" in repair_block
+    assert "'beneficiary_onboarding'::text" in repair_block
+
+
 def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():
     source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"
