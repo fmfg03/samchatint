@@ -27691,6 +27691,7 @@ async def documentos_todos(
         # Link to documento detail with next parameter
         next_url = quote("/documentos/todos")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
+        action_link = f'<a class="button secondary" href="/documentos/{documento.id}?next={next_url}" style="white-space:nowrap;">Revisar documento</a>'
 
         # Shortened ID (first 8 chars)
         doc_id_short = str(documento.id)[:8]
@@ -27717,6 +27718,7 @@ async def documentos_todos(
             <td>{row_values["enviado"]}</td>
             <td>{row_values["aprobado"]}</td>
             <td>{row_values["pagado"]}</td>
+            <td>{action_link}</td>
         </tr>
         """
 
@@ -27867,6 +27869,7 @@ async def documentos_todos(
                             <th>Enviado</th>
                             <th>Aprobado</th>
                             <th>Pagado</th>
+                            <th>Acción</th>
                         </tr>
                     </thead>
                     <tbody>

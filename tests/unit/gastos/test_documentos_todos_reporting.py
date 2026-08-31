@@ -143,6 +143,18 @@ def test_documentos_todos_bulk_zip_href_is_built_from_filters():
     assert "urlencode(bulk_params)" in route
 
 
+def test_documentos_todos_rows_have_explicit_review_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert "<th>Acción</th>" in route
+    assert "Revisar documento" in route
+    assert 'next_url = quote("/documentos/todos")' in route
+    assert 'href="/documentos/{documento.id}?next={next_url}"' in route
+
+
 def test_proceso_contable_exposes_bulk_document_excel_downloads():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
 
