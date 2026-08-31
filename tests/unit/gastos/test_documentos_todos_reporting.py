@@ -243,6 +243,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def nuevo_gasto_form("),
         )
     ]
+    gasto_edit = text[
+        text.index("async def editar_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/editar")',
+            text.index("async def editar_gasto_form("),
+        )
+    ]
     informe_detail = text[
         text.index("async def cuenta_de_gastos_detail(") :
         text.index(
@@ -304,6 +311,7 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_crear
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_nuevo
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_edit
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
     assert (
@@ -351,6 +359,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def nuevo_gasto_form("),
         )
     ]
+    gasto_edit = text[
+        text.index("async def editar_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/editar")',
+            text.index("async def editar_gasto_form("),
+        )
+    ]
     informe_edit = text[
         text.index("async def editar_cuenta_de_gastos_form(") :
         text.index(
@@ -394,6 +409,11 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '_gastos_breadcrumb_html([' in gasto_nuevo
     assert '("Informes de gastos", "/informes-de-gastos")' in gasto_nuevo
     assert '("Registrar nuevo gasto", None)' in gasto_nuevo
+
+    assert '_gastos_breadcrumb_html([' in gasto_edit
+    assert '("Informes de gastos", "/informes-de-gastos")' in gasto_edit
+    assert '(expense.numero_referencia, f"/gastos/{gasto_id}")' in gasto_edit
+    assert '("Editar", None)' in gasto_edit
 
     for route_source, leaf in [
         (informe_edit, "Editar"),
