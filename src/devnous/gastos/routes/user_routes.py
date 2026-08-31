@@ -31454,6 +31454,11 @@ async def _render_solicitud_terceros_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "solicitudes")}
+            {_gastos_breadcrumb_html([
+                ("Solicitudes de transferencia", "/gastos-terceros"),
+                (page_heading, None),
+            ])}
             <h1 style="margin-top:0;">{page_heading}</h1>
 
             {f'<div class="notice warn"><strong>Error:</strong> {escape(request.query_params.get("error_msg", ""))}</div>' if request.query_params.get("error_msg") else ''}

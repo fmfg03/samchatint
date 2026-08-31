@@ -785,6 +785,18 @@ def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -
     assert "budget_concept_id_terceros" not in block
 
 
+def test_solicitud_terceros_form_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def _render_solicitud_terceros_form")
+    end = source.index('@router.post("/documentos/nueva-solicitud-terceros")', start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Solicitudes de transferencia", "/gastos-terceros")' in block
+    assert "(page_heading, None)" in block
+
+
 def test_solicitud_terceros_create_and_edit_force_budget_control_assignment() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     create_start = source.index("async def crear_nueva_solicitud_terceros")
