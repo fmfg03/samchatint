@@ -292,6 +292,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def documentos_control_presupuestal("),
         )
     ]
+    solicitar_anticipo = text[
+        text.index("async def solicitar_anticipo_form(") :
+        text.index(
+            '@router.post("/gastos-terceros/solicitar-anticipo")',
+            text.index("async def solicitar_anticipo_form("),
+        )
+    ]
     beneficiarios = text[
         text.index("def _beneficiary_onboarding_page(") :
         text.index(
@@ -358,6 +365,10 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert (
         '_gastos_workspace_nav_html(current_empleado, "documentos")'
         in control_presupuestal
+    )
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "solicitudes")'
+        in solicitar_anticipo
     )
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
     assert (
@@ -467,6 +478,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def documentos_control_presupuestal("),
         )
     ]
+    solicitar_anticipo = text[
+        text.index("async def solicitar_anticipo_form(") :
+        text.index(
+            '@router.post("/gastos-terceros/solicitar-anticipo")',
+            text.index("async def solicitar_anticipo_form("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -508,6 +526,11 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
 
     assert "_gastos_breadcrumb_html([" in control_presupuestal
     assert '("Control Presupuestal", None)' in control_presupuestal
+
+    assert "_gastos_breadcrumb_html([" in solicitar_anticipo
+    assert '("Solicitudes de transferencia", "/gastos-terceros")' in solicitar_anticipo
+    assert '("Solicitar anticipo", None)' in solicitar_anticipo
+    assert "Solicitud vinculada a informe de gastos" in solicitar_anticipo
 
     for route_source, leaf in [
         (informe_edit, "Editar"),

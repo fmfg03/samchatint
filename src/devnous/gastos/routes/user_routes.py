@@ -15371,11 +15371,24 @@ async def solicitar_anticipo_form(
     <body>
         <div class="container">
             {nav}
-            <h1 style="margin-top:0;">Solicitar Anticipo</h1>
-            <p class="section-note" style="margin:0 0 16px 0;">
-                Complete la solicitud de transferencia y el proyecto. Al enviar se creará el informe de gastos
-                y la solicitud vinculada.
-            </p>
+            {_gastos_workspace_nav_html(current_empleado, "solicitudes")}
+            {_gastos_breadcrumb_html([
+                ("Solicitudes de transferencia", "/gastos-terceros"),
+                ("Solicitar anticipo", None),
+            ])}
+            {_render_workspace_hero(
+                eyebrow="Solicitud vinculada a informe de gastos",
+                title="Solicitar anticipo",
+                description=(
+                    "Captura el anticipo ligado a un informe de gastos. "
+                    "Para solicitudes a terceros, vuelve a la bandeja de solicitudes."
+                ),
+                actions_html=(
+                    '<a href="/gastos-terceros" class="button secondary">Solicitudes de transferencia</a>'
+                    '<a href="/informes-de-gastos" class="button secondary">Informes de gastos</a>'
+                ),
+                side_html="",
+            )}
             {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
             <form method="POST" action="/gastos-terceros/solicitar-anticipo">
                 <input type="hidden" name="tipo_cuenta" value="local">
