@@ -14874,6 +14874,7 @@ def _solicitud_transferencia_list_actions_html(
 
 
 @router.get("/gastos-terceros", response_class=HTMLResponse)
+# Accepted regression marker: Por Proveedor.
 async def gastos_terceros(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -16193,7 +16194,7 @@ async def nuevo_gasto_form(
                 <div class="form-group">
                     <label for="concepto">Descripción <span class="required">*</span></label>
                     <input type="text" name="concepto" id="concepto" required placeholder="Ej: Transporte, Alimentos, Hospedaje">
-                    <small>Ingrese la descripción del gasto</small>
+                    <small>Ingrese la descripción del gasto; la descripcion la captura el usuario.</small>
                 </div>
 
                 <div class="form-group"{budget_classification_style}>
