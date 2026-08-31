@@ -1077,6 +1077,18 @@ def test_operaciones_gasto_create_ignores_budget_concept_payload() -> None:
     assert "resolve_budget_concept" not in block
 
 
+def test_carga_masiva_amex_has_finance_breadcrumb_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def carga_masiva_amex_get")
+    end = source.index('@router.post("/gastos/carga-masiva-amex")', start)
+    block = source[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Finanzas", "/admin/gastos")' in block
+    assert '("Carga AMEX", None)' in block
+
+
 def test_operaciones_gasto_edit_hides_and_ignores_budget_concept() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     form_start = source.index("async def editar_gasto_form")

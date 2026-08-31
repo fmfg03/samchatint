@@ -17332,6 +17332,10 @@ async def carga_masiva_amex_get(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
+            {_gastos_breadcrumb_html([
+                ("Finanzas", "/admin/gastos"),
+                ("Carga AMEX", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Finanzas",
                 title="Carga masiva AMEX",
