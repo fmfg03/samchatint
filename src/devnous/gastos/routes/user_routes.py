@@ -36685,6 +36685,9 @@ async def cuentas_de_gastos_list(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title="Informes de gastos",

@@ -394,6 +394,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def cuenta_de_gastos_detail("),
         )
     ]
+    informes = text[
+        text.index("async def cuentas_de_gastos_list(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
+            text.index("async def cuentas_de_gastos_list("),
+        )
+    ]
     informe_crear = text[
         text.index("async def crear_cuenta_de_gastos_form(") :
         text.index(
@@ -499,6 +506,9 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
 
     assert '_gastos_breadcrumb_html([' in informe_detail
     assert '(f"I-{cuenta.referencia_base}", None)' in informe_detail
+
+    assert '_gastos_breadcrumb_html([' in informes
+    assert '("Informes de gastos", None)' in informes
 
     assert '_gastos_breadcrumb_html([' in informe_crear
     assert '("Informes de gastos", "/informes-de-gastos")' in informe_crear
