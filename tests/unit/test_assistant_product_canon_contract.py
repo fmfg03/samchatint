@@ -48,6 +48,35 @@ def test_context_corpus_defines_context_layers_and_gates() -> None:
 def test_quality_roadmap_keeps_canary_readonly() -> None:
     text = _read_doc("docs/assistant/rqf-assistant-009-quality-roadmap.md")
 
+    assert "Canary posture: READ_ONLY" in text
+    assert "Writes: DISABLED" in text
+    assert "No general write enablement" in text
+    assert "No allowlist expansion until quality improves" in text
+
+
+def test_current_roadmap_reconciles_runtime_and_clean_room_boundary() -> None:
+    text = _read_doc("docs/assistant/current-roadmap-handoff.md")
+
+    required_phrases = [
+        "2026-08-31 roadmap reconciliation",
+        "/root/claudeleaked",
+        "architecture reference only",
+        "Do not copy source",
+        "WorkingDirectory",
+        "gastos-prod-42bf8d6a-expense-report-controls",
+        "multi-candidate read-only",
+        "RQF-054G",
+        "RQF-054H",
+        "demo/canary gate",
+        "versioned preview",
+        "explicit human approval",
+        "idempotency",
+        "execution receipt",
+        "no production write path is enabled",
+    ]
+    for phrase in required_phrases:
+        assert phrase in text
+
 
 def test_owner_ai_needs_are_versioned_as_assistant_requirements() -> None:
     text = _read_doc("docs/assistant/owner-ai-needs.md")

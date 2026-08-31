@@ -49,10 +49,12 @@ def build_specialist_workspace_step_trace(
             "outputs": ["understood_context"],
             "authority": understood_context.get("authority", "context_hint_only"),
             "data": {
-                "document_refs": understood_context.get("document_refs") or [],
-                "operations_refs": understood_context.get("operations_refs") or [],
-                "domains": understood_context.get("domains") or [],
-                "entities": understood_context.get("entities") or [],
+                "document_refs": _as_list(understood_context.get("document_refs")),
+                "operations_refs": _as_list(
+                    understood_context.get("operations_refs")
+                ),
+                "domains": _as_list(understood_context.get("domains")),
+                "entities": _as_list(understood_context.get("entities")),
             },
         },
         {
@@ -92,7 +94,9 @@ def build_specialist_workspace_step_trace(
                 ),
                 "inputs": ["conversation_metadata"],
                 "outputs": ["continuity_context"],
-                "authority": continuity_context.get("authority", "read_only_continuity"),
+                "authority": continuity_context.get(
+                    "authority", "read_only_continuity"
+                ),
                 "data": {
                     "matched": bool(continuity_context.get("matched")),
                     "status": continuity_context.get("status") or "unknown",
@@ -106,7 +110,11 @@ def build_specialist_workspace_step_trace(
             {
                 "step_id": "recall_case_memory",
                 "title": "Recordar precedentes",
-                "status": "complete" if memory_context.get("lookup_performed") else "skipped",
+                "status": (
+                    "complete"
+                    if memory_context.get("lookup_performed")
+                    else "skipped"
+                ),
                 "kind": "memory",
                 "summary": (
                     "Consulte memoria de casos en modo read-only."
@@ -167,10 +175,10 @@ def build_specialist_workspace_step_trace(
                 "authority": diagnostics.get("authority", "read_only_diagnostic"),
                 "data": {
                     "readiness": readiness,
-                    "findings": diagnostics.get("findings") or [],
-                    "missing": diagnostics.get("missing") or [],
-                    "risks": diagnostics.get("risks") or [],
-                    "next_steps": diagnostics.get("next_steps") or [],
+                    "findings": _as_list(diagnostics.get("findings")),
+                    "missing": _as_list(diagnostics.get("missing")),
+                    "risks": _as_list(diagnostics.get("risks")),
+                    "next_steps": _as_list(diagnostics.get("next_steps")),
                 },
             },
             {
@@ -240,11 +248,15 @@ def build_specialist_workspace_source_panel(
             "status": "used",
             "summary": "Fuente primaria para referencias, entidades y dominios detectados.",
             "data": {
-                "document_refs": understood_context.get("document_refs") or [],
-                "operations_refs": understood_context.get("operations_refs") or [],
-                "uuid_or_prefixes": understood_context.get("uuid_or_prefixes") or [],
-                "account_codes": understood_context.get("account_codes") or [],
-                "domains": understood_context.get("domains") or [],
+                "document_refs": _as_list(understood_context.get("document_refs")),
+                "operations_refs": _as_list(
+                    understood_context.get("operations_refs")
+                ),
+                "uuid_or_prefixes": _as_list(
+                    understood_context.get("uuid_or_prefixes")
+                ),
+                "account_codes": _as_list(understood_context.get("account_codes")),
+                "domains": _as_list(understood_context.get("domains")),
             },
         },
         {
@@ -305,12 +317,24 @@ def build_specialist_workspace_source_panel(
                 "status": evidence_quality_gate.get("quality_status") or "unknown",
                 "summary": "Compuerta deterministica de soporte y faltantes; no ejecuta acciones.",
                 "data": {
-                    "supported_change_count": evidence_quality_gate.get("supported_change_count", 0),
-                    "unbound_change_count": evidence_quality_gate.get("unbound_change_count", 0),
-                    "missing_evidence_count": evidence_quality_gate.get("missing_evidence_count", 0),
-                    "precedent_count": evidence_quality_gate.get("precedent_count", 0),
-                    "safe_to_execute": bool(evidence_quality_gate.get("safe_to_execute")),
-                    "authority": evidence_quality_gate.get("authority", "read_only_evidence_gate"),
+                    "supported_change_count": evidence_quality_gate.get(
+                        "supported_change_count", 0
+                    ),
+                    "unbound_change_count": evidence_quality_gate.get(
+                        "unbound_change_count", 0
+                    ),
+                    "missing_evidence_count": evidence_quality_gate.get(
+                        "missing_evidence_count", 0
+                    ),
+                    "precedent_count": evidence_quality_gate.get(
+                        "precedent_count", 0
+                    ),
+                    "safe_to_execute": bool(
+                        evidence_quality_gate.get("safe_to_execute")
+                    ),
+                    "authority": evidence_quality_gate.get(
+                        "authority", "read_only_evidence_gate"
+                    ),
                 },
             }
         )
@@ -339,11 +363,14 @@ def build_specialist_workspace_source_panel(
                 "title": "Diagnostico deterministico",
                 "kind": "analysis",
                 "status": diagnostics.get("readiness") or "unknown",
-                "summary": "Reglas deterministicas para hallazgos, faltantes, riesgos y siguiente paso.",
+                "summary": (
+                    "Reglas deterministicas para hallazgos, faltantes, "
+                    "riesgos y siguiente paso."
+                ),
                 "data": {
-                    "findings": diagnostics.get("findings") or [],
-                    "missing": diagnostics.get("missing") or [],
-                    "risks": diagnostics.get("risks") or [],
+                    "findings": _as_list(diagnostics.get("findings")),
+                    "missing": _as_list(diagnostics.get("missing")),
+                    "risks": _as_list(diagnostics.get("risks")),
                 },
             },
             {

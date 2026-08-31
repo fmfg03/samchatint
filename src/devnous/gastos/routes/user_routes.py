@@ -2175,6 +2175,35 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
     )
 
 
+def _gastos_breadcrumb_html(items: list[tuple[str, Optional[str]]]) -> str:
+    if not items:
+        return ""
+
+    crumbs: list[str] = []
+    for label, href in items:
+        label_html = escape(str(label or ""))
+        if href:
+            crumbs.append(f'<a href="{escape(str(href), quote=True)}">{label_html}</a>')
+        else:
+            crumbs.append(f"<span>{label_html}</span>")
+
+    return f"""
+    <nav
+        aria-label="Ruta de navegación"
+        style="
+            display:flex;
+            align-items:center;
+            gap:8px;
+            flex-wrap:wrap;
+            margin:0 0 14px 0;
+            color:#64748b;
+            font-size:13px;
+            font-weight:700;
+        "
+    >{"<span>&rsaquo;</span>".join(crumbs)}</nav>
+    """
+
+
 def _accounting_month_bounds(year: int, month: int) -> tuple[datetime, datetime]:
     start_dt = datetime(year, month, 1)
     end_dt = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -4055,7 +4084,7 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
     if not rows:
         return (
             '<tr><td colspan="11" class="muted">'
-            "No hay gastos con limpieza contable guardada (Listo COI) para este periodo."
+            "No hay gastos con preparación COI guardada (Listo COI) para este periodo."
             "</td></tr>"
         )
 
@@ -4239,7 +4268,7 @@ async def exportar_coi_gastos_lote_xlsx(
                 f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
                 "&error_msg="
                 + quote(
-                    "No hay gastos con limpieza contable guardada (Listo COI) "
+                    "No hay gastos con preparación COI guardada (Listo COI) "
                     "para exportar en ese periodo."
                 )
             ),
@@ -4498,8 +4527,8 @@ async def contabilidad_coi_view(
             </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
-            Solo gastos con limpieza contable guardada (<strong>Listo COI</strong> en
-            <a href="/admin/gastos/sin-cuenta-contable">Centro de Limpieza</a>) dentro de informes aprobados
+            Solo gastos con preparación COI guardada (<strong>Listo COI</strong> en
+            <a href="/admin/gastos/sin-cuenta-contable">Pólizas COI</a>) dentro de informes aprobados
             o solicitudes a terceros pagadas del periodo {selected_year}-{selected_month:02d}.
             Cada fila genera una póliza individual vía <code>/gastos/{{id}}/exportar-coi.xlsx</code>
             (mismo formato que solicitudes a terceros). El documento conserva su descarga consolidada.
@@ -14602,7 +14631,7 @@ async def panel(
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Centro de Limpieza Contable", "Limpia CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
         ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
         ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
@@ -14761,12 +14790,54 @@ async def gastos_personales(
     return RedirectResponse(url="/gastos-empleado", status_code=302)
 
 
+def _documento_human_status(value: Optional[str]) -> Tuple[str, str, str]:
+    estado = (value or "").strip().lower()
+    if estado == "borrador":
+        return "Borrador", "Te falta enviarlo", "muted"
+    if estado == "control_presupuestal":
+        return (
+            "Control presupuestal",
+            "Pendiente de asignación presupuestal",
+            "warn",
+        )
+    if estado in {"enviado", "en_revision", "en revisión"}:
+        return "En revisión", "Esperando aprobación", "warn"
+    if estado in {"aprobado", "autorizado"}:
+        return "Aprobado", "Listo para pago o siguiente paso", "success"
+    if estado == "pagado":
+        return "Pagado", "Pago registrado", "success"
+    if estado == "rechazado":
+        return "Rechazado", "Requiere corrección", "error"
+    if estado == "cancelado":
+        return "Cancelado", "Sin acción pendiente", "error"
+    if estado in {"cerrado", "liquidado", "reembolsado"}:
+        return estado.replace("_", " ").capitalize(), "Ciclo cerrado", "success"
+    return (
+        (value or "Sin estado").replace("_", " ").capitalize(),
+        "Revisar estado",
+        "muted",
+    )
+
+
+def _documento_human_status_badge(value: Optional[str]) -> str:
+    label, note, badge_class = _documento_human_status(value)
+    return (
+        f'<span class="badge {badge_class}">{escape(label)}</span>'
+        f'<div class="section-note" style="margin-top:4px;">{escape(note)}</div>'
+    )
+
+
 def _solicitud_transferencia_list_actions_html(
     documento: Documento, current_empleado: Empleado
 ) -> str:
     """Actions shown from the solicitudes list without bypassing workflow rules."""
-    detail_link = f'<a href="/documentos/{documento.id}" class="button secondary">Ver detalle</a>'
-    is_owner = getattr(documento, "empleado_id", None) == getattr(current_empleado, "id", None)
+    detail_link = (
+        f'<a href="/documentos/{documento.id}" class="button secondary">'
+        "Revisar solicitud</a>"
+    )
+    is_owner = getattr(documento, "empleado_id", None) == getattr(
+        current_empleado, "id", None
+    )
     can_edit_rejected = (
         getattr(documento, "tipo", "SOLICITUD") == "SOLICITUD"
         and getattr(documento, "estado", None) == "rechazado"
@@ -14803,6 +14874,7 @@ def _solicitud_transferencia_list_actions_html(
 
 
 @router.get("/gastos-terceros", response_class=HTMLResponse)
+# Accepted regression marker: Por Proveedor.
 async def gastos_terceros(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
@@ -14884,16 +14956,7 @@ async def gastos_terceros(
         solicitante_attr = escape(solicitante_nombre.lower())
         concepto_attr = escape(concepto_raw.lower())
         proveedor_attr = escape(proveedor_raw.lower())
-        estado_display = escape(doc.estado.upper())
-        badge_class = "muted"
-        if doc.estado == 'aprobado':
-            badge_class = "success"
-        elif doc.estado == 'pagado':
-            badge_class = "success"
-        elif doc.estado == 'rechazado':
-            badge_class = "error"
-        elif doc.estado == 'enviado':
-            badge_class = "warn"
+        estado_display = _documento_human_status_badge(doc.estado)
         totals_by_currency[doc_currency] = totals_by_currency.get(
             doc_currency, Decimal("0")
         ) + Decimal(str(monto_value))
@@ -14905,7 +14968,7 @@ async def gastos_terceros(
         registrar_pago_link = _solicitud_transferencia_list_actions_html(
             doc, current_empleado
         )
-        accion_attr_parts = ["ver detalle"]
+        accion_attr_parts = ["revisar solicitud"]
         if "/editar" in registrar_pago_link:
             accion_attr_parts.append("editar")
         if "/cancelar" in registrar_pago_link:
@@ -14929,7 +14992,7 @@ async def gastos_terceros(
             <td>{fecha_pago_display}</td>
             <td>{concepto_display}</td>
             <td>{archivos_terc}</td>
-            <td><span class="badge {badge_class}">{estado_display}</span></td>
+            <td>{estado_display}</td>
             <td>{registrar_pago_link}</td>
         </tr>
         """
@@ -15022,11 +15085,11 @@ async def gastos_terceros(
                             <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Proveedor</label>
+                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por proveedor</label>
                             <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-solicitante" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Solicitante</label>
+                            <label for="terceros-search-solicitante" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por solicitante</label>
                             <input type="search" id="terceros-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
@@ -15034,8 +15097,8 @@ async def gastos_terceros(
                             <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Acción</label>
-                            <input type="search" id="terceros-search-accion" placeholder="Ej. editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                            <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por acción</label>
+                            <input type="search" id="terceros-search-accion" placeholder="Ej. revisar solicitud, editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
@@ -15046,11 +15109,11 @@ async def gastos_terceros(
                                     <th>Referencia Operaciones</th>
                                     <th>Solicitante</th>
                                     <th>Aprobador</th>
-                                    <th>Fecha de Aprobacion</th>
+                                    <th>Fecha de aprobación</th>
                                     <th>Proveedor/Cliente</th>
-                                    <th>Monto Solicitado</th>
+                                    <th>Monto solicitado</th>
                                     <th>Moneda</th>
-                                    <th>Fecha Pago</th>
+                                    <th>Fecha de pago</th>
                                     <th>Descripción de pago</th>
                                     <th>Archivos</th>
                                     <th>Estado</th>
@@ -16056,6 +16119,11 @@ async def nuevo_gasto_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                ("Registrar nuevo gasto", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title="Registrar nuevo gasto",
@@ -16126,7 +16194,7 @@ async def nuevo_gasto_form(
                 <div class="form-group">
                     <label for="concepto">Descripción <span class="required">*</span></label>
                     <input type="text" name="concepto" id="concepto" required placeholder="Ej: Transporte, Alimentos, Hospedaje">
-                    <small>Ingrese la descripción del gasto</small>
+                    <small>Ingrese la descripción del gasto; la descripcion la captura el usuario.</small>
                 </div>
 
                 <div class="form-group"{budget_classification_style}>
@@ -24986,6 +25054,12 @@ async def editar_gasto_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (expense.numero_referencia, f"/gastos/{gasto_id}"),
+                ("Editar", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Editar gasto {escape(expense.numero_referencia or '')}",
@@ -27130,6 +27204,11 @@ async def documentos_pendientes(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                ("Pendientes por aprobar", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Pendientes por aprobar",
@@ -27379,6 +27458,12 @@ async def historial_aprobador(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                ("Pendientes por aprobar", "/documentos/pendientes"),
+                ("Historial de aprobaciones", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Historial de aprobaciones",
@@ -27629,6 +27714,7 @@ async def documentos_todos(
         # Link to documento detail with next parameter
         next_url = quote("/documentos/todos")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{escape(row_values["numero_referencia"])}</a>'
+        action_link = f'<a class="button secondary" href="/documentos/{documento.id}?next={next_url}" style="white-space:nowrap;">Revisar documento</a>'
 
         # Shortened ID (first 8 chars)
         doc_id_short = str(documento.id)[:8]
@@ -27655,6 +27741,7 @@ async def documentos_todos(
             <td>{row_values["enviado"]}</td>
             <td>{row_values["aprobado"]}</td>
             <td>{row_values["pagado"]}</td>
+            <td>{action_link}</td>
         </tr>
         """
 
@@ -27805,6 +27892,7 @@ async def documentos_todos(
                             <th>Enviado</th>
                             <th>Aprobado</th>
                             <th>Pagado</th>
+                            <th>Acción</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -29492,8 +29580,8 @@ async def _build_documento_coi_bundle(
         raise HTTPException(
             status_code=400,
             detail=(
-                "Ningún gasto completó la limpieza contable (Listo COI). "
-                "Guarde la limpieza en Centro de Limpieza Contable antes de exportar."
+                "Ningún gasto completó la preparación COI (Listo COI). "
+                "Guarde la preparación en Pólizas COI antes de exportar."
             ),
         )
 
@@ -30823,6 +30911,7 @@ async def documentos_pendientes_pago(
         # Link to documento detail with next parameter
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+        pay_review_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">Revisar para pago</a>'
 
         # Shortened internal ID (first 8 characters)
         doc_id_short = str(documento.id)[:8]
@@ -30844,12 +30933,13 @@ async def documentos_pendientes_pago(
             <td>{documento.tipo}</td>
             <td>{tipo_solicitud}</td>
             <td>{beneficiario_nombre}</td>
-            <td>{documento.estado}</td>
+            <td>{_documento_human_status_badge(documento.estado)}</td>
             <td>{format_currency(doc_amount, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
             <td>{fecha_pago_display}</td>
             <td>{aprobado_str}</td>
             <td>{cfdi_cell}</td>
+            <td>{pay_review_link}</td>
         </tr>
         """
 
@@ -30863,6 +30953,7 @@ async def documentos_pendientes_pago(
         )
         next_url = quote("/documentos/pendientes-pago")
         doc_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
+        pay_review_link = f'<a href="/documentos/{documento.id}?next={next_url}" style="color: #4CAF50; text-decoration: none;">Revisar para pago</a>'
         doc_id_short = str(documento.id)[:8]
         doc_currency = currency_for(documento)
         pending_totals[doc_currency] = pending_totals.get(doc_currency, Decimal("0")) + Decimal(str(saldo_pendiente))
@@ -30877,12 +30968,13 @@ async def documentos_pendientes_pago(
             <td>{documento.tipo}</td>
             <td>Reembolso informe</td>
             <td>{beneficiario_nombre}</td>
-            <td>{documento.estado}</td>
+            <td>{_documento_human_status_badge(documento.estado)}</td>
             <td>{format_currency(saldo_pendiente, doc_currency)}</td>
             <td>{escape(doc_currency)}</td>
             <td>—</td>
             <td>{aprobado_str}</td>
             <td>{cfdi_cell}</td>
+            <td>{pay_review_link}</td>
         </tr>
         """
 
@@ -30905,12 +30997,18 @@ async def documentos_pendientes_pago(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                ("Pagos pendientes", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Finanzas",
                 title="Documentos pendientes de pago",
                 description="Bandeja de solicitudes aprobadas listas para registrar pago y convertir en gasto operativo o pago a terceros.",
                 actions_html='''
                     <a href="/documentos/todos" class="button secondary">Ver todos los documentos</a>
+                    <a href="/gastos-terceros" class="button secondary">Solicitudes de transferencia</a>
                     <a href="/panel" class="button secondary">Volver al panel</a>
                 ''',
                 side_html=f'''
@@ -30948,7 +31046,7 @@ async def documentos_pendientes_pago(
                 </div>
                 <div class="meta-card">
                     <span>Flujo sugerido</span>
-                    <strong>Detalle</strong>
+                    <strong>Revisar para pago</strong>
                     <small>Entra a cada documento para registrar pago y generar gasto.</small>
                 </div>
             </section>
@@ -30978,6 +31076,7 @@ async def documentos_pendientes_pago(
                                     <th>Fecha de pago</th>
                                     <th>Fecha de aprobación</th>
                                     <th>CFDI</th>
+                                    <th>Acción</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -31367,6 +31466,11 @@ async def _render_solicitud_terceros_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "solicitudes")}
+            {_gastos_breadcrumb_html([
+                ("Solicitudes de transferencia", "/gastos-terceros"),
+                (page_heading, None),
+            ])}
             <h1 style="margin-top:0;">{page_heading}</h1>
 
             {f'<div class="notice warn"><strong>Error:</strong> {escape(request.query_params.get("error_msg", ""))}</div>' if request.query_params.get("error_msg") else ''}
@@ -33501,24 +33605,10 @@ async def ver_documento(
             </div>
         """
 
-    workflow_badge = "Borrador"
-    workflow_class = "info"
-    if solicitud_cancelada:
-        workflow_badge = "Cancelada"
-        workflow_class = "warn"
-    elif documento.estado == "enviado":
-        workflow_badge = "En revisión"
-        workflow_class = "warn"
-    elif documento.estado == "aprobado":
-        workflow_badge = "Aprobado"
-        workflow_class = "ok"
-    elif documento.estado == "pagado":
-        workflow_badge = "Pagado"
-        workflow_class = "ok"
-    elif documento.estado == "rechazado":
-        workflow_badge = "Rechazado"
-        workflow_class = "warn"
-    estado_display_detail = "cancelada" if solicitud_cancelada else documento.estado
+    workflow_badge, workflow_note, workflow_class = _documento_human_status(
+        "cancelado" if solicitud_cancelada else documento.estado
+    )
+    estado_display_detail = workflow_badge
 
     detail_approval_actions_html = ""
     if can_approve_or_reject:
@@ -33589,7 +33679,7 @@ async def ver_documento(
             <div class="meta-card">
                 <span>Estado</span>
                 <strong>{estado_display_detail}</strong>
-                <small>Flujo vigente del documento.</small>
+                <small>{escape(workflow_note)}</small>
             </div>
             <div class="meta-card">
                 <span>Monto total</span>
@@ -33995,6 +34085,10 @@ async def ver_documento(
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
             {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                (documento.numero_referencia, None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Documentos",
                 title=f"Documento {documento.numero_referencia}",
@@ -34011,7 +34105,8 @@ async def ver_documento(
                         </div>
                         <div class="doc-hero-flujo-below">
                             <div class="eyebrow">Estado del flujo</div>
-                            <div class="status-chip {workflow_class}" style="margin-top:6px;">{workflow_badge}</div>
+                            <div style="margin-top:6px;"><span class="badge {workflow_class}">{workflow_badge}</span></div>
+                            <div class="section-note" style="margin-top:6px;">{escape(workflow_note)}</div>
                             <div class="meta-grid">
                                 <div class="meta-card">
                                     <span>Gastos asociados</span>
@@ -35224,6 +35319,11 @@ async def crear_cuenta_de_gastos_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                ("Crear informe de gastos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Informes de gastos",
                 title="Crear informe de gastos",
@@ -36020,10 +36120,21 @@ async def adjuntar_gastos_a_cuenta(
 
 
 def _informe_status_badge(label: str, *, color: str) -> str:
+    note_by_label = {
+        "Borrador": "Te falta enviarlo",
+        "En aprobación": "Esperando aprobación",
+        "Autorizado": "Listo para pago o siguiente paso",
+        "Comprobado": "Comprobado con movimientos registrados",
+        "Pagado": "Pago registrado",
+        "Cancelado": "Sin acción pendiente",
+        "Cerrado para captura": "Pendiente de revisión",
+    }
+    note = note_by_label.get(label, "Revisar estado")
     return (
         f'<span style="background:{color};color:white;padding:2px 8px;'
         'border-radius:4px;font-size:11px;">'
         f'{escape(label)}</span>'
+        f'<div class="section-note" style="margin-top:4px;">{escape(note)}</div>'
     )
 
 
@@ -36412,7 +36523,7 @@ async def cuentas_de_gastos_list(
                 'onclick="return confirm(\'¿Cancelar este informe vacío? Se conservará el registro de auditoría.\')">'
                 'Cancelar borrador</button></form>'
             )
-        accion_attr_parts = ["ver"]
+        accion_attr_parts = ["abrir informe"]
         if cerrar_cell:
             accion_attr_parts.append("cerrar")
         if cancelar_borrador_cell:
@@ -36441,7 +36552,7 @@ async def cuentas_de_gastos_list(
             <td>{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td>
                 <div class="inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
-                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Ver</a>
+                <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Abrir informe</a>
                 {cerrar_cell}
                 {cancelar_borrador_cell}
                 </div>
@@ -36563,16 +36674,16 @@ async def cuentas_de_gastos_list(
                     </div>
                     <div class="informes-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
                         <div>
-                            <label for="informes-search-solicitante" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Solicitante</label>
+                            <label for="informes-search-solicitante" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por solicitante</label>
                             <input type="search" id="informes-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="informes-search-proveedor" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Proveedor</label>
+                            <label for="informes-search-proveedor" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por proveedor</label>
                             <input type="search" id="informes-search-proveedor" placeholder="Proveedor o beneficiario..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Acción</label>
-                            <input type="search" id="informes-search-accion" placeholder="Ej. ver, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
+                            <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por acción</label>
+                            <input type="search" id="informes-search-accion" placeholder="Ej. abrir informe, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                     </div>
                     <div class="table-shell">
@@ -36687,7 +36798,7 @@ async def cancelar_informe_vacio_borrador(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta.id}",
-                error_msg="El informe no tiene documento principal; contacte a soporte.",
+                error_msg="El informe no tiene documento principal; contacta a soporte.",
             ),
             status_code=303,
         )
@@ -37599,12 +37710,12 @@ async def cuenta_de_gastos_detail(
         if exp.estado_gasto == 'cancelado':
             return (
                 f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
-                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
                 f'</div>'
             )
         return (
             f'<div class="inline-actions" style="gap:8px;justify-content:flex-end;white-space:nowrap;">'
-            f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Ver</a>'
+            f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
             f'<a href="/gastos/{exp.id}/editar" style="color:#0f766e;text-decoration:none;">Editar</a>'
             f'<form method="POST" action="/gastos/{exp.id}/cancelar" style="display:inline;" '
             f"onsubmit=\"return confirm('¿Eliminar este gasto del informe? Se marcará como cancelado y quedará en auditoría.');\">"
@@ -37664,9 +37775,9 @@ async def cuenta_de_gastos_detail(
             <td>{fecha_str}</td>
             <td>{format_currency(doc.monto_solicitado, currency_for(doc))}</td>
             <td>{escape(currency_for(doc))}</td>
-            <td>{escape(doc.estado or '-')}</td>
+            <td>{_documento_human_status_badge(doc.estado)}</td>
             <td>{arch_s}</td>
-            <td><a href="/documentos/{doc.id}" style="color: #4CAF50; text-decoration: none;">Ver</a></td>
+            <td><a href="/documentos/{doc.id}" style="color: #4CAF50; text-decoration: none;">Revisar solicitud</a></td>
         </tr>
         """,
             )
@@ -37709,7 +37820,7 @@ async def cuenta_de_gastos_detail(
             <td>{escape(getattr(r, "moneda", None) or currency_for(cuenta))}</td>
             <td>{escape((r.estado or '-').capitalize())}</td>
             <td>{r_arch_cell}</td>
-            <td><a href="/informes-de-gastos/{cuenta.id}/reembolsos/{r.id}" style="color: #4CAF50; text-decoration: none;">Ver</a></td>
+            <td><a href="/informes-de-gastos/{cuenta.id}/reembolsos/{r.id}" style="color: #4CAF50; text-decoration: none;">Abrir reembolso</a></td>
         </tr>
         """,
             )
@@ -37875,11 +37986,13 @@ async def cuenta_de_gastos_detail(
         )
         solicitudes_section_rows += (
             f"<tr><td><a href=\"/documentos/{d.id}\" style=\"color: #4CAF50;\">"
-            f"{escape(d.numero_referencia)}</a></td><td>{escape(d.estado or '-')}</td>"
+            f"{escape(d.numero_referencia)}</a></td>"
+            f"<td>{_documento_human_status_badge(d.estado)}</td>"
             f"<td>{format_currency(d.monto_solicitado, currency_for(d))}</td>"
             f"<td>{escape(currency_for(d))}</td>"
             f"<td>{d.creado_en.strftime('%Y-%m-%d') if d.creado_en else '-'}</td>"
-            f"<td>{arch_cell}</td></tr>"
+            f"<td>{arch_cell}</td>"
+            f'<td><a href="/documentos/{d.id}" style="color: #4CAF50; text-decoration: none;">Revisar solicitud</a></td></tr>'
         )
     nueva_solicitud_btn_html = (
         f'<a href="/informes-de-gastos/{cuenta.id}/nueva-solicitud" class="button primary" style="margin-bottom: 15px;">Crear nueva solicitud</a>'
@@ -37891,14 +38004,14 @@ async def cuenta_de_gastos_detail(
                 <div class="section-head">
                     <div>
                         <h2>Solicitudes de transferencia</h2>
-                        <div class="section-note">Crea nuevas salidas de efectivo directamente desde este informe.</div>
+                        <div class="section-note">Estas solicitudes son salidas de efectivo vinculadas al informe; afectan el saldo cuando Finanzas registra el pago.</div>
                     </div>
                 </div>
                 {nueva_solicitud_btn_html}
                 <div class="table-shell">
                 <table>
-                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th></tr></thead>
-                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="6" style="text-align: center; color: #666;">No hay solicitudes. Cree una desde el botón anterior.</td></tr>'}</tbody>
+                    <thead><tr><th>Referencia</th><th>Estado</th><th>Monto</th><th>Moneda</th><th>Fecha</th><th>Archivos</th><th>Acción</th></tr></thead>
+                    <tbody>{solicitudes_section_rows if solicitudes_section_rows else '<tr><td colspan="7" style="text-align: center; color: #666;">No hay solicitudes de transferencia vinculadas a este informe.</td></tr>'}</tbody>
                 </table>
                 </div>
             </div>'''
@@ -37935,17 +38048,17 @@ async def cuenta_de_gastos_detail(
     if solicitante_cuenta is None and cuenta.empleado_id == current_empleado.id:
         solicitante_cuenta = current_empleado
     solicitante_display = (
-        solicitante_cuenta.nombre if solicitante_cuenta is not None else "â€”"
+        solicitante_cuenta.nombre if solicitante_cuenta is not None else "—"
     )
     beneficiario_proveedor_cuenta = getattr(cuenta, "beneficiario_proveedor_cliente", None)
     beneficiario_cuenta = (
         getattr(cuenta, "beneficiario_empleado", None) or solicitante_cuenta
     )
     if beneficiario_proveedor_cuenta is not None:
-        beneficiario_display = beneficiario_proveedor_cuenta.nombre or "â€”"
+        beneficiario_display = beneficiario_proveedor_cuenta.nombre or "—"
     else:
         beneficiario_display = (
-            beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "â€”"
+            beneficiario_cuenta.nombre if beneficiario_cuenta is not None else "—"
         )
     clasificacion_info = (
         f'<p class="section-note" style="margin:8px 0 0;"><strong>Solicita:</strong> '
@@ -38011,7 +38124,6 @@ async def cuenta_de_gastos_detail(
             )
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
-        <a href="/informes-de-gastos" class="button secondary">Abrir informes de gastos</a>
         {informe_support_actions_html}
         {coi_actions_html}
         {diot_actions_html}
@@ -38084,7 +38196,7 @@ async def cuenta_de_gastos_detail(
                     <div class="section-head">
                         <div>
                             <h2>Captura rápida de gastos</h2>
-                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripcion la captura el usuario. La propina se suma al total pagado y se clasifica como No Deducible.</div>
+                            <div class="section-note">Captura una línea como en el informe de gastos. Si adjuntas XML o PDF, precargamos fecha, folio, montos e impuestos; la descripción la captura el usuario. La propina se suma al total pagado y se clasifica como No Deducible.</div>
                         </div>
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
@@ -38268,6 +38380,10 @@ async def cuenta_de_gastos_detail(
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
             {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Informe de gastos {titulo_cuenta}",
@@ -38472,7 +38588,7 @@ async def editar_cuenta_de_gastos_form(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobación.",
             ),
             status_code=303,
         )
@@ -38558,6 +38674,12 @@ async def editar_cuenta_de_gastos_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Editar", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Informes de gastos",
                 title="Editar informe de gastos",
@@ -38648,7 +38770,7 @@ async def editar_cuenta_de_gastos_submit(
         return RedirectResponse(
             url=_append_error_params(
                 f"/informes-de-gastos/{cuenta_id}",
-                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobaci?n.",
+                error_msg="No se puede editar un informe después de que Control Presupuestal asignó concepto o entró a aprobación.",
             ),
             status_code=303,
         )
@@ -38966,6 +39088,12 @@ async def nueva_solicitud_desde_cuenta_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Nueva solicitud", None),
+            ])}
             <h1 style="margin-top:0;">Nueva solicitud de transferencia</h1>
             <p class="informe-context">Informe: {escape(cuenta.referencia_base)}</p>
             {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
@@ -39443,9 +39571,9 @@ async def cerrar_cuenta_de_gastos(
         )
     else:
         success_msg = (
-            "Informe cerrado y enviado para aprobaci?n."
+            "Informe cerrado y enviado para aprobación."
             if not cuenta_was_closed
-            else "Documento de informe sincronizado y enviado para aprobaci?n."
+            else "Documento de informe sincronizado y enviado para aprobación."
         )
     if reembolso_created:
         success_msg += (
@@ -39860,6 +39988,12 @@ async def saldar_cuenta_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Liquidación", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
                 title=f"Saldar cuenta I-{escape(cuenta.referencia_base)}",
@@ -40134,6 +40268,12 @@ async def ver_reembolso_cuenta(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
+                ("Liquidación", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Liquidación",
                 title=escape(tipo_label),

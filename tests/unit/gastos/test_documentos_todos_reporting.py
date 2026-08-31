@@ -143,6 +143,18 @@ def test_documentos_todos_bulk_zip_href_is_built_from_filters():
     assert "urlencode(bulk_params)" in route
 
 
+def test_documentos_todos_rows_have_explicit_review_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert "<th>Acción</th>" in route
+    assert "Revisar documento" in route
+    assert 'next_url = quote("/documentos/todos")' in route
+    assert 'href="/documentos/{documento.id}?next={next_url}"' in route
+
+
 def test_proceso_contable_exposes_bulk_document_excel_downloads():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
 
@@ -185,6 +197,21 @@ def test_gastos_workspace_nav_filters_unauthorized_links():
     assert 'href="/beneficiarios/altas"' not in html
 
 
+def test_gastos_breadcrumb_html_escapes_labels_and_optional_links():
+    html = user_routes._gastos_breadcrumb_html(
+        [
+            ("Informes <gastos>", "/informes-de-gastos?x=<bad>"),
+            ("I-123", None),
+        ]
+    )
+
+    assert 'aria-label="Ruta de navegación"' in html
+    assert 'href="/informes-de-gastos?x=&lt;bad&gt;"' in html
+    assert "Informes &lt;gastos&gt;" in html
+    assert "<span>I-123</span>" in html
+    assert "&rsaquo;" in html
+
+
 def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
 
@@ -200,6 +227,27 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
         text.index(
             '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
             text.index("async def cuentas_de_gastos_list("),
+        )
+    ]
+    informe_crear = text[
+        text.index("async def crear_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/crear")',
+            text.index("async def crear_cuenta_de_gastos_form("),
+        )
+    ]
+    gasto_nuevo = text[
+        text.index("async def nuevo_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/nuevo")',
+            text.index("async def nuevo_gasto_form("),
+        )
+    ]
+    gasto_edit = text[
+        text.index("async def editar_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/editar")',
+            text.index("async def editar_gasto_form("),
         )
     ]
     informe_detail = text[
@@ -230,13 +278,324 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("def _beneficiary_onboarding_page("),
         )
     ]
+    informe_edit = text[
+        text.index("async def editar_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+            text.index("async def editar_cuenta_de_gastos_form("),
+        )
+    ]
+    informe_nueva_solicitud = text[
+        text.index("async def nueva_solicitud_desde_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/nueva-solicitud")',
+            text.index("async def nueva_solicitud_desde_cuenta_form("),
+        )
+    ]
+    informe_saldar = text[
+        text.index("async def saldar_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/saldar")',
+            text.index("async def saldar_cuenta_form("),
+        )
+    ]
+    informe_reembolso = text[
+        text.index("async def ver_reembolso_cuenta(") :
+        text.index(
+            '@router.post(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"',
+            text.index("async def ver_reembolso_cuenta("),
+        )
+    ]
 
     assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in terceros
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_crear
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_nuevo
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in gasto_edit
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "informes")'
+        in informe_nueva_solicitud
+    )
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_saldar
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "informes")'
+        in informe_reembolso
+    )
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
+
+
+def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    documento_detail = text[
+        text.index("async def ver_documento(") :
+        text.index(
+            '@router.get("/api/informes-de-gastos/activas"',
+            text.index("async def ver_documento("),
+        )
+    ]
+    informe_detail = text[
+        text.index("async def cuenta_de_gastos_detail(") :
+        text.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            text.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    informe_crear = text[
+        text.index("async def crear_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/crear")',
+            text.index("async def crear_cuenta_de_gastos_form("),
+        )
+    ]
+    gasto_nuevo = text[
+        text.index("async def nuevo_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/nuevo")',
+            text.index("async def nuevo_gasto_form("),
+        )
+    ]
+    gasto_edit = text[
+        text.index("async def editar_gasto_form(") :
+        text.index(
+            '@router.post("/gastos/{gasto_id}/editar")',
+            text.index("async def editar_gasto_form("),
+        )
+    ]
+    informe_edit = text[
+        text.index("async def editar_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+            text.index("async def editar_cuenta_de_gastos_form("),
+        )
+    ]
+    informe_nueva_solicitud = text[
+        text.index("async def nueva_solicitud_desde_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/nueva-solicitud")',
+            text.index("async def nueva_solicitud_desde_cuenta_form("),
+        )
+    ]
+    informe_saldar = text[
+        text.index("async def saldar_cuenta_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/saldar")',
+            text.index("async def saldar_cuenta_form("),
+        )
+    ]
+    informe_reembolso = text[
+        text.index("async def ver_reembolso_cuenta(") :
+        text.index(
+            '@router.post(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"',
+            text.index("async def ver_reembolso_cuenta("),
+        )
+    ]
+
+    assert '_gastos_breadcrumb_html([' in documento_detail
+    assert '("Todos los documentos", "/documentos/todos")' in documento_detail
+    assert "(documento.numero_referencia, None)" in documento_detail
+
+    assert '_gastos_breadcrumb_html([' in informe_detail
+    assert '(f"I-{cuenta.referencia_base}", None)' in informe_detail
+
+    assert '_gastos_breadcrumb_html([' in informe_crear
+    assert '("Informes de gastos", "/informes-de-gastos")' in informe_crear
+    assert '("Crear informe de gastos", None)' in informe_crear
+
+    assert '_gastos_breadcrumb_html([' in gasto_nuevo
+    assert '("Informes de gastos", "/informes-de-gastos")' in gasto_nuevo
+    assert '("Registrar nuevo gasto", None)' in gasto_nuevo
+
+    assert '_gastos_breadcrumb_html([' in gasto_edit
+    assert '("Informes de gastos", "/informes-de-gastos")' in gasto_edit
+    assert '(expense.numero_referencia, f"/gastos/{gasto_id}")' in gasto_edit
+    assert '("Editar", None)' in gasto_edit
+
+    for route_source, leaf in [
+        (informe_edit, "Editar"),
+        (informe_nueva_solicitud, "Nueva solicitud"),
+        (informe_saldar, "Liquidación"),
+        (informe_reembolso, "Liquidación"),
+    ]:
+        assert '_gastos_breadcrumb_html([' in route_source
+        assert '("Informes de gastos", "/informes-de-gastos")' in route_source
+        assert (
+            '(f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}")'
+            in route_source
+        )
+        assert f'("{leaf}", None)' in route_source
+
+
+def test_informe_document_visible_copy_has_clean_spanish_encoding():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    blocks = [
+        text[
+            text.index("async def ver_documento(") :
+            text.index(
+                '@router.get("/api/informes-de-gastos/activas"',
+                text.index("async def ver_documento("),
+            )
+        ],
+        text[
+            text.index("async def cuenta_de_gastos_detail(") :
+            text.index(
+                '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+                text.index("async def cuenta_de_gastos_detail("),
+            )
+        ],
+        text[
+            text.index("async def cancelar_informe_vacio_borrador(") :
+            text.index(
+                "def _can_quick_capture_expense",
+                text.index("async def cancelar_informe_vacio_borrador("),
+            )
+        ],
+        text[
+            text.index("async def editar_cuenta_de_gastos_form(") :
+            text.index(
+                '@router.post("/informes-de-gastos/{cuenta_id}/editar")',
+                text.index("async def editar_cuenta_de_gastos_form("),
+            )
+        ],
+        text[
+            text.index("async def editar_cuenta_de_gastos_submit(") :
+            text.index(
+                '@router.post("/api/informes-de-gastos/cfdi-autofill"',
+                text.index("async def editar_cuenta_de_gastos_submit("),
+            )
+        ],
+        text[
+            text.index("async def cerrar_cuenta_de_gastos(") :
+            text.index(
+                "async def _ensure_reembolso_solicitud_for_approved_informe",
+                text.index("async def cerrar_cuenta_de_gastos("),
+            )
+        ],
+    ]
+    scoped = "\n".join(blocks)
+
+    for broken_text in [
+        "aprobaci?n",
+        "â€”",
+        "descripcion la captura",
+        "Cree una desde",
+        "contacte a soporte",
+    ]:
+        assert broken_text not in scoped
+
+    for corrected_text in [
+        "aprobación",
+        "descripción la captura",
+        "contacta a soporte",
+    ]:
+        assert corrected_text in scoped
+
+
+def test_accounting_cleanup_is_labeled_as_coi_policies():
+    admin_source = open(
+        "src/devnous/gastos/routes/admin_routes.py", encoding="utf-8"
+    ).read()
+    user_source = open(
+        "src/devnous/gastos/routes/user_routes.py", encoding="utf-8"
+    ).read()
+    nav_start = admin_source.index("def render_admin_navigation")
+    nav_end = admin_source.index("def _render_admin_error_page", nav_start)
+    coi_start = admin_source.index("async def gastos_sin_cuenta_contable")
+    coi_end = admin_source.index(
+        '@router.post("/admin/gastos/{gasto_id}/asignar-cuenta-contable"',
+        coi_start,
+    )
+    admin_surface = admin_source[nav_start:nav_end] + admin_source[coi_start:coi_end]
+
+    assert "Pólizas COI" in admin_surface
+    assert "Preparar pólizas COI" in admin_surface
+    assert "Guardar preparación COI" in admin_surface
+    assert "Centro de Limpieza Contable" not in admin_surface
+    assert "Limpieza contable" not in admin_surface
+    assert "Pólizas COI" in user_source
+
+
+def test_document_status_helper_uses_human_operational_labels():
+    assert user_routes._documento_human_status("borrador") == (
+        "Borrador",
+        "Te falta enviarlo",
+        "muted",
+    )
+    assert user_routes._documento_human_status("control_presupuestal") == (
+        "Control presupuestal",
+        "Pendiente de asignación presupuestal",
+        "warn",
+    )
+    assert user_routes._documento_human_status("rechazado") == (
+        "Rechazado",
+        "Requiere corrección",
+        "error",
+    )
+
+
+def test_action_labels_are_specific_for_reports_and_requests():
+    request_doc = SimpleNamespace(id=uuid4(), tipo="SOLICITUD", estado="enviado")
+    html = user_routes._solicitud_transferencia_list_actions_html(
+        request_doc,
+        SimpleNamespace(id=uuid4(), rol="empleado"),
+    )
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+
+    assert "Revisar solicitud" in html
+    assert "Abrir informe" in source
+    assert "Abrir gasto" in source
+    assert "Abrir reembolso" in source
+    assert ">Ver</a>" not in source[
+        source.index("async def cuenta_de_gastos_detail(") :
+        source.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            source.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+
+
+def test_informe_detail_uses_human_status_and_single_back_action():
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    detail = source[
+        source.index("async def cuenta_de_gastos_detail(") :
+        source.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            source.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    solicitudes_section = detail[
+        detail.index('solicitudes_section_rows += (') :
+        detail.index(
+            'nueva_solicitud_btn_html =',
+            detail.index('solicitudes_section_rows += ('),
+        )
+    ]
+    detail_actions = detail[
+        detail.index('detail_actions_html = f"""') :
+        detail.index(
+            'detail_side_html = f"""',
+            detail.index('detail_actions_html = f"""'),
+        )
+    ]
+
+    assert "_documento_human_status_badge(d.estado)" in solicitudes_section
+    assert "escape(d.estado or '-')" not in solicitudes_section
+    assert "Revisar solicitud" in solicitudes_section
+    assert '<th>Acción</th>' in detail
+    assert 'colspan="7"' in detail
+    assert (
+        "Estas solicitudes son salidas de efectivo vinculadas al informe; "
+        "afectan el saldo cuando Finanzas registra el pago."
+    ) in detail
+    assert "Crea una desde el botón anterior" not in detail
+    assert "No hay solicitudes de transferencia vinculadas a este informe." in detail
+    assert detail_actions.count('href="/informes-de-gastos"') == 1
+    assert "Volver a mis informes" in detail_actions
+    assert "Abrir informes de gastos" not in detail_actions
 
 
 def test_document_detail_expenses_table_exposes_edit_actions():
@@ -304,6 +663,8 @@ def test_solicitudes_transferencia_header_filters_include_solicitante_and_action
     assert 'data-accion="{accion_attr}"' in route
     assert 'id="terceros-search-solicitante"' in route
     assert 'id="terceros-search-accion"' in route
+    assert 'placeholder="Ej. revisar solicitud, editar, cancelar..."' in route
+    assert 'accion_attr_parts = ["revisar solicitud"]' in route
     assert "matchSolicitante" in route
     assert "matchAccion" in route
 
@@ -329,6 +690,72 @@ def test_informes_de_gastos_header_filters_include_solicitante_provider_and_acti
     assert 'data-solicitante="{solicitante_attr}"' in route
     assert 'data-proveedor="{proveedor_attr}"' in route
     assert 'data-accion="{accion_attr}"' in route
+    assert 'placeholder="Ej. abrir informe, cerrar, cancelar..."' in route
+    assert 'placeholder="Ej. ver, cerrar, cancelar..."' not in route
+    assert 'accion_attr_parts = ["abrir informe"]' in route
+
+
+def test_gastos_list_tables_use_consistent_spanish_copy():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    terceros = text[
+        text.index("async def gastos_terceros(") :
+        text.index(
+            '@router.get("/gastos-terceros/solicitar-anticipo"',
+            text.index("async def gastos_terceros("),
+        )
+    ]
+    informes = text[
+        text.index("async def cuentas_de_gastos_list(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
+            text.index("async def cuentas_de_gastos_list("),
+        )
+    ]
+    scoped = terceros + "\n" + informes
+
+    for expected in [
+        "Fecha de aprobación",
+        "Monto solicitado",
+        "Fecha de pago",
+        "Por proveedor",
+        "Por solicitante",
+        "Por acción",
+    ]:
+        assert expected in scoped
+
+    for legacy in [
+        "Fecha de Aprobacion",
+        "Monto Solicitado",
+        "Fecha Pago",
+        "Por Proveedor",
+        "Por Solicitante",
+        "Por Acción",
+    ]:
+        assert legacy not in scoped
+
+
+def test_pendientes_pago_uses_human_status_and_explicit_payment_action():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_pendientes_pago(")
+    end = text.index(
+        '@router.get("/documentos/nueva-solicitud-terceros"',
+        start,
+    )
+    route = text[start:end]
+
+    assert "_documento_human_status_badge(documento.estado)" in route
+    assert "<th>Acción</th>" in route
+    assert "Revisar para pago" in route
+    assert 'next_url = quote("/documentos/pendientes-pago")' in route
+    assert "<td>{documento.estado}</td>" not in route
+    assert "<strong>Detalle</strong>" not in route
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in route
+    assert "_gastos_breadcrumb_html([" in route
+    assert '("Todos los documentos", "/documentos/todos")' in route
+    assert '("Pagos pendientes", None)' in route
+    assert 'href="/gastos-terceros"' in route
+    assert "Solicitudes de transferencia" in route
+    assert "Ver todos los documentos" in route
 
 
 def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
@@ -419,6 +846,18 @@ def test_pending_approval_summary_shows_accumulated_amount() -> None:
     assert "pending_amount_display" in block
 
 
+def test_pending_approval_page_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def documentos_pendientes")
+    end = source.index('@router.post("/documentos/pendientes/accion-lote")', start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Todos los documentos", "/documentos/todos")' in block
+    assert '("Pendientes por aprobar", None)' in block
+
+
 def test_historial_and_bulk_pending_actions_use_approver_visibility_gate() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     bulk_start = source.index("async def documentos_pendientes_accion_lote")
@@ -430,6 +869,19 @@ def test_historial_and_bulk_pending_actions_use_approver_visibility_gate() -> No
     assert "await _can_review_pending_approvals" in source[history_start:history_end]
 
 
+def test_approval_history_page_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def historial_aprobador")
+    end = source.index("@router.get(\"/documentos/todos\"", start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Todos los documentos", "/documentos/todos")' in block
+    assert '("Pendientes por aprobar", "/documentos/pendientes")' in block
+    assert '("Historial de aprobaciones", None)' in block
+
+
 def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = source.index("async def _render_solicitud_terceros_form")
@@ -439,6 +891,18 @@ def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -
     assert "budget_concept_row_terceros = """ in block
     assert "CONCEPTO:" not in block
     assert "budget_concept_id_terceros" not in block
+
+
+def test_solicitud_terceros_form_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def _render_solicitud_terceros_form")
+    end = source.index('@router.post("/documentos/nueva-solicitud-terceros")', start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Solicitudes de transferencia", "/gastos-terceros")' in block
+    assert "(page_heading, None)" in block
 
 
 def test_solicitud_terceros_create_and_edit_force_budget_control_assignment() -> None:

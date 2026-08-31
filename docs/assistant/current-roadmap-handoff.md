@@ -1,10 +1,68 @@
 # SamChat current roadmap handoff
 
 Status: ACTIVE_CONTEXT
-Last updated: 2026-08-24
-Branch at time of writing: `codex/rqf-054def-executive-workloop`
+Last updated: 2026-08-31
+Branch at time of reconciliation: `codex/feature-consolidation-20260830`
 
 This file exists so the roadmap survives conversation compaction. Read this before continuing assistant/owner-pack/SOUL work.
+
+## 2026-08-31 roadmap reconciliation
+
+This reconciliation is the current entry point for assistant roadmap work.
+It separates product direction, repository evidence, runtime evidence, and
+remaining gaps so future slices do not infer production capability from a doc
+heading, branch name, or release directory name alone.
+
+Current active runtime checked during reconciliation:
+
+- Service: `samchat-gastos.service`
+- WorkingDirectory: `/srv/samchat/releases/gastos-prod-42bf8d6a-expense-report-controls`
+- Health: `/healthz` and `/readyz` returned healthy.
+- Important nuance: the active release name is expense-report-oriented, but its
+  loaded source contains the assistant WorkFrame, work-turn trace,
+  multi-candidate read-only, executive regression, and Owner Entity Folder
+  Workspace modules.
+
+Clean-room architecture boundary:
+
+- `/root/claudeleaked` is an architecture reference only.
+- Do not copy source, names, or implementation details from it into SamChat.
+- Transferable patterns are the governed work loop, candidate tool selection,
+  policy checks, context/memory selection, visible traces, sufficiency
+  verification, preview/approval boundaries, and auditable execution receipts.
+- A Claude-Code-like pattern is accepted only when it improves SamChat's real
+  operational cycle over gastos, CFDI, Owner Pack, tournaments, SOUL, and
+  authorization boundaries.
+
+| Slice | Product capability | Repo evidence | Runtime evidence | Remaining gap | Authority posture |
+| --- | --- | --- | --- | --- | --- |
+| RQF-054A | WorkFrame classifier | `src/samchat/assistant/work_frame.py`; tests in `tests/unit/test_assistant_work_frame.py` | Present in active release source | Keep extending real business phrases as failures are found | Read-only |
+| RQF-054B/C | Tool candidate adjudicator and sufficiency gate | `tool_adjudicator.py`, `response_sufficiency.py`, focused tests | Present in active release source | Continue mapping tools through semantic metadata instead of ad hoc keywords | Read-only |
+| RQF-054D/E/F | Executive renderer, work-turn trace, semantic registry foundation | `work_turn_renderer.py`, `assistant_workspace_trace.py`, `tool_registry.py` | Present in active release source | Keep broadening source-backed rendered answers; do not render raw payloads | Read-only |
+| RQF-054G | Multi-candidate read-only execution | `multi_candidate_readonly.py`; focused local verification passed 2026-08-31 | Present in active release source | Reconcile historical `IMPLEMENTED_LOCAL` labels with PR/release evidence before claiming formal closure | Read-only |
+| RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; fixture demo/canary gate artifact captured under `artifacts/rqf-054h-executive-canary-gate/` | Present in active release source as source module | Live authenticated canary remains pending explicit auth/runtime target | Read-only |
+| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; PR #151 follow-ups FU4/FU6/FU7/FU8/FU9 closed in repository artifacts/tests; frontend credential intake hardened in artifact/tests | Runtime static deploy completed 2026-08-31; receipt under `artifacts/rqf-053h-assistant-ui-runtime-deploy/`; credential-hardening deploy receipt under `artifacts/rqf-053h-assistant-credential-hardening/`; active asset `Assistant-DM-K94_6.js` verified with no browser-sent `X-OpenAI-API-Key` marker | Backend still accepts `X-OpenAI-API-Key`; evaluate separately before stronger credential-boundary claims. Live authenticated canary still pending explicit auth/runtime target | Read-only/proposal |
+| SOUL Wizard 001-004 | Tournament SOUL draft, clone, activation preview | `soul_wizard.py`; mini-roadmap closed | Source present; coverage remains data-dependent | One reliable SOUL per tournament before complete Owner Pack claims | Preview-only, no operational writes |
+| Owner Pack workspace | Read-only entity folder readiness/evidence workspace | `owner_pack_*`, `owner_entity_folder_workspace.py`, owner variable Q&A | Present in active release source | Improve tournament/entity data coverage; report missing fields instead of completing gaps | Read-only/proposal |
+
+Next execution order:
+
+1. Keep this roadmap reconciliation current whenever runtime/source status
+   changes.
+2. Run the RQF-054H live authenticated canary when credentials and runtime
+   target are explicitly approved; fixture gate evidence is already captured.
+3. Evaluate backend `X-OpenAI-API-Key` header acceptance as a separate
+   hardening slice before making stronger credential-boundary claims.
+4. Improve SOUL and Owner Pack coverage per tournament/entity before promising
+   complete folders.
+5. Only after the read-only loop is stable, design one narrow write-capable path
+   with versioned preview, explicit human approval, idempotency, audit trail,
+   execution receipt, and rollback evidence.
+
+Current non-goal: no production write path is enabled by this roadmap
+reconciliation. SamChat may investigate, render evidence, show gaps, and propose
+actions, but durable effects remain blocked until a separately approved
+authority slice exists.
 
 ## Product north star
 
@@ -462,3 +520,69 @@ Next:
 
 - Expand the suite with captured live prompts from Francisco/Juan Pablo after each demo bug.
 - Use the suite as the acceptance gate for Owner Pack demo hardening and Finance/Accounting Q&A.
+
+## 2026-08-31 RQF-054H gate/canary runner
+
+Status: IMPLEMENTED_LOCAL_PENDING_PR
+
+What changed:
+
+- Added `scripts/run_assistant_executive_canary.py`.
+- Default fixture mode evaluates all current RQF-054H executive cases without
+  HTTP, providers, credentials, or business writes.
+- Live mode is opt-in and requires cookie or bearer auth before calling
+  `/api/assistant`; credential values are never printed.
+- Each canary row records case id, prompt, pass/fail, failures, HTTP status,
+  latency, timeout flag, provider/model if present, tool count, tools, pending
+  confirmation, write detection, and authority posture.
+- Provider timeout, pending confirmation, or write trace fails the case even if
+  the response is otherwise controlled.
+
+Verification:
+
+```bash
+./scripts/pytestw tests/unit/test_assistant_executive_canary.py tests/unit/test_assistant_executive_regression_suite.py -q
+./.venv/bin/python scripts/run_assistant_executive_canary.py --fixture
+```
+
+Next:
+
+- Run live mode only with an authenticated session and record the JSON result as
+  canary evidence.
+- Add Francisco/Juan Pablo demo prompts after each observed failure, then use
+  this runner as the acceptance gate for assistant demo hardening.
+
+## 2026-08-31 RQF-054H fixture gate captured
+
+Artifact:
+
+- `artifacts/rqf-054h-executive-canary-gate/README.md`
+- `artifacts/rqf-054h-executive-canary-gate/fixture-result.json`
+
+Captured command:
+
+```bash
+./.venv/bin/python scripts/run_assistant_executive_canary.py --fixture
+```
+
+Result:
+
+- Schema: `samchat.assistant_executive_canary.v1`
+- Mode: `fixture`
+- Status: `pass`
+- Total: 7
+- Passed: 7
+- Failed: 0
+- Timeouts: 0
+
+Boundary:
+
+- No HTTP calls.
+- No provider calls.
+- No credentials.
+- No pending confirmations.
+- No writes detected.
+
+Remaining gap: run live authenticated canary only after explicit auth/runtime
+approval. Live evidence must capture provider/model, latency, timeout status,
+tool count, pass/fail per case, and read-only boundary.
