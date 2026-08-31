@@ -30971,12 +30971,18 @@ async def documentos_pendientes_pago(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                ("Pagos pendientes", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Finanzas",
                 title="Documentos pendientes de pago",
                 description="Bandeja de solicitudes aprobadas listas para registrar pago y convertir en gasto operativo o pago a terceros.",
                 actions_html='''
                     <a href="/documentos/todos" class="button secondary">Ver todos los documentos</a>
+                    <a href="/gastos-terceros" class="button secondary">Solicitudes de transferencia</a>
                     <a href="/panel" class="button secondary">Volver al panel</a>
                 ''',
                 side_html=f'''

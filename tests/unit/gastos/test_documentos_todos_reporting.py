@@ -679,6 +679,13 @@ def test_pendientes_pago_uses_human_status_and_explicit_payment_action():
     assert 'next_url = quote("/documentos/pendientes-pago")' in route
     assert "<td>{documento.estado}</td>" not in route
     assert "<strong>Detalle</strong>" not in route
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in route
+    assert "_gastos_breadcrumb_html([" in route
+    assert '("Todos los documentos", "/documentos/todos")' in route
+    assert '("Pagos pendientes", None)' in route
+    assert 'href="/gastos-terceros"' in route
+    assert "Solicitudes de transferencia" in route
+    assert "Ver todos los documentos" in route
 
 
 def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
