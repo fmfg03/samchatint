@@ -738,6 +738,18 @@ def test_pending_approval_summary_shows_accumulated_amount() -> None:
     assert "pending_amount_display" in block
 
 
+def test_pending_approval_page_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def documentos_pendientes")
+    end = source.index('@router.post("/documentos/pendientes/accion-lote")', start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Todos los documentos", "/documentos/todos")' in block
+    assert '("Pendientes por aprobar", None)' in block
+
+
 def test_historial_and_bulk_pending_actions_use_approver_visibility_gate() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     bulk_start = source.index("async def documentos_pendientes_accion_lote")
