@@ -143,6 +143,18 @@ def test_documentos_todos_bulk_zip_href_is_built_from_filters():
     assert "urlencode(bulk_params)" in route
 
 
+def test_documentos_todos_has_workspace_navigation_context():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in route
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in route
+    assert "_gastos_breadcrumb_html([" in route
+    assert '("Todos los documentos", None)' in route
+
+
 def test_documentos_todos_rows_have_explicit_review_action():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def documentos_todos(")

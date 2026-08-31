@@ -27902,6 +27902,9 @@ async def documentos_todos(
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
             {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
