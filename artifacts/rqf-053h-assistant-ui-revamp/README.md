@@ -14,6 +14,11 @@ Make the production assistant feel like an operational workspace instead of a ra
 - Promotes proposed actions into a separate **Acciones propuestas** panel with authority language.
 - Promotes detected artifacts, owner-pack readiness sections, and artifact-review buckets into **Artefactos** cards.
 - Preserves existing workspace cards, step trace, source cards, and specialist preview surfaces.
+- Adds RQF-053B-FU4 history hydration by sending a deterministic
+  `external_session_id` for the Assistant route, then loading
+  `GET /api/assistant/conversations/{conversation_id}/messages` and preserving
+  persisted `tool_payload` so historical assistant messages render workspace
+  cards, step traces, source cards, and preview surfaces after reload/re-entry.
 
 ## Authority boundary
 

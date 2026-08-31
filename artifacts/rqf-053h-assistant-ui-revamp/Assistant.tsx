@@ -106,6 +106,14 @@ type ChatMessage = {
   preview_render?: SpecialistPreviewRender | null;
 };
 
+type PersistedChatMessage = {
+  id?: string;
+  role?: string;
+  content?: string | null;
+  created_at?: string | null;
+  tool_payload?: Record<string, unknown> | null;
+};
+
 type PendingConfirmation = {
   run_id: string;
   tool_name: string;
@@ -318,6 +326,20 @@ function asPreviewRender(value: unknown): SpecialistPreviewRender | null {
 
 function previewFromPayload(payload: Record<string, unknown> | null | undefined): SpecialistPreviewRender | null {
   return asPreviewRender(payload?.preview_render);
+}
+
+function chatMessageFromHistoryRecord(record: PersistedChatMessage): ChatMessage | null {
+  const role = record.role === "assistant" || record.role === "user" ? record.role : null;
+  if (!role || !record.id) return null;
+  const toolPayload = asRecord(record.tool_payload);
+  return {
+    id: String(record.id),
+    role,
+    content: String(record.content || ""),
+    created_at: record.created_at || undefined,
+    tool_payload: toolPayload,
+    preview_render: previewFromPayload(toolPayload),
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1027,6 +1049,8 @@ export default function Assistant() {
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [mediaKind, setMediaKind] = useState<"image" | "voice" | "spreadsheet" | "text">("image");
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaNote, setMediaNote] = useState("");
@@ -1082,6 +1106,10 @@ export default function Assistant() {
         moduleContext: assistantEntry?.moduleContext,
       }),
     [assistantEntry, assistantSearchKey, urlFilters],
+  );
+  const assistantExternalSessionId = useMemo(
+    () => `assistant-web:${assistantSearchKey || "default"}`,
+    [assistantSearchKey],
   );
 
   useEffect(() => {
@@ -1211,9 +1239,20 @@ export default function Assistant() {
         module_key: assistantEntry?.moduleKey,
         module_label: assistantEntry?.moduleLabel,
         module_context: assistantEntry?.moduleContext,
+        external_session_id: assistantExternalSessionId,
       }),
     });
     return created.conversation_id;
+  }
+
+  async function loadConversationMessages(cid: string): Promise<ChatMessage[]> {
+    const rows = await api<PersistedChatMessage[]>(
+      `/api/assistant/conversations/${cid}/messages`
+    );
+    if (!Array.isArray(rows)) return [];
+    return rows
+      .map((row) => chatMessageFromHistoryRecord(row))
+      .filter((message): message is ChatMessage => Boolean(message));
   }
 
   useEffect(() => {
@@ -1245,12 +1284,24 @@ export default function Assistant() {
       try {
         setBusy(true);
         setError(null);
+        setHistoryError(null);
         setPending(null);
         setConversationId(null);
         const cid = await ensureConversation();
         if (cancelled) return;
         setConversationId(cid);
-        setMessages([]);
+        setHistoryLoading(true);
+        try {
+          const history = await loadConversationMessages(cid);
+          if (!cancelled) setMessages(history);
+        } catch (historyLoadError) {
+          if (!cancelled) {
+            setMessages([]);
+            setHistoryError(String(historyLoadError));
+          }
+        } finally {
+          if (!cancelled) setHistoryLoading(false);
+        }
       } catch (e) {
         if (cancelled) return;
         setError(String(e));
@@ -2113,6 +2164,17 @@ export default function Assistant() {
           </Card>
         ) : null}
 
+        {historyError ? (
+          <Card className="rounded-[var(--assistant-radius)] border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+              <div className="whitespace-pre-wrap">
+                No se pudo cargar el historial: {historyError}
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
         <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
           <Card className="overflow-hidden rounded-[var(--assistant-radius)] border border-[var(--assistant-border)] bg-[var(--assistant-surface)] shadow-[var(--assistant-shadow)]">
             <div className="border-b border-[var(--assistant-border)] bg-[var(--assistant-surface-elevated)] px-4 py-3 sm:px-5">
@@ -2129,7 +2191,7 @@ export default function Assistant() {
                 <div className="flex flex-wrap gap-2">
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-800">
                     <Clock3 className="h-3.5 w-3.5" />
-                    {busy ? "Procesando" : "Listo"}
+                    {busy ? "Procesando" : historyLoading ? "Cargando historial" : "Listo"}
                   </span>
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
                     <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -2140,7 +2202,21 @@ export default function Assistant() {
             </div>
 
             <div className="min-h-[430px] bg-[var(--assistant-bg)] p-3 sm:p-5">
-              {messages.length === 0 ? (
+              {historyLoading ? (
+                <div className="flex min-h-[360px] items-center justify-center rounded-[var(--assistant-radius)] border border-dashed border-[var(--assistant-border)] bg-[var(--assistant-surface)] p-6 text-center">
+                  <div className="max-w-md">
+                    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[var(--assistant-accent)]">
+                      <RefreshCw className="h-6 w-6 animate-spin" />
+                    </div>
+                    <h3 className="mt-4 text-lg font-semibold text-[var(--assistant-text)]">
+                      Cargando historial
+                    </h3>
+                    <p className="mt-2 text-sm leading-6 text-[var(--assistant-muted)]">
+                      Recuperando mensajes persistidos y superficies de trabajo.
+                    </p>
+                  </div>
+                </div>
+              ) : messages.length === 0 ? (
                 <div className="flex min-h-[360px] items-center justify-center rounded-[var(--assistant-radius)] border border-dashed border-[var(--assistant-border)] bg-[var(--assistant-surface)] p-6 text-center">
                   <div className="max-w-2xl">
                     <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-[var(--assistant-accent)]">
