@@ -666,7 +666,7 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
 
     assert 'class="terceros-filter-bar"' in html
     assert 'id="terceros-search-proveedor"' in html
-    assert "Por Proveedor" in html
+    assert "Por proveedor" in html
     assert 'data-proveedor="hk diseno, s.a. de c.v."' in html
     assert "normalize('NFD')" in html
     assert ".replace(/[^a-z0-9]+/g, ' ')" in html

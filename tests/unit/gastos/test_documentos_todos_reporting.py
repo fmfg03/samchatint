@@ -625,6 +625,45 @@ def test_informes_de_gastos_header_filters_include_solicitante_provider_and_acti
     assert 'accion_attr_parts = ["abrir informe"]' in route
 
 
+def test_gastos_list_tables_use_consistent_spanish_copy():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    terceros = text[
+        text.index("async def gastos_terceros(") :
+        text.index(
+            '@router.get("/gastos-terceros/solicitar-anticipo"',
+            text.index("async def gastos_terceros("),
+        )
+    ]
+    informes = text[
+        text.index("async def cuentas_de_gastos_list(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
+            text.index("async def cuentas_de_gastos_list("),
+        )
+    ]
+    scoped = terceros + "\n" + informes
+
+    for expected in [
+        "Fecha de aprobación",
+        "Monto solicitado",
+        "Fecha de pago",
+        "Por proveedor",
+        "Por solicitante",
+        "Por acción",
+    ]:
+        assert expected in scoped
+
+    for legacy in [
+        "Fecha de Aprobacion",
+        "Monto Solicitado",
+        "Fecha Pago",
+        "Por Proveedor",
+        "Por Solicitante",
+        "Por Acción",
+    ]:
+        assert legacy not in scoped
+
+
 def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def cuentas_de_gastos_list(")

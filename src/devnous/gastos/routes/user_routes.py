@@ -15084,11 +15084,11 @@ async def gastos_terceros(
                             <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Proveedor</label>
+                            <label for="terceros-search-proveedor" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por proveedor</label>
                             <input type="search" id="terceros-search-proveedor" placeholder="Ej. asociacion, diseno..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-solicitante" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Solicitante</label>
+                            <label for="terceros-search-solicitante" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por solicitante</label>
                             <input type="search" id="terceros-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
@@ -15096,7 +15096,7 @@ async def gastos_terceros(
                             <input type="search" id="terceros-search-concepto" placeholder="Ej. renta, servicios…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por Acción</label>
+                            <label for="terceros-search-accion" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Por acción</label>
                             <input type="search" id="terceros-search-accion" placeholder="Ej. revisar solicitud, editar, cancelar..." autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
                     </div>
@@ -15108,11 +15108,11 @@ async def gastos_terceros(
                                     <th>Referencia Operaciones</th>
                                     <th>Solicitante</th>
                                     <th>Aprobador</th>
-                                    <th>Fecha de Aprobacion</th>
+                                    <th>Fecha de aprobación</th>
                                     <th>Proveedor/Cliente</th>
-                                    <th>Monto Solicitado</th>
+                                    <th>Monto solicitado</th>
                                     <th>Moneda</th>
-                                    <th>Fecha Pago</th>
+                                    <th>Fecha de pago</th>
                                     <th>Descripción de pago</th>
                                     <th>Archivos</th>
                                     <th>Estado</th>
@@ -36627,15 +36627,15 @@ async def cuentas_de_gastos_list(
                     </div>
                     <div class="informes-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
                         <div>
-                            <label for="informes-search-solicitante" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Solicitante</label>
+                            <label for="informes-search-solicitante" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por solicitante</label>
                             <input type="search" id="informes-search-solicitante" placeholder="Ej. Alicia, Odilon..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="informes-search-proveedor" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Proveedor</label>
+                            <label for="informes-search-proveedor" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por proveedor</label>
                             <input type="search" id="informes-search-proveedor" placeholder="Proveedor o beneficiario..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                         <div>
-                            <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por Acción</label>
+                            <label for="informes-search-accion" style="display:block;font-size:12px;color:#6b7280;margin-bottom:4px;">Por acción</label>
                             <input type="search" id="informes-search-accion" placeholder="Ej. abrir informe, cerrar, cancelar..." autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box;">
                         </div>
                     </div>
