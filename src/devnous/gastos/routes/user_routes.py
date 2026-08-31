@@ -19164,6 +19164,10 @@ async def contabilidad_cuentas_por_cobrar_view(
     </style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cxc")}
+        {_gastos_breadcrumb_html([
+            ("Contabilidad", "/admin/contabilidad/estado"),
+            ("Cuentas por Cobrar", None),
+        ])}
         {f'<div class="card" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;font-weight:700;">{escape(success_msg)}</div>' if success_msg else ''}
         {f'<div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;font-weight:700;">{escape(error_msg)}</div>' if error_msg else ''}
         <div class="card">
