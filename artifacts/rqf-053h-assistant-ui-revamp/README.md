@@ -38,6 +38,31 @@ The build was generated with `npm run build` from `/srv/samchat/archive/projects
 
 A snapshot of the patched `Assistant.tsx` is stored in this artifact directory to prevent losing the UI work during later branch/release consolidation.
 
+## Rollback Notes
+
+This artifact does not deploy or copy frontend assets. Before applying a future
+`goal-fest-page` build to the active static directory, capture the existing
+bundle receipt:
+
+```bash
+find /srv/samchat/current/goal-fest-page/dist/assets -maxdepth 1 -type f -printf '%f %s %T@\n' | sort
+```
+
+Also copy the current dist directory to a dated backup before replacing files:
+
+```bash
+cp -a /srv/samchat/current/goal-fest-page/dist /srv/samchat/current/goal-fest-page/dist.rollback-YYYYMMDDHHMMSS
+```
+
+Rollback command:
+
+```bash
+rsync -a --delete /srv/samchat/current/goal-fest-page/dist.rollback-YYYYMMDDHHMMSS/ /srv/samchat/current/goal-fest-page/dist/
+```
+
+After rollback, verify `/healthz`, `/readyz`, and the expected `/assistant`
+bundle markers before claiming recovery.
+
 ## Verification
 
 - `npm run build` passed for the frontend bundle.

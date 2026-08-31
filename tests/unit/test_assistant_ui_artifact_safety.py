@@ -121,6 +121,23 @@ def test_assistant_ui_revamp_artifact_distinguishes_exec_errors():
     assert "RQF-053B-FU6 executive dashboard error state" in readme
 
 
+def test_assistant_ui_revamp_artifact_documents_static_asset_rollback():
+    readme = README_053H.read_text(encoding="utf-8")
+
+    static_dist = "/srv/samchat/current/goal-fest-page/dist"
+    static_assets = f"{static_dist}/assets"
+
+    assert "## Rollback Notes" in readme
+    assert static_dist in readme
+    assert static_assets in readme
+    assert "find /srv/samchat/current/goal-fest-page/dist/assets" in readme
+    assert "cp -a /srv/samchat/current/goal-fest-page/dist" in readme
+    assert "rsync -a --delete" in readme
+    assert "/healthz" in readme
+    assert "/readyz" in readme
+    assert "bundle markers" in readme
+
+
 def test_assistant_ui_artifacts_document_external_deploy_boundary():
     readme_053a = README_053A.read_text(encoding="utf-8")
     readme_053b = README_053B.read_text(encoding="utf-8")
