@@ -13153,6 +13153,11 @@ async def beneficiary_onboarding_new_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "beneficiarios")}
+            {_gastos_breadcrumb_html([
+                ("Alta de beneficiarios", "/beneficiarios/altas"),
+                ("Nueva alta", None),
+            ])}
             <section class="surface">
                 <h1 style="margin-top:0;">Solicitar alta de beneficiario</h1>
                 {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
