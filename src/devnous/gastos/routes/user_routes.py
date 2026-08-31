@@ -26411,6 +26411,10 @@ async def documentos_control_presupuestal(
     <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px")}</style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "operacion")}
+        {_gastos_workspace_nav_html(current_empleado, "documentos")}
+        {_gastos_breadcrumb_html([
+            ("Control Presupuestal", None),
+        ])}
         {_render_workspace_hero(
             eyebrow="Control Presupuestal",
             title="Documentos por clasificar",
