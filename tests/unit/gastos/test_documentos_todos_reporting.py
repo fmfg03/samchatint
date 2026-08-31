@@ -761,6 +761,19 @@ def test_historial_and_bulk_pending_actions_use_approver_visibility_gate() -> No
     assert "await _can_review_pending_approvals" in source[history_start:history_end]
 
 
+def test_approval_history_page_has_workspace_navigation_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def historial_aprobador")
+    end = source.index("@router.get(\"/documentos/todos\"", start)
+    block = source[start:end]
+
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Todos los documentos", "/documentos/todos")' in block
+    assert '("Pendientes por aprobar", "/documentos/pendientes")' in block
+    assert '("Historial de aprobaciones", None)' in block
+
+
 def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = source.index("async def _render_solicitud_terceros_form")

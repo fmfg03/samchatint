@@ -27446,6 +27446,12 @@ async def historial_aprobador(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Todos los documentos", "/documentos/todos"),
+                ("Pendientes por aprobar", "/documentos/pendientes"),
+                ("Historial de aprobaciones", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Aprobaciones",
                 title="Historial de aprobaciones",
