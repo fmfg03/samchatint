@@ -26015,7 +26015,6 @@ async def mis_documentos(
         """
     mis_docs_actions_html = """
         <a href="/documentos/nueva-solicitud" class="button primary">Nueva solicitud</a>
-        <a href="/informes-de-gastos" class="button secondary">Volver a informes de gastos</a>
         <a href="/informes-de-gastos" class="button secondary">Abrir informes</a>
     """
     mis_docs_side_html = f"""
@@ -26039,6 +26038,10 @@ async def mis_documentos(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "documentos")}
+            {_gastos_breadcrumb_html([
+                ("Mis documentos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Documentos",
                 title="Mis documentos",

@@ -278,6 +278,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def documentos_todos("),
         )
     ]
+    mis_documentos = text[
+        text.index("async def mis_documentos(") :
+        text.index(
+            '@router.get("/documentos/control-presupuestal"',
+            text.index("async def mis_documentos("),
+        )
+    ]
     beneficiarios = text[
         text.index("def _beneficiary_onboarding_page(") :
         text.index(
@@ -340,6 +347,7 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     )
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in mis_documentos
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
     assert (
         '_gastos_workspace_nav_html(current_empleado, "beneficiarios")'
@@ -434,6 +442,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("def _beneficiary_onboarding_page("),
         )
     ]
+    mis_documentos = text[
+        text.index("async def mis_documentos(") :
+        text.index(
+            '@router.get("/documentos/control-presupuestal"',
+            text.index("async def mis_documentos("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -468,6 +483,10 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '("Alta de beneficiarios", "/beneficiarios/altas")' in beneficiarios
     assert '("Autorización área", None)' in beneficiarios
     assert '("Palomita final", None)' in beneficiarios
+
+    assert "_gastos_breadcrumb_html([" in mis_documentos
+    assert '("Mis documentos", None)' in mis_documentos
+    assert "Volver a informes de gastos" not in mis_documentos
 
     for route_source, leaf in [
         (informe_edit, "Editar"),
