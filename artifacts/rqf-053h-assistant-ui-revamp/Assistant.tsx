@@ -1063,6 +1063,7 @@ export default function Assistant() {
   const [executive, setExecutive] = useState<ExecutiveDashboard | null>(null);
   const [alerts, setAlerts] = useState<AlertsResponse | null>(null);
   const [execLoading, setExecLoading] = useState(false);
+  const [execError, setExecError] = useState<string | null>(null);
   const [ragStatus, setRagStatus] = useState<RAGStatus | null>(null);
   const [ragQuery, setRagQuery] = useState("");
   const [ragResults, setRagResults] = useState<RAGResult[]>([]);
@@ -1330,6 +1331,7 @@ export default function Assistant() {
   async function loadExecutiveDashboard() {
     if (!me) return;
     setExecLoading(true);
+    setExecError(null);
     try {
       const [execData, alertsData] = await Promise.all([
         api<ExecutiveDashboard>("/api/assistant/reports/executive", {
@@ -1349,9 +1351,10 @@ export default function Assistant() {
       ]);
       setExecutive(execData);
       setAlerts(alertsData);
-    } catch {
+    } catch (e) {
       setExecutive(null);
       setAlerts(null);
+      setExecError(String(e));
     } finally {
       setExecLoading(false);
     }
@@ -2525,7 +2528,11 @@ export default function Assistant() {
                 <AlertTriangle className="h-4 w-4 text-[var(--assistant-warning)]" />
                 Alertas automáticas
               </div>
-              {alerts?.alerts?.length ? (
+              {execError ? (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-[var(--assistant-danger)]">
+                  No se pudo cargar el panel ejecutivo: {execError}
+                </div>
+              ) : alerts?.alerts?.length ? (
                 <div className="grid gap-2 md:grid-cols-2">
                   {alerts.alerts.slice(0, 4).map((item, idx) => (
                     <div key={`${item.code}_${idx}`} className="rounded-xl border border-[var(--assistant-border)] bg-[var(--assistant-surface-elevated)] p-3">
@@ -2536,11 +2543,11 @@ export default function Assistant() {
                     </div>
                   ))}
                 </div>
-              ) : (
+              ) : !execLoading ? (
                 <p className="rounded-xl border border-[var(--assistant-border)] bg-[var(--assistant-surface-elevated)] p-3 text-sm text-[var(--assistant-muted)]">
                   Sin alertas activas para el filtro actual.
                 </p>
-              )}
+              ) : null}
             </div>
           </Card>
 

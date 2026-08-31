@@ -105,6 +105,22 @@ def test_assistant_ui_revamp_artifact_hydrates_persisted_history():
     assert "RQF-053B-FU4 history hydration" in readme
 
 
+def test_assistant_ui_revamp_artifact_distinguishes_exec_errors():
+    source = _source_053h()
+    readme = README_053H.read_text(encoding="utf-8")
+
+    assert "const [execError, setExecError]" in source
+    assert "setExecError(null)" in source
+    assert "setExecError(String(e))" in source
+    assert "No se pudo cargar el panel ejecutivo" in source
+    assert "alerts?.alerts?.length ? (" in source
+    assert "!execLoading ? (" in source
+    assert source.index("No se pudo cargar el panel ejecutivo") < source.index(
+        "Sin alertas activas para el filtro actual."
+    )
+    assert "RQF-053B-FU6 executive dashboard error state" in readme
+
+
 def test_assistant_ui_artifacts_document_external_deploy_boundary():
     readme_053a = README_053A.read_text(encoding="utf-8")
     readme_053b = README_053B.read_text(encoding="utf-8")

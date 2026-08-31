@@ -19,6 +19,8 @@ Make the production assistant feel like an operational workspace instead of a ra
   `GET /api/assistant/conversations/{conversation_id}/messages` and preserving
   persisted `tool_payload` so historical assistant messages render workspace
   cards, step traces, source cards, and preview surfaces after reload/re-entry.
+- Adds RQF-053B-FU6 executive dashboard error state so failed dashboard loads
+  render an explicit error before the empty-alerts state.
 
 ## Authority boundary
 
