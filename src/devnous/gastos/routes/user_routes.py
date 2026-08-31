@@ -15059,6 +15059,9 @@ async def gastos_terceros(
         <div class="container">
             {nav}
             {_gastos_workspace_nav_html(current_empleado, "solicitudes")}
+            {_gastos_breadcrumb_html([
+                ("Solicitudes de transferencia", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Operaciones",
                 title="Solicitudes de transferencia",

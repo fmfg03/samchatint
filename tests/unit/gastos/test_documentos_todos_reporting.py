@@ -485,6 +485,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def solicitar_anticipo_form("),
         )
     ]
+    terceros = text[
+        text.index("async def gastos_terceros(") :
+        text.index(
+            '@router.get("/gastos-terceros/solicitar-anticipo"',
+            text.index("async def gastos_terceros("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -531,6 +538,9 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert '("Solicitudes de transferencia", "/gastos-terceros")' in solicitar_anticipo
     assert '("Solicitar anticipo", None)' in solicitar_anticipo
     assert "Solicitud vinculada a informe de gastos" in solicitar_anticipo
+
+    assert "_gastos_breadcrumb_html([" in terceros
+    assert '("Solicitudes de transferencia", None)' in terceros
 
     for route_source, leaf in [
         (informe_edit, "Editar"),
