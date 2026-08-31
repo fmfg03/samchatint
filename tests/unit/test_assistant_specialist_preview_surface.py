@@ -668,3 +668,127 @@ def test_specialist_preview_workspace_trace_and_sources_include_case_memory() ->
     assert "recommend_safe_next_step" in [step["step_id"] for step in steps]
     assert "deterministic_resume_guidance" in [source["source_id"] for source in sources]
     assert steps[-1]["data"]["execution_allowed"] is False
+
+
+def test_workspace_trace_handles_skipped_live_lookup_and_bad_lists() -> None:
+    from samchat.assistant.assistant_workspace_trace import (
+        build_specialist_workspace_source_panel,
+        build_specialist_workspace_step_trace,
+    )
+
+    understood_context = {
+        "authority": "context_hint_only",
+        "document_refs": "S-2600071",
+        "operations_refs": None,
+        "uuid_or_prefixes": {"prefix": "669DBF39"},
+        "account_codes": "105-001",
+        "domains": "cxc",
+        "entities": {"customer": "ACME"},
+    }
+    live_context = {
+        "authority": "read_only_context",
+        "status": "not_lookup_performed",
+        "live_lookup_performed": False,
+        "matched": True,
+        "documents": {"numero_referencia": "S-2600071"},
+        "expenses": "not-a-list",
+        "cfdis": None,
+        "unresolved": None,
+    }
+    diagnostics = {
+        "authority": "read_only_diagnostic",
+        "readiness": "missing_live_context",
+        "findings": "malformed",
+        "missing": None,
+        "risks": {"risk": "malformed"},
+        "next_steps": "ask_for_reference",
+    }
+    preview_render = {
+        "preview_id": "preview-skipped-live",
+        "task_id": "SAMCHAT-CXC-COLLECTION-001",
+        "preview_type": "specialist_business_diff",
+        "sections": {"section_id": "summary"},
+        "primary_action_enabled": False,
+        "execution_status": "not_executed",
+    }
+
+    steps = build_specialist_workspace_step_trace(
+        task_id="SAMCHAT-CXC-COLLECTION-001",
+        understood_context=understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=preview_render,
+    )
+    sources = build_specialist_workspace_source_panel(
+        understood_context=understood_context,
+        live_context=live_context,
+        diagnostics=diagnostics,
+        preview_render=preview_render,
+    )
+
+    understand_step = next(
+        step for step in steps if step["step_id"] == "understand_request"
+    )
+    live_step = next(
+        step for step in steps if step["step_id"] == "read_live_context"
+    )
+    diagnostic_step = next(
+        step for step in steps if step["step_id"] == "diagnose_readiness"
+    )
+    preview_step = next(
+        step for step in steps if step["step_id"] == "prepare_preview"
+    )
+    authority_step = next(
+        step for step in steps if step["step_id"] == "hold_authority_boundary"
+    )
+    user_source = next(
+        source for source in sources if source["source_id"] == "user_message"
+    )
+    live_source = next(
+        source
+        for source in sources
+        if source["source_id"] == "samchat_db_readonly"
+    )
+    diagnostic_source = next(
+        source
+        for source in sources
+        if source["source_id"] == "deterministic_diagnostics"
+    )
+    preview_source = next(
+        source
+        for source in sources
+        if source["source_id"] == "specialist_preview_contract"
+    )
+
+    assert understand_step["data"]["document_refs"] == []
+    assert understand_step["data"]["operations_refs"] == []
+    assert understand_step["data"]["domains"] == []
+    assert understand_step["data"]["entities"] == []
+    assert live_step["status"] == "skipped"
+    assert live_step["data"]["documents"] == 0
+    assert live_step["data"]["expenses"] == 0
+    assert live_step["data"]["cfdis"] == 0
+    assert live_step["data"]["unresolved"] == {}
+    assert diagnostic_step["data"]["findings"] == []
+    assert diagnostic_step["data"]["missing"] == []
+    assert diagnostic_step["data"]["risks"] == []
+    assert diagnostic_step["data"]["next_steps"] == []
+    assert preview_step["status"] == "blocked"
+    assert preview_step["data"]["sections"] == []
+    assert preview_step["data"]["primary_action_enabled"] is False
+    assert authority_step["data"]["execution_allowed"] is False
+    assert authority_step["data"]["writes_attempted"] is False
+    assert user_source["data"]["document_refs"] == []
+    assert user_source["data"]["operations_refs"] == []
+    assert user_source["data"]["uuid_or_prefixes"] == []
+    assert user_source["data"]["account_codes"] == []
+    assert user_source["data"]["domains"] == []
+    assert live_source["data"]["documents"] == 0
+    assert live_source["data"]["expenses"] == 0
+    assert live_source["data"]["cfdis"] == 0
+    assert live_source["data"]["unresolved"] == {}
+    assert diagnostic_source["data"]["findings"] == []
+    assert diagnostic_source["data"]["missing"] == []
+    assert diagnostic_source["data"]["risks"] == []
+    assert preview_source["data"]["section_count"] == 0
+    assert preview_source["data"]["primary_action_enabled"] is False
