@@ -229,6 +229,13 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def cuentas_de_gastos_list("),
         )
     ]
+    informe_crear = text[
+        text.index("async def crear_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/crear")',
+            text.index("async def crear_cuenta_de_gastos_form("),
+        )
+    ]
     informe_detail = text[
         text.index("async def cuenta_de_gastos_detail(") :
         text.index(
@@ -288,6 +295,7 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
 
     assert '_gastos_workspace_nav_html(current_empleado, "solicitudes")' in terceros
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informes
+    assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_crear
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_detail
     assert '_gastos_workspace_nav_html(current_empleado, "informes")' in informe_edit
     assert (
@@ -319,6 +327,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
         text.index(
             '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
             text.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    informe_crear = text[
+        text.index("async def crear_cuenta_de_gastos_form(") :
+        text.index(
+            '@router.post("/informes-de-gastos/crear")',
+            text.index("async def crear_cuenta_de_gastos_form("),
         )
     ]
     informe_edit = text[
@@ -356,6 +371,10 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
 
     assert '_gastos_breadcrumb_html([' in informe_detail
     assert '(f"I-{cuenta.referencia_base}", None)' in informe_detail
+
+    assert '_gastos_breadcrumb_html([' in informe_crear
+    assert '("Informes de gastos", "/informes-de-gastos")' in informe_crear
+    assert '("Crear informe de gastos", None)' in informe_crear
 
     for route_source, leaf in [
         (informe_edit, "Editar"),

@@ -35307,6 +35307,11 @@ async def crear_cuenta_de_gastos_form(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "informes")}
+            {_gastos_workspace_nav_html(current_empleado, "informes")}
+            {_gastos_breadcrumb_html([
+                ("Informes de gastos", "/informes-de-gastos"),
+                ("Crear informe de gastos", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Informes de gastos",
                 title="Crear informe de gastos",
