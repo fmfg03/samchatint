@@ -6925,6 +6925,7 @@ async def admin_finance_accounts_receivable(
             tournament_id=tournament_id,
             tournament_code=tournament_code,
             limit=limit,
+            ensure_schema=False,
         )
         matching_payload = await build_ar_matching_workbench(
             session,
@@ -6935,6 +6936,7 @@ async def admin_finance_accounts_receivable(
             month=month,
             tolerance=tolerance,
             limit=limit,
+            ensure_schema=False,
         )
         body_html = (
             render_ar_read_model_html(payload)

@@ -251,8 +251,10 @@ async def list_psp_cfdi_income_candidates(
     assigned_only: bool = False,
     unassigned_only: bool = False,
     limit: int = 100,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_cfdi_income_tournament_assignment_schema(session)
+    if ensure_schema:
+        await ensure_cfdi_income_tournament_assignment_schema(session)
     allowlist = await list_configured_rfc_allowlist(session)
     if not allowlist:
         return []

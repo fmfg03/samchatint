@@ -5459,8 +5459,10 @@ async def list_budget_lines(
     tournament_code: Optional[str] = None,
     line_direction: Optional[str] = None,
     limit: int = 200,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     filters = ["l.budget_version_id = :version_id"]
     params: dict[str, Any] = {
         "version_id": version_id,
@@ -6575,8 +6577,10 @@ async def list_monthly_plan_for_lines(
     session: AsyncSession,
     *,
     line_ids: list[str],
+    ensure_schema: bool = True,
 ) -> dict[str, dict[int, dict[str, float]]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_ids = [_safe_str(line_id) for line_id in line_ids if _safe_str(line_id)]
     if not clean_ids:
         return {}

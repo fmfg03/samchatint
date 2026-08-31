@@ -36914,6 +36914,14 @@ def _can_quick_capture_expense(
     informe_doc: Optional[Documento],
     current_empleado: Empleado,
 ) -> bool:
+    return _can_create_solicitud_from_cuenta(cuenta, informe_doc, current_empleado)
+
+
+def _can_create_solicitud_from_cuenta(
+    cuenta: CuentaDeGastos,
+    informe_doc: Optional[Documento],
+    current_empleado: Empleado,
+) -> bool:
     can_manage = cuenta.empleado_id == current_empleado.id or current_empleado.rol in (
         "admin",
         "finanzas",
@@ -37987,7 +37995,7 @@ async def cuenta_de_gastos_detail(
         )
     nueva_solicitud_btn_html = (
         f'<a href="/informes-de-gastos/{cuenta.id}/nueva-solicitud" class="button primary" style="margin-bottom: 15px;">Crear nueva solicitud</a>'
-        if _can_manage_cuenta
+        if _can_create_solicitud_from_cuenta(cuenta, informe_doc, current_empleado)
         else ''
     )
     solicitudes_section_html = f'''

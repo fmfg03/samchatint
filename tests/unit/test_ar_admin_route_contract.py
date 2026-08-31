@@ -47,6 +47,8 @@ def test_admin_ar_route_does_not_run_budget_schema_ddl_on_get():
     assert "resolve_definitive_budget_version(" not in route_body
     assert "ensure_schema=False" in route_body
     assert "resolve_definitive_budget_version_from_versions" in route_body
+    assert "build_ar_read_model(" in route_body
+    assert "build_ar_matching_workbench(" in route_body
 
 
 def test_admin_routes_expose_ar_collection_match_posts():
@@ -57,7 +59,8 @@ def test_admin_routes_expose_ar_collection_match_posts():
         in source
     )
     assert (
-        '@router.post("/admin/finanzas/cuentas-por-cobrar/matches/{match_id}/reverse")'
+        '@router.post("/admin/finanzas/cuentas-por-cobrar/matches/'
+        '{match_id}/reverse")'
         in source
     )
     assert "accept_ar_collection_match" in source

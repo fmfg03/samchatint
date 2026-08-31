@@ -775,6 +775,56 @@ def test_informes_de_gastos_actions_are_spaced_not_inline_overlapped():
     assert "matchAccion" in route
 
 
+def test_informe_detail_new_solicitud_button_uses_creation_gate():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def cuenta_de_gastos_detail(")
+    end = text.index(
+        '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+        start,
+    )
+    route = text[start:end]
+
+    assert (
+        "_can_create_solicitud_from_cuenta(cuenta, informe_doc, current_empleado)"
+        in route
+    )
+    assert "if _can_manage_cuenta\n        else ''" not in route
+
+
+def test_can_create_solicitud_from_cuenta_requires_open_draft_and_manager():
+    empleado_id = uuid4()
+    manager = SimpleNamespace(id=empleado_id, rol="finanzas")
+    owner = SimpleNamespace(id=empleado_id, rol="empleado")
+    other = SimpleNamespace(id=uuid4(), rol="empleado")
+    open_cuenta = SimpleNamespace(
+        id=uuid4(), empleado_id=empleado_id, estado="abierta"
+    )
+    closed_cuenta = SimpleNamespace(
+        id=uuid4(), empleado_id=empleado_id, estado="cerrada"
+    )
+    draft_informe = SimpleNamespace(estado="borrador")
+    rejected_informe = SimpleNamespace(estado="rechazado")
+
+    assert user_routes._can_create_solicitud_from_cuenta(
+        open_cuenta, draft_informe, owner
+    )
+    assert user_routes._can_create_solicitud_from_cuenta(
+        open_cuenta, draft_informe, manager
+    )
+    assert not user_routes._can_create_solicitud_from_cuenta(
+        open_cuenta, draft_informe, other
+    )
+    assert not user_routes._can_create_solicitud_from_cuenta(
+        closed_cuenta, draft_informe, manager
+    )
+    assert not user_routes._can_create_solicitud_from_cuenta(
+        open_cuenta, rejected_informe, manager
+    )
+    assert not user_routes._can_create_solicitud_from_cuenta(
+        open_cuenta, None, manager
+    )
+
+
 def test_documentos_todos_is_available_to_active_authenticated_users() -> None:
     active_user = SimpleNamespace(id=uuid4(), activo=True, rol="empleado")
     inactive_user = SimpleNamespace(id=uuid4(), activo=False, rol="empleado")
