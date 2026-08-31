@@ -271,8 +271,13 @@ type AlertsResponse = {
   }>;
 };
 
-const OPENAI_KEY_STORAGE_KEY = "samchat_assistant_openai_api_key";
 const ASSISTANT_MODE_STORAGE_KEY = "samchat_assistant_mode";
+const LEGACY_PROVIDER_CREDENTIAL_STORAGE = "samchat_assistant_openai_api_key";
+const SUPPORTED_ASSISTANT_MODES: AssistantMode[] = [
+  "ahorro",
+  "balanceado",
+  "calidad",
+];
 
 const assistantThemeVars = {
   "--assistant-bg": "#f5f7fb",
@@ -308,6 +313,13 @@ function formatAssistantDate(raw?: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function normalizeAssistantMode(raw: string | null): AssistantMode {
+  if (SUPPORTED_ASSISTANT_MODES.includes(raw as AssistantMode)) {
+    return raw as AssistantMode;
+  }
+  return "ahorro";
 }
 
 function modeLabel(mode: AssistantMode) {
@@ -1044,7 +1056,7 @@ export default function Assistant() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>(
-    () => (localStorage.getItem(ASSISTANT_MODE_STORAGE_KEY) as AssistantMode) || "ahorro"
+    () => normalizeAssistantMode(localStorage.getItem(ASSISTANT_MODE_STORAGE_KEY)),
   );
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
@@ -1082,9 +1094,6 @@ export default function Assistant() {
   const [codexDraft, setCodexDraft] = useState<string>("");
   const [codexBusy, setCodexBusy] = useState(false);
   const [codexStatus, setCodexStatus] = useState<string | null>(null);
-  const [sessionOpenAiKey, setSessionOpenAiKey] = useState<string>(
-    () => localStorage.getItem(OPENAI_KEY_STORAGE_KEY) || ""
-  );
   const [ragWeightsDraft, setRagWeightsDraft] = useState({
     doc_weight: "1.0",
     sql_weight: "1.15",
@@ -1115,17 +1124,21 @@ export default function Assistant() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const keyFromUrl =
-      url.searchParams.get("openai_api_key") ||
-      url.searchParams.get("openai_key") ||
-      "";
-    const normalized = keyFromUrl.trim();
-    if (!normalized) return;
-    localStorage.setItem(OPENAI_KEY_STORAGE_KEY, normalized);
-    setSessionOpenAiKey(normalized);
+    const hasUrlProviderKey =
+      url.searchParams.has("openai_api_key") ||
+      url.searchParams.has("openai_key");
+    localStorage.removeItem(LEGACY_PROVIDER_CREDENTIAL_STORAGE);
+    if (!hasUrlProviderKey) return;
     url.searchParams.delete("openai_api_key");
     url.searchParams.delete("openai_key");
-    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+    window.history.replaceState(
+      {},
+      document.title,
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+    setAuthError(
+      "Las API keys no se aceptan por URL. Usa credenciales server-side configuradas.",
+    );
   }, []);
 
   useEffect(() => {
@@ -1160,9 +1173,6 @@ export default function Assistant() {
               "Content-Type": "application/json",
               ...(init?.headers || {}),
             };
-        if (sessionOpenAiKey) {
-          (mergedHeaders as Record<string, string>)["X-OpenAI-API-Key"] = sessionOpenAiKey;
-        }
         const res = await fetch(url, {
           credentials: "include",
           signal: controller.signal,
@@ -1204,9 +1214,6 @@ export default function Assistant() {
           "Content-Type": "application/json",
           ...(init?.headers as Record<string, string> | undefined),
         };
-        if (sessionOpenAiKey) {
-          mergedHeaders["X-OpenAI-API-Key"] = sessionOpenAiKey;
-        }
         const res = await fetch(url, {
           credentials: "include",
           signal: controller.signal,

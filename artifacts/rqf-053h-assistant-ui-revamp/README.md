@@ -25,10 +25,18 @@ Make the production assistant feel like an operational workspace instead of a ra
   navigation to `/RAG`, not as an active RAG administration console. Any
   remaining RAG state or handlers in this snapshot are extraction debt for a
   dedicated frontend slice, not Assistant ownership.
+- Adds RQF-053H credential-surface hardening: `/assistant` removes legacy
+  locally stored provider keys, rejects `openai_api_key` / `openai_key` URL
+  parameters without reading their values, and does not send
+  `X-OpenAI-API-Key` from browser state.
 
 ## Authority boundary
 
 This slice does not enable writes, approvals, folder creation, notifications, exports, or mutations. It only changes presentation of already returned assistant data.
+
+Provider credentials are not accepted through URL parameters or browser
+storage. Any live provider credential must be configured through the server-side
+runtime authority path, not the Assistant UI.
 
 ## Frontend source and deployment note
 

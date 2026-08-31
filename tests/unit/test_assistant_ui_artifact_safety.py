@@ -13,6 +13,9 @@ README_053H = Path("artifacts/rqf-053h-assistant-ui-revamp/README.md")
 RUNTIME_DEPLOY_053H = Path(
     "artifacts/rqf-053h-assistant-ui-runtime-deploy"
 )
+CREDENTIAL_HARDENING_053H = Path(
+    "artifacts/rqf-053h-assistant-credential-hardening"
+)
 
 
 def _source() -> str:
@@ -124,6 +127,33 @@ def test_assistant_ui_revamp_artifact_distinguishes_exec_errors():
     assert "RQF-053B-FU6 executive dashboard error state" in readme
 
 
+def test_assistant_ui_revamp_artifact_rejects_provider_key_intake():
+    source = _source_053h()
+    readme = README_053H.read_text(encoding="utf-8")
+
+    assert "OPENAI_KEY_STORAGE_KEY" not in source
+    legacy_set = "localStorage.setItem(LEGACY_PROVIDER_CREDENTIAL_STORAGE"
+    legacy_get = "localStorage.getItem(LEGACY_PROVIDER_CREDENTIAL_STORAGE"
+    assert legacy_set not in source
+    assert legacy_get not in source
+    assert "setSessionOpenAiKey" not in source
+    assert 'url.searchParams.get("openai_api_key")' not in source
+    assert 'url.searchParams.get("openai_key")' not in source
+    assert 'url.searchParams.has("openai_api_key")' in source
+    assert 'url.searchParams.has("openai_key")' in source
+    legacy_remove = (
+        "localStorage.removeItem(LEGACY_PROVIDER_CREDENTIAL_STORAGE)"
+    )
+    assert legacy_remove in source
+    assert 'url.searchParams.delete("openai_api_key")' in source
+    assert 'url.searchParams.delete("openai_key")' in source
+    assert "X-OpenAI-API-Key" not in source
+    assert "Las API keys no se aceptan por URL" in source
+    assert "function normalizeAssistantMode" in source
+    assert "SUPPORTED_ASSISTANT_MODES" in source
+    assert "RQF-053H credential-surface hardening" in readme
+
+
 def test_assistant_ui_revamp_artifact_documents_static_asset_rollback():
     readme = README_053H.read_text(encoding="utf-8")
 
@@ -195,3 +225,26 @@ def test_assistant_ui_runtime_deploy_receipt_captures_053h_assets():
     assert "/readyz" in readme
     assert "dist.rollback-20260831-rqf053h" in readme
     assert "rsync -a --delete" in readme
+
+
+def test_assistant_ui_credential_hardening_receipt_captures_runtime():
+    readme = (CREDENTIAL_HARDENING_053H / "README.md").read_text(
+        encoding="utf-8"
+    )
+    predeploy = (
+        CREDENTIAL_HARDENING_053H / "predeploy-assets.txt"
+    ).read_text(encoding="utf-8")
+    postdeploy = (
+        CREDENTIAL_HARDENING_053H / "postdeploy-assets.txt"
+    ).read_text(encoding="utf-8")
+
+    assert "DEPLOYED_STATIC_ASSETS" in readme
+    assert "Assistant-Cj-wzq_B.js" in predeploy
+    assert "Assistant-DM-K94_6.js" in postdeploy
+    assert "Assistant-DM-K94_6.js" in readme
+    assert "Las API keys no se aceptan por URL" in readme
+    assert "X-OpenAI-API-Key" in readme
+    assert "Verified absent from the served assistant asset" in readme
+    assert "Expected remaining literals" in readme
+    assert "dist.rollback-20260831-rqf053h-credentials" in readme
+    assert "backend still accepts `X-OpenAI-API-Key`" in readme
