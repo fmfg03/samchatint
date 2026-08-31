@@ -138,6 +138,25 @@ def test_assistant_ui_revamp_artifact_documents_static_asset_rollback():
     assert "bundle markers" in readme
 
 
+def test_assistant_ui_revamp_artifact_keeps_rag_admin_out_of_assistant():
+    source = _source_053h()
+    readme = README_053H.read_text(encoding="utf-8")
+
+    forbidden_labels = [
+        "Ingestar",
+        "Auto tune",
+        "Reset config",
+        "Guardar configuracion",
+        "Guardar configuración",
+    ]
+
+    assert 'href="/RAG"' in source
+    assert "RAG movido a página dedicada" in source
+    assert "RQF-053B-FU7 RAG ownership note" in readme
+    for label in forbidden_labels:
+        assert label not in source
+
+
 def test_assistant_ui_artifacts_document_external_deploy_boundary():
     readme_053a = README_053A.read_text(encoding="utf-8")
     readme_053b = README_053B.read_text(encoding="utf-8")

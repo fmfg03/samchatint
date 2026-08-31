@@ -21,6 +21,10 @@ Make the production assistant feel like an operational workspace instead of a ra
   cards, step traces, source cards, and preview surfaces after reload/re-entry.
 - Adds RQF-053B-FU6 executive dashboard error state so failed dashboard loads
   render an explicit error before the empty-alerts state.
+- Adds RQF-053B-FU7 RAG ownership note: `/assistant` should treat RAG as
+  navigation to `/RAG`, not as an active RAG administration console. Any
+  remaining RAG state or handlers in this snapshot are extraction debt for a
+  dedicated frontend slice, not Assistant ownership.
 
 ## Authority boundary
 
