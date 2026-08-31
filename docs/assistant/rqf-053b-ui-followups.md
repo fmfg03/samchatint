@@ -1,6 +1,6 @@
 # RQF-053B ? Assistant UI follow-ups
 
-Status: PENDING_BACKLOG
+Status: CLOSED_TRACKED_FOLLOWUPS
 Source: CodeRabbit review on PR #151
 Scope: Assistant UI debt captured after merging the read-only step trace and source panel slice.
 
@@ -32,6 +32,8 @@ Tighten `resolveExportIntent` so casual mentions of PDF/Excel/CSV in a question 
 
 ### RQF-053B-FU4 ? Conversation history rendering
 
+Status: CLOSED_BY_F41712CA2
+
 Load persisted conversation history from `GET /conversations/{conversation_id}/messages` and map records into `ChatMessage` so workspace cards, traces, sources, and previews render for historical assistant messages. Memoize derived workspace panels for long conversations.
 
 ### RQF-053B-FU5 - Assistant mode validation
@@ -42,31 +44,37 @@ Validate `assistantMode` read from storage against supported values before using
 
 ### RQF-053B-FU6 ? Executive dashboard error state
 
+Status: CLOSED_BY_66A726830
+
 Distinguish failed executive dashboard loads from successfully loaded empty results. Render a visible error state before any empty-alerts message.
 
 ### RQF-053B-FU7 ? RAG ownership cleanup
+
+Status: CLOSED_BY_3F20EA541
 
 Review whether Assistant still owns RAG administration handlers/state. If not, remove or relocate them to `/RAG` to reduce Assistant UI surface area.
 
 ### RQF-053B-FU8 ? Rollback notes for external frontend assets
 
+Status: CLOSED_BY_FBFA8D488
+
 Deployment artifacts for external `goal-fest-page` assets should include the previous asset hash and/or an explicit rollback command.
 
 ### RQF-053B-FU9 ? Boundary tests for trace/source builders
+
+Status: CLOSED_BY_4175D250F
 
 Add tests for `build_specialist_workspace_step_trace` and `build_specialist_workspace_source_panel` with `live_lookup_performed=False` and malformed/empty list-like values.
 
 ## Priority
 
-Recommended handling:
-
-1. FU4 - product continuity and workspace history.
-2. FU6 - correctness and operator trust.
-3. FU8, FU9 - factory hygiene.
-4. FU7 - UI cleanup, likely during the larger Assistant UI revamp.
+Recommended handling is complete for this tracker.
 
 Closed in RQF-053C: FU1, FU2, FU3, FU5.
+Closed in the 2026-08-31 consolidation branch:
+FU4 (`f41712ca2`), FU6 (`66a726830`), FU7 (`3f20ea541`),
+FU8 (`fbfa8d488`), FU9 (`4175d250f`).
 
 ## Boundary
 
-These follow-ups should not block the completed RQF-053B read-only trace/source contract, but they should be addressed before presenting the Assistant UI as polished or before enabling any write-capable assistant path.
+These follow-ups no longer block the completed RQF-053B read-only trace/source contract in repository artifacts. Runtime claims still require applying the relevant artifact to the external frontend source, building static assets, and verifying the active `/assistant` bundle.

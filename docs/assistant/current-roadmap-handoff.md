@@ -41,7 +41,7 @@ Clean-room architecture boundary:
 | RQF-054D/E/F | Executive renderer, work-turn trace, semantic registry foundation | `work_turn_renderer.py`, `assistant_workspace_trace.py`, `tool_registry.py` | Present in active release source | Keep broadening source-backed rendered answers; do not render raw payloads | Read-only |
 | RQF-054G | Multi-candidate read-only execution | `multi_candidate_readonly.py`; focused local verification passed 2026-08-31 | Present in active release source | Reconcile historical `IMPLEMENTED_LOCAL` labels with PR/release evidence before claiming formal closure | Read-only |
 | RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; focused local verification passed 2026-08-31 | Present in active release source as source module | Promote from local regression contract into demo/canary gate with captured live prompts | Read-only |
-| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; UI follow-ups tracked | Prior static deployment evidence exists; runtime assets must be rechecked before UI claims | Close continuity/error-state/rollback/source-builder follow-ups before calling UI polished | Read-only/proposal |
+| RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; PR #151 follow-ups FU4/FU6/FU7/FU8/FU9 closed in repository artifacts/tests | Prior static deployment evidence exists; runtime assets must be rechecked before UI claims | Apply artifact to external active frontend, rebuild static assets, capture rollback receipt, and verify runtime bundle before polished UI claims | Read-only/proposal |
 | SOUL Wizard 001-004 | Tournament SOUL draft, clone, activation preview | `soul_wizard.py`; mini-roadmap closed | Source present; coverage remains data-dependent | One reliable SOUL per tournament before complete Owner Pack claims | Preview-only, no operational writes |
 | Owner Pack workspace | Read-only entity folder readiness/evidence workspace | `owner_pack_*`, `owner_entity_folder_workspace.py`, owner variable Q&A | Present in active release source | Improve tournament/entity data coverage; report missing fields instead of completing gaps | Read-only/proposal |
 
@@ -52,9 +52,9 @@ Next execution order:
 2. Convert RQF-054H into the acceptance gate for assistant demo hardening:
    captured real prompts, expected source class, forbidden bad answers,
    provider/latency/timeout evidence, and pass/fail canary results.
-3. Close high-priority Assistant UI follow-ups that affect continuity and trust:
-   historical conversation rendering, failed-vs-empty dashboard states, frontend
-   rollback notes, and trace/source builder boundary tests.
+3. When UI deployment is approved, apply the reconciled Assistant artifact to
+   the external active frontend, rebuild static assets, capture rollback
+   evidence, and verify the runtime `/assistant` bundle.
 4. Improve SOUL and Owner Pack coverage per tournament/entity before promising
    complete folders.
 5. Only after the read-only loop is stable, design one narrow write-capable path
