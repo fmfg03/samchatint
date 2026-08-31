@@ -17895,6 +17895,11 @@ async def amex_card_accounts_view(
     <body>
         <div class="container">
             {render_top_navigation(current_empleado, "finanzas")}
+            {_gastos_breadcrumb_html([
+                ("Finanzas", "/admin/gastos"),
+                ("Conciliación AMEX", "/admin/gastos/amex/conciliacion"),
+                ("Catálogo tarjetas AMEX", None),
+            ])}
             {_render_workspace_hero(
                 eyebrow="Finanzas",
                 title="Catálogo tarjetas AMEX",
