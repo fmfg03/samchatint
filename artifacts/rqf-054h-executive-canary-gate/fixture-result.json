@@ -1,0 +1,98 @@
+{
+  "artifact_id": "rqf-054h-executive-canary-gate",
+  "captured_at": "2026-08-31",
+  "command": "./.venv/bin/python scripts/run_assistant_executive_canary.py --fixture",
+  "mode": "fixture",
+  "schema_version": "samchat.assistant_executive_canary.v1",
+  "status": "pass",
+  "ok": true,
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "timeouts": 0
+  },
+  "network": {
+    "http_called": false,
+    "base_url": null,
+    "provider_called": false,
+    "credentials_used": false
+  },
+  "authority_boundary": {
+    "posture": "read_only",
+    "pending_confirmations": 0,
+    "writes_detected": 0
+  },
+  "cases": [
+    {
+      "case_id": "OWNER-READINESS-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_owner_pack_readiness"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "OWNER-PAYMENT-EVIDENCE-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_owner_variable_query"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "FIN-ACCOUNTING-LOADED-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_finance_accounting_qa"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "FIN-PAYMENT-RUN-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_finance_accounting_qa"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "FIN-CLOSE-BLOCKERS-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_finance_accounting_qa"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "FIN-CFDI-GAPS-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_finance_accounting_qa"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    },
+    {
+      "case_id": "OWNER-TEAMS-BY-CATEGORY-001",
+      "provider": "fixture",
+      "model": "deterministic",
+      "tool_count": 1,
+      "tools": ["assistant_owner_variable_query"],
+      "authority_posture": "read_only",
+      "ok": true,
+      "failures": []
+    }
+  ]
+}

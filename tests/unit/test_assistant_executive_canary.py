@@ -6,6 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = ROOT / "scripts" / "run_assistant_executive_canary.py"
+ARTIFACT_DIR = ROOT / "artifacts" / "rqf-054h-executive-canary-gate"
+ARTIFACT_RESULT = ARTIFACT_DIR / "fixture-result.json"
+ARTIFACT_README = ARTIFACT_DIR / "README.md"
 SPEC = importlib.util.spec_from_file_location(
     "assistant_executive_canary_test", SCRIPT_PATH
 )
@@ -188,3 +191,28 @@ def test_live_canary_never_includes_cookie_or_bearer_in_result(monkeypatch):
     assert "secret-cookie" not in serialized
     assert "secret-bearer" not in serialized
     assert result["summary"]["total"] >= 7
+
+
+def test_rqf_054h_fixture_gate_artifact_contract():
+    result = json.loads(ARTIFACT_RESULT.read_text(encoding="utf-8"))
+    readme = ARTIFACT_README.read_text(encoding="utf-8")
+
+    assert result["schema_version"] == MODULE.SCHEMA_VERSION
+    assert result["mode"] == "fixture"
+    assert result["ok"] is True
+    assert result["summary"]["failed"] == 0
+    assert result["summary"]["timeouts"] == 0
+    assert result["network"]["http_called"] is False
+    assert result["network"]["provider_called"] is False
+    assert result["network"]["credentials_used"] is False
+    assert result["authority_boundary"]["posture"] == "read_only"
+    assert result["authority_boundary"]["writes_detected"] == 0
+    assert result["authority_boundary"]["pending_confirmations"] == 0
+    assert {row["case_id"] for row in result["cases"]} == {
+        case.case_id for case in MODULE.executive_regression_cases()
+    }
+    assert "Status: FIXTURE_GATE_CAPTURED" in readme
+    assert "## Fixture Gate" in readme
+    assert "## Live Gate Boundary" in readme
+    assert "--live" in readme
+    assert "No live canary" in readme

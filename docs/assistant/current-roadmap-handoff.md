@@ -40,7 +40,7 @@ Clean-room architecture boundary:
 | RQF-054B/C | Tool candidate adjudicator and sufficiency gate | `tool_adjudicator.py`, `response_sufficiency.py`, focused tests | Present in active release source | Continue mapping tools through semantic metadata instead of ad hoc keywords | Read-only |
 | RQF-054D/E/F | Executive renderer, work-turn trace, semantic registry foundation | `work_turn_renderer.py`, `assistant_workspace_trace.py`, `tool_registry.py` | Present in active release source | Keep broadening source-backed rendered answers; do not render raw payloads | Read-only |
 | RQF-054G | Multi-candidate read-only execution | `multi_candidate_readonly.py`; focused local verification passed 2026-08-31 | Present in active release source | Reconcile historical `IMPLEMENTED_LOCAL` labels with PR/release evidence before claiming formal closure | Read-only |
-| RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; focused local verification passed 2026-08-31 | Present in active release source as source module | Promote from local regression contract into demo/canary gate with captured live prompts | Read-only |
+| RQF-054H | Executive regression suite for real questions | `executive_regression_suite.py`; fixture demo/canary gate artifact captured under `artifacts/rqf-054h-executive-canary-gate/` | Present in active release source as source module | Live authenticated canary remains pending explicit auth/runtime target | Read-only |
 | RQF-053H/UI | Operational workspace UI first pass | Static snapshot under `artifacts/rqf-053h-assistant-ui-revamp/`; PR #151 follow-ups FU4/FU6/FU7/FU8/FU9 closed in repository artifacts/tests | Prior static deployment evidence exists; runtime assets must be rechecked before UI claims | Apply artifact to external active frontend, rebuild static assets, capture rollback receipt, and verify runtime bundle before polished UI claims | Read-only/proposal |
 | SOUL Wizard 001-004 | Tournament SOUL draft, clone, activation preview | `soul_wizard.py`; mini-roadmap closed | Source present; coverage remains data-dependent | One reliable SOUL per tournament before complete Owner Pack claims | Preview-only, no operational writes |
 | Owner Pack workspace | Read-only entity folder readiness/evidence workspace | `owner_pack_*`, `owner_entity_folder_workspace.py`, owner variable Q&A | Present in active release source | Improve tournament/entity data coverage; report missing fields instead of completing gaps | Read-only/proposal |
@@ -49,9 +49,8 @@ Next execution order:
 
 1. Keep this roadmap reconciliation current whenever runtime/source status
    changes.
-2. Convert RQF-054H into the acceptance gate for assistant demo hardening:
-   captured real prompts, expected source class, forbidden bad answers,
-   provider/latency/timeout evidence, and pass/fail canary results.
+2. Run the RQF-054H live authenticated canary when credentials and runtime
+   target are explicitly approved; fixture gate evidence is already captured.
 3. When UI deployment is approved, apply the reconciled Assistant artifact to
    the external active frontend, rebuild static assets, capture rollback
    evidence, and verify the runtime `/assistant` bundle.
@@ -553,3 +552,38 @@ Next:
   canary evidence.
 - Add Francisco/Juan Pablo demo prompts after each observed failure, then use
   this runner as the acceptance gate for assistant demo hardening.
+
+## 2026-08-31 RQF-054H fixture gate captured
+
+Artifact:
+
+- `artifacts/rqf-054h-executive-canary-gate/README.md`
+- `artifacts/rqf-054h-executive-canary-gate/fixture-result.json`
+
+Captured command:
+
+```bash
+./.venv/bin/python scripts/run_assistant_executive_canary.py --fixture
+```
+
+Result:
+
+- Schema: `samchat.assistant_executive_canary.v1`
+- Mode: `fixture`
+- Status: `pass`
+- Total: 7
+- Passed: 7
+- Failed: 0
+- Timeouts: 0
+
+Boundary:
+
+- No HTTP calls.
+- No provider calls.
+- No credentials.
+- No pending confirmations.
+- No writes detected.
+
+Remaining gap: run live authenticated canary only after explicit auth/runtime
+approval. Live evidence must capture provider/model, latency, timeout status,
+tool count, pass/fail per case, and read-only boundary.
