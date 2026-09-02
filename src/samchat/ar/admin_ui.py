@@ -715,6 +715,9 @@ def render_ar_read_model_html(
     sort_dir: str = "desc",
     base_url: str = "/admin/finanzas/cuentas-por-cobrar",
     export_url: str = "/admin/finanzas/cuentas-por-cobrar/export.xlsx",
+    prepoliza_export_url: str = (
+        "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
+    ),
     return_to: str = "",
 ) -> str:
     """Render AR S1 as an admin workspace body fragment."""
@@ -811,6 +814,7 @@ def render_ar_read_model_html(
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
+                <a class="button secondary" href="{escape(prepoliza_export_url)}">Descargar prepólizas CxC</a>
                 <a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Vista contable</a>
             </div>
         </section>

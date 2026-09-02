@@ -122,6 +122,31 @@ def test_admin_routes_expose_cxc_export_from_canonical_read_model():
     assert "Saldo" in export_body
 
 
+def test_admin_routes_expose_cxc_prepolizas_coi_export_read_only():
+    source = ADMIN_ROUTES.read_text()
+
+    assert (
+        '@router.get(\n    "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"'
+        in source
+    )
+    export_body = source.split(
+        "async def admin_finance_accounts_receivable_prepolizas_coi_xlsx",
+        maxsplit=1,
+    )[1].split(
+        '@router.get("/admin/finanzas/export.xlsx"',
+        maxsplit=1,
+    )[0]
+
+    assert "build_ar_read_model" in export_body
+    assert "build_ar_operational_rows" in export_body
+    assert "generate_ar_coi_ready_xlsx" in export_body
+    assert "ensure_schema=False" in export_body
+    assert "INSERT " not in export_body.upper()
+    assert "UPDATE " not in export_body.upper()
+    assert "DELETE " not in export_body.upper()
+    assert "commit(" not in export_body
+
+
 def test_admin_routes_expose_cxc_item_detail_from_canonical_read_model():
     source = ADMIN_ROUTES.read_text()
 

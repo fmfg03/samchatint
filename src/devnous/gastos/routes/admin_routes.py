@@ -7019,6 +7019,10 @@ async def admin_finance_accounts_receivable(
         "/admin/finanzas/cuentas-por-cobrar/export.xlsx",
         {**current_params, "sort_by": sort_by, "sort_dir": sort_dir},
     )
+    prepoliza_export_url = _admin_query_url(
+        "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx",
+        {**current_params, "sort_by": sort_by, "sort_dir": sort_dir},
+    )
 
     return_to_url = str(request.url.path)
     if request.url.query:
@@ -7054,6 +7058,7 @@ async def admin_finance_accounts_receivable(
                 sort_dir=sort_dir,
                 base_url=current_url,
                 export_url=export_url,
+                prepoliza_export_url=prepoliza_export_url,
                 return_to=return_to_url,
             )
             + render_ar_matching_workbench_html(
@@ -7643,6 +7648,88 @@ async def admin_finance_accounts_receivable_export_xlsx(
     filename = f"cuentas_por_cobrar_{int(resolved_year)}.xlsx"
     return Response(
         content=output.getvalue(),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get(
+    "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx",
+    response_class=Response,
+)
+async def admin_finance_accounts_receivable_prepolizas_coi_xlsx(
+    request: Request,
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+    tournament_code: Optional[str] = Query(None),
+    limit: int = Query(500),
+    estado: str = Query("todos"),
+    cliente: Optional[str] = Query(None),
+    dias_credito: int = Query(0),
+    sort_by: str = Query("issued_date"),
+    sort_dir: str = Query("desc"),
+) -> Response:
+    """Download read-only COI workbook for ready CxC policy previews."""
+    from samchat.ar import (
+        build_ar_operational_rows,
+        build_ar_read_model,
+        generate_ar_coi_ready_xlsx,
+    )
+
+    all_versions = await list_budget_versions(session, ensure_schema=False)
+    resolved_year = edition_year
+    if resolved_year is None:
+        resolved_year = (
+            int(all_versions[0]["edition_year"])
+            if all_versions
+            else date.today().year
+        )
+    versions = await list_budget_versions(
+        session,
+        edition_year=resolved_year,
+        ensure_schema=False,
+    )
+    selected_version = None
+    if budget_version_id:
+        selected_version = next(
+            (item for item in versions if item["id"] == budget_version_id),
+            None,
+        )
+    if selected_version is None:
+        selected_version = resolve_definitive_budget_version_from_versions(versions)
+    if selected_version is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay versión presupuestal para exportar prepólizas CxC.",
+        )
+
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    payload = await build_ar_read_model(
+        session,
+        budget_version_id=str(selected_version["id"]),
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=safe_limit,
+        credit_days_default=safe_credit_days,
+        ensure_schema=False,
+    )
+    rows = build_ar_operational_rows(
+        payload,
+        status_filter=estado,
+        search=cliente or "",
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    content = generate_ar_coi_ready_xlsx(rows, payload)
+    filename = f"prepolizas_cxc_coi_{int(resolved_year)}.xlsx"
+    return Response(
+        content=content,
         media_type=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ),

@@ -88,6 +88,7 @@ def test_render_ar_read_model_html_includes_expected_sections():
     assert "Gaps de matching" in html
     assert "collection_unknown" in html
     assert "Descargar Excel CxC" in html
+    assert "Descargar prepólizas CxC" in html
 
 
 def test_render_ar_read_model_html_includes_actionable_gap_queue():
@@ -138,6 +139,20 @@ def test_render_ar_read_model_html_links_to_detail_with_return_context():
     assert "/admin/finanzas/cuentas-por-cobrar/item/expected%3A" in html
     assert "return_to=%2Fadmin%2Ffinanzas%2Fcuentas-por-cobrar" in html
     assert "budget_version_id=version-1" in html
+
+
+def test_render_ar_read_model_html_preserves_prepoliza_export_filters():
+    html = render_ar_read_model_html(
+        _payload(),
+        prepoliza_export_url=(
+            "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx?"
+            "budget_version_id=version-1&estado=todos&sort_by=issued_date"
+        ),
+    )
+
+    assert "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx" in html
+    assert "budget_version_id=version-1" in html
+    assert "sort_by=issued_date" in html
 
 
 def test_render_ar_read_model_html_escapes_values():
