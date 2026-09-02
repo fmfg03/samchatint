@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import CFDIReport, Documento, ExpenseReport
@@ -265,7 +265,10 @@ async def has_existing_cfdi_usage(
     if expense_result.scalar_one_or_none() is not None:
         return True
 
-    documento_conditions = [Documento.cfdi_report_id == report_id]
+    documento_conditions = [
+        Documento.cfdi_report_id == report_id,
+        or_(Documento.estado.is_(None), Documento.estado != "cancelado"),
+    ]
     if isinstance(entity, Documento) and getattr(entity, "id", None):
         documento_conditions.append(Documento.id != entity.id)
     documento_result = await session.execute(
