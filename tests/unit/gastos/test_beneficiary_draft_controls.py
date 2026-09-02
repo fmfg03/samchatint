@@ -1,5 +1,6 @@
 """Authorization and rendering tests for beneficiaries and empty drafts."""
 
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
@@ -255,6 +256,19 @@ def test_solicitud_list_actions_do_not_show_cancel_for_other_user_or_sent() -> N
     assert "Revisar solicitud" in html
     assert "Cancelar borrador" not in html
     assert "/cancelar" not in html
+
+
+def test_mis_documentos_exposes_owner_draft_cancel_action() -> None:
+    source = inspect.getsource(user_routes.mis_documentos)
+
+    assert "<th>Acciones</th>" in source
+    assert 'documento.tipo == "SOLICITUD"' in source
+    assert 'documento.estado == "borrador"' in source
+    assert "documento.empleado_id == current_empleado.id" in source
+    assert 'method="POST" action="/documentos/{documento.id}/cancelar"' in source
+    assert 'name="next" value="/documentos/mis-documentos"' in source
+    assert "Cancelar borrador" in source
+    assert 'colspan="9"' in source
 
 
 def test_empty_draft_cancellation_belongs_to_owner_with_superadmin_recovery() -> None:

@@ -66,6 +66,45 @@ def test_onboarding_attachment_download_route_exists() -> None:
     assert "can_access_beneficiary_onboarding_request" in source
 
 
+def test_onboarding_form_marks_business_optional_documents_as_optional() -> None:
+    source = USER_ROUTES_SOURCE.read_text()
+    form = source[
+        source.index("async def beneficiary_onboarding_new_form(") :
+        source.index('@router.post("/beneficiarios/altas/nueva")')
+    ]
+
+    for field_name in [
+        "comprobante_domicilio_fiscal_comercial",
+        "ine_apoderado_legal",
+        "ine_titular_constancia",
+        "contrato_convenio_plataforma",
+        "contrato_plataforma",
+        "credencial_participante",
+    ]:
+        field_block = form[
+            form.index(f'for="{field_name}"') :
+            form.index("</div>", form.index(f'for="{field_name}"'))
+        ]
+        assert "Opcional" in field_block
+        assert "Requerida" not in field_block
+        assert "Requerido" not in field_block
+
+
+def test_onboarding_create_redirects_on_unexpected_errors() -> None:
+    source = USER_ROUTES_SOURCE.read_text()
+    route = source[
+        source.index("async def beneficiary_onboarding_create(") :
+        source.index('@router.get("/beneficiarios/altas"', source.index("async def beneficiary_onboarding_create("))
+    ]
+
+    assert "except Exception:" in route
+    assert "logger.exception(" in route
+    assert "Unexpected beneficiary onboarding create failure" in route
+    assert "No se pudo crear la solicitud. Intenta de nuevo o contacta a soporte." in route
+    assert '"/beneficiarios/altas/nueva?error_msg="' in route
+    assert "status_code=303" in route
+
+
 def _attachment(category: str) -> svc.BeneficiaryOnboardingAttachmentInput:
     return svc.BeneficiaryOnboardingAttachmentInput(
         categoria=category,

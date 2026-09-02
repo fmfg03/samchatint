@@ -139,6 +139,7 @@ from ..services.customer_success_audit import (
     build_customer_success_audit_report,
     is_superadmin_role,
 )
+from ..services.access_control_service import is_catalog_admin_user
 from ..services.payment_run_service import (
     PaymentRunPermissionError,
     PaymentRunValidationError,
@@ -1110,6 +1111,8 @@ def render_admin_navigation(
         ("admin.proveedores", "/admin/proveedores-clientes", "Proveedores", "proveedores"),
         ("admin.torneos", "/admin/torneos", "Torneos y proyectos", "torneos"),
     ]
+    if not is_catalog_admin_user(current_empleado):
+        catalogos_items = []
     avanzado_items = [
         ("admin.torneos", "/admin/sports", "Sports", "sports"),
         ("admin.torneos", "/admin/torneos/domain-alignment", "Alineación", "alineacion"),

@@ -135,6 +135,7 @@ from ..services.access_control_service import (
     ALL_ROLES,
     NON_CONFIGURABLE_GATEWAY_TOOL_KEYS,
     filter_cards_by_tools,
+    is_catalog_admin_user,
     is_superadmin_role,
     list_known_areas,
     list_rules,
@@ -11201,15 +11202,6 @@ _BUDGET_CONTROL_EMPLOYEE_NAMES = {
     "francisco m fernandez",
 }
 
-_CONFIGURATION_PANEL_EMPLOYEE_NAMES = {
-    "juan pablo lopez",
-    "juan pablo lopez romero",
-    "luis angel",
-    "luis angel orozco",
-    "luis angel orozco colin",
-}
-
-
 def _employee_matches_named_access(empleado: Empleado, allowed_names: set[str]) -> bool:
     normalized = _normalize_employee_identity_text(getattr(empleado, "nombre", ""))
     if not normalized:
@@ -11233,13 +11225,8 @@ def _is_budget_control_user(current_empleado: Empleado) -> bool:
 
 
 def _is_configuration_panel_user(current_empleado: Empleado) -> bool:
-    """Only Juan Pablo and Luis Ángel can see configuration/catalog modules."""
-    if current_empleado is None or getattr(current_empleado, "activo", True) is False:
-        return False
-    return _employee_matches_named_access(
-        current_empleado,
-        _CONFIGURATION_PANEL_EMPLOYEE_NAMES,
-    )
+    """Only Juan Pablo, Luis Ángel, and superadmins can see configuration/catalog modules."""
+    return is_catalog_admin_user(current_empleado)
 
 
 def _can_view_documentos_todos(current_empleado: Empleado) -> bool:
@@ -13251,21 +13238,22 @@ async def beneficiary_onboarding_new_form(
                             <div class="attachment-card provider-only">
                                 <label for="comprobante_domicilio_fiscal_comercial">Comprobante de Domicilio Fiscal y Comercial</label>
                                 <input type="file" name="comprobante_domicilio_fiscal_comercial" id="comprobante_domicilio_fiscal_comercial" accept=".pdf,image/*,application/pdf">
-                                <small>No mayor a tres meses.</small>
+                                <small>Opcional. No mayor a tres meses.</small>
                             </div>
                             <div class="attachment-card provider-moral-only">
                                 <label for="ine_apoderado_legal">INE del apoderado legal</label>
                                 <input type="file" name="ine_apoderado_legal" id="ine_apoderado_legal" accept=".pdf,image/*,application/pdf">
-                                <small>Requerida para proveedor Persona Moral.</small>
+                                <small>Opcional para proveedor Persona Moral.</small>
                             </div>
                             <div class="attachment-card provider-fisica-only">
                                 <label for="ine_titular_constancia">INE del titular de la constancia fiscal</label>
                                 <input type="file" name="ine_titular_constancia" id="ine_titular_constancia" accept=".pdf,image/*,application/pdf">
-                                <small>Requerida para proveedor Persona Física.</small>
+                                <small>Opcional para proveedor Persona Física.</small>
                             </div>
                             <div class="attachment-card provider-only">
                                 <label for="contrato_convenio_plataforma">Contrato o convenio con Plataforma Sports</label>
                                 <input type="file" name="contrato_convenio_plataforma" id="contrato_convenio_plataforma" accept=".pdf,image/*,application/pdf">
+                                <small>Opcional.</small>
                             </div>
                             <div class="attachment-card operator-only">
                                 <label for="ine_colaborador_externo">INE del colaborador externo</label>
@@ -13274,6 +13262,7 @@ async def beneficiary_onboarding_new_form(
                             <div class="attachment-card operator-only">
                                 <label for="contrato_plataforma">Contrato con Plataforma Sports</label>
                                 <input type="file" name="contrato_plataforma" id="contrato_plataforma" accept=".pdf,image/*,application/pdf">
+                                <small>Opcional.</small>
                             </div>
                             <div class="attachment-card adult-only">
                                 <label for="ine_participante">INE del participante</label>
@@ -13288,7 +13277,7 @@ async def beneficiary_onboarding_new_form(
                             <div class="attachment-card participant-only">
                                 <label for="credencial_participante">Credencial del torneo o escolar</label>
                                 <input type="file" name="credencial_participante" id="credencial_participante" accept=".pdf,image/*,application/pdf">
-                                <small>Requerida para casos de atención médica.</small>
+                                <small>Opcional.</small>
                             </div>
                             <div class="attachment-card participant-only">
                                 <label for="expediente_atencion_medica">Expediente del caso de atención médica</label>
@@ -13433,6 +13422,18 @@ async def beneficiary_onboarding_create(
     except BeneficiaryOnboardingError as exc:
         return RedirectResponse(
             url="/beneficiarios/altas/nueva?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected beneficiary onboarding create failure",
+            extra={"empleado_id": str(getattr(current_empleado, "id", ""))},
+        )
+        return RedirectResponse(
+            url=(
+                "/beneficiarios/altas/nueva?error_msg="
+                + quote("No se pudo crear la solicitud. Intenta de nuevo o contacta a soporte.")
+            ),
             status_code=303,
         )
     return RedirectResponse(
@@ -26033,6 +26034,20 @@ async def mis_documentos(
 
         # Shortened internal ID (first 8 characters)
         doc_id_short = str(documento.id)[:8]
+        can_cancel_doc = (
+            documento.tipo == "SOLICITUD"
+            and documento.estado == "borrador"
+            and documento.empleado_id == current_empleado.id
+        )
+        acciones_html = "&mdash;"
+        if can_cancel_doc:
+            acciones_html = f"""
+                <form method="POST" action="/documentos/{documento.id}/cancelar" style="margin: 0;">
+                    <input type="hidden" name="next" value="/documentos/mis-documentos">
+                    <input type="hidden" name="comentario" value="Borrador cancelado desde Mis documentos.">
+                    <button type="submit" class="button danger">Cancelar borrador</button>
+                </form>
+            """
 
         rows_html += f"""
         <tr>
@@ -26044,6 +26059,7 @@ async def mis_documentos(
             <td>{fecha_fin_str}</td>
             <td>{format_currency(documento.monto_total)}</td>
             <td>{creado_str}</td>
+            <td>{acciones_html}</td>
         </tr>
         """
     mis_docs_actions_html = """
@@ -26102,10 +26118,11 @@ async def mis_documentos(
                         <th>Fecha Fin</th>
                         <th>Monto Total</th>
                         <th>Creado</th>
+                        <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {rows_html if rows_html else '<tr><td colspan="8" style="text-align: center; padding: 20px;">No hay documentos registrados</td></tr>'}
+                    {rows_html if rows_html else '<tr><td colspan="9" style="text-align: center; padding: 20px;">No hay documentos registrados</td></tr>'}
                 </tbody>
             </table>
                     </div>
@@ -31177,6 +31194,39 @@ async def nueva_solicitud_terceros_form(
         session,
         current_empleado,
         edit_documento=None,
+    )
+
+
+def _legacy_solicitud_edit_redirect_url(
+    documento_id: UUIDType,
+    request: Request,
+) -> str:
+    target = f"/documentos/{documento_id}/editar"
+    next_url = (request.query_params.get("next") or "").strip()
+    if next_url:
+        target += "?" + urlencode({"next": next_url})
+    return target
+
+
+@router.get("/solicitudes/{documento_id}/editar")
+async def legacy_solicitud_edit_redirect(
+    documento_id: UUIDType,
+    request: Request,
+) -> RedirectResponse:
+    return RedirectResponse(
+        url=_legacy_solicitud_edit_redirect_url(documento_id, request),
+        status_code=303,
+    )
+
+
+@router.get("/gastos-terceros/{documento_id}/editar")
+async def legacy_gastos_terceros_edit_redirect(
+    documento_id: UUIDType,
+    request: Request,
+) -> RedirectResponse:
+    return RedirectResponse(
+        url=_legacy_solicitud_edit_redirect_url(documento_id, request),
+        status_code=303,
     )
 
 
