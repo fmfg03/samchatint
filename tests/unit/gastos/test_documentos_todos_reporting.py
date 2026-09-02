@@ -1031,6 +1031,65 @@ def test_approval_history_page_has_workspace_navigation_context() -> None:
     assert '("Historial de aprobaciones", None)' in block
 
 
+def test_sortable_table_helper_orders_clickable_columns() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("def _sortable_table_assets")
+    end = source.index("def _approval_history_display_value", start)
+    block = source[start:end]
+
+    assert "table[data-sortable-table]" in block
+    assert "th[data-sort-key]" in block
+    assert "data-default-sort-index" in block
+    assert "data-default-sort-dir" in block
+    assert "header.cellIndex" in block
+    assert "header.getAttribute('data-sort-dir') === 'asc' ? 'desc' : 'asc'" in block
+    assert "row.hasAttribute('data-sort-ignore')" in block
+    assert "type === 'number' || type === 'money' || type === 'date'" in block
+
+
+def test_operational_reference_default_sort_key_is_numeric_descending() -> None:
+    newer = SimpleNamespace(referencia_operaciones="100", creado_en=datetime(2026, 8, 2))
+    older = SimpleNamespace(referencia_operaciones="99", creado_en=datetime(2026, 8, 3))
+    missing = SimpleNamespace(referencia_operaciones=None, creado_en=datetime(2026, 8, 4))
+
+    ordered = sorted(
+        [missing, older, newer],
+        key=lambda doc: user_routes._referencia_operaciones_default_sort_key(
+            doc.referencia_operaciones,
+            doc.creado_en,
+        ),
+    )
+
+    assert [item.referencia_operaciones for item in ordered] == ["100", "99", None]
+
+
+def test_operational_reference_views_are_sortable_by_default() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    pending = source[
+        source.index("async def documentos_pendientes"):
+        source.index('@router.post("/documentos/pendientes/accion-lote")')
+    ]
+    history = source[
+        source.index("async def historial_aprobador"):
+        source.index("@router.get(\"/documentos/todos\"")
+    ]
+    all_docs = source[
+        source.index("async def documentos_todos"):
+        source.index("async def _query_documentos_todos_for_export")
+    ]
+    informes = source[
+        source.index("async def cuentas_de_gastos_list"):
+        source.index('@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador")')
+    ]
+
+    for block in (pending, history, all_docs, informes):
+        assert "data-sortable-table" in block
+        assert 'data-default-sort-dir="desc"' in block
+        assert 'data-sort-key="referencia_operaciones"' in block
+        assert 'data-sort-type="number"' in block
+        assert "_sortable_table_assets()" in block
+
+
 def test_approval_history_supports_multi_option_filters_after_visibility_scope() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = source.index("async def historial_aprobador")

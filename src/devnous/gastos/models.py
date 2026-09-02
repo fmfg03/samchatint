@@ -2084,6 +2084,172 @@ class PaymentRunClosureItem(Base):
     documento = relationship("Documento", foreign_keys=[documento_id], lazy="selectin")
 
 
+class SolicitudPrestamo(Base):
+    """Loan request workflow independent from budget-affecting documents."""
+
+    __tablename__ = "solicitudes_prestamo"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    numero_referencia = Column(String(200), nullable=False, unique=True, index=True)
+    solicitante_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    beneficiario_tipo = Column(
+        String(40), nullable=False, index=True
+    )  # propio, empleado, operador_regional, proveedor
+    beneficiario_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    beneficiario_proveedor_cliente_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("proveedores_clientes.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    beneficiario_nombre_snapshot = Column(Text, nullable=True)
+    banco_beneficiario = Column(Text, nullable=True)
+    cuenta_beneficiario = Column(Text, nullable=True)
+    monto_solicitado = Column(Numeric(18, 2), nullable=False)
+    saldo_pendiente = Column(Numeric(18, 2), nullable=False, default=0)
+    currency = Column(String(3), nullable=False, default="MXN")
+    motivo = Column(Text, nullable=False)
+    estado = Column(String(40), nullable=False, default="borrador", index=True)
+    cuenta_deudor_contable_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    banco_cuenta_contable_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cuentas_contables.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    aprobado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    cancelado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    pagado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    comprobante_pago_filename = Column(Text, nullable=True)
+    comprobante_pago_storage_key = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    enviado_en = Column(DateTime(timezone=True), nullable=True)
+    aprobado_en = Column(DateTime(timezone=True), nullable=True)
+    cancelado_en = Column(DateTime(timezone=True), nullable=True)
+    en_proceso_pago_en = Column(DateTime(timezone=True), nullable=True)
+    pagado_en = Column(DateTime(timezone=True), nullable=True)
+    liquidado_en = Column(DateTime(timezone=True), nullable=True)
+    actualizado_en = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    solicitante = relationship(
+        "Empleado", foreign_keys=[solicitante_empleado_id], lazy="selectin"
+    )
+    beneficiario_empleado = relationship(
+        "Empleado", foreign_keys=[beneficiario_empleado_id], lazy="selectin"
+    )
+    beneficiario_proveedor_cliente = relationship(
+        "ProveedorCliente",
+        foreign_keys=[beneficiario_proveedor_cliente_id],
+        lazy="selectin",
+    )
+    cuenta_deudor_contable = relationship(
+        "CuentaContable", foreign_keys=[cuenta_deudor_contable_id], lazy="selectin"
+    )
+    banco_cuenta_contable = relationship(
+        "CuentaContable", foreign_keys=[banco_cuenta_contable_id], lazy="selectin"
+    )
+    aprobado_por = relationship(
+        "Empleado", foreign_keys=[aprobado_por_empleado_id], lazy="selectin"
+    )
+    cancelado_por = relationship(
+        "Empleado", foreign_keys=[cancelado_por_empleado_id], lazy="selectin"
+    )
+    pagado_por = relationship(
+        "Empleado", foreign_keys=[pagado_por_empleado_id], lazy="selectin"
+    )
+    abonos = relationship(
+        "PrestamoAbono",
+        back_populates="prestamo",
+        lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class PrestamoAbono(Base):
+    """Repayment submitted by a user and approved or rejected by accounting."""
+
+    __tablename__ = "prestamo_abonos"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    prestamo_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("solicitudes_prestamo.id", onupdate="CASCADE", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    registrado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    aprobado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    monto_reportado = Column(Numeric(18, 2), nullable=False)
+    monto_aplicado = Column(Numeric(18, 2), nullable=False, default=0)
+    monto_excedente = Column(Numeric(18, 2), nullable=False, default=0)
+    saldo_antes = Column(Numeric(18, 2), nullable=False, default=0)
+    saldo_despues = Column(Numeric(18, 2), nullable=False, default=0)
+    estado = Column(String(40), nullable=False, default="enviado", index=True)
+    excedente_confirmado = Column(Boolean, nullable=False, default=False)
+    comprobante_filename = Column(Text, nullable=True)
+    comprobante_storage_key = Column(Text, nullable=True)
+    comentario = Column(Text, nullable=True)
+    metadata_json = Column("metadata", JSONB, nullable=True)
+    creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    enviado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    aprobado_en = Column(DateTime(timezone=True), nullable=True)
+    rechazado_en = Column(DateTime(timezone=True), nullable=True)
+
+    prestamo = relationship("SolicitudPrestamo", back_populates="abonos", lazy="selectin")
+    registrado_por = relationship(
+        "Empleado", foreign_keys=[registrado_por_empleado_id], lazy="selectin"
+    )
+    aprobado_por = relationship(
+        "Empleado", foreign_keys=[aprobado_por_empleado_id], lazy="selectin"
+    )
+
+
 class Aprobacion(Base):
     """
     Approval tracking for documents or expenses.

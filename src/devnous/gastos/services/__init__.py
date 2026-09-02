@@ -84,6 +84,23 @@ from .support_ticket_service import (
     summarize_admin_tickets,
     update_ticket_admin_fields,
 )
+from .loan_request_service import (
+    PRESTAMO_SANTANDER_CUENTA_CODIGO,
+    PrestamoCreatePayload,
+    PrestamoWorkflowError,
+    PrestamoWorkflowPermissionError,
+    PrestamoWorkflowValidationError,
+    build_prestamo_from_payload,
+    build_abono_from_application,
+    can_approve_prestamo,
+    can_approve_prestamo_abono,
+    can_edit_prestamo,
+    can_view_all_prestamos,
+    can_view_prestamo,
+    cancel_prestamo,
+    compute_abono_application,
+    submit_prestamo,
+)
 
 __all__ = [
     'TocinoClient',
@@ -156,4 +173,18 @@ __all__ = [
     'list_staff_empleados',
     'summarize_admin_tickets',
     'update_ticket_admin_fields',
+    'PRESTAMO_SANTANDER_CUENTA_CODIGO',
+    'PrestamoCreatePayload',
+    'PrestamoWorkflowError',
+    'PrestamoWorkflowPermissionError',
+    'PrestamoWorkflowValidationError',
+    'build_prestamo_from_payload',
+    'can_approve_prestamo',
+    'can_approve_prestamo_abono',
+    'can_edit_prestamo',
+    'can_view_all_prestamos',
+    'can_view_prestamo',
+    'cancel_prestamo',
+    'compute_abono_application',
+    'submit_prestamo',
 ]

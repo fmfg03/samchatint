@@ -273,3 +273,32 @@ def test_finance_dashboard_no_longer_renders_mass_mark_paid_form() -> None:
 
     assert "/admin/finanzas/payment-run/pay" not in block
     assert "Registrar seleccionados como pagados" not in block
+
+
+def test_payment_run_tables_are_sortable_by_operational_reference() -> None:
+    source = open("src/devnous/gastos/routes/admin_routes.py", encoding="utf-8").read()
+    helper = source[
+        source.index("def _admin_sortable_table_assets"):
+        source.index("def _payment_run_badge")
+    ]
+    payment_run = source[
+        source.index("@router.get(\"/admin/finanzas/payment-run\""):
+        source.index("def _render_payment_history_rows")
+    ]
+    history_start = source.index("@router.get(\"/admin/finanzas/payment-history\"")
+    payment_history = source[
+        history_start:
+        source.index("@router.post(\"/admin/finanzas/payment-run/documentos", history_start)
+    ]
+
+    assert "table[data-sortable-table]" in helper
+    assert "header.cellIndex" in helper
+    assert "_payment_run_sort_key" in source
+    assert "_payment_run_ref_number" in source
+    assert "for row in sorted(rows, key=_payment_run_sort_key)" in source
+    for block in (payment_run, payment_history):
+        assert "data-sortable-table" in block
+        assert 'data-default-sort-dir="desc"' in block
+        assert 'data-sort-key="referencia_operaciones"' in block
+        assert 'data-sort-type="number"' in block
+        assert "_admin_sortable_table_assets()" in block
