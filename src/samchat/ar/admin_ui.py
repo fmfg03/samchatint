@@ -9,6 +9,7 @@ from urllib.parse import quote
 from .service import (
     build_ar_accounting_preview,
     build_ar_actionable_gaps,
+    build_ar_billing_schedule,
     build_ar_operational_rows,
 )
 
@@ -210,6 +211,37 @@ def _actionable_gap_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> 
                 _money(item.get("amount")),
                 (
                     f'{_text(item.get("suggested_action"))}<br>'
+                    '<a class="button secondary compact" href="'
+                    f'/admin/finanzas/cuentas-por-cobrar/item/'
+                    f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
+                    f'?{context_query + "&" if context_query else ""}'
+                    f'return_to={quote(return_to or "", safe="")}'
+                    '">Ver detalle</a>'
+                ),
+            ]
+        )
+        for item in rows
+    )
+
+
+def _billing_schedule_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> str:
+    if not rows:
+        return _empty_row(9, "Sin programación por facturar para el alcance actual.")
+    context_query = ""
+    if "?" in return_to:
+        context_query = return_to.split("?", 1)[1]
+    return "".join(
+        _row(
+            [
+                _status_pill(item.get("priority")),
+                _text(item.get("tournament_name")),
+                _text(item.get("phase")),
+                _text(item.get("concept_name")),
+                _money(item.get("budgeted_amount")),
+                _money(item.get("linked_amount")),
+                _money(item.get("remaining_to_invoice")),
+                _text(item.get("months_label")),
+                (
                     '<a class="button secondary compact" href="'
                     f'/admin/finanzas/cuentas-por-cobrar/item/'
                     f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
@@ -779,6 +811,17 @@ def render_ar_read_model_html(
         "<th>Razon</th></tr></thead>"
     )
     actionable_gaps = build_ar_actionable_gaps(payload)
+    billing_schedule = build_ar_billing_schedule(
+        payload,
+        status_filter=status_filter,
+        search=search,
+    )
+    billing_schedule_header = (
+        "<thead><tr><th>Prioridad</th><th>Torneo/proyecto</th>"
+        "<th>Fase</th><th>Concepto/partida</th><th>Presupuestado</th>"
+        "<th>Facturado</th><th>Saldo por facturar</th><th>Meses</th>"
+        "<th>Detalle</th></tr></thead>"
+    )
     actionable_header = (
         "<thead><tr><th>Prioridad</th><th>Tipo</th><th>Estado</th>"
         "<th>Cliente</th><th>RFC</th><th>Torneo/proyecto</th>"
@@ -822,6 +865,18 @@ def render_ar_read_model_html(
             <div class="workspace-section-title">Resumen</div>
             <div class="ar-metrics">
                 {summary_cards}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Programación por facturar</div>
+            <div class="workspace-section-subtitle">
+                Partidas de ingreso presupuestado que aún no tienen CFDI completo.
+            </div>
+            <div class="ar-table-wrap">
+                <table class="ar-table">
+                    {billing_schedule_header}
+                    <tbody>{_billing_schedule_rows(billing_schedule, return_to=return_to or base_url)}</tbody>
+                </table>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">

@@ -7407,6 +7407,7 @@ async def admin_finance_accounts_receivable_export_xlsx(
     from samchat.ar import (
         build_ar_accounting_preview,
         build_ar_actionable_gaps,
+        build_ar_billing_schedule,
         build_ar_operational_rows,
         build_ar_read_model,
     )
@@ -7457,6 +7458,11 @@ async def admin_finance_accounts_receivable_export_xlsx(
         sort_dir=sort_dir,
     )
     actionable_gaps = build_ar_actionable_gaps(payload)
+    billing_schedule = build_ar_billing_schedule(
+        payload,
+        status_filter=estado,
+        search=cliente or "",
+    )
 
     wb = Workbook()
     ws = wb.active
@@ -7527,6 +7533,40 @@ async def admin_finance_accounts_receivable_export_xlsx(
     for cell in ws_summary[1]:
         cell.fill = header_fill
         cell.font = header_font
+
+    ws_billing = wb.create_sheet("Programación por facturar")
+    billing_headers = [
+        "Prioridad",
+        "Torneo/proyecto",
+        "Fase",
+        "Concepto/partida",
+        "Presupuestado",
+        "Facturado",
+        "Saldo por facturar",
+        "Meses",
+        "AR item",
+    ]
+    ws_billing.append(billing_headers)
+    for item in billing_schedule:
+        ws_billing.append(
+            [
+                item.get("priority"),
+                item.get("tournament_name"),
+                item.get("phase"),
+                item.get("concept_name"),
+                item.get("budgeted_amount"),
+                item.get("linked_amount"),
+                item.get("remaining_to_invoice"),
+                item.get("months_label"),
+                item.get("ar_item_id"),
+            ]
+        )
+    for cell in ws_billing[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    for column in ws_billing.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
+        ws_billing.column_dimensions[column[0].column_letter].width = width
 
     ws_gaps = wb.create_sheet("Gaps accionables")
     gap_headers = [

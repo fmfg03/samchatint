@@ -114,6 +114,8 @@ def test_admin_routes_expose_cxc_export_from_canonical_read_model():
     assert "build_ar_operational_rows" in export_body
     assert "build_ar_accounting_preview" in export_body
     assert "build_ar_actionable_gaps" in export_body
+    assert "build_ar_billing_schedule" in export_body
+    assert '"Programación por facturar"' in export_body
     assert '"Gaps accionables"' in export_body
     assert '"Prepólizas CxC"' in export_body
     assert "Monto presupuestado" in export_body

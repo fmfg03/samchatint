@@ -195,6 +195,23 @@ def _receivable_account_code_for_ar_item(item: dict[str, Any]) -> str:
     return "1150-001-001"
 
 
+def _month_name(month: int) -> str:
+    return {
+        1: "ene",
+        2: "feb",
+        3: "mar",
+        4: "abr",
+        5: "may",
+        6: "jun",
+        7: "jul",
+        8: "ago",
+        9: "sep",
+        10: "oct",
+        11: "nov",
+        12: "dic",
+    }.get(month, "")
+
+
 def _apply_collection_match(
     item: dict[str, Any],
     match: Optional[dict[str, Any]],
@@ -708,6 +725,109 @@ def build_ar_operational_rows(
     present_rows = [row for row in rows if row.get(key) not in (None, "")]
     missing_rows = [row for row in rows if row.get(key) in (None, "")]
     return sorted(present_rows, key=_sort_value, reverse=reverse) + missing_rows
+
+
+def build_ar_billing_schedule(
+    payload: dict[str, Any],
+    *,
+    as_of_date: Optional[date] = None,
+    status_filter: str = "todos",
+    search: str = "",
+) -> list[dict[str, Any]]:
+    """Build read-only expected-income rows that still need invoicing."""
+
+    as_of = as_of_date or date.today()
+    clean_status = _safe_str(status_filter).lower()
+    if clean_status and clean_status != "todos":
+        if clean_status != "presupuestado sin cfdi":
+            return []
+    clean_search = _safe_str(search).lower()
+    rows: list[dict[str, Any]] = []
+    priority_rank = {"alta": 0, "media": 1, "baja": 2}
+    for item in list(payload.get("expected_income") or []):
+        status = _safe_str(item.get("status"))
+        operational_status = _safe_str(item.get("operational_status"))
+        if (
+            status != "planned"
+            and operational_status != "Presupuestado sin CFDI"
+        ):
+            continue
+
+        budgeted_amount = _safe_float(item.get("expected_income_amount"))
+        linked_amount = _safe_float(
+            item.get("linked_income_amount") or item.get("issued_amount")
+        )
+        remaining_to_invoice = _safe_float(max(budgeted_amount - linked_amount, 0.0))
+        if remaining_to_invoice <= 0:
+            continue
+
+        month_entries: list[dict[str, Any]] = []
+        for monthly in list(item.get("monthly_plan") or []):
+            amount = _safe_float(monthly.get("expected_income_amount"))
+            if amount <= 0:
+                continue
+            try:
+                month = int(monthly.get("month") or 0)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= month <= 12:
+                month_entries.append(
+                    {
+                        "month": month,
+                        "label": _month_name(month),
+                        "expected_income_amount": amount,
+                    }
+                )
+
+        if any(entry["month"] < as_of.month for entry in month_entries):
+            priority = "alta"
+        elif any(entry["month"] == as_of.month for entry in month_entries):
+            priority = "media"
+        else:
+            priority = "baja"
+
+        months_label = ", ".join(
+            (
+                f"{entry['label']}: "
+                f"${entry['expected_income_amount']:,.2f}"
+            )
+            for entry in month_entries
+        ) or "sin mes claro"
+
+        rows.append(
+            {
+                "priority": priority,
+                "ar_item_id": item.get("ar_item_id"),
+                "budget_line_id": item.get("budget_line_id"),
+                "tournament_name": item.get("tournament_name")
+                or item.get("tournament_code"),
+                "phase": item.get("phase"),
+                "concept_name": item.get("concept_name"),
+                "budgeted_amount": budgeted_amount,
+                "linked_amount": linked_amount,
+                "remaining_to_invoice": remaining_to_invoice,
+                "months": month_entries,
+                "months_label": months_label,
+            }
+        )
+
+    if clean_search:
+        rows = [
+            row
+            for row in rows
+            if clean_search
+            in " ".join(_safe_str(value).lower() for value in row.values())
+        ]
+
+    return sorted(
+        rows,
+        key=lambda row: (
+            priority_rank.get(str(row.get("priority")), 9),
+            -_safe_float(row.get("remaining_to_invoice")),
+            _safe_str(row.get("tournament_name")).lower(),
+            _safe_str(row.get("concept_name")).lower(),
+        ),
+    )
 
 
 def find_ar_operational_item(

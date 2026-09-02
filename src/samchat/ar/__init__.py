@@ -19,6 +19,7 @@ from .matching import build_ar_matching_workbench
 from .service import (
     build_ar_accounting_preview,
     build_ar_actionable_gaps,
+    build_ar_billing_schedule,
     build_ar_operational_rows,
     build_ar_read_model,
     find_ar_operational_item,
@@ -29,6 +30,7 @@ __all__ = [
     "ar_admin_styles",
     "build_ar_accounting_preview",
     "build_ar_actionable_gaps",
+    "build_ar_billing_schedule",
     "build_ar_coi_ready_policy_rows",
     "build_ar_matching_workbench",
     "build_ar_operational_rows",

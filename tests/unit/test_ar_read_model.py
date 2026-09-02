@@ -8,6 +8,7 @@ import pytest
 from samchat.ar.service import (
     build_ar_accounting_preview,
     build_ar_actionable_gaps,
+    build_ar_billing_schedule,
     build_ar_operational_rows,
     build_ar_read_model,
     find_ar_operational_item,
@@ -527,6 +528,188 @@ def test_build_ar_operational_rows_keeps_missing_dates_last_on_desc_sort():
         "linked:old",
         "expected:1",
     ]
+
+
+def test_build_ar_billing_schedule_includes_planned_rows_with_remaining():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:line-1",
+                "status": "planned",
+                "tournament_name": "Copa",
+                "phase": "Nacional",
+                "concept_name": "Patrocinio",
+                "expected_income_amount": 1200,
+                "linked_income_amount": 500,
+                "monthly_plan": [
+                    {"month": 8, "expected_income_amount": 1200},
+                ],
+            }
+        ]
+    }
+
+    rows = build_ar_billing_schedule(
+        payload,
+        as_of_date=datetime(2026, 9, 2).date(),
+    )
+
+    assert rows == [
+        {
+            "priority": "alta",
+            "ar_item_id": "expected:line-1",
+            "budget_line_id": None,
+            "tournament_name": "Copa",
+            "phase": "Nacional",
+            "concept_name": "Patrocinio",
+            "budgeted_amount": 1200.0,
+            "linked_amount": 500.0,
+            "remaining_to_invoice": 700.0,
+            "months": [
+                {
+                    "month": 8,
+                    "label": "ago",
+                    "expected_income_amount": 1200.0,
+                }
+            ],
+            "months_label": "ago: $1,200.00",
+        }
+    ]
+
+
+def test_build_ar_billing_schedule_priority_media_for_current_month():
+    rows = build_ar_billing_schedule(
+        {
+            "expected_income": [
+                {
+                    "ar_item_id": "expected:current",
+                    "status": "planned",
+                    "expected_income_amount": 100,
+                    "monthly_plan": [
+                        {"month": 9, "expected_income_amount": 100},
+                    ],
+                }
+            ]
+        },
+        as_of_date=datetime(2026, 9, 2).date(),
+    )
+
+    assert rows[0]["priority"] == "media"
+
+
+def test_build_ar_billing_schedule_priority_baja_for_future_or_unclear_months():
+    rows = build_ar_billing_schedule(
+        {
+            "expected_income": [
+                {
+                    "ar_item_id": "expected:future",
+                    "status": "planned",
+                    "expected_income_amount": 100,
+                    "monthly_plan": [
+                        {"month": 10, "expected_income_amount": 100},
+                    ],
+                },
+                {
+                    "ar_item_id": "expected:unclear",
+                    "status": "planned",
+                    "expected_income_amount": 80,
+                    "monthly_plan": [],
+                },
+            ]
+        },
+        as_of_date=datetime(2026, 9, 2).date(),
+    )
+
+    assert [row["priority"] for row in rows] == ["baja", "baja"]
+    assert rows[1]["months_label"] == "sin mes claro"
+
+
+def test_build_ar_billing_schedule_excludes_completed_or_non_planned_rows():
+    rows = build_ar_billing_schedule(
+        {
+            "expected_income": [
+                {
+                    "ar_item_id": "expected:complete",
+                    "status": "planned",
+                    "expected_income_amount": 100,
+                    "linked_income_amount": 100,
+                },
+                {
+                    "ar_item_id": "expected:linked",
+                    "status": "issued_linked",
+                    "operational_status": "CFDI vinculado",
+                    "expected_income_amount": 100,
+                },
+            ]
+        },
+        as_of_date=datetime(2026, 9, 2).date(),
+    )
+
+    assert rows == []
+
+
+def test_build_ar_billing_schedule_sorts_priority_then_remaining_desc():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:media",
+                "status": "planned",
+                "expected_income_amount": 900,
+                "monthly_plan": [{"month": 9, "expected_income_amount": 900}],
+            },
+            {
+                "ar_item_id": "expected:alta-small",
+                "status": "planned",
+                "expected_income_amount": 100,
+                "monthly_plan": [{"month": 8, "expected_income_amount": 100}],
+            },
+            {
+                "ar_item_id": "expected:alta-large",
+                "status": "planned",
+                "expected_income_amount": 500,
+                "monthly_plan": [{"month": 8, "expected_income_amount": 500}],
+            },
+        ]
+    }
+
+    rows = build_ar_billing_schedule(
+        payload,
+        as_of_date=datetime(2026, 9, 2).date(),
+    )
+
+    assert [row["ar_item_id"] for row in rows] == [
+        "expected:alta-large",
+        "expected:alta-small",
+        "expected:media",
+    ]
+
+
+def test_build_ar_billing_schedule_respects_status_and_search_filters():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:copa",
+                "status": "planned",
+                "tournament_name": "Copa Nacional",
+                "expected_income_amount": 100,
+            }
+        ]
+    }
+
+    assert (
+        build_ar_billing_schedule(
+            payload,
+            status_filter="Vencido",
+            search="copa",
+        )
+        == []
+    )
+    rows = build_ar_billing_schedule(
+        payload,
+        status_filter="Presupuestado sin CFDI",
+        search="nacional",
+    )
+
+    assert [row["ar_item_id"] for row in rows] == ["expected:copa"]
 
 
 def test_build_ar_actionable_gaps_prioritizes_high_medium_low():
