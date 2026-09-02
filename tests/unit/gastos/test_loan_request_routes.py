@@ -124,6 +124,8 @@ def test_prestamo_payment_proof_route_saves_upload_and_marks_paid() -> None:
 
     assert "_save_prestamo_payment_proof_upload" in route_block
     assert "register_prestamo_payment_proof(" in route_block
+    assert "ensure_prestamo_payment_posting(" in route_block
+    assert 'posting.status == "pending"' in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block
 
@@ -137,6 +139,7 @@ def test_prestamo_abono_routes_register_and_review_repayments() -> None:
     assert "_save_prestamo_abono_proof_upload" in route_block
     assert "register_prestamo_abono(" in route_block
     assert "approve_prestamo_abono(" in route_block
+    assert "ensure_prestamo_abono_posting(" in route_block
     assert "reject_prestamo_abono(" in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block

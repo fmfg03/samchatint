@@ -107,6 +107,11 @@ from .loan_request_service import (
     register_prestamo_payment_proof,
     submit_prestamo,
 )
+from .loan_accounting_service import (
+    ensure_prestamo_abono_posting,
+    ensure_prestamo_payment_posting,
+    resolve_prestamo_debtor_account,
+)
 
 __all__ = [
     'TocinoClient',
@@ -199,5 +204,8 @@ __all__ = [
     'reject_prestamo_abono',
     'register_prestamo_abono',
     'register_prestamo_payment_proof',
+    'ensure_prestamo_abono_posting',
+    'ensure_prestamo_payment_posting',
+    'resolve_prestamo_debtor_account',
     'submit_prestamo',
 ]

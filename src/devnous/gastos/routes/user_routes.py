@@ -254,6 +254,10 @@ from ..services.loan_request_service import (
     register_prestamo_payment_proof,
     submit_prestamo,
 )
+from ..services.loan_accounting_service import (
+    ensure_prestamo_abono_posting,
+    ensure_prestamo_payment_posting,
+)
 from ..services.expense_service import create_expense_from_data, trigger_cfdi_generation
 from ..services.hospedaje_tax_service import (
     normalize_hospedaje_rate,
@@ -15833,6 +15837,16 @@ async def prestamo_upload_payment_proof_route(
             comprobante_filename=filename,
             comprobante_storage_key=storage_key,
         )
+        posting = await ensure_prestamo_payment_posting(
+            session,
+            prestamo=prestamo,
+        )
+        if posting.status == "pending":
+            raise PrestamoWorkflowError(
+                "accounting_posting_pending",
+                "No se puede marcar como pagada hasta completar su "
+                f"configuración contable ({posting.reason or 'incompleta'}).",
+            )
         await session.commit()
     except PrestamoWorkflowError as exc:
         await session.rollback()
@@ -15925,6 +15939,16 @@ async def prestamo_approve_abono_route(
     prestamo_id = abono.prestamo_id
     try:
         approve_prestamo_abono(abono, current_empleado)
+        posting = await ensure_prestamo_abono_posting(
+            session,
+            abono=abono,
+        )
+        if posting.status == "pending":
+            raise PrestamoWorkflowError(
+                "accounting_posting_pending",
+                "No se puede aprobar el abono hasta completar su "
+                f"configuración contable ({posting.reason or 'incompleta'}).",
+            )
         await session.commit()
     except PrestamoWorkflowError as exc:
         await session.rollback()
