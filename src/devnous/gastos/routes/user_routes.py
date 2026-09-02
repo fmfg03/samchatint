@@ -20060,7 +20060,7 @@ async def contabilidad_cuentas_por_cobrar_view(
     hasta: Optional[str] = Query(None),
     estado: str = Query("pendiente"),
     cliente: Optional[str] = Query(None),
-    dias_credito: int = Query(30),
+    dias_credito: int = Query(0),
     torneo_id: Optional[str] = Query(None),
     edition_year: Optional[int] = Query(None),
     success_msg: Optional[str] = Query(None),
@@ -20076,7 +20076,7 @@ async def contabilidad_cuentas_por_cobrar_view(
         to_date_exclusive = datetime.strptime(hasta, "%Y-%m-%d") + timedelta(days=1) if hasta else datetime.combine(today + timedelta(days=1), datetime.min.time())
     except ValueError:
         to_date_exclusive = datetime.combine(today + timedelta(days=1), datetime.min.time())
-    dias_credito = max(0, min(int(dias_credito or 30), 365))
+    dias_credito = max(0, min(int(dias_credito or 0), 365))
     estado = (estado or "pendiente").lower().strip()
     cliente_filter = (cliente or "").strip()
     selected_torneo_id = str(torneo_id or "").strip()
@@ -20463,6 +20463,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 <div><label>Días crédito</label><input type="number" min="0" max="365" name="dias_credito" value="{dias_credito}"></div>
                 <div><button type="submit" class="button">Filtrar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
+                <div><a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar/export.xlsx?edition_year={resolved_edition_year}&dias_credito={dias_credito}">Excel CxC</a></div>
             </form>
         </div>
         <div class="grid">
