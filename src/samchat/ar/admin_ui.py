@@ -228,6 +228,53 @@ def _detail_gap_items(item: dict[str, Any], gaps: list[dict[str, Any]]) -> str:
     return "".join(f"<li>{escape(message)}</li>" for message in dict.fromkeys(messages))
 
 
+def _detail_action_links(item: dict[str, Any], *, return_to: str) -> str:
+    links = [
+        f'<a class="button secondary" href="{escape(return_to)}">Volver a CxC</a>',
+        (
+            '<a class="button secondary" '
+            f'href="{escape(return_to)}#prematching">Ir a pre-matching</a>'
+        ),
+    ]
+    budget_version_id = str(item.get("budget_version_id") or "").strip()
+    tournament_key = str(
+        item.get("tournament_id")
+        or item.get("tournament_code")
+        or item.get("tournament_name")
+        or ""
+    ).strip()
+    if tournament_key:
+        query_parts = []
+        if budget_version_id:
+            query_parts.append(f"version_id={quote(budget_version_id, safe='')}")
+        query_parts.append("budget_view=income")
+        budget_href = (
+            f"/admin/presupuestos/torneo/{quote(tournament_key, safe='')}"
+            f"?{'&'.join(query_parts)}#presupuesto-ingresos"
+        )
+        links.append(
+            '<a class="button secondary" '
+            f'href="{escape(budget_href)}">Presupuesto ingresos</a>'
+        )
+        accounting_query = []
+        if item.get("tournament_id"):
+            accounting_query.append(
+                f"torneo_id={quote(str(item.get('tournament_id')), safe='')}"
+            )
+        if budget_version_id:
+            accounting_query.append(
+                f"budget_version_id={quote(budget_version_id, safe='')}"
+            )
+        accounting_href = "/admin/contabilidad/cuentas-por-cobrar"
+        if accounting_query:
+            accounting_href = f"{accounting_href}?{'&'.join(accounting_query)}"
+        links.append(
+            '<a class="button secondary" '
+            f'href="{escape(accounting_href)}">Vista contable CxC</a>'
+        )
+    return "".join(links)
+
+
 def render_ar_item_detail_html(
     item: dict[str, Any],
     payload: dict[str, Any],
@@ -247,11 +294,11 @@ def render_ar_item_detail_html(
         if item.get("balance_amount") is not None
         else "sin saldo confirmado"
     )
+    navigation_actions = _detail_action_links(item, return_to=return_to)
     mutable_actions = ""
     if can_operate_matches:
         mutable_actions = """
-            <a class="button secondary" href="#prematching">Ir a pre-matching</a>
-            <a class="button secondary" href="/admin/presupuestos">Vincular CFDI en presupuesto</a>
+            <span class="ar-muted">Acciones operativas habilitadas para CxC.</span>
         """
         if item.get("collection_match_id"):
             mutable_actions += (
@@ -268,7 +315,7 @@ def render_ar_item_detail_html(
                 Detalle construido desde el mismo read model de la tabla CxC.
             </div>
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
-                <a class="button secondary" href="{escape(return_to)}">Volver a CxC</a>
+                {navigation_actions}
                 {mutable_actions}
             </div>
         </section>
@@ -525,7 +572,7 @@ def render_ar_matching_workbench_html(
         "<th>RFC</th><th>Monto</th><th>Estado</th></tr></thead>"
     )
     return f"""
-        <section class="workspace-card ar-warning" style="margin-bottom:18px;">
+        <section class="workspace-card ar-warning" id="prematching" style="margin-bottom:18px;">
             <div class="workspace-section-title">Pre-matching AR</div>
             <div class="workspace-section-subtitle">
                 Evidencia candidata; no prueba cobranza. Esta seccion no acepta

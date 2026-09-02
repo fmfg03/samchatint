@@ -223,6 +223,8 @@ def test_render_ar_item_detail_html_shows_core_sections_and_gaps():
         "collected_amount": 0,
         "balance_amount": None,
         "tournament_name": "Copa",
+        "tournament_id": "tournament-1",
+        "budget_version_id": "version-1",
         "phase": "Nacional",
         "concept_name": "Patrocinio",
         "collection_status": "collection_unknown",
@@ -242,6 +244,11 @@ def test_render_ar_item_detail_html_shows_core_sections_and_gaps():
     assert "Gaps / Siguientes Acciones" in html
     assert "La cobranza no está comprobada" in html
     assert "Ir a pre-matching" in html
+    assert "#prematching" in html
+    assert "/admin/presupuestos/torneo/tournament-1" in html
+    assert "budget_view=income" in html
+    assert "#presupuesto-ingresos" in html
+    assert "/admin/contabilidad/cuentas-por-cobrar" in html
 
 
 def test_render_ar_item_detail_html_hides_mutable_actions_without_permission():
@@ -253,4 +260,12 @@ def test_render_ar_item_detail_html_hides_mutable_actions_without_permission():
     )
 
     assert "Sin permiso operativo" in html
-    assert "Ir a pre-matching" not in html
+    assert "Acciones operativas habilitadas" not in html
+
+
+def test_render_ar_matching_workbench_has_stable_prematching_anchor():
+    html = render_ar_matching_workbench_html(
+        {"summary": {}, "items": [], "unmatched_bank_inflows": []}
+    )
+
+    assert 'id="prematching"' in html
