@@ -16,6 +16,7 @@ import secrets
 import unicodedata
 from collections import deque
 from datetime import date, datetime
+from decimal import Decimal
 from html import escape
 from pathlib import Path
 from threading import Lock
@@ -59,6 +60,7 @@ from ..models import (
     CuentaContable,
     CentroDeCosto,
     ProveedorCliente,
+    SolicitudPrestamo,
 )
 from ..services.import_balanza_service import parse_cuentas_contables_upload
 from ..services.import_aux_service import import_aux_workbook
@@ -155,6 +157,10 @@ from ..services.payment_run_service import (
     require_payment_run_manager,
     require_payment_run_payment_confirmation,
     update_payment_run_fecha_pago,
+)
+from ..services.loan_request_service import (
+    PRESTAMO_STATUS_APROBADA,
+    PRESTAMO_STATUS_EN_PROCESO_PAGO,
 )
 from ..services.documento_service import (
     SolicitudTercerosAttachment,
@@ -8317,6 +8323,97 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
+def _prestamo_payment_run_beneficiary(prestamo: SolicitudPrestamo) -> str:
+    snapshot = str(getattr(prestamo, "beneficiario_nombre_snapshot", "") or "").strip()
+    if snapshot:
+        return snapshot
+    empleado = getattr(prestamo, "beneficiario_empleado", None)
+    if empleado is not None and getattr(empleado, "nombre", None):
+        return str(empleado.nombre)
+    proveedor = getattr(prestamo, "beneficiario_proveedor_cliente", None)
+    if proveedor is not None and getattr(proveedor, "nombre", None):
+        return str(proveedor.nombre)
+    solicitante = getattr(prestamo, "solicitante", None)
+    if solicitante is not None and getattr(solicitante, "nombre", None):
+        return str(solicitante.nombre)
+    return "-"
+
+
+def _loan_payment_run_row(prestamo: SolicitudPrestamo) -> dict[str, Any]:
+    status = "en proceso de pago"
+    if prestamo.estado == PRESTAMO_STATUS_APROBADA:
+        status = "programada"
+    return {
+        "id": prestamo.id,
+        "entity_type": "prestamo",
+        "numero_referencia": prestamo.numero_referencia,
+        "referencia_operaciones": None,
+        "fecha_pago": None,
+        "aprobado_en": prestamo.aprobado_en,
+        "pagado_en": prestamo.pagado_en,
+        "concepto_pago": prestamo.motivo or "Prestamo",
+        "currency": prestamo.currency or "MXN",
+        "monto": Decimal(str(prestamo.monto_solicitado or 0)),
+        "solicitante_nombre": getattr(prestamo.solicitante, "nombre", "-"),
+        "beneficiario_nombre": _prestamo_payment_run_beneficiary(prestamo),
+        "proveedor_nombre": None,
+        "closure_id": None,
+        "status": status,
+        "can_edit_fecha_pago": False,
+        "can_close": prestamo.estado == PRESTAMO_STATUS_APROBADA,
+        "can_upload_payment_proof": (
+            prestamo.estado == PRESTAMO_STATUS_EN_PROCESO_PAGO
+        ),
+    }
+
+
+async def list_prestamo_payment_run_items(
+    session: AsyncSession,
+    *,
+    status_filter: str = "pendientes",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    query: Optional[str] = None,
+    limit: int = 250,
+) -> list[dict[str, Any]]:
+    normalized_status = (status_filter or "pendientes").strip().lower()
+    estados = [PRESTAMO_STATUS_APROBADA]
+    if normalized_status in {"cerradas", "en_proceso", "en_proceso_pago"}:
+        estados = [PRESTAMO_STATUS_EN_PROCESO_PAGO]
+    elif normalized_status == "todas":
+        estados = [PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO]
+    elif normalized_status not in {"pendientes", "abiertas"}:
+        estados = [PRESTAMO_STATUS_APROBADA]
+    stmt = (
+        select(SolicitudPrestamo)
+        .options(
+            selectinload(SolicitudPrestamo.solicitante),
+            selectinload(SolicitudPrestamo.beneficiario_empleado),
+            selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+        )
+        .where(SolicitudPrestamo.estado.in_(estados))
+        .order_by(SolicitudPrestamo.aprobado_en.desc().nullslast())
+        .limit(max(1, min(int(limit or 250), 500)))
+    )
+    if date_from:
+        stmt = stmt.where(SolicitudPrestamo.aprobado_en >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        stmt = stmt.where(SolicitudPrestamo.aprobado_en <= datetime.combine(date_to, datetime.max.time()))
+    result = await session.execute(stmt)
+    rows = [_loan_payment_run_row(prestamo) for prestamo in result.scalars().all()]
+    if query:
+        needle = str(query or "").strip().lower()
+        rows = [
+            row
+            for row in rows
+            if needle in str(row.get("numero_referencia") or "").lower()
+            or needle in str(row.get("concepto_pago") or "").lower()
+            or needle in str(row.get("solicitante_nombre") or "").lower()
+            or needle in str(row.get("beneficiario_nombre") or "").lower()
+        ]
+    return rows
+
+
 def _render_payment_run_items(
     rows: list[dict[str, Any]],
     *,
@@ -8326,6 +8423,7 @@ def _render_payment_run_items(
     rendered_rows = []
     for row in sorted(rows, key=_payment_run_sort_key):
         documento_id = escape(str(row.get("id") or ""))
+        entity_type = str(row.get("entity_type") or "documento")
         referencia = escape(str(row.get("numero_referencia") or documento_id))
         referencia_operaciones = escape(str(row.get("referencia_operaciones") or "—"))
         referencia_operaciones_sort = _payment_run_sort_value(
@@ -8337,12 +8435,20 @@ def _render_payment_run_items(
         fecha_sort = _payment_run_sort_value(fecha_pago, kind="date")
         can_edit = bool(row.get("can_edit_fecha_pago"))
         can_close = bool(row.get("can_close"))
-        checkbox = (
+        checkbox = ""
+        if entity_type == "prestamo" and can_close and can_close_run:
+            checkbox = f"""
+                <form method="POST" action="/prestamos/{documento_id}/programar-pago" style="display:inline;">
+                    <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Pasar este préstamo a En Proceso de Pago?');">Pasar a pago</button>
+                </form>
+            """
+        else:
+            checkbox = (
             f'<input type="checkbox" form="payment-run-close-form" '
             f'name="document_ids" value="{documento_id}">'
             if can_close and can_close_run
             else '<span style="color:#94a3b8;">-</span>'
-        )
+            )
         if can_edit:
             fecha_html = f"""
                 <form method="POST" action="/admin/finanzas/payment-run/documentos/{documento_id}/fecha-pago" style="display:flex;gap:8px;align-items:center;">
@@ -8360,17 +8466,28 @@ def _render_payment_run_items(
         )
         proof_html = "-"
         if row.get("can_upload_payment_proof") and can_confirm_payment:
+            proof_action = (
+                f"/prestamos/{documento_id}/comprobante-pago"
+                if entity_type == "prestamo"
+                else f"/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago"
+            )
             proof_html = f"""
-                <form method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago" style="display:grid;gap:8px;min-width:220px;">
+                <form method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" required>
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir testigo y marcar la solicitud como pagada?');">Subir testigo y pagar</button>
                 </form>
             """
+        detail_href = (
+            f"/prestamos/{documento_id}"
+            if entity_type == "prestamo"
+            else f"/documentos/{documento_id}"
+        )
+        type_label = "Préstamo" if entity_type == "prestamo" else "Solicitud"
         rendered_rows.append(
             f"""
             <tr>
                 <td>{checkbox}</td>
-                <td><strong>{referencia}</strong><div style="color:#64748b;font-size:12px;">{escape(str(row.get("concepto_pago") or ""))[:120]}</div></td>
+                <td><a href="{detail_href}"><strong>{referencia}</strong></a><div style="color:#64748b;font-size:12px;">{escape(type_label)} · {escape(str(row.get("concepto_pago") or ""))[:120]}</div></td>
                 <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
                 <td>{escape(str(row.get("solicitante_nombre") or "-"))}</td>
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
@@ -8440,12 +8557,30 @@ async def admin_finance_payment_run(
         date_to=parsed_to,
         query=(q_value or "").strip() or None,
     )
+    approved_rows.extend(
+        await list_prestamo_payment_run_items(
+            session,
+            status_filter="pendientes",
+            date_from=parsed_from,
+            date_to=parsed_to,
+            query=(q_value or "").strip() or None,
+        )
+    )
     proof_rows = await list_payment_run_items(
         session,
         status_filter="cerradas",
         date_from=parsed_from,
         date_to=parsed_to,
         query=(q_value or "").strip() or None,
+    )
+    proof_rows.extend(
+        await list_prestamo_payment_run_items(
+            session,
+            status_filter="cerradas",
+            date_from=parsed_from,
+            date_to=parsed_to,
+            query=(q_value or "").strip() or None,
+        )
     )
     closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)

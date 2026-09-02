@@ -11,7 +11,9 @@ from sqlalchemy.orm import selectinload
 from devnous.gastos.models import (
     AccountingPoliza,
     CuentaContable,
+    Empleado,
     PrestamoAbono,
+    ProveedorCliente,
     SolicitudPrestamo,
 )
 from devnous.gastos.services.employee_debtor_accounting_service import (
@@ -78,7 +80,11 @@ def _loan_debtor_prefixes(prestamo: SolicitudPrestamo) -> tuple[str, ...]:
         getattr(prestamo, "beneficiario_empleado", None)
         or getattr(prestamo, "solicitante", None)
     )
-    name = str(getattr(empleado, "nombre", "") or "").lower()
+    name = str(
+        getattr(empleado, "nombre", "")
+        or getattr(prestamo, "beneficiario_nombre_snapshot", "")
+        or ""
+    ).lower()
     if any(
         marker in name
         for marker in (
@@ -151,14 +157,20 @@ async def resolve_prestamo_debtor_account(
     prestamo: SolicitudPrestamo,
 ) -> Optional[CuentaContable]:
     configured = getattr(prestamo, "cuenta_deudor_contable", None)
-    if configured is not None and getattr(configured, "activo", True):
+    if configured is not None and is_valid_prestamo_debtor_account(
+        prestamo,
+        configured,
+    ):
         return configured
     if getattr(prestamo, "cuenta_deudor_contable_id", None):
         configured = await session.get(
             CuentaContable,
             prestamo.cuenta_deudor_contable_id,
         )
-        if configured is not None and getattr(configured, "activo", True):
+        if configured is not None and is_valid_prestamo_debtor_account(
+            prestamo,
+            configured,
+        ):
             return configured
     if prestamo.beneficiario_tipo in {
         PRESTAMO_BENEFICIARIO_PROPIO,
@@ -168,8 +180,32 @@ async def resolve_prestamo_debtor_account(
             getattr(prestamo, "beneficiario_empleado", None)
             or getattr(prestamo, "solicitante", None)
         )
+        if empleado is None:
+            empleado_id = (
+                getattr(prestamo, "beneficiario_empleado_id", None)
+                or getattr(prestamo, "solicitante_empleado_id", None)
+            )
+            if empleado_id:
+                empleado = await session.get(Empleado, empleado_id)
         if empleado is not None:
-            return await resolve_employee_debtor_account(session, empleado)
+            debtor = await resolve_employee_debtor_account(session, empleado)
+            if debtor is not None and is_valid_prestamo_debtor_account(
+                prestamo,
+                debtor,
+            ):
+                return debtor
+    if (
+        prestamo.beneficiario_tipo
+        in {PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL, PRESTAMO_BENEFICIARIO_PROVEEDOR}
+        and getattr(prestamo, "beneficiario_proveedor_cliente", None) is None
+        and getattr(prestamo, "beneficiario_proveedor_cliente_id", None)
+    ):
+        proveedor = await session.get(
+            ProveedorCliente,
+            prestamo.beneficiario_proveedor_cliente_id,
+        )
+        if proveedor is not None:
+            prestamo.beneficiario_proveedor_cliente = proveedor
     beneficiary_name = _beneficiario_nombre(prestamo)
     prefixes = _loan_debtor_prefixes(prestamo)
     result = await session.execute(
@@ -199,6 +235,18 @@ async def resolve_prestamo_debtor_account(
     best = max(score for score, _account in scored)
     matches = [account for score, account in scored if score == best]
     return matches[0] if len(matches) == 1 else None
+
+
+async def autofill_prestamo_debtor_account(
+    session: AsyncSession,
+    prestamo: SolicitudPrestamo,
+) -> Optional[CuentaContable]:
+    debtor = await resolve_prestamo_debtor_account(session, prestamo)
+    if debtor is None:
+        return None
+    prestamo.cuenta_deudor_contable_id = debtor.id
+    prestamo.cuenta_deudor_contable = debtor
+    return debtor
 
 
 def _loan_meta(prestamo: SolicitudPrestamo, event: str) -> dict[str, Any]:

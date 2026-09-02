@@ -29,6 +29,8 @@ def test_prestamos_list_filters_visibility_and_renders_summary() -> None:
     )
 
     assert "can_view_all_prestamos(current_empleado)" in route_block
+    assert "can_view_delegated_prestamos(current_empleado)" in route_block
+    assert "if can_view_prestamo(current_empleado, prestamo)" in route_block
     assert "selectinload(SolicitudPrestamo.abonos)" in route_block
     assert (
         "SolicitudPrestamo.solicitante_empleado_id == current_empleado.id"
@@ -42,6 +44,7 @@ def test_prestamos_list_filters_visibility_and_renders_summary() -> None:
     assert "abonos_pendientes" in route_block
     assert "PRESTAMO_ABONO_STATUS_ENVIADO" in route_block
     assert "_prestamo_row_html(prestamo, current_empleado)" in route_block
+    assert '/prestamos/{prestamo.id}/editar' in SOURCE
     assert "Nueva solicitud" in route_block
     assert "Saldo pendiente" in route_block
 
@@ -68,20 +71,43 @@ def test_prestamo_form_uses_mutually_exclusive_beneficiary_controls() -> None:
     assert "input.disabled = !active" in route_block
     assert 'name="monto_solicitado"' in route_block
     assert 'name="motivo"' in route_block
+    assert 'request.query_params.get("tipo")' in route_block
+    assert 'href="/prestamos/nuevo?tipo=prestamo"' in route_block
+    assert 'href="/prestamos/nuevo?tipo=abono"' in route_block
+    assert "Abono al préstamo" in route_block
+    assert "_prestamo_repayable_options(" in route_block
+    assert 'action="/prestamos/abonos"' in route_block
+    assert 'name="prestamo_id"' in route_block
+    assert "No tienes préstamos pagados con saldo pendiente" in route_block
 
 
 def test_prestamo_create_persists_draft_or_submits_via_service() -> None:
     route_block = _block(
         '@router.post("/prestamos")',
-        '@router.get("/prestamos/{prestamo_id}", response_class=HTMLResponse)',
+        '@router.get("/prestamos/{prestamo_id}/editar", response_class=HTMLResponse)',
     )
 
     assert "_build_prestamo_payload_from_form" in route_block
     assert "build_prestamo_from_payload(payload)" in route_block
+    assert "autofill_prestamo_debtor_account(session, prestamo)" in route_block
     assert 'if action == "submit":' in route_block
     assert "submit_prestamo(prestamo, current_empleado)" in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block
+
+
+def test_prestamo_new_request_abono_route_registers_repayment() -> None:
+    route_block = _block(
+        '@router.post("/prestamos/abonos")',
+        '@router.get("/prestamos/{prestamo_id}/editar", response_class=HTMLResponse)',
+    )
+
+    assert "_load_prestamo_for_user" in route_block
+    assert "_save_prestamo_abono_proof_upload" in route_block
+    assert "register_prestamo_abono(" in route_block
+    assert "excess_confirmed=bool(excess_confirmed)" in route_block
+    assert "Abono registrado y pendiente de aprobación contable" in route_block
+    assert "/prestamos/nuevo?tipo=abono&error_msg=" in route_block
 
 
 def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
@@ -91,6 +117,7 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     )
 
     assert "_load_prestamo_for_user" in route_block
+    assert 'href="/prestamos/{prestamo.id}/editar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/enviar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/cancelar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/aprobar"' in route_block
@@ -99,9 +126,12 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     assert 'action="/prestamos/{prestamo.id}/cuenta-deudor"' in route_block
     assert 'name="cuenta_deudor_contable_id"' in route_block
     assert "_prestamo_debtor_account_options(" in route_block
+    assert "La cuenta deudor se asigna automáticamente" in route_block
     assert "can_manage_payment_run(current_empleado)" in route_block
     assert 'action="/prestamos/{prestamo.id}/comprobante-pago"' in route_block
     assert 'action="/prestamos/{prestamo.id}/abonos"' in route_block
+    assert 'id="abonos"' in route_block
+    assert 'href="/prestamos/{prestamo.id}#abonos"' in SOURCE
     assert 'name="comprobante_abono"' in route_block
     assert "excess_confirmed" in route_block
     assert 'action="/prestamos/abonos/{abono.id}/aprobar"' in route_block
@@ -114,6 +144,24 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     assert "marcado como pagado" in route_block
     assert "Movimientos registrados" in route_block
     assert "monto_excedente" in route_block
+
+
+def test_prestamo_edit_routes_update_only_draft_own_requests() -> None:
+    route_block = _block(
+        '@router.get("/prestamos/{prestamo_id}/editar", response_class=HTMLResponse)',
+        '@router.get("/prestamos/{prestamo_id}", response_class=HTMLResponse)',
+    )
+
+    assert "can_edit_prestamo(prestamo)" in route_block
+    assert "_apply_prestamo_draft_form(" in route_block
+    assert "prestamo.beneficiario_empleado = None" in SOURCE
+    assert "prestamo.beneficiario_proveedor_cliente = None" in SOURCE
+    assert "Solo el solicitante puede editar prestamos en borrador" in route_block
+    assert 'action="/prestamos/{prestamo.id}/editar"' in route_block
+    assert 'name="beneficiario_tipo"' in route_block
+    assert 'name="monto_solicitado"' in route_block
+    assert 'name="motivo"' in route_block
+    assert "Borrador actualizado" in route_block
 
 
 def test_prestamo_approval_routes_commit_or_rollback_via_service() -> None:
@@ -158,6 +206,8 @@ def test_prestamo_payment_proof_route_saves_upload_and_marks_paid() -> None:
     )
 
     assert "_save_prestamo_payment_proof_upload" in route_block
+    assert "autofill_prestamo_debtor_account(session, prestamo)" in route_block
+    assert "No se encontró una cuenta de deudor única" in route_block
     assert "register_prestamo_payment_proof(" in route_block
     assert "ensure_prestamo_payment_posting(" in route_block
     assert 'posting.status == "pending"' in route_block

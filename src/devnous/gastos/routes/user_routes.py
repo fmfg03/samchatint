@@ -245,6 +245,8 @@ from ..services.loan_request_service import (
     build_prestamo_from_payload,
     can_approve_prestamo,
     can_approve_prestamo_abono,
+    can_edit_prestamo,
+    can_view_delegated_prestamos,
     can_view_all_prestamos,
     can_view_prestamo,
     cancel_prestamo,
@@ -257,6 +259,7 @@ from ..services.loan_request_service import (
 )
 from ..services.loan_accounting_service import (
     assign_prestamo_debtor_account,
+    autofill_prestamo_debtor_account,
     ensure_prestamo_abono_posting,
     ensure_prestamo_payment_posting,
     is_valid_prestamo_debtor_account,
@@ -2372,9 +2375,17 @@ def _prestamo_row_html(
     actions = [
         f'<a href="/prestamos/{prestamo.id}" class="button secondary">Ver</a>',
     ]
-    if (
+    is_requester = (
         str(getattr(current_empleado, "id", "") or "").lower()
         == str(prestamo.solicitante_empleado_id).lower()
+    )
+    if is_requester and can_edit_prestamo(prestamo):
+        actions.append(
+            f'<a href="/prestamos/{prestamo.id}/editar" class="button primary">'
+            "Editar</a>"
+        )
+    if (
+        is_requester
         and prestamo.estado in {PRESTAMO_STATUS_BORRADOR, PRESTAMO_STATUS_ENVIADA}
     ):
         actions.append(
@@ -2385,6 +2396,15 @@ def _prestamo_row_html(
                 <button type="submit" class="button secondary">Cancelar</button>
             </form>
             """
+        )
+    if (
+        is_requester
+        and prestamo.estado == PRESTAMO_STATUS_PAGADA
+        and Decimal(str(prestamo.saldo_pendiente or 0)) > Decimal("0.00")
+    ):
+        actions.append(
+            f'<a href="/prestamos/{prestamo.id}#abonos" '
+            'class="button primary">Registrar abono</a>'
         )
     return f"""
     <tr>
@@ -2412,6 +2432,7 @@ async def _load_prestamo_for_user(
             selectinload(SolicitudPrestamo.solicitante),
             selectinload(SolicitudPrestamo.beneficiario_empleado),
             selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+            selectinload(SolicitudPrestamo.cuenta_deudor_contable),
             selectinload(SolicitudPrestamo.abonos),
         )
         .where(SolicitudPrestamo.id == prestamo_id)
@@ -2482,6 +2503,10 @@ async def _prestamo_debtor_account_options(
 async def _prestamo_beneficiary_options(
     session: AsyncSession,
     current_empleado: Empleado,
+    *,
+    selected_empleado_id: Optional[UUIDType] = None,
+    selected_operador_id: Optional[UUIDType] = None,
+    selected_proveedor_id: Optional[UUIDType] = None,
 ) -> tuple[str, str, str]:
     empleados_result = await session.execute(
         select(Empleado)
@@ -2490,7 +2515,9 @@ async def _prestamo_beneficiary_options(
     )
     empleados = empleados_result.scalars().all()
     empleado_options = "".join(
-        f'<option value="{empleado.id}">{escape(empleado.nombre or "")}</option>'
+        f'<option value="{empleado.id}" '
+        f'{"selected" if empleado.id == selected_empleado_id else ""}>'
+        f'{escape(empleado.nombre or "")}</option>'
         for empleado in empleados
         if getattr(empleado, "id", None) != getattr(current_empleado, "id", None)
     )
@@ -2504,7 +2531,9 @@ async def _prestamo_beneficiary_options(
     )
     operadores = operadores_result.scalars().all()
     operador_options = "".join(
-        f'<option value="{operador.id}">{escape(operador.nombre or "")}</option>'
+        f'<option value="{operador.id}" '
+        f'{"selected" if operador.id == selected_operador_id else ""}>'
+        f'{escape(operador.nombre or "")}</option>'
         for operador in operadores
     )
     proveedores_result = await session.execute(
@@ -2517,10 +2546,35 @@ async def _prestamo_beneficiary_options(
     )
     proveedores = proveedores_result.scalars().all()
     proveedor_options = "".join(
-        f'<option value="{proveedor.id}">{escape(proveedor.nombre or "")}</option>'
+        f'<option value="{proveedor.id}" '
+        f'{"selected" if proveedor.id == selected_proveedor_id else ""}>'
+        f'{escape(proveedor.nombre or "")}</option>'
         for proveedor in proveedores
     )
     return empleado_options, operador_options, proveedor_options
+
+
+async def _prestamo_repayable_options(
+    session: AsyncSession,
+    current_empleado: Empleado,
+) -> str:
+    result = await session.execute(
+        select(SolicitudPrestamo)
+        .where(
+            SolicitudPrestamo.solicitante_empleado_id == current_empleado.id,
+            SolicitudPrestamo.estado == PRESTAMO_STATUS_PAGADA,
+            SolicitudPrestamo.saldo_pendiente > 0,
+        )
+        .order_by(SolicitudPrestamo.pagado_en.desc().nullslast())
+    )
+    options: list[str] = []
+    for prestamo in result.scalars().all():
+        label = (
+            f"{prestamo.numero_referencia} · "
+            f"{format_currency(prestamo.saldo_pendiente or 0, prestamo.currency or 'MXN')}"
+        )
+        options.append(f'<option value="{prestamo.id}">{escape(label)}</option>')
+    return "".join(options)
 
 
 async def _build_prestamo_payload_from_form(
@@ -2574,6 +2628,39 @@ async def _build_prestamo_payload_from_form(
         motivo=str(form.get("motivo") or ""),
         numero_referencia=_prestamo_reference_number(),
     )
+
+
+async def _apply_prestamo_draft_form(
+    session: AsyncSession,
+    prestamo: SolicitudPrestamo,
+    current_empleado: Empleado,
+    form: Any,
+) -> SolicitudPrestamo:
+    payload = await _build_prestamo_payload_from_form(
+        session,
+        current_empleado,
+        form,
+    )
+    edited = build_prestamo_from_payload(payload)
+    prestamo.beneficiario_tipo = edited.beneficiario_tipo
+    prestamo.beneficiario_empleado_id = edited.beneficiario_empleado_id
+    prestamo.beneficiario_proveedor_cliente_id = (
+        edited.beneficiario_proveedor_cliente_id
+    )
+    prestamo.beneficiario_empleado = None
+    prestamo.beneficiario_proveedor_cliente = None
+    prestamo.beneficiario_nombre_snapshot = edited.beneficiario_nombre_snapshot
+    prestamo.banco_beneficiario = edited.banco_beneficiario
+    prestamo.cuenta_beneficiario = edited.cuenta_beneficiario
+    prestamo.monto_solicitado = edited.monto_solicitado
+    prestamo.saldo_pendiente = edited.saldo_pendiente
+    prestamo.currency = edited.currency
+    prestamo.motivo = edited.motivo
+    prestamo.cuenta_deudor_contable_id = None
+    prestamo.cuenta_deudor_contable = None
+    await session.flush()
+    await autofill_prestamo_debtor_account(session, prestamo)
+    return prestamo
 
 
 def _accounting_month_bounds(year: int, month: int) -> tuple[datetime, datetime]:
@@ -15276,6 +15363,7 @@ async def prestamos_list(
             selectinload(SolicitudPrestamo.solicitante),
             selectinload(SolicitudPrestamo.beneficiario_empleado),
             selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+            selectinload(SolicitudPrestamo.cuenta_deudor_contable),
             selectinload(SolicitudPrestamo.abonos),
         )
         .order_by(SolicitudPrestamo.creado_en.desc())
@@ -15283,12 +15371,17 @@ async def prestamos_list(
     if (
         not can_view_all_prestamos(current_empleado)
         and not can_approve_prestamo_abono(current_empleado)
+        and not can_view_delegated_prestamos(current_empleado)
     ):
         query = query.where(
             SolicitudPrestamo.solicitante_empleado_id == current_empleado.id
         )
     result = await session.execute(query)
-    visible_prestamos = list(result.scalars().all())
+    visible_prestamos = [
+        prestamo
+        for prestamo in result.scalars().all()
+        if can_view_prestamo(current_empleado, prestamo)
+    ]
     selected_view = str(request.query_params.get("vista") or "todos").strip().lower()
 
     def has_pending_abono(prestamo: SolicitudPrestamo) -> bool:
@@ -15409,10 +15502,134 @@ async def prestamo_new_form(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
 ) -> str:
+    selected_mode = str(request.query_params.get("tipo") or "").strip().lower()
+    error_msg = request.query_params.get("error_msg", "")
+    if selected_mode not in {"prestamo", "abono"}:
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Nueva solicitud - Préstamos</title>
+            <style>{_workspace_shell_styles("980px")}</style>
+        </head>
+        <body>
+            <div class="container">
+                {render_top_navigation(current_empleado, "operacion")}
+                {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+                {_gastos_breadcrumb_html([
+                    ("Préstamos", "/prestamos"),
+                    ("Nueva solicitud", None),
+                ])}
+                {_render_workspace_hero(
+                    eyebrow="Solicitud de préstamo",
+                    title="Nueva solicitud",
+                    description=(
+                        "Selecciona si quieres solicitar un préstamo nuevo o "
+                        "registrar un abono a un préstamo pagado."
+                    ),
+                    actions_html='<a href="/prestamos" class="button secondary">Volver</a>',
+                    side_html="",
+                )}
+                {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+                <section class="surface">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+                        <a class="button primary" href="/prestamos/nuevo?tipo=prestamo" style="justify-content:center;padding:18px;">Préstamo</a>
+                        <a class="button secondary" href="/prestamos/nuevo?tipo=abono" style="justify-content:center;padding:18px;">Abono al préstamo</a>
+                    </div>
+                </section>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+    if selected_mode == "abono":
+        prestamo_options = await _prestamo_repayable_options(
+            session,
+            current_empleado,
+        )
+        empty_html = ""
+        form_html = ""
+        if prestamo_options:
+            form_html = f"""
+            <form method="POST" action="/prestamos/abonos" enctype="multipart/form-data">
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+                    <div>
+                        <label>Préstamo</label>
+                        <select name="prestamo_id" required>
+                            <option value="">Seleccione préstamo</option>
+                            {prestamo_options}
+                        </select>
+                    </div>
+                    <div>
+                        <label>Monto del abono</label>
+                        <input type="number" name="monto_reportado" min="0.01" step="0.01" required>
+                    </div>
+                    <div>
+                        <label>Comprobante de transferencia o depósito</label>
+                        <input type="file" name="comprobante_abono" required>
+                    </div>
+                    <div style="grid-column:1/-1;">
+                        <label style="display:flex;gap:8px;align-items:flex-start;">
+                            <input type="checkbox" name="excess_confirmed" value="1">
+                            <span>Confirmo que si el abono excede el saldo, el préstamo se queda en cero y el excedente queda como ajuste manual contable.</span>
+                        </label>
+                    </div>
+                    <div style="grid-column:1/-1;">
+                        <label>Comentario</label>
+                        <textarea name="comentario" rows="2"></textarea>
+                    </div>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+                    <button type="submit" class="button primary">Registrar abono</button>
+                    <a href="/prestamos/nuevo" class="button secondary">Cambiar tipo</a>
+                </div>
+            </form>
+            """
+        else:
+            empty_html = """
+            <div class="notice warn">
+                No tienes préstamos pagados con saldo pendiente para registrar abonos.
+            </div>
+            <a href="/prestamos/nuevo" class="button secondary">Cambiar tipo</a>
+            """
+        html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Abono al préstamo - SamChat</title>
+            <style>{_workspace_shell_styles("980px")}</style>
+        </head>
+        <body>
+            <div class="container">
+                {render_top_navigation(current_empleado, "operacion")}
+                {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+                {_gastos_breadcrumb_html([
+                    ("Préstamos", "/prestamos"),
+                    ("Nueva solicitud", "/prestamos/nuevo"),
+                    ("Abono al préstamo", None),
+                ])}
+                {_render_workspace_hero(
+                    eyebrow="Abono al préstamo",
+                    title="Registrar abono",
+                    description=(
+                        "Captura el monto y adjunta comprobante de "
+                        "transferencia o depósito para revisión contable."
+                    ),
+                    actions_html='<a href="/prestamos/nuevo" class="button secondary">Cambiar tipo</a>',
+                    side_html="",
+                )}
+                {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+                <section class="surface">
+                    {form_html or empty_html}
+                </section>
+            </div>
+        </body>
+        </html>
+        """
+        return html
     empleado_options, operador_options, proveedor_options = (
         await _prestamo_beneficiary_options(session, current_empleado)
     )
-    error_msg = request.query_params.get("error_msg", "")
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -15541,6 +15758,7 @@ async def prestamo_create(
         prestamo = build_prestamo_from_payload(payload)
         session.add(prestamo)
         await session.flush()
+        await autofill_prestamo_debtor_account(session, prestamo)
         if action == "submit":
             submit_prestamo(prestamo, current_empleado)
         await session.commit()
@@ -15554,6 +15772,250 @@ async def prestamo_create(
     success = "Solicitud enviada." if action == "submit" else "Borrador guardado."
     return RedirectResponse(
         url=f"/prestamos/{prestamo.id}?success_msg=" + quote(success),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/abonos")
+async def prestamo_register_abono_from_new_request_route(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    prestamo_id: UUIDType = Form(...),
+    monto_reportado: str = Form(...),
+    excess_confirmed: Optional[str] = Form(None),
+    comentario: Optional[str] = Form(None),
+    comprobante_abono: UploadFile = File(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        filename, storage_key = await _save_prestamo_abono_proof_upload(
+            prestamo,
+            comprobante_abono,
+        )
+        abono = register_prestamo_abono(
+            prestamo,
+            current_empleado,
+            monto_reportado=monto_reportado,
+            comprobante_filename=filename,
+            comprobante_storage_key=storage_key,
+            excess_confirmed=bool(excess_confirmed),
+            comentario=comentario,
+        )
+        session.add(abono)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url="/prestamos/nuevo?tipo=abono&error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error registering loan repayment from new request",
+            extra={
+                "prestamo_id": str(prestamo_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return RedirectResponse(
+            url="/prestamos/nuevo?tipo=abono&error_msg="
+            + quote("No se pudo registrar el abono."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono registrado y pendiente de aprobación contable."),
+        status_code=303,
+    )
+
+
+@router.get("/prestamos/{prestamo_id}/editar", response_class=HTMLResponse)
+async def prestamo_edit_form(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    is_requester = (
+        str(current_empleado.id).lower()
+        == str(prestamo.solicitante_empleado_id).lower()
+    )
+    if not is_requester or not can_edit_prestamo(prestamo):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el solicitante puede editar prestamos en borrador.",
+        )
+    selected_operador_id = (
+        prestamo.beneficiario_proveedor_cliente_id
+        if prestamo.beneficiario_tipo == PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL
+        else None
+    )
+    selected_proveedor_id = (
+        prestamo.beneficiario_proveedor_cliente_id
+        if prestamo.beneficiario_tipo == PRESTAMO_BENEFICIARIO_PROVEEDOR
+        else None
+    )
+    empleado_options, operador_options, proveedor_options = (
+        await _prestamo_beneficiary_options(
+            session,
+            current_empleado,
+            selected_empleado_id=prestamo.beneficiario_empleado_id,
+            selected_operador_id=selected_operador_id,
+            selected_proveedor_id=selected_proveedor_id,
+        )
+    )
+    selected_tipo = prestamo.beneficiario_tipo or PRESTAMO_BENEFICIARIO_PROPIO
+    error_msg = request.query_params.get("error_msg", "")
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Editar {escape(prestamo.numero_referencia)} - Préstamos</title>
+        <style>{_workspace_shell_styles("980px")}</style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+            {_gastos_breadcrumb_html([
+                ("Préstamos", "/prestamos"),
+                (prestamo.numero_referencia, f"/prestamos/{prestamo.id}"),
+                ("Editar", None),
+            ])}
+            {_render_workspace_hero(
+                eyebrow="Solicitud de préstamo",
+                title="Editar borrador",
+                description=(
+                    "Actualiza beneficiario, monto, cuenta bancaria y motivo "
+                    "antes de enviar la solicitud."
+                ),
+                actions_html=f'<a href="/prestamos/{prestamo.id}" class="button secondary">Volver</a>',
+                side_html="",
+            )}
+            {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+            <section class="surface">
+                <form method="POST" action="/prestamos/{prestamo.id}/editar">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+                        <div>
+                            <label>Tipo de beneficiario</label>
+                            <select name="beneficiario_tipo" id="prestamo-beneficiario-tipo" required>
+                                <option value="{PRESTAMO_BENEFICIARIO_PROPIO}" {"selected" if selected_tipo == PRESTAMO_BENEFICIARIO_PROPIO else ""}>A nombre propio</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_EMPLEADO}" {"selected" if selected_tipo == PRESTAMO_BENEFICIARIO_EMPLEADO else ""}>Otro empleado</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL}" {"selected" if selected_tipo == PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL else ""}>Operador regional</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_PROVEEDOR}" {"selected" if selected_tipo == PRESTAMO_BENEFICIARIO_PROVEEDOR else ""}>Proveedor</option>
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_EMPLEADO}" style="display:none;">
+                            <label>Empleado beneficiario</label>
+                            <select name="beneficiario_empleado_id">
+                                <option value="">Seleccione empleado</option>
+                                {empleado_options}
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL}" style="display:none;">
+                            <label>Operador regional</label>
+                            <select name="beneficiario_operador_id">
+                                <option value="">Seleccione operador</option>
+                                {operador_options}
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_PROVEEDOR}" style="display:none;">
+                            <label>Proveedor</label>
+                            <select name="beneficiario_proveedor_id">
+                                <option value="">Seleccione proveedor</option>
+                                {proveedor_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Monto requerido</label>
+                            <input type="number" name="monto_solicitado" min="0.01" step="0.01" required value="{escape(str(prestamo.monto_solicitado or ""))}">
+                        </div>
+                        <div>
+                            <label>Moneda</label>
+                            <select name="currency">{_currency_options(prestamo.currency or "MXN")}</select>
+                        </div>
+                        <div>
+                            <label>Banco del beneficiario</label>
+                            <input type="text" name="banco_beneficiario" value="{escape(prestamo.banco_beneficiario or "")}" placeholder="Banco">
+                        </div>
+                        <div>
+                            <label>Cuenta / CLABE beneficiario</label>
+                            <input type="text" name="cuenta_beneficiario" value="{escape(prestamo.cuenta_beneficiario or "")}" placeholder="Cuenta o CLABE">
+                        </div>
+                        <div style="grid-column:1/-1;">
+                            <label>Motivo del préstamo</label>
+                            <textarea name="motivo" rows="4" required>{escape(prestamo.motivo or "")}</textarea>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+                        <button type="submit" class="button primary">Guardar cambios</button>
+                        <a href="/prestamos/{prestamo.id}" class="button secondary">Cancelar edición</a>
+                    </div>
+                </form>
+            </section>
+        </div>
+        <script>
+        (function() {{
+            var selector = document.getElementById('prestamo-beneficiario-tipo');
+            var targets = document.querySelectorAll('[data-prestamo-target]');
+            function syncTargets() {{
+                var value = selector ? selector.value : '';
+                targets.forEach(function(target) {{
+                    var active = target.getAttribute('data-prestamo-target') === value;
+                    target.style.display = active ? '' : 'none';
+                    target.querySelectorAll('select,input').forEach(function(input) {{
+                        input.disabled = !active;
+                    }});
+                }});
+            }}
+            if (selector) selector.addEventListener('change', syncTargets);
+            syncTargets();
+        }})();
+        </script>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/prestamos/{prestamo_id}/editar")
+async def prestamo_edit(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    is_requester = (
+        str(current_empleado.id).lower()
+        == str(prestamo.solicitante_empleado_id).lower()
+    )
+    if not is_requester or not can_edit_prestamo(prestamo):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el solicitante puede editar prestamos en borrador.",
+        )
+    form = await request.form()
+    try:
+        await _apply_prestamo_draft_form(
+            session,
+            prestamo,
+            current_empleado,
+            form,
+        )
+        await session.commit()
+    except (ValueError, PrestamoWorkflowError) as exc:
+        await session.rollback()
+        message = getattr(exc, "message", str(exc))
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}/editar?error_msg=" + quote(message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Borrador actualizado."),
         status_code=303,
     )
 
@@ -15587,7 +16049,10 @@ async def prestamo_detail(
         and Decimal(str(prestamo.saldo_pendiente or 0)) > Decimal("0.00")
     )
     can_review_abonos = can_approve_prestamo_abono(current_empleado)
-    can_assign_debtor_account = can_confirm_payment_run_payment(current_empleado)
+    can_assign_debtor_account = (
+        can_confirm_payment_run_payment(current_empleado)
+        and not getattr(prestamo, "cuenta_deudor_contable_id", None)
+    )
     debtor_account_options = ""
     if can_assign_debtor_account:
         debtor_account_options = await _prestamo_debtor_account_options(
@@ -15595,6 +16060,10 @@ async def prestamo_detail(
             prestamo,
         )
     if is_requester and prestamo.estado == PRESTAMO_STATUS_BORRADOR:
+        actions.append(
+            f'<a href="/prestamos/{prestamo.id}/editar" class="button primary">'
+            "Editar</a>"
+        )
         actions.append(
             f"""
             <form method="POST" action="/prestamos/{prestamo.id}/enviar" style="display:inline;">
@@ -15676,6 +16145,11 @@ async def prestamo_detail(
         <form method="POST" action="/prestamos/{prestamo.id}/cuenta-deudor"
               style="margin-top:16px;">
             <label>Cuenta de deudor diverso</label>
+            <div class="section-note">
+                La cuenta deudor se asigna automáticamente por beneficiario.
+                Usa este selector sólo si Contabilidad debe corregir o crear la
+                cuenta del catálogo.
+            </div>
             <select name="cuenta_deudor_contable_id" required>
                 <option value="">Selecciona cuenta</option>
                 {debtor_account_options}
@@ -15813,7 +16287,7 @@ async def prestamo_detail(
                 </div>
                 {authorization_forms_html}
             </section>
-            <section class="surface">
+            <section class="surface" id="abonos">
                 <div class="section-head">
                     <div>
                         <div class="eyebrow">Abonos</div>
@@ -15999,6 +16473,14 @@ async def prestamo_upload_payment_proof_route(
 ) -> RedirectResponse:
     prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
     try:
+        debtor = await autofill_prestamo_debtor_account(session, prestamo)
+        if debtor is None:
+            raise PrestamoWorkflowError(
+                "missing_loan_debtor_account",
+                "No se encontró una cuenta de deudor única para el "
+                "beneficiario. Contabilidad debe crear o ajustar la cuenta "
+                "contable.",
+            )
         filename, storage_key = await _save_prestamo_payment_proof_upload(
             prestamo,
             comprobante_pago,
@@ -16014,6 +16496,13 @@ async def prestamo_upload_payment_proof_route(
             prestamo=prestamo,
         )
         if posting.status == "pending":
+            if posting.reason == "missing_loan_debtor_account":
+                raise PrestamoWorkflowError(
+                    "missing_loan_debtor_account",
+                    "No se encontró una cuenta de deudor única para el "
+                    "beneficiario. Contabilidad debe crear o ajustar la "
+                    "cuenta contable.",
+                )
             raise PrestamoWorkflowError(
                 "accounting_posting_pending",
                 "No se puede marcar como pagada hasta completar su "

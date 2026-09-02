@@ -113,6 +113,14 @@ DEFAULT_PRESTAMO_ABONO_APPROVER_NAMES = frozenset(
         "daniel",
     }
 )
+DEFAULT_PRESTAMO_DANIEL_DELEGATE_NAMES = frozenset({"daniel"})
+DEFAULT_PRESTAMO_ODILON_DELEGATE_NAMES = frozenset(
+    {"jose odilon trujillo macedo", "odilon trujillo", "odilon"}
+)
+DEFAULT_PRESTAMO_SEBASTIAN_REQUESTER_NAMES = frozenset(
+    {"sebastian", "sebastian garcia", "sebas"}
+)
+DEFAULT_PRESTAMO_DANIEL_REQUESTER_NAMES = frozenset({"daniel"})
 
 
 class PrestamoWorkflowError(Exception):
@@ -245,16 +253,87 @@ def can_view_all_prestamos(
     )
 
 
+def _prestamo_requester(prestamo: SolicitudPrestamo) -> Any:
+    return getattr(prestamo, "solicitante", None)
+
+
+def _prestamo_requester_matches(
+    prestamo: SolicitudPrestamo,
+    names: Iterable[str],
+) -> bool:
+    requester = _prestamo_requester(prestamo)
+    if requester is None:
+        return False
+    return _employee_matches_named_access(requester, names)
+
+
+def can_view_delegated_prestamos(empleado: Any) -> bool:
+    return _employee_matches_named_access(
+        empleado,
+        DEFAULT_PRESTAMO_DANIEL_DELEGATE_NAMES,
+    ) or _employee_matches_named_access(
+        empleado,
+        DEFAULT_PRESTAMO_ODILON_DELEGATE_NAMES,
+    )
+
+
+def _can_view_delegated_prestamo(
+    empleado: Any,
+    prestamo: SolicitudPrestamo,
+) -> bool:
+    if _employee_matches_named_access(
+        empleado,
+        DEFAULT_PRESTAMO_DANIEL_DELEGATE_NAMES,
+    ):
+        return _prestamo_requester_matches(
+            prestamo,
+            DEFAULT_PRESTAMO_SEBASTIAN_REQUESTER_NAMES,
+        )
+    if _employee_matches_named_access(
+        empleado,
+        DEFAULT_PRESTAMO_ODILON_DELEGATE_NAMES,
+    ):
+        return _prestamo_requester_matches(
+            prestamo,
+            DEFAULT_PRESTAMO_SEBASTIAN_REQUESTER_NAMES
+            | DEFAULT_PRESTAMO_DANIEL_REQUESTER_NAMES,
+        )
+    return False
+
+
+def _prestamo_has_pending_abono(prestamo: SolicitudPrestamo) -> bool:
+    return any(
+        getattr(abono, "estado", None) == PRESTAMO_ABONO_STATUS_ENVIADO
+        for abono in list(getattr(prestamo, "abonos", []) or [])
+    )
+
+
 def can_view_prestamo(empleado: Any, prestamo: SolicitudPrestamo) -> bool:
     if empleado is None or getattr(empleado, "activo", True) is False:
         return False
-    if can_view_all_prestamos(empleado):
+    if is_superadmin_role(getattr(empleado, "rol", None)):
         return True
-    if can_approve_prestamo_abono(empleado):
-        return True
-    return _employee_id(empleado) == str(
+    if _employee_id(empleado) == str(
         getattr(prestamo, "solicitante_empleado_id", "") or ""
-    ).lower()
+    ).lower():
+        return True
+    if can_approve_prestamo(empleado):
+        return True
+    if _can_view_delegated_prestamo(empleado, prestamo):
+        return True
+    if can_manage_payment_run(empleado) and prestamo.estado in {
+        PRESTAMO_STATUS_APROBADA,
+        PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    }:
+        return True
+    if can_confirm_payment_run_payment(empleado) and prestamo.estado in {
+        PRESTAMO_STATUS_APROBADA,
+        PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    }:
+        return True
+    if can_approve_prestamo_abono(empleado) and _prestamo_has_pending_abono(prestamo):
+        return True
+    return False
 
 
 def can_approve_prestamo(

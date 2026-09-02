@@ -8,9 +8,11 @@ import pytest
 from devnous.gastos.services import loan_accounting_service
 from devnous.gastos.services.loan_accounting_service import (
     assign_prestamo_debtor_account,
+    autofill_prestamo_debtor_account,
     ensure_prestamo_abono_posting,
     ensure_prestamo_payment_posting,
     is_valid_prestamo_debtor_account,
+    resolve_prestamo_debtor_account,
 )
 from devnous.gastos.services.loan_request_service import (
     PrestamoWorkflowPermissionError,
@@ -25,6 +27,12 @@ class _ScalarResult:
     def scalar_one_or_none(self):
         return self.value
 
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
 
 class _FakeSession:
     async def execute(self, _query):
@@ -36,6 +44,28 @@ class _FakeSession:
 
 def _account(code: str):
     return SimpleNamespace(id=uuid4(), codigo=code, nombre=code, activo=True)
+
+
+class _ListScalarResult:
+    def __init__(self, values):
+        self.values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.values
+
+
+class _AccountSearchSession:
+    def __init__(self, values):
+        self.values = values
+
+    async def execute(self, _query):
+        return _ListScalarResult(self.values)
+
+    async def get(self, _model, _entity_id):
+        return None
 
 
 async def _capture_poliza(captured, **kwargs):
@@ -202,6 +232,89 @@ def test_accounting_assigns_only_valid_loan_debtor_accounts() -> None:
             SimpleNamespace(id=uuid4(), rol="empleado"),
             provider_debtor,
         )
+
+
+@pytest.mark.asyncio
+async def test_autofill_loan_debtor_account_assigns_unique_provider_match() -> None:
+    debtor = _account("1170-003-042")
+    debtor.nombre = "Servicios Rogers"
+    prestamo = SimpleNamespace(
+        beneficiario_tipo="proveedor",
+        beneficiario_nombre_snapshot="Servicios Rogers",
+        beneficiario_proveedor_cliente=None,
+        beneficiario_proveedor_cliente_id=None,
+        cuenta_deudor_contable_id=None,
+        cuenta_deudor_contable=None,
+    )
+
+    result = await autofill_prestamo_debtor_account(
+        _AccountSearchSession([debtor]),
+        prestamo,
+    )
+
+    assert result == debtor
+    assert prestamo.cuenta_deudor_contable_id == debtor.id
+    assert prestamo.cuenta_deudor_contable == debtor
+
+
+@pytest.mark.asyncio
+async def test_autofill_loan_debtor_account_respects_valid_existing_account() -> None:
+    debtor = _account("1170-001-016")
+    prestamo = SimpleNamespace(
+        beneficiario_tipo="empleado",
+        beneficiario_nombre_snapshot="Juan Pablo Lopez",
+        cuenta_deudor_contable_id=debtor.id,
+        cuenta_deudor_contable=debtor,
+    )
+
+    result = await autofill_prestamo_debtor_account(_FakeSession(), prestamo)
+
+    assert result == debtor
+    assert prestamo.cuenta_deudor_contable_id == debtor.id
+
+
+@pytest.mark.asyncio
+async def test_resolve_loan_debtor_account_returns_none_for_ambiguous_match() -> None:
+    account_a = _account("1170-003-041")
+    account_b = _account("1170-003-042")
+    account_a.nombre = "Proveedor Rogers"
+    account_b.nombre = "Proveedor Rogers"
+    prestamo = SimpleNamespace(
+        beneficiario_tipo="proveedor",
+        beneficiario_nombre_snapshot="Proveedor Rogers",
+        beneficiario_proveedor_cliente=None,
+        beneficiario_proveedor_cliente_id=None,
+        cuenta_deudor_contable_id=None,
+        cuenta_deudor_contable=None,
+    )
+
+    result = await resolve_prestamo_debtor_account(
+        _AccountSearchSession([account_a, account_b]),
+        prestamo,
+    )
+
+    assert result is None
+    assert prestamo.cuenta_deudor_contable_id is None
+
+
+@pytest.mark.asyncio
+async def test_autofill_loan_debtor_account_leaves_missing_match_pending() -> None:
+    prestamo = SimpleNamespace(
+        beneficiario_tipo="proveedor",
+        beneficiario_nombre_snapshot="Proveedor sin cuenta",
+        beneficiario_proveedor_cliente=None,
+        beneficiario_proveedor_cliente_id=None,
+        cuenta_deudor_contable_id=None,
+        cuenta_deudor_contable=None,
+    )
+
+    result = await autofill_prestamo_debtor_account(
+        _AccountSearchSession([]),
+        prestamo,
+    )
+
+    assert result is None
+    assert prestamo.cuenta_deudor_contable_id is None
 
 
 async def _async_value(value):
