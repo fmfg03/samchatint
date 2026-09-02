@@ -686,3 +686,131 @@ def find_ar_operational_item(
             enriched["source"] = source
             return enriched
     return None
+
+
+def build_ar_actionable_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a prioritized CxC action queue from the AR read model."""
+
+    operational_by_id = {
+        str(row.get("ar_item_id") or ""): row
+        for row in build_ar_operational_rows(payload)
+    }
+    gaps: list[dict[str, Any]] = []
+
+    def _add_gap(
+        *,
+        item: dict[str, Any],
+        gap_type: str,
+        priority: str,
+        suggested_action: str,
+        amount: Any = None,
+    ) -> None:
+        gaps.append(
+            {
+                "priority": priority,
+                "gap_type": gap_type,
+                "ar_item_id": item.get("ar_item_id"),
+                "operational_status": item.get("operational_status"),
+                "payer_name": item.get("payer_name"),
+                "payer_rfc": item.get("payer_rfc"),
+                "tournament_name": item.get("tournament_name"),
+                "phase": item.get("phase"),
+                "concept_name": item.get("concept_name"),
+                "amount": _safe_float(
+                    amount if amount is not None else item.get("issued_amount")
+                ),
+                "suggested_action": suggested_action,
+            }
+        )
+
+    for item in operational_by_id.values():
+        status = _safe_str(item.get("operational_status"))
+        if status == "Revisión sobrepago":
+            _add_gap(
+                item=item,
+                gap_type="sobrepago",
+                priority="alta",
+                suggested_action="Revisar excedente manualmente en contabilidad.",
+            )
+        elif status == "Vencido":
+            _add_gap(
+                item=item,
+                gap_type="vencido",
+                priority="alta",
+                suggested_action="Confirmar cobranza o aceptar match bancario.",
+            )
+        elif status == "CFDI emitido sin vincular":
+            _add_gap(
+                item=item,
+                gap_type="cfdi_sin_partida",
+                priority="media",
+                suggested_action="Vincular CFDI a partida de ingreso.",
+            )
+        elif status == "Cobranza desconocida":
+            _add_gap(
+                item=item,
+                gap_type="cobranza_no_comprobada",
+                priority="alta",
+                suggested_action="Buscar/aceptar match de cobranza.",
+            )
+        elif status == "Presupuestado sin CFDI":
+            _add_gap(
+                item=item,
+                gap_type="presupuesto_sin_cfdi",
+                priority="baja",
+                suggested_action="Dar seguimiento a emisión de CFDI.",
+                amount=item.get("expected_income_amount"),
+            )
+        if (
+            item.get("issued_amount")
+            and not item.get("payer_name")
+            and not item.get("payer_rfc")
+        ):
+            _add_gap(
+                item=item,
+                gap_type="cliente_rfc_faltante",
+                priority="media",
+                suggested_action="Completar cliente/RFC antes de seguimiento.",
+            )
+    for raw_gap in list(payload.get("matching_gaps") or []):
+        item_id = str(raw_gap.get("item_id") or "")
+        item = operational_by_id.get(item_id)
+        if not item:
+            continue
+        reason = _safe_str(raw_gap.get("reason"))
+        if reason == "missing_budget_income_link":
+            _add_gap(
+                item=item,
+                gap_type="cfdi_sin_partida",
+                priority="alta",
+                suggested_action="Vincular CFDI a partida de ingreso.",
+            )
+        elif reason == "payer_gap":
+            _add_gap(
+                item=item,
+                gap_type="cliente_rfc_faltante",
+                priority="media",
+                suggested_action="Completar cliente/RFC.",
+            )
+
+    priority_rank = {"alta": 0, "media": 1, "baja": 2}
+    unique: dict[tuple[str, str], dict[str, Any]] = {}
+    for gap in gaps:
+        key = (str(gap.get("ar_item_id") or ""), str(gap.get("gap_type") or ""))
+        existing = unique.get(key)
+        if existing is None:
+            unique[key] = gap
+            continue
+        if priority_rank.get(str(gap.get("priority")), 9) < priority_rank.get(
+            str(existing.get("priority")),
+            9,
+        ):
+            unique[key] = gap
+    return sorted(
+        unique.values(),
+        key=lambda item: (
+            priority_rank.get(str(item.get("priority")), 9),
+            -_safe_float(item.get("amount")),
+            _safe_str(item.get("gap_type")),
+        ),
+    )

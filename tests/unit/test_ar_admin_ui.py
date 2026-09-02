@@ -76,6 +76,7 @@ def test_render_ar_read_model_html_includes_expected_sections():
     html = render_ar_read_model_html(_payload())
 
     assert "Cuentas por Cobrar" in html
+    assert "Gaps accionables" in html
     assert "Cartera operativa" in html
     assert "Ingreso esperado" in html
     assert "CFDI ligado" in html
@@ -84,6 +85,26 @@ def test_render_ar_read_model_html_includes_expected_sections():
     assert "Gaps de matching" in html
     assert "collection_unknown" in html
     assert "Descargar Excel CxC" in html
+
+
+def test_render_ar_read_model_html_includes_actionable_gap_queue():
+    html = render_ar_read_model_html(
+        _payload(),
+        base_url=(
+            "/admin/finanzas/cuentas-por-cobrar?"
+            "budget_version_id=version-1&estado=todos"
+        ),
+        return_to=(
+            "/admin/finanzas/cuentas-por-cobrar?"
+            "budget_version_id=version-1&estado=todos"
+        ),
+    )
+
+    assert "Pendientes CxC priorizados" in html
+    assert "cfdi_sin_partida" in html
+    assert "Vincular CFDI a partida de ingreso" in html
+    assert "/admin/finanzas/cuentas-por-cobrar/item/candidate%3Acfdi-2" in html
+    assert "return_to=%2Fadmin%2Ffinanzas%2Fcuentas-por-cobrar" in html
 
 
 def test_render_ar_read_model_html_includes_sortable_operational_columns():
@@ -138,6 +159,7 @@ def test_render_ar_read_model_html_does_not_confirm_collection():
 def test_render_ar_read_model_html_handles_empty_payload():
     html = render_ar_read_model_html({"summary": {}})
 
+    assert "Sin pendientes CxC accionables" in html
     assert "Sin ingreso esperado" in html
     assert "Sin CFDI de ingreso ligado" in html
     assert "Sin CFDI PSP candidatos" in html

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from samchat.ar.service import (
+    build_ar_actionable_gaps,
     build_ar_operational_rows,
     build_ar_read_model,
     find_ar_operational_item,
@@ -525,6 +526,120 @@ def test_build_ar_operational_rows_keeps_missing_dates_last_on_desc_sort():
         "linked:old",
         "expected:1",
     ]
+
+
+def test_build_ar_actionable_gaps_prioritizes_high_medium_low():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:1",
+                "status": "planned",
+                "tournament_name": "Copa",
+                "concept_name": "Inscripciones",
+                "expected_income_amount": 100,
+                "operational_status": "Presupuestado sin CFDI",
+            }
+        ],
+        "issued_linked": [
+            {
+                "ar_item_id": "linked:overpaid",
+                "payer_name": "Cliente A",
+                "payer_rfc": "AAA010101AAA",
+                "issued_amount": 100,
+                "collected_amount": 120,
+                "operational_status": "Revisión sobrepago",
+            }
+        ],
+        "issued_unlinked": [
+            {
+                "ar_item_id": "candidate:1",
+                "payer_name": "Cliente B",
+                "payer_rfc": "BBB010101BBB",
+                "issued_amount": 80,
+                "operational_status": "CFDI emitido sin vincular",
+            }
+        ],
+        "matching_gaps": [],
+    }
+
+    gaps = build_ar_actionable_gaps(payload)
+
+    assert [gap["priority"] for gap in gaps] == ["alta", "media", "baja"]
+    assert [gap["gap_type"] for gap in gaps] == [
+        "sobrepago",
+        "cfdi_sin_partida",
+        "presupuesto_sin_cfdi",
+    ]
+
+
+def test_build_ar_actionable_gaps_deduplicates_and_keeps_highest_priority():
+    payload = {
+        "expected_income": [],
+        "issued_linked": [],
+        "issued_unlinked": [
+            {
+                "ar_item_id": "candidate:1",
+                "payer_name": "Cliente",
+                "payer_rfc": "CLI010101AAA",
+                "issued_amount": 100,
+                "operational_status": "CFDI emitido sin vincular",
+            }
+        ],
+        "matching_gaps": [
+            {
+                "item_id": "candidate:1",
+                "reason": "missing_budget_income_link",
+            }
+        ],
+    }
+
+    gaps = build_ar_actionable_gaps(payload)
+
+    assert len(gaps) == 1
+    assert gaps[0]["gap_type"] == "cfdi_sin_partida"
+    assert gaps[0]["priority"] == "alta"
+
+
+def test_build_ar_actionable_gaps_marks_expected_income_without_cfdi_low_only():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:1",
+                "status": "planned",
+                "expected_income_amount": 100,
+                "operational_status": "Presupuestado sin CFDI",
+            }
+        ],
+        "issued_linked": [],
+        "issued_unlinked": [],
+        "matching_gaps": [],
+    }
+
+    gaps = build_ar_actionable_gaps(payload)
+
+    assert [(gap["priority"], gap["gap_type"]) for gap in gaps] == [
+        ("baja", "presupuesto_sin_cfdi")
+    ]
+
+
+def test_build_ar_actionable_gaps_marks_missing_client_or_rfc_as_medium():
+    payload = {
+        "expected_income": [],
+        "issued_linked": [
+            {
+                "ar_item_id": "linked:1",
+                "issued_amount": 100,
+                "operational_status": "Cobrado",
+            }
+        ],
+        "issued_unlinked": [],
+        "matching_gaps": [],
+    }
+
+    gaps = build_ar_actionable_gaps(payload)
+
+    assert gaps[0]["priority"] == "media"
+    assert gaps[0]["gap_type"] == "cliente_rfc_faltante"
 
 
 def test_find_ar_operational_item_finds_item_across_sections():

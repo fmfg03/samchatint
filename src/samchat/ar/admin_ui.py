@@ -6,7 +6,7 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
-from .service import build_ar_operational_rows
+from .service import build_ar_actionable_gaps, build_ar_operational_rows
 
 
 def _money(value: Any) -> str:
@@ -181,6 +181,38 @@ def _matching_gap_rows(rows: list[dict[str, Any]]) -> str:
                 _text(item.get("source")),
                 _text(item.get("item_id")),
                 _text(item.get("reason")),
+            ]
+        )
+        for item in rows
+    )
+
+
+def _actionable_gap_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> str:
+    if not rows:
+        return _empty_row(9, "Sin pendientes CxC accionables para el alcance actual.")
+    context_query = ""
+    if "?" in return_to:
+        context_query = return_to.split("?", 1)[1]
+    return "".join(
+        _row(
+            [
+                _status_pill(item.get("priority")),
+                _text(item.get("gap_type")),
+                _status_pill(item.get("operational_status")),
+                _text(item.get("payer_name")),
+                _text(item.get("payer_rfc")),
+                _text(item.get("tournament_name")),
+                _text(item.get("concept_name")),
+                _money(item.get("amount")),
+                (
+                    f'{_text(item.get("suggested_action"))}<br>'
+                    '<a class="button secondary compact" href="'
+                    f'/admin/finanzas/cuentas-por-cobrar/item/'
+                    f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
+                    f'?{context_query + "&" if context_query else ""}'
+                    f'return_to={quote(return_to or "", safe="")}'
+                    '">Ver detalle</a>'
+                ),
             ]
         )
         for item in rows
@@ -691,6 +723,12 @@ def render_ar_read_model_html(
         "<thead><tr><th>Severidad</th><th>Fuente</th><th>Item</th>"
         "<th>Razon</th></tr></thead>"
     )
+    actionable_gaps = build_ar_actionable_gaps(payload)
+    actionable_header = (
+        "<thead><tr><th>Prioridad</th><th>Tipo</th><th>Estado</th>"
+        "<th>Cliente</th><th>RFC</th><th>Torneo/proyecto</th>"
+        "<th>Concepto</th><th>Monto</th><th>Accion sugerida</th></tr></thead>"
+    )
     operational_header = (
         "<thead><tr>"
         f"<th>{_sort_link(label='Torneo', field='tournament_name', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
@@ -728,6 +766,18 @@ def render_ar_read_model_html(
             <div class="workspace-section-title">Resumen</div>
             <div class="ar-metrics">
                 {summary_cards}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Gaps accionables</div>
+            <div class="workspace-section-subtitle">
+                Pendientes CxC priorizados desde la misma cartera operativa.
+            </div>
+            <div class="ar-table-wrap">
+                <table class="ar-table">
+                    {actionable_header}
+                    <tbody>{_actionable_gap_rows(actionable_gaps, return_to=return_to or base_url)}</tbody>
+                </table>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">

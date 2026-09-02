@@ -13,6 +13,7 @@ from .collection_matches import (
 )
 from .matching import build_ar_matching_workbench
 from .service import (
+    build_ar_actionable_gaps,
     build_ar_operational_rows,
     build_ar_read_model,
     find_ar_operational_item,
@@ -21,6 +22,7 @@ from .service import (
 __all__ = [
     "accept_ar_collection_match",
     "ar_admin_styles",
+    "build_ar_actionable_gaps",
     "build_ar_matching_workbench",
     "build_ar_operational_rows",
     "build_ar_read_model",

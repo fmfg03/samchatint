@@ -7399,7 +7399,11 @@ async def admin_finance_accounts_receivable_export_xlsx(
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill
 
-    from samchat.ar import build_ar_operational_rows, build_ar_read_model
+    from samchat.ar import (
+        build_ar_actionable_gaps,
+        build_ar_operational_rows,
+        build_ar_read_model,
+    )
 
     all_versions = await list_budget_versions(session, ensure_schema=False)
     resolved_year = edition_year
@@ -7446,6 +7450,7 @@ async def admin_finance_accounts_receivable_export_xlsx(
         sort_by=sort_by,
         sort_dir=sort_dir,
     )
+    actionable_gaps = build_ar_actionable_gaps(payload)
 
     wb = Workbook()
     ws = wb.active
@@ -7516,6 +7521,44 @@ async def admin_finance_accounts_receivable_export_xlsx(
     for cell in ws_summary[1]:
         cell.fill = header_fill
         cell.font = header_font
+
+    ws_gaps = wb.create_sheet("Gaps accionables")
+    gap_headers = [
+        "Prioridad",
+        "Tipo de gap",
+        "Estado operativo",
+        "Cliente/pagador",
+        "RFC",
+        "Torneo/proyecto",
+        "Fase",
+        "Concepto/partida",
+        "Monto",
+        "Acción sugerida",
+        "AR item",
+    ]
+    ws_gaps.append(gap_headers)
+    for gap in actionable_gaps:
+        ws_gaps.append(
+            [
+                gap.get("priority"),
+                gap.get("gap_type"),
+                gap.get("operational_status"),
+                gap.get("payer_name"),
+                gap.get("payer_rfc"),
+                gap.get("tournament_name"),
+                gap.get("phase"),
+                gap.get("concept_name"),
+                gap.get("amount"),
+                gap.get("suggested_action"),
+                gap.get("ar_item_id"),
+            ]
+        )
+    for cell in ws_gaps[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    for column in ws_gaps.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
+        ws_gaps.column_dimensions[column[0].column_letter].width = width
 
     output = io.BytesIO()
     wb.save(output)
