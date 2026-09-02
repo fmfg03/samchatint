@@ -118,6 +118,44 @@ def test_admin_routes_expose_cxc_export_from_canonical_read_model():
     assert "Saldo" in export_body
 
 
+def test_admin_routes_expose_cxc_item_detail_from_canonical_read_model():
+    source = ADMIN_ROUTES.read_text()
+
+    assert (
+        '"/admin/finanzas/cuentas-por-cobrar/item/{ar_item_id:path}"'
+        in source
+    )
+    detail_body = source.split(
+        "async def admin_finance_accounts_receivable_item_detail",
+        maxsplit=1,
+    )[1].split(
+        '@router.post("/admin/finanzas/cuentas-por-cobrar/matches/accept")',
+        maxsplit=1,
+    )[0]
+
+    assert "build_ar_read_model" in detail_body
+    assert "find_ar_operational_item" in detail_body
+    assert "render_ar_item_detail_html" in detail_body
+    assert "_safe_admin_cxc_return_url" in detail_body
+    assert "status_code=404" in detail_body
+
+
+def test_admin_cxc_return_url_is_restricted_to_cxc_namespace():
+    source = ADMIN_ROUTES.read_text()
+
+    assert "def _safe_admin_cxc_return_url" in source
+    helper_body = source.split(
+        "def _safe_admin_cxc_return_url",
+        maxsplit=1,
+    )[1].split(
+        "def _render_admin_workspace_hero",
+        maxsplit=1,
+    )[0]
+
+    assert 'clean.startswith("/admin/finanzas/cuentas-por-cobrar")' in helper_body
+    assert 'return "/admin/finanzas/cuentas-por-cobrar"' in helper_body
+
+
 def test_admin_ar_mutations_are_restricted_to_cxc_operator_guard():
     source = ADMIN_ROUTES.read_text()
 

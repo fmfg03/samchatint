@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from samchat.ar.service import build_ar_operational_rows, build_ar_read_model
+from samchat.ar.service import (
+    build_ar_operational_rows,
+    build_ar_read_model,
+    find_ar_operational_item,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -521,6 +525,19 @@ def test_build_ar_operational_rows_keeps_missing_dates_last_on_desc_sort():
         "linked:old",
         "expected:1",
     ]
+
+
+def test_find_ar_operational_item_finds_item_across_sections():
+    payload = {
+        "expected_income": [{"ar_item_id": "expected:1"}],
+        "issued_linked": [{"ar_item_id": "linked:1"}],
+        "issued_unlinked": [{"ar_item_id": "candidate:1"}],
+    }
+
+    item = find_ar_operational_item(payload, "linked:1")
+
+    assert item == {"ar_item_id": "linked:1", "source": "issued_linked"}
+    assert find_ar_operational_item(payload, "missing") is None
 
 
 @pytest.mark.asyncio

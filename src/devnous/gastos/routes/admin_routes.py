@@ -1467,6 +1467,13 @@ def _admin_query_url(path: str, params: Mapping[str, Any]) -> str:
     return f"{path}?{query}" if query else path
 
 
+def _safe_admin_cxc_return_url(return_to: Optional[str]) -> str:
+    clean = str(return_to or "").strip()
+    if clean.startswith("/admin/finanzas/cuentas-por-cobrar"):
+        return clean
+    return "/admin/finanzas/cuentas-por-cobrar"
+
+
 def _render_admin_workspace_hero(
     *,
     eyebrow: str,
@@ -7013,6 +7020,10 @@ async def admin_finance_accounts_receivable(
         {**current_params, "sort_by": sort_by, "sort_dir": sort_dir},
     )
 
+    return_to_url = str(request.url.path)
+    if request.url.query:
+        return_to_url = f"{return_to_url}?{request.url.query}"
+
     if selected_version:
         payload = await build_ar_read_model(
             session,
@@ -7043,6 +7054,7 @@ async def admin_finance_accounts_receivable(
                 sort_dir=sort_dir,
                 base_url=current_url,
                 export_url=export_url,
+                return_to=return_to_url,
             )
             + render_ar_matching_workbench_html(
                 matching_payload,
@@ -7152,6 +7164,133 @@ async def admin_finance_accounts_receivable(
             {breadcrumb_html}
             {hero_html}
             {body_html}
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get(
+    "/admin/finanzas/cuentas-por-cobrar/item/{ar_item_id:path}",
+    response_class=HTMLResponse,
+)
+async def admin_finance_accounts_receivable_item_detail(
+    ar_item_id: str,
+    request: Request,
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+    tournament_code: Optional[str] = Query(None),
+    limit: int = Query(500),
+    dias_credito: int = Query(0),
+    return_to: Optional[str] = Query(None),
+) -> HTMLResponse:
+    """Render one CxC item detail from the canonical AR read model."""
+    from samchat.ar import (
+        ar_admin_styles,
+        build_ar_read_model,
+        find_ar_operational_item,
+        render_ar_item_detail_html,
+    )
+
+    all_versions = await list_budget_versions(session, ensure_schema=False)
+    resolved_year = edition_year
+    if resolved_year is None:
+        resolved_year = (
+            int(all_versions[0]["edition_year"])
+            if all_versions
+            else date.today().year
+        )
+    versions = await list_budget_versions(
+        session,
+        edition_year=resolved_year,
+        ensure_schema=False,
+    )
+    selected_version = None
+    if budget_version_id:
+        selected_version = next(
+            (item for item in versions if item["id"] == budget_version_id),
+            None,
+        )
+    if selected_version is None:
+        selected_version = resolve_definitive_budget_version_from_versions(versions)
+    if selected_version is None:
+        return HTMLResponse(
+            content=_render_admin_error_page(
+                title="Sin versión presupuestal",
+                message="No hay versión presupuestal disponible para CxC.",
+                detail="Selecciona o crea una versión antes de abrir el detalle.",
+                current_empleado=current_empleado,
+                return_href="/admin/finanzas/cuentas-por-cobrar",
+                return_label="Volver a Cuentas por Cobrar",
+            ),
+            status_code=404,
+        )
+
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    payload = await build_ar_read_model(
+        session,
+        budget_version_id=str(selected_version["id"]),
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=safe_limit,
+        credit_days_default=safe_credit_days,
+        ensure_schema=False,
+    )
+    item = find_ar_operational_item(payload, ar_item_id)
+    safe_return = _safe_admin_cxc_return_url(return_to)
+    if item is None:
+        return HTMLResponse(
+            content=_render_admin_error_page(
+                title="Item CxC no encontrado",
+                message="No se encontró el item solicitado en el read model actual.",
+                detail=(
+                    "Puede haberse filtrado por versión, torneo o código de "
+                    "torneo diferente."
+                ),
+                current_empleado=current_empleado,
+                return_href=safe_return,
+                return_label="Volver a Cuentas por Cobrar",
+            ),
+            status_code=404,
+        )
+
+    nav_html = render_admin_navigation(
+        current_empleado,
+        "ar_cxc",
+        subtitle="Detalle de Cuentas por Cobrar.",
+    )
+    breadcrumb_html = _admin_breadcrumb_html(
+        [
+            ("Finanzas", "/admin/finanzas"),
+            ("Cuentas por Cobrar", safe_return),
+            ("Detalle", None),
+        ]
+    )
+    detail_html = render_ar_item_detail_html(
+        item,
+        payload,
+        return_to=safe_return,
+        can_operate_matches=_can_operate_ar_cxc(current_empleado),
+    )
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Detalle Cuentas por Cobrar - Samchat</title>
+        <style>{_admin_workspace_styles("1380px")}{ar_admin_styles()}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {nav_html}
+            {breadcrumb_html}
+            {detail_html}
         </div>
     </body>
     </html>

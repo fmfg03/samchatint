@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from samchat.ar.admin_ui import (
+    render_ar_item_detail_html,
     render_ar_matching_workbench_html,
     render_ar_read_model_html,
 )
@@ -17,6 +18,7 @@ def _payload() -> dict:
         },
         "expected_income": [
             {
+                "ar_item_id": "expected:line-1",
                 "tournament_name": "Copa <Nido>",
                 "status": "planned",
                 "phase": "Nacional",
@@ -28,6 +30,7 @@ def _payload() -> dict:
         ],
         "issued_linked": [
             {
+                "ar_item_id": "linked:link-1",
                 "cfdi_uuid": "uuid-1",
                 "concept_name": "Patrocinio",
                 "payer_name": "Cliente SA",
@@ -39,6 +42,7 @@ def _payload() -> dict:
         ],
         "issued_unlinked": [
             {
+                "ar_item_id": "candidate:cfdi-2",
                 "cfdi_uuid": "uuid-2",
                 "issued_date": "2026-02-01T00:00:00",
                 "payer_name": "Cliente Dos",
@@ -92,6 +96,24 @@ def test_render_ar_read_model_html_includes_sortable_operational_columns():
     assert "sort_by=balance_amount" in html
     assert "Presupuestado sin CFDI" in html
     assert "Saldo" in html
+
+
+def test_render_ar_read_model_html_links_to_detail_with_return_context():
+    html = render_ar_read_model_html(
+        _payload(),
+        base_url=(
+            "/admin/finanzas/cuentas-por-cobrar?"
+            "budget_version_id=version-1&estado=todos"
+        ),
+        return_to=(
+            "/admin/finanzas/cuentas-por-cobrar?"
+            "budget_version_id=version-1&estado=todos"
+        ),
+    )
+
+    assert "/admin/finanzas/cuentas-por-cobrar/item/expected%3A" in html
+    assert "return_to=%2Fadmin%2Ffinanzas%2Fcuentas-por-cobrar" in html
+    assert "budget_version_id=version-1" in html
 
 
 def test_render_ar_read_model_html_escapes_values():
@@ -185,3 +207,50 @@ def test_render_ar_matching_workbench_html_hides_match_actions_without_permissio
     assert "sin permiso operativo" in html
     assert "Aceptar match" not in html
     assert "Revertir" not in html
+
+
+def test_render_ar_item_detail_html_shows_core_sections_and_gaps():
+    item = {
+        "ar_item_id": "linked:1",
+        "source": "issued_linked",
+        "operational_status": "Cobranza desconocida",
+        "payer_name": "Cliente SA",
+        "payer_rfc": "CLI010101AAA",
+        "cfdi_uuid": "uuid-1",
+        "issued_date": "2026-01-15",
+        "issued_amount": 100,
+        "linked_income_amount": 100,
+        "collected_amount": 0,
+        "balance_amount": None,
+        "tournament_name": "Copa",
+        "phase": "Nacional",
+        "concept_name": "Patrocinio",
+        "collection_status": "collection_unknown",
+    }
+
+    html = render_ar_item_detail_html(
+        item,
+        {"matching_gaps": [], "collection_gaps": []},
+        return_to="/admin/finanzas/cuentas-por-cobrar?estado=todos",
+        can_operate_matches=True,
+    )
+
+    assert "Detalle de Cuentas por Cobrar" in html
+    assert "CFDI" in html
+    assert "Presupuesto" in html
+    assert "Cobranza" in html
+    assert "Gaps / Siguientes Acciones" in html
+    assert "La cobranza no está comprobada" in html
+    assert "Ir a pre-matching" in html
+
+
+def test_render_ar_item_detail_html_hides_mutable_actions_without_permission():
+    html = render_ar_item_detail_html(
+        {"ar_item_id": "candidate:1", "source": "issued_unlinked"},
+        {"matching_gaps": [], "collection_gaps": []},
+        return_to="/admin/finanzas/cuentas-por-cobrar",
+        can_operate_matches=False,
+    )
+
+    assert "Sin permiso operativo" in html
+    assert "Ir a pre-matching" not in html

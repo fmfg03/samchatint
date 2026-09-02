@@ -662,3 +662,27 @@ def build_ar_operational_rows(
     present_rows = [row for row in rows if row.get(key) not in (None, "")]
     missing_rows = [row for row in rows if row.get(key) in (None, "")]
     return sorted(present_rows, key=_sort_value, reverse=reverse) + missing_rows
+
+
+def find_ar_operational_item(
+    payload: dict[str, Any],
+    ar_item_id: str,
+) -> Optional[dict[str, Any]]:
+    """Find one AR item in the read model by stable operational id."""
+
+    clean_id = _safe_str(ar_item_id)
+    if not clean_id:
+        return None
+    sections = (
+        ("expected_income", payload.get("expected_income") or []),
+        ("issued_linked", payload.get("issued_linked") or []),
+        ("issued_unlinked", payload.get("issued_unlinked") or []),
+    )
+    for source, items in sections:
+        for item in list(items):
+            if _safe_str(item.get("ar_item_id")) != clean_id:
+                continue
+            enriched = dict(item)
+            enriched["source"] = source
+            return enriched
+    return None

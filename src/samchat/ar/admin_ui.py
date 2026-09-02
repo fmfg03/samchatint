@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Any
+from urllib.parse import quote
 
 from .service import build_ar_operational_rows
 
@@ -56,9 +57,12 @@ def _sort_link(
     return f'<a class="ar-sort" href="{escape(href)}">{escape(label + marker)}</a>'
 
 
-def _operational_rows(rows: list[dict[str, Any]]) -> str:
+def _operational_rows(rows: list[dict[str, Any]], *, return_to: str = "") -> str:
     if not rows:
-        return _empty_row(14, "Sin cartera CxC con los filtros seleccionados.")
+        return _empty_row(15, "Sin cartera CxC con los filtros seleccionados.")
+    context_query = ""
+    if "?" in return_to:
+        context_query = return_to.split("?", 1)[1]
     return "".join(
         _row(
             [
@@ -80,6 +84,14 @@ def _operational_rows(rows: list[dict[str, Any]]) -> str:
                     else '<span class="ar-muted">sin saldo confirmado</span>'
                 ),
                 _status_pill(item.get("operational_status")),
+                (
+                    '<a class="button secondary compact" href="'
+                    f'/admin/finanzas/cuentas-por-cobrar/item/'
+                    f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
+                    f'?{context_query + "&" if context_query else ""}'
+                    f'return_to={quote(return_to or "", safe="")}'
+                    '">Ver detalle</a>'
+                ),
             ]
         )
         for item in rows
@@ -173,6 +185,146 @@ def _matching_gap_rows(rows: list[dict[str, Any]]) -> str:
         )
         for item in rows
     )
+
+
+def _detail_metric(label: str, value: Any) -> str:
+    return (
+        '<div class="ar-detail-metric">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{_text(value)}</strong>"
+        "</div>"
+    )
+
+
+def _detail_money(label: str, value: Any) -> str:
+    return (
+        '<div class="ar-detail-metric">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{_money(value)}</strong>"
+        "</div>"
+    )
+
+
+def _detail_gap_items(item: dict[str, Any], gaps: list[dict[str, Any]]) -> str:
+    item_id = str(item.get("ar_item_id") or "")
+    messages: list[str] = []
+    if item.get("source") == "expected_income":
+        messages.append("Falta vincular CFDI a la partida de ingreso.")
+    if not item.get("payer_name") and not item.get("payer_rfc"):
+        messages.append("Falta cliente/RFC.")
+    if not item.get("concept_name") and item.get("source") != "issued_unlinked":
+        messages.append("Falta partida de ingreso.")
+    if item.get("collection_status") in {None, "", "collection_unknown"}:
+        messages.append("Falta comprobar cobranza con match aceptado.")
+    if item.get("operational_status") == "Revisión sobrepago":
+        messages.append("Sobrepago requiere revisión manual contable.")
+    if item.get("issued_amount") and not item.get("due_date"):
+        messages.append("Sin fecha de vencimiento confiable.")
+    for gap in gaps:
+        if str(gap.get("item_id") or "") == item_id:
+            messages.append(str(gap.get("reason") or "Gap sin clasificar."))
+    if not messages:
+        return '<li class="ar-muted">Sin gaps accionables detectados.</li>'
+    return "".join(f"<li>{escape(message)}</li>" for message in dict.fromkeys(messages))
+
+
+def render_ar_item_detail_html(
+    item: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    return_to: str,
+    can_operate_matches: bool,
+) -> str:
+    """Render one CxC operational item detail from the AR read model."""
+
+    gaps = list(payload.get("matching_gaps") or []) + list(
+        payload.get("collection_gaps") or []
+    )
+    status = item.get("operational_status") or item.get("status")
+    collection_status = item.get("collection_status") or "collection_unknown"
+    balance = (
+        _money(item.get("balance_amount"))
+        if item.get("balance_amount") is not None
+        else "sin saldo confirmado"
+    )
+    mutable_actions = ""
+    if can_operate_matches:
+        mutable_actions = """
+            <a class="button secondary" href="#prematching">Ir a pre-matching</a>
+            <a class="button secondary" href="/admin/presupuestos">Vincular CFDI en presupuesto</a>
+        """
+        if item.get("collection_match_id"):
+            mutable_actions += (
+                '<span class="ar-muted">Match aceptado: '
+                f'{_text(item.get("collection_match_id"))}</span>'
+            )
+    else:
+        mutable_actions = '<span class="ar-muted">Sin permiso operativo para acciones mutables.</span>'
+
+    return f"""
+        <section class="workspace-card ar-warning" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Detalle de Cuentas por Cobrar</div>
+            <div class="workspace-section-subtitle">
+                Detalle construido desde el mismo read model de la tabla CxC.
+            </div>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+                <a class="button secondary" href="{escape(return_to)}">Volver a CxC</a>
+                {mutable_actions}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">{_text(status)}</div>
+            <div class="ar-detail-grid" style="margin-top:14px;">
+                {_detail_metric("Cliente/pagador", item.get("payer_name"))}
+                {_detail_metric("RFC", item.get("payer_rfc"))}
+                {_detail_metric("UUID CFDI", item.get("cfdi_uuid"))}
+                {_detail_metric("Saldo", balance)}
+            </div>
+        </section>
+        <section class="ar-detail-sections">
+            <div class="workspace-card">
+                <div class="workspace-section-title">CFDI</div>
+                <div class="ar-detail-grid">
+                    {_detail_metric("UUID", item.get("cfdi_uuid"))}
+                    {_detail_metric("Fecha CFDI", item.get("issued_date"))}
+                    {_detail_money("Monto facturado", item.get("issued_amount"))}
+                    {_detail_metric("RFC emisor", item.get("emisor_rfc"))}
+                    {_detail_metric("Nombre emisor", item.get("emisor_nombre"))}
+                    {_detail_metric("RFC receptor", item.get("payer_rfc"))}
+                    {_detail_metric("Nombre receptor", item.get("payer_name"))}
+                </div>
+            </div>
+            <div class="workspace-card">
+                <div class="workspace-section-title">Presupuesto</div>
+                <div class="ar-detail-grid">
+                    {_detail_metric("Torneo/proyecto", item.get("tournament_name") or item.get("tournament_code"))}
+                    {_detail_metric("Fase", item.get("phase"))}
+                    {_detail_metric("Concepto/partida", item.get("concept_name"))}
+                    {_detail_money("Monto presupuestado", item.get("expected_income_amount"))}
+                    {_detail_money("Monto reconocido", item.get("linked_income_amount"))}
+                    {_detail_metric("Versión", item.get("budget_version_id"))}
+                </div>
+            </div>
+            <div class="workspace-card">
+                <div class="workspace-section-title">Cobranza</div>
+                <div class="ar-detail-grid">
+                    {_detail_money("Cobrado comprobado", item.get("collected_amount"))}
+                    {_detail_metric("Fecha cobranza", item.get("collection_date"))}
+                    {_detail_metric("Match aceptado", item.get("collection_match_id"))}
+                    {_detail_metric("Estado cobranza", collection_status)}
+                    {_detail_metric("Vencimiento", item.get("due_date"))}
+                    {_detail_metric("Saldo", balance)}
+                </div>
+                <div class="workspace-section-subtitle">
+                    {"" if item.get("collection_match_id") else "La cobranza no está comprobada: falta match aceptado."}
+                </div>
+            </div>
+            <div class="workspace-card">
+                <div class="workspace-section-title">Gaps / Siguientes Acciones</div>
+                <ul class="ar-gap-list">{_detail_gap_items(item, gaps)}</ul>
+            </div>
+        </section>
+    """
 
 
 def _candidate_summary(candidates: list[dict[str, Any]]) -> str:
@@ -432,6 +584,7 @@ def render_ar_read_model_html(
     sort_dir: str = "desc",
     base_url: str = "/admin/finanzas/cuentas-por-cobrar",
     export_url: str = "/admin/finanzas/cuentas-por-cobrar/export.xlsx",
+    return_to: str = "",
 ) -> str:
     """Render AR S1 as an admin workspace body fragment."""
 
@@ -507,6 +660,7 @@ def render_ar_read_model_html(
         f"<th>{_sort_link(label='Cobrado', field='collected_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Saldo', field='balance_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
         f"<th>{_sort_link(label='Estado', field='operational_status', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        "<th>Detalle</th>"
         "</tr></thead>"
     )
 
@@ -538,7 +692,7 @@ def render_ar_read_model_html(
             <div class="ar-table-wrap">
                 <table class="ar-table">
                     {operational_header}
-                    <tbody>{_operational_rows(operational_rows)}</tbody>
+                    <tbody>{_operational_rows(operational_rows, return_to=return_to or base_url)}</tbody>
                 </table>
             </div>
         </section>
@@ -656,5 +810,48 @@ def ar_admin_styles() -> str:
             font-size:11px;
             font-weight:900;
             text-transform:uppercase;
+        }
+        .button.compact {
+            padding:7px 10px;
+            border-radius:10px;
+            font-size:12px;
+            white-space:nowrap;
+        }
+        .ar-detail-grid {
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+            gap:12px;
+            margin-top:12px;
+        }
+        .ar-detail-sections {
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(320px,1fr));
+            gap:16px;
+            margin-bottom:18px;
+        }
+        .ar-detail-metric {
+            border:1px solid #e2e8f0;
+            border-radius:8px;
+            background:#fff;
+            padding:12px;
+        }
+        .ar-detail-metric span {
+            display:block;
+            color:#64748b;
+            font-size:11px;
+            font-weight:900;
+            text-transform:uppercase;
+        }
+        .ar-detail-metric strong {
+            display:block;
+            margin-top:6px;
+            color:#0f172a;
+            font-size:14px;
+            overflow-wrap:anywhere;
+        }
+        .ar-gap-list {
+            margin:12px 0 0 18px;
+            color:#334155;
+            line-height:1.55;
         }
     """
