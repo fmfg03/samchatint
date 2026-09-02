@@ -7985,6 +7985,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
+            actor=current_empleado,
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(

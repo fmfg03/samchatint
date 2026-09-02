@@ -694,6 +694,7 @@ def test_comprobante_pago_attachment_is_registered_atomically_with_payment() -> 
     assert 'if categoria_norm == "comprobante_pago":' in handler
     assert "commit=False" in handler
     assert "await register_document_payment(" in handler
+    assert "actor=current_empleado" in handler
     assert "payment_registered = True" in handler
 
 
@@ -741,6 +742,23 @@ def test_quick_expense_form_exposes_air_supplement_facturas() -> None:
     assert 'name="exceso_equipaje_cfdi_pdf"' in source
     assert "airTokens" in source
     assert "isAir()" in source
+
+
+def test_quick_expense_form_exposes_no_deducible_action() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("quick_capture_html =")
+    end = source.index("debtor_aux = await build_cuenta_debtor_auxiliary", start)
+    quick_form = source[start:end]
+
+    assert 'id="quick-no-deducible"' in quick_form
+    assert "No deducible" in quick_form
+    assert ".quick-no-deducible-btn.active" in source
+    assert "numeroFactura.value = 'no facturable'" in source
+    assert "cfdiXml.value = ''" in source
+    assert "cfdiPdf.value = ''" in source
+    assert "clearNoDeducibleIfCfdiSelected" in source
+    assert "normalize(numeroFactura.value) === 'no facturable'" in source
+    assert "aria-pressed" in source
 
 
 def test_quick_expense_route_creates_air_supplement_expenses() -> None:
@@ -815,6 +833,34 @@ def test_solicitante_can_add_materialidad_after_financial_closure():
 
     documento.estado = "aplicado"
     assert user_routes._can_add_solicitud_adjuntos(documento, empleado) is True
+
+
+def test_expense_edit_form_allows_materiality_uploads() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def editar_gasto_form")
+    end = source.index('@router.post("/gastos/{gasto_id}/editar")', start)
+    form = source[start:end]
+
+    assert 'enctype="multipart/form-data"' in form
+    assert 'name="archivos_generales"' in form
+    assert 'id="archivos_generales"' in form
+    assert "Materialidad / soporte" in form
+    assert "recibos PDF o imagen" in form
+
+
+def test_expense_edit_post_persists_materiality_uploads() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def editar_gasto(")
+    end = source.index('@router.get("/documentos/mis-documentos"', start)
+    handler = source[start:end]
+
+    assert "archivos_generales: Optional[List[UploadFile]] = File(None)" in handler
+    assert "validate_solicitud_terceros_attachment(" in handler
+    assert "create_adjunto_record(" in handler
+    assert 'categoria="supporting"' in handler
+    assert 'origen="user_upload"' in handler
+    assert "adjuntos_materialidad" in handler
+    assert handler.index("adjuntos_materialidad") < handler.index("if not changes:")
 
 
 def test_workflow_closure_does_not_reopen_solicitud_editing():

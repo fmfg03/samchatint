@@ -29,10 +29,22 @@ PAYMENT_RUN_MANAGER_ENV_KEYS = (
     "SAMCHAT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS",
     "PAYMENT_RUN_MANAGER_EMPLOYEE_IDS",
 )
+PAYMENT_RUN_PAYMENT_CONFIRMER_ENV_KEYS = (
+    "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
+    "PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
+)
 DEFAULT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS = frozenset(
     {
         "6380f16d-2b89-491c-8457-c5b80c319a0f",
         "e3d13040-2360-420f-98a1-516440ef63c3",
+    }
+)
+DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS = frozenset(
+    {
+        "6380f16d-2b89-491c-8457-c5b80c319a0f",
+        "d87a03c1-7023-4b25-9867-2e2e8301e2aa",
+        "11bb2f54-363e-49b0-8e12-12e36b51e84a",
+        "2c85b3ca-9f4b-49b7-be2e-2e36ef981479",
     }
 )
 
@@ -66,8 +78,16 @@ class PaymentRunCloseResult:
 
 
 def _parse_manager_ids_from_env() -> set[str]:
+    return _parse_ids_from_env(PAYMENT_RUN_MANAGER_ENV_KEYS)
+
+
+def _parse_payment_confirmer_ids_from_env() -> set[str]:
+    return _parse_ids_from_env(PAYMENT_RUN_PAYMENT_CONFIRMER_ENV_KEYS)
+
+
+def _parse_ids_from_env(keys: Iterable[str]) -> set[str]:
     ids: set[str] = set()
-    for key in PAYMENT_RUN_MANAGER_ENV_KEYS:
+    for key in keys:
         raw = os.getenv(key, "")
         for item in raw.replace(";", ",").split(","):
             normalized = item.strip().lower()
@@ -81,6 +101,18 @@ def configured_payment_run_manager_ids(
 ) -> set[str]:
     ids = set(DEFAULT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS)
     ids.update(_parse_manager_ids_from_env())
+    for item in extra_ids or []:
+        normalized = str(item or "").strip().lower()
+        if normalized:
+            ids.add(normalized)
+    return ids
+
+
+def configured_payment_run_payment_confirmer_ids(
+    extra_ids: Optional[Iterable[Any]] = None,
+) -> set[str]:
+    ids = set(DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS)
+    ids.update(_parse_payment_confirmer_ids_from_env())
     for item in extra_ids or []:
         normalized = str(item or "").strip().lower()
         if normalized:
@@ -137,6 +169,9 @@ def _has_any_permission(empleado: Any, *permissions: str) -> bool:
 def can_confirm_payment_run_payment(empleado: Any) -> bool:
     """Only Contabilidad can attach proof and mark Payment Run items as paid."""
     if is_superadmin_role(getattr(empleado, "rol", None)):
+        return True
+    empleado_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    if empleado_id in configured_payment_run_payment_confirmer_ids():
         return True
     if _has_any_permission(
         empleado,

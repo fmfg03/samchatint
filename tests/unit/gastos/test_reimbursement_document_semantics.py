@@ -528,6 +528,27 @@ def test_approval_history_view_shows_operations_reference_column() -> None:
     assert "<td>{referencia_operaciones}</td>" in route_block
 
 
+def test_approval_history_view_shows_operational_context_columns() -> None:
+    source = Path(user_routes.__file__).read_text()
+    route_start = source.index('async def historial_aprobador(')
+    route_end = source.index("def _documentos_todos_reporting_type", route_start)
+    route_block = source[route_start:route_end]
+
+    assert "<th>Torneo</th>" in route_block
+    assert "<th>Fase</th>" in route_block
+    assert "<th>Concepto/Presupuestal</th>" in route_block
+    assert "<th>Descripción del Usuario</th>" in route_block
+    assert "<th>Beneficiario</th>" in route_block
+    assert '_approval_history_torneo(documento)' in route_block
+    assert '_approval_history_fase(documento)' in route_block
+    assert '_approval_history_budget_concept(documento)' in route_block
+    assert '_documentos_todos_reporting_description(documento)' in route_block
+    assert '_approval_history_beneficiario(documento)' in route_block
+    assert 'escape(row_values["torneo"])' in route_block
+    assert 'escape(row_values["descripcion"])' in route_block
+    assert 'escape(row_values["beneficiario"])' in route_block
+
+
 def test_telegram_workflow_approval_triggers_odilon_finance_alert() -> None:
     source = Path(tg.__file__).read_text()
     workflow_start = source.index("async def run_document_workflow_telegram_notifications")

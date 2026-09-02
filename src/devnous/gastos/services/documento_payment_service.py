@@ -153,18 +153,33 @@ async def register_document_payment(
     *,
     documento_id: UUID | str,
     actor_id: UUID | str,
+    actor: Any | None = None,
+    notify: bool = True,
 ) -> DocumentoPagoResult:
     documento_uuid = _to_uuid(documento_id)
     actor_uuid = _to_uuid(actor_id)
 
     documento = await _load_documento_for_payment(session, documento_uuid)
     if documento is None:
-        raise DocumentoPaymentValidationError("documento_not_found", "Documento not found")
+        raise DocumentoPaymentValidationError(
+            "documento_not_found",
+            "Documento not found",
+        )
 
-    actor = await _load_actor(session, actor_uuid)
-    if actor is None:
+    payment_actor = actor
+    if (
+        payment_actor is not None
+        and _to_uuid(getattr(payment_actor, "id")) != actor_uuid
+    ):
+        raise DocumentoPaymentValidationError(
+            "actor_mismatch",
+            "Actor does not match actor_id.",
+        )
+    if payment_actor is None:
+        payment_actor = await _load_actor(session, actor_uuid)
+    if payment_actor is None:
         raise DocumentoPaymentValidationError("actor_not_found", "Actor not found")
-    if not can_confirm_payment_run_payment(actor):
+    if not can_confirm_payment_run_payment(payment_actor):
         raise DocumentoPaymentPermissionError(
             "insufficient_role",
             "Solo Contabilidad puede marcar solicitudes como pagadas.",
@@ -213,7 +228,7 @@ async def register_document_payment(
         aprobacion = Aprobacion(
             tipo_entidad="documento",
             entidad_id=documento.id,
-            aprobador_id=actor.id,
+            aprobador_id=payment_actor.id,
             accion="pagar",
             comentario="Pago AMEX marcado como pagado contra pasivo de tarjeta.",
             fecha=datetime.utcnow(),
@@ -222,10 +237,11 @@ async def register_document_payment(
         await session.commit()
         await session.refresh(documento)
         await session.refresh(aprobacion)
-        _schedule_solicitud_paid_telegram_notifications(
-            documento_id=documento.id,
-            actor_id=actor.id,
-        )
+        if notify:
+            _schedule_solicitud_paid_telegram_notifications(
+                documento_id=documento.id,
+                actor_id=payment_actor.id,
+            )
         return DocumentoPagoResult(
             documento=documento,
             aprobacion=aprobacion,
@@ -260,7 +276,7 @@ async def register_document_payment(
             aprobacion = Aprobacion(
                 tipo_entidad="documento",
                 entidad_id=documento.id,
-                aprobador_id=actor.id,
+                aprobador_id=payment_actor.id,
                 accion="pagar",
                 comentario="Solicitud de transferencia marcada como pagada.",
                 fecha=datetime.utcnow(),
@@ -269,10 +285,11 @@ async def register_document_payment(
             await session.commit()
             await session.refresh(documento)
             await session.refresh(aprobacion)
-            _schedule_solicitud_paid_telegram_notifications(
-                documento_id=documento.id,
-                actor_id=actor.id,
-            )
+            if notify:
+                _schedule_solicitud_paid_telegram_notifications(
+                    documento_id=documento.id,
+                    actor_id=payment_actor.id,
+                )
             return DocumentoPagoResult(
                 documento=documento,
                 aprobacion=aprobacion,
@@ -434,7 +451,7 @@ async def register_document_payment(
     aprobacion = Aprobacion(
         tipo_entidad="documento",
         entidad_id=documento.id,
-        aprobador_id=actor.id,
+        aprobador_id=payment_actor.id,
         accion="pagar",
         comentario=(
             f"Pago registrado y gasto generado automáticamente ({flow_type}). "
@@ -446,10 +463,11 @@ async def register_document_payment(
     await session.commit()
     await session.refresh(documento)
     await session.refresh(aprobacion)
-    _schedule_solicitud_paid_telegram_notifications(
-        documento_id=documento.id,
-        actor_id=actor.id,
-    )
+    if notify:
+        _schedule_solicitud_paid_telegram_notifications(
+            documento_id=documento.id,
+            actor_id=payment_actor.id,
+        )
     return DocumentoPagoResult(documento=documento, aprobacion=aprobacion, expense=expense)
 
 

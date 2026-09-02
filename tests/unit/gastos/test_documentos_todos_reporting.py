@@ -1031,6 +1031,58 @@ def test_approval_history_page_has_workspace_navigation_context() -> None:
     assert '("Historial de aprobaciones", None)' in block
 
 
+def test_approval_history_supports_multi_option_filters_after_visibility_scope() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def historial_aprobador")
+    end = source.index("@router.get(\"/documentos/todos\"", start)
+    block = source[start:end]
+    gate_index = block.index("await _can_review_pending_approvals")
+    filter_options_index = block.index("filter_options = {")
+
+    assert "torneo: Optional[List[str]] = Query(None)" in block
+    assert "concepto: Optional[List[str]] = Query(None)" in block
+    assert "beneficiario: Optional[List[str]] = Query(None)" in block
+    assert "tipo: Optional[List[str]] = Query(None)" in block
+    assert "estado: Optional[List[str]] = Query(None)" in block
+    assert gate_index < filter_options_index
+    assert "selected_torneo = _approval_history_filter_values(torneo)" in block
+    assert "selected_concepto = _approval_history_filter_values(concepto)" in block
+    assert "selected_beneficiario = _approval_history_filter_values(beneficiario)" in block
+    assert "selected_tipo = _approval_history_filter_values(tipo)" in block
+    assert "selected_estado = _approval_history_filter_values(estado)" in block
+    assert 'name="torneo" multiple' in block
+    assert 'name="concepto" multiple' in block
+    assert 'name="beneficiario" multiple' in block
+    assert 'name="tipo" multiple' in block
+    assert 'name="estado" multiple' in block
+    assert "Aplicar filtros" in block
+    assert "Limpiar filtros" in block
+    assert "No hay aprobaciones con esos filtros." in block
+
+
+def test_approval_history_loads_context_relations_for_filter_options() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def historial_aprobador")
+    end = source.index("@router.get(\"/documentos/todos\"", start)
+    block = source[start:end]
+
+    assert "selectinload(Documento.beneficiario_empleado)" in block
+    assert "selectinload(Documento.proveedor_cliente)" in block
+    assert "selectinload(Documento.budget_concept)" in block
+    assert "selectinload(Documento.torneo)" in block
+    assert "selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase)" in block
+    assert "selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo)" in block
+    assert (
+        "selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.beneficiario_empleado)"
+        in block
+    )
+    assert (
+        "selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.beneficiario_proveedor_cliente)"
+        in block
+    )
+    assert "undefer(Documento.fase)" in block
+
+
 def test_solicitud_terceros_creation_does_not_render_budget_concept_selector() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = source.index("async def _render_solicitud_terceros_form")
