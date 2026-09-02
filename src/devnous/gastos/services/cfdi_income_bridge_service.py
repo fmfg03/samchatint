@@ -98,8 +98,9 @@ async def _load_cfdi_report(
         await session.execute(
             text(
                 """
-                SELECT id, cfdi_uuid, fecha, total, emisor_rfc, emisor_nombre,
-                       receptor_rfc, receptor_nombre, tipo_de_comprobante
+                SELECT id, cfdi_uuid, fecha, total, total_impuestos_trasladados,
+                       emisor_rfc, emisor_nombre, receptor_rfc, receptor_nombre,
+                       tipo_de_comprobante
                 FROM cfdi_reports
                 WHERE id = CAST(:cfdi_report_id AS uuid)
                 LIMIT 1
@@ -280,7 +281,8 @@ async def list_psp_cfdi_income_candidates(
         await session.execute(
             text(
                 f"""
-                SELECT c.id, c.cfdi_uuid, c.fecha, c.total, c.emisor_rfc,
+                SELECT c.id, c.cfdi_uuid, c.fecha, c.total,
+                       c.total_impuestos_trasladados, c.emisor_rfc,
                        c.emisor_nombre, c.receptor_rfc, c.receptor_nombre,
                        c.descripcion_concepto_principal,
                        a.tournament_id AS assigned_tournament_id
@@ -531,9 +533,11 @@ async def list_budget_cfdi_income_links(
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
                        l.income_date, l.source, l.created_at, l.unlinked_at,
                        c.cfdi_uuid, c.fecha AS cfdi_fecha,
+                       c.total_impuestos_trasladados,
                        c.emisor_rfc, c.emisor_nombre,
                        c.receptor_rfc, c.receptor_nombre,
-                       bl.concept_name
+                       bl.concept_name, bl.account_code_final,
+                       bl.account_code_suggested
                 FROM budget_cfdi_income_links l
                 JOIN cfdi_reports c ON c.id = l.cfdi_report_id
                 JOIN budget_lines bl ON bl.id = l.budget_line_id

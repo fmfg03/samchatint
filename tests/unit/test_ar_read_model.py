@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from samchat.ar.service import (
+    build_ar_accounting_preview,
     build_ar_actionable_gaps,
     build_ar_operational_rows,
     build_ar_read_model,
@@ -640,6 +641,85 @@ def test_build_ar_actionable_gaps_marks_missing_client_or_rfc_as_medium():
 
     assert gaps[0]["priority"] == "media"
     assert gaps[0]["gap_type"] == "cliente_rfc_faltante"
+
+
+def test_build_ar_accounting_preview_for_linked_invoice_is_ready():
+    item = {
+        "source": "issued_linked",
+        "ar_item_id": "linked:1",
+        "issued_amount": 116,
+        "iva_amount": 16,
+        "account_code_final": "4100-001-004",
+    }
+
+    preview = build_ar_accounting_preview(item)
+
+    invoice = preview["invoice_policy_preview"]
+    assert invoice["status"] == "lista"
+    assert invoice["gaps"] == []
+    assert [
+        (line["side"], line["account_code"], line["amount"])
+        for line in invoice["lines"]
+    ] == [
+        ("debe", "1150-001-001", 116.0),
+        ("haber", "4100-001-004", 100.0),
+        ("haber", "2140-001-001", 16.0),
+    ]
+
+
+def test_build_ar_accounting_preview_marks_missing_income_account():
+    preview = build_ar_accounting_preview(
+        {
+            "source": "issued_linked",
+            "ar_item_id": "linked:1",
+            "issued_amount": 100,
+            "iva_amount": 0,
+        }
+    )
+
+    invoice = preview["invoice_policy_preview"]
+    assert invoice["status"] == "incompleta"
+    assert "missing_income_account" in invoice["gaps"]
+    assert invoice["lines"] == []
+
+
+def test_build_ar_accounting_preview_marks_collection_without_match():
+    preview = build_ar_accounting_preview(
+        {
+            "source": "issued_linked",
+            "ar_item_id": "linked:1",
+            "issued_amount": 100,
+            "account_code_final": "4100-001-004",
+        }
+    )
+
+    collection = preview["collection_policy_preview"]
+    assert collection["status"] == "sin match"
+    assert collection["gaps"] == ["missing_collection_match"]
+    assert collection["lines"] == []
+
+
+def test_build_ar_accounting_preview_for_accepted_collection_is_ready():
+    preview = build_ar_accounting_preview(
+        {
+            "source": "issued_linked",
+            "ar_item_id": "linked:1",
+            "issued_amount": 100,
+            "collected_amount": 100,
+            "collection_match_id": "match-1",
+            "account_code_final": "4100-001-004",
+        }
+    )
+
+    collection = preview["collection_policy_preview"]
+    assert collection["status"] == "lista"
+    assert [
+        (line["side"], line["account_code"], line["amount"])
+        for line in collection["lines"]
+    ] == [
+        ("debe", "1120-001-001", 100.0),
+        ("haber", "1150-001-001", 100.0),
+    ]
 
 
 def test_find_ar_operational_item_finds_item_across_sections():

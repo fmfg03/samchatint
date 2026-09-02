@@ -31,8 +31,11 @@ def _payload() -> dict:
         "issued_linked": [
             {
                 "ar_item_id": "linked:link-1",
+                "source": "issued_linked",
                 "cfdi_uuid": "uuid-1",
                 "concept_name": "Patrocinio",
+                "account_code_final": "4100-001-004",
+                "iva_amount": 80,
                 "payer_name": "Cliente SA",
                 "payer_rfc": "CLI010101AAA",
                 "issued_amount": 500,
@@ -249,6 +252,8 @@ def test_render_ar_item_detail_html_shows_core_sections_and_gaps():
         "budget_version_id": "version-1",
         "phase": "Nacional",
         "concept_name": "Patrocinio",
+        "account_code_final": "4100-001-004",
+        "iva_amount": 16,
         "collection_status": "collection_unknown",
     }
 
@@ -264,6 +269,10 @@ def test_render_ar_item_detail_html_shows_core_sections_and_gaps():
     assert "Presupuesto" in html
     assert "Cobranza" in html
     assert "Gaps / Siguientes Acciones" in html
+    assert "Prepólizas CxC" in html
+    assert "4100-001-004" in html
+    assert "2140-001-001" in html
+    assert "missing_collection_match" in html
     assert "La cobranza no está comprobada" in html
     assert "Ir a pre-matching" in html
     assert "#prematching" in html
@@ -283,6 +292,7 @@ def test_render_ar_item_detail_html_hides_mutable_actions_without_permission():
 
     assert "Sin permiso operativo" in html
     assert "Acciones operativas habilitadas" not in html
+    assert "Prepólizas CxC" in html
 
 
 def test_render_ar_matching_workbench_has_stable_prematching_anchor():

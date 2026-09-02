@@ -5,6 +5,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+AR_DEFAULT_BANK_ACCOUNT_CODE = "1120-001-001"
+AR_IVA_TRASLADADO_ACCOUNT_CODE = "2140-001-001"
+
 
 def _safe_str(value: Any) -> str:
     return str(value or "").strip()
@@ -173,6 +176,25 @@ def _collection_gap(
     }
 
 
+def _receivable_account_code_for_ar_item(item: dict[str, Any]) -> str:
+    concept = " ".join(
+        _safe_str(item.get(key))
+        for key in (
+            "tournament_name",
+            "concept_name",
+            "account_code_final",
+            "account_code_suggested",
+        )
+    ).lower()
+    if (
+        "patrocin" in concept
+        or "intercambio" in concept
+        or "4100-001-008" in concept
+    ):
+        return "1150-001-003"
+    return "1150-001-001"
+
+
 def _apply_collection_match(
     item: dict[str, Any],
     match: Optional[dict[str, Any]],
@@ -300,6 +322,12 @@ async def build_ar_read_model(
                 "tournament_name": _safe_str(line.get("tournament_name")) or None,
                 "phase": _safe_str(line.get("phase")) or None,
                 "concept_name": _safe_str(line.get("concept_name")) or None,
+                "account_code_final": _safe_str(line.get("account_code_final"))
+                or None,
+                "account_code_suggested": _safe_str(
+                    line.get("account_code_suggested")
+                )
+                or None,
                 "expected_income_amount": _safe_float(expected_total),
                 "issued_amount": _safe_float(linked_total),
                 "collected_amount": 0.0,
@@ -346,8 +374,17 @@ async def build_ar_read_model(
                 "phase": _safe_str(link.get("phase")) or None,
                 "budget_concept_id": _safe_str(link.get("budget_concept_id")) or None,
                 "concept_name": _safe_str(link.get("concept_name")) or None,
+                "account_code_final": _safe_str(link.get("account_code_final"))
+                or None,
+                "account_code_suggested": _safe_str(
+                    link.get("account_code_suggested")
+                )
+                or None,
                 "cfdi_report_id": _safe_str(link.get("cfdi_report_id")) or None,
                 "cfdi_uuid": _safe_str(link.get("cfdi_uuid")) or None,
+                "iva_amount": _safe_float(
+                    link.get("total_impuestos_trasladados")
+                ),
                 "payer_rfc": payer_rfc,
                 "payer_name": payer_name,
                 "issued_amount": amount,
@@ -424,6 +461,9 @@ async def build_ar_read_model(
                 "status": "issued_unlinked",
                 "cfdi_report_id": candidate_id or None,
                 "cfdi_uuid": _safe_str(candidate.get("cfdi_uuid")) or None,
+                "iva_amount": _safe_float(
+                    candidate.get("total_impuestos_trasladados")
+                ),
                 "issued_amount": amount,
                 "issued_date": _iso(candidate.get("fecha")),
                 "due_date": _due_date(candidate.get("fecha"), credit_days),
@@ -567,6 +607,9 @@ def build_ar_operational_rows(
                 or item.get("tournament_code"),
                 "phase": item.get("phase"),
                 "concept_name": item.get("concept_name"),
+                "account_code_final": item.get("account_code_final"),
+                "account_code_suggested": item.get("account_code_suggested"),
+                "iva_amount": _safe_float(item.get("iva_amount")),
                 "payer_name": None,
                 "payer_rfc": None,
                 "cfdi_uuid": None,
@@ -601,6 +644,9 @@ def build_ar_operational_rows(
                     or item.get("tournament_code"),
                     "phase": item.get("phase"),
                     "concept_name": item.get("concept_name"),
+                    "account_code_final": item.get("account_code_final"),
+                    "account_code_suggested": item.get("account_code_suggested"),
+                    "iva_amount": _safe_float(item.get("iva_amount")),
                     "payer_name": item.get("payer_name"),
                     "payer_rfc": item.get("payer_rfc"),
                     "cfdi_uuid": item.get("cfdi_uuid"),
@@ -686,6 +732,136 @@ def find_ar_operational_item(
             enriched["source"] = source
             return enriched
     return None
+
+
+def build_ar_accounting_preview(
+    item: dict[str, Any],
+    payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Build read-only expected CxC accounting entries for one AR item."""
+
+    _ = payload
+    source = _safe_str(item.get("source") or item.get("status"))
+    issued_amount = _safe_float(
+        item.get("issued_amount") or item.get("linked_income_amount")
+    )
+    collected_amount = _safe_float(item.get("collected_amount"))
+    income_account = _safe_str(
+        item.get("account_code_final") or item.get("account_code_suggested")
+    )
+    receivable_account = _safe_str(item.get("receivable_account_code"))
+    if not receivable_account and source == "issued_linked":
+        receivable_account = _receivable_account_code_for_ar_item(item)
+    iva_amount = _safe_float(item.get("iva_amount"))
+    income_base = max(issued_amount - iva_amount, 0.0)
+
+    def _line(
+        *,
+        side: str,
+        account: str,
+        amount: float,
+        label: str,
+    ) -> dict[str, Any]:
+        return {
+            "side": side,
+            "account_code": account,
+            "amount": _safe_float(amount),
+            "label": label,
+        }
+
+    invoice_gaps: list[str] = []
+    invoice_warnings: list[str] = []
+    invoice_lines: list[dict[str, Any]] = []
+    if source != "issued_linked":
+        invoice_status = "no_aplica"
+        invoice_gaps.append("cfdi_not_linked")
+    else:
+        if issued_amount <= 0:
+            invoice_gaps.append("missing_invoice_amount")
+        if not receivable_account:
+            invoice_gaps.append("missing_receivable_account")
+        if not income_account:
+            invoice_gaps.append("missing_income_account")
+        if "iva_amount" not in item:
+            invoice_warnings.append("iva_unknown")
+        if not invoice_gaps:
+            invoice_lines.append(
+                _line(
+                    side="debe",
+                    account=receivable_account,
+                    amount=issued_amount,
+                    label="Cuentas por cobrar",
+                )
+            )
+            invoice_lines.append(
+                _line(
+                    side="haber",
+                    account=income_account,
+                    amount=income_base,
+                    label="Ingreso presupuestal",
+                )
+            )
+            if iva_amount > 0:
+                invoice_lines.append(
+                    _line(
+                        side="haber",
+                        account=AR_IVA_TRASLADADO_ACCOUNT_CODE,
+                        amount=iva_amount,
+                        label="IVA trasladado",
+                    )
+                )
+        invoice_status = "lista" if not invoice_gaps else "incompleta"
+
+    collection_gaps: list[str] = []
+    collection_lines: list[dict[str, Any]] = []
+    if not item.get("collection_match_id"):
+        collection_status = "sin match"
+        collection_gaps.append("missing_collection_match")
+    else:
+        collection_amount = collected_amount or issued_amount
+        if collection_amount <= 0:
+            collection_gaps.append("missing_collection_amount")
+        if not receivable_account:
+            collection_gaps.append("missing_receivable_account")
+        if not collection_gaps:
+            collection_lines.append(
+                _line(
+                    side="debe",
+                    account=AR_DEFAULT_BANK_ACCOUNT_CODE,
+                    amount=collection_amount,
+                    label="Bancos",
+                )
+            )
+            collection_lines.append(
+                _line(
+                    side="haber",
+                    account=receivable_account,
+                    amount=collection_amount,
+                    label="Cuentas por cobrar",
+                )
+            )
+        collection_status = "lista" if not collection_gaps else "incompleta"
+
+    return {
+        "ar_item_id": item.get("ar_item_id"),
+        "cfdi_uuid": item.get("cfdi_uuid"),
+        "payer_name": item.get("payer_name"),
+        "payer_rfc": item.get("payer_rfc"),
+        "invoice_policy_preview": {
+            "type": "factura",
+            "status": invoice_status,
+            "lines": invoice_lines,
+            "gaps": invoice_gaps,
+            "warnings": invoice_warnings,
+        },
+        "collection_policy_preview": {
+            "type": "cobro",
+            "status": collection_status,
+            "lines": collection_lines,
+            "gaps": collection_gaps,
+            "warnings": [],
+        },
+    }
 
 
 def build_ar_actionable_gaps(payload: dict[str, Any]) -> list[dict[str, Any]]:

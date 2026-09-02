@@ -7400,6 +7400,7 @@ async def admin_finance_accounts_receivable_export_xlsx(
     from openpyxl.styles import Font, PatternFill
 
     from samchat.ar import (
+        build_ar_accounting_preview,
         build_ar_actionable_gaps,
         build_ar_operational_rows,
         build_ar_read_model,
@@ -7559,6 +7560,83 @@ async def admin_finance_accounts_receivable_export_xlsx(
     for column in ws_gaps.columns:
         width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
         ws_gaps.column_dimensions[column[0].column_letter].width = width
+
+    def _policy_side(policy: dict[str, Any], side: str) -> str:
+        return "; ".join(
+            (
+                f"{line.get('account_code') or ''} "
+                f"{line.get('label') or ''} "
+                f"{float(line.get('amount') or 0):,.2f}"
+            ).strip()
+            for line in list(policy.get("lines") or [])
+            if str(line.get("side") or "") == side
+        )
+
+    def _policy_issues(policy: dict[str, Any]) -> str:
+        return "; ".join(
+            str(issue)
+            for issue in list(policy.get("gaps") or [])
+            + list(policy.get("warnings") or [])
+        )
+
+    ws_policies = wb.create_sheet("Prepólizas CxC")
+    policy_headers = [
+        "AR item",
+        "Tipo",
+        "Estado",
+        "Debe cuenta",
+        "Debe monto",
+        "Haber cuenta",
+        "Haber monto",
+        "Gaps",
+        "CFDI UUID",
+        "Cliente/RFC",
+    ]
+    ws_policies.append(policy_headers)
+    for row in rows:
+        preview = build_ar_accounting_preview(row, payload)
+        for label, key in [
+            ("Factura", "invoice_policy_preview"),
+            ("Cobro", "collection_policy_preview"),
+        ]:
+            policy = preview.get(key) or {}
+            debit = [
+                line
+                for line in list(policy.get("lines") or [])
+                if str(line.get("side") or "") == "debe"
+            ]
+            credit = [
+                line
+                for line in list(policy.get("lines") or [])
+                if str(line.get("side") or "") == "haber"
+            ]
+            ws_policies.append(
+                [
+                    row.get("ar_item_id"),
+                    label,
+                    policy.get("status"),
+                    _policy_side(policy, "debe"),
+                    sum(float(line.get("amount") or 0) for line in debit),
+                    _policy_side(policy, "haber"),
+                    sum(float(line.get("amount") or 0) for line in credit),
+                    _policy_issues(policy),
+                    row.get("cfdi_uuid"),
+                    " / ".join(
+                        part
+                        for part in [
+                            str(row.get("payer_name") or "").strip(),
+                            str(row.get("payer_rfc") or "").strip(),
+                        ]
+                        if part
+                    ),
+                ]
+            )
+    for cell in ws_policies[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    for column in ws_policies.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
+        ws_policies.column_dimensions[column[0].column_letter].width = width
 
     output = io.BytesIO()
     wb.save(output)

@@ -6,7 +6,11 @@ from html import escape
 from typing import Any
 from urllib.parse import quote
 
-from .service import build_ar_actionable_gaps, build_ar_operational_rows
+from .service import (
+    build_ar_accounting_preview,
+    build_ar_actionable_gaps,
+    build_ar_operational_rows,
+)
 
 
 def _money(value: Any) -> str:
@@ -260,6 +264,46 @@ def _detail_gap_items(item: dict[str, Any], gaps: list[dict[str, Any]]) -> str:
     return "".join(f"<li>{escape(message)}</li>" for message in dict.fromkeys(messages))
 
 
+def _policy_side_summary(lines: list[dict[str, Any]], side: str) -> str:
+    selected = [line for line in lines if str(line.get("side") or "") == side]
+    if not selected:
+        return '<span class="ar-muted">-</span>'
+    return "<br>".join(
+        (
+            f'{_text(line.get("account_code"))} '
+            f'<span class="ar-muted">{_text(line.get("label"))}</span> '
+            f'{_money(line.get("amount"))}'
+        )
+        for line in selected
+    )
+
+
+def _policy_issue_summary(preview: dict[str, Any]) -> str:
+    issues = list(preview.get("gaps") or []) + list(preview.get("warnings") or [])
+    if not issues:
+        return '<span class="ar-muted">Sin gaps.</span>'
+    return "<br>".join(_text(issue) for issue in issues)
+
+
+def _accounting_preview_rows(preview: dict[str, Any]) -> str:
+    policies = [
+        ("Factura", preview.get("invoice_policy_preview") or {}),
+        ("Cobro", preview.get("collection_policy_preview") or {}),
+    ]
+    return "".join(
+        _row(
+            [
+                _text(label),
+                _status_pill(policy.get("status")),
+                _policy_side_summary(list(policy.get("lines") or []), "debe"),
+                _policy_side_summary(list(policy.get("lines") or []), "haber"),
+                _policy_issue_summary(policy),
+            ]
+        )
+        for label, policy in policies
+    )
+
+
 def _detail_action_links(item: dict[str, Any], *, return_to: str) -> str:
     links = [
         f'<a class="button secondary" href="{escape(return_to)}">Volver a CxC</a>',
@@ -327,6 +371,7 @@ def render_ar_item_detail_html(
         else "sin saldo confirmado"
     )
     navigation_actions = _detail_action_links(item, return_to=return_to)
+    accounting_preview = build_ar_accounting_preview(item, payload)
     mutable_actions = ""
     if can_operate_matches:
         mutable_actions = """
@@ -401,6 +446,13 @@ def render_ar_item_detail_html(
             <div class="workspace-card">
                 <div class="workspace-section-title">Gaps / Siguientes Acciones</div>
                 <ul class="ar-gap-list">{_detail_gap_items(item, gaps)}</ul>
+            </div>
+            <div class="workspace-card">
+                <div class="workspace-section-title">Prepólizas CxC</div>
+                <table class="ar-table">
+                    <thead><tr><th>Tipo</th><th>Estado</th><th>Debe</th><th>Haber</th><th>Gaps</th></tr></thead>
+                    <tbody>{_accounting_preview_rows(accounting_preview)}</tbody>
+                </table>
             </div>
         </section>
     """
