@@ -30,6 +30,7 @@ from devnous.gastos.services.loan_request_service import (
     can_approve_prestamo,
     can_approve_prestamo_abono,
     can_edit_prestamo,
+    can_view_delegated_prestamos,
     can_view_all_prestamos,
     can_view_prestamo,
     cancel_prestamo,
@@ -304,11 +305,10 @@ def test_visibility_allows_named_managers_and_requester_only() -> None:
         nombre="Usuario",
         rol="empleado",
     )
-    juan_pablo = SimpleNamespace(
+    loan_approver = SimpleNamespace(
         id=uuid4(),
-        nombre="Juan Pablo Lopez Romero",
-        rol="finanzas",
-        correo="jlopez@plataformasports.com",
+        nombre="Luis Angel Orozco Colin",
+        rol="admin",
     )
     other = SimpleNamespace(
         id=uuid4(),
@@ -318,10 +318,67 @@ def test_visibility_allows_named_managers_and_requester_only() -> None:
     )
 
     assert can_view_prestamo(requester, prestamo)
-    assert can_view_all_prestamos(juan_pablo)
-    assert can_view_prestamo(juan_pablo, prestamo)
+    assert can_view_prestamo(loan_approver, prestamo)
     assert not can_view_all_prestamos(other)
     assert not can_view_prestamo(other, prestamo)
+
+
+def test_loan_visibility_allows_only_requester_approvers_and_delegates() -> None:
+    sebastian_id = uuid4()
+    daniel_id = uuid4()
+    sebastian_loan = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=sebastian_id)
+    )
+    sebastian_loan.solicitante = SimpleNamespace(
+        id=sebastian_id,
+        nombre="Sebastián García",
+        rol="empleado",
+    )
+    daniel_loan = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=daniel_id)
+    )
+    daniel_loan.solicitante = SimpleNamespace(
+        id=daniel_id,
+        nombre="Daniel Dominguez",
+        rol="contabilidad",
+    )
+    daniel = SimpleNamespace(id=uuid4(), nombre="Daniel Dominguez", rol="contabilidad")
+    odilon = SimpleNamespace(
+        id=uuid4(),
+        nombre="Jose Odilon Trujillo Macedo",
+        rol="admin",
+    )
+    benjamin = SimpleNamespace(id=uuid4(), nombre="Benjamin Jimenez", rol="contabilidad")
+    other = SimpleNamespace(id=uuid4(), nombre="Otro Usuario", rol="empleado")
+
+    assert can_view_delegated_prestamos(daniel)
+    assert can_view_prestamo(daniel, sebastian_loan)
+    assert not can_view_prestamo(daniel, daniel_loan)
+    assert can_view_prestamo(odilon, sebastian_loan)
+    assert can_view_prestamo(odilon, daniel_loan)
+    assert not can_view_prestamo(benjamin, sebastian_loan)
+    assert not can_view_prestamo(other, sebastian_loan)
+
+
+def test_payment_run_operators_can_view_loans_only_in_payment_flow(monkeypatch) -> None:
+    operator_id = uuid4()
+    requester_id = uuid4()
+    monkeypatch.setenv("SAMCHAT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS", str(operator_id))
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    operator = SimpleNamespace(
+        id=operator_id,
+        nombre="Benjamin Jimenez",
+        rol="finanzas",
+    )
+
+    prestamo.estado = "enviada"
+    assert not can_view_prestamo(operator, prestamo)
+    prestamo.estado = "aprobada"
+    assert can_view_prestamo(operator, prestamo)
+    prestamo.estado = "en_proceso_de_pago"
+    assert can_view_prestamo(operator, prestamo)
 
 
 def test_approvers_follow_approved_people_lists() -> None:

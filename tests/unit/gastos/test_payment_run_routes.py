@@ -76,6 +76,11 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
         "list_payment_run_closures",
         AsyncMock(return_value=[]),
     )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_prestamo_payment_run_items",
+        AsyncMock(side_effect=[[], []]),
+    )
 
     response = await admin_routes.admin_finance_payment_run(
         request=SimpleNamespace(query_params={}),
@@ -111,6 +116,8 @@ async def test_payment_run_page_queries_approved_and_in_process_sections(
 ) -> None:
     list_mock = AsyncMock(side_effect=[[], []])
     monkeypatch.setattr(admin_routes, "list_payment_run_items", list_mock)
+    loan_list_mock = AsyncMock(side_effect=[[], []])
+    monkeypatch.setattr(admin_routes, "list_prestamo_payment_run_items", loan_list_mock)
     monkeypatch.setattr(
         admin_routes,
         "list_payment_run_closures",
@@ -136,6 +143,10 @@ async def test_payment_run_page_queries_approved_and_in_process_sections(
     assert list_mock.await_args_list[1].kwargs["status_filter"] == "cerradas"
     assert list_mock.await_args_list[0].kwargs["query"] == "S-26000146"
     assert list_mock.await_args_list[1].kwargs["query"] == "S-26000146"
+    assert loan_list_mock.await_args_list[0].kwargs["status_filter"] == "pendientes"
+    assert loan_list_mock.await_args_list[1].kwargs["status_filter"] == "cerradas"
+    assert loan_list_mock.await_args_list[0].kwargs["query"] == "S-26000146"
+    assert loan_list_mock.await_args_list[1].kwargs["query"] == "S-26000146"
 
 
 @pytest.mark.asyncio
@@ -204,6 +215,11 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
         "list_payment_run_closures",
         AsyncMock(return_value=[]),
     )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_prestamo_payment_run_items",
+        AsyncMock(side_effect=[[], []]),
+    )
 
     response = await admin_routes.admin_finance_payment_run(
         request=SimpleNamespace(query_params={}),
@@ -224,6 +240,84 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "comprobante-pago" in html
     assert "Subir testigo y pagar" in html
+
+
+@pytest.mark.asyncio
+async def test_payment_run_page_renders_approved_and_in_process_loans(
+    monkeypatch,
+) -> None:
+    approved_id = uuid4()
+    proof_id = uuid4()
+    monkeypatch.setattr(admin_routes, "list_payment_run_items", AsyncMock(side_effect=[[], []]))
+    monkeypatch.setattr(
+        admin_routes,
+        "list_prestamo_payment_run_items",
+        AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": approved_id,
+                        "entity_type": "prestamo",
+                        "numero_referencia": "PRE-26000010",
+                        "solicitante_nombre": "Sebas",
+                        "beneficiario_nombre": "Sebas",
+                        "concepto_pago": "Prestamo viaje",
+                        "fecha_pago": None,
+                        "monto": Decimal("2000.00"),
+                        "currency": "MXN",
+                        "status": "programada",
+                        "can_edit_fecha_pago": False,
+                        "can_close": True,
+                        "can_upload_payment_proof": False,
+                    },
+                ],
+                [
+                    {
+                        "id": proof_id,
+                        "entity_type": "prestamo",
+                        "numero_referencia": "PRE-26000011",
+                        "solicitante_nombre": "Dani",
+                        "beneficiario_nombre": "Dani",
+                        "concepto_pago": "Prestamo apoyo",
+                        "fecha_pago": None,
+                        "monto": Decimal("900.00"),
+                        "currency": "MXN",
+                        "status": "en proceso de pago",
+                        "can_edit_fecha_pago": False,
+                        "can_close": False,
+                        "can_upload_payment_proof": True,
+                    },
+                ],
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_closures",
+        AsyncMock(return_value=[]),
+    )
+
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="superadmin",
+            departamento="Contabilidad",
+            nombre="Superadmin",
+        ),
+        status="pendientes",
+        date_from=None,
+        date_to=None,
+        q=None,
+    )
+    html = response.body.decode("utf-8")
+
+    assert "PRE-26000010" in html
+    assert "PRE-26000011" in html
+    assert f'action="/prestamos/{approved_id}/programar-pago"' in html
+    assert f'action="/prestamos/{proof_id}/comprobante-pago"' in html
+    assert "Préstamo" in html
 
 
 @pytest.mark.asyncio
