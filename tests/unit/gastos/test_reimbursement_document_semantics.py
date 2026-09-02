@@ -488,8 +488,12 @@ def test_pending_documents_view_shows_operations_reference_column() -> None:
 
     assert "referencia_operaciones = escape(" in route_block
     assert "documento.referencia_operaciones" in route_block
-    assert "<th>Referencia Operaciones</th>" in route_block
-    assert "<td>{referencia_operaciones}</td>" in route_block
+    assert 'data-sort-key="referencia_operaciones"' in route_block
+    assert "Referencia Operaciones</th>" in route_block
+    assert (
+        '<td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>'
+        in route_block
+    )
 
 
 def test_pending_documents_view_adds_search_filters_and_reporting_columns() -> None:
@@ -510,8 +514,8 @@ def test_pending_documents_view_adds_search_filters_and_reporting_columns() -> N
     assert 'Documento.notas.ilike(q_filter)' in route_block
     assert 'beneficiario_alias.nombre.ilike(q_filter)' in route_block
     assert 'proveedor_alias.nombre.ilike(q_filter)' in route_block
-    assert '<th>Beneficiario/Proveedor</th>' in route_block
-    assert '<th>Descripción</th>' in route_block
+    assert "Beneficiario/Proveedor</th>" in route_block
+    assert "Descripción</th>" in route_block
     assert 'Search/filter is applied only inside that already-authorized visibility scope' in route_block
 
 
@@ -524,8 +528,12 @@ def test_approval_history_view_shows_operations_reference_column() -> None:
     assert "Eventos registrados" in route_block
     assert "referencia_operaciones = escape(" in route_block
     assert "documento.referencia_operaciones" in route_block
-    assert "<th>Referencia Operaciones</th>" in route_block
-    assert "<td>{referencia_operaciones}</td>" in route_block
+    assert 'data-sort-key="referencia_operaciones"' in route_block
+    assert "Referencia Operaciones</th>" in route_block
+    assert (
+        '<td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>'
+        in route_block
+    )
 
 
 def test_approval_history_view_shows_operational_context_columns() -> None:
@@ -534,11 +542,11 @@ def test_approval_history_view_shows_operational_context_columns() -> None:
     route_end = source.index("def _documentos_todos_reporting_type", route_start)
     route_block = source[route_start:route_end]
 
-    assert "<th>Torneo</th>" in route_block
-    assert "<th>Fase</th>" in route_block
-    assert "<th>Concepto/Presupuestal</th>" in route_block
-    assert "<th>Descripción del Usuario</th>" in route_block
-    assert "<th>Beneficiario</th>" in route_block
+    assert "Torneo</th>" in route_block
+    assert "Fase</th>" in route_block
+    assert "Concepto/Presupuestal</th>" in route_block
+    assert "Descripción del Usuario</th>" in route_block
+    assert "Beneficiario</th>" in route_block
     assert '_approval_history_torneo(documento)' in route_block
     assert '_approval_history_fase(documento)' in route_block
     assert '_approval_history_budget_concept(documento)' in route_block

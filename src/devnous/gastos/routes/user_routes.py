@@ -18,7 +18,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from html import escape
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -41,7 +41,7 @@ from samchat.budgets.service import (
     resolve_definitive_budget_version,
 )
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -225,6 +225,42 @@ from ..services.cuenta_settlement_service import (
     compute_cuenta_saldo_adjustments,
     register_cuenta_settlement,
 )
+from ..services.loan_request_service import (
+    PRESTAMO_ABONO_STATUS_ENVIADO,
+    PRESTAMO_BENEFICIARIO_EMPLEADO,
+    PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL,
+    PRESTAMO_BENEFICIARIO_PROPIO,
+    PRESTAMO_BENEFICIARIO_PROVEEDOR,
+    PRESTAMO_STATUS_BORRADOR,
+    PRESTAMO_STATUS_CANCELADA,
+    PRESTAMO_STATUS_ENVIADA,
+    PRESTAMO_STATUS_APROBADA,
+    PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    PRESTAMO_STATUS_PAGADA,
+    PRESTAMO_STATUS_RECHAZADA,
+    PrestamoCreatePayload,
+    PrestamoWorkflowError,
+    approve_prestamo_abono,
+    approve_prestamo,
+    build_prestamo_from_payload,
+    can_approve_prestamo,
+    can_approve_prestamo_abono,
+    can_view_all_prestamos,
+    can_view_prestamo,
+    cancel_prestamo,
+    reject_prestamo,
+    reject_prestamo_abono,
+    register_prestamo_abono,
+    register_prestamo_payment_proof,
+    schedule_prestamo_payment,
+    submit_prestamo,
+)
+from ..services.loan_accounting_service import (
+    assign_prestamo_debtor_account,
+    ensure_prestamo_abono_posting,
+    ensure_prestamo_payment_posting,
+    is_valid_prestamo_debtor_account,
+)
 from ..services.expense_service import create_expense_from_data, trigger_cfdi_generation
 from ..services.hospedaje_tax_service import (
     normalize_hospedaje_rate,
@@ -332,7 +368,10 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
-from ..services.payment_run_service import can_confirm_payment_run_payment
+from ..services.payment_run_service import (
+    can_confirm_payment_run_payment,
+    can_manage_payment_run,
+)
 from .auth_routes import get_password_hash, validate_self_service_password_change
 from samchat.accounting_historical.service import (
     build_historical_accounting_comparison,
@@ -2157,6 +2196,7 @@ def _gastos_workspace_nav_html(current_empleado: Empleado, active: str) -> str:
         items.extend(
             [
                 ("/gastos-terceros", "Solicitudes de transferencia", "solicitudes"),
+                ("/prestamos", "Préstamos", "prestamos"),
                 ("/documentos/todos", "Todos los documentos", "documentos"),
                 ("/beneficiarios/altas", "Alta de beneficiarios", "beneficiarios"),
             ]
@@ -2203,6 +2243,337 @@ def _gastos_breadcrumb_html(items: list[tuple[str, Optional[str]]]) -> str:
         "
     >{"<span>&rsaquo;</span>".join(crumbs)}</nav>
     """
+
+
+def _prestamo_status_badge(status: str) -> str:
+    normalized = str(status or "").strip().lower()
+    color = {
+        PRESTAMO_STATUS_BORRADOR: ("#e0f2fe", "#075985"),
+        PRESTAMO_STATUS_ENVIADA: ("#fef3c7", "#92400e"),
+        PRESTAMO_STATUS_APROBADA: ("#dcfce7", "#166534"),
+        PRESTAMO_STATUS_RECHAZADA: ("#fee2e2", "#991b1b"),
+        "en_proceso_de_pago": ("#ede9fe", "#5b21b6"),
+        "pagada": ("#dbeafe", "#1d4ed8"),
+        "liquidada": ("#ecfdf5", "#047857"),
+        PRESTAMO_STATUS_CANCELADA: ("#f1f5f9", "#475569"),
+    }.get(normalized, ("#f1f5f9", "#475569"))
+    label = normalized.replace("_", " ").title() or "Sin estado"
+    return (
+        f'<span style="display:inline-block;border-radius:999px;'
+        f'padding:4px 9px;font-size:12px;font-weight:800;'
+        f'background:{color[0]};color:{color[1]};">{escape(label)}</span>'
+    )
+
+
+def _prestamo_reference_number() -> str:
+    return f"PRE-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}-{uuid4().hex[:4].upper()}"
+
+
+def _prestamo_payment_proof_storage_path(
+    prestamo: SolicitudPrestamo,
+    filename: str,
+) -> tuple[Path, str]:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).name).strip("._")
+    if not safe_name:
+        safe_name = "comprobante_pago"
+    storage_key = (
+        f"prestamos/{prestamo.id}/comprobante_pago/"
+        f"{uuid4().hex}_{safe_name}"
+    )
+    return _repo_root() / "data" / "gastos" / storage_key, storage_key
+
+
+async def _save_prestamo_payment_proof_upload(
+    prestamo: SolicitudPrestamo,
+    upload: UploadFile,
+) -> tuple[str, str]:
+    if not upload or not upload.filename:
+        raise PrestamoWorkflowError(
+            "missing_payment_proof",
+            "Selecciona el comprobante de pago.",
+        )
+    raw = await upload.read()
+    if not raw:
+        raise PrestamoWorkflowError(
+            "empty_payment_proof",
+            "El comprobante de pago esta vacio.",
+        )
+    target_path, storage_key = _prestamo_payment_proof_storage_path(
+        prestamo,
+        upload.filename,
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(raw)
+    return upload.filename, storage_key
+
+
+async def _save_prestamo_abono_proof_upload(
+    prestamo: SolicitudPrestamo,
+    upload: UploadFile,
+) -> tuple[str, str]:
+    if not upload or not upload.filename:
+        raise PrestamoWorkflowError(
+            "missing_abono_proof",
+            "Selecciona el comprobante del abono.",
+        )
+    raw = await upload.read()
+    if not raw:
+        raise PrestamoWorkflowError(
+            "empty_abono_proof",
+            "El comprobante del abono esta vacio.",
+        )
+    safe_name = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "_",
+        Path(upload.filename).name,
+    ).strip("._")
+    if not safe_name:
+        safe_name = "comprobante_abono"
+    storage_key = f"prestamos/{prestamo.id}/abonos/{uuid4().hex}_{safe_name}"
+    target_path = _repo_root() / "data" / "gastos" / storage_key
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(raw)
+    return upload.filename, storage_key
+
+
+def _prestamo_beneficiario_label(prestamo: SolicitudPrestamo) -> str:
+    if getattr(prestamo, "beneficiario_nombre_snapshot", None):
+        return str(prestamo.beneficiario_nombre_snapshot)
+    if getattr(prestamo, "beneficiario_empleado", None):
+        return str(prestamo.beneficiario_empleado.nombre or "")
+    if getattr(prestamo, "beneficiario_proveedor_cliente", None):
+        return str(prestamo.beneficiario_proveedor_cliente.nombre or "")
+    if getattr(prestamo, "solicitante", None):
+        return str(prestamo.solicitante.nombre or "")
+    return "—"
+
+
+def _prestamo_account_display(prestamo: SolicitudPrestamo) -> str:
+    parts = [
+        str(getattr(prestamo, "banco_beneficiario", "") or "").strip(),
+        str(getattr(prestamo, "cuenta_beneficiario", "") or "").strip(),
+    ]
+    return " / ".join(part for part in parts if part) or "—"
+
+
+def _prestamo_row_html(
+    prestamo: SolicitudPrestamo,
+    current_empleado: Empleado,
+) -> str:
+    solicitante = getattr(getattr(prestamo, "solicitante", None), "nombre", "") or "—"
+    beneficiario = _prestamo_beneficiario_label(prestamo)
+    monto = format_currency(prestamo.monto_solicitado or 0, prestamo.currency or "MXN")
+    saldo = format_currency(prestamo.saldo_pendiente or 0, prestamo.currency or "MXN")
+    creado = (
+        prestamo.creado_en.strftime("%Y-%m-%d")
+        if getattr(prestamo, "creado_en", None)
+        else "—"
+    )
+    actions = [
+        f'<a href="/prestamos/{prestamo.id}" class="button secondary">Ver</a>',
+    ]
+    if (
+        str(getattr(current_empleado, "id", "") or "").lower()
+        == str(prestamo.solicitante_empleado_id).lower()
+        and prestamo.estado in {PRESTAMO_STATUS_BORRADOR, PRESTAMO_STATUS_ENVIADA}
+    ):
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/cancelar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Cancelar esta solicitud de préstamo?');">
+                <button type="submit" class="button secondary">Cancelar</button>
+            </form>
+            """
+        )
+    return f"""
+    <tr>
+        <td><a href="/prestamos/{prestamo.id}">{escape(prestamo.numero_referencia)}</a></td>
+        <td>{escape(solicitante)}</td>
+        <td>{escape(beneficiario)}</td>
+        <td>{escape(prestamo.beneficiario_tipo or "")}</td>
+        <td style="text-align:right;">{monto}</td>
+        <td style="text-align:right;">{saldo}</td>
+        <td>{_prestamo_status_badge(prestamo.estado)}</td>
+        <td>{escape(creado)}</td>
+        <td><div style="display:flex;gap:8px;flex-wrap:wrap;">{''.join(actions)}</div></td>
+    </tr>
+    """
+
+
+async def _load_prestamo_for_user(
+    session: AsyncSession,
+    prestamo_id: UUIDType,
+    current_empleado: Empleado,
+) -> SolicitudPrestamo:
+    result = await session.execute(
+        select(SolicitudPrestamo)
+        .options(
+            selectinload(SolicitudPrestamo.solicitante),
+            selectinload(SolicitudPrestamo.beneficiario_empleado),
+            selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+            selectinload(SolicitudPrestamo.abonos),
+        )
+        .where(SolicitudPrestamo.id == prestamo_id)
+    )
+    prestamo = result.scalar_one_or_none()
+    if prestamo is None:
+        raise HTTPException(status_code=404, detail="Solicitud de prestamo no encontrada")
+    if not can_view_prestamo(current_empleado, prestamo):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este prestamo")
+    return prestamo
+
+
+async def _load_prestamo_abono_for_user(
+    session: AsyncSession,
+    abono_id: UUIDType,
+    current_empleado: Empleado,
+) -> PrestamoAbono:
+    result = await session.execute(
+        select(PrestamoAbono)
+        .options(
+            selectinload(PrestamoAbono.prestamo).selectinload(
+                SolicitudPrestamo.solicitante
+            ),
+        )
+        .where(PrestamoAbono.id == abono_id)
+    )
+    abono = result.scalar_one_or_none()
+    if abono is None:
+        raise HTTPException(status_code=404, detail="Abono no encontrado")
+    if not can_view_prestamo(current_empleado, abono.prestamo):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este abono")
+    return abono
+
+
+async def _prestamo_debtor_account_options(
+    session: AsyncSession,
+    prestamo: SolicitudPrestamo,
+) -> str:
+    result = await session.execute(
+        select(CuentaContable)
+        .where(
+            CuentaContable.activo == True,
+            or_(
+                CuentaContable.codigo.like("1170-001-%"),
+                CuentaContable.codigo.like("1170-002-%"),
+                CuentaContable.codigo.like("1170-003-%"),
+            ),
+            CuentaContable.codigo.notin_(
+                ["1170-001-000", "1170-002-000", "1170-003-000"]
+            ),
+        )
+        .order_by(CuentaContable.codigo.asc())
+    )
+    selected_id = str(getattr(prestamo, "cuenta_deudor_contable_id", "") or "")
+    options: list[str] = []
+    for account in result.scalars().all():
+        if not is_valid_prestamo_debtor_account(prestamo, account):
+            continue
+        selected = "selected" if str(account.id) == selected_id else ""
+        options.append(
+            f'<option value="{account.id}" {selected}>'
+            f'{escape(account.codigo)} · {escape(account.nombre or "")}'
+            "</option>"
+        )
+    return "".join(options)
+
+
+async def _prestamo_beneficiary_options(
+    session: AsyncSession,
+    current_empleado: Empleado,
+) -> tuple[str, str, str]:
+    empleados_result = await session.execute(
+        select(Empleado)
+        .where(Empleado.activo == True)
+        .order_by(Empleado.nombre.asc())
+    )
+    empleados = empleados_result.scalars().all()
+    empleado_options = "".join(
+        f'<option value="{empleado.id}">{escape(empleado.nombre or "")}</option>'
+        for empleado in empleados
+        if getattr(empleado, "id", None) != getattr(current_empleado, "id", None)
+    )
+    operadores_result = await session.execute(
+        select(ProveedorCliente)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "operadores_regionales",
+        )
+        .order_by(ProveedorCliente.nombre.asc())
+    )
+    operadores = operadores_result.scalars().all()
+    operador_options = "".join(
+        f'<option value="{operador.id}">{escape(operador.nombre or "")}</option>'
+        for operador in operadores
+    )
+    proveedores_result = await session.execute(
+        select(ProveedorCliente)
+        .where(
+            ProveedorCliente.activo == True,
+            ProveedorCliente.tipo == "proveedor",
+        )
+        .order_by(ProveedorCliente.nombre.asc())
+    )
+    proveedores = proveedores_result.scalars().all()
+    proveedor_options = "".join(
+        f'<option value="{proveedor.id}">{escape(proveedor.nombre or "")}</option>'
+        for proveedor in proveedores
+    )
+    return empleado_options, operador_options, proveedor_options
+
+
+async def _build_prestamo_payload_from_form(
+    session: AsyncSession,
+    current_empleado: Empleado,
+    form: Any,
+) -> PrestamoCreatePayload:
+    tipo = str(form.get("beneficiario_tipo") or PRESTAMO_BENEFICIARIO_PROPIO).strip()
+    tipo = tipo.lower()
+    empleado_id: Optional[UUIDType] = None
+    proveedor_id: Optional[UUIDType] = None
+    snapshot = str(current_empleado.nombre or "")
+    banco = str(form.get("banco_beneficiario") or "").strip()
+    cuenta = str(form.get("cuenta_beneficiario") or "").strip()
+
+    if tipo == PRESTAMO_BENEFICIARIO_EMPLEADO:
+        empleado_id = UUIDType(str(form.get("beneficiario_empleado_id") or ""))
+        beneficiario = await session.get(Empleado, empleado_id)
+        if beneficiario is None or not getattr(beneficiario, "activo", True):
+            raise PrestamoWorkflowError("beneficiary_not_found", "Beneficiario no encontrado.")
+        snapshot = str(beneficiario.nombre or "")
+    elif tipo in {
+        PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL,
+        PRESTAMO_BENEFICIARIO_PROVEEDOR,
+    }:
+        field = (
+            "beneficiario_operador_id"
+            if tipo == PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL
+            else "beneficiario_proveedor_id"
+        )
+        proveedor_id = UUIDType(str(form.get(field) or ""))
+        proveedor = await session.get(ProveedorCliente, proveedor_id)
+        if proveedor is None or not getattr(proveedor, "activo", True):
+            raise PrestamoWorkflowError("beneficiary_not_found", "Beneficiario no encontrado.")
+        snapshot = str(proveedor.nombre or "")
+        banco = banco or str(proveedor.banco or "")
+        cuenta = cuenta or str(
+            proveedor.cuenta_clabe or proveedor.cuenta_bancaria or ""
+        )
+
+    return PrestamoCreatePayload(
+        solicitante_empleado_id=current_empleado.id,
+        beneficiario_tipo=tipo,
+        beneficiario_empleado_id=empleado_id,
+        beneficiario_proveedor_cliente_id=proveedor_id,
+        beneficiario_nombre_snapshot=snapshot,
+        banco_beneficiario=banco,
+        cuenta_beneficiario=cuenta,
+        monto_solicitado=form.get("monto_solicitado"),
+        currency=str(form.get("currency") or "MXN"),
+        motivo=str(form.get("motivo") or ""),
+        numero_referencia=_prestamo_reference_number(),
+    )
 
 
 def _accounting_month_bounds(year: int, month: int) -> tuple[datetime, datetime]:
@@ -14893,6 +15264,907 @@ def _solicitud_transferencia_list_actions_html(
     )
 
 
+@router.get("/prestamos", response_class=HTMLResponse)
+async def prestamos_list(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    query = (
+        select(SolicitudPrestamo)
+        .options(
+            selectinload(SolicitudPrestamo.solicitante),
+            selectinload(SolicitudPrestamo.beneficiario_empleado),
+            selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+            selectinload(SolicitudPrestamo.abonos),
+        )
+        .order_by(SolicitudPrestamo.creado_en.desc())
+    )
+    if (
+        not can_view_all_prestamos(current_empleado)
+        and not can_approve_prestamo_abono(current_empleado)
+    ):
+        query = query.where(
+            SolicitudPrestamo.solicitante_empleado_id == current_empleado.id
+        )
+    result = await session.execute(query)
+    visible_prestamos = list(result.scalars().all())
+    selected_view = str(request.query_params.get("vista") or "todos").strip().lower()
+
+    def has_pending_abono(prestamo: SolicitudPrestamo) -> bool:
+        return any(
+            getattr(abono, "estado", None) == PRESTAMO_ABONO_STATUS_ENVIADO
+            for abono in list(getattr(prestamo, "abonos", []) or [])
+        )
+
+    view_filters = {
+        "todos": lambda prestamo: True,
+        "por_aprobar": lambda prestamo: prestamo.estado == PRESTAMO_STATUS_ENVIADA,
+        "por_programar": lambda prestamo: prestamo.estado == PRESTAMO_STATUS_APROBADA,
+        "por_pagar": lambda prestamo: (
+            prestamo.estado == PRESTAMO_STATUS_EN_PROCESO_PAGO
+        ),
+        "abonos_pendientes": has_pending_abono,
+    }
+    if selected_view not in view_filters:
+        selected_view = "todos"
+    counts = {
+        key: sum(1 for prestamo in visible_prestamos if predicate(prestamo))
+        for key, predicate in view_filters.items()
+    }
+    prestamos = [
+        prestamo
+        for prestamo in visible_prestamos
+        if view_filters[selected_view](prestamo)
+    ]
+    view_links = [
+        ("todos", "Todos"),
+        ("por_aprobar", "Por aprobar"),
+        ("por_programar", "Por programar"),
+        ("por_pagar", "Por pagar"),
+        ("abonos_pendientes", "Abonos por aprobar"),
+    ]
+    filters_html = "".join(
+        f'<a href="/prestamos?vista={key}" '
+        f'class="button {"primary" if selected_view == key else "secondary"}">'
+        f'{escape(label)} ({counts.get(key, 0)})</a>'
+        for key, label in view_links
+    )
+    rows_html = "".join(
+        _prestamo_row_html(prestamo, current_empleado)
+        for prestamo in prestamos
+    )
+    total_saldo = sum(Decimal(str(item.saldo_pendiente or 0)) for item in prestamos)
+    error_msg = request.query_params.get("error_msg", "")
+    success_msg = request.query_params.get("success_msg", "")
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Préstamos - SamChat</title>
+        <style>{_workspace_shell_styles("1280px")}</style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+            {_gastos_breadcrumb_html([("Préstamos", None)])}
+            {_render_workspace_hero(
+                eyebrow="Flujo de efectivo",
+                title="Solicitudes de préstamo",
+                description=(
+                    "Consulta préstamos propios o autorizados, con saldo "
+                    "pendiente y estado operativo."
+                ),
+                actions_html='<a href="/prestamos/nuevo" class="button primary">Nueva solicitud</a>',
+                side_html=f'''
+                    <div class="meta-grid">
+                        <div class="meta-card"><span>Solicitudes visibles</span><strong>{len(prestamos)}</strong></div>
+                        <div class="meta-card"><span>Saldo pendiente</span><strong>{format_currency(total_saldo)}</strong></div>
+                    </div>
+                ''',
+            )}
+            {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+            {f'<div class="notice success">{escape(success_msg)}</div>' if success_msg else ''}
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Préstamos</div>
+                        <h2>Resumen</h2>
+                        <div class="section-note">Las solicitudes enviadas ya no se editan. Sólo pueden cancelarse antes de aprobación.</div>
+                    </div>
+                </div>
+                <div class="hero-actions" style="margin-top:0;margin-bottom:14px;">
+                    {filters_html}
+                </div>
+                <div class="table-shell">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Referencia</th>
+                                <th>Solicitante</th>
+                                <th>Beneficiario</th>
+                                <th>Tipo</th>
+                                <th>Monto</th>
+                                <th>Saldo</th>
+                                <th>Estado</th>
+                                <th>Creada</th>
+                                <th>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="9" style="text-align:center;padding:20px;">No hay solicitudes de préstamo.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.get("/prestamos/nuevo", response_class=HTMLResponse)
+async def prestamo_new_form(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    empleado_options, operador_options, proveedor_options = (
+        await _prestamo_beneficiary_options(session, current_empleado)
+    )
+    error_msg = request.query_params.get("error_msg", "")
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Nueva solicitud de préstamo - SamChat</title>
+        <style>{_workspace_shell_styles("980px")}</style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+            {_gastos_breadcrumb_html([
+                ("Préstamos", "/prestamos"),
+                ("Nueva solicitud", None),
+            ])}
+            {_render_workspace_hero(
+                eyebrow="Solicitud de préstamo",
+                title="Nueva solicitud",
+                description=(
+                    "Captura el monto requerido, beneficiario, cuenta bancaria "
+                    "y motivo. Al enviar ya no podrá editarse."
+                ),
+                actions_html='<a href="/prestamos" class="button secondary">Volver</a>',
+                side_html="",
+            )}
+            {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+            <section class="surface">
+                <form method="POST" action="/prestamos">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">
+                        <div>
+                            <label>Tipo de beneficiario</label>
+                            <select name="beneficiario_tipo" id="prestamo-beneficiario-tipo" required>
+                                <option value="{PRESTAMO_BENEFICIARIO_PROPIO}">A nombre propio</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_EMPLEADO}">Otro empleado</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL}">Operador regional</option>
+                                <option value="{PRESTAMO_BENEFICIARIO_PROVEEDOR}">Proveedor</option>
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_EMPLEADO}" style="display:none;">
+                            <label>Empleado beneficiario</label>
+                            <select name="beneficiario_empleado_id">
+                                <option value="">Seleccione empleado</option>
+                                {empleado_options}
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL}" style="display:none;">
+                            <label>Operador regional</label>
+                            <select name="beneficiario_operador_id">
+                                <option value="">Seleccione operador</option>
+                                {operador_options}
+                            </select>
+                        </div>
+                        <div data-prestamo-target="{PRESTAMO_BENEFICIARIO_PROVEEDOR}" style="display:none;">
+                            <label>Proveedor</label>
+                            <select name="beneficiario_proveedor_id">
+                                <option value="">Seleccione proveedor</option>
+                                {proveedor_options}
+                            </select>
+                        </div>
+                        <div>
+                            <label>Monto requerido</label>
+                            <input type="number" name="monto_solicitado" min="0.01" step="0.01" required>
+                        </div>
+                        <div>
+                            <label>Moneda</label>
+                            <select name="currency">{_currency_options("MXN")}</select>
+                        </div>
+                        <div>
+                            <label>Banco del beneficiario</label>
+                            <input type="text" name="banco_beneficiario" placeholder="Banco">
+                        </div>
+                        <div>
+                            <label>Cuenta / CLABE beneficiario</label>
+                            <input type="text" name="cuenta_beneficiario" placeholder="Cuenta o CLABE">
+                        </div>
+                        <div style="grid-column:1/-1;">
+                            <label>Motivo del préstamo</label>
+                            <textarea name="motivo" rows="4" required></textarea>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+                        <button type="submit" name="action" value="draft" class="button secondary">Guardar borrador</button>
+                        <button type="submit" name="action" value="submit" class="button primary">Enviar solicitud</button>
+                    </div>
+                </form>
+            </section>
+        </div>
+        <script>
+        (function() {{
+            var selector = document.getElementById('prestamo-beneficiario-tipo');
+            var targets = document.querySelectorAll('[data-prestamo-target]');
+            function syncTargets() {{
+                var value = selector ? selector.value : '';
+                targets.forEach(function(target) {{
+                    var active = target.getAttribute('data-prestamo-target') === value;
+                    target.style.display = active ? '' : 'none';
+                    target.querySelectorAll('select,input').forEach(function(input) {{
+                        input.disabled = !active;
+                    }});
+                }});
+            }}
+            if (selector) selector.addEventListener('change', syncTargets);
+            syncTargets();
+        }})();
+        </script>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/prestamos")
+async def prestamo_create(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    form = await request.form()
+    action = str(form.get("action") or "draft")
+    try:
+        payload = await _build_prestamo_payload_from_form(
+            session,
+            current_empleado,
+            form,
+        )
+        prestamo = build_prestamo_from_payload(payload)
+        session.add(prestamo)
+        await session.flush()
+        if action == "submit":
+            submit_prestamo(prestamo, current_empleado)
+        await session.commit()
+    except (ValueError, PrestamoWorkflowError) as exc:
+        await session.rollback()
+        message = getattr(exc, "message", str(exc))
+        return RedirectResponse(
+            url="/prestamos/nuevo?error_msg=" + quote(message),
+            status_code=303,
+        )
+    success = "Solicitud enviada." if action == "submit" else "Borrador guardado."
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo.id}?success_msg=" + quote(success),
+        status_code=303,
+    )
+
+
+@router.get("/prestamos/{prestamo_id}", response_class=HTMLResponse)
+async def prestamo_detail(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    is_requester = (
+        str(current_empleado.id).lower()
+        == str(prestamo.solicitante_empleado_id).lower()
+    )
+    actions = ['<a href="/prestamos" class="button secondary">Volver</a>']
+    is_loan_approver = can_approve_prestamo(current_empleado)
+    can_upload_payment_proof = (
+        can_confirm_payment_run_payment(current_empleado)
+        and prestamo.estado
+        in {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
+    )
+    can_schedule_payment = (
+        can_manage_payment_run(current_empleado)
+        and prestamo.estado == PRESTAMO_STATUS_APROBADA
+    )
+    can_register_abono = (
+        is_requester
+        and prestamo.estado == PRESTAMO_STATUS_PAGADA
+        and Decimal(str(prestamo.saldo_pendiente or 0)) > Decimal("0.00")
+    )
+    can_review_abonos = can_approve_prestamo_abono(current_empleado)
+    can_assign_debtor_account = can_confirm_payment_run_payment(current_empleado)
+    debtor_account_options = ""
+    if can_assign_debtor_account:
+        debtor_account_options = await _prestamo_debtor_account_options(
+            session,
+            prestamo,
+        )
+    if is_requester and prestamo.estado == PRESTAMO_STATUS_BORRADOR:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/enviar" style="display:inline;">
+                <button type="submit" class="button primary">Enviar solicitud</button>
+            </form>
+            """
+        )
+    if is_requester and prestamo.estado in {
+        PRESTAMO_STATUS_BORRADOR,
+        PRESTAMO_STATUS_ENVIADA,
+    }:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/cancelar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Cancelar esta solicitud de préstamo?');">
+                <button type="submit" class="button secondary">Cancelar</button>
+            </form>
+            """
+        )
+    if is_loan_approver and prestamo.estado == PRESTAMO_STATUS_ENVIADA:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/aprobar" style="display:inline;">
+                <button type="submit" class="button primary">Aprobar</button>
+            </form>
+            """
+        )
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/rechazar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Rechazar esta solicitud de préstamo?');">
+                <button type="submit" class="button danger">Rechazar</button>
+            </form>
+            """
+        )
+    if can_schedule_payment:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/programar-pago"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Pasar este préstamo a proceso de pago?');">
+                <button type="submit" class="button primary">Pasar a pago</button>
+            </form>
+            """
+        )
+    authorization_forms_html = ""
+    if is_loan_approver and prestamo.estado == PRESTAMO_STATUS_ENVIADA:
+        authorization_forms_html = f"""
+        <form method="POST" action="/prestamos/{prestamo.id}/aprobar" style="margin-top:16px;">
+            <label>Comentario de aprobación</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button primary" style="margin-top:10px;">Aprobar préstamo</button>
+        </form>
+        <form method="POST" action="/prestamos/{prestamo.id}/rechazar" style="margin-top:16px;">
+            <label>Motivo de rechazo</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button danger" style="margin-top:10px;">Rechazar préstamo</button>
+        </form>
+        """
+    payment_proof_form_html = ""
+    if can_upload_payment_proof:
+        payment_proof_form_html = f"""
+        <form method="POST"
+              action="/prestamos/{prestamo.id}/comprobante-pago"
+              enctype="multipart/form-data"
+              style="margin-top:16px;">
+            <label>Comprobante de pago</label>
+            <input type="file" name="comprobante_pago" required>
+            <button type="submit" class="button primary" style="margin-top:10px;">
+                Añadir comprobante y marcar pagada
+            </button>
+        </form>
+        """
+    debtor_account_form_html = ""
+    if can_assign_debtor_account:
+        debtor_account_form_html = f"""
+        <form method="POST" action="/prestamos/{prestamo.id}/cuenta-deudor"
+              style="margin-top:16px;">
+            <label>Cuenta de deudor diverso</label>
+            <select name="cuenta_deudor_contable_id" required>
+                <option value="">Selecciona cuenta</option>
+                {debtor_account_options}
+            </select>
+            <button type="submit" class="button primary" style="margin-top:10px;">Guardar cuenta</button>
+        </form>
+        """
+    abono_form_html = ""
+    if can_register_abono:
+        abono_form_html = f"""
+        <form method="POST"
+              action="/prestamos/{prestamo.id}/abonos"
+              enctype="multipart/form-data"
+              style="margin-top:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+                <div>
+                    <label>Monto del abono</label>
+                    <input type="number" name="monto_reportado" min="0.01" step="0.01" required>
+                </div>
+                <div>
+                    <label>Comprobante de transferencia o depósito</label>
+                    <input type="file" name="comprobante_abono" required>
+                </div>
+            </div>
+            <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;">
+                <input type="checkbox" name="excess_confirmed" value="1">
+                <span>Confirmo que si el abono excede el saldo, el préstamo se queda en cero y el excedente queda como ajuste manual contable.</span>
+            </label>
+            <label style="margin-top:12px;">Comentario</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button primary" style="margin-top:10px;">Registrar abono</button>
+        </form>
+        """
+    abonos_html = "".join(
+        (lambda actions_html: f"""
+        <tr>
+            <td>{escape(abono.creado_en.strftime('%Y-%m-%d') if abono.creado_en else '—')}</td>
+            <td style="text-align:right;">{format_currency(abono.monto_reportado or 0, prestamo.currency or "MXN")}</td>
+            <td style="text-align:right;">{format_currency(abono.monto_aplicado or 0, prestamo.currency or "MXN")}</td>
+            <td style="text-align:right;">{format_currency(abono.monto_excedente or 0, prestamo.currency or "MXN")}</td>
+            <td>{_prestamo_status_badge(abono.estado)}</td>
+            <td><div style="display:flex;gap:8px;flex-wrap:wrap;">{actions_html}</div></td>
+        </tr>
+        """)(
+            f"""
+            <form method="POST" action="/prestamos/abonos/{abono.id}/aprobar" style="display:inline;">
+                <button type="submit" class="button primary">Aprobar</button>
+            </form>
+            <form method="POST" action="/prestamos/abonos/{abono.id}/rechazar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Rechazar este abono?');">
+                <button type="submit" class="button danger">Rechazar</button>
+            </form>
+            """
+            if can_review_abonos
+            and abono.estado == PRESTAMO_ABONO_STATUS_ENVIADO
+            else "—"
+        )
+        for abono in sorted(
+            list(getattr(prestamo, "abonos", []) or []),
+            key=lambda item: item.creado_en or datetime.min,
+            reverse=True,
+        )
+    )
+    error_msg = request.query_params.get("error_msg", "")
+    success_msg = request.query_params.get("success_msg", "")
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>{escape(prestamo.numero_referencia)} - Préstamos</title>
+        <style>{_workspace_shell_styles("980px")}</style>
+    </head>
+    <body>
+        <div class="container">
+            {render_top_navigation(current_empleado, "operacion")}
+            {_gastos_workspace_nav_html(current_empleado, "prestamos")}
+            {_gastos_breadcrumb_html([
+                ("Préstamos", "/prestamos"),
+                (prestamo.numero_referencia, None),
+            ])}
+            {_render_workspace_hero(
+                eyebrow="Solicitud de préstamo",
+                title=prestamo.numero_referencia,
+                description=prestamo.motivo or "",
+                actions_html="".join(actions),
+                side_html=f'''
+                    <div class="meta-grid">
+                        <div class="meta-card"><span>Monto</span><strong>{format_currency(prestamo.monto_solicitado or 0, prestamo.currency or "MXN")}</strong></div>
+                        <div class="meta-card"><span>Saldo</span><strong>{format_currency(prestamo.saldo_pendiente or 0, prestamo.currency or "MXN")}</strong></div>
+                    </div>
+                ''',
+            )}
+            {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
+            {f'<div class="notice success">{escape(success_msg)}</div>' if success_msg else ''}
+            <section class="surface">
+                <div class="section-head"><div><div class="eyebrow">Detalle</div><h2>Información de la solicitud</h2></div></div>
+                <div class="meta-grid">
+                    <div class="meta-card"><span>Solicitante</span><strong>{escape(getattr(prestamo.solicitante, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Beneficiario</span><strong>{escape(_prestamo_beneficiario_label(prestamo))}</strong></div>
+                    <div class="meta-card"><span>Cuenta beneficiario</span><strong>{escape(_prestamo_account_display(prestamo))}</strong></div>
+                    <div class="meta-card"><span>Cuenta deudor</span><strong>{escape(getattr(getattr(prestamo, "cuenta_deudor_contable", None), "codigo", None) or "—")}</strong></div>
+                    <div class="meta-card"><span>Estado</span><strong>{_prestamo_status_badge(prestamo.estado)}</strong></div>
+                </div>
+                {debtor_account_form_html}
+            </section>
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Pago</div>
+                        <h2>Comprobante de pago</h2>
+                        <div class="section-note">Contabilidad puede subir el comprobante cuando la solicitud ya fue aprobada. Al subirlo, el préstamo queda marcado como pagado.</div>
+                    </div>
+                </div>
+                <div class="meta-grid">
+                    <div class="meta-card"><span>Comprobante</span><strong>{escape(prestamo.comprobante_pago_filename or "—")}</strong></div>
+                    <div class="meta-card"><span>Pagó</span><strong>{escape(getattr(prestamo.pagado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha pago</span><strong>{escape(prestamo.pagado_en.strftime('%Y-%m-%d %H:%M') if prestamo.pagado_en else "—")}</strong></div>
+                </div>
+                {payment_proof_form_html}
+            </section>
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Autorización</div>
+                        <h2>Decisión y programación</h2>
+                        <div class="section-note">Al aprobar, la solicitud queda lista para programación de pago. No genera prepóliza hasta que contabilidad añada el comprobante.</div>
+                    </div>
+                </div>
+                <div class="meta-grid">
+                    <div class="meta-card"><span>Aprobó</span><strong>{escape(getattr(prestamo.aprobado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha aprobación</span><strong>{escape(prestamo.aprobado_en.strftime('%Y-%m-%d %H:%M') if prestamo.aprobado_en else "—")}</strong></div>
+                    <div class="meta-card"><span>Rechazó</span><strong>{escape(getattr(prestamo.rechazado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha rechazo</span><strong>{escape(prestamo.rechazado_en.strftime('%Y-%m-%d %H:%M') if prestamo.rechazado_en else "—")}</strong></div>
+                </div>
+                {authorization_forms_html}
+            </section>
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Abonos</div>
+                        <h2>Movimientos registrados</h2>
+                        <div class="section-note">Saldo actual: {format_currency(prestamo.saldo_pendiente or 0, prestamo.currency or "MXN")}</div>
+                    </div>
+                </div>
+                {abono_form_html}
+                <div class="table-shell">
+                    <table>
+                        <thead><tr><th>Fecha</th><th>Monto reportado</th><th>Aplicado</th><th>Excedente</th><th>Estado</th><th>Acciones</th></tr></thead>
+                        <tbody>{abonos_html if abonos_html else '<tr><td colspan="6" style="text-align:center;padding:18px;">Sin abonos registrados.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return html
+
+
+@router.post("/prestamos/{prestamo_id}/enviar")
+async def prestamo_submit_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        submit_prestamo(prestamo, current_empleado)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg=" + quote("Solicitud enviada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/cancelar")
+async def prestamo_cancel_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        cancel_prestamo(prestamo, current_empleado)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg=" + quote("Solicitud cancelada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/aprobar")
+async def prestamo_approve_route(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    form = await request.form()
+    try:
+        approve_prestamo(
+            prestamo,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Solicitud aprobada y lista para programación de pago."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/rechazar")
+async def prestamo_reject_route(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    form = await request.form()
+    try:
+        reject_prestamo(
+            prestamo,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Solicitud rechazada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/programar-pago")
+async def prestamo_schedule_payment_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        schedule_prestamo_payment(prestamo, current_empleado)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Préstamo enviado a proceso de pago."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/cuenta-deudor")
+async def prestamo_assign_debtor_account_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    cuenta_deudor_contable_id: UUIDType = Form(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    account = await session.get(CuentaContable, cuenta_deudor_contable_id)
+    try:
+        assign_prestamo_debtor_account(
+            prestamo,
+            current_empleado,
+            account,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Cuenta de deudor guardada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/comprobante-pago")
+async def prestamo_upload_payment_proof_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    comprobante_pago: UploadFile = File(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        filename, storage_key = await _save_prestamo_payment_proof_upload(
+            prestamo,
+            comprobante_pago,
+        )
+        register_prestamo_payment_proof(
+            prestamo,
+            current_empleado,
+            comprobante_filename=filename,
+            comprobante_storage_key=storage_key,
+        )
+        posting = await ensure_prestamo_payment_posting(
+            session,
+            prestamo=prestamo,
+        )
+        if posting.status == "pending":
+            raise PrestamoWorkflowError(
+                "accounting_posting_pending",
+                "No se puede marcar como pagada hasta completar su "
+                f"configuración contable ({posting.reason or 'incompleta'}).",
+            )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error uploading loan payment proof",
+            extra={
+                "prestamo_id": str(prestamo_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg="
+            + quote("No se pudo cargar el comprobante de pago."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Comprobante cargado y préstamo marcado como pagado."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/abonos")
+async def prestamo_register_abono_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    monto_reportado: str = Form(...),
+    excess_confirmed: Optional[str] = Form(None),
+    comentario: Optional[str] = Form(None),
+    comprobante_abono: UploadFile = File(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        filename, storage_key = await _save_prestamo_abono_proof_upload(
+            prestamo,
+            comprobante_abono,
+        )
+        abono = register_prestamo_abono(
+            prestamo,
+            current_empleado,
+            monto_reportado=monto_reportado,
+            comprobante_filename=filename,
+            comprobante_storage_key=storage_key,
+            excess_confirmed=bool(excess_confirmed),
+            comentario=comentario,
+        )
+        session.add(abono)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error registering loan repayment",
+            extra={
+                "prestamo_id": str(prestamo_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg="
+            + quote("No se pudo registrar el abono."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono registrado y pendiente de aprobación contable."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/abonos/{abono_id}/aprobar")
+async def prestamo_approve_abono_route(
+    abono_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    abono = await _load_prestamo_abono_for_user(session, abono_id, current_empleado)
+    prestamo_id = abono.prestamo_id
+    try:
+        approve_prestamo_abono(abono, current_empleado)
+        posting = await ensure_prestamo_abono_posting(
+            session,
+            abono=abono,
+        )
+        if posting.status == "pending":
+            raise PrestamoWorkflowError(
+                "accounting_posting_pending",
+                "No se puede aprobar el abono hasta completar su "
+                f"configuración contable ({posting.reason or 'incompleta'}).",
+            )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono aprobado y saldo actualizado."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/abonos/{abono_id}/rechazar")
+async def prestamo_reject_abono_route(
+    abono_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    abono = await _load_prestamo_abono_for_user(session, abono_id, current_empleado)
+    prestamo_id = abono.prestamo_id
+    form = await request.form()
+    try:
+        reject_prestamo_abono(
+            abono,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono rechazado."),
+        status_code=303,
+    )
+
+
 @router.get("/gastos-terceros", response_class=HTMLResponse)
 # Accepted regression marker: Por Proveedor.
 async def gastos_terceros(
@@ -27174,6 +28446,19 @@ async def documentos_pendientes(
         referencia_operaciones = escape(
             str((documento.referencia_operaciones or "").strip() or "?")
         )
+        referencia_operaciones_sort = _sort_value_attr(
+            getattr(documento, "referencia_operaciones", None),
+            kind="referencia_operaciones",
+        )
+        monto_total_sort = _sort_value_attr(
+            getattr(documento, "monto_total", None)
+            or getattr(documento, "monto_solicitado", None),
+            kind="money",
+        )
+        enviado_sort = _sort_value_attr(
+            getattr(documento, "enviado_en", None) or getattr(documento, "creado_en", None),
+            kind="date",
+        )
         descripcion = row_values["concepto"]
         beneficiary_provider = row_values["beneficiario"]
         provider_value = row_values["proveedor"]
@@ -27189,16 +28474,16 @@ async def documentos_pendientes(
         <tr>
             <td><input type="checkbox" name="documento_ids" value="{documento.id}" aria-label="Seleccionar {escape(row_values['numero_referencia'])}"></td>
             <td>{doc_link}</td>
-            <td>{referencia_operaciones}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
             <td>{escape(_pending_torneo_display(documento))}</td>
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["solicitante"])}</td>
             <td>{escape(beneficiary_provider)}</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["estado"])}</td>
-            <td>{escape(row_values["monto_total"])}</td>
+            <td data-sort-value="{escape(monto_total_sort)}">{escape(row_values["monto_total"])}</td>
             <td>{escape(descripcion)}</td>
-            <td>{escape(str(enviado_str))}</td>
+            <td data-sort-value="{escape(enviado_sort)}">{escape(str(enviado_str))}</td>
             <td>{actions_html}</td>
         </tr>
         """
@@ -27290,21 +28575,21 @@ async def documentos_pendientes(
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
                     <button type="submit" name="action" value="reject" class="button secondary">Rechazar seleccionados</button>
                 </div>
-                <div class="table-shell"><table>
+                <div class="table-shell"><table data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th>Sel.</th>
-                            <th>Número de Referencia</th>
-                            <th>Referencia Operaciones</th>
-                            <th>Torneo</th>
-                            <th>ID Interno</th>
-                            <th>Solicitante</th>
-                            <th>Beneficiario/Proveedor</th>
-                            <th>Tipo</th>
-                            <th>Estado</th>
-                            <th>Monto Total</th>
-                            <th>Descripción</th>
-                            <th>Fecha de Envío</th>
+                            <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th>
+                            <th data-sort-key="torneo" data-sort-type="text">Torneo</th>
+                            <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
+                            <th data-sort-key="solicitante" data-sort-type="text">Solicitante</th>
+                            <th data-sort-key="beneficiario" data-sort-type="text">Beneficiario/Proveedor</th>
+                            <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
+                            <th data-sort-key="estado" data-sort-type="text">Estado</th>
+                            <th data-sort-key="monto_total" data-sort-type="money">Monto Total</th>
+                            <th data-sort-key="descripcion" data-sort-type="text">Descripción</th>
+                            <th data-sort-key="fecha_envio" data-sort-type="date">Fecha de Envío</th>
                             <th>Acciones</th>
                         </tr>
                     </thead>
@@ -27356,6 +28641,7 @@ async def documentos_pendientes(
                 </section>
             </div>
         </div>
+        {_sortable_table_assets()}
         <script>
         (function() {{
           document.querySelectorAll('[data-select-all-approval]').forEach(function(button) {{
@@ -27466,6 +28752,156 @@ def _approval_history_filter_values(values: Optional[List[str]]) -> set[str]:
         for value in values or []
         if str(value or "").strip()
     }
+
+
+def _normalize_filter_value(value: Any) -> str:
+    normalized = unicodedata.normalize("NFD", str(value or "").strip().lower())
+    normalized = "".join(
+        ch for ch in normalized if unicodedata.category(ch) != "Mn"
+    )
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _referencia_operaciones_number(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    digits = re.sub(r"\D+", "", raw)
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _datetime_sort_timestamp(value: Any) -> float:
+    if isinstance(value, datetime):
+        return value.timestamp()
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day).timestamp()
+    return 0.0
+
+
+def _referencia_operaciones_default_sort_key(
+    ref_value: Any,
+    fallback_date: Any = None,
+) -> tuple[int, int, float]:
+    ref_number = _referencia_operaciones_number(ref_value)
+    if ref_number is None:
+        return (1, 0, -_datetime_sort_timestamp(fallback_date))
+    return (0, -ref_number, -_datetime_sort_timestamp(fallback_date))
+
+
+def _sort_value_attr(value: Any, *, kind: str = "text") -> str:
+    if kind == "referencia_operaciones":
+        number = _referencia_operaciones_number(value)
+        return "" if number is None else str(number)
+    if kind == "date":
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        return str(value or "")
+    if kind in {"number", "money"}:
+        raw = re.sub(r"[^0-9.\-]+", "", str(value or ""))
+        return raw or "0"
+    return str(value or "")
+
+
+def _sortable_table_assets() -> str:
+    return """
+        <style>
+            table[data-sortable-table] th[data-sort-key] {
+                cursor:pointer;
+                user-select:none;
+                white-space:nowrap;
+            }
+            table[data-sortable-table] th[data-sort-key]::after {
+                content:"";
+                display:inline-block;
+                margin-left:6px;
+                color:#64748b;
+            }
+            table[data-sortable-table] th[data-sort-dir="asc"]::after {
+                content:"↑";
+            }
+            table[data-sortable-table] th[data-sort-dir="desc"]::after {
+                content:"↓";
+            }
+        </style>
+        <script>
+        (function() {
+            function normalizeText(value) {
+                return String(value || '')
+                    .normalize('NFD')
+                    .replace(/[\\u0300-\\u036f]/g, '')
+                    .toLowerCase()
+                    .trim();
+            }
+            function numericValue(value) {
+                var raw = String(value || '').replace(/[^0-9.-]+/g, '');
+                var parsed = Number.parseFloat(raw);
+                return Number.isFinite(parsed) ? parsed : null;
+            }
+            function cellValue(row, index) {
+                var cell = row.children[index];
+                if (!cell) return '';
+                return cell.getAttribute('data-sort-value') || cell.textContent || '';
+            }
+            function compareValues(a, b, type, direction) {
+                var aEmpty = normalizeText(a) === '' || normalizeText(a) === '—' || normalizeText(a) === '?';
+                var bEmpty = normalizeText(b) === '' || normalizeText(b) === '—' || normalizeText(b) === '?';
+                if (aEmpty && bEmpty) return 0;
+                if (aEmpty) return 1;
+                if (bEmpty) return -1;
+                var result = 0;
+                if (type === 'number' || type === 'money' || type === 'date') {
+                    var aNum = type === 'date' ? Date.parse(a) : numericValue(a);
+                    var bNum = type === 'date' ? Date.parse(b) : numericValue(b);
+                    if (!Number.isFinite(aNum)) aNum = numericValue(a);
+                    if (!Number.isFinite(bNum)) bNum = numericValue(b);
+                    if (aNum !== null && bNum !== null) result = aNum - bNum;
+                    else result = normalizeText(a).localeCompare(normalizeText(b), 'es');
+                } else {
+                    result = normalizeText(a).localeCompare(normalizeText(b), 'es');
+                }
+                return direction === 'desc' ? -result : result;
+            }
+            function sortTable(table, columnIndex, direction, markHeader) {
+                var tbody = table.tBodies && table.tBodies[0];
+                if (!tbody) return;
+                var header = table.tHead ? table.tHead.rows[0].children[columnIndex] : null;
+                var type = header ? (header.getAttribute('data-sort-type') || 'text') : 'text';
+                var rows = Array.prototype.slice.call(tbody.rows).filter(function(row) {
+                    return !row.hasAttribute('data-sort-ignore');
+                });
+                rows.sort(function(a, b) {
+                    return compareValues(cellValue(a, columnIndex), cellValue(b, columnIndex), type, direction);
+                });
+                rows.forEach(function(row) { tbody.appendChild(row); });
+                if (!markHeader) return;
+                table.querySelectorAll('th[data-sort-key]').forEach(function(th) {
+                    th.removeAttribute('data-sort-dir');
+                });
+                if (header) header.setAttribute('data-sort-dir', direction);
+            }
+            document.querySelectorAll('table[data-sortable-table]').forEach(function(table) {
+                var defaultIndex = table.getAttribute('data-default-sort-index');
+                var defaultDir = table.getAttribute('data-default-sort-dir') || 'desc';
+                if (defaultIndex !== null && defaultIndex !== '') {
+                    sortTable(table, Number.parseInt(defaultIndex, 10), defaultDir, false);
+                }
+                table.querySelectorAll('th[data-sort-key]').forEach(function(header, index) {
+                    header.addEventListener('click', function() {
+                        var nextDir = header.getAttribute('data-sort-dir') === 'asc' ? 'desc' : 'asc';
+                        sortTable(table, header.cellIndex, nextDir, true);
+                    });
+                });
+            });
+        })();
+        </script>
+    """
 
 
 def _approval_history_display_value(value: Any) -> str:
@@ -27631,6 +29067,12 @@ async def historial_aprobador(
             "estado": _approval_history_display_value(documento.estado),
         }
         history_items.append((aprobacion, documento, row_values))
+    history_items.sort(
+        key=lambda item: _referencia_operaciones_default_sort_key(
+            getattr(item[1], "referencia_operaciones", None),
+            getattr(item[0], "fecha", None),
+        )
+    )
 
     filter_options = {
         "torneo": [item[2]["torneo"] for item in history_items],
@@ -27697,6 +29139,7 @@ async def historial_aprobador(
 
         # Format fecha
         fecha_str = format_value(aprobacion.fecha)
+        fecha_sort = _sort_value_attr(aprobacion.fecha, kind="date")
 
         # Format accion
         if aprobacion.accion == 'aprobar':
@@ -27715,6 +29158,10 @@ async def historial_aprobador(
         referencia_operaciones = escape(
             str((documento.referencia_operaciones or "").strip() or "—")
         )
+        referencia_operaciones_sort = _sort_value_attr(
+            getattr(documento, "referencia_operaciones", None),
+            kind="referencia_operaciones",
+        )
 
         # Link to documento detail
         doc_link = f'<a href="/documentos/{documento.id}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
@@ -27725,8 +29172,8 @@ async def historial_aprobador(
 
         rows_html += f"""
         <tr>
-            <td>{fecha_str}</td>
-            <td>{referencia_operaciones}</td>
+            <td data-sort-value="{escape(fecha_sort)}">{fecha_str}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
             <td><span style="color: {accion_color}; font-weight: bold;">{accion_str}</span></td>
             <td>{doc_link}</td>
             <td>{escape(row_values["torneo"])}</td>
@@ -27818,22 +29265,22 @@ async def historial_aprobador(
                     </div>
                     {filter_form_html}
             {f'''
-            <div class="table-shell"><table>
+            <div class="table-shell"><table data-sortable-table data-default-sort-index="1" data-default-sort-dir="desc">
                 <thead>
                     <tr>
-                        <th>Fecha</th>
-                        <th>Referencia Operaciones</th>
-                        <th>Acción</th>
-                        <th>Número de Referencia</th>
-                        <th>Torneo</th>
-                        <th>Fase</th>
-                        <th>Concepto/Presupuestal</th>
-                        <th>Descripción del Usuario</th>
-                        <th>Beneficiario</th>
-                        <th>Empleado</th>
-                        <th>Tipo</th>
-                        <th>Estado Actual</th>
-                        <th>Comentario</th>
+                        <th data-sort-key="fecha" data-sort-type="date">Fecha</th>
+                        <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th>
+                        <th data-sort-key="accion" data-sort-type="text">Acción</th>
+                        <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                        <th data-sort-key="torneo" data-sort-type="text">Torneo</th>
+                        <th data-sort-key="fase" data-sort-type="text">Fase</th>
+                        <th data-sort-key="concepto_presupuestal" data-sort-type="text">Concepto/Presupuestal</th>
+                        <th data-sort-key="descripcion_usuario" data-sort-type="text">Descripción del Usuario</th>
+                        <th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th>
+                        <th data-sort-key="empleado" data-sort-type="text">Empleado</th>
+                        <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
+                        <th data-sort-key="estado_actual" data-sort-type="text">Estado Actual</th>
+                        <th data-sort-key="comentario" data-sort-type="text">Comentario</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -27848,6 +29295,7 @@ async def historial_aprobador(
                 </section>
             </div>
         </div>
+        {_sortable_table_assets()}
     </body>
     </html>
     """
@@ -28061,6 +29509,22 @@ async def documentos_todos(
 
         # Shortened ID (first 8 chars)
         doc_id_short = str(documento.id)[:8]
+        referencia_operaciones_sort = _sort_value_attr(
+            row_values["referencia_operaciones"],
+            kind="referencia_operaciones",
+        )
+        monto_solicitado_sort = _sort_value_attr(
+            getattr(documento, "monto_solicitado", None),
+            kind="money",
+        )
+        monto_total_sort = _sort_value_attr(
+            getattr(documento, "monto_total", None),
+            kind="money",
+        )
+        creado_sort = _sort_value_attr(getattr(documento, "creado_en", None), kind="date")
+        enviado_sort = _sort_value_attr(getattr(documento, "enviado_en", None), kind="date")
+        aprobado_sort = _sort_value_attr(getattr(documento, "aprobado_en", None), kind="date")
+        pagado_sort = _sort_value_attr(getattr(documento, "pagado_en", None), kind="date")
 
         rows_html += f"""
         <tr>
@@ -28074,16 +29538,16 @@ async def documentos_todos(
             <td>{escape(row_values["aprobador"])}</td>
             <td>{escape(row_values["concepto"])}</td>
             <td>{escape(row_values["referencia_pago"])}</td>
-            <td>{escape(row_values["referencia_operaciones"])}</td>
-            <td>{row_values["monto_solicitado"]}</td>
-            <td>{row_values["monto_total"]}</td>
+            <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
+            <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
+            <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
             <td>{escape(row_values["currency"])}</td>
             <td>{escape(row_values["situacion"])}</td>
             <td>{escape(row_values["estado"])}</td>
-            <td>{row_values["creado"]}</td>
-            <td>{row_values["enviado"]}</td>
-            <td>{row_values["aprobado"]}</td>
-            <td>{row_values["pagado"]}</td>
+            <td data-sort-value="{escape(creado_sort)}">{row_values["creado"]}</td>
+            <td data-sort-value="{escape(enviado_sort)}">{row_values["enviado"]}</td>
+            <td data-sort-value="{escape(aprobado_sort)}">{row_values["aprobado"]}</td>
+            <td data-sort-value="{escape(pagado_sort)}">{row_values["pagado"]}</td>
             <td>{action_link}</td>
         </tr>
         """
@@ -28215,29 +29679,29 @@ async def documentos_todos(
                     </div>
             {f'''
             <div class="table-shell">
-                <table>
+                <table data-sortable-table data-default-sort-index="10" data-default-sort-dir="desc">
                     <thead>
                         <tr>
-                            <th>Número de Referencia</th>
-                            <th>ID Interno</th>
-                            <th>Tipo</th>
-                            <th>Tipo solicitud</th>
-                            <th>Solicitante</th>
-                            <th>Beneficiario</th>
-                            <th>Proveedor</th>
-                            <th>Aprobador</th>
-                            <th>Concepto</th>
-                            <th>Referencia pago</th>
-                            <th>Referencia operaciones</th>
-                            <th>Monto solicitado</th>
-                            <th>Monto total</th>
-                            <th>Moneda</th>
-                            <th>Situación</th>
-                            <th>Estado</th>
-                            <th>Creado</th>
-                            <th>Enviado</th>
-                            <th>Aprobado</th>
-                            <th>Pagado</th>
+                            <th data-sort-key="numero_referencia" data-sort-type="text">Número de Referencia</th>
+                            <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
+                            <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
+                            <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
+                            <th data-sort-key="solicitante" data-sort-type="text">Solicitante</th>
+                            <th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th>
+                            <th data-sort-key="proveedor" data-sort-type="text">Proveedor</th>
+                            <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
+                            <th data-sort-key="concepto" data-sort-type="text">Concepto</th>
+                            <th data-sort-key="referencia_pago" data-sort-type="text">Referencia pago</th>
+                            <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
+                            <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
+                            <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
+                            <th data-sort-key="moneda" data-sort-type="text">Moneda</th>
+                            <th data-sort-key="situacion" data-sort-type="text">Situación</th>
+                            <th data-sort-key="estado" data-sort-type="text">Estado</th>
+                            <th data-sort-key="creado" data-sort-type="date">Creado</th>
+                            <th data-sort-key="enviado" data-sort-type="date">Enviado</th>
+                            <th data-sort-key="aprobado" data-sort-type="date">Aprobado</th>
+                            <th data-sort-key="pagado" data-sort-type="date">Pagado</th>
                             <th>Acción</th>
                         </tr>
                     </thead>
@@ -28254,6 +29718,7 @@ async def documentos_todos(
                 </section>
             </div>
         </div>
+        {_sortable_table_assets()}
     </body>
     </html>
     """
@@ -36801,6 +38266,12 @@ async def cuentas_de_gastos_list(
             continue
         filtered_cuenta_data.append(item)
     cuenta_data = filtered_cuenta_data
+    cuenta_data.sort(
+        key=lambda item: _referencia_operaciones_default_sort_key(
+            getattr(item.get("informe_doc"), "referencia_operaciones", None),
+            getattr(item["cuenta"], "created_at", None),
+        )
+    )
 
     saldo_totals: Dict[str, Decimal] = {}
     for item in cuenta_data:
@@ -36867,8 +38338,13 @@ async def cuentas_de_gastos_list(
             if informe_doc and informe_doc.aprobado_en
             else "-"
         )
+        fecha_aprobacion_sort = _sort_value_attr(
+            getattr(informe_doc, "aprobado_en", None),
+            kind="date",
+        )
         ro_raw = informe_ro_by_cuenta_id.get(cuenta.id)
         ro_cell = escape(ro_raw) if ro_raw else "—"
+        ro_sort = _sort_value_attr(ro_raw, kind="referencia_operaciones")
         cuenta_currency = currency_for(cuenta)
         _can_manage_cuenta_row = (
             cuenta.empleado_id == current_empleado.id
@@ -36919,17 +38395,17 @@ async def cuentas_de_gastos_list(
             <td>{solicitante_nombre}</td>
             <td>{beneficiario_nombre}</td>
             <td>{aprobador_nombre}</td>
-            <td>{fecha_aprobacion_informe}</td>
-            <td style="white-space: nowrap;">{ro_cell}</td>
+            <td data-sort-value="{escape(fecha_aprobacion_sort)}">{fecha_aprobacion_informe}</td>
+            <td data-sort-value="{escape(ro_sort)}" style="white-space: nowrap;">{ro_cell}</td>
             <td>{estado_badge}</td>
-            <td>{data['num_expenses']} gastos</td>
-            <td>{format_currency(data['total_gastos'], cuenta_currency)}</td>
-            <td>{format_currency(data['monto_solicitado'], cuenta_currency)}</td>
+            <td data-sort-value="{escape(_sort_value_attr(data['num_expenses'], kind='number'))}">{data['num_expenses']} gastos</td>
+            <td data-sort-value="{escape(_sort_value_attr(data['total_gastos'], kind='money'))}">{format_currency(data['total_gastos'], cuenta_currency)}</td>
+            <td data-sort-value="{escape(_sort_value_attr(data['monto_solicitado'], kind='money'))}">{format_currency(data['monto_solicitado'], cuenta_currency)}</td>
             <td>{escape(cuenta_currency)}</td>
-            <td style="color: {saldo_color}; font-weight: bold;">
+            <td data-sort-value="{escape(_sort_value_attr(data['saldo'], kind='money'))}" style="color: {saldo_color}; font-weight: bold;">
                 {format_currency(abs(data['saldo']), cuenta_currency)} <small>({saldo_label})</small>
             </td>
-            <td>{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
+            <td data-sort-value="{escape(_sort_value_attr(cuenta.created_at, kind='date'))}">{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td>
                 <div class="inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
                 <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Abrir informe</a>
@@ -37070,34 +38546,35 @@ async def cuentas_de_gastos_list(
                         </div>
                     </div>
                     <div class="table-shell">
-            <table id="informes-table">
+            <table id="informes-table" data-sortable-table data-default-sort-index="5" data-default-sort-dir="desc">
                 <thead>
                     <tr>
-                        <th>Informe de Gastos</th>
-                        <th>Solicitante</th>
-                        <th>Beneficiario</th>
-                        <th>Aprobador</th>
-                        <th>Fecha Aprobacion</th>
-                        <th>Referencia Operaciones</th>
-                        <th>Estado</th>
-                        <th># Gastos</th>
-                        <th>Total Gastos</th>
-                        <th>Solicitado</th>
-                        <th>Moneda</th>
-                        <th>Saldo</th>
-                        <th>Creada</th>
+                        <th data-sort-key="informe" data-sort-type="text">Informe de Gastos</th>
+                        <th data-sort-key="solicitante" data-sort-type="text">Solicitante</th>
+                        <th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th>
+                        <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
+                        <th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobacion</th>
+                        <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th>
+                        <th data-sort-key="estado" data-sort-type="text">Estado</th>
+                        <th data-sort-key="gastos" data-sort-type="number"># Gastos</th>
+                        <th data-sort-key="total_gastos" data-sort-type="money">Total Gastos</th>
+                        <th data-sort-key="solicitado" data-sort-type="money">Solicitado</th>
+                        <th data-sort-key="moneda" data-sort-type="text">Moneda</th>
+                        <th data-sort-key="saldo" data-sort-type="money">Saldo</th>
+                        <th data-sort-key="creada" data-sort-type="date">Creada</th>
                         <th>Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
                     {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
-                    <tr id="informes-no-matches" style="display:none;"><td colspan="14" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
+                    <tr id="informes-no-matches" data-sort-ignore style="display:none;"><td colspan="14" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
                 </tbody>
             </table>
                     </div>
                 </section>
             </div>
         </div>
+        {_sortable_table_assets()}
         <script>
             (function() {{
                 var solicitanteInput = document.getElementById('informes-search-solicitante');

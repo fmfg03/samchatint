@@ -7510,6 +7510,128 @@ def _payment_run_money(value: Any, currency: str = "MXN") -> str:
     return f"{currency or 'MXN'} ${amount:,.2f}"
 
 
+def _payment_run_ref_number(value: Any) -> Optional[int]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except ValueError:
+        return None
+
+
+def _payment_run_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
+    ref_number = _payment_run_ref_number(row.get("referencia_operaciones"))
+    fallback = str(row.get("fecha_pago") or row.get("aprobado_en") or "")
+    if ref_number is None:
+        return (1, 0, fallback)
+    return (0, -ref_number, fallback)
+
+
+def _payment_run_sort_value(value: Any, *, kind: str = "text") -> str:
+    if kind == "referencia_operaciones":
+        ref_number = _payment_run_ref_number(value)
+        return "" if ref_number is None else str(ref_number)
+    if kind == "money":
+        try:
+            return str(float(value or 0))
+        except Exception:
+            return "0"
+    if kind == "date":
+        if isinstance(value, (datetime, date)):
+            return value.isoformat()
+        return str(value or "")
+    return str(value or "")
+
+
+def _admin_sortable_table_assets() -> str:
+    return """
+        <style>
+            table[data-sortable-table] th[data-sort-key] {
+                cursor:pointer;
+                user-select:none;
+                white-space:nowrap;
+            }
+            table[data-sortable-table] th[data-sort-dir="asc"]::after {
+                content:"↑";
+                margin-left:6px;
+            }
+            table[data-sortable-table] th[data-sort-dir="desc"]::after {
+                content:"↓";
+                margin-left:6px;
+            }
+        </style>
+        <script>
+        (function() {
+            function normalizeText(value) {
+                return String(value || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+            }
+            function numericValue(value) {
+                var parsed = Number.parseFloat(String(value || '').replace(/[^0-9.-]+/g, ''));
+                return Number.isFinite(parsed) ? parsed : null;
+            }
+            function cellValue(row, index) {
+                var cell = row.children[index];
+                return cell ? (cell.getAttribute('data-sort-value') || cell.textContent || '') : '';
+            }
+            function compareValues(a, b, type, direction) {
+                var aEmpty = normalizeText(a) === '' || normalizeText(a) === '—' || normalizeText(a) === '-';
+                var bEmpty = normalizeText(b) === '' || normalizeText(b) === '—' || normalizeText(b) === '-';
+                if (aEmpty && bEmpty) return 0;
+                if (aEmpty) return 1;
+                if (bEmpty) return -1;
+                var result = 0;
+                if (type === 'number' || type === 'money' || type === 'date') {
+                    var aNum = type === 'date' ? Date.parse(a) : numericValue(a);
+                    var bNum = type === 'date' ? Date.parse(b) : numericValue(b);
+                    if (!Number.isFinite(aNum)) aNum = numericValue(a);
+                    if (!Number.isFinite(bNum)) bNum = numericValue(b);
+                    if (aNum !== null && bNum !== null) result = aNum - bNum;
+                    else result = normalizeText(a).localeCompare(normalizeText(b), 'es');
+                } else {
+                    result = normalizeText(a).localeCompare(normalizeText(b), 'es');
+                }
+                return direction === 'desc' ? -result : result;
+            }
+            function sortTable(table, columnIndex, direction, markHeader) {
+                var tbody = table.tBodies && table.tBodies[0];
+                if (!tbody) return;
+                var header = table.tHead ? table.tHead.rows[0].children[columnIndex] : null;
+                var type = header ? (header.getAttribute('data-sort-type') || 'text') : 'text';
+                var rows = Array.prototype.slice.call(tbody.rows).filter(function(row) {
+                    return !row.hasAttribute('data-sort-ignore');
+                });
+                rows.sort(function(a, b) {
+                    return compareValues(cellValue(a, columnIndex), cellValue(b, columnIndex), type, direction);
+                });
+                rows.forEach(function(row) { tbody.appendChild(row); });
+                if (!markHeader) return;
+                table.querySelectorAll('th[data-sort-key]').forEach(function(th) {
+                    th.removeAttribute('data-sort-dir');
+                });
+                if (header) header.setAttribute('data-sort-dir', direction);
+            }
+            document.querySelectorAll('table[data-sortable-table]').forEach(function(table) {
+                var defaultIndex = table.getAttribute('data-default-sort-index');
+                var defaultDir = table.getAttribute('data-default-sort-dir') || 'desc';
+                if (defaultIndex !== null && defaultIndex !== '') {
+                    sortTable(table, Number.parseInt(defaultIndex, 10), defaultDir, false);
+                }
+                table.querySelectorAll('th[data-sort-key]').forEach(function(header) {
+                    header.addEventListener('click', function() {
+                        var nextDir = header.getAttribute('data-sort-dir') === 'asc' ? 'desc' : 'asc';
+                        sortTable(table, header.cellIndex, nextDir, true);
+                    });
+                });
+            });
+        })();
+        </script>
+    """
+
+
 def _payment_run_badge(status: str) -> str:
     normalized = (status or "").strip().lower()
     color = {
@@ -7533,12 +7655,17 @@ def _render_payment_run_items(
     can_confirm_payment: bool = False,
 ) -> str:
     rendered_rows = []
-    for row in rows:
+    for row in sorted(rows, key=_payment_run_sort_key):
         documento_id = escape(str(row.get("id") or ""))
         referencia = escape(str(row.get("numero_referencia") or documento_id))
         referencia_operaciones = escape(str(row.get("referencia_operaciones") or "—"))
+        referencia_operaciones_sort = _payment_run_sort_value(
+            row.get("referencia_operaciones"),
+            kind="referencia_operaciones",
+        )
         fecha_pago = row.get("fecha_pago")
         fecha_value = fecha_pago.isoformat() if hasattr(fecha_pago, "isoformat") else ""
+        fecha_sort = _payment_run_sort_value(fecha_pago, kind="date")
         can_edit = bool(row.get("can_edit_fecha_pago"))
         can_close = bool(row.get("can_close"))
         checkbox = (
@@ -7575,11 +7702,11 @@ def _render_payment_run_items(
             <tr>
                 <td>{checkbox}</td>
                 <td><strong>{referencia}</strong><div style="color:#64748b;font-size:12px;">{escape(str(row.get("concepto_pago") or ""))[:120]}</div></td>
-                <td>{referencia_operaciones}</td>
+                <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
                 <td>{escape(str(row.get("solicitante_nombre") or "-"))}</td>
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
-                <td>{fecha_html}</td>
-                <td>{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
+                <td data-sort-value="{escape(fecha_sort)}">{fecha_html}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
                 <td>{proof_html}</td>
                 <td>{closure_html}</td>
@@ -7719,10 +7846,10 @@ async def admin_finance_payment_run(
                 <div class="workspace-section-title">Solicitudes aprobadas para corte</div>
                 <div class="workspace-section-subtitle">Benjamín ajusta fecha_pago y cierra corte. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
                 <div style="overflow:auto;margin-top:14px;">
-                    <table class="payment-table">
-                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False)}</tbody>
-                    </table>
+	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
+	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
+	                        <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False)}</tbody>
+	                    </table>
                 </div>
                 {close_form_html}
             </section>
@@ -7730,10 +7857,10 @@ async def admin_finance_payment_run(
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
                 <div class="workspace-section-subtitle">Dani, Sebas, Jacquie y usuarios de Contabilidad adjuntan el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
                 <div style="overflow:auto;margin-top:14px;">
-                    <table class="payment-table">
-                        <thead><tr><th>Cerrar</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Testigo de pago</th><th>Corte</th></tr></thead>
-                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
-                    </table>
+	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
+	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
+	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
+	                    </table>
                 </div>
             </section>
             <section class="workspace-card">
@@ -7745,8 +7872,9 @@ async def admin_finance_payment_run(
                     </table>
                 </div>
             </section>
-        </div>
-    </body>
+	        </div>
+	        {_admin_sortable_table_assets()}
+	    </body>
     </html>
     """
     return HTMLResponse(html)
@@ -7755,10 +7883,14 @@ async def admin_finance_payment_run(
 
 def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
     rendered_rows = []
-    for row in rows:
+    for row in sorted(rows, key=_payment_run_sort_key):
         documento_id = escape(str(row.get("id") or ""))
         referencia = escape(str(row.get("numero_referencia") or documento_id))
         referencia_operaciones = escape(str(row.get("referencia_operaciones") or "—"))
+        referencia_operaciones_sort = _payment_run_sort_value(
+            row.get("referencia_operaciones"),
+            kind="referencia_operaciones",
+        )
         solicitante = escape(str(row.get("solicitante_nombre") or "-"))
         beneficiario = escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))
         fecha_aprobacion = escape(str(row.get("aprobado_en") or "-")[:10])
@@ -7769,13 +7901,13 @@ def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
             f"""
             <tr>
                 <td><a href="/documentos/{documento_id}">{referencia}</a><div style="color:#64748b;font-size:12px;">{concepto}</div></td>
-                <td>{referencia_operaciones}</td>
+                <td data-sort-value="{escape(referencia_operaciones_sort)}">{referencia_operaciones}</td>
                 <td>{solicitante}</td>
                 <td>{beneficiario}</td>
-                <td>{fecha_aprobacion}</td>
-                <td>{fecha_programacion}</td>
-                <td>{fecha_pagada}</td>
-                <td>{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('aprobado_en'), kind='date'))}">{fecha_aprobacion}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('fecha_pago'), kind='date'))}">{fecha_programacion}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('pagado_en'), kind='date'))}">{fecha_pagada}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
             </tr>
             """
@@ -7863,14 +7995,15 @@ async def admin_finance_payment_history(
                 <div class="workspace-section-title">Solicitudes por estado de pago</div>
                 <div class="workspace-section-subtitle">Incluye fecha de aprobación, fecha programada, fecha pagada, solicitante y beneficiario.</div>
                 <div style="overflow:auto;margin-top:14px;">
-                    <table class="payment-table">
-                        <thead><tr><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha Aprobación</th><th>Fecha Programación</th><th>Fecha Pagada</th><th>Monto</th><th>Estado</th></tr></thead>
-                        <tbody>{_render_payment_history_rows(rows)}</tbody>
-                    </table>
+	                    <table class="payment-table" data-sortable-table data-default-sort-index="1" data-default-sort-dir="desc">
+	                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_pagada" data-sort-type="date">Fecha Pagada</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
+	                        <tbody>{_render_payment_history_rows(rows)}</tbody>
+	                    </table>
                 </div>
             </section>
-        </div>
-    </body>
+	        </div>
+	        {_admin_sortable_table_assets()}
+	    </body>
     </html>
     """
     return HTMLResponse(html)
