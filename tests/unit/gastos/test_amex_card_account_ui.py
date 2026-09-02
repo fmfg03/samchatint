@@ -10,6 +10,34 @@ def test_amex_card_account_catalog_route_is_exposed():
     assert "Catálogo tarjetas" in source
 
 
+def test_amex_card_account_catalog_has_finance_breadcrumb_context():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def amex_card_accounts_view")
+    end = source.index('@router.post("/admin/gastos/amex/tarjetas")', start)
+    block = source[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Finanzas", "/admin/gastos")' in block
+    assert '("Conciliación AMEX", "/admin/gastos/amex/conciliacion")' in block
+    assert '("Catálogo tarjetas AMEX", None)' in block
+
+
+def test_amex_reconciliation_has_finance_breadcrumb_context():
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def amex_conciliacion_view")
+    end = source.index(
+        '@router.get("/admin/contabilidad/cuentas-por-cobrar"',
+        start,
+    )
+    block = source[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Finanzas", "/admin/gastos")' in block
+    assert '("Conciliación AMEX", None)' in block
+
+
 def test_amex_cfdi_matching_surface_is_exposed():
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
 

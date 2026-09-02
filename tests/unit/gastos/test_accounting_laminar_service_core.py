@@ -152,3 +152,19 @@ def test_amex_reconciliation_validation_wires_accounting_before_notification():
     assert "notify_amex_reconciliation_validated" in body
     assert body.index("ensure_amex_reconciliation_posting") < body.index("notify_amex_reconciliation_validated")
     assert 'posting.status == "pending"' in body
+
+
+def test_cuentas_por_cobrar_has_accounting_breadcrumb_context():
+    routes = (ROOT / "src/devnous/gastos/routes/user_routes.py").read_text(encoding="utf-8")
+    start = routes.index("async def contabilidad_cuentas_por_cobrar_view")
+    end = routes.index(
+        '@router.post("/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign")',
+        start,
+    )
+    body = routes[start:end]
+
+    assert 'render_top_navigation(current_empleado, "contabilidad")' in body
+    assert '_contabilidad_subnav("cxc")' in body
+    assert "_gastos_breadcrumb_html([" in body
+    assert '("Contabilidad", "/admin/contabilidad/estado")' in body
+    assert '("Cuentas por Cobrar", None)' in body

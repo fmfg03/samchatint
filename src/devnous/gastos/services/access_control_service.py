@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable, Optional
@@ -349,10 +350,46 @@ ACCESS_TOOLS: tuple[AccessTool, ...] = (
 )
 
 TOOLS_BY_KEY = {tool.key: tool for tool in ACCESS_TOOLS}
+CATALOG_ADMIN_TOOL_KEYS = frozenset(
+    {
+        "admin.empleados",
+        "admin.perfiles",
+        "admin.rfc",
+        "admin.cuentas_contables",
+        "admin.centros_costo",
+        "admin.proveedores",
+        "admin.torneos",
+    }
+)
+CATALOG_ADMIN_EMPLOYEE_IDS = frozenset(
+    {
+        "e3d13040-2360-420f-98a1-516440ef63c3",  # Juan Pablo Lopez Romero
+    }
+)
+CATALOG_ADMIN_EMPLOYEE_EMAILS = frozenset(
+    {
+        "jlopez@plataformasports.com",
+    }
+)
+CATALOG_ADMIN_EMPLOYEE_NAMES = frozenset(
+    {
+        "juan pablo lopez",
+        "juan pablo lopez romero",
+        "luis angel",
+        "luis angel orozco",
+        "luis angel orozco colin",
+    }
+)
 
 
 def normalize_role(value: Any) -> str:
     return (str(value or "")).strip().lower()
+
+
+def normalize_identity_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.strip().lower().split())
 
 
 def normalize_area(value: Any) -> str:
@@ -369,6 +406,35 @@ def empleado_role(empleado: Any) -> str:
 
 def empleado_area(empleado: Any) -> str:
     return normalize_area(getattr(empleado, "departamento", ""))
+
+
+def employee_matches_named_access(empleado: Any, allowed_names: Iterable[str]) -> bool:
+    normalized = normalize_identity_text(getattr(empleado, "nombre", ""))
+    if not normalized:
+        return False
+    for allowed_raw in allowed_names:
+        allowed = normalize_identity_text(allowed_raw)
+        if (
+            normalized == allowed
+            or normalized.startswith(f"{allowed} ")
+            or allowed.startswith(f"{normalized} ")
+        ):
+            return True
+    return False
+
+
+def is_catalog_admin_user(empleado: Any) -> bool:
+    if empleado is None or getattr(empleado, "activo", True) is False:
+        return False
+    if is_superadmin_role(getattr(empleado, "rol", "")):
+        return True
+    empleado_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    email = str(getattr(empleado, "correo", "") or "").strip().lower()
+    return (
+        empleado_id in CATALOG_ADMIN_EMPLOYEE_IDS
+        or email in CATALOG_ADMIN_EMPLOYEE_EMAILS
+        or employee_matches_named_access(empleado, CATALOG_ADMIN_EMPLOYEE_NAMES)
+    )
 
 
 def action_for_method(method: str) -> str:
@@ -444,6 +510,8 @@ async def can_access_tool(
     role = empleado_role(empleado)
     if is_superadmin_role(role):
         return True
+    if tool_key in CATALOG_ADMIN_TOOL_KEYS:
+        return is_catalog_admin_user(empleado)
     if tool_key in NON_CONFIGURABLE_GATEWAY_TOOL_KEYS:
         return True
     action = (action_key or "ver").strip().lower()

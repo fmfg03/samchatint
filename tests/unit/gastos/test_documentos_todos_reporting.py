@@ -143,6 +143,18 @@ def test_documentos_todos_bulk_zip_href_is_built_from_filters():
     assert "urlencode(bulk_params)" in route
 
 
+def test_documentos_todos_has_workspace_navigation_context():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in route
+    assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in route
+    assert "_gastos_breadcrumb_html([" in route
+    assert '("Todos los documentos", None)' in route
+
+
 def test_documentos_todos_rows_have_explicit_review_action():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def documentos_todos(")
@@ -285,6 +297,20 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
             text.index("async def mis_documentos("),
         )
     ]
+    control_presupuestal = text[
+        text.index("async def documentos_control_presupuestal(") :
+        text.index(
+            "async def _apply_control_presupuestal_assignment",
+            text.index("async def documentos_control_presupuestal("),
+        )
+    ]
+    solicitar_anticipo = text[
+        text.index("async def solicitar_anticipo_form(") :
+        text.index(
+            '@router.post("/gastos-terceros/solicitar-anticipo")',
+            text.index("async def solicitar_anticipo_form("),
+        )
+    ]
     beneficiarios = text[
         text.index("def _beneficiary_onboarding_page(") :
         text.index(
@@ -348,6 +374,14 @@ def test_gastos_workspace_nav_is_rendered_on_primary_and_detail_pages():
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documento_detail
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in documentos_todos
     assert '_gastos_workspace_nav_html(current_empleado, "documentos")' in mis_documentos
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "documentos")'
+        in control_presupuestal
+    )
+    assert (
+        '_gastos_workspace_nav_html(current_empleado, "solicitudes")'
+        in solicitar_anticipo
+    )
     assert '_gastos_workspace_nav_html(current_empleado, "beneficiarios")' in beneficiarios
     assert (
         '_gastos_workspace_nav_html(current_empleado, "beneficiarios")'
@@ -370,6 +404,13 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
         text.index(
             '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
             text.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+    informes = text[
+        text.index("async def cuentas_de_gastos_list(") :
+        text.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/cancelar-borrador"',
+            text.index("async def cuentas_de_gastos_list("),
         )
     ]
     informe_crear = text[
@@ -449,6 +490,27 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             text.index("async def mis_documentos("),
         )
     ]
+    control_presupuestal = text[
+        text.index("async def documentos_control_presupuestal(") :
+        text.index(
+            "async def _apply_control_presupuestal_assignment",
+            text.index("async def documentos_control_presupuestal("),
+        )
+    ]
+    solicitar_anticipo = text[
+        text.index("async def solicitar_anticipo_form(") :
+        text.index(
+            '@router.post("/gastos-terceros/solicitar-anticipo")',
+            text.index("async def solicitar_anticipo_form("),
+        )
+    ]
+    terceros = text[
+        text.index("async def gastos_terceros(") :
+        text.index(
+            '@router.get("/gastos-terceros/solicitar-anticipo"',
+            text.index("async def gastos_terceros("),
+        )
+    ]
 
     assert '_gastos_breadcrumb_html([' in documento_detail
     assert '("Todos los documentos", "/documentos/todos")' in documento_detail
@@ -456,6 +518,9 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
 
     assert '_gastos_breadcrumb_html([' in informe_detail
     assert '(f"I-{cuenta.referencia_base}", None)' in informe_detail
+
+    assert '_gastos_breadcrumb_html([' in informes
+    assert '("Informes de gastos", None)' in informes
 
     assert '_gastos_breadcrumb_html([' in informe_crear
     assert '("Informes de gastos", "/informes-de-gastos")' in informe_crear
@@ -487,6 +552,17 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     assert "_gastos_breadcrumb_html([" in mis_documentos
     assert '("Mis documentos", None)' in mis_documentos
     assert "Volver a informes de gastos" not in mis_documentos
+
+    assert "_gastos_breadcrumb_html([" in control_presupuestal
+    assert '("Control Presupuestal", None)' in control_presupuestal
+
+    assert "_gastos_breadcrumb_html([" in solicitar_anticipo
+    assert '("Solicitudes de transferencia", "/gastos-terceros")' in solicitar_anticipo
+    assert '("Solicitar anticipo", None)' in solicitar_anticipo
+    assert "Solicitud vinculada a informe de gastos" in solicitar_anticipo
+
+    assert "_gastos_breadcrumb_html([" in terceros
+    assert '("Solicitudes de transferencia", None)' in terceros
 
     for route_source, leaf in [
         (informe_edit, "Editar"),
@@ -1011,6 +1087,18 @@ def test_operaciones_gasto_create_ignores_budget_concept_payload() -> None:
     assert "budget_concept_id = None" in block
     assert "cuenta_contable_id = None" in block
     assert "resolve_budget_concept" not in block
+
+
+def test_carga_masiva_amex_has_finance_breadcrumb_context() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("async def carga_masiva_amex_get")
+    end = source.index('@router.post("/gastos/carga-masiva-amex")', start)
+    block = source[start:end]
+
+    assert 'render_top_navigation(current_empleado, "finanzas")' in block
+    assert "_gastos_breadcrumb_html([" in block
+    assert '("Finanzas", "/admin/gastos")' in block
+    assert '("Carga AMEX", None)' in block
 
 
 def test_operaciones_gasto_edit_hides_and_ignores_budget_concept() -> None:

@@ -6,6 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from devnous.gastos.routes import admin_routes, operations_analytics_routes, user_routes
+from devnous.gastos.services import access_control_service
 from samchat.budgets import service as budget_service
 
 
@@ -68,6 +69,133 @@ def test_budget_link_is_hidden_from_unauthorized_user() -> None:
     navigation = admin_routes.render_admin_navigation(employee)
 
     assert "/admin/presupuestos" not in navigation
+
+
+def test_catalog_navigation_is_limited_to_named_users_and_superadmins() -> None:
+    generic_admin = SimpleNamespace(
+        nombre="Admin Generico",
+        rol="admin",
+        departamento="Finanzas",
+        correo="admin@example.com",
+        visible_tool_keys={
+            "admin.empleados",
+            "admin.perfiles",
+            "admin.rfc",
+            "admin.cuentas_contables",
+            "admin.centros_costo",
+            "admin.proveedores",
+            "admin.torneos",
+        },
+    )
+    juan_pablo = SimpleNamespace(
+        nombre="Juan Pablo Lopez Romero",
+        rol="finanzas",
+        departamento="Finanzas",
+        correo="jlopez@plataformasports.com",
+        visible_tool_keys={"admin.empleados"},
+    )
+    luis_angel = SimpleNamespace(
+        nombre="Luis Ángel Orozco Colin",
+        rol="admin",
+        departamento="Finanzas",
+        correo="luis@example.com",
+        visible_tool_keys={"admin.empleados"},
+    )
+    superadmin = SimpleNamespace(
+        nombre="Super Admin",
+        rol="superadmin",
+        departamento="Finanzas",
+        correo="super@example.com",
+        visible_tool_keys=set(),
+    )
+
+    assert "Catálogos" not in admin_routes.render_admin_navigation(generic_admin)
+    assert "Catálogos" in admin_routes.render_admin_navigation(juan_pablo)
+    assert "Catálogos" in admin_routes.render_admin_navigation(luis_angel)
+    assert "Catálogos" in admin_routes.render_admin_navigation(superadmin)
+
+
+def test_configuration_panel_uses_catalog_admin_gate() -> None:
+    generic_finance = SimpleNamespace(
+        nombre="Finanzas General",
+        rol="finanzas",
+        correo="finance@example.com",
+        activo=True,
+    )
+    juan_pablo = SimpleNamespace(
+        nombre="Juan Pablo",
+        rol="empleado",
+        correo="jlopez@plataformasports.com",
+        activo=True,
+    )
+    luis_angel = SimpleNamespace(
+        nombre="Luis Angel Orozco",
+        rol="empleado",
+        correo="luis@example.com",
+        activo=True,
+    )
+    superadmin = SimpleNamespace(
+        nombre="Super Admin",
+        rol="super_admin",
+        correo="super@example.com",
+        activo=True,
+    )
+
+    assert not user_routes._is_configuration_panel_user(generic_finance)
+    assert user_routes._is_configuration_panel_user(juan_pablo)
+    assert user_routes._is_configuration_panel_user(luis_angel)
+    assert user_routes._is_configuration_panel_user(superadmin)
+
+
+@pytest.mark.asyncio
+async def test_catalog_direct_access_is_limited_to_named_users_and_superadmins() -> None:
+    session = SimpleNamespace(execute=AsyncMock())
+    generic_admin = SimpleNamespace(
+        id=uuid4(),
+        nombre="Admin Generico",
+        rol="admin",
+        departamento="Finanzas",
+        correo="admin@example.com",
+        activo=True,
+    )
+    juan_pablo = SimpleNamespace(
+        id=uuid4(),
+        nombre="Juan Pablo Lopez",
+        rol="empleado",
+        departamento="Operaciones",
+        correo="jlopez@plataformasports.com",
+        activo=True,
+    )
+    luis_angel = SimpleNamespace(
+        id=uuid4(),
+        nombre="Luis Ángel Orozco Colin",
+        rol="empleado",
+        departamento="Operaciones",
+        correo="luis@example.com",
+        activo=True,
+    )
+    superadmin = SimpleNamespace(
+        id=uuid4(),
+        nombre="Super Admin",
+        rol="superadmin",
+        departamento="Finanzas",
+        correo="super@example.com",
+        activo=True,
+    )
+
+    assert not await access_control_service.can_access_tool(
+        session, generic_admin, "admin.empleados", "ver"
+    )
+    assert await access_control_service.can_access_tool(
+        session, juan_pablo, "admin.empleados", "ver"
+    )
+    assert await access_control_service.can_access_tool(
+        session, luis_angel, "admin.empleados", "ver"
+    )
+    assert await access_control_service.can_access_tool(
+        session, superadmin, "admin.empleados", "ver"
+    )
+    session.execute.assert_not_awaited()
 
 
 def test_operations_analytics_budget_api_uses_same_strict_policy() -> None:

@@ -1,4 +1,7 @@
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
+from uuid import uuid4
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -38,10 +41,40 @@ def test_solicitud_list_exposes_edit_for_rejected_owner():
     assert 'Cancelar borrador' in helper
 
 
-def test_rejected_solicitud_owner_can_edit_even_with_budget_concept():
-    from types import SimpleNamespace
-    from uuid import uuid4
+def test_legacy_solicitud_edit_aliases_redirect_to_canonical_route():
+    from devnous.gastos.routes import user_routes
 
+    source = (
+        ROOT / "src" / "devnous" / "gastos" / "routes" / "user_routes.py"
+    ).read_text()
+    alias_block = source.split(
+        "def _legacy_solicitud_edit_redirect_url(", 1
+    )[1].split(
+        '@router.get("/documentos/{documento_id}/editar"',
+        1,
+    )[0]
+    documento_id = uuid4()
+    request = SimpleNamespace(
+        query_params={"next": "/gastos-terceros?estado=rechazado"}
+    )
+
+    redirect_url = user_routes._legacy_solicitud_edit_redirect_url(
+        documento_id,
+        request,
+    )
+    parsed = urlparse(redirect_url)
+
+    assert '@router.get("/solicitudes/{documento_id}/editar")' in alias_block
+    assert '@router.get("/gastos-terceros/{documento_id}/editar")' in alias_block
+    assert "get_db_session" not in alias_block
+    assert "get_current_empleado" not in alias_block
+    assert parsed.path == f"/documentos/{documento_id}/editar"
+    assert parse_qs(parsed.query) == {
+        "next": ["/gastos-terceros?estado=rechazado"]
+    }
+
+
+def test_rejected_solicitud_owner_can_edit_even_with_budget_concept():
     from devnous.gastos.routes import user_routes
 
     owner_id = uuid4()
