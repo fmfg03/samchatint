@@ -22,8 +22,30 @@ def test_cancel_workflow_uses_cancelado_not_rechazado():
     )[0]
 
     assert 'documento.estado = "cancelado"' in cancel_block
+    assert "documento.cfdi_report_id = None" in cancel_block
+    assert "documento.cfdi_uuid_manual = None" in cancel_block
+    assert "documento.cfdi_compartido_confirmado = False" in cancel_block
     assert 'aprobacion_accion = "cancelar"' in cancel_block
     assert 'documento.estado = "rechazado"' not in cancel_block
+
+
+def test_cancelled_solicitudes_do_not_block_cfdi_reuse():
+    source = (
+        ROOT
+        / "src"
+        / "devnous"
+        / "gastos"
+        / "services"
+        / "cfdi_ingestion_service.py"
+    ).read_text()
+    usage_block = source.split("async def has_existing_cfdi_usage(", 1)[1].split(
+        "async def _ingest_cfdi_parsed(",
+        1,
+    )[0]
+
+    assert "Documento.cfdi_report_id == report_id" in usage_block
+    assert 'Documento.estado != "cancelado"' in usage_block
+    assert "Documento.estado.is_(None)" in usage_block
 
 
 def test_solicitud_list_exposes_edit_for_rejected_owner():

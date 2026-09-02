@@ -615,6 +615,9 @@ async def transition_documento_workflow(
             )
         documento.estado = "cancelado"
         documento.enviado_en = None
+        documento.cfdi_report_id = None
+        documento.cfdi_uuid_manual = None
+        documento.cfdi_compartido_confirmado = False
         aprobacion_accion = "cancelar"
 
     aprobacion = Aprobacion(
