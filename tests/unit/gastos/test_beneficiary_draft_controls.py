@@ -237,7 +237,7 @@ def test_solicitud_list_actions_show_cancel_for_owner_draft() -> None:
     html = user_routes._solicitud_transferencia_list_actions_html(documento, actor)
 
     assert "Revisar solicitud" in html
-    assert "Cancelar borrador" in html
+    assert "Cancelar solicitud" in html
     assert f'/documentos/{documento.id}/cancelar' in html
     assert 'name="next" value="/gastos-terceros"' in html
 
@@ -254,7 +254,7 @@ def test_solicitud_list_actions_do_not_show_cancel_for_other_user_or_sent() -> N
     html = user_routes._solicitud_transferencia_list_actions_html(documento, actor)
 
     assert "Revisar solicitud" in html
-    assert "Cancelar borrador" not in html
+    assert "Cancelar solicitud" not in html
     assert "/cancelar" not in html
 
 
@@ -267,7 +267,7 @@ def test_mis_documentos_exposes_owner_draft_cancel_action() -> None:
     assert "documento.empleado_id == current_empleado.id" in source
     assert 'method="POST" action="/documentos/{documento.id}/cancelar"' in source
     assert 'name="next" value="/documentos/mis-documentos"' in source
-    assert "Cancelar borrador" in source
+    assert "Cancelar solicitud" in source
     assert 'colspan="9"' in source
 
 
