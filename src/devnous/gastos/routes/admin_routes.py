@@ -13,13 +13,14 @@ import sys
 import time
 import asyncio
 import secrets
+import unicodedata
 from collections import deque
 from datetime import date, datetime
 from html import escape
 from pathlib import Path
 from threading import Lock
 from typing import Optional, List, Any, Union, Dict, Mapping
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from uuid import UUID as UUIDType, uuid4
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dotenv import dotenv_values, load_dotenv
@@ -1081,7 +1082,7 @@ def render_admin_navigation(
         (
             "admin.finanzas",
             "/admin/finanzas/cuentas-por-cobrar",
-            "CxC AR",
+            "Cuentas por Cobrar",
             "ar_cxc",
         ),
         ("admin.contabilidad", "/admin/contabilidad/deudores", "Deudores", "deudores"),
@@ -1372,6 +1373,23 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .action-card strong {{ display:block; margin-bottom:6px; font-size:15px; }}
         .action-card p {{ margin:0; color:var(--shell-muted); font-size:13px; line-height:1.55; }}
         .hero-actions {{ display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }}
+        .admin-breadcrumbs {{
+            display:flex;
+            gap:8px;
+            align-items:center;
+            flex-wrap:wrap;
+            margin:0 0 14px 0;
+            color:#64748b;
+            font-size:13px;
+            font-weight:800;
+        }}
+        .admin-breadcrumbs a {{
+            color:#0f766e;
+            text-decoration:none;
+        }}
+        .admin-breadcrumbs .sep {{
+            color:#94a3b8;
+        }}
         .button {{
             text-decoration:none;
             border:none;
@@ -1404,6 +1422,49 @@ def _admin_money(value: Any) -> str:
         return f"${float(value or 0):,.2f}"
     except (TypeError, ValueError):
         return "$0.00"
+
+
+def _admin_text_key(value: Any) -> str:
+    text_value = str(value or "").strip().lower()
+    normalized = unicodedata.normalize("NFKD", text_value)
+    ascii_text = "".join(char for char in normalized if not unicodedata.combining(char))
+    return " ".join(ascii_text.split())
+
+
+def _can_operate_ar_cxc(current_empleado: Empleado) -> bool:
+    role = _admin_text_key(getattr(current_empleado, "rol", ""))
+    department = _admin_text_key(getattr(current_empleado, "departamento", ""))
+    name = _admin_text_key(getattr(current_empleado, "nombre", ""))
+    if role in {"superadmin", "super_admin", "contabilidad"}:
+        return True
+    if department == "contabilidad":
+        return True
+    return "juan pablo" in name or "luis angel" in name
+
+
+def _admin_breadcrumb_html(items: list[tuple[str, Optional[str]]]) -> str:
+    parts: list[str] = []
+    for label, href in items:
+        clean_label = escape(str(label or ""))
+        if href:
+            parts.append(f'<a href="{escape(href)}">{clean_label}</a>')
+        else:
+            parts.append(f"<span>{clean_label}</span>")
+    return (
+        '<nav class="admin-breadcrumbs" aria-label="Breadcrumbs">'
+        + '<span class="sep">/</span>'.join(parts)
+        + "</nav>"
+    )
+
+
+def _admin_query_url(path: str, params: Mapping[str, Any]) -> str:
+    clean_params = {
+        key: value
+        for key, value in params.items()
+        if value not in (None, "", [])
+    }
+    query = urlencode(clean_params)
+    return f"{path}?{query}" if query else path
 
 
 def _render_admin_workspace_hero(
@@ -6857,8 +6918,13 @@ async def admin_finance_accounts_receivable(
     month: Optional[int] = Query(None),
     tolerance: float = Query(1.0),
     limit: int = Query(500),
+    estado: str = Query("todos"),
+    cliente: Optional[str] = Query(None),
+    dias_credito: int = Query(0),
+    sort_by: str = Query("issued_date"),
+    sort_dir: str = Query("desc"),
 ):
-    """Read-only AR S1 consumer over budget income and PSP CFDI links."""
+    """Operational CxC consumer over budget income, PSP CFDI links, and accepted matches."""
     from samchat.ar import (
         ar_admin_styles,
         build_ar_matching_workbench,
@@ -6921,13 +6987,40 @@ async def admin_finance_accounts_receivable(
         for year_value in year_values
     )
 
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    current_params = {
+        "edition_year": resolved_year,
+        "budget_version_id": str(selected_version.get("id") or "")
+        if selected_version
+        else "",
+        "tournament_id": tournament_id,
+        "tournament_code": tournament_code,
+        "year": year,
+        "month": month,
+        "tolerance": f"{float(tolerance or 0):.2f}",
+        "limit": safe_limit,
+        "estado": estado,
+        "cliente": cliente,
+        "dias_credito": safe_credit_days,
+    }
+    current_url = _admin_query_url(
+        "/admin/finanzas/cuentas-por-cobrar",
+        current_params,
+    )
+    export_url = _admin_query_url(
+        "/admin/finanzas/cuentas-por-cobrar/export.xlsx",
+        {**current_params, "sort_by": sort_by, "sort_dir": sort_dir},
+    )
+
     if selected_version:
         payload = await build_ar_read_model(
             session,
             budget_version_id=str(selected_version["id"]),
             tournament_id=tournament_id,
             tournament_code=tournament_code,
-            limit=limit,
+            limit=safe_limit,
+            credit_days_default=safe_credit_days,
             ensure_schema=False,
         )
         matching_payload = await build_ar_matching_workbench(
@@ -6938,14 +7031,23 @@ async def admin_finance_accounts_receivable(
             year=year,
             month=month,
             tolerance=tolerance,
-            limit=limit,
+            limit=safe_limit,
             ensure_schema=False,
         )
         body_html = (
-            render_ar_read_model_html(payload)
+            render_ar_read_model_html(
+                payload,
+                status_filter=estado,
+                search=cliente or "",
+                sort_by=sort_by,
+                sort_dir=sort_dir,
+                base_url=current_url,
+                export_url=export_url,
+            )
             + render_ar_matching_workbench_html(
                 matching_payload,
                 return_to=str(request.url),
+                can_operate_matches=_can_operate_ar_cxc(current_empleado),
             )
         )
     else:
@@ -6959,6 +7061,20 @@ async def admin_finance_accounts_receivable(
         """
 
     version_select = version_options or '<option value="">Sin versiones</option>'
+    status_options = "".join(
+        f'<option value="{escape(value)}"{" selected" if estado == value else ""}>{escape(label)}</option>'
+        for value, label in [
+            ("todos", "Todos"),
+            ("Presupuestado sin CFDI", "Presupuestado sin CFDI"),
+            ("CFDI emitido sin vincular", "CFDI emitido sin vincular"),
+            ("CFDI vinculado", "CFDI vinculado"),
+            ("Cobranza desconocida", "Cobranza desconocida"),
+            ("Parcialmente cobrado", "Parcialmente cobrado"),
+            ("Cobrado", "Cobrado"),
+            ("Vencido", "Vencido"),
+            ("Revisión sobrepago", "Revisión sobrepago"),
+        ]
+    )
     form_html = (
         '<form method="GET" action="/admin/finanzas/cuentas-por-cobrar" '
         'style="display:grid;grid-template-columns:repeat(auto-fit,'
@@ -6977,37 +7093,48 @@ async def admin_finance_accounts_receivable(
         f'<div><label>Mes banco</label><input name="month" type="number" '
         f'min="1" max="12" value="{escape(str(month or ""))}" '
         'placeholder="opcional"></div>'
+        f'<div><label>Estado</label><select name="estado">{status_options}</select></div>'
+        f'<div><label>Cliente / RFC / UUID</label><input name="cliente" '
+        f'value="{escape(str(cliente or ""))}" placeholder="opcional"></div>'
+        f'<div><label>Días crédito</label><input name="dias_credito" '
+        f'type="number" min="0" max="365" value="{safe_credit_days}"></div>'
         f'<div><label>Tolerancia</label><input name="tolerance" '
         f'type="number" step="0.01" min="0" value="{float(tolerance or 0):.2f}">'
         "</div>"
         f'<div><label>Limite</label><input name="limit" type="number" '
-        f'min="1" max="5000" value="{int(limit or 500)}"></div>'
+        f'min="1" max="5000" value="{safe_limit}"></div>'
         '<div><button class="button" type="submit">Actualizar AR</button></div>'
+        f'<div><a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a></div>'
         "</form>"
     )
     nav_html = render_admin_navigation(
         current_empleado,
         "ar_cxc",
         subtitle=(
-            "Cuentas por cobrar AR S1 sobre presupuestos y CFDI de ingreso."
+            "Cuentas por Cobrar sobre presupuestos, CFDI de ingreso y matches aceptados."
         ),
     )
     hero_html = _render_admin_workspace_hero(
         eyebrow="Finance Spine",
-        title="Cuentas por cobrar AR S1",
+        title="Cuentas por Cobrar",
         description=(
-            "Vista read-only de ingreso esperado, CFDI ligado y CFDI PSP sin "
-            "liga presupuestal. S1 no confirma cobranza ni calcula saldos "
-            "cobrables."
+            "Cartera operativa que separa ingreso presupuestado, facturado, "
+            "reconocido y cobrado comprobado."
         ),
         actions_html=form_html,
         side_html=(
             '<div class="eyebrow">Estado cobranza</div>'
             '<div style="font-size:1.2rem;font-weight:900;color:#0f172a;">'
-            "collection_unknown</div>"
+            "matches aceptados</div>"
             '<div style="margin-top:8px;color:#64748b;">'
-            "Sin fuente canonica de cobro en S1</div>"
+            f"Días de crédito default: {safe_credit_days}</div>"
         ),
+    )
+    breadcrumb_html = _admin_breadcrumb_html(
+        [
+            ("Finanzas", "/admin/finanzas"),
+            ("Cuentas por Cobrar", None),
+        ]
     )
 
     html = f"""
@@ -7022,6 +7149,7 @@ async def admin_finance_accounts_receivable(
     <body>
         <div class="workspace-shell">
             {nav_html}
+            {breadcrumb_html}
             {hero_html}
             {body_html}
         </div>
@@ -7052,6 +7180,8 @@ async def admin_finance_ar_match_accept(
         accept_ar_collection_match,
     )
 
+    if not _can_operate_ar_cxc(current_empleado):
+        raise HTTPException(status_code=403, detail="No autorizado para operar CxC.")
     try:
         await accept_ar_collection_match(
             session,
@@ -7092,6 +7222,8 @@ async def admin_finance_ar_match_reverse(
         reverse_ar_collection_match,
     )
 
+    if not _can_operate_ar_cxc(current_empleado):
+        raise HTTPException(status_code=403, detail="No autorizado para operar CxC.")
     try:
         await reverse_ar_collection_match(
             session,
@@ -7106,6 +7238,156 @@ async def admin_finance_ar_match_reverse(
         separator = "&" if "?" in return_to else "?"
         target = f"{return_to}{separator}error_msg={quote(str(exc))}"
     return RedirectResponse(url=target, status_code=303)
+
+
+@router.get("/admin/finanzas/cuentas-por-cobrar/export.xlsx", response_class=Response)
+async def admin_finance_accounts_receivable_export_xlsx(
+    request: Request,
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+    tournament_code: Optional[str] = Query(None),
+    limit: int = Query(500),
+    estado: str = Query("todos"),
+    cliente: Optional[str] = Query(None),
+    dias_credito: int = Query(0),
+    sort_by: str = Query("issued_date"),
+    sort_dir: str = Query("desc"),
+) -> Response:
+    """Download CxC workbook from the canonical AR read model."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    from samchat.ar import build_ar_operational_rows, build_ar_read_model
+
+    all_versions = await list_budget_versions(session, ensure_schema=False)
+    resolved_year = edition_year
+    if resolved_year is None:
+        resolved_year = (
+            int(all_versions[0]["edition_year"])
+            if all_versions
+            else date.today().year
+        )
+    versions = await list_budget_versions(
+        session,
+        edition_year=resolved_year,
+        ensure_schema=False,
+    )
+    selected_version = None
+    if budget_version_id:
+        selected_version = next(
+            (item for item in versions if item["id"] == budget_version_id),
+            None,
+        )
+    if selected_version is None:
+        selected_version = resolve_definitive_budget_version_from_versions(versions)
+    if selected_version is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No hay versión presupuestal para exportar CxC.",
+        )
+
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    payload = await build_ar_read_model(
+        session,
+        budget_version_id=str(selected_version["id"]),
+        tournament_id=tournament_id,
+        tournament_code=tournament_code,
+        limit=safe_limit,
+        credit_days_default=safe_credit_days,
+        ensure_schema=False,
+    )
+    rows = build_ar_operational_rows(
+        payload,
+        status_filter=estado,
+        search=cliente or "",
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Cuentas por Cobrar"
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    header_font = Font(color="FFFFFF", bold=True)
+    headers = [
+        "Torneo/proyecto",
+        "Fase",
+        "Concepto/partida",
+        "Cliente/pagador",
+        "RFC",
+        "UUID CFDI",
+        "Fecha CFDI",
+        "Vencimiento",
+        "Monto presupuestado",
+        "Monto facturado",
+        "Monto reconocido",
+        "Monto cobrado comprobado",
+        "Saldo",
+        "Estado",
+        "Fuente",
+        "AR item",
+    ]
+    ws.append(headers)
+    for row in rows:
+        ws.append(
+            [
+                row.get("tournament_name"),
+                row.get("phase"),
+                row.get("concept_name"),
+                row.get("payer_name"),
+                row.get("payer_rfc"),
+                row.get("cfdi_uuid"),
+                row.get("issued_date"),
+                row.get("due_date"),
+                row.get("expected_income_amount"),
+                row.get("issued_amount"),
+                row.get("linked_income_amount"),
+                row.get("collected_amount"),
+                row.get("balance_amount"),
+                row.get("operational_status"),
+                row.get("source"),
+                row.get("ar_item_id"),
+            ]
+        )
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+    for column in ws.columns:
+        width = min(max(len(str(cell.value or "")) for cell in column) + 2, 48)
+        ws.column_dimensions[column[0].column_letter].width = width
+
+    summary = payload.get("summary") or {}
+    ws_summary = wb.create_sheet("Resumen")
+    ws_summary.append(["Métrica", "Valor"])
+    for label, key in [
+        ("Ingreso presupuestado", "expected_income_total"),
+        ("CFDI facturado", "invoiced_total"),
+        ("Ingreso reconocido", "linked_income_total"),
+        ("Cobrado comprobado", "collected_total"),
+        ("Saldo", "balance_total"),
+        ("Vencido", "overdue_total"),
+        ("Gaps cobranza", "collection_gap_count"),
+        ("Gaps matching", "matching_gap_count"),
+    ]:
+        ws_summary.append([label, summary.get(key)])
+    for cell in ws_summary[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+
+    output = io.BytesIO()
+    wb.save(output)
+    filename = f"cuentas_por_cobrar_{int(resolved_year)}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/finanzas/export.xlsx", response_class=Response)

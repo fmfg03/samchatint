@@ -530,7 +530,8 @@ async def list_budget_cfdi_income_links(
                 SELECT l.id, l.cfdi_report_id, l.budget_line_id, l.budget_version_id,
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
                        l.income_date, l.source, l.created_at, l.unlinked_at,
-                       c.cfdi_uuid, c.emisor_rfc, c.emisor_nombre,
+                       c.cfdi_uuid, c.fecha AS cfdi_fecha,
+                       c.emisor_rfc, c.emisor_nombre,
                        c.receptor_rfc, c.receptor_nombre,
                        bl.concept_name
                 FROM budget_cfdi_income_links l

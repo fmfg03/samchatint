@@ -5,6 +5,8 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from .service import build_ar_operational_rows
+
 
 def _money(value: Any) -> str:
     try:
@@ -33,6 +35,55 @@ def _empty_row(colspan: int, message: str) -> str:
 def _status_pill(value: Any) -> str:
     text = str(value or "collection_unknown").strip() or "collection_unknown"
     return f'<span class="ar-pill">{escape(text)}</span>'
+
+
+def _sort_link(
+    *,
+    label: str,
+    field: str,
+    base_url: str,
+    current_sort: str,
+    current_dir: str,
+) -> str:
+    next_dir = "asc"
+    if current_sort == field and current_dir == "asc":
+        next_dir = "desc"
+    separator = "&" if "?" in base_url else "?"
+    href = f"{base_url}{separator}sort_by={field}&sort_dir={next_dir}"
+    marker = ""
+    if current_sort == field:
+        marker = " ↑" if current_dir == "asc" else " ↓"
+    return f'<a class="ar-sort" href="{escape(href)}">{escape(label + marker)}</a>'
+
+
+def _operational_rows(rows: list[dict[str, Any]]) -> str:
+    if not rows:
+        return _empty_row(14, "Sin cartera CxC con los filtros seleccionados.")
+    return "".join(
+        _row(
+            [
+                _text(item.get("tournament_name")),
+                _text(item.get("phase")),
+                _text(item.get("concept_name")),
+                _text(item.get("payer_name")),
+                _text(item.get("payer_rfc")),
+                _text(item.get("cfdi_uuid")),
+                _text(item.get("issued_date")),
+                _text(item.get("due_date")),
+                _money(item.get("expected_income_amount")),
+                _money(item.get("issued_amount")),
+                _money(item.get("linked_income_amount")),
+                _money(item.get("collected_amount")),
+                (
+                    _money(item.get("balance_amount"))
+                    if item.get("balance_amount") is not None
+                    else '<span class="ar-muted">sin saldo confirmado</span>'
+                ),
+                _status_pill(item.get("operational_status")),
+            ]
+        )
+        for item in rows
+    )
 
 
 def _expected_income_rows(rows: list[dict[str, Any]]) -> str:
@@ -143,7 +194,10 @@ def _accept_match_form(
     budget_version_id: str,
     action_base: str,
     return_to: str,
+    can_operate_matches: bool = True,
 ) -> str:
+    if not can_operate_matches:
+        return '<span class="ar-muted">sin permiso operativo</span>'
     if item.get("status") != "candidate_match":
         return '<span class="ar-muted">revision requerida</span>'
     hidden = {
@@ -179,6 +233,7 @@ def _prematch_rows(
     budget_version_id: str,
     action_base: str,
     return_to: str,
+    can_operate_matches: bool,
 ) -> str:
     if not rows:
         return _empty_row(8, "Sin items AR para pre-matching.")
@@ -199,6 +254,7 @@ def _prematch_rows(
                         budget_version_id=budget_version_id,
                         action_base=action_base,
                         return_to=return_to,
+                        can_operate_matches=can_operate_matches,
                     ),
                 ]
             )
@@ -232,13 +288,17 @@ def _accepted_match_rows(
     *,
     action_base: str,
     return_to: str,
+    can_operate_matches: bool,
 ) -> str:
     if not rows:
         return _empty_row(7, "Sin matches AR aceptados.")
     rendered = []
     for item in rows:
         match_id = _text(item.get("id"), "")
-        reverse_form = f"""
+        reverse_form = (
+            '<span class="ar-muted">sin permiso operativo</span>'
+            if not can_operate_matches
+            else f"""
             <form method="POST"
                   action="{escape(action_base)}/matches/{match_id}/reverse"
                   style="display:grid;gap:6px;min-width:180px;">
@@ -248,6 +308,7 @@ def _accepted_match_rows(
                 <button class="button secondary" type="submit">Revertir</button>
             </form>
         """
+        )
         rendered.append(
             _row(
                 [
@@ -269,6 +330,7 @@ def render_ar_matching_workbench_html(
     *,
     action_base: str = "/admin/finanzas/cuentas-por-cobrar",
     return_to: str = "",
+    can_operate_matches: bool = True,
 ) -> str:
     """Render AR S3 pre-matching as a read-only admin fragment."""
 
@@ -331,6 +393,7 @@ def render_ar_matching_workbench_html(
                         accepted_matches,
                         action_base=action_base,
                         return_to=return_to,
+                        can_operate_matches=can_operate_matches,
                     )}
                 </tbody>
             </table>
@@ -345,6 +408,7 @@ def render_ar_matching_workbench_html(
                         budget_version_id=budget_version_id,
                         action_base=action_base,
                         return_to=return_to,
+                        can_operate_matches=can_operate_matches,
                     )}
                 </tbody>
             </table>
@@ -359,7 +423,16 @@ def render_ar_matching_workbench_html(
     """
 
 
-def render_ar_read_model_html(payload: dict[str, Any]) -> str:
+def render_ar_read_model_html(
+    payload: dict[str, Any],
+    *,
+    status_filter: str = "todos",
+    search: str = "",
+    sort_by: str = "issued_date",
+    sort_dir: str = "desc",
+    base_url: str = "/admin/finanzas/cuentas-por-cobrar",
+    export_url: str = "/admin/finanzas/cuentas-por-cobrar/export.xlsx",
+) -> str:
     """Render AR S1 as an admin workspace body fragment."""
 
     summary = payload.get("summary") or {}
@@ -368,6 +441,14 @@ def render_ar_read_model_html(payload: dict[str, Any]) -> str:
     issued_unlinked = list(payload.get("issued_unlinked") or [])
     collection_gaps = list(payload.get("collection_gaps") or [])
     matching_gaps = list(payload.get("matching_gaps") or [])
+    operational_rows = build_ar_operational_rows(
+        payload,
+        status_filter=status_filter,
+        search=search,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+    )
+    clean_sort_dir = "asc" if str(sort_dir).lower() == "asc" else "desc"
 
     summary_cards = "".join(
         [
@@ -377,6 +458,12 @@ def render_ar_read_model_html(payload: dict[str, Any]) -> str:
             f"<strong>{_money(summary.get('linked_income_total'))}</strong></div>",
             "<div><span>CFDI PSP no ligado</span>"
             f"<strong>{_money(summary.get('issued_unlinked_total'))}</strong></div>",
+            "<div><span>Cobrado comprobado</span>"
+            f"<strong>{_money(summary.get('collected_total'))}</strong></div>",
+            "<div><span>Saldo</span>"
+            f"<strong>{_money(summary.get('balance_total'))}</strong></div>",
+            "<div><span>Vencido</span>"
+            f"<strong>{_money(summary.get('overdue_total'))}</strong></div>",
             "<div><span>Gaps cobranza</span>"
             f"<strong>{int(summary.get('collection_gap_count') or 0)}</strong></div>",
             "<div><span>Gaps matching</span>"
@@ -404,20 +491,55 @@ def render_ar_read_model_html(payload: dict[str, Any]) -> str:
         "<thead><tr><th>Severidad</th><th>Fuente</th><th>Item</th>"
         "<th>Razon</th></tr></thead>"
     )
+    operational_header = (
+        "<thead><tr>"
+        f"<th>{_sort_link(label='Torneo', field='tournament_name', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Fase', field='phase', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Concepto', field='concept_name', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Cliente', field='payer_name', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='RFC', field='payer_rfc', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='UUID', field='cfdi_uuid', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Fecha CFDI', field='issued_date', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Vence', field='due_date', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Presupuestado', field='expected_income_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Facturado', field='issued_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Reconocido', field='linked_income_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Cobrado', field='collected_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Saldo', field='balance_amount', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        f"<th>{_sort_link(label='Estado', field='operational_status', base_url=base_url, current_sort=sort_by, current_dir=clean_sort_dir)}</th>"
+        "</tr></thead>"
+    )
 
     return f"""
         <section class="workspace-card ar-warning" style="margin-bottom:18px;">
-            <div class="workspace-section-title">AR S1 read-only</div>
+            <div class="workspace-section-title">Cuentas por Cobrar</div>
             <div class="workspace-section-subtitle">
-                Esta vista consolida ingreso esperado y CFDI de ingreso. La
-                cobranza permanece como <strong>collection_unknown</strong>
-                porque S1 no tiene fuente canonica de cobro.
+                Esta vista separa ingreso presupuestado, CFDI emitido, ingreso
+                reconocido y cobranza comprobada. Un CFDI vinculado no prueba
+                pago; solo los matches aceptados cuentan como cobro.
+            </div>
+            <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
+                <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
+                <a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Vista contable</a>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Resumen</div>
             <div class="ar-metrics">
                 {summary_cards}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Cartera operativa</div>
+            <div class="workspace-section-subtitle">
+                Click en cualquier encabezado para ordenar A-Z / Z-A o
+                menor-mayor / mayor-menor.
+            </div>
+            <div class="ar-table-wrap">
+                <table class="ar-table">
+                    {operational_header}
+                    <tbody>{_operational_rows(operational_rows)}</tbody>
+                </table>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
@@ -496,6 +618,11 @@ def ar_admin_styles() -> str:
             border-collapse:separate;
             border-spacing:0;
         }
+        .ar-table-wrap {
+            overflow:auto;
+            max-height:68vh;
+            margin-top:14px;
+        }
         .ar-table th,
         .ar-table td {
             text-align:left;
@@ -508,6 +635,14 @@ def ar_admin_styles() -> str:
             font-size:11px;
             text-transform:uppercase;
             background:#f8fafc;
+            position:sticky;
+            top:0;
+            z-index:1;
+        }
+        .ar-sort {
+            color:#334155;
+            text-decoration:none;
+            font-weight:900;
         }
         .ar-muted {
             color:#64748b;

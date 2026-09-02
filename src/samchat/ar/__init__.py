@@ -11,12 +11,13 @@ from .collection_matches import (
     reverse_ar_collection_match,
 )
 from .matching import build_ar_matching_workbench
-from .service import build_ar_read_model
+from .service import build_ar_operational_rows, build_ar_read_model
 
 __all__ = [
     "accept_ar_collection_match",
     "ar_admin_styles",
     "build_ar_matching_workbench",
+    "build_ar_operational_rows",
     "build_ar_read_model",
     "list_ar_collection_matches",
     "render_ar_matching_workbench_html",

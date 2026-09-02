@@ -18,6 +18,7 @@ def _payload() -> dict:
         "expected_income": [
             {
                 "tournament_name": "Copa <Nido>",
+                "status": "planned",
                 "phase": "Nacional",
                 "concept_name": "Patrocinio",
                 "expected_income_amount": 1200,
@@ -70,12 +71,27 @@ def _payload() -> dict:
 def test_render_ar_read_model_html_includes_expected_sections():
     html = render_ar_read_model_html(_payload())
 
+    assert "Cuentas por Cobrar" in html
+    assert "Cartera operativa" in html
     assert "Ingreso esperado" in html
     assert "CFDI ligado" in html
     assert "CFDI PSP no ligado" in html
     assert "Gaps de cobranza" in html
     assert "Gaps de matching" in html
     assert "collection_unknown" in html
+    assert "Descargar Excel CxC" in html
+
+
+def test_render_ar_read_model_html_includes_sortable_operational_columns():
+    html = render_ar_read_model_html(
+        _payload(),
+        base_url="/admin/finanzas/cuentas-por-cobrar?estado=todos",
+    )
+
+    assert "sort_by=tournament_name" in html
+    assert "sort_by=balance_amount" in html
+    assert "Presupuestado sin CFDI" in html
+    assert "Saldo" in html
 
 
 def test_render_ar_read_model_html_escapes_values():
@@ -145,3 +161,27 @@ def test_render_ar_matching_workbench_html_does_not_confirm_collection():
 
     assert "cobranza confirmada" not in html
     assert "cobrado confirmado" not in html
+
+
+def test_render_ar_matching_workbench_html_hides_match_actions_without_permission():
+    html = render_ar_matching_workbench_html(
+        {
+            "summary": {},
+            "items": [
+                {
+                    "ar_item_id": "linked:1",
+                    "source": "issued_linked",
+                    "amount": 100,
+                    "status": "candidate_match",
+                    "candidate_evidence": [{"bank_movement_id": "bank-1"}],
+                }
+            ],
+            "accepted_matches": [{"id": "match-1"}],
+            "unmatched_bank_inflows": [],
+        },
+        can_operate_matches=False,
+    )
+
+    assert "sin permiso operativo" in html
+    assert "Aceptar match" not in html
+    assert "Revertir" not in html

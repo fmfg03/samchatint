@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from samchat.ar.service import build_ar_read_model
+from samchat.ar.service import build_ar_operational_rows, build_ar_read_model
 
 
 @pytest.fixture(autouse=True)
@@ -271,6 +271,7 @@ async def test_ar_read_model_is_read_only_shape():
         "tournament_id": None,
         "tournament_code": None,
         "collection_source": "unknown",
+        "credit_days_default": 0,
         "outstanding_amount_status": "unknown",
         "summary": {
             "expected_income_count": 0,
@@ -279,6 +280,10 @@ async def test_ar_read_model_is_read_only_shape():
             "linked_income_total": 0.0,
             "issued_unlinked_count": 0,
             "issued_unlinked_total": 0.0,
+            "invoiced_total": 0.0,
+            "collected_total": 0.0,
+            "balance_total": 0.0,
+            "overdue_total": 0.0,
             "collection_gap_count": 0,
             "matching_gap_count": 0,
         },
@@ -342,6 +347,226 @@ async def test_ar_read_model_marks_active_match_as_collected():
     assert linked["outstanding_amount"] == 0.0
     assert linked["outstanding_amount_status"] == "known"
     assert result["collection_gaps"] == []
+
+
+@pytest.mark.asyncio
+async def test_ar_read_model_marks_partial_collection_and_balance():
+    with (
+        patch(
+            "samchat.ar.service.list_budget_lines",
+            new=AsyncMock(return_value=[{"id": "line-1", "budget_amount": 100}]),
+        ),
+        patch(
+            "samchat.ar.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.ar.service.list_budget_cfdi_income_links",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "link-1",
+                        "budget_line_id": "line-1",
+                        "budget_version_id": "version-1",
+                        "amount": 100,
+                        "cfdi_fecha": datetime(2026, 1, 15),
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "samchat.ar.service.list_psp_cfdi_income_candidates",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "samchat.ar.service.list_ar_collection_matches",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "match-1",
+                        "ar_item_id": "linked:link-1",
+                        "accepted_amount": 40,
+                        "collection_date": "2026-01-16T00:00:00",
+                    }
+                ]
+            ),
+        ),
+    ):
+        result = await build_ar_read_model(
+            object(),
+            budget_version_id="version-1",
+            as_of_date=datetime(2026, 1, 15).date(),
+        )
+
+    linked = result["issued_linked"][0]
+    assert linked["collection_status"] == "partially_collected"
+    assert linked["collected_amount"] == 40.0
+    assert linked["balance_amount"] == 60.0
+    assert linked["operational_status"] == "Parcialmente cobrado"
+    assert result["summary"]["collected_total"] == 40.0
+    assert result["summary"]["balance_total"] == 60.0
+
+
+@pytest.mark.asyncio
+async def test_ar_read_model_marks_overpayment_for_manual_review():
+    with (
+        patch(
+            "samchat.ar.service.list_budget_lines",
+            new=AsyncMock(return_value=[{"id": "line-1", "budget_amount": 100}]),
+        ),
+        patch(
+            "samchat.ar.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.ar.service.list_budget_cfdi_income_links",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "link-1",
+                        "budget_line_id": "line-1",
+                        "budget_version_id": "version-1",
+                        "amount": 100,
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "samchat.ar.service.list_psp_cfdi_income_candidates",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "samchat.ar.service.list_ar_collection_matches",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "match-1",
+                        "ar_item_id": "linked:link-1",
+                        "accepted_amount": 120,
+                    }
+                ]
+            ),
+        ),
+    ):
+        result = await build_ar_read_model(object(), budget_version_id="version-1")
+
+    linked = result["issued_linked"][0]
+    assert linked["collection_status"] == "over_collected_review"
+    assert linked["operational_status"] == "Revisión sobrepago"
+    assert result["collection_gaps"] == []
+
+
+def test_build_ar_operational_rows_filters_and_sorts():
+    payload = {
+        "expected_income": [
+            {
+                "ar_item_id": "expected:1",
+                "status": "planned",
+                "concept_name": "Patrocinio B",
+                "expected_income_amount": 100,
+            }
+        ],
+        "issued_linked": [
+            {
+                "ar_item_id": "linked:1",
+                "concept_name": "Patrocinio A",
+                "payer_name": "Cliente Z",
+                "issued_amount": 200,
+                "collected_amount": 50,
+                "operational_status": "Parcialmente cobrado",
+            }
+        ],
+        "issued_unlinked": [],
+    }
+
+    rows = build_ar_operational_rows(
+        payload,
+        search="patrocinio",
+        sort_by="concept_name",
+        sort_dir="asc",
+    )
+
+    assert [row["concept_name"] for row in rows] == ["Patrocinio A", "Patrocinio B"]
+    filtered = build_ar_operational_rows(
+        payload,
+        status_filter="Parcialmente cobrado",
+    )
+    assert [row["ar_item_id"] for row in filtered] == ["linked:1"]
+
+
+def test_build_ar_operational_rows_keeps_missing_dates_last_on_desc_sort():
+    payload = {
+        "expected_income": [
+            {"ar_item_id": "expected:1", "status": "planned", "budget_amount": 100}
+        ],
+        "issued_linked": [
+            {
+                "ar_item_id": "linked:old",
+                "issued_date": "2026-01-01T00:00:00",
+                "issued_amount": 100,
+            },
+            {
+                "ar_item_id": "linked:new",
+                "issued_date": "2026-02-01T00:00:00",
+                "issued_amount": 100,
+            },
+        ],
+        "issued_unlinked": [],
+    }
+
+    rows = build_ar_operational_rows(payload)
+
+    assert [row["ar_item_id"] for row in rows] == [
+        "linked:new",
+        "linked:old",
+        "expected:1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_ar_read_model_allows_collected_status_for_unlinked_cfdi_with_match():
+    with (
+        patch("samchat.ar.service.list_budget_lines", new=AsyncMock(return_value=[])),
+        patch(
+            "samchat.ar.service.list_monthly_plan_for_lines",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "samchat.ar.service.list_budget_cfdi_income_links",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "samchat.ar.service.list_psp_cfdi_income_candidates",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "cfdi-1",
+                        "cfdi_uuid": "uuid-1",
+                        "fecha": datetime(2026, 1, 15),
+                        "total": 100,
+                    }
+                ]
+            ),
+        ),
+        patch(
+            "samchat.ar.service.list_ar_collection_matches",
+            new=AsyncMock(
+                return_value=[
+                    {
+                        "id": "match-1",
+                        "ar_item_id": "candidate:cfdi-1",
+                        "accepted_amount": 100,
+                    }
+                ]
+            ),
+        ),
+    ):
+        result = await build_ar_read_model(object(), budget_version_id="version-1")
+
+    candidate = result["issued_unlinked"][0]
+    assert candidate["status"] == "issued_unlinked"
+    assert candidate["collection_status"] == "matched_collected"
+    assert candidate["operational_status"] == "Cobrado"
 
 
 @pytest.mark.asyncio
