@@ -29,10 +29,18 @@ def test_prestamos_list_filters_visibility_and_renders_summary() -> None:
     )
 
     assert "can_view_all_prestamos(current_empleado)" in route_block
+    assert "selectinload(SolicitudPrestamo.abonos)" in route_block
     assert (
         "SolicitudPrestamo.solicitante_empleado_id == current_empleado.id"
         in route_block
     )
+    assert "selected_view" in route_block
+    assert "view_filters" in route_block
+    assert "por_aprobar" in route_block
+    assert "por_programar" in route_block
+    assert "por_pagar" in route_block
+    assert "abonos_pendientes" in route_block
+    assert "PRESTAMO_ABONO_STATUS_ENVIADO" in route_block
     assert "_prestamo_row_html(prestamo, current_empleado)" in route_block
     assert "Nueva solicitud" in route_block
     assert "Saldo pendiente" in route_block
@@ -88,6 +96,9 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     assert 'action="/prestamos/{prestamo.id}/aprobar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/rechazar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/programar-pago"' in route_block
+    assert 'action="/prestamos/{prestamo.id}/cuenta-deudor"' in route_block
+    assert 'name="cuenta_deudor_contable_id"' in route_block
+    assert "_prestamo_debtor_account_options(" in route_block
     assert "can_manage_payment_run(current_empleado)" in route_block
     assert 'action="/prestamos/{prestamo.id}/comprobante-pago"' in route_block
     assert 'action="/prestamos/{prestamo.id}/abonos"' in route_block
@@ -125,6 +136,17 @@ def test_prestamo_schedule_payment_route_commits_or_rolls_back() -> None:
     )
 
     assert "schedule_prestamo_payment(" in route_block
+    assert "await session.commit()" in route_block
+    assert "await session.rollback()" in route_block
+
+
+def test_prestamo_assign_debtor_account_route_commits_or_rolls_back() -> None:
+    route_block = _block(
+        '@router.post("/prestamos/{prestamo_id}/cuenta-deudor")',
+        '@router.post("/prestamos/{prestamo_id}/comprobante-pago")',
+    )
+
+    assert "assign_prestamo_debtor_account(" in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block
 

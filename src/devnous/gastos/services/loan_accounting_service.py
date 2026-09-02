@@ -33,6 +33,11 @@ from devnous.gastos.services.loan_request_service import (
     PRESTAMO_STATUS_PAGADA,
     PRESTAMO_STATUS_LIQUIDADA,
     PRESTAMO_ABONO_STATUS_APROBADO,
+    PrestamoWorkflowPermissionError,
+    PrestamoWorkflowValidationError,
+)
+from devnous.gastos.services.payment_run_service import (
+    can_confirm_payment_run_payment,
 )
 
 
@@ -88,6 +93,40 @@ def _loan_debtor_prefixes(prestamo: SolicitudPrestamo) -> tuple[str, ...]:
             f"{PRESTAMO_DEUDORES_EMPLEADOS_PREFIX}-",
         )
     return (f"{PRESTAMO_DEUDORES_EMPLEADOS_PREFIX}-",)
+
+
+def is_valid_prestamo_debtor_account(
+    prestamo: SolicitudPrestamo,
+    account: CuentaContable,
+) -> bool:
+    if account is None or not getattr(account, "activo", True):
+        return False
+    code = str(getattr(account, "codigo", "") or "")
+    return any(
+        code.startswith(prefix)
+        for prefix in _loan_debtor_prefixes(prestamo)
+    )
+
+
+def assign_prestamo_debtor_account(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    account: CuentaContable,
+) -> SolicitudPrestamo:
+    if not can_confirm_payment_run_payment(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_accounting",
+            "Solo Contabilidad puede asignar la cuenta de deudor.",
+        )
+    if not is_valid_prestamo_debtor_account(prestamo, account):
+        raise PrestamoWorkflowValidationError(
+            "invalid_debtor_account",
+            "La cuenta seleccionada no corresponde al bloque de deudores del "
+            "beneficiario.",
+        )
+    prestamo.cuenta_deudor_contable_id = account.id
+    prestamo.cuenta_deudor_contable = account
+    return prestamo
 
 
 async def _existing_poliza(

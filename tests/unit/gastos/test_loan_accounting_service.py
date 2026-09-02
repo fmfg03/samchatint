@@ -7,8 +7,14 @@ import pytest
 
 from devnous.gastos.services import loan_accounting_service
 from devnous.gastos.services.loan_accounting_service import (
+    assign_prestamo_debtor_account,
     ensure_prestamo_abono_posting,
     ensure_prestamo_payment_posting,
+    is_valid_prestamo_debtor_account,
+)
+from devnous.gastos.services.loan_request_service import (
+    PrestamoWorkflowPermissionError,
+    PrestamoWorkflowValidationError,
 )
 
 
@@ -164,6 +170,38 @@ async def test_loan_posting_fails_closed_when_debtor_account_missing(
 
     assert result.status == "pending"
     assert result.reason == "missing_loan_debtor_account"
+
+
+def test_accounting_assigns_only_valid_loan_debtor_accounts() -> None:
+    prestamo = SimpleNamespace(
+        beneficiario_tipo="proveedor",
+        cuenta_deudor_contable_id=None,
+        cuenta_deudor_contable=None,
+    )
+    provider_debtor = _account("1170-003-042")
+    employee_debtor = _account("1170-001-016")
+    accountant = SimpleNamespace(
+        id=uuid4(),
+        rol="contabilidad",
+        departamento="Contabilidad",
+    )
+
+    assert is_valid_prestamo_debtor_account(prestamo, provider_debtor)
+    assert not is_valid_prestamo_debtor_account(prestamo, employee_debtor)
+
+    assign_prestamo_debtor_account(prestamo, accountant, provider_debtor)
+
+    assert prestamo.cuenta_deudor_contable_id == provider_debtor.id
+    assert prestamo.cuenta_deudor_contable == provider_debtor
+
+    with pytest.raises(PrestamoWorkflowValidationError):
+        assign_prestamo_debtor_account(prestamo, accountant, employee_debtor)
+    with pytest.raises(PrestamoWorkflowPermissionError):
+        assign_prestamo_debtor_account(
+            prestamo,
+            SimpleNamespace(id=uuid4(), rol="empleado"),
+            provider_debtor,
+        )
 
 
 async def _async_value(value):

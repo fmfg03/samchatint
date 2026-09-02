@@ -256,8 +256,10 @@ from ..services.loan_request_service import (
     submit_prestamo,
 )
 from ..services.loan_accounting_service import (
+    assign_prestamo_debtor_account,
     ensure_prestamo_abono_posting,
     ensure_prestamo_payment_posting,
+    is_valid_prestamo_debtor_account,
 )
 from ..services.expense_service import create_expense_from_data, trigger_cfdi_generation
 from ..services.hospedaje_tax_service import (
@@ -2442,6 +2444,39 @@ async def _load_prestamo_abono_for_user(
     if not can_view_prestamo(current_empleado, abono.prestamo):
         raise HTTPException(status_code=403, detail="No tienes acceso a este abono")
     return abono
+
+
+async def _prestamo_debtor_account_options(
+    session: AsyncSession,
+    prestamo: SolicitudPrestamo,
+) -> str:
+    result = await session.execute(
+        select(CuentaContable)
+        .where(
+            CuentaContable.activo == True,
+            or_(
+                CuentaContable.codigo.like("1170-001-%"),
+                CuentaContable.codigo.like("1170-002-%"),
+                CuentaContable.codigo.like("1170-003-%"),
+            ),
+            CuentaContable.codigo.notin_(
+                ["1170-001-000", "1170-002-000", "1170-003-000"]
+            ),
+        )
+        .order_by(CuentaContable.codigo.asc())
+    )
+    selected_id = str(getattr(prestamo, "cuenta_deudor_contable_id", "") or "")
+    options: list[str] = []
+    for account in result.scalars().all():
+        if not is_valid_prestamo_debtor_account(prestamo, account):
+            continue
+        selected = "selected" if str(account.id) == selected_id else ""
+        options.append(
+            f'<option value="{account.id}" {selected}>'
+            f'{escape(account.codigo)} · {escape(account.nombre or "")}'
+            "</option>"
+        )
+    return "".join(options)
 
 
 async def _prestamo_beneficiary_options(
@@ -15241,6 +15276,7 @@ async def prestamos_list(
             selectinload(SolicitudPrestamo.solicitante),
             selectinload(SolicitudPrestamo.beneficiario_empleado),
             selectinload(SolicitudPrestamo.beneficiario_proveedor_cliente),
+            selectinload(SolicitudPrestamo.abonos),
         )
         .order_by(SolicitudPrestamo.creado_en.desc())
     )
@@ -15252,7 +15288,48 @@ async def prestamos_list(
             SolicitudPrestamo.solicitante_empleado_id == current_empleado.id
         )
     result = await session.execute(query)
-    prestamos = result.scalars().all()
+    visible_prestamos = list(result.scalars().all())
+    selected_view = str(request.query_params.get("vista") or "todos").strip().lower()
+
+    def has_pending_abono(prestamo: SolicitudPrestamo) -> bool:
+        return any(
+            getattr(abono, "estado", None) == PRESTAMO_ABONO_STATUS_ENVIADO
+            for abono in list(getattr(prestamo, "abonos", []) or [])
+        )
+
+    view_filters = {
+        "todos": lambda prestamo: True,
+        "por_aprobar": lambda prestamo: prestamo.estado == PRESTAMO_STATUS_ENVIADA,
+        "por_programar": lambda prestamo: prestamo.estado == PRESTAMO_STATUS_APROBADA,
+        "por_pagar": lambda prestamo: (
+            prestamo.estado == PRESTAMO_STATUS_EN_PROCESO_PAGO
+        ),
+        "abonos_pendientes": has_pending_abono,
+    }
+    if selected_view not in view_filters:
+        selected_view = "todos"
+    counts = {
+        key: sum(1 for prestamo in visible_prestamos if predicate(prestamo))
+        for key, predicate in view_filters.items()
+    }
+    prestamos = [
+        prestamo
+        for prestamo in visible_prestamos
+        if view_filters[selected_view](prestamo)
+    ]
+    view_links = [
+        ("todos", "Todos"),
+        ("por_aprobar", "Por aprobar"),
+        ("por_programar", "Por programar"),
+        ("por_pagar", "Por pagar"),
+        ("abonos_pendientes", "Abonos por aprobar"),
+    ]
+    filters_html = "".join(
+        f'<a href="/prestamos?vista={key}" '
+        f'class="button {"primary" if selected_view == key else "secondary"}">'
+        f'{escape(label)} ({counts.get(key, 0)})</a>'
+        for key, label in view_links
+    )
     rows_html = "".join(
         _prestamo_row_html(prestamo, current_empleado)
         for prestamo in prestamos
@@ -15296,6 +15373,9 @@ async def prestamos_list(
                         <h2>Resumen</h2>
                         <div class="section-note">Las solicitudes enviadas ya no se editan. Sólo pueden cancelarse antes de aprobación.</div>
                     </div>
+                </div>
+                <div class="hero-actions" style="margin-top:0;margin-bottom:14px;">
+                    {filters_html}
                 </div>
                 <div class="table-shell">
                     <table>
@@ -15507,6 +15587,13 @@ async def prestamo_detail(
         and Decimal(str(prestamo.saldo_pendiente or 0)) > Decimal("0.00")
     )
     can_review_abonos = can_approve_prestamo_abono(current_empleado)
+    can_assign_debtor_account = can_confirm_payment_run_payment(current_empleado)
+    debtor_account_options = ""
+    if can_assign_debtor_account:
+        debtor_account_options = await _prestamo_debtor_account_options(
+            session,
+            prestamo,
+        )
     if is_requester and prestamo.estado == PRESTAMO_STATUS_BORRADOR:
         actions.append(
             f"""
@@ -15581,6 +15668,19 @@ async def prestamo_detail(
             <button type="submit" class="button primary" style="margin-top:10px;">
                 Añadir comprobante y marcar pagada
             </button>
+        </form>
+        """
+    debtor_account_form_html = ""
+    if can_assign_debtor_account:
+        debtor_account_form_html = f"""
+        <form method="POST" action="/prestamos/{prestamo.id}/cuenta-deudor"
+              style="margin-top:16px;">
+            <label>Cuenta de deudor diverso</label>
+            <select name="cuenta_deudor_contable_id" required>
+                <option value="">Selecciona cuenta</option>
+                {debtor_account_options}
+            </select>
+            <button type="submit" class="button primary" style="margin-top:10px;">Guardar cuenta</button>
         </form>
         """
     abono_form_html = ""
@@ -15677,8 +15777,10 @@ async def prestamo_detail(
                     <div class="meta-card"><span>Solicitante</span><strong>{escape(getattr(prestamo.solicitante, "nombre", "—") or "—")}</strong></div>
                     <div class="meta-card"><span>Beneficiario</span><strong>{escape(_prestamo_beneficiario_label(prestamo))}</strong></div>
                     <div class="meta-card"><span>Cuenta beneficiario</span><strong>{escape(_prestamo_account_display(prestamo))}</strong></div>
+                    <div class="meta-card"><span>Cuenta deudor</span><strong>{escape(getattr(getattr(prestamo, "cuenta_deudor_contable", None), "codigo", None) or "—")}</strong></div>
                     <div class="meta-card"><span>Estado</span><strong>{_prestamo_status_badge(prestamo.estado)}</strong></div>
                 </div>
+                {debtor_account_form_html}
             </section>
             <section class="surface">
                 <div class="section-head">
@@ -15855,6 +15957,35 @@ async def prestamo_schedule_payment_route(
     return RedirectResponse(
         url=f"/prestamos/{prestamo_id}?success_msg="
         + quote("Préstamo enviado a proceso de pago."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/cuenta-deudor")
+async def prestamo_assign_debtor_account_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    cuenta_deudor_contable_id: UUIDType = Form(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    account = await session.get(CuentaContable, cuenta_deudor_contable_id)
+    try:
+        assign_prestamo_debtor_account(
+            prestamo,
+            current_empleado,
+            account,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Cuenta de deudor guardada."),
         status_code=303,
     )
 
