@@ -90,6 +90,7 @@ from .loan_request_service import (
     PrestamoWorkflowError,
     PrestamoWorkflowPermissionError,
     PrestamoWorkflowValidationError,
+    approve_prestamo,
     build_prestamo_from_payload,
     build_abono_from_application,
     can_approve_prestamo,
@@ -99,6 +100,8 @@ from .loan_request_service import (
     can_view_prestamo,
     cancel_prestamo,
     compute_abono_application,
+    reject_prestamo,
+    register_prestamo_payment_proof,
     submit_prestamo,
 )
 
@@ -178,7 +181,9 @@ __all__ = [
     'PrestamoWorkflowError',
     'PrestamoWorkflowPermissionError',
     'PrestamoWorkflowValidationError',
+    'approve_prestamo',
     'build_prestamo_from_payload',
+    'build_abono_from_application',
     'can_approve_prestamo',
     'can_approve_prestamo_abono',
     'can_edit_prestamo',
@@ -186,5 +191,7 @@ __all__ = [
     'can_view_prestamo',
     'cancel_prestamo',
     'compute_abono_application',
+    'reject_prestamo',
+    'register_prestamo_payment_proof',
     'submit_prestamo',
 ]

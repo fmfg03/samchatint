@@ -2138,6 +2138,12 @@ class SolicitudPrestamo(Base):
         nullable=True,
         index=True,
     )
+    rechazado_por_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     cancelado_por_empleado_id = Column(
         UUID(as_uuid=True),
         ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
@@ -2156,6 +2162,7 @@ class SolicitudPrestamo(Base):
     creado_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     enviado_en = Column(DateTime(timezone=True), nullable=True)
     aprobado_en = Column(DateTime(timezone=True), nullable=True)
+    rechazado_en = Column(DateTime(timezone=True), nullable=True)
     cancelado_en = Column(DateTime(timezone=True), nullable=True)
     en_proceso_pago_en = Column(DateTime(timezone=True), nullable=True)
     pagado_en = Column(DateTime(timezone=True), nullable=True)
@@ -2186,6 +2193,9 @@ class SolicitudPrestamo(Base):
     )
     aprobado_por = relationship(
         "Empleado", foreign_keys=[aprobado_por_empleado_id], lazy="selectin"
+    )
+    rechazado_por = relationship(
+        "Empleado", foreign_keys=[rechazado_por_empleado_id], lazy="selectin"
     )
     cancelado_por = relationship(
         "Empleado", foreign_keys=[cancelado_por_empleado_id], lazy="selectin"

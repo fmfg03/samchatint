@@ -12,10 +12,14 @@ from devnous.gastos.services.loan_request_service import (
     PRESTAMO_STATUS_APROBADA,
     PRESTAMO_STATUS_BORRADOR,
     PRESTAMO_STATUS_CANCELADA,
+    PRESTAMO_STATUS_EN_PROCESO_PAGO,
     PRESTAMO_STATUS_ENVIADA,
+    PRESTAMO_STATUS_PAGADA,
+    PRESTAMO_STATUS_RECHAZADA,
     PrestamoCreatePayload,
     PrestamoWorkflowPermissionError,
     PrestamoWorkflowValidationError,
+    approve_prestamo,
     build_abono_from_application,
     build_prestamo_from_payload,
     can_approve_prestamo,
@@ -25,6 +29,8 @@ from devnous.gastos.services.loan_request_service import (
     can_view_prestamo,
     cancel_prestamo,
     compute_abono_application,
+    reject_prestamo,
+    register_prestamo_payment_proof,
     submit_prestamo,
 )
 
@@ -126,6 +132,126 @@ def test_cancel_after_approval_is_rejected() -> None:
         cancel_prestamo(prestamo, actor)
 
     assert exc_info.value.code == "not_cancelable"
+
+
+def test_loan_approver_can_approve_sent_loan_for_payment_scheduling() -> None:
+    requester_id = uuid4()
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    submit_prestamo(prestamo, SimpleNamespace(id=requester_id))
+    approver_id = uuid4()
+    approver = SimpleNamespace(
+        id=approver_id,
+        nombre="Luis Angel Orozco Colin",
+        rol="admin",
+    )
+
+    approve_prestamo(prestamo, approver, comentario="Autorizado")
+
+    assert prestamo.estado == PRESTAMO_STATUS_APROBADA
+    assert prestamo.aprobado_por_empleado_id == approver_id
+    assert prestamo.aprobado_en is not None
+    assert prestamo.metadata_json["approval_comment"] == "Autorizado"
+
+
+def test_loan_rejection_limited_to_sent_loans_and_approvers() -> None:
+    requester_id = uuid4()
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    submit_prestamo(prestamo, SimpleNamespace(id=requester_id))
+    unauthorized = SimpleNamespace(
+        id=uuid4(),
+        nombre="Benjamin Jimenez",
+        rol="finanzas",
+    )
+    approver = SimpleNamespace(
+        id=uuid4(),
+        nombre="Federico Gonzalez Nava",
+        rol="admin",
+    )
+
+    with pytest.raises(PrestamoWorkflowPermissionError) as forbidden:
+        reject_prestamo(prestamo, unauthorized)
+
+    reject_prestamo(prestamo, approver, comentario="Falta soporte")
+
+    assert forbidden.value.code == "not_loan_approver"
+    assert prestamo.estado == PRESTAMO_STATUS_RECHAZADA
+    assert prestamo.rechazado_por_empleado_id == approver.id
+    assert prestamo.rechazado_en is not None
+    assert prestamo.metadata_json["rejection_comment"] == "Falta soporte"
+
+    with pytest.raises(PrestamoWorkflowValidationError) as not_rejectable:
+        approve_prestamo(prestamo, approver)
+
+    assert not_rejectable.value.code == "not_approvable"
+
+
+def test_accounting_can_add_payment_proof_and_mark_loan_paid() -> None:
+    requester_id = uuid4()
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    prestamo.estado = PRESTAMO_STATUS_APROBADA
+    actor = SimpleNamespace(
+        id=uuid4(),
+        rol="contabilidad",
+        departamento="Contabilidad",
+        permissions={"contabilidad.pagos.marcar_pagado"},
+    )
+
+    register_prestamo_payment_proof(
+        prestamo,
+        actor,
+        comprobante_filename="pago.pdf",
+        comprobante_storage_key="prestamos/x/pago.pdf",
+    )
+
+    assert prestamo.estado == PRESTAMO_STATUS_PAGADA
+    assert prestamo.pagado_por_empleado_id == actor.id
+    assert prestamo.pagado_en is not None
+    assert prestamo.en_proceso_pago_en is not None
+    assert prestamo.comprobante_pago_filename == "pago.pdf"
+    assert prestamo.comprobante_pago_storage_key == "prestamos/x/pago.pdf"
+    assert prestamo.metadata_json["prepoliza_required"] is True
+    assert prestamo.metadata_json["prepoliza_status"] == "pending"
+
+
+def test_payment_proof_requires_accounting_status_and_file_reference() -> None:
+    prestamo = build_prestamo_from_payload(_payload())
+    actor = SimpleNamespace(
+        id=uuid4(),
+        rol="empleado",
+        departamento="Operaciones",
+        permissions=set(),
+    )
+    accounting = SimpleNamespace(
+        id=uuid4(),
+        rol="contabilidad",
+        departamento="Contabilidad",
+        permissions={"contabilidad.pagos.marcar_pagado"},
+    )
+
+    with pytest.raises(PrestamoWorkflowPermissionError) as forbidden:
+        register_prestamo_payment_proof(
+            prestamo,
+            actor,
+            comprobante_filename="pago.pdf",
+            comprobante_storage_key="prestamos/x/pago.pdf",
+        )
+    prestamo.estado = PRESTAMO_STATUS_EN_PROCESO_PAGO
+    with pytest.raises(PrestamoWorkflowValidationError) as missing_file:
+        register_prestamo_payment_proof(
+            prestamo,
+            accounting,
+            comprobante_filename="",
+            comprobante_storage_key="",
+        )
+
+    assert forbidden.value.code == "not_accounting_payment_confirmer"
+    assert missing_file.value.code == "missing_payment_proof"
 
 
 def test_only_requester_can_submit_or_cancel() -> None:
@@ -255,6 +381,11 @@ def test_schema_guard_and_migration_include_loan_tables() -> None:
     assert "create_solicitudes_prestamo_table" in patch_names
     assert "create_prestamo_abonos_table" in patch_names
     assert ("solicitudes_prestamo", "estado") in required_columns
+    assert (
+        "solicitudes_prestamo",
+        "rechazado_por_empleado_id",
+    ) in required_columns
+    assert ("solicitudes_prestamo", "rechazado_en") in required_columns
     assert ("prestamo_abonos", "prestamo_id") in required_columns
     assert (
         "solicitudes_prestamo",
@@ -266,3 +397,5 @@ def test_schema_guard_and_migration_include_loan_tables() -> None:
     ) in required_indexes
     assert "CREATE TABLE IF NOT EXISTS solicitudes_prestamo" in migration
     assert "CREATE TABLE IF NOT EXISTS prestamo_abonos" in migration
+    assert "rechazado_por_empleado_id" in migration
+    assert "rechazado_en" in migration

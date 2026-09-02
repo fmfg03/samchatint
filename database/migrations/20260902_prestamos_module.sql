@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS solicitudes_prestamo (
     cuenta_deudor_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL,
     banco_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL,
     aprobado_por_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+    rechazado_por_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
     cancelado_por_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
     pagado_por_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
     comprobante_pago_filename TEXT NULL,
@@ -24,12 +25,20 @@ CREATE TABLE IF NOT EXISTS solicitudes_prestamo (
     creado_en TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     enviado_en TIMESTAMPTZ NULL,
     aprobado_en TIMESTAMPTZ NULL,
+    rechazado_en TIMESTAMPTZ NULL,
     cancelado_en TIMESTAMPTZ NULL,
     en_proceso_pago_en TIMESTAMPTZ NULL,
     pagado_en TIMESTAMPTZ NULL,
     liquidado_en TIMESTAMPTZ NULL,
     actualizado_en TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE solicitudes_prestamo
+    ADD COLUMN IF NOT EXISTS rechazado_por_empleado_id UUID NULL
+        REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL;
+
+ALTER TABLE solicitudes_prestamo
+    ADD COLUMN IF NOT EXISTS rechazado_en TIMESTAMPTZ NULL;
 
 CREATE TABLE IF NOT EXISTS prestamo_abonos (
     id UUID PRIMARY KEY,

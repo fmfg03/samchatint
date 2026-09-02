@@ -233,12 +233,19 @@ from ..services.loan_request_service import (
     PRESTAMO_STATUS_BORRADOR,
     PRESTAMO_STATUS_CANCELADA,
     PRESTAMO_STATUS_ENVIADA,
+    PRESTAMO_STATUS_APROBADA,
+    PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    PRESTAMO_STATUS_RECHAZADA,
     PrestamoCreatePayload,
     PrestamoWorkflowError,
+    approve_prestamo,
     build_prestamo_from_payload,
+    can_approve_prestamo,
     can_view_all_prestamos,
     can_view_prestamo,
     cancel_prestamo,
+    reject_prestamo,
+    register_prestamo_payment_proof,
     submit_prestamo,
 )
 from ..services.expense_service import create_expense_from_data, trigger_cfdi_generation
@@ -2227,8 +2234,8 @@ def _prestamo_status_badge(status: str) -> str:
     color = {
         PRESTAMO_STATUS_BORRADOR: ("#e0f2fe", "#075985"),
         PRESTAMO_STATUS_ENVIADA: ("#fef3c7", "#92400e"),
-        "aprobada": ("#dcfce7", "#166534"),
-        "rechazada": ("#fee2e2", "#991b1b"),
+        PRESTAMO_STATUS_APROBADA: ("#dcfce7", "#166534"),
+        PRESTAMO_STATUS_RECHAZADA: ("#fee2e2", "#991b1b"),
         "en_proceso_de_pago": ("#ede9fe", "#5b21b6"),
         "pagada": ("#dbeafe", "#1d4ed8"),
         "liquidada": ("#ecfdf5", "#047857"),
@@ -2244,6 +2251,44 @@ def _prestamo_status_badge(status: str) -> str:
 
 def _prestamo_reference_number() -> str:
     return f"PRE-{datetime.now(timezone.utc).strftime('%y%m%d%H%M%S')}-{uuid4().hex[:4].upper()}"
+
+
+def _prestamo_payment_proof_storage_path(
+    prestamo: SolicitudPrestamo,
+    filename: str,
+) -> tuple[Path, str]:
+    safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).name).strip("._")
+    if not safe_name:
+        safe_name = "comprobante_pago"
+    storage_key = (
+        f"prestamos/{prestamo.id}/comprobante_pago/"
+        f"{uuid4().hex}_{safe_name}"
+    )
+    return _repo_root() / "data" / "gastos" / storage_key, storage_key
+
+
+async def _save_prestamo_payment_proof_upload(
+    prestamo: SolicitudPrestamo,
+    upload: UploadFile,
+) -> tuple[str, str]:
+    if not upload or not upload.filename:
+        raise PrestamoWorkflowError(
+            "missing_payment_proof",
+            "Selecciona el comprobante de pago.",
+        )
+    raw = await upload.read()
+    if not raw:
+        raise PrestamoWorkflowError(
+            "empty_payment_proof",
+            "El comprobante de pago esta vacio.",
+        )
+    target_path, storage_key = _prestamo_payment_proof_storage_path(
+        prestamo,
+        upload.filename,
+    )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(raw)
+    return upload.filename, storage_key
 
 
 def _prestamo_beneficiario_label(prestamo: SolicitudPrestamo) -> str:
@@ -15378,6 +15423,12 @@ async def prestamo_detail(
         == str(prestamo.solicitante_empleado_id).lower()
     )
     actions = ['<a href="/prestamos" class="button secondary">Volver</a>']
+    is_loan_approver = can_approve_prestamo(current_empleado)
+    can_upload_payment_proof = (
+        can_confirm_payment_run_payment(current_empleado)
+        and prestamo.estado
+        in {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
+    )
     if is_requester and prestamo.estado == PRESTAMO_STATUS_BORRADOR:
         actions.append(
             f"""
@@ -15399,6 +15450,51 @@ async def prestamo_detail(
             </form>
             """
         )
+    if is_loan_approver and prestamo.estado == PRESTAMO_STATUS_ENVIADA:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/aprobar" style="display:inline;">
+                <button type="submit" class="button primary">Aprobar</button>
+            </form>
+            """
+        )
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/rechazar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Rechazar esta solicitud de préstamo?');">
+                <button type="submit" class="button danger">Rechazar</button>
+            </form>
+            """
+        )
+    authorization_forms_html = ""
+    if is_loan_approver and prestamo.estado == PRESTAMO_STATUS_ENVIADA:
+        authorization_forms_html = f"""
+        <form method="POST" action="/prestamos/{prestamo.id}/aprobar" style="margin-top:16px;">
+            <label>Comentario de aprobación</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button primary" style="margin-top:10px;">Aprobar préstamo</button>
+        </form>
+        <form method="POST" action="/prestamos/{prestamo.id}/rechazar" style="margin-top:16px;">
+            <label>Motivo de rechazo</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button danger" style="margin-top:10px;">Rechazar préstamo</button>
+        </form>
+        """
+    payment_proof_form_html = ""
+    if can_upload_payment_proof:
+        payment_proof_form_html = f"""
+        <form method="POST"
+              action="/prestamos/{prestamo.id}/comprobante-pago"
+              enctype="multipart/form-data"
+              style="margin-top:16px;">
+            <label>Comprobante de pago</label>
+            <input type="file" name="comprobante_pago" required>
+            <button type="submit" class="button primary" style="margin-top:10px;">
+                Añadir comprobante y marcar pagada
+            </button>
+        </form>
+        """
     abonos_html = "".join(
         f"""
         <tr>
@@ -15456,6 +15552,37 @@ async def prestamo_detail(
                 </div>
             </section>
             <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Pago</div>
+                        <h2>Comprobante de pago</h2>
+                        <div class="section-note">Contabilidad puede subir el comprobante cuando la solicitud ya fue aprobada. Al subirlo, el préstamo queda marcado como pagado.</div>
+                    </div>
+                </div>
+                <div class="meta-grid">
+                    <div class="meta-card"><span>Comprobante</span><strong>{escape(prestamo.comprobante_pago_filename or "—")}</strong></div>
+                    <div class="meta-card"><span>Pagó</span><strong>{escape(getattr(prestamo.pagado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha pago</span><strong>{escape(prestamo.pagado_en.strftime('%Y-%m-%d %H:%M') if prestamo.pagado_en else "—")}</strong></div>
+                </div>
+                {payment_proof_form_html}
+            </section>
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Autorización</div>
+                        <h2>Decisión y programación</h2>
+                        <div class="section-note">Al aprobar, la solicitud queda lista para programación de pago. No genera prepóliza hasta que contabilidad añada el comprobante.</div>
+                    </div>
+                </div>
+                <div class="meta-grid">
+                    <div class="meta-card"><span>Aprobó</span><strong>{escape(getattr(prestamo.aprobado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha aprobación</span><strong>{escape(prestamo.aprobado_en.strftime('%Y-%m-%d %H:%M') if prestamo.aprobado_en else "—")}</strong></div>
+                    <div class="meta-card"><span>Rechazó</span><strong>{escape(getattr(prestamo.rechazado_por, "nombre", "—") or "—")}</strong></div>
+                    <div class="meta-card"><span>Fecha rechazo</span><strong>{escape(prestamo.rechazado_en.strftime('%Y-%m-%d %H:%M') if prestamo.rechazado_en else "—")}</strong></div>
+                </div>
+                {authorization_forms_html}
+            </section>
+            <section class="surface">
                 <div class="section-head"><div><div class="eyebrow">Abonos</div><h2>Movimientos registrados</h2></div></div>
                 <div class="table-shell">
                     <table>
@@ -15511,6 +15638,111 @@ async def prestamo_cancel_route(
         )
     return RedirectResponse(
         url=f"/prestamos/{prestamo_id}?success_msg=" + quote("Solicitud cancelada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/aprobar")
+async def prestamo_approve_route(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    form = await request.form()
+    try:
+        approve_prestamo(
+            prestamo,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Solicitud aprobada y lista para programación de pago."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/rechazar")
+async def prestamo_reject_route(
+    prestamo_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    form = await request.form()
+    try:
+        reject_prestamo(
+            prestamo,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Solicitud rechazada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/comprobante-pago")
+async def prestamo_upload_payment_proof_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    comprobante_pago: UploadFile = File(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        filename, storage_key = await _save_prestamo_payment_proof_upload(
+            prestamo,
+            comprobante_pago,
+        )
+        register_prestamo_payment_proof(
+            prestamo,
+            current_empleado,
+            comprobante_filename=filename,
+            comprobante_storage_key=storage_key,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error uploading loan payment proof",
+            extra={
+                "prestamo_id": str(prestamo_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg="
+            + quote("No se pudo cargar el comprobante de pago."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Comprobante cargado y préstamo marcado como pagado."),
         status_code=303,
     )
 

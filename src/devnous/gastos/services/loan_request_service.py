@@ -12,6 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.models import PrestamoAbono, SolicitudPrestamo
 from devnous.gastos.services.access_control_service import is_superadmin_role
+from devnous.gastos.services.payment_run_service import (
+    can_confirm_payment_run_payment,
+)
 
 
 PRESTAMO_STATUS_BORRADOR = "borrador"
@@ -43,6 +46,9 @@ PRESTAMO_BENEFICIARIO_TYPES = frozenset(
 PRESTAMO_EDITABLE_STATUSES = frozenset({PRESTAMO_STATUS_BORRADOR})
 PRESTAMO_CANCELABLE_STATUSES = frozenset(
     {PRESTAMO_STATUS_BORRADOR, PRESTAMO_STATUS_ENVIADA}
+)
+PRESTAMO_PAYMENT_PROOF_STATUSES = frozenset(
+    {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
 )
 
 PRESTAMO_SANTANDER_CUENTA_CODIGO = "1120-001-001"
@@ -461,6 +467,111 @@ def cancel_prestamo(
     prestamo.estado = PRESTAMO_STATUS_CANCELADA
     prestamo.cancelado_por_empleado_id = getattr(actor, "id", None)
     prestamo.cancelado_en = now or datetime.now(timezone.utc)
+    return prestamo
+
+
+def _append_workflow_comment(
+    prestamo: SolicitudPrestamo,
+    key: str,
+    comentario: Optional[str],
+) -> None:
+    if not comentario or not str(comentario).strip():
+        return
+    metadata = dict(getattr(prestamo, "metadata_json", None) or {})
+    metadata[key] = str(comentario).strip()
+    prestamo.metadata_json = metadata
+
+
+def approve_prestamo(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    comentario: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> SolicitudPrestamo:
+    if not can_approve_prestamo(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_loan_approver",
+            "Solo Federico Gonzalez Nava o Luis Angel Orozco Colin pueden "
+            "aprobar prestamos.",
+        )
+    if prestamo.estado != PRESTAMO_STATUS_ENVIADA:
+        raise PrestamoWorkflowValidationError(
+            "not_approvable",
+            "Solo se pueden aprobar solicitudes enviadas.",
+        )
+    timestamp = now or datetime.now(timezone.utc)
+    prestamo.estado = PRESTAMO_STATUS_APROBADA
+    prestamo.aprobado_por_empleado_id = getattr(actor, "id", None)
+    prestamo.aprobado_en = timestamp
+    _append_workflow_comment(prestamo, "approval_comment", comentario)
+    return prestamo
+
+
+def reject_prestamo(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    comentario: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> SolicitudPrestamo:
+    if not can_approve_prestamo(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_loan_approver",
+            "Solo Federico Gonzalez Nava o Luis Angel Orozco Colin pueden "
+            "rechazar prestamos.",
+        )
+    if prestamo.estado != PRESTAMO_STATUS_ENVIADA:
+        raise PrestamoWorkflowValidationError(
+            "not_rejectable",
+            "Solo se pueden rechazar solicitudes enviadas.",
+        )
+    timestamp = now or datetime.now(timezone.utc)
+    prestamo.estado = PRESTAMO_STATUS_RECHAZADA
+    prestamo.rechazado_por_empleado_id = getattr(actor, "id", None)
+    prestamo.rechazado_en = timestamp
+    _append_workflow_comment(prestamo, "rejection_comment", comentario)
+    return prestamo
+
+
+def register_prestamo_payment_proof(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    comprobante_filename: str,
+    comprobante_storage_key: str,
+    now: Optional[datetime] = None,
+) -> SolicitudPrestamo:
+    if not can_confirm_payment_run_payment(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_accounting_payment_confirmer",
+            "Solo Contabilidad puede anadir comprobantes de pago.",
+        )
+    if prestamo.estado not in PRESTAMO_PAYMENT_PROOF_STATUSES:
+        raise PrestamoWorkflowValidationError(
+            "not_payable",
+            "Solo se puede pagar una solicitud aprobada o en proceso de pago.",
+        )
+    filename = str(comprobante_filename or "").strip()
+    storage_key = str(comprobante_storage_key or "").strip()
+    if not filename or not storage_key:
+        raise PrestamoWorkflowValidationError(
+            "missing_payment_proof",
+            "Selecciona el comprobante de pago.",
+        )
+    timestamp = now or datetime.now(timezone.utc)
+    if prestamo.estado == PRESTAMO_STATUS_APROBADA:
+        prestamo.en_proceso_pago_en = timestamp
+    prestamo.estado = PRESTAMO_STATUS_PAGADA
+    prestamo.pagado_por_empleado_id = getattr(actor, "id", None)
+    prestamo.pagado_en = timestamp
+    prestamo.comprobante_pago_filename = filename
+    prestamo.comprobante_pago_storage_key = storage_key
+    metadata = dict(getattr(prestamo, "metadata_json", None) or {})
+    metadata["payment_proof_uploaded_at"] = timestamp.isoformat()
+    metadata["prepoliza_status"] = "pending"
+    metadata["prepoliza_required"] = True
+    prestamo.metadata_json = metadata
     return prestamo
 
 
