@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -6,12 +7,25 @@ from uuid import uuid4
 from devnous.gastos.services.employee_debtor_accounting_service import (
     DEBTOR_ACCOUNT_PREFIXES,
     SANTANDER_BANK_ACCOUNT_CODE,
+    _create_poliza,
     _event_poliza_number,
+    _naive_utc_datetime,
     _preview_expense_lines,
 )
 
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+class FakeAccountingSession:
+    def __init__(self):
+        self.added = []
+
+    def add(self, value):
+        self.added.append(value)
+
+    async def flush(self):
+        return None
 
 
 def _account(code: str):
@@ -33,6 +47,50 @@ def test_laminar_event_identity_binds_event_and_complete_uuid():
     assert _event_poliza_number("PROV-PAY", entity_id) != _event_poliza_number(
         "PROV-APR", entity_id
     )
+
+
+def test_poliza_date_normalization_accepts_aware_datetimes():
+    aware = datetime(2026, 8, 26, 22, 33, 3, tzinfo=timezone.utc)
+
+    normalized = _naive_utc_datetime(aware)
+
+    assert normalized == datetime(2026, 8, 26, 22, 33, 3)
+    assert normalized.tzinfo is None
+
+
+async def test_create_poliza_keeps_lines_attached_in_memory():
+    session = FakeAccountingSession()
+
+    poliza = await _create_poliza(
+        session,
+        origen="proveedor_aprobacion",
+        numero_poliza="LAM-PROV-APR-test",
+        fecha=datetime(2026, 8, 26, 22, 33, 3, tzinfo=timezone.utc),
+        beneficiario_nombre="Proveedor",
+        concepto="Proveedor aprobado",
+        lines=[
+            {
+                "cuenta_codigo": "5300-001-001",
+                "cuenta_contable_id": uuid4(),
+                "concepto": "Proveedor aprobado",
+                "debe": Decimal("100.00"),
+                "haber": 0,
+                "raw_row_json": {"movement": "debe_gasto"},
+            },
+            {
+                "cuenta_codigo": "2120-001-001",
+                "cuenta_contable_id": uuid4(),
+                "concepto": "Proveedor aprobado",
+                "debe": 0,
+                "haber": Decimal("100.00"),
+                "raw_row_json": {"movement": "haber_pasivo"},
+            },
+        ],
+    )
+
+    assert poliza.fecha_poliza.tzinfo is None
+    assert len(poliza.lines) == 2
+    assert all(line.poliza is poliza for line in poliza.lines)
 
 
 def test_laminar_accounts_are_exact_and_reject_1700_aliases():

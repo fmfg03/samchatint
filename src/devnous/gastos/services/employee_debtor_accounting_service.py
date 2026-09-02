@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -81,6 +81,14 @@ def _money(value: Any) -> Decimal:
 
 def _money_float(value: Any) -> float:
     return float(_money(value))
+
+
+def _naive_utc_datetime(value: date | datetime) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+    return datetime.combine(value, datetime.min.time())
 
 
 def _normalize_text(value: Any) -> str:
@@ -474,6 +482,21 @@ async def _existing_poliza(
     return result.scalar_one_or_none()
 
 
+async def _load_poliza_lines(
+    session: AsyncSession,
+    poliza: AccountingPoliza,
+) -> list[AccountingPolizaLine]:
+    cached = getattr(poliza, "__dict__", {}).get("lines")
+    if cached is not None:
+        return list(cached)
+    result = await session.execute(
+        select(AccountingPolizaLine)
+        .where(AccountingPolizaLine.poliza_id == poliza.id)
+        .order_by(AccountingPolizaLine.line_no.asc())
+    )
+    return list(result.scalars().all())
+
+
 async def _create_poliza(
     session: AsyncSession,
     *,
@@ -491,7 +514,7 @@ async def _create_poliza(
         source_row_start=None,
         tipo_poliza="Diario",
         numero_poliza=numero_poliza,
-        fecha_poliza=fecha,
+        fecha_poliza=_naive_utc_datetime(fecha),
         beneficiario_nombre=beneficiario_nombre,
         concepto=concepto,
         concepto_resumen=concepto,
@@ -505,7 +528,7 @@ async def _create_poliza(
         session.add(
             AccountingPolizaLine(
                 id=uuid4(),
-                poliza_id=poliza.id,
+                poliza=poliza,
                 line_no=idx,
                 cuenta_codigo=line["cuenta_codigo"],
                 cuenta_contable_id=line.get("cuenta_contable_id"),
@@ -719,10 +742,11 @@ async def ensure_provider_payment_posting(
         )
     if approval_poliza is None:
         return DebtorPostingResult(status="pending", reason="missing_provider_accrual")
+    approval_lines = await _load_poliza_lines(session, approval_poliza)
     amount = sum(
         (
             _money(line.haber)
-            for line in list(getattr(approval_poliza, "lines", None) or [])
+            for line in approval_lines
             if str(getattr(line, "cuenta_codigo", "")) == liability.codigo
         ),
         Decimal("0.00"),

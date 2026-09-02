@@ -3,8 +3,10 @@ from uuid import uuid4
 
 from devnous.gastos.services.payment_run_service import (
     DEFAULT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS,
+    DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
+    configured_payment_run_payment_confirmer_ids,
     configured_payment_run_manager_ids,
     parse_payment_run_date,
 )
@@ -58,6 +60,17 @@ def test_parse_payment_run_date_from_iso_string() -> None:
 
 
 def test_payment_run_payment_confirmation_is_accounting_only() -> None:
+    payment_confirmer_id = next(
+        iter(DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS)
+    )
+
+    assert can_confirm_payment_run_payment(
+        SimpleNamespace(
+            id=payment_confirmer_id,
+            rol="finanzas",
+            departamento="Finanzas",
+        )
+    )
     assert can_confirm_payment_run_payment(
         SimpleNamespace(id=uuid4(), rol="contabilidad")
     )
@@ -84,3 +97,13 @@ def test_payment_run_payment_confirmation_is_accounting_only() -> None:
     assert not can_confirm_payment_run_payment(
         SimpleNamespace(id=uuid4(), rol="operaciones", departamento="operaciones")
     )
+
+
+def test_payment_run_payment_confirmer_ids_accept_env_key(monkeypatch) -> None:
+    empleado_id = uuid4()
+    monkeypatch.setenv(
+        "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
+        str(empleado_id),
+    )
+
+    assert str(empleado_id) in configured_payment_run_payment_confirmer_ids()

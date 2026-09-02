@@ -25129,7 +25129,7 @@ async def editar_gasto_form(
             {message_html}
             {lock_banner_html}
             <section class="surface">
-            <form method="POST" action="{edit_form_url}">
+            <form method="POST" action="{edit_form_url}" enctype="multipart/form-data">
                 {return_to_input_html}
                 <div class="form-group">
                     <label for="concepto">Concepto *</label>
@@ -25218,6 +25218,12 @@ async def editar_gasto_form(
                     <label for="cfdi_qr_or_url">Pegar enlace/QR CFDI (si ya se generó el CFDI)</label>
                     <textarea name="cfdi_qr_or_url" id="cfdi_qr_or_url" placeholder="Pegue aquí el enlace o texto del código QR del CFDI" {disabled_attr}></textarea>
                     <small>El sistema extraerá automáticamente el UUID del enlace o QR</small>
+                </div>
+
+                <div class="form-group">
+                    <label for="archivos_generales">Materialidad / soporte</label>
+                    <input type="file" name="archivos_generales" id="archivos_generales" multiple accept=".pdf,image/*,application/pdf" {disabled_attr}>
+                    <small>Adjunte recibos PDF o imagen cuando no exista factura CFDI.</small>
                 </div>
 
                 {motivo_field_html}
@@ -25385,6 +25391,7 @@ async def editar_gasto(
     cuenta_contable_id: Optional[str] = Form(None),
     cfdi_uuid_manual: Optional[str] = Form(None),
     cfdi_qr_or_url: Optional[str] = Form(None),
+    archivos_generales: Optional[List[UploadFile]] = File(None),
     motivo: Optional[str] = Form(None),
     return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
@@ -25559,6 +25566,31 @@ async def editar_gasto(
     changes = []
     old_values = {}
     new_values = {}
+    materialidades: List[tuple[bytes, str, str, str]] = []
+    for upload in archivos_generales or []:
+        if not upload or not upload.filename:
+            continue
+        raw = await upload.read()
+        try:
+            materialidades.append(
+                validate_solicitud_terceros_attachment(
+                    SolicitudTercerosAttachment(
+                        raw_bytes=raw,
+                        filename=upload.filename or "adjunto",
+                        mime_type=getattr(upload, "content_type", None),
+                        categoria="supporting",
+                    )
+                )
+            )
+        except SolicitudValidationError as exc:
+            return RedirectResponse(
+                url=_append_error_params(
+                    edit_form_url,
+                    error=exc.code,
+                    error_msg=str(exc),
+                ),
+                status_code=303,
+            )
 
     # Check concepto
     if expense.concepto != concepto:
@@ -25963,6 +25995,20 @@ async def editar_gasto(
                 changes.append("cfdi_report_id vinculado a CFDI existente (UUID fiscal)")
             else:
                 changes.append("cfdi_report_id desvinculado (CFDI no encontrado)")
+
+    for raw_bytes, mime_type, filename, categoria in materialidades:
+        await create_adjunto_record(
+            session,
+            gasto_id=expense.id,
+            ruta_archivo=base64.b64encode(raw_bytes).decode("ascii"),
+            tipo_archivo=mime_type,
+            nombre_archivo=filename,
+            mime_type=mime_type,
+            categoria=categoria,
+            origen="user_upload",
+        )
+    if materialidades:
+        changes.append(f"adjuntos_materialidad {len(materialidades)} archivo(s)")
 
     # If no changes, don't save or create audit record
     if not changes:
@@ -27414,11 +27460,94 @@ async def documentos_pendientes_accion_lote(
     )
 
 
+def _approval_history_filter_values(values: Optional[List[str]]) -> set[str]:
+    return {
+        _normalize_filter_value(value)
+        for value in values or []
+        if str(value or "").strip()
+    }
+
+
+def _approval_history_display_value(value: Any) -> str:
+    cleaned = str(value or "").strip()
+    return cleaned or "—"
+
+
+def _approval_history_torneo(documento: Documento) -> str:
+    torneo = getattr(documento, "torneo", None)
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    cuenta_torneo = getattr(cuenta, "torneo", None) if cuenta is not None else None
+    return _approval_history_display_value(
+        getattr(torneo, "name", None) or getattr(cuenta_torneo, "name", None)
+    )
+
+
+def _approval_history_fase(documento: Documento) -> str:
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    return _approval_history_display_value(
+        getattr(documento, "fase", None)
+        or (getattr(cuenta, "fase", None) if cuenta is not None else None)
+    )
+
+
+def _approval_history_budget_concept(documento: Documento) -> str:
+    budget_concept = getattr(documento, "budget_concept", None)
+    return _approval_history_display_value(
+        getattr(budget_concept, "concept_name", None)
+        or getattr(budget_concept, "concept_key", None)
+    )
+
+
+def _approval_history_beneficiario(documento: Documento) -> str:
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    beneficiario_empleado = (
+        getattr(documento, "beneficiario_empleado", None)
+        or (getattr(cuenta, "beneficiario_empleado", None) if cuenta is not None else None)
+    )
+    beneficiario_proveedor = (
+        getattr(documento, "proveedor_cliente", None)
+        or (
+            getattr(cuenta, "beneficiario_proveedor_cliente", None)
+            if cuenta is not None
+            else None
+        )
+    )
+    return _approval_history_display_value(
+        getattr(beneficiario_empleado, "nombre", None)
+        or getattr(beneficiario_proveedor, "nombre", None)
+    )
+
+
+def _approval_history_select_options(
+    options: Iterable[str],
+    selected: set[str],
+) -> str:
+    option_html = []
+    for option in sorted(
+        {value for value in options if _approval_history_display_value(value) != "—"},
+        key=lambda item: _normalize_filter_value(item),
+    ):
+        selected_attr = (
+            " selected"
+            if _normalize_filter_value(option) in selected
+            else ""
+        )
+        option_html.append(
+            f'<option value="{escape(option)}"{selected_attr}>{escape(option)}</option>'
+        )
+    return "".join(option_html)
+
+
 @router.get("/documentos/historial-aprobador", response_class=HTMLResponse)
 async def historial_aprobador(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    estado: Optional[List[str]] = Query(None),
 ) -> str:
     """
     Show approval history for the current approver.
@@ -27463,19 +27592,108 @@ async def historial_aprobador(
     if documento_ids:
         documentos_result = await session.execute(
             select(Documento).options(
-                selectinload(Documento.empleado)
+                selectinload(Documento.empleado),
+                selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.proveedor_cliente),
+                selectinload(Documento.budget_concept),
+                selectinload(Documento.torneo),
+                selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
+                selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+                selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.beneficiario_empleado),
+                selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.beneficiario_proveedor_cliente),
+                undefer(Documento.fase),
             ).where(Documento.id.in_(documento_ids))
         )
         documentos_dict = {doc.id: doc for doc in documentos_result.scalars().all()}
     else:
         documentos_dict = {}
 
-    # Build rows HTML
-    rows_html = ""
+    selected_torneo = _approval_history_filter_values(torneo)
+    selected_concepto = _approval_history_filter_values(concepto)
+    selected_beneficiario = _approval_history_filter_values(beneficiario)
+    selected_tipo = _approval_history_filter_values(tipo)
+    selected_estado = _approval_history_filter_values(estado)
+
+    history_items = []
     for aprobacion in aprobaciones:
         documento = documentos_dict.get(aprobacion.entidad_id)
         if not documento:
             continue
+        empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
+        row_values = {
+            "torneo": _approval_history_torneo(documento),
+            "fase": _approval_history_fase(documento),
+            "concepto": _approval_history_budget_concept(documento),
+            "descripcion": _documentos_todos_reporting_description(documento),
+            "beneficiario": _approval_history_beneficiario(documento),
+            "empleado": empleado_nombre,
+            "tipo": _approval_history_display_value(documento.tipo),
+            "estado": _approval_history_display_value(documento.estado),
+        }
+        history_items.append((aprobacion, documento, row_values))
+
+    filter_options = {
+        "torneo": [item[2]["torneo"] for item in history_items],
+        "concepto": [item[2]["concepto"] for item in history_items],
+        "beneficiario": [item[2]["beneficiario"] for item in history_items],
+        "tipo": [item[2]["tipo"] for item in history_items],
+        "estado": [item[2]["estado"] for item in history_items],
+    }
+
+    def _matches_selected(value: str, selected: set[str]) -> bool:
+        return not selected or _normalize_filter_value(value) in selected
+
+    history_items = [
+        item
+        for item in history_items
+        if _matches_selected(item[2]["torneo"], selected_torneo)
+        and _matches_selected(item[2]["concepto"], selected_concepto)
+        and _matches_selected(item[2]["beneficiario"], selected_beneficiario)
+        and _matches_selected(item[2]["tipo"], selected_tipo)
+        and _matches_selected(item[2]["estado"], selected_estado)
+    ]
+
+    filters_active = any(
+        [
+            selected_torneo,
+            selected_concepto,
+            selected_beneficiario,
+            selected_tipo,
+            selected_estado,
+        ]
+    )
+    filter_form_html = f"""
+                    <form method="GET" action="/documentos/historial-aprobador" class="approval-history-filters">
+                        <div>
+                            <label for="historial_torneo">Torneo</label>
+                            <select id="historial_torneo" name="torneo" multiple size="4">{_approval_history_select_options(filter_options["torneo"], selected_torneo)}</select>
+                        </div>
+                        <div>
+                            <label for="historial_concepto">Concepto</label>
+                            <select id="historial_concepto" name="concepto" multiple size="4">{_approval_history_select_options(filter_options["concepto"], selected_concepto)}</select>
+                        </div>
+                        <div>
+                            <label for="historial_beneficiario">Beneficiario</label>
+                            <select id="historial_beneficiario" name="beneficiario" multiple size="4">{_approval_history_select_options(filter_options["beneficiario"], selected_beneficiario)}</select>
+                        </div>
+                        <div>
+                            <label for="historial_tipo">Tipo</label>
+                            <select id="historial_tipo" name="tipo" multiple size="4">{_approval_history_select_options(filter_options["tipo"], selected_tipo)}</select>
+                        </div>
+                        <div>
+                            <label for="historial_estado">Estado Actual</label>
+                            <select id="historial_estado" name="estado" multiple size="4">{_approval_history_select_options(filter_options["estado"], selected_estado)}</select>
+                        </div>
+                        <div class="approval-history-filter-actions">
+                            <button type="submit" class="button primary">Aplicar filtros</button>
+                            <a href="/documentos/historial-aprobador" class="button secondary">Limpiar filtros</a>
+                        </div>
+                    </form>
+    """
+
+    # Build rows HTML
+    rows_html = ""
+    for aprobacion, documento, row_values in history_items:
 
         # Format fecha
         fecha_str = format_value(aprobacion.fecha)
@@ -27494,8 +27712,6 @@ async def historial_aprobador(
             accion_str = aprobacion.accion.capitalize()
             accion_color = "#666"
 
-        # Get empleado name (owner of the documento)
-        empleado_nombre = documento.empleado.nombre if documento.empleado else "N/A"
         referencia_operaciones = escape(
             str((documento.referencia_operaciones or "").strip() or "—")
         )
@@ -27505,6 +27721,7 @@ async def historial_aprobador(
 
         # Comentario
         comentario_str = aprobacion.comentario if aprobacion.comentario else "-"
+        comentario_safe = escape(comentario_str)
 
         rows_html += f"""
         <tr>
@@ -27512,10 +27729,15 @@ async def historial_aprobador(
             <td>{referencia_operaciones}</td>
             <td><span style="color: {accion_color}; font-weight: bold;">{accion_str}</span></td>
             <td>{doc_link}</td>
-            <td>{empleado_nombre}</td>
-            <td>{documento.tipo}</td>
-            <td>{documento.estado}</td>
-            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_str}">{comentario_str}</td>
+            <td>{escape(row_values["torneo"])}</td>
+            <td>{escape(row_values["fase"])}</td>
+            <td>{escape(row_values["concepto"])}</td>
+            <td>{escape(row_values["descripcion"])}</td>
+            <td>{escape(row_values["beneficiario"])}</td>
+            <td>{escape(row_values["empleado"])}</td>
+            <td>{escape(row_values["tipo"])}</td>
+            <td>{escape(row_values["estado"])}</td>
+            <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
     historial_side_html = f"""
@@ -27523,18 +27745,52 @@ async def historial_aprobador(
         <div class="meta-grid">
             <div class="meta-card">
                 <span>Eventos</span>
-                <strong>{len(aprobaciones)}</strong>
-                <small>Aprobaciones, rechazos y pagos registrados.</small>
+                <strong>{len(history_items)}</strong>
+                <small>Aprobaciones, rechazos y pagos visibles.</small>
             </div>
         </div>
     """
+    empty_history_msg = (
+        "No hay aprobaciones con esos filtros."
+        if filters_active
+        else "No tienes aprobaciones registradas."
+    )
 
     html = f"""
     <!DOCTYPE html>
     <html>
     <head>
         <title>Historial de Aprobaciones - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1480px")}</style>
+        <style>
+            {_workspace_shell_styles("1680px")}
+            .approval-history-filters {{
+                display:grid;
+                grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
+                gap:12px;
+                margin:0 0 18px;
+            }}
+            .approval-history-filters label {{
+                display:block;
+                margin-bottom:6px;
+                font-weight:700;
+                color:#334155;
+                font-size:13px;
+            }}
+            .approval-history-filters select {{
+                width:100%;
+                min-height:118px;
+                border:1px solid #cbd5e1;
+                border-radius:8px;
+                padding:8px;
+                box-sizing:border-box;
+            }}
+            .approval-history-filter-actions {{
+                display:flex;
+                align-items:flex-end;
+                gap:8px;
+                flex-wrap:wrap;
+            }}
+        </style>
     </head>
     <body>
         <div class="container">
@@ -27560,6 +27816,7 @@ async def historial_aprobador(
                             <div class="section-note">Consulta quién aprobó, rechazó o pagó y el comentario asociado.</div>
                         </div>
                     </div>
+                    {filter_form_html}
             {f'''
             <div class="table-shell"><table>
                 <thead>
@@ -27568,6 +27825,11 @@ async def historial_aprobador(
                         <th>Referencia Operaciones</th>
                         <th>Acción</th>
                         <th>Número de Referencia</th>
+                        <th>Torneo</th>
+                        <th>Fase</th>
+                        <th>Concepto/Presupuestal</th>
+                        <th>Descripción del Usuario</th>
+                        <th>Beneficiario</th>
                         <th>Empleado</th>
                         <th>Tipo</th>
                         <th>Estado Actual</th>
@@ -27580,7 +27842,7 @@ async def historial_aprobador(
             </table></div>
             ''' if rows_html else '''
             <div class="notice info" style="text-align:center;">
-                <p style="font-size: 18px; color: #666;">No tienes aprobaciones registradas.</p>
+                <p style="font-size: 18px; color: #666;">''' + escape(empty_history_msg) + '''</p>
             </div>
             '''}
                 </section>
@@ -32482,6 +32744,7 @@ async def agregar_documento_adjuntos(
                 session,
                 documento_id=documento.id,
                 actor_id=current_empleado.id,
+                actor=current_empleado,
             )
             payment_registered = True
         else:
@@ -38328,6 +38591,7 @@ async def cuenta_de_gastos_detail(
                                     <tr>
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
+                                        <th>Fiscal</th>
                                         <th>DESCRIPCIÓN DEL GASTO</th>
                                         <th{quick_budget_style}>CONCEPTO</th>
                                         <th>FECHA DEL GASTO</th>
@@ -38346,6 +38610,7 @@ async def cuenta_de_gastos_detail(
                                     <tr>
                                         <td><input type="file" name="cfdi_xml" id="quick-cfdi-xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input type="file" name="cfdi_pdf" id="quick-cfdi-pdf" accept=".pdf,application/pdf"></td>
+                                        <td><button type="button" id="quick-no-deducible" class="button secondary quick-no-deducible-btn" aria-pressed="false">No deducible</button></td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
                                         <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>
                                         <td><input type="date" name="fecha" id="quick-fecha" required></td>
@@ -38467,6 +38732,15 @@ async def cuenta_de_gastos_detail(
             }}
             .quick-expense-table #quick-propina {{
                 min-width:110px;
+            }}
+            .quick-expense-table .quick-no-deducible-btn {{
+                min-width:130px;
+                white-space:nowrap;
+            }}
+            .quick-expense-table .quick-no-deducible-btn.active {{
+                background:#7f1d1d;
+                border-color:#7f1d1d;
+                color:#fff;
             }}
             .quick-expense-table input[type="file"] {{
                 min-width:180px;
@@ -38629,6 +38903,10 @@ async def cuenta_de_gastos_detail(
                 const descuento = document.getElementById('quick-descuento');
                 const impuestos = document.getElementById('quick-impuestos-y-retenciones');
                 const total = document.getElementById('quick-total');
+                const noDeducibleButton = document.getElementById('quick-no-deducible');
+                const numeroFactura = document.getElementById('quick-numero-factura');
+                const cfdiXml = document.getElementById('quick-cfdi-xml');
+                const cfdiPdf = document.getElementById('quick-cfdi-pdf');
                 const tokens = ['alimento', 'alimentos', 'restaurante', 'restaurant', 'consumo', 'comida', 'cena', 'desayuno', 'cafeteria'];
                 const airTokens = ['avion', 'aereo', 'aerea', 'aerolinea', 'boleto de avion', 'transporte aereo', 'vuelo', 'vuelos'];
                 function normalize(value) {{
@@ -38660,6 +38938,34 @@ async def cuenta_de_gastos_detail(
                     if (airSupplements) airSupplements.hidden = !isAir();
                     updateTotalWithTip();
                 }}
+                function setNoDeducibleActive(active) {{
+                    if (!noDeducibleButton) return;
+                    noDeducibleButton.classList.toggle('active', active);
+                    noDeducibleButton.setAttribute('aria-pressed', active ? 'true' : 'false');
+                }}
+                function markNoDeducible() {{
+                    if (numeroFactura) numeroFactura.value = 'no facturable';
+                    if (cfdiXml) cfdiXml.value = '';
+                    if (cfdiPdf) cfdiPdf.value = '';
+                    setNoDeducibleActive(true);
+                }}
+                function clearNoDeducibleIfCfdiSelected() {{
+                    const hasCfdi = (cfdiXml && cfdiXml.files && cfdiXml.files.length > 0) || (cfdiPdf && cfdiPdf.files && cfdiPdf.files.length > 0);
+                    if (!hasCfdi) return;
+                    if (numeroFactura && normalize(numeroFactura.value) === 'no facturable') numeroFactura.value = '';
+                    setNoDeducibleActive(false);
+                }}
+                function syncNoDeducibleFromInvoice() {{
+                    setNoDeducibleActive(Boolean(numeroFactura && normalize(numeroFactura.value) === 'no facturable'));
+                }}
+                if (noDeducibleButton) noDeducibleButton.addEventListener('click', markNoDeducible);
+                [cfdiXml, cfdiPdf].forEach(function(el) {{
+                    if (el) el.addEventListener('change', clearNoDeducibleIfCfdiSelected);
+                }});
+                if (numeroFactura) {{
+                    numeroFactura.addEventListener('input', syncNoDeducibleFromInvoice);
+                    numeroFactura.addEventListener('change', syncNoDeducibleFromInvoice);
+                }}
                 [concept, budget].forEach(function(el) {{
                     if (!el) return;
                     el.addEventListener('input', refreshTipVisibility);
@@ -38668,6 +38974,7 @@ async def cuenta_de_gastos_detail(
                 [subtotal, descuento, impuestos, tipInput].forEach(function(el) {{
                     if (el) el.addEventListener('input', updateTotalWithTip);
                 }});
+                syncNoDeducibleFromInvoice();
                 refreshTipVisibility();
             }})();
         </script>

@@ -255,6 +255,7 @@ def test_payment_run_upload_payment_proof_is_atomic() -> None:
 
     assert "commit=False" in block
     assert "await register_document_payment(" in block
+    assert "actor=current_empleado" in block
 
 
 def test_accounting_profile_can_create_employee_beneficiary_requests() -> None:
