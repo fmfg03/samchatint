@@ -38,7 +38,7 @@ def test_solicitud_list_exposes_edit_for_rejected_owner():
     assert 'can_edit_rejected' in helper
     assert 'getattr(documento, "estado", None) == "rechazado"' in helper
     assert '/documentos/{documento.id}/editar' in helper
-    assert 'Cancelar borrador' in helper
+    assert 'Cancelar solicitud' in helper
 
 
 def test_legacy_solicitud_edit_aliases_redirect_to_canonical_route():

@@ -15252,8 +15252,8 @@ def _solicitud_transferencia_list_actions_html(
         '<input type="hidden" name="next" value="/gastos-terceros">'
         '<input type="hidden" name="comentario" value="Borrador cancelado desde la bandeja de solicitudes.">'
         '<button type="submit" class="button danger" '
-        "onclick=\"return confirm('Cancelar esta solicitud en borrador? Se conservara como cancelada con registro de auditoria.')\">"
-        'Cancelar borrador</button></form>'
+        "onclick=\"return confirm('Cancelar esta solicitud antes de enviarla? Se conservara como cancelada con registro de auditoria.')\">"
+        'Cancelar solicitud</button></form>'
         if can_cancel_draft
         else ""
     )
@@ -16264,7 +16264,7 @@ async def gastos_terceros(
         if "/editar" in registrar_pago_link:
             accion_attr_parts.append("editar")
         if "/cancelar" in registrar_pago_link:
-            accion_attr_parts.append("cancelar borrador")
+            accion_attr_parts.append("cancelar solicitud borrador")
         accion_attr = escape(" ".join(accion_attr_parts))
 
         archivos_terc = html_documento_archivos_cell(
@@ -16345,6 +16345,11 @@ async def gastos_terceros(
             <div class="stack">
                 {f'<div class="notice warn">{escape(error_msg)}</div>' if error_msg else ''}
                 <section class="meta-grid">
+                    <div class="meta-card">
+                        <span>Borradores</span>
+                        <strong>{status_counts.get("borrador", 0)}</strong>
+                        <small>Cancelables por el solicitante antes de enviarse.</small>
+                    </div>
                     <div class="meta-card">
                         <span>Enviadas</span>
                         <strong>{status_counts.get("enviado", 0)}</strong>
@@ -27363,7 +27368,7 @@ async def mis_documentos(
                 <form method="POST" action="/documentos/{documento.id}/cancelar" style="margin: 0;">
                     <input type="hidden" name="next" value="/documentos/mis-documentos">
                     <input type="hidden" name="comentario" value="Borrador cancelado desde Mis documentos.">
-                    <button type="submit" class="button danger">Cancelar borrador</button>
+                    <button type="submit" class="button danger">Cancelar solicitud</button>
                 </form>
             """
 
