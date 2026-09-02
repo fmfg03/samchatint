@@ -89,6 +89,9 @@ def test_aprobaciones_action_constraint_admits_current_audit_actions():
 
 def test_aprobaciones_tipo_entidad_constraint_admits_beneficiary_onboarding():
     schema_guard = Path("src/devnous/gastos/schema_guard.py").read_text()
+    migration = Path(
+        "database/migrations/20260902_aprobaciones_beneficiary_onboarding_constraint.sql"
+    ).read_text()
     service = Path(
         "src/devnous/gastos/services/beneficiary_onboarding_service.py"
     ).read_text()
@@ -104,6 +107,11 @@ def test_aprobaciones_tipo_entidad_constraint_admits_beneficiary_onboarding():
     assert "'documento'::text" in repair_block
     assert "'gasto'::text" in repair_block
     assert "'beneficiary_onboarding'::text" in repair_block
+    assert "DROP CONSTRAINT aprobaciones_tipo_entidad_check" in migration
+    assert "ADD CONSTRAINT aprobaciones_tipo_entidad_check" in migration
+    assert "'documento'::text" in migration
+    assert "'gasto'::text" in migration
+    assert "'beneficiary_onboarding'::text" in migration
 
 
 def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():
