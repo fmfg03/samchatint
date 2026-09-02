@@ -41,7 +41,7 @@ from samchat.budgets.service import (
     resolve_definitive_budget_version,
 )
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -226,6 +226,7 @@ from ..services.cuenta_settlement_service import (
     register_cuenta_settlement,
 )
 from ..services.loan_request_service import (
+    PRESTAMO_ABONO_STATUS_ENVIADO,
     PRESTAMO_BENEFICIARIO_EMPLEADO,
     PRESTAMO_BENEFICIARIO_OPERADOR_REGIONAL,
     PRESTAMO_BENEFICIARIO_PROPIO,
@@ -235,16 +236,21 @@ from ..services.loan_request_service import (
     PRESTAMO_STATUS_ENVIADA,
     PRESTAMO_STATUS_APROBADA,
     PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    PRESTAMO_STATUS_PAGADA,
     PRESTAMO_STATUS_RECHAZADA,
     PrestamoCreatePayload,
     PrestamoWorkflowError,
+    approve_prestamo_abono,
     approve_prestamo,
     build_prestamo_from_payload,
     can_approve_prestamo,
+    can_approve_prestamo_abono,
     can_view_all_prestamos,
     can_view_prestamo,
     cancel_prestamo,
     reject_prestamo,
+    reject_prestamo_abono,
+    register_prestamo_abono,
     register_prestamo_payment_proof,
     submit_prestamo,
 )
@@ -2291,6 +2297,35 @@ async def _save_prestamo_payment_proof_upload(
     return upload.filename, storage_key
 
 
+async def _save_prestamo_abono_proof_upload(
+    prestamo: SolicitudPrestamo,
+    upload: UploadFile,
+) -> tuple[str, str]:
+    if not upload or not upload.filename:
+        raise PrestamoWorkflowError(
+            "missing_abono_proof",
+            "Selecciona el comprobante del abono.",
+        )
+    raw = await upload.read()
+    if not raw:
+        raise PrestamoWorkflowError(
+            "empty_abono_proof",
+            "El comprobante del abono esta vacio.",
+        )
+    safe_name = re.sub(
+        r"[^A-Za-z0-9._-]+",
+        "_",
+        Path(upload.filename).name,
+    ).strip("._")
+    if not safe_name:
+        safe_name = "comprobante_abono"
+    storage_key = f"prestamos/{prestamo.id}/abonos/{uuid4().hex}_{safe_name}"
+    target_path = _repo_root() / "data" / "gastos" / storage_key
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_bytes(raw)
+    return upload.filename, storage_key
+
+
 def _prestamo_beneficiario_label(prestamo: SolicitudPrestamo) -> str:
     if getattr(prestamo, "beneficiario_nombre_snapshot", None):
         return str(prestamo.beneficiario_nombre_snapshot)
@@ -2377,6 +2412,28 @@ async def _load_prestamo_for_user(
     if not can_view_prestamo(current_empleado, prestamo):
         raise HTTPException(status_code=403, detail="No tienes acceso a este prestamo")
     return prestamo
+
+
+async def _load_prestamo_abono_for_user(
+    session: AsyncSession,
+    abono_id: UUIDType,
+    current_empleado: Empleado,
+) -> PrestamoAbono:
+    result = await session.execute(
+        select(PrestamoAbono)
+        .options(
+            selectinload(PrestamoAbono.prestamo).selectinload(
+                SolicitudPrestamo.solicitante
+            ),
+        )
+        .where(PrestamoAbono.id == abono_id)
+    )
+    abono = result.scalar_one_or_none()
+    if abono is None:
+        raise HTTPException(status_code=404, detail="Abono no encontrado")
+    if not can_view_prestamo(current_empleado, abono.prestamo):
+        raise HTTPException(status_code=403, detail="No tienes acceso a este abono")
+    return abono
 
 
 async def _prestamo_beneficiary_options(
@@ -15179,7 +15236,10 @@ async def prestamos_list(
         )
         .order_by(SolicitudPrestamo.creado_en.desc())
     )
-    if not can_view_all_prestamos(current_empleado):
+    if (
+        not can_view_all_prestamos(current_empleado)
+        and not can_approve_prestamo_abono(current_empleado)
+    ):
         query = query.where(
             SolicitudPrestamo.solicitante_empleado_id == current_empleado.id
         )
@@ -15429,6 +15489,12 @@ async def prestamo_detail(
         and prestamo.estado
         in {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
     )
+    can_register_abono = (
+        is_requester
+        and prestamo.estado == PRESTAMO_STATUS_PAGADA
+        and Decimal(str(prestamo.saldo_pendiente or 0)) > Decimal("0.00")
+    )
+    can_review_abonos = can_approve_prestamo_abono(current_empleado)
     if is_requester and prestamo.estado == PRESTAMO_STATUS_BORRADOR:
         actions.append(
             f"""
@@ -15495,16 +15561,57 @@ async def prestamo_detail(
             </button>
         </form>
         """
+    abono_form_html = ""
+    if can_register_abono:
+        abono_form_html = f"""
+        <form method="POST"
+              action="/prestamos/{prestamo.id}/abonos"
+              enctype="multipart/form-data"
+              style="margin-top:16px;">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+                <div>
+                    <label>Monto del abono</label>
+                    <input type="number" name="monto_reportado" min="0.01" step="0.01" required>
+                </div>
+                <div>
+                    <label>Comprobante de transferencia o depósito</label>
+                    <input type="file" name="comprobante_abono" required>
+                </div>
+            </div>
+            <label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;">
+                <input type="checkbox" name="excess_confirmed" value="1">
+                <span>Confirmo que si el abono excede el saldo, el préstamo se queda en cero y el excedente queda como ajuste manual contable.</span>
+            </label>
+            <label style="margin-top:12px;">Comentario</label>
+            <textarea name="comentario" rows="2"></textarea>
+            <button type="submit" class="button primary" style="margin-top:10px;">Registrar abono</button>
+        </form>
+        """
     abonos_html = "".join(
-        f"""
+        (lambda actions_html: f"""
         <tr>
             <td>{escape(abono.creado_en.strftime('%Y-%m-%d') if abono.creado_en else '—')}</td>
             <td style="text-align:right;">{format_currency(abono.monto_reportado or 0, prestamo.currency or "MXN")}</td>
             <td style="text-align:right;">{format_currency(abono.monto_aplicado or 0, prestamo.currency or "MXN")}</td>
             <td style="text-align:right;">{format_currency(abono.monto_excedente or 0, prestamo.currency or "MXN")}</td>
             <td>{_prestamo_status_badge(abono.estado)}</td>
+            <td><div style="display:flex;gap:8px;flex-wrap:wrap;">{actions_html}</div></td>
         </tr>
-        """
+        """)(
+            f"""
+            <form method="POST" action="/prestamos/abonos/{abono.id}/aprobar" style="display:inline;">
+                <button type="submit" class="button primary">Aprobar</button>
+            </form>
+            <form method="POST" action="/prestamos/abonos/{abono.id}/rechazar"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Rechazar este abono?');">
+                <button type="submit" class="button danger">Rechazar</button>
+            </form>
+            """
+            if can_review_abonos
+            and abono.estado == PRESTAMO_ABONO_STATUS_ENVIADO
+            else "—"
+        )
         for abono in sorted(
             list(getattr(prestamo, "abonos", []) or []),
             key=lambda item: item.creado_en or datetime.min,
@@ -15583,11 +15690,18 @@ async def prestamo_detail(
                 {authorization_forms_html}
             </section>
             <section class="surface">
-                <div class="section-head"><div><div class="eyebrow">Abonos</div><h2>Movimientos registrados</h2></div></div>
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Abonos</div>
+                        <h2>Movimientos registrados</h2>
+                        <div class="section-note">Saldo actual: {format_currency(prestamo.saldo_pendiente or 0, prestamo.currency or "MXN")}</div>
+                    </div>
+                </div>
+                {abono_form_html}
                 <div class="table-shell">
                     <table>
-                        <thead><tr><th>Fecha</th><th>Monto reportado</th><th>Aplicado</th><th>Excedente</th><th>Estado</th></tr></thead>
-                        <tbody>{abonos_html if abonos_html else '<tr><td colspan="5" style="text-align:center;padding:18px;">Sin abonos registrados.</td></tr>'}</tbody>
+                        <thead><tr><th>Fecha</th><th>Monto reportado</th><th>Aplicado</th><th>Excedente</th><th>Estado</th><th>Acciones</th></tr></thead>
+                        <tbody>{abonos_html if abonos_html else '<tr><td colspan="6" style="text-align:center;padding:18px;">Sin abonos registrados.</td></tr>'}</tbody>
                     </table>
                 </div>
             </section>
@@ -15743,6 +15857,114 @@ async def prestamo_upload_payment_proof_route(
     return RedirectResponse(
         url=f"/prestamos/{prestamo_id}?success_msg="
         + quote("Comprobante cargado y préstamo marcado como pagado."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/abonos")
+async def prestamo_register_abono_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    monto_reportado: str = Form(...),
+    excess_confirmed: Optional[str] = Form(None),
+    comentario: Optional[str] = Form(None),
+    comprobante_abono: UploadFile = File(...),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        filename, storage_key = await _save_prestamo_abono_proof_upload(
+            prestamo,
+            comprobante_abono,
+        )
+        abono = register_prestamo_abono(
+            prestamo,
+            current_empleado,
+            monto_reportado=monto_reportado,
+            comprobante_filename=filename,
+            comprobante_storage_key=storage_key,
+            excess_confirmed=bool(excess_confirmed),
+            comentario=comentario,
+        )
+        session.add(abono)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error registering loan repayment",
+            extra={
+                "prestamo_id": str(prestamo_id),
+                "actor_id": str(current_empleado.id),
+            },
+        )
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg="
+            + quote("No se pudo registrar el abono."),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono registrado y pendiente de aprobación contable."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/abonos/{abono_id}/aprobar")
+async def prestamo_approve_abono_route(
+    abono_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    abono = await _load_prestamo_abono_for_user(session, abono_id, current_empleado)
+    prestamo_id = abono.prestamo_id
+    try:
+        approve_prestamo_abono(abono, current_empleado)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono aprobado y saldo actualizado."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/abonos/{abono_id}/rechazar")
+async def prestamo_reject_abono_route(
+    abono_id: UUIDType,
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    abono = await _load_prestamo_abono_for_user(session, abono_id, current_empleado)
+    prestamo_id = abono.prestamo_id
+    form = await request.form()
+    try:
+        reject_prestamo_abono(
+            abono,
+            current_empleado,
+            comentario=str(form.get("comentario") or "").strip() or None,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Abono rechazado."),
         status_code=303,
     )
 

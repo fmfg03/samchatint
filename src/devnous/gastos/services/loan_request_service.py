@@ -50,6 +50,9 @@ PRESTAMO_CANCELABLE_STATUSES = frozenset(
 PRESTAMO_PAYMENT_PROOF_STATUSES = frozenset(
     {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
 )
+PRESTAMO_ABONO_REGISTRABLE_STATUSES = frozenset(
+    {PRESTAMO_STATUS_PAGADA}
+)
 
 PRESTAMO_SANTANDER_CUENTA_CODIGO = "1120-001-001"
 PRESTAMO_SANTANDER_CUENTA_NOMBRE = "BANCO SANTANDER 65506206424"
@@ -245,6 +248,8 @@ def can_view_prestamo(empleado: Any, prestamo: SolicitudPrestamo) -> bool:
     if empleado is None or getattr(empleado, "activo", True) is False:
         return False
     if can_view_all_prestamos(empleado):
+        return True
+    if can_approve_prestamo_abono(empleado):
         return True
     return _employee_id(empleado) == str(
         getattr(prestamo, "solicitante_empleado_id", "") or ""
@@ -637,3 +642,129 @@ def build_abono_from_application(
         ),
         comentario=str(comentario or "").strip() or None,
     )
+
+
+def register_prestamo_abono(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    monto_reportado: Any,
+    comprobante_filename: str,
+    comprobante_storage_key: str,
+    excess_confirmed: bool = False,
+    comentario: Optional[str] = None,
+) -> PrestamoAbono:
+    if _employee_id(actor) != str(prestamo.solicitante_empleado_id).lower():
+        raise PrestamoWorkflowPermissionError(
+            "not_requester",
+            "Solo el solicitante puede registrar abonos al prestamo.",
+        )
+    if prestamo.estado not in PRESTAMO_ABONO_REGISTRABLE_STATUSES:
+        raise PrestamoWorkflowValidationError(
+            "not_repayable",
+            "Solo se pueden registrar abonos cuando el prestamo esta pagado.",
+        )
+    filename = str(comprobante_filename or "").strip()
+    storage_key = str(comprobante_storage_key or "").strip()
+    if not filename or not storage_key:
+        raise PrestamoWorkflowValidationError(
+            "missing_abono_proof",
+            "Selecciona el comprobante del abono.",
+        )
+    application = compute_abono_application(
+        saldo_pendiente=prestamo.saldo_pendiente,
+        monto_reportado=monto_reportado,
+        excess_confirmed=excess_confirmed,
+    )
+    if application.requires_excess_confirmation:
+        raise PrestamoWorkflowValidationError(
+            "excess_confirmation_required",
+            "El abono excede el saldo; confirma que el excedente sera ajuste "
+            "manual contable.",
+        )
+    return build_abono_from_application(
+        prestamo,
+        actor,
+        application,
+        comprobante_filename=filename,
+        comprobante_storage_key=storage_key,
+        comentario=comentario,
+    )
+
+
+def approve_prestamo_abono(
+    abono: PrestamoAbono,
+    actor: Any,
+    *,
+    now: Optional[datetime] = None,
+) -> PrestamoAbono:
+    if not can_approve_prestamo_abono(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_abono_approver",
+            "Solo Contabilidad puede aprobar abonos al prestamo.",
+        )
+    if abono.estado != PRESTAMO_ABONO_STATUS_ENVIADO:
+        raise PrestamoWorkflowValidationError(
+            "abono_not_pending",
+            "Solo se pueden aprobar abonos enviados.",
+        )
+    prestamo = getattr(abono, "prestamo", None)
+    if prestamo is None:
+        raise PrestamoWorkflowValidationError(
+            "missing_loan",
+            "El abono no tiene prestamo asociado.",
+        )
+    application = compute_abono_application(
+        saldo_pendiente=prestamo.saldo_pendiente,
+        monto_reportado=abono.monto_reportado,
+        excess_confirmed=bool(abono.excedente_confirmado),
+    )
+    if application.requires_excess_confirmation:
+        raise PrestamoWorkflowValidationError(
+            "excess_confirmation_required",
+            "El abono excede el saldo actual y requiere confirmacion del "
+            "solicitante.",
+        )
+    timestamp = now or datetime.now(timezone.utc)
+    abono.monto_aplicado = application.monto_aplicado
+    abono.monto_excedente = application.monto_excedente
+    abono.saldo_antes = application.saldo_antes
+    abono.saldo_despues = application.saldo_despues
+    abono.estado = PRESTAMO_ABONO_STATUS_APROBADO
+    abono.aprobado_por_empleado_id = getattr(actor, "id", None)
+    abono.aprobado_en = timestamp
+    prestamo.saldo_pendiente = application.saldo_despues
+    metadata = dict(getattr(abono, "metadata_json", None) or {})
+    metadata["prepoliza_status"] = "pending"
+    metadata["prepoliza_required"] = True
+    metadata["prepoliza_kind"] = "prestamo_abono"
+    abono.metadata_json = metadata
+    if application.saldo_despues == Decimal("0.00"):
+        prestamo.estado = PRESTAMO_STATUS_LIQUIDADA
+        prestamo.liquidado_en = timestamp
+    return abono
+
+
+def reject_prestamo_abono(
+    abono: PrestamoAbono,
+    actor: Any,
+    *,
+    comentario: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> PrestamoAbono:
+    if not can_approve_prestamo_abono(actor):
+        raise PrestamoWorkflowPermissionError(
+            "not_abono_approver",
+            "Solo Contabilidad puede rechazar abonos al prestamo.",
+        )
+    if abono.estado != PRESTAMO_ABONO_STATUS_ENVIADO:
+        raise PrestamoWorkflowValidationError(
+            "abono_not_pending",
+            "Solo se pueden rechazar abonos enviados.",
+        )
+    timestamp = now or datetime.now(timezone.utc)
+    abono.estado = PRESTAMO_ABONO_STATUS_RECHAZADO
+    abono.aprobado_por_empleado_id = getattr(actor, "id", None)
+    abono.rechazado_en = timestamp
+    _append_workflow_comment(abono, "rejection_comment", comentario)
+    return abono

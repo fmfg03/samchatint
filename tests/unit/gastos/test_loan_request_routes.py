@@ -88,8 +88,14 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     assert 'action="/prestamos/{prestamo.id}/aprobar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/rechazar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/comprobante-pago"' in route_block
+    assert 'action="/prestamos/{prestamo.id}/abonos"' in route_block
+    assert 'name="comprobante_abono"' in route_block
+    assert "excess_confirmed" in route_block
+    assert 'action="/prestamos/abonos/{abono.id}/aprobar"' in route_block
+    assert 'action="/prestamos/abonos/{abono.id}/rechazar"' in route_block
     assert 'name="comprobante_pago"' in route_block
     assert "can_confirm_payment_run_payment(current_empleado)" in route_block
+    assert "can_approve_prestamo_abono(current_empleado)" in route_block
     assert "can_approve_prestamo(current_empleado)" in route_block
     assert "lista para programación de pago" in route_block
     assert "marcado como pagado" in route_block
@@ -118,6 +124,20 @@ def test_prestamo_payment_proof_route_saves_upload_and_marks_paid() -> None:
 
     assert "_save_prestamo_payment_proof_upload" in route_block
     assert "register_prestamo_payment_proof(" in route_block
+    assert "await session.commit()" in route_block
+    assert "await session.rollback()" in route_block
+
+
+def test_prestamo_abono_routes_register_and_review_repayments() -> None:
+    route_block = _block(
+        '@router.post("/prestamos/{prestamo_id}/abonos")',
+        '@router.get("/gastos-terceros", response_class=HTMLResponse)',
+    )
+
+    assert "_save_prestamo_abono_proof_upload" in route_block
+    assert "register_prestamo_abono(" in route_block
+    assert "approve_prestamo_abono(" in route_block
+    assert "reject_prestamo_abono(" in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block
 

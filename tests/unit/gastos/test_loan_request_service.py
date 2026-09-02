@@ -6,6 +6,9 @@ import pytest
 
 from devnous.gastos import schema_guard
 from devnous.gastos.services.loan_request_service import (
+    PRESTAMO_ABONO_STATUS_APROBADO,
+    PRESTAMO_ABONO_STATUS_ENVIADO,
+    PRESTAMO_ABONO_STATUS_RECHAZADO,
     PRESTAMO_BENEFICIARIO_EMPLEADO,
     PRESTAMO_BENEFICIARIO_PROPIO,
     PRESTAMO_SANTANDER_CUENTA_CODIGO,
@@ -15,10 +18,12 @@ from devnous.gastos.services.loan_request_service import (
     PRESTAMO_STATUS_EN_PROCESO_PAGO,
     PRESTAMO_STATUS_ENVIADA,
     PRESTAMO_STATUS_PAGADA,
+    PRESTAMO_STATUS_LIQUIDADA,
     PRESTAMO_STATUS_RECHAZADA,
     PrestamoCreatePayload,
     PrestamoWorkflowPermissionError,
     PrestamoWorkflowValidationError,
+    approve_prestamo_abono,
     approve_prestamo,
     build_abono_from_application,
     build_prestamo_from_payload,
@@ -30,6 +35,8 @@ from devnous.gastos.services.loan_request_service import (
     cancel_prestamo,
     compute_abono_application,
     reject_prestamo,
+    reject_prestamo_abono,
+    register_prestamo_abono,
     register_prestamo_payment_proof,
     submit_prestamo,
 )
@@ -361,6 +368,105 @@ def test_abono_excess_requires_confirmation_then_manual_adjustment() -> None:
     assert abono.monto_excedente == Decimal("20.00")
     assert abono.saldo_despues == Decimal("0.00")
     assert abono.excedente_confirmado is True
+
+
+def test_requester_registers_repayment_with_required_confirmation() -> None:
+    requester_id = uuid4()
+    requester = SimpleNamespace(id=requester_id)
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    prestamo.id = uuid4()
+    prestamo.estado = PRESTAMO_STATUS_PAGADA
+    prestamo.saldo_pendiente = Decimal("100.00")
+
+    with pytest.raises(PrestamoWorkflowValidationError) as needs_confirm:
+        register_prestamo_abono(
+            prestamo,
+            requester,
+            monto_reportado="120.00",
+            comprobante_filename="abono.pdf",
+            comprobante_storage_key="prestamos/x/abono.pdf",
+        )
+
+    abono = register_prestamo_abono(
+        prestamo,
+        requester,
+        monto_reportado="120.00",
+        comprobante_filename="abono.pdf",
+        comprobante_storage_key="prestamos/x/abono.pdf",
+        excess_confirmed=True,
+        comentario="Pago final",
+    )
+
+    assert needs_confirm.value.code == "excess_confirmation_required"
+    assert abono.estado == PRESTAMO_ABONO_STATUS_ENVIADO
+    assert abono.monto_aplicado == Decimal("100.00")
+    assert abono.monto_excedente == Decimal("20.00")
+    assert abono.excedente_confirmado is True
+    assert prestamo.saldo_pendiente == Decimal("100.00")
+
+
+def test_accounting_approves_repayment_and_liquidates_zero_balance() -> None:
+    requester_id = uuid4()
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    prestamo.id = uuid4()
+    prestamo.estado = PRESTAMO_STATUS_PAGADA
+    prestamo.saldo_pendiente = Decimal("100.00")
+    abono = register_prestamo_abono(
+        prestamo,
+        SimpleNamespace(id=requester_id),
+        monto_reportado="100.00",
+        comprobante_filename="abono.pdf",
+        comprobante_storage_key="prestamos/x/abono.pdf",
+    )
+    abono.prestamo = prestamo
+    accountant = SimpleNamespace(
+        id=uuid4(),
+        nombre="Daniel Dominguez",
+        rol="contabilidad",
+    )
+
+    approve_prestamo_abono(abono, accountant)
+
+    assert abono.estado == PRESTAMO_ABONO_STATUS_APROBADO
+    assert abono.aprobado_por_empleado_id == accountant.id
+    assert abono.metadata_json["prepoliza_kind"] == "prestamo_abono"
+    assert prestamo.saldo_pendiente == Decimal("0.00")
+    assert prestamo.estado == PRESTAMO_STATUS_LIQUIDADA
+    assert prestamo.liquidado_en is not None
+
+
+def test_accounting_rejects_repayment_without_changing_balance() -> None:
+    requester_id = uuid4()
+    prestamo = build_prestamo_from_payload(
+        _payload(solicitante_empleado_id=requester_id)
+    )
+    prestamo.id = uuid4()
+    prestamo.estado = PRESTAMO_STATUS_PAGADA
+    prestamo.saldo_pendiente = Decimal("250.00")
+    abono = register_prestamo_abono(
+        prestamo,
+        SimpleNamespace(id=requester_id),
+        monto_reportado="50.00",
+        comprobante_filename="abono.pdf",
+        comprobante_storage_key="prestamos/x/abono.pdf",
+    )
+    abono.prestamo = prestamo
+    accountant = SimpleNamespace(
+        id=uuid4(),
+        nombre="Jaqueline",
+        rol="contabilidad",
+    )
+
+    reject_prestamo_abono(abono, accountant, comentario="No localizado")
+
+    assert abono.estado == PRESTAMO_ABONO_STATUS_RECHAZADO
+    assert abono.rechazado_en is not None
+    assert abono.metadata_json["rejection_comment"] == "No localizado"
+    assert prestamo.saldo_pendiente == Decimal("250.00")
 
 
 def test_schema_guard_and_migration_include_loan_tables() -> None:
