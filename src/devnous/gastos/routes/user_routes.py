@@ -252,6 +252,7 @@ from ..services.loan_request_service import (
     reject_prestamo_abono,
     register_prestamo_abono,
     register_prestamo_payment_proof,
+    schedule_prestamo_payment,
     submit_prestamo,
 )
 from ..services.loan_accounting_service import (
@@ -365,7 +366,10 @@ from ..utils.receipt_bytes import (
     resolve_media_type,
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
-from ..services.payment_run_service import can_confirm_payment_run_payment
+from ..services.payment_run_service import (
+    can_confirm_payment_run_payment,
+    can_manage_payment_run,
+)
 from .auth_routes import get_password_hash, validate_self_service_password_change
 from samchat.accounting_historical.service import (
     build_historical_accounting_comparison,
@@ -15493,6 +15497,10 @@ async def prestamo_detail(
         and prestamo.estado
         in {PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO}
     )
+    can_schedule_payment = (
+        can_manage_payment_run(current_empleado)
+        and prestamo.estado == PRESTAMO_STATUS_APROBADA
+    )
     can_register_abono = (
         is_requester
         and prestamo.estado == PRESTAMO_STATUS_PAGADA
@@ -15534,6 +15542,16 @@ async def prestamo_detail(
                   style="display:inline;"
                   onsubmit="return confirm('¿Rechazar esta solicitud de préstamo?');">
                 <button type="submit" class="button danger">Rechazar</button>
+            </form>
+            """
+        )
+    if can_schedule_payment:
+        actions.append(
+            f"""
+            <form method="POST" action="/prestamos/{prestamo.id}/programar-pago"
+                  style="display:inline;"
+                  onsubmit="return confirm('¿Pasar este préstamo a proceso de pago?');">
+                <button type="submit" class="button primary">Pasar a pago</button>
             </form>
             """
         )
@@ -15814,6 +15832,29 @@ async def prestamo_reject_route(
     return RedirectResponse(
         url=f"/prestamos/{prestamo_id}?success_msg="
         + quote("Solicitud rechazada."),
+        status_code=303,
+    )
+
+
+@router.post("/prestamos/{prestamo_id}/programar-pago")
+async def prestamo_schedule_payment_route(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    prestamo = await _load_prestamo_for_user(session, prestamo_id, current_empleado)
+    try:
+        schedule_prestamo_payment(prestamo, current_empleado)
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=f"/prestamos/{prestamo_id}?error_msg=" + quote(exc.message),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=f"/prestamos/{prestamo_id}?success_msg="
+        + quote("Préstamo enviado a proceso de pago."),
         status_code=303,
     )
 

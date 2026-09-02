@@ -87,6 +87,8 @@ def test_prestamo_detail_exposes_send_cancel_and_abonos_sections() -> None:
     assert 'action="/prestamos/{prestamo.id}/cancelar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/aprobar"' in route_block
     assert 'action="/prestamos/{prestamo.id}/rechazar"' in route_block
+    assert 'action="/prestamos/{prestamo.id}/programar-pago"' in route_block
+    assert "can_manage_payment_run(current_empleado)" in route_block
     assert 'action="/prestamos/{prestamo.id}/comprobante-pago"' in route_block
     assert 'action="/prestamos/{prestamo.id}/abonos"' in route_block
     assert 'name="comprobante_abono"' in route_block
@@ -112,6 +114,17 @@ def test_prestamo_approval_routes_commit_or_rollback_via_service() -> None:
     assert "approve_prestamo(" in route_block
     assert "reject_prestamo(" in route_block
     assert "comentario" in route_block
+    assert "await session.commit()" in route_block
+    assert "await session.rollback()" in route_block
+
+
+def test_prestamo_schedule_payment_route_commits_or_rolls_back() -> None:
+    route_block = _block(
+        '@router.post("/prestamos/{prestamo_id}/programar-pago")',
+        '@router.post("/prestamos/{prestamo_id}/comprobante-pago")',
+    )
+
+    assert "schedule_prestamo_payment(" in route_block
     assert "await session.commit()" in route_block
     assert "await session.rollback()" in route_block
 

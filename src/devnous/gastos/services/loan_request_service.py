@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from devnous.gastos.models import PrestamoAbono, SolicitudPrestamo
 from devnous.gastos.services.access_control_service import is_superadmin_role
 from devnous.gastos.services.payment_run_service import (
+    can_manage_payment_run,
     can_confirm_payment_run_payment,
 )
 
@@ -536,6 +537,28 @@ def reject_prestamo(
     prestamo.rechazado_por_empleado_id = getattr(actor, "id", None)
     prestamo.rechazado_en = timestamp
     _append_workflow_comment(prestamo, "rejection_comment", comentario)
+    return prestamo
+
+
+def schedule_prestamo_payment(
+    prestamo: SolicitudPrestamo,
+    actor: Any,
+    *,
+    allowed_ids: Optional[Iterable[Any]] = None,
+    now: Optional[datetime] = None,
+) -> SolicitudPrestamo:
+    if not can_manage_payment_run(actor, allowed_ids=allowed_ids):
+        raise PrestamoWorkflowPermissionError(
+            "not_payment_run_manager",
+            "Solo el responsable de cortes puede programar el pago.",
+        )
+    if prestamo.estado != PRESTAMO_STATUS_APROBADA:
+        raise PrestamoWorkflowValidationError(
+            "not_schedulable",
+            "Solo se pueden programar prestamos aprobados.",
+        )
+    prestamo.estado = PRESTAMO_STATUS_EN_PROCESO_PAGO
+    prestamo.en_proceso_pago_en = now or datetime.now(timezone.utc)
     return prestamo
 
 

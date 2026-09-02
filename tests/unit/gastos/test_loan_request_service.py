@@ -38,6 +38,7 @@ from devnous.gastos.services.loan_request_service import (
     reject_prestamo_abono,
     register_prestamo_abono,
     register_prestamo_payment_proof,
+    schedule_prestamo_payment,
     submit_prestamo,
 )
 
@@ -224,6 +225,26 @@ def test_accounting_can_add_payment_proof_and_mark_loan_paid() -> None:
     assert prestamo.comprobante_pago_storage_key == "prestamos/x/pago.pdf"
     assert prestamo.metadata_json["prepoliza_required"] is True
     assert prestamo.metadata_json["prepoliza_status"] == "pending"
+
+
+def test_payment_run_manager_schedules_approved_loan_for_payment() -> None:
+    manager_id = uuid4()
+    prestamo = build_prestamo_from_payload(_payload())
+    prestamo.estado = PRESTAMO_STATUS_APROBADA
+    manager = SimpleNamespace(
+        id=manager_id,
+        rol="finanzas",
+        permissions=set(),
+    )
+
+    schedule_prestamo_payment(
+        prestamo,
+        manager,
+        allowed_ids={manager_id},
+    )
+
+    assert prestamo.estado == PRESTAMO_STATUS_EN_PROCESO_PAGO
+    assert prestamo.en_proceso_pago_en is not None
 
 
 def test_payment_proof_requires_accounting_status_and_file_reference() -> None:

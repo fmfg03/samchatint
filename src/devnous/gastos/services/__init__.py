@@ -105,6 +105,7 @@ from .loan_request_service import (
     reject_prestamo_abono,
     register_prestamo_abono,
     register_prestamo_payment_proof,
+    schedule_prestamo_payment,
     submit_prestamo,
 )
 from .loan_accounting_service import (
@@ -204,6 +205,7 @@ __all__ = [
     'reject_prestamo_abono',
     'register_prestamo_abono',
     'register_prestamo_payment_proof',
+    'schedule_prestamo_payment',
     'ensure_prestamo_abono_posting',
     'ensure_prestamo_payment_posting',
     'resolve_prestamo_debtor_account',
