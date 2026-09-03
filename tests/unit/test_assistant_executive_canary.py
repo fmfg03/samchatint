@@ -31,6 +31,46 @@ def test_fixture_canary_passes_all_current_executive_cases():
     assert all(
         row["authority_posture"] == "read_only" for row in result["cases"]
     )
+    assert result["routing_contracts"]["ok"] is True
+    assert result["routing_contracts"]["summary"]["total"] >= 12
+    assert result["routing_contracts"]["summary"]["failed"] == 0
+
+
+def test_fixture_canary_flags_wrong_routing_contract(tmp_path):
+    overrides = tmp_path / "responses.jsonl"
+    overrides.write_text(
+        json.dumps(
+            {
+                "case_id": "ROUTE-FIN-CASHFLOW-STATEMENT-001",
+                "assistant_message": "Cashflow Planning read-only. No ejecute cambios.",
+                "tool_trace": [
+                    {
+                        "tool": "assistant_finance_read",
+                        "result": {
+                            "intent": "cashflow.summary",
+                            "provider_called": False,
+                            "writes_attempted": False,
+                        },
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = MODULE.run_fixture_canary(fixture_responses=str(overrides))
+
+    failed = [
+        row
+        for row in result["routing_contracts"]["cases"]
+        if row["case_id"] == "ROUTE-FIN-CASHFLOW-STATEMENT-001"
+    ][0]
+    assert result["ok"] is False
+    assert result["routing_contracts"]["ok"] is False
+    assert failed["ok"] is False
+    assert "missing_intent:cashflow.statement" in failed["failures"]
+    assert "missing_term:Flujo de Efectivo" in failed["failures"]
 
 
 def test_fixture_canary_flags_wrong_tool_from_override(tmp_path):

@@ -31,6 +31,11 @@ from samchat.assistant.executive_regression_suite import (  # noqa: E402
     evaluate_executive_regression_case,
     executive_regression_cases,
 )
+from samchat.assistant.routing_contracts import (  # noqa: E402
+    AssistantRoutingContractCase,
+    assistant_routing_contract_cases,
+    evaluate_routing_contract_case,
+)
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 SCHEMA_VERSION = "samchat.assistant_executive_canary.v1"
@@ -306,6 +311,32 @@ def _fixture_response_for_case(
     }
 
 
+def _fixture_response_for_routing_case(
+    case: AssistantRoutingContractCase,
+) -> dict[str, Any]:
+    message_terms = list(case.required_terms) or ["Ruta read-only"]
+    message = ". ".join(message_terms) + ". No ejecute cambios."
+    result: dict[str, Any] = {
+        "status": "fixture",
+        "case_id": case.case_id,
+        "intent": case.expected_intent,
+        "read_only": True,
+        "provider_called": False,
+        "writes_attempted": False,
+    }
+    if case.must_be_exportable:
+        result["payload"] = {
+            "report_type": case.expected_intent or "routing_contract",
+            "rows": [{"fixture": True}],
+        }
+    return {
+        "assistant_message": message,
+        "tool_trace": [{"tool": case.expected_tool, "result": result}],
+        "provider": "fixture",
+        "model": "deterministic",
+    }
+
+
 def _load_fixture_overrides(path: str | None) -> dict[str, dict[str, Any]]:
     if not path:
         return {}
@@ -380,6 +411,58 @@ def _evaluate_case_payload(
     }
 
 
+def _evaluate_routing_case_payload(
+    *,
+    case: AssistantRoutingContractCase,
+    payload: Mapping[str, Any],
+) -> dict[str, Any]:
+    assistant_message = str(payload.get("assistant_message") or "")
+    tool_trace = (
+        payload.get("tool_trace")
+        if isinstance(payload.get("tool_trace"), list)
+        else []
+    )
+    verdict = evaluate_routing_contract_case(
+        case=case,
+        assistant_message=assistant_message,
+        tool_trace=tool_trace,
+    )
+    return {
+        "case_id": case.case_id,
+        "prompt": case.prompt,
+        "ok": verdict.ok,
+        "failures": list(verdict.failures),
+        "expected_tool": case.expected_tool,
+        "expected_intent": case.expected_intent,
+        "must_bypass_provider": case.must_bypass_provider,
+        "must_be_read_only": case.must_be_read_only,
+        "must_be_exportable": case.must_be_exportable,
+        "diagnostics": verdict.diagnostics,
+    }
+
+
+def run_fixture_routing_contracts(
+    *, fixture_responses: str | None = None
+) -> dict[str, Any]:
+    overrides = _load_fixture_overrides(fixture_responses)
+    rows: list[dict[str, Any]] = []
+    for case in assistant_routing_contract_cases():
+        payload = dict(_fixture_response_for_routing_case(case))
+        payload.update(overrides.get(case.case_id, {}))
+        rows.append(_evaluate_routing_case_payload(case=case, payload=payload))
+
+    failed = [row for row in rows if not row["ok"]]
+    return {
+        "ok": not failed,
+        "summary": {
+            "total": len(rows),
+            "passed": len(rows) - len(failed),
+            "failed": len(failed),
+        },
+        "cases": rows,
+    }
+
+
 def run_fixture_canary(
     *, fixture_responses: str | None = None
 ) -> dict[str, Any]:
@@ -397,7 +480,15 @@ def run_fixture_canary(
                 timeout=bool(payload.get("timeout")),
             )
         )
-    return _result_payload(mode="fixture", rows=rows, base_url=None)
+    routing_contracts = run_fixture_routing_contracts(
+        fixture_responses=fixture_responses
+    )
+    return _result_payload(
+        mode="fixture",
+        rows=rows,
+        base_url=None,
+        routing_contracts=routing_contracts,
+    )
 
 
 def run_live_canary(
@@ -501,15 +592,20 @@ def run_live_canary(
 
 
 def _result_payload(
-    *, mode: str, rows: list[dict[str, Any]], base_url: str | None
+    *,
+    mode: str,
+    rows: list[dict[str, Any]],
+    base_url: str | None,
+    routing_contracts: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     failed = [row for row in rows if not row["ok"]]
     timeouts = [row for row in rows if row["timeout"]]
+    routing_ok = True if routing_contracts is None else bool(routing_contracts.get("ok"))
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": mode,
-        "ok": not failed,
-        "status": "pass" if not failed else "failed",
+        "ok": not failed and routing_ok,
+        "status": "pass" if not failed and routing_ok else "failed",
         "base_url": base_url,
         "summary": {
             "total": len(rows),
@@ -518,6 +614,7 @@ def _result_payload(
             "timeouts": len(timeouts),
         },
         "cases": rows,
+        **({"routing_contracts": routing_contracts} if routing_contracts is not None else {}),
     }
 
 
