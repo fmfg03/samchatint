@@ -177,6 +177,9 @@ from ..services.documento_workflow_service import (
     promote_solicitudes_ready_for_payment,
     transition_documento_workflow,
 )
+from ..services.reimbursement_payment_run_service import (
+    ensure_approved_informe_reimbursement_for_payment_run,
+)
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 from .admin_budget_ui import render_cfdi_income_bridge_panel
 from ..services.cfdi_income_bridge_service import (
@@ -31333,13 +31336,23 @@ async def aprobar_documento(
             comentario=comentario,
             request_context=audit_context_from_request(request),
         )
-        reembolso_created, reembolso_warning = (
-            await _ensure_reembolso_solicitud_for_approved_informe(
-                session,
-                informe_doc=workflow_result.documento,
-                request=request,
+        try:
+            reembolso_created, reembolso_warning = (
+                await _ensure_reembolso_solicitud_for_approved_informe(
+                    session,
+                    informe_doc=workflow_result.documento,
+                    actor_id=current_empleado.id,
+                    request=request,
+                )
             )
-        )
+        except Exception:
+            logger.exception(
+                "Failed to route informe reimbursement after document approval",
+                extra={"documento_id": str(documento_id)},
+            )
+            reembolso_warning = (
+                "No se pudo generar automáticamente la solicitud de reembolso."
+            )
     except DocumentoWorkflowPermissionError as exc:
         if exc.code == "insufficient_role":
             raise HTTPException(status_code=403, detail=exc.message)
@@ -42189,136 +42202,17 @@ async def _ensure_reembolso_solicitud_for_approved_informe(
     session: AsyncSession,
     *,
     informe_doc: Documento,
+    actor_id: UUIDType,
     request: Request,
 ) -> Tuple[bool, Optional[str]]:
     """Create the missing reimbursement SOLICITUD for an approved expense report."""
-    if (
-        informe_doc.tipo != "INFORME"
-        or informe_doc.estado != "aprobado"
-        or not informe_doc.cuenta_gastos_id
-    ):
-        return False, None
-
-    cuenta_result = await session.execute(
-        select(CuentaDeGastos)
-        .where(CuentaDeGastos.id == informe_doc.cuenta_gastos_id)
-        .options(
-            undefer(CuentaDeGastos.torneo_id),
-            undefer(CuentaDeGastos.fase),
-        )
+    result = await ensure_approved_informe_reimbursement_for_payment_run(
+        session,
+        informe_doc=informe_doc,
+        actor_id=actor_id,
+        request_context=audit_context_from_request(request),
     )
-    cuenta = cuenta_result.scalar_one_or_none()
-    if cuenta is None:
-        return (
-            False,
-            "No se pudo generar la solicitud de reembolso: informe sin cuenta "
-            "vinculada.",
-        )
-
-    saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta.id)
-    saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
-    if saldo_raw >= -0.005:
-        return False, None
-
-    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
-    beneficiary_id = effective_account_beneficiary_id(cuenta)
-    existing_filters = [
-        Documento.cuenta_gastos_id == cuenta.id,
-        Documento.tipo == "SOLICITUD",
-        Documento.concepto_pago.like("Reembolso de saldo a favor%"),
-        Documento.estado.notin_(["rechazado", "cancelado"]),
-    ]
-    if provider_beneficiary_id is not None:
-        existing_filters.append(
-            Documento.beneficiario_proveedor_cliente_id == provider_beneficiary_id
-        )
-    else:
-        existing_filters.append(Documento.beneficiario_empleado_id == beneficiary_id)
-
-    existing_reembolso = await session.execute(
-        select(Documento.id).where(*existing_filters).limit(1)
-    )
-    if existing_reembolso.scalar_one_or_none() is not None:
-        return False, None
-
-    proveedor_uuid: Optional[UUIDType] = provider_beneficiary_id
-    if proveedor_uuid is None:
-        beneficiary_result = await session.execute(
-            select(Empleado).where(Empleado.id == beneficiary_id)
-        )
-        beneficiary_empleado = beneficiary_result.scalar_one_or_none()
-        matches = (
-            await _get_matching_bank_accounts_for_empleado(
-                session=session,
-                empleado=beneficiary_empleado,
-            )
-            if beneficiary_empleado is not None
-            else []
-        )
-        if len(matches) != 1:
-            return (
-                False,
-                "No se generó la solicitud de reembolso porque el beneficiario "
-                "no tiene una única cuenta bancaria activa seleccionable.",
-            )
-        proveedor_uuid = matches[0][0].id
-
-    try:
-        payload = build_solicitud_personal_payload(
-            cuenta_id=cuenta.id,
-            empleado_id=cuenta.empleado_id,
-            monto_solicitado=abs(saldo_raw),
-            concepto_pago=reimbursement_concept_from_cuenta(cuenta),
-            proveedor_cliente_id=str(proveedor_uuid),
-            budget_concept_id=(
-                str(informe_doc.budget_concept_id)
-                if informe_doc.budget_concept_id
-                else None
-            ),
-            allow_closed_cuenta=True,
-        )
-        new_solicitud = await create_solicitud_personal_document(session, payload)
-        await transition_documento_workflow(
-            session,
-            documento_id=new_solicitud.id,
-            actor_id=cuenta.empleado_id,
-            action="send",
-            comentario=(
-                "Generada al aprobar el informe "
-                "(saldo a favor del empleado)."
-            ),
-            request_context=audit_context_from_request(request),
-        )
-    except SolicitudValidationError as exc:
-        await session.rollback()
-        return False, f"No se pudo generar la solicitud de reembolso: {str(exc)}"
-    except (DocumentoWorkflowPermissionError, DocumentoWorkflowValidationError) as exc:
-        await session.rollback()
-        return (
-            False,
-            "La solicitud de reembolso se creó pero no pudo enviarse: "
-            f"{exc.message}",
-        )
-    except Exception:
-        await session.rollback()
-        logger.exception(
-            "Failed to auto-create reimbursement solicitud on informe approval",
-            extra={
-                "cuenta_id": str(cuenta.id),
-                "documento_id": str(informe_doc.id),
-            },
-        )
-        return (
-            False,
-            "No se pudo generar automáticamente la solicitud de reembolso.",
-        )
-
-    logger.info(
-        "Auto-created reimbursement solicitud %s for approved informe %s",
-        new_solicitud.id,
-        informe_doc.id,
-    )
-    return True, None
+    return result.changed, result.warning
 
 
 @router.get("/informes-de-gastos/{cuenta_id}/saldar", response_class=HTMLResponse)
