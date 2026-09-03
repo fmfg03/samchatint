@@ -423,6 +423,43 @@ def test_render_budget_executive_dashboard_rolls_up_monthly_expense_view():
     assert 'value="monthly" selected' in html
 
 
+def test_render_budget_executive_dashboard_counts_unassigned_actuals_once():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
+
+    html = render_budget_executive_dashboard(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Balones",
+                "budget_concept_id": "concept-1",
+            },
+            {
+                "id": "line-2",
+                "concept_name": "Uniformes",
+                "budget_concept_id": "concept-2",
+            },
+        ],
+        plan_map={
+            "line-1": {1: {"budget_expense_amount": 100.0}},
+            "line-2": {1: {"budget_expense_amount": 100.0}},
+        },
+        actuals_map={
+            "__unassigned__": {
+                1: {"real_expense_cash": 50.0, "committed_unpaid": 20.0}
+            }
+        },
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="expenses",
+        budget_period="weekly",
+    )
+
+    assert "Ejercido real</span><strong>$50.00</strong>" in html
+    assert "Comprometido pendiente</span><strong>$20.00</strong>" in html
+    assert "35.0%" in html
+
+
 def test_render_budget_executive_dashboard_supports_quarter_semester_annual_options():
     from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
 
@@ -580,6 +617,64 @@ def test_render_tournament_dashboard_cards_show_exceeded_state():
     assert "105.0%" in html
 
 
+def test_render_tournament_dashboard_cards_prefers_detail_rollup_for_real_spend():
+    from devnous.gastos.routes.admin_budget_ui import render_tournament_dashboard_cards
+
+    html = render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": "torneo-1",
+                "tournament_name": "Copa Prueba",
+                "comparison": {
+                    "actual_total": 250.0,
+                    "paid_total": 200.0,
+                    "committed_total": 100.0,
+                },
+            }
+        ],
+        edition_year=2026,
+        version_id="version-1",
+        tournament_rollups={
+            "torneo-1": {
+                "budget_expense_total": 1000.0,
+                "real_expense_total": 75.0,
+                "committed_pending_total": 25.0,
+            }
+        },
+    )
+
+    assert "Ejercido real" in html
+    assert "$75.00" in html
+    assert "$25.00" in html
+    assert "10.0%" in html
+
+
+def test_render_tournament_dashboard_cards_falls_back_to_snapshot_actual_total():
+    from devnous.gastos.routes.admin_budget_ui import render_tournament_dashboard_cards
+
+    html = render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": "torneo-1",
+                "tournament_name": "Copa Prueba",
+                "comparison": {
+                    "actual_total": 250.0,
+                    "paid_total": 200.0,
+                    "committed_total": 100.0,
+                },
+            }
+        ],
+        edition_year=2026,
+        version_id="version-1",
+        tournament_rollups={"torneo-1": {"budget_expense_total": 1000.0}},
+    )
+
+    assert "Ejercido real" in html
+    assert "$250.00" in html
+    assert "$100.00" in html
+    assert "35.0%" in html
+
+
 def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
 
@@ -621,6 +716,87 @@ def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     assert 'data-budget-week-kind="expense"' in html
     assert "Semana 52" in html
     assert 'name="month_52_expense"' in html
+
+
+def test_render_budget_partida_matrix_does_not_fallback_to_unassigned_for_concept():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Hospedaje",
+                "budget_amount": 1000,
+                "phase": "Estatal",
+                "budget_concept_id": "concept-1",
+            }
+        ],
+        plan_map={"line-1": {1: {"budget_expense_amount": 100.0}}},
+        actuals_map={
+            "__unassigned__": {
+                1: {"real_expense_cash": 50.0, "committed_unpaid": 20.0}
+            }
+        },
+        version_id="version-1",
+        tournament_key="copatest",
+        can_edit=True,
+        matrix_mode="expenses",
+    )
+
+    assert "Sin partida asignada" in html
+    assert "Gasto real: <strong>$0.00</strong>" in html
+    assert html.count("$50.00") == 2
+    assert html.count("$20.00") == 2
+
+
+def test_render_budget_partida_matrix_monthly_view_is_aggregated_readonly():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Hospedaje",
+                "budget_amount": 1000,
+                "phase": "Estatal",
+                "budget_concept_id": "concept-1",
+            }
+        ],
+        plan_map={"line-1": {1: {"budget_expense_amount": 100.0}}},
+        actuals_map={
+            "concept-1": {
+                1: {"real_expense_cash": 25.0, "committed_unpaid": 10.0}
+            }
+        },
+        version_id="version-1",
+        tournament_key="copatest",
+        can_edit=True,
+        matrix_mode="expenses",
+        budget_period="monthly",
+    )
+
+    assert "Vista agregada por periodo" in html
+    assert "Enero 2026" in html
+    assert "Semana 52" not in html
+    assert 'name="month_52_expense"' not in html
+    assert "Distribuir total" not in html
+
+
+def test_budget_detail_route_passes_period_to_partida_matrix():
+    source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
+    start = source.index("gastos_matrix_html = render_budget_partida_matrix(")
+    end = source.index("active_visible_count = (", start)
+    block = source[start:end]
+
+    assert block.count("budget_period=budget_period") == 2
+
+
+def test_budget_dashboard_route_summarizes_actuals_for_cards():
+    source = Path("src/devnous/gastos/routes/admin_budget_routes.py").read_text()
+
+    assert "summarize_budget_actuals_for_lines" in source
+    assert '"real_income_total": round(real_income, 2)' in source
+    assert 'line_direction="expense"' in source
 
 
 def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
