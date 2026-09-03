@@ -1436,14 +1436,42 @@ _FINANCE_TEMPLATE_MONTHS = {
 }
 
 
-def _finance_template_report_intent(raw_message: str) -> Optional[str]:
+def _finance_direct_read_intent(raw_message: str) -> Optional[str]:
     normalized = normalize_request_text(raw_message)
     if any(term in normalized for term in ("presupuesto vs real", "budget vs actual")):
         return "budget.vs_actual"
     if "variacion presupuestal" in normalized or "variación presupuestal" in normalized:
         return "budget.vs_actual"
+    if "cashflow planning" in normalized or "cash flow planning" in normalized:
+        return "cashflow.summary"
     if any(term in normalized for term in ("flujo de efectivo", "cash flow")):
         return "cashflow.statement"
+    if (
+        "pre matching" in normalized
+        or "pre-matching" in normalized
+        or "prematching" in normalized
+    ) and (
+        "revisa" in normalized
+        or "revision" in normalized
+        or "revisión" in normalized
+        or any(term in normalized for term in ("cxc", "cuentas por cobrar", "cobrar"))
+    ):
+        return "ar.prematching"
+    if any(term in normalized for term in ("cuanto falta por cobrar", "cuánto falta por cobrar")):
+        return "ar.summary"
+    if "cuentas por cobrar" in normalized and any(
+        term in normalized for term in ("resumen", "saldo", "saldos", "cartera")
+    ):
+        return "ar.summary"
+    if any(
+        term in normalized
+        for term in (
+            "snapshot de presupuesto",
+            "presupuesto general",
+            "resumen de presupuesto",
+        )
+    ):
+        return "budget.snapshot"
     return None
 
 
@@ -1465,14 +1493,14 @@ def _finance_template_report_year(raw_message: str) -> int:
     return datetime.now().year
 
 
-async def _build_finance_template_report_response(
+async def _build_finance_direct_read_response(
     *,
     raw_message: str,
     conversation: Any,
     session: Any,
     maybe_append_export_prompt: MaybeAppendExportPromptFn,
 ) -> Optional[Any]:
-    intent = _finance_template_report_intent(raw_message)
+    intent = _finance_direct_read_intent(raw_message)
     if intent is None:
         return None
 
@@ -1488,7 +1516,7 @@ async def _build_finance_template_report_response(
     tool_trace = [
         {
             "assistant_finance_template_report": {
-                "stage": "deterministic_read_only_template_report",
+                "stage": "deterministic_read_only_finance_read",
                 "intent": intent,
                 "source_function": result.get("source_function"),
                 "ok": bool(result.get("ok")),
@@ -2074,6 +2102,15 @@ async def run_conversation_turn(
     if owner_entity_workspace_response is not None:
         return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
 
+    finance_direct_response = await _build_finance_direct_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_direct_response is not None:
+        return _with_work_frame_trace(finance_direct_response, work_frame)
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -2110,15 +2147,6 @@ async def run_conversation_turn(
     if owner_readiness_response is not None:
         return _with_work_frame_trace(owner_readiness_response, work_frame)
 
-
-    finance_template_response = await _build_finance_template_report_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-        maybe_append_export_prompt=maybe_append_export_prompt,
-    )
-    if finance_template_response is not None:
-        return _with_work_frame_trace(finance_template_response, work_frame)
 
     request_response = await _build_request_intelligence_response(
         raw_message=raw_message,
@@ -2399,6 +2427,15 @@ async def run_message_turn_with_pending(
     if owner_entity_workspace_response is not None:
         return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
 
+    finance_direct_response = await _build_finance_direct_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_direct_response is not None:
+        return _with_work_frame_trace(finance_direct_response, work_frame)
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -2436,15 +2473,6 @@ async def run_message_turn_with_pending(
     )
     if request_response is not None:
         return _with_work_frame_trace(request_response, work_frame)
-
-    finance_template_response = await _build_finance_template_report_response(
-        raw_message=raw_message,
-        conversation=conversation,
-        session=session,
-        maybe_append_export_prompt=maybe_append_export_prompt,
-    )
-    if finance_template_response is not None:
-        return _with_work_frame_trace(finance_template_response, work_frame)
 
     analyst_response = await _build_analyst_workbench_response(
         raw_message=raw_message,
