@@ -47,6 +47,28 @@ def test_successful_request_trace_with_rows_allows_export_prompt():
     )
 
 
+def test_template_report_payload_allows_export_prompt():
+    trace = [
+        {
+            "tool": "assistant_finance_read",
+            "result": {
+                "ok": True,
+                "payload": {
+                    "report_type": "budget_vs_actual",
+                    "title": "Presupuesto vs Real",
+                    "rows": [{"segment": "Ingresos", "variance_accumulated": 100}],
+                    "summary": {"variance_accumulated_total": 100},
+                },
+            },
+        }
+    ]
+
+    assert "¿Quieres que te lo exporte ahora?" in _maybe_append_export_prompt(
+        "Presupuesto vs Real generado.",
+        trace,
+    )
+
+
 def test_unavailable_request_trace_does_not_allow_export_prompt():
     intent = detect_request_intent("Compara gasto 2026 vs 2025 por concepto")
     route = route_request(intent)

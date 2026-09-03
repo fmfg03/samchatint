@@ -136,6 +136,48 @@ async def test_adapter_routes_cashflow_summary_to_canonical_read_model():
 
 
 @pytest.mark.asyncio
+async def test_adapter_routes_cashflow_statement_to_template_report():
+    source = AsyncMock(
+        return_value={
+            "read_only": True,
+            "period": {"year": 2026, "month": 6},
+            "monthly_buckets": [{"month": 1, "actual_cash_in": 1000}],
+        }
+    )
+    session = object()
+
+    with patch(
+        "samchat.assistant.finance_read_adapter."
+        "build_cashflow_planning_read_model",
+        new=source,
+    ):
+        result = await run_finance_read_adapter(
+            session,
+            intent="cashflow.statement",
+            budget_version_id="version-1",
+            year=2026,
+            month=6,
+            horizon_months=3,
+            limit=20,
+        )
+
+    source.assert_awaited_once_with(
+        session,
+        budget_version_id="version-1",
+        year=2026,
+        month=6,
+        horizon_months=12,
+        limit=20,
+    )
+    assert result["ok"] is True
+    assert result["read_only"] is True
+    assert result["intent"] == "cashflow.statement"
+    assert result["payload"]["report_type"] == "cashflow_statement"
+    assert result["payload"]["title"] == "Flujo de Efectivo"
+    assert "forecast_is_derived" in result["payload"]["safety_labels"]
+
+
+@pytest.mark.asyncio
 async def test_adapter_routes_budget_snapshot_to_canonical_budget_service():
     source = AsyncMock(
         return_value={
@@ -174,6 +216,55 @@ async def test_adapter_routes_budget_snapshot_to_canonical_budget_service():
     assert "budget_snapshot_read_only" in result["safety_labels"]
     assert "budget_authority_stays_in_presupuestos" in result["safety_labels"]
     assert "budget authority stays in Presupuestos" in result["source_notes"]
+
+
+@pytest.mark.asyncio
+async def test_adapter_routes_budget_vs_actual_to_template_report():
+    source = AsyncMock(
+        return_value={
+            "ok": True,
+            "source": "budget_db",
+            "summary": {"edition_year": 2026},
+            "breakdowns": {
+                "by_phase": [
+                    {
+                        "label": "Fase Nacional",
+                        "budget_total": 8000,
+                        "actual_total": 7000,
+                    }
+                ]
+            },
+        }
+    )
+    session = object()
+
+    with patch(
+        "samchat.assistant.finance_read_adapter.build_budget_snapshot",
+        new=source,
+    ):
+        result = await run_finance_read_adapter(
+            session,
+            intent="budget.vs_actual",
+            budget_version_id="version-1",
+            tournament_id="tournament-1",
+            tournament_code="CTT",
+            year=2026,
+            month=6,
+        )
+
+    source.assert_awaited_once_with(
+        session,
+        version_id="version-1",
+        tournament_id="tournament-1",
+        tournament_slug="CTT",
+        edition_year=2026,
+    )
+    assert result["ok"] is True
+    assert result["read_only"] is True
+    assert result["intent"] == "budget.vs_actual"
+    assert result["payload"]["report_type"] == "budget_vs_actual"
+    assert result["payload"]["summary"]["variance_accumulated_total"] == 1000.0
+    assert "budget_snapshot_read_only" in result["safety_labels"]
 
 
 @pytest.mark.asyncio
@@ -299,7 +390,9 @@ async def test_adapter_blocks_unsupported_intent_without_fallback():
         "ar.summary",
         "ar.prematching",
         "cashflow.summary",
+        "cashflow.statement",
         "budget.snapshot",
+        "budget.vs_actual",
         "finance.platform",
         "finance.exports",
     ]

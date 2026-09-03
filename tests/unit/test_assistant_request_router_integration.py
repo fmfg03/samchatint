@@ -230,7 +230,7 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -256,7 +256,7 @@ async def test_owner_ai_owner_needs_brief_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -271,7 +271,7 @@ async def test_owner_ai_prepared_dashboards_message_is_data_gap_aware():
         "Ya estan preparados los tableros para el dueno, pero falta informacion?"
     )
 
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
     assert trace["provider_called"] is False
@@ -292,7 +292,7 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "torneo=copa-telmex" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
@@ -317,7 +317,7 @@ async def test_broad_owner_data_question_uses_readiness_not_unmapped_variable():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "No pude mapear" not in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -486,7 +486,7 @@ async def test_owner_readiness_folder_gap_question_extracts_entity_without_provi
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "entidad=Jalisco" in response.assistant_message
     assert "Faltantes" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -591,7 +591,7 @@ async def test_owner_pack_readiness_without_tournament_requests_context():
         "Que tan listo esta el Owner Pack para responderle al dueno?"
     )
 
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "schema" in response.assistant_message.lower()
     assert "De que torneo quieres revisar el Owner Pack" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]

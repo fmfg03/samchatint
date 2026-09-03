@@ -3203,7 +3203,9 @@ def _tool_defs() -> List[Dict[str, Any]]:
                                 "ar.summary",
                                 "ar.prematching",
                                 "cashflow.summary",
+                                "cashflow.statement",
                                 "budget.snapshot",
+                                "budget.vs_actual",
                                 "finance.platform",
                                 "finance.exports",
                             ],
@@ -5420,6 +5422,23 @@ def _extract_report_payload_from_trace(tool_trace: Any) -> Optional[Dict[str, An
         result = step.get("result")
         if not isinstance(result, dict):
             continue
+        payload = result.get("payload")
+        if isinstance(payload, dict) and payload.get("report_type") in {
+            "cashflow_statement",
+            "budget_vs_actual",
+        }:
+            rows = payload.get("rows") or []
+            return {
+                "title": payload.get("title") or f"Export {step.get('tool') or 'query'}",
+                "generated_at": datetime.utcnow().isoformat(),
+                "period": payload.get("period") or {},
+                "totals": payload.get("summary") or {"registros": len(rows)},
+                "budget": {},
+                "projection": {},
+                "breakdown": {"items": rows},
+                "trend_monthly": [],
+                "comparison_yoy": [],
+            }
         # Signature of finance_realtime_report output.
         if any(
             k in result
