@@ -811,22 +811,54 @@ def test_informe_csv_labels_negative_saldo_as_employee_favorable() -> None:
 
 def test_reimbursement_request_is_created_when_closed_informe_is_approved() -> None:
     route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    reimbursement_service_source = Path(
+        "src/devnous/gastos/services/reimbursement_payment_run_service.py"
+    ).read_text()
     service_source = Path("src/devnous/gastos/services/documento_service.py").read_text()
 
     assert (
         "async def _ensure_reembolso_solicitud_for_approved_informe"
         in route_source
     )
-    assert 'informe_doc.estado != "aprobado"' in route_source
-    assert 'saldo_raw >= -0.005' in route_source
+    assert (
+        "ensure_approved_informe_reimbursement_for_payment_run(" in route_source
+    )
+    assert 'informe_doc.estado != "aprobado"' in reimbursement_service_source
+    assert 'saldo_raw >= -0.005' in reimbursement_service_source
     assert (
         'Documento.concepto_pago.like("Reembolso de saldo a favor%")'
-        in route_source
+        in reimbursement_service_source
     )
-    assert "allow_closed_cuenta=True" in route_source
+    assert "allow_closed_cuenta=True" in reimbursement_service_source
     assert "await _ensure_reembolso_solicitud_for_approved_informe(" in route_source
     assert "allow_closed_cuenta: bool = False" in service_source
     assert (
         'cuenta.estado == "cerrada" and not payload.allow_closed_cuenta'
         in service_source
     )
+
+
+def test_existing_reimbursement_request_is_promoted_on_informe_approval() -> None:
+    reimbursement_service_source = Path(
+        "src/devnous/gastos/services/reimbursement_payment_run_service.py"
+    ).read_text()
+
+    assert 'existing_reembolso.estado == "enviado"' in reimbursement_service_source
+    assert "action=\"approve\"" in reimbursement_service_source
+    assert (
+        "ensure_fecha_pago_for_approved_solicitud(existing_reembolso)"
+        in reimbursement_service_source
+    )
+
+
+def test_telegram_approval_routes_reimbursement_to_payment_run() -> None:
+    runtime_source = Path(
+        "src/devnous/gastos/services/telegram_document_runtime.py"
+    ).read_text()
+
+    assert (
+        "ensure_approved_informe_reimbursement_for_payment_run"
+        in runtime_source
+    )
+    assert "informe_doc=workflow_result.documento" in runtime_source
+    assert "programación de pagos" in runtime_source

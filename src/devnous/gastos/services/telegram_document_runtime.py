@@ -12,6 +12,9 @@ from .documento_workflow_service import (
     DocumentoWorkflowValidationError,
     transition_documento_workflow,
 )
+from .reimbursement_payment_run_service import (
+    ensure_approved_informe_reimbursement_for_payment_run,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +34,32 @@ class TelegramDocumentRuntime:
             return False
         try:
             async with session_maker() as session:
-                await transition_documento_workflow(
+                workflow_result = await transition_documento_workflow(
                     session,
                     documento_id=doc_uuid,
                     actor_id=empleado.id,
                     action="approve",
                     surface="telegram",
                 )
+                reimbursement_warning = None
+                try:
+                    reimbursement_result = (
+                        await ensure_approved_informe_reimbursement_for_payment_run(
+                            session,
+                            informe_doc=workflow_result.documento,
+                            actor_id=empleado.id,
+                        )
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to route informe reimbursement after Telegram approval",
+                        extra={"documento_id": str(doc_uuid)},
+                    )
+                    reimbursement_result = None
+                    reimbursement_warning = (
+                        "No se pudo generar automáticamente la solicitud de "
+                        "reembolso."
+                    )
         except DocumentoWorkflowValidationError as exc:
             if exc.code == "invalid_estado":
                 await self.gateway.send_message(
@@ -57,7 +79,18 @@ class TelegramDocumentRuntime:
                 "❌ No se pudo aprobar. Intenta de nuevo o usa la web.",
             )
             return False
-        await self.gateway.send_message(chat_id, "✅ Documento *aprobado* correctamente.")
+        success_msg = "✅ Documento *aprobado* correctamente."
+        if reimbursement_result is not None and reimbursement_result.changed:
+            success_msg += (
+                "\nSolicitud de reembolso lista en programación de pagos."
+            )
+        reimbursement_warning = (
+            reimbursement_warning
+            or (reimbursement_result.warning if reimbursement_result else None)
+        )
+        if reimbursement_warning:
+            success_msg += f"\n⚠️ {reimbursement_warning}"
+        await self.gateway.send_message(chat_id, success_msg)
         return True
 
     async def execute_reject(
