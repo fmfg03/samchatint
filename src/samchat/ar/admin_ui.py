@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html import escape
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from .service import (
     build_ar_accounting_preview,
@@ -41,6 +41,155 @@ def _empty_row(colspan: int, message: str) -> str:
 def _status_pill(value: Any) -> str:
     text = str(value or "collection_unknown").strip() or "collection_unknown"
     return f'<span class="ar-pill">{escape(text)}</span>'
+
+
+def _safe_count(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _sum_money(rows: list[dict[str, Any]], *keys: str) -> float:
+    total = 0.0
+    for row in rows:
+        for key in keys:
+            value = row.get(key)
+            if value is not None:
+                try:
+                    total += float(value or 0)
+                except (TypeError, ValueError):
+                    pass
+                break
+    return total
+
+
+def _url_with_query_value(base_url: str, key: str, value: Any) -> str:
+    parsed = urlsplit(base_url)
+    query = [
+        (query_key, query_value)
+        for query_key, query_value in parse_qsl(parsed.query, keep_blank_values=True)
+        if query_key != key
+    ]
+    query.append((key, str(value or "")))
+    return urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urlencode(query),
+            parsed.fragment,
+        )
+    )
+
+
+def _executive_kpi_card(
+    label: str,
+    value: Any,
+    note: str,
+    *,
+    tone: str = "neutral",
+    money: bool = True,
+) -> str:
+    display_value = _money(value) if money else str(value)
+    return f"""
+        <div class="ar-executive-card ar-executive-{escape(tone)}">
+            <span>{escape(label)}</span>
+            <strong>{escape(display_value)}</strong>
+            <small>{escape(note)}</small>
+        </div>
+    """
+
+
+def _executive_status_buckets(rows: list[dict[str, Any]], *, base_url: str) -> str:
+    bucket_defs = [
+        (
+            "Vencido",
+            "alta",
+            "Cobranza fuera de fecha; requiere seguimiento inmediato.",
+        ),
+        (
+            "Parcialmente cobrado",
+            "media",
+            "Tiene abono, pero aún conserva saldo abierto.",
+        ),
+        (
+            "Cobranza desconocida",
+            "alta",
+            "CFDI ligado sin match aceptado de cobranza.",
+        ),
+        (
+            "Presupuestado sin CFDI",
+            "baja",
+            "Ingreso planeado pendiente de facturación.",
+        ),
+    ]
+    cards = []
+    for status, priority, description in bucket_defs:
+        selected = [
+            row
+            for row in rows
+            if str(row.get("operational_status") or "").strip() == status
+        ]
+        amount = _sum_money(
+            selected,
+            "balance_amount",
+            "issued_amount",
+            "expected_income_amount",
+        )
+        href = _url_with_query_value(base_url, "estado", status)
+        cards.append(
+            f"""
+            <a class="ar-executive-bucket" href="{escape(href)}">
+                <div>
+                    {_status_pill(priority)}
+                    <h3>{escape(status)}</h3>
+                    <p>{escape(description)}</p>
+                </div>
+                <div class="ar-bucket-number">
+                    <strong>{len(selected)}</strong>
+                    <span>{_money(amount)}</span>
+                </div>
+            </a>
+            """
+        )
+    return "".join(cards)
+
+
+def _executive_action_cards(rows: list[dict[str, Any]], *, return_to: str) -> str:
+    if not rows:
+        return (
+            '<div class="ar-executive-empty">'
+            "Sin acciones ejecutivas CxC para los filtros actuales.</div>"
+        )
+    context_query = ""
+    if "?" in return_to:
+        context_query = return_to.split("?", 1)[1]
+    cards = []
+    for item in rows[:5]:
+        detail_href = (
+            "/admin/finanzas/cuentas-por-cobrar/item/"
+            f'{quote(str(item.get("ar_item_id") or ""), safe="")}'
+            f'?{context_query + "&" if context_query else ""}'
+            f'return_to={quote(return_to or "", safe="")}'
+        )
+        cards.append(
+            f"""
+            <article class="ar-action-card">
+                <div>
+                    {_status_pill(item.get("priority"))}
+                    <h3>{_text(item.get("gap_type"), "Pendiente")}</h3>
+                    <p>{_text(item.get("suggested_action"), "Revisar CxC.")}</p>
+                </div>
+                <div>
+                    <strong>{_money(item.get("amount"))}</strong>
+                    <small>{_text(item.get("payer_name") or item.get("tournament_name"), "Sin cliente")}</small>
+                    <a class="button secondary compact" href="{escape(detail_href)}">Ver detalle</a>
+                </div>
+            </article>
+            """
+        )
+    return "".join(cards)
 
 
 def _sort_link(
@@ -816,6 +965,95 @@ def render_ar_read_model_html(
         status_filter=status_filter,
         search=search,
     )
+    filtered_balance = _sum_money(operational_rows, "balance_amount")
+    filtered_invoiced = _sum_money(operational_rows, "issued_amount")
+    filtered_collected = _sum_money(operational_rows, "collected_amount")
+    filtered_overdue = _sum_money(
+        [
+            row
+            for row in operational_rows
+            if str(row.get("operational_status") or "") == "Vencido"
+        ],
+        "balance_amount",
+        "issued_amount",
+    )
+    executive_cards = "".join(
+        [
+            _executive_kpi_card(
+                "Ingreso presupuestado",
+                summary.get("expected_income_total"),
+                "Plan de ingresos de la versión activa.",
+            ),
+            _executive_kpi_card(
+                "Facturado",
+                summary.get("invoiced_total")
+                if summary.get("invoiced_total") is not None
+                else (
+                    float(summary.get("linked_income_total") or 0)
+                    + float(summary.get("issued_unlinked_total") or 0)
+                ),
+                "CFDI PSP ligado o pendiente de liga.",
+            ),
+            _executive_kpi_card(
+                "Cobrado comprobado",
+                summary.get("collected_total"),
+                "Sólo matches aceptados cuentan como cobro.",
+                tone="positive",
+            ),
+            _executive_kpi_card(
+                "Saldo pendiente CxC",
+                summary.get("balance_total"),
+                "Estimado desde facturado menos cobrado comprobado.",
+                tone="warning",
+            ),
+            _executive_kpi_card(
+                "Vencido",
+                summary.get("overdue_total"),
+                "Cartera facturada fuera de fecha.",
+                tone="danger",
+            ),
+            _executive_kpi_card(
+                "Gaps cobranza",
+                _safe_count(summary.get("collection_gap_count")),
+                "Items sin evidencia suficiente de cobro.",
+                tone="warning",
+                money=False,
+            ),
+        ]
+    )
+    filtered_cards = "".join(
+        [
+            _executive_kpi_card(
+                "Items filtrados",
+                len(operational_rows),
+                "Renglones visibles con los filtros actuales.",
+                money=False,
+            ),
+            _executive_kpi_card(
+                "Facturado filtrado",
+                filtered_invoiced,
+                "Suma de CFDI visibles.",
+            ),
+            _executive_kpi_card(
+                "Cobrado filtrado",
+                filtered_collected,
+                "Cobro comprobado visible.",
+                tone="positive",
+            ),
+            _executive_kpi_card(
+                "Saldo filtrado",
+                filtered_balance,
+                "Saldo de la cartera visible.",
+                tone="warning",
+            ),
+            _executive_kpi_card(
+                "Vencido filtrado",
+                filtered_overdue,
+                "Parte vencida dentro del filtro.",
+                tone="danger",
+            ),
+        ]
+    )
     billing_schedule_header = (
         "<thead><tr><th>Prioridad</th><th>Torneo/proyecto</th>"
         "<th>Fase</th><th>Concepto/partida</th><th>Presupuestado</th>"
@@ -859,6 +1097,47 @@ def render_ar_read_model_html(
                 <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
                 <a class="button secondary" href="{escape(prepoliza_export_url)}">Descargar prepólizas CxC</a>
                 <a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Vista contable</a>
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Lectura ejecutiva CxC</div>
+            <div class="workspace-section-subtitle">
+                Cartera, facturación, cobro comprobado y riesgo vencido desde
+                el mismo read model. Los candidatos bancarios siguen siendo
+                evidencia candidata; no cuentan como cobro hasta ser aceptados.
+            </div>
+            <div class="ar-executive-grid">
+                {executive_cards}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Cartera filtrada</div>
+            <div class="workspace-section-subtitle">
+                Estos importes responden al estado, cliente, versión y búsqueda
+                activos en la pantalla.
+            </div>
+            <div class="ar-executive-grid ar-executive-grid-compact">
+                {filtered_cards}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Prioridad ejecutiva de cartera</div>
+            <div class="workspace-section-subtitle">
+                Atajos por estado para llegar primero a vencidos, cobros
+                parciales, cobranza no comprobada y presupuesto sin CFDI.
+            </div>
+            <div class="ar-bucket-grid">
+                {_executive_status_buckets(operational_rows, base_url=base_url)}
+            </div>
+        </section>
+        <section class="workspace-card" style="margin-bottom:18px;">
+            <div class="workspace-section-title">Siguientes acciones CxC</div>
+            <div class="workspace-section-subtitle">
+                Cinco pendientes priorizados para mover la cartera sin cambiar
+                reglas contables ni hacer conciliaciones automáticas.
+            </div>
+            <div class="ar-action-grid">
+                {_executive_action_cards(actionable_gaps, return_to=return_to or base_url)}
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
@@ -974,6 +1253,119 @@ def ar_admin_styles() -> str:
             margin-top:6px;
             color:#0f172a;
             font-size:1.15rem;
+        }
+        .ar-executive-grid {
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+            gap:12px;
+            margin-top:14px;
+        }
+        .ar-executive-grid-compact {
+            grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+        }
+        .ar-executive-card {
+            min-width:0;
+            border:1px solid #e2e8f0;
+            border-left:4px solid #64748b;
+            border-radius:8px;
+            padding:14px;
+            background:#fff;
+        }
+        .ar-executive-positive {
+            border-left-color:#047857;
+        }
+        .ar-executive-warning {
+            border-left-color:#b45309;
+        }
+        .ar-executive-danger {
+            border-left-color:#b91c1c;
+        }
+        .ar-executive-card span,
+        .ar-bucket-number span,
+        .ar-action-card small {
+            display:block;
+            color:#64748b;
+            font-size:12px;
+            font-weight:800;
+            text-transform:uppercase;
+        }
+        .ar-executive-card strong {
+            display:block;
+            margin-top:6px;
+            color:#0f172a;
+            font-size:1.35rem;
+            overflow-wrap:anywhere;
+        }
+        .ar-executive-card small {
+            display:block;
+            margin-top:6px;
+            color:#475569;
+            line-height:1.45;
+        }
+        .ar-bucket-grid,
+        .ar-action-grid {
+            display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+            gap:12px;
+            margin-top:14px;
+        }
+        .ar-executive-bucket,
+        .ar-action-card {
+            min-width:0;
+            display:flex;
+            justify-content:space-between;
+            gap:14px;
+            text-decoration:none;
+            border:1px solid #e2e8f0;
+            border-radius:8px;
+            padding:14px;
+            background:#fff;
+            color:#0f172a;
+        }
+        .ar-executive-bucket:hover,
+        .ar-action-card:hover {
+            border-color:#0f766e;
+            box-shadow:0 12px 24px rgba(15,23,42,.08);
+        }
+        .ar-executive-bucket h3,
+        .ar-action-card h3 {
+            margin:10px 0 6px;
+            font-size:16px;
+            line-height:1.25;
+            color:#0f172a;
+        }
+        .ar-executive-bucket p,
+        .ar-action-card p {
+            margin:0;
+            color:#475569;
+            font-size:13px;
+            line-height:1.45;
+        }
+        .ar-bucket-number {
+            flex:0 0 auto;
+            text-align:right;
+        }
+        .ar-bucket-number strong,
+        .ar-action-card strong {
+            display:block;
+            color:#0f172a;
+            font-size:1.35rem;
+        }
+        .ar-action-card {
+            align-items:flex-start;
+        }
+        .ar-action-card > div:last-child {
+            display:grid;
+            gap:6px;
+            justify-items:end;
+            text-align:right;
+        }
+        .ar-executive-empty {
+            border:1px dashed #cbd5e1;
+            border-radius:8px;
+            padding:16px;
+            color:#64748b;
+            background:#f8fafc;
         }
         .ar-table {
             width:100%;

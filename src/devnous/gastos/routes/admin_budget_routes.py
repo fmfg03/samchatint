@@ -559,6 +559,7 @@ def _render_presupuestos_catalog_section(
 
 def register_presupuestos_routes(router) -> None:
     from .admin_routes import (
+        _admin_breadcrumb_html,
         _admin_workspace_styles,
         _budget_access_map,
         _OPERATION_GENERIC_ERROR,
@@ -810,11 +811,13 @@ def register_presupuestos_routes(router) -> None:
         <style>{_admin_workspace_styles("1380px")}</style></head><body>
         <div class="workspace-shell">
             {render_admin_navigation(current_empleado, "presupuestos", subtitle="Dashboard por torneo con acceso al detalle de partidas y plan mensual.")}
+            {_admin_breadcrumb_html([("Centro Ejecutivo", "/admin/ejecutivo"), ("Presupuestos", None)])}
             {_render_admin_workspace_hero(
                 eyebrow="C-suite",
                 title=f"Presupuestos {resolved_year}",
                 description="Selecciona un torneo para capturar presupuesto mensual, ingreso esperado y revisar gasto real en caja.",
                 actions_html=(
+                    '<a class="button secondary" href="/admin/ejecutivo">Centro Ejecutivo</a>'
                     '<a class="button secondary" href="/admin/gastos/sat">SAT / CFDI</a>'
                     '<a class="button secondary" href="/admin/gastos/cfdis/matching">Matching CFDI</a>'
                 ),

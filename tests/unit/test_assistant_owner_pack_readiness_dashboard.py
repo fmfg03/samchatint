@@ -51,6 +51,7 @@ def test_owner_pack_readiness_dashboard_without_tournament_is_navigable_and_safe
     assert dashboard.side_effects_detected == 0
     assert dashboard.safety_summary["read_only_dashboard"] is True
     assert dashboard.safety_summary["writes_enabled"] is False
+    assert dashboard.headline == "Estado ejecutivo del Owner Pack"
     assert dashboard.overall_status == OWNER_PACK_SCHEMA_ONLY
     assert dashboard.coverage_score == 0
     assert [card.section_id for card in dashboard.cards] == list(OWNER_PACK_DASHBOARD_SECTIONS)
@@ -63,6 +64,11 @@ def test_owner_pack_readiness_dashboard_without_tournament_is_navigable_and_safe
     assert "De que torneo" in tournament_card.next_questions[0]
     assert "scope: all" in tournament_card.available_sources
     assert payload["cards"][0]["label"] == "Torneo / contexto"
+    assert payload["cards"][1]["label"] == "Carpeta por entidad"
+    assert payload["cards"][2]["label"] == "Fase nacional"
+    assert "Readiness" not in dashboard.headline
+    assert "Entity folder" not in str(payload["cards"])
+    assert "National phase" not in str(payload["cards"])
     assert owner_pack_readiness_dashboard_contains_execution_claim(dashboard) is False
 
 

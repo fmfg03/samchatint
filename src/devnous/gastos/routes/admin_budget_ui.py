@@ -305,6 +305,26 @@ def _sum_budget_line_periods(
     return list(buckets.values())
 
 
+def _budget_executive_status(execution: float) -> tuple[str, str, str]:
+    if execution > 100:
+        return (
+            "Excedido",
+            "#fee2e2",
+            "#991b1b",
+        )
+    if execution >= 85:
+        return (
+            "En observación",
+            "#fef3c7",
+            "#92400e",
+        )
+    return (
+        "Controlado",
+        "#dcfce7",
+        "#166534",
+    )
+
+
 def render_budget_executive_dashboard(
     lines: list[dict[str, Any]],
     *,
@@ -318,7 +338,7 @@ def render_budget_executive_dashboard(
     phase_filter: Optional[str] = None,
     show_committed: bool = True,
 ) -> str:
-    """Render a read-only executive rollup over the weekly budget matrix."""
+    """Render an executive rollup over the weekly budget matrix."""
     clean_period = _clean_budget_period(budget_period)
     clean_view = "income" if str(budget_view or "").lower() == "income" else "expenses"
     buckets = _sum_budget_line_periods(
@@ -334,6 +354,7 @@ def render_budget_executive_dashboard(
     total_committed = sum(float(item["committed"] or 0) for item in buckets)
     available = total_budget - total_real - (total_committed if clean_view == "expenses" else 0)
     execution = ((total_real + (total_committed if clean_view == "expenses" else 0)) / total_budget * 100) if total_budget else 0.0
+    executive_status, status_bg, status_color = _budget_executive_status(execution)
 
     period_options = "".join(
         f'<option value="{escape(key)}" {"selected" if key == clean_period else ""}>{escape(label)}</option>'
@@ -377,7 +398,11 @@ def render_budget_executive_dashboard(
         <div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">
             <div>
                 <div class="workspace-section-title">Tablero ejecutivo de presupuesto</div>
-                <div class="workspace-section-subtitle">Vista read-only de {escape(view_label.lower())}: real y comprometido contra presupuesto, agregada desde la matriz semanal.</div>
+                <div class="workspace-section-subtitle">Lectura ejecutiva de {escape(view_label.lower())}: ejercido real, comprometido pendiente y disponible contra presupuesto autorizado.</div>
+            </div>
+            <div style="display:grid;gap:6px;min-width:170px;padding:12px 14px;border:1px solid {status_bg};border-radius:12px;background:{status_bg};color:{status_color};">
+                <span style="font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;">Estado ejecutivo</span>
+                <strong style="font-size:1.05rem;">{executive_status}</strong>
             </div>
             <form method="GET" action="{form_action}" style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;">
                 <input type="hidden" name="edition_year" value="{int(edition_year)}">
@@ -395,22 +420,23 @@ def render_budget_executive_dashboard(
             </form>
         </div>
         <div class="meta-grid" style="margin-top:14px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));">
-            <div class="meta-card"><span>Presupuesto</span><strong>${total_budget:,.2f}</strong></div>
-            <div class="meta-card"><span>Real</span><strong>${total_real:,.2f}</strong></div>
-            <div class="meta-card"><span>Comprometido</span><strong>{('$' + format(total_committed, ',.2f')) if clean_view == 'expenses' else '—'}</strong></div>
+            <div class="meta-card"><span>Presupuesto autorizado</span><strong>${total_budget:,.2f}</strong></div>
+            <div class="meta-card"><span>Ejercido real</span><strong>${total_real:,.2f}</strong></div>
+            <div class="meta-card"><span>Comprometido pendiente</span><strong>{('$' + format(total_committed, ',.2f')) if clean_view == 'expenses' else '—'}</strong></div>
             <div class="meta-card"><span>{available_label}</span><strong>${available:,.2f}</strong></div>
-            <div class="meta-card"><span>Avance</span><strong>{execution:.1f}%</strong></div>
+            <div class="meta-card"><span>% utilizado</span><strong>{execution:.1f}%</strong></div>
         </div>
         <div style="overflow-x:auto;margin-top:14px;">
+            <div class="workspace-section-title" style="font-size:14px;margin-bottom:8px;">Lectura por periodo</div>
             <table style="width:100%;border-collapse:collapse;font-size:13px;">
                 <thead>
                     <tr style="background:#0f766e;color:#fff;">
                         <th style="padding:10px;text-align:left;">Periodo</th>
-                        <th style="padding:10px;text-align:right;">Presupuesto</th>
-                        <th style="padding:10px;text-align:right;">Real</th>
-                        <th style="padding:10px;text-align:right;">Comprometido</th>
+                        <th style="padding:10px;text-align:right;">Presupuesto autorizado</th>
+                        <th style="padding:10px;text-align:right;">Ejercido real</th>
+                        <th style="padding:10px;text-align:right;">Comprometido pendiente</th>
                         <th style="padding:10px;text-align:right;">{available_label}</th>
-                        <th style="padding:10px;text-align:right;">% ejecución</th>
+                        <th style="padding:10px;text-align:right;">% utilizado</th>
                     </tr>
                 </thead>
                 <tbody>{''.join(rows)}</tbody>
@@ -455,6 +481,14 @@ def render_tournament_dashboard_cards(
         rollup_key = str(item.get("tournament_id") or item.get("tournament_code") or key)
         rollup = tournament_rollups.get(rollup_key, {})
         comparison = item.get("comparison") or {}
+        budget_total = float(
+            rollup.get("budget_expense_total") or item.get("budget_total") or 0
+        )
+        paid_total = float(comparison.get("paid_total") or 0)
+        committed_total = float(comparison.get("committed_total") or 0)
+        used_total = paid_total + committed_total
+        execution = (used_total / budget_total * 100) if budget_total else 0.0
+        executive_status, status_bg, status_color = _budget_executive_status(execution)
         detail_url = budget_tournament_detail_url(
             key,
             edition_year=edition_year,
@@ -476,11 +510,21 @@ def render_tournament_dashboard_cards(
                     </div>
                     <div style="text-align:right;">
                         <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#64748b;">
-                            Presupuesto gasto
+                            Presupuesto autorizado
                         </div>
                         <div style="font-size:18px;font-weight:800;color:#0f766e;">
-                            ${float(rollup.get("budget_expense_total") or item.get("budget_total") or 0):,.2f}
+                            ${budget_total:,.2f}
                         </div>
+                    </div>
+                </div>
+                <div style="margin-top:12px;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;">
+                    <div style="display:grid;gap:4px;padding:10px 12px;border:1px solid {status_bg};border-radius:12px;background:{status_bg};color:{status_color};">
+                        <span style="font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.08em;">Estado ejecutivo</span>
+                        <strong style="font-size:14px;">{executive_status}</strong>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#64748b;">% utilizado</div>
+                        <div style="font-size:18px;font-weight:900;color:{status_color};">{execution:.1f}%</div>
                     </div>
                 </div>
                 <div style="margin-top:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;font-size:12px;">
@@ -489,21 +533,21 @@ def render_tournament_dashboard_cards(
                         <div style="font-weight:800;">${float(rollup.get("expected_income_total") or 0):,.2f}</div>
                     </div>
                     <div style="padding:8px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;">
-                        <div style="color:#64748b;">Gasto real (caja)</div>
-                        <div style="font-weight:800;">${float(comparison.get("paid_total") or 0):,.2f}</div>
+                        <div style="color:#64748b;">Ejercido real</div>
+                        <div style="font-weight:800;">${paid_total:,.2f}</div>
                     </div>
                     <div style="padding:8px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;">
                         <div style="color:#64748b;">Ingreso real</div>
                         <div style="font-weight:800;">${float(rollup.get("real_income_total") or 0):,.2f}</div>
                     </div>
                     <div style="padding:8px;border:1px solid #e5e7eb;border-radius:10px;background:#f8fafc;">
-                        <div style="color:#64748b;">Comprometido</div>
-                        <div style="font-weight:800;">${float(comparison.get("committed_total") or 0):,.2f}</div>
+                        <div style="color:#64748b;">Comprometido pendiente</div>
+                        <div style="font-weight:800;">${committed_total:,.2f}</div>
                     </div>
                 </div>
                 <div style="margin-top:12px;display:flex;justify-content:flex-end;">
                     <span class="button" style="padding:8px 12px;font-size:12px;border-radius:10px;">
-                        Capturar detalle &rarr;
+                        Abrir detalle &rarr;
                     </span>
                 </div>
             </div>

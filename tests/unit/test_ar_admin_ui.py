@@ -13,6 +13,10 @@ def _payload() -> dict:
             "expected_income_total": 1200,
             "linked_income_total": 500,
             "issued_unlinked_total": 250,
+            "invoiced_total": 750,
+            "collected_total": 40,
+            "balance_total": 710,
+            "overdue_total": 60,
             "collection_gap_count": 2,
             "matching_gap_count": 1,
         },
@@ -44,6 +48,8 @@ def _payload() -> dict:
                 "issued_amount": 500,
                 "recognized_income_date": "2026-01-15T00:00:00",
                 "collection_status": "collection_unknown",
+                "collected_amount": 40,
+                "balance_amount": 460,
             }
         ],
         "issued_unlinked": [
@@ -55,6 +61,8 @@ def _payload() -> dict:
                 "payer_rfc": "CLI020202BBB",
                 "issued_amount": 250,
                 "collection_status": "collection_unknown",
+                "collected_amount": 0,
+                "balance_amount": 250,
             }
         ],
         "collection_gaps": [
@@ -82,6 +90,10 @@ def test_render_ar_read_model_html_includes_expected_sections():
     html = render_ar_read_model_html(_payload())
 
     assert "Cuentas por Cobrar" in html
+    assert "Lectura ejecutiva CxC" in html
+    assert "Cartera filtrada" in html
+    assert "Prioridad ejecutiva de cartera" in html
+    assert "Siguientes acciones CxC" in html
     assert "Programación por facturar" in html
     assert "Gaps accionables" in html
     assert "Cartera operativa" in html
@@ -93,6 +105,53 @@ def test_render_ar_read_model_html_includes_expected_sections():
     assert "collection_unknown" in html
     assert "Descargar Excel CxC" in html
     assert "Descargar prepólizas CxC" in html
+
+
+def test_render_ar_read_model_html_includes_executive_cxc_kpis():
+    html = render_ar_read_model_html(_payload())
+
+    assert "Ingreso presupuestado" in html
+    assert "$1,200.00" in html
+    assert "Facturado" in html
+    assert "$750.00" in html
+    assert "Cobrado comprobado" in html
+    assert "$40.00" in html
+    assert "Saldo pendiente CxC" in html
+    assert "$710.00" in html
+    assert "Vencido" in html
+    assert "$60.00" in html
+    assert "Gaps cobranza" in html
+    assert "Los candidatos bancarios siguen siendo" in html
+    assert "no cuentan como cobro hasta ser aceptados" in html
+
+
+def test_render_ar_read_model_html_prioritizes_executive_portfolio_buckets():
+    html = render_ar_read_model_html(
+        _payload(),
+        base_url="/admin/finanzas/cuentas-por-cobrar?estado=todos",
+        return_to="/admin/finanzas/cuentas-por-cobrar?estado=todos",
+    )
+
+    assert "Cobranza fuera de fecha" in html
+    assert "Tiene abono, pero aún conserva saldo abierto" in html
+    assert "CFDI ligado sin match aceptado de cobranza" in html
+    assert "Ingreso planeado pendiente de facturación" in html
+    assert "estado=Vencido" in html
+    assert "estado=Presupuestado+sin+CFDI" in html
+    assert "estado=todos&amp;estado=" not in html
+
+
+def test_render_ar_read_model_html_shows_filtered_executive_totals():
+    html = render_ar_read_model_html(
+        _payload(),
+        status_filter="Cobranza desconocida",
+    )
+
+    assert "Items filtrados" in html
+    assert "Facturado filtrado" in html
+    assert "Cobrado filtrado" in html
+    assert "Saldo filtrado" in html
+    assert "Estos importes responden al estado, cliente, versión y búsqueda" in html
 
 
 def test_render_ar_read_model_html_includes_billing_schedule():
@@ -193,10 +252,10 @@ def test_render_ar_read_model_html_does_not_confirm_collection():
     forbidden_terms = [
         "cobrado confirmado",
         "pago confirmado",
-        "saldo pendiente",
         "outstanding confirmado",
     ]
     assert all(term not in html for term in forbidden_terms)
+    assert "estimado desde facturado menos cobrado comprobado" in html
 
 
 def test_render_ar_read_model_html_handles_empty_payload():

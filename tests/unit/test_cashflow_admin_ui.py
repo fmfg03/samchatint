@@ -38,12 +38,28 @@ def _payload() -> dict:
 def test_render_cashflow_planning_html_includes_sections_and_copy():
     html = render_cashflow_planning_html(_payload())
 
-    assert "Cashflow Planning read-only" in html
+    assert "Flujo de efectivo ejecutivo" in html
     assert "Caja real neta" in html
-    assert "Obligaciones aprobadas" in html
-    assert "Cobranza AR probada" in html
-    assert "Forecast derivado" in html
-    assert "No usa candidatos AR como cobranza" in html
+    assert "Pagos aprobados pendientes" in html
+    assert "Ingresos presupuestados" in html
+    assert "Egresos presupuestados" in html
+    assert "Ingreso facturado/reconocido" in html
+    assert "Cobranza confirmada" in html
+    assert "Proyección neta" in html
+    assert "Vista mensual" in html
+    assert "Notas de lectura" in html
+
+
+def test_render_cashflow_planning_html_hides_internal_copy():
+    html = render_cashflow_planning_html(_payload())
+
+    assert "read-only" not in html
+    assert "Finance Spine" not in html
+    assert "Accepted matches" not in html
+    assert "Buckets mensuales" not in html
+    assert "Source notes" not in html
+    assert "CFDI income" not in html
+    assert "AP / payment run" not in html
 
 
 def test_render_cashflow_planning_html_escapes_source_notes():
@@ -58,4 +74,4 @@ def test_render_cashflow_planning_html_does_not_treat_candidates_as_collection()
 
     assert "candidate_match cobrado" not in html
     assert "candidato ar cobrado" not in html
-    assert "candidatos ar como cobranza" in html
+    assert "cobranza confirmada" in html

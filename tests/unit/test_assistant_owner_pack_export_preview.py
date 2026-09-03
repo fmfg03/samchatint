@@ -54,13 +54,21 @@ def test_owner_pack_export_preview_is_read_only_and_renderable() -> None:
     assert payload["formats"]["excel_index"]["available"] is True
     assert payload["missing_items"]
     assert payload["non_claims"]
+    assert payload["title"] == "Owner Pack ejecutivo"
     assert owner_pack_export_preview_contains_execution_claim(preview) is False
 
     html = render_owner_pack_preview_html(preview)
-    assert "Read-only preview" in html
+    assert "Vista previa segura" in html
+    assert "Owner Pack ejecutivo" in html
+    assert "Faltantes explícitos" in html
+    assert "Límites de la vista" in html
     assert "Entity folder" in html
     assert "Telefono del contacto" in html
     assert "no ejecuta acciones reales" in html
+    assert "Read-only preview" not in html
+    assert "Owner Pack - preview revisable" not in html
+    assert "Faltantes explicitos" not in html
+    assert "Non-claims" not in html
 
     rows = owner_pack_preview_excel_rows(preview)
     assert {row["kind"] for row in rows} >= {"supported", "missing", "evidence", "next_question"}

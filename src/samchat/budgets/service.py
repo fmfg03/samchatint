@@ -5873,8 +5873,10 @@ async def build_budget_snapshot(
     tournament_slug: Optional[str] = None,
     edition_year: int = 2026,
     version_id: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     selected_version = await _select_budget_version(
         session,
         edition_year=edition_year,

@@ -1075,6 +1075,7 @@ def render_admin_navigation(
 
     inicio_items = [
         ("admin.gastos.dashboard", "/admin/gastos", "Resumen", "dashboard"),
+        ("executive.reports.read", "/admin/ejecutivo", "Ejecutivo", "ejecutivo"),
         ("admin.finanzas", "/admin/sam-inbox", "Sam Inbox", "sam_inbox"),
     ]
     finanzas_items = [
@@ -1557,6 +1558,163 @@ def _safe_admin_cxc_return_url(return_to: Optional[str]) -> str:
     if clean.startswith("/admin/finanzas/cuentas-por-cobrar"):
         return clean
     return "/admin/finanzas/cuentas-por-cobrar"
+
+
+def _executive_alert_severity(value: Any) -> str:
+    severity = str(value or "").strip().lower()
+    if severity in {"critical", "high", "alta"}:
+        return "high"
+    if severity in {"warning", "medium", "media"}:
+        return "medium"
+    return "low"
+
+
+def _executive_alert_priority_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    rank = {"high": 0, "medium": 1, "low": 2}
+    return (
+        rank.get(str(item.get("severity") or "low"), 9),
+        str(item.get("module") or "").lower(),
+        str(item.get("title") or "").lower(),
+    )
+
+
+def _executive_alert_card(
+    *,
+    severity: Any,
+    module: Any,
+    title: Any,
+    detail: Any,
+    owner: Any = "Dirección",
+    href: Any = "/admin/ejecutivo/alertas",
+    source: Any = "SamChat",
+) -> dict[str, Any]:
+    clean_href = str(href or "").strip()
+    if not (
+        clean_href.startswith("/admin/")
+        or clean_href.startswith("/assistant")
+    ):
+        clean_href = "/admin/ejecutivo/alertas"
+    return {
+        "severity": _executive_alert_severity(severity),
+        "module": str(module or "Dirección").strip() or "Dirección",
+        "title": str(title or "Alerta ejecutiva").strip() or "Alerta ejecutiva",
+        "detail": str(detail or "Revisar señal ejecutiva.").strip()
+        or "Revisar señal ejecutiva.",
+        "owner": str(owner or "Dirección").strip() or "Dirección",
+        "href": clean_href,
+        "source": str(source or "SamChat").strip() or "SamChat",
+    }
+
+
+def _build_consolidated_executive_alerts(
+    platform: dict[str, Any],
+    inbox_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for action in list((platform.get("action_queue") or {}).get("actions") or []):
+        alerts.append(
+            _executive_alert_card(
+                severity=action.get("severity"),
+                module=action.get("module") or "Finanzas",
+                title=action.get("title"),
+                detail=action.get("detail"),
+                owner=action.get("owner") or "Finanzas",
+                href=action.get("href") or "/admin/finanzas",
+                source="Finance Action Queue",
+            )
+        )
+
+    payment_run = platform.get("payment_run") or {}
+    if int(payment_run.get("payable_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="Pagos",
+                title="Pagos aprobados pendientes",
+                detail=(
+                    f"{int(payment_run.get('payable_count') or 0)} documentos "
+                    f"por ${_safe_money(payment_run.get('payable_total'))}."
+                ),
+                owner="Benjamín / Contabilidad",
+                href="/admin/finanzas/payment-run",
+                source="Payment Run",
+            )
+        )
+
+    tax_readiness = platform.get("tax_readiness") or {}
+    if int(tax_readiness.get("diot_blockers_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="DIOT / CFDI",
+                title="Bloqueos fiscales activos",
+                detail=(
+                    f"{int(tax_readiness.get('diot_blockers_count') or 0)} "
+                    "documentos o gastos requieren CFDI antes de cierre."
+                ),
+                owner="Contabilidad",
+                href="/admin/finanzas",
+                source="Tax Readiness",
+            )
+        )
+
+    accounting_close = platform.get("accounting_close_center") or {}
+    if int(accounting_close.get("unbalanced_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="Pólizas COI",
+                title="Pólizas descuadradas",
+                detail=(
+                    f"{int(accounting_close.get('unbalanced_count') or 0)} "
+                    "pólizas tienen diferencia debe/haber."
+                ),
+                owner="Contabilidad",
+                href="/admin/finanzas",
+                source="Accounting Close Center",
+            )
+        )
+    if int(accounting_close.get("pending_coi_expenses_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="medium",
+                module="Pólizas COI",
+                title="Gastos pendientes de clasificación COI",
+                detail=(
+                    f"{int(accounting_close.get('pending_coi_expenses_count') or 0)} "
+                    "gastos aún no están listos para prepóliza."
+                ),
+                owner="Contabilidad",
+                href="/admin/gastos/sin-cuenta-contable",
+                source="Accounting Close Center",
+            )
+        )
+
+    direction_alerts = (
+        (inbox_payload.get("direction") or {}).get("executive_alerts") or {}
+    ).get("alerts") or []
+    for alert in list(direction_alerts):
+        alerts.append(
+            _executive_alert_card(
+                severity=alert.get("severity"),
+                module="Dirección",
+                title=alert.get("title"),
+                detail=alert.get("detail") or alert.get("playbook"),
+                owner="Dirección",
+                href="/admin/sam-inbox?tab=direccion",
+                source="Sam Inbox Dirección",
+            )
+        )
+
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in alerts:
+        key = (
+            str(item.get("severity") or ""),
+            str(item.get("module") or ""),
+            str(item.get("title") or ""),
+        )
+        deduped.setdefault(key, item)
+    return sorted(deduped.values(), key=_executive_alert_priority_key)
 
 
 def _render_admin_workspace_hero(
@@ -3218,6 +3376,475 @@ async def admin_dashboard(
     </html>
     """
     return html
+
+
+@router.get("/admin/ejecutivo", response_class=HTMLResponse)
+async def admin_executive_center(
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> HTMLResponse:
+    """Unified executive entrypoint for existing finance and owner-pack surfaces."""
+
+    cards = [
+        {
+            "title": "Asistente Ejecutivo",
+            "href": "/assistant",
+            "status": "Entrada principal",
+            "metric": "Preguntas con evidencia",
+            "description": (
+                "Pregunta por presupuesto, flujo, cobranza, Owner Pack y "
+                "faltantes sin salir del contexto ejecutivo."
+            ),
+        },
+        {
+            "title": "Presupuestos",
+            "href": "/admin/presupuestos",
+            "status": "Control financiero",
+            "metric": "Autorizado vs utilizado",
+            "description": (
+                "Revisa presupuesto autorizado, ejercido real, comprometido "
+                "pendiente y estado por torneo."
+            ),
+        },
+        {
+            "title": "Flujo de efectivo",
+            "href": "/admin/finanzas/cashflow",
+            "status": "Liquidez",
+            "metric": "Caja y proyección",
+            "description": (
+                "Separa entradas reales, salidas reales, pagos pendientes, "
+                "cobranza confirmada y proyección neta."
+            ),
+        },
+        {
+            "title": "Cuentas por cobrar",
+            "href": "/admin/finanzas/cuentas-por-cobrar",
+            "status": "Cobranza",
+            "metric": "Facturado, cobrado y pendiente",
+            "description": (
+                "Da seguimiento a cartera, vencimientos, vínculos de CFDI PSP "
+                "y conciliación de cobros."
+            ),
+        },
+        {
+            "title": "Owner Pack",
+            "href": "/api/assistant/owner-pack/export-preview.html",
+            "status": "Evidencia",
+            "metric": "Cobertura y faltantes",
+            "description": (
+                "Abre la vista ejecutiva de secciones, evidencia disponible, "
+                "faltantes y preguntas siguientes."
+            ),
+        },
+        {
+            "title": "Alertas ejecutivas",
+            "href": "/admin/ejecutivo/alertas",
+            "status": "Atención",
+            "metric": "Riesgos operativos",
+            "description": (
+                "Consolida señales de pagos, COI, DIOT, cobranza y dirección "
+                "sin cambiar datos operativos."
+            ),
+        },
+        {
+            "title": "Export ejecutivo",
+            "href": "/admin/ejecutivo/export.xlsx",
+            "status": "Excel",
+            "metric": "Paquete de dirección",
+            "description": (
+                "Descarga resumen, presupuesto, flujo, cobranza, alertas y "
+                "fuentes en un solo archivo."
+            ),
+        },
+    ]
+    cards_html = "".join(
+        f"""
+        <a href="{escape(card['href'])}" class="action-card">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <strong>{escape(card['title'])}</strong>
+                <span style="border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;white-space:nowrap;">
+                    {escape(card['status'])}
+                </span>
+            </div>
+            <p style="font-weight:800;color:#0f172a;margin-top:10px;">{escape(card['metric'])}</p>
+            <p>{escape(card['description'])}</p>
+        </a>
+        """
+        for card in cards
+    )
+    hero_actions_html = (
+        '<a class="button" href="/assistant">Abrir asistente</a>'
+        '<a class="button secondary" href="/admin/presupuestos">Presupuestos</a>'
+        '<a class="button secondary" href="/admin/finanzas/cashflow">Flujo de efectivo</a>'
+        '<a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar">Cuentas por cobrar</a>'
+        '<a class="button secondary" href="/admin/ejecutivo/export.xlsx">Descargar export ejecutivo</a>'
+    )
+    hero_side_html = """
+        <div class="meta-grid">
+            <div class="meta-card">
+                <span>Vista</span>
+                <strong>Ejecutiva</strong>
+                <small>Entrada única para tableros y evidencia.</small>
+            </div>
+            <div class="meta-card">
+                <span>Acciones</span>
+                <strong>Sin cambios</strong>
+                <small>Esta pantalla no modifica datos ni crea solicitudes.</small>
+            </div>
+        </div>
+    """
+    breadcrumb_html = _admin_breadcrumb_html([("Centro Ejecutivo", None)])
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Centro Ejecutivo - SamChat</title>
+        <style>{_admin_workspace_styles("1380px")}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "ejecutivo", subtitle="Entrada ejecutiva a presupuesto, flujo, cobranza, evidencia y asistente.")}
+            {breadcrumb_html}
+            {_render_admin_workspace_hero(
+                eyebrow="Dirección",
+                title="Centro Ejecutivo",
+                description=(
+                    "Una sola entrada para revisar salud financiera, evidencia, "
+                    "faltantes y navegación hacia los tableros clave."
+                ),
+                actions_html=hero_actions_html,
+                side_html=hero_side_html,
+            )}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Tableros y reportes</div>
+                        <h2>Lectura ejecutiva consolidada</h2>
+                        <div class="section-note">
+                            Cada tarjeta abre la superficie dueña del dato. El centro
+                            organiza la navegación sin duplicar cálculos.
+                        </div>
+                    </div>
+                </div>
+                <div class="action-grid">{cards_html}</div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/ejecutivo/export.xlsx", response_class=Response)
+async def admin_executive_export_xlsx(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    dias_credito: int = Query(0),
+    limit: int = Query(500),
+) -> Response:
+    """Download the consolidated read-only executive workbook."""
+    from samchat.ar import build_ar_operational_rows, build_ar_read_model
+    from samchat.executive import generate_executive_export_xlsx
+    from samchat.finance_platform import (
+        build_finance_platform_snapshot,
+        build_finance_source_snapshot,
+    )
+
+    now = datetime.utcnow()
+    current_year = int(year or now.year)
+    current_month = max(1, min(int(month or now.month), 12))
+    resolved_edition_year = int(edition_year or current_year)
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    source_notes: list[str] = []
+    platform: dict[str, Any] = {
+        "period": {"year": current_year, "month": current_month},
+        "summary": {},
+        "action_queue": {"actions": []},
+    }
+    budget_snapshot: dict[str, Any] = {
+        "summary": {},
+        "forecast": {},
+        "executive_comparison": [],
+    }
+    ar_payload: dict[str, Any] = {"summary": {}}
+    ar_rows: list[dict[str, Any]] = []
+    inbox_payload: dict[str, Any] = {}
+
+    try:
+        finance_source = await build_finance_source_snapshot(
+            session,
+            year=current_year,
+            month=current_month,
+            limit=300,
+        )
+        platform = build_finance_platform_snapshot(finance_source)
+    except Exception as exc:
+        logger.exception("Executive export finance snapshot failed")
+        source_notes.append(f"Finanzas no disponible: {type(exc).__name__}.")
+
+    selected_version: Optional[dict[str, Any]] = None
+    try:
+        versions = await list_budget_versions(
+            session,
+            edition_year=resolved_edition_year,
+            ensure_schema=False,
+        )
+        if budget_version_id:
+            selected_version = next(
+                (
+                    item
+                    for item in versions
+                    if str(item.get("id")) == budget_version_id
+                ),
+                None,
+            )
+        if selected_version is None:
+            selected_version = resolve_definitive_budget_version_from_versions(
+                versions
+            )
+        if selected_version is None:
+            source_notes.append(
+                f"Presupuesto {resolved_edition_year} sin versión definitiva."
+            )
+        else:
+            budget_snapshot = await build_budget_snapshot(
+                session=session,
+                edition_year=resolved_edition_year,
+                version_id=str(selected_version["id"]),
+                ensure_schema=False,
+            )
+    except Exception as exc:
+        logger.exception("Executive export budget snapshot failed")
+        source_notes.append(f"Presupuestos no disponible: {type(exc).__name__}.")
+
+    try:
+        if selected_version is None:
+            source_notes.append(
+                "CxC no disponible porque no hay versión presupuestal seleccionada."
+            )
+        else:
+            ar_payload = await build_ar_read_model(
+                session,
+                budget_version_id=str(selected_version["id"]),
+                limit=safe_limit,
+                credit_days_default=safe_credit_days,
+                ensure_schema=False,
+            )
+            ar_rows = build_ar_operational_rows(
+                ar_payload,
+                sort_by="issued_date",
+                sort_dir="desc",
+            )
+    except Exception as exc:
+        logger.exception("Executive export AR snapshot failed")
+        source_notes.append(
+            f"Cuentas por cobrar no disponible: {type(exc).__name__}."
+        )
+
+    try:
+        inbox_payload = await build_sam_inbox_payload(
+            session,
+            current_empleado=current_empleado,
+            tab="direccion",
+        )
+    except Exception as exc:
+        logger.exception("Executive export Sam Inbox snapshot failed")
+        source_notes.append(
+            f"Sam Inbox Dirección no disponible: {type(exc).__name__}."
+        )
+        inbox_payload = {"direction": {"executive_alerts": {"alerts": []}}}
+
+    alerts = _build_consolidated_executive_alerts(platform, inbox_payload)
+    payload = generate_executive_export_xlsx(
+        finance_platform=platform,
+        budget_snapshot=budget_snapshot,
+        ar_payload=ar_payload,
+        ar_rows=ar_rows,
+        alerts=alerts,
+        source_notes=source_notes,
+    )
+    filename = f"export_ejecutivo_{current_year}_{current_month:02d}.xlsx"
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/admin/ejecutivo/alertas", response_class=HTMLResponse)
+async def admin_executive_alerts(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> HTMLResponse:
+    """Consolidated read-only executive alerts from existing snapshots."""
+    from samchat.finance_platform import (
+        build_finance_platform_snapshot,
+        build_finance_source_snapshot,
+    )
+
+    now = datetime.utcnow()
+    current_year = int(year or now.year)
+    current_month = max(1, min(int(month or now.month), 12))
+    source_errors: list[str] = []
+    platform: dict[str, Any] = {}
+    inbox_payload: dict[str, Any] = {}
+
+    try:
+        finance_source = await build_finance_source_snapshot(
+            session,
+            year=current_year,
+            month=current_month,
+            limit=300,
+        )
+        platform = build_finance_platform_snapshot(finance_source)
+    except Exception as exc:
+        logger.exception("Executive alerts finance snapshot failed")
+        source_errors.append(
+            f"Finanzas no disponible para alertas ejecutivas: {type(exc).__name__}."
+        )
+        platform = {"action_queue": {"actions": []}}
+
+    try:
+        inbox_payload = await build_sam_inbox_payload(
+            session,
+            current_empleado=current_empleado,
+            tab="direccion",
+        )
+    except Exception as exc:
+        logger.exception("Executive alerts Sam Inbox snapshot failed")
+        source_errors.append(
+            f"Sam Inbox Dirección no disponible: {type(exc).__name__}."
+        )
+        inbox_payload = {"direction": {"executive_alerts": {"alerts": []}}}
+
+    alerts = _build_consolidated_executive_alerts(platform, inbox_payload)
+    action_queue = platform.get("action_queue") or {}
+    payment_run = platform.get("payment_run") or {}
+    tax_readiness = platform.get("tax_readiness") or {}
+    accounting_close = platform.get("accounting_close_center") or {}
+    severity_counts = {
+        "high": sum(1 for item in alerts if item.get("severity") == "high"),
+        "medium": sum(1 for item in alerts if item.get("severity") == "medium"),
+        "low": sum(1 for item in alerts if item.get("severity") == "low"),
+    }
+
+    errors_html = "".join(
+        f"""
+        <div style="margin-bottom:12px;padding:12px 14px;border:1px solid #fcd34d;border-radius:14px;background:#fffbeb;color:#92400e;">
+            {escape(message)}
+        </div>
+        """
+        for message in source_errors
+    )
+    alert_rows = "".join(
+        f"""
+        <tr>
+            <td><span class="finance-pill finance-{escape(str(item.get("severity") or "low"))}">{escape(str(item.get("severity") or "-"))}</span></td>
+            <td>{escape(str(item.get("module") or "-"))}</td>
+            <td>{escape(str(item.get("title") or "-"))}</td>
+            <td>{escape(str(item.get("detail") or "-"))}</td>
+            <td>{escape(str(item.get("owner") or "-"))}</td>
+            <td>{escape(str(item.get("source") or "-"))}</td>
+            <td><a class="button secondary compact" href="{escape(str(item.get("href") or "/admin/ejecutivo/alertas"))}">Abrir</a></td>
+        </tr>
+        """
+        for item in alerts[:80]
+    ) or '<tr><td colspan="7">Sin alertas ejecutivas activas con las fuentes disponibles.</td></tr>'
+    quick_actions_html = "".join(
+        f"""
+        <a class="action-card" href="{escape(str(item.get("href") or "/admin/ejecutivo/alertas"))}">
+            <strong>{escape(str(item.get("title") or "Alerta"))}</strong>
+            <p>{escape(str(item.get("module") or "Dirección"))} · {escape(str(item.get("owner") or "Dirección"))}</p>
+        </a>
+        """
+        for item in alerts[:6]
+    ) or '<div class="section-note">Sin acciones prioritarias para este corte.</div>'
+    period_form_html = (
+        '<form method="GET" action="/admin/ejecutivo/alertas" '
+        'style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
+        f'<div><label>Año</label><input name="year" type="number" min="2020" max="2100" value="{current_year}"></div>'
+        f'<div><label>Mes</label><input name="month" type="number" min="1" max="12" value="{current_month}"></div>'
+        '<button class="button" type="submit">Actualizar alertas</button>'
+        "</form>"
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Alertas ejecutivas - SamChat</title>
+        <style>
+            {_admin_workspace_styles("1380px")}
+            .finance-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }}
+            .finance-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .finance-table th, .finance-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .finance-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            .finance-pill {{ display:inline-flex; padding:5px 9px; border-radius:999px; font-size:11px; font-weight:900; text-transform:uppercase; }}
+            .finance-high {{ background:#fee2e2; color:#991b1b; }}
+            .finance-medium {{ background:#fef3c7; color:#92400e; }}
+            .finance-low {{ background:#dcfce7; color:#166534; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "ejecutivo", subtitle="Alertas consolidadas para dirección y finanzas.")}
+            {_admin_breadcrumb_html([("Centro Ejecutivo", "/admin/ejecutivo"), ("Alertas ejecutivas", None)])}
+            {_render_admin_workspace_hero(
+                eyebrow="Dirección",
+                title="Alertas ejecutivas consolidadas",
+                description="Una sola vista read-only para riesgos de pagos, COI, DIOT/CFDI, pólizas y señales directivas desde snapshots existentes.",
+                actions_html=period_form_html,
+                side_html=(
+                    '<div class="eyebrow">Periodo</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{current_month}/{current_year}</div>'
+                    '<div style="margin-top:8px;color:#64748b;">Sin mutaciones ni tablas nuevas.</div>'
+                ),
+            )}
+            {errors_html}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Semáforo ejecutivo</div>
+                <div class="workspace-section-subtitle">Resumen priorizado desde Finance Action Queue, Payment Run, Tax Readiness, Accounting Close y Sam Inbox Dirección.</div>
+                <div class="finance-grid" style="margin-top:14px;">
+                    {_sports_card("Alertas totales", len(alerts), "Consolidadas y deduplicadas")}
+                    {_sports_card("Alta prioridad", severity_counts["high"], "Atención inmediata")}
+                    {_sports_card("Media prioridad", severity_counts["medium"], "Seguimiento operativo")}
+                    {_sports_card("Pagos pendientes", payment_run.get("payable_count", 0), f"${_safe_money(payment_run.get('payable_total'))}")}
+                    {_sports_card("DIOT/CFDI bloqueado", tax_readiness.get("diot_blockers_count", 0), str(tax_readiness.get("status") or "sin fuente"))}
+                    {_sports_card("Pólizas descuadradas", accounting_close.get("unbalanced_count", 0), "Debe/haber")}
+                </div>
+            </section>
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Acciones prioritarias</div>
+                <div class="workspace-section-subtitle">Atajos a los módulos canónicos. Esta pantalla no ejecuta acciones.</div>
+                <div class="action-grid" style="margin-top:14px;">{quick_actions_html}</div>
+            </section>
+            <section class="workspace-card">
+                <div class="workspace-section-title">Lista priorizada</div>
+                <div class="workspace-section-subtitle">Ordenada por severidad, módulo y título para revisión ejecutiva.</div>
+                <div class="table-shell" style="margin-top:14px;">
+                    <table class="finance-table">
+                        <thead><tr><th>Sev</th><th>Módulo</th><th>Alerta</th><th>Detalle</th><th>Responsable</th><th>Fuente</th><th>Acción</th></tr></thead>
+                        <tbody>{alert_rows}</tbody>
+                    </table>
+                </div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 @router.get("/admin/gastos/finance-training", response_class=HTMLResponse)
@@ -6857,7 +7484,7 @@ async def admin_finance_cashflow(
     horizon_months: int = Query(3),
     limit: int = Query(500),
 ) -> HTMLResponse:
-    """Read-only Finance Spine cashflow planning view."""
+    """Executive cashflow planning view."""
     from samchat.cashflow import (
         build_cashflow_planning_read_model,
         cashflow_admin_styles,
@@ -6950,29 +7577,40 @@ async def admin_finance_cashflow(
         "</div>"
         f'<div><label>Limite</label><input name="limit" type="number" '
         f'min="1" max="5000" value="{int(limit or 500)}"></div>'
-        '<div><button class="button" type="submit">Actualizar Cashflow</button></div>'
+        '<div><button class="button" type="submit">Actualizar flujo</button></div>'
         "</form>"
     )
     nav_html = render_admin_navigation(
         current_empleado,
         "cashflow",
-        subtitle="Cashflow planning read-only sobre Finance Spine.",
+        subtitle="Flujo de efectivo con caja, obligaciones, cobranza y proyección.",
+    )
+    breadcrumb_html = _admin_breadcrumb_html(
+        [
+            ("Centro Ejecutivo", "/admin/ejecutivo"),
+            ("Flujo de efectivo", None),
+        ]
     )
     hero_html = _render_admin_workspace_hero(
-        eyebrow="Finance Spine",
-        title="Cashflow Planning",
+        eyebrow="Finanzas ejecutivas",
+        title="Flujo de efectivo ejecutivo",
         description=(
-            "Vista read-only que separa caja real, obligaciones AP, plan "
-            "presupuestal, ingreso reconocido, cobranza AR probada y forecast "
-            "derivado."
+            "Vista que separa caja real, pagos aprobados pendientes, plan "
+            "presupuestal, facturación reconocida, cobranza confirmada y "
+            "proyección neta."
         ),
-        actions_html=form_html,
+        actions_html=(
+            '<a class="button secondary" href="/admin/ejecutivo">'
+            "Centro Ejecutivo</a>"
+            + form_html
+        ),
         side_html=(
             '<div class="eyebrow">Regla de cobranza</div>'
             '<div style="font-size:1.05rem;font-weight:900;color:#0f172a;">'
-            "No usa candidatos AR como cobranza</div>"
+            "Sólo cobranza confirmada cuenta como entrada real</div>"
             '<div style="margin-top:8px;color:#64748b;">'
-            "Sólo accepted matches cuentan como cobranza AR probada.</div>"
+            "Los posibles vínculos pendientes permanecen separados hasta "
+            "conciliación.</div>"
         ),
     )
 
@@ -6988,6 +7626,7 @@ async def admin_finance_cashflow(
     <body>
         <div class="workspace-shell">
             {nav_html}
+            {breadcrumb_html}
             {hero_html}
             {render_cashflow_planning_html(payload)}
         </div>
@@ -7223,7 +7862,11 @@ async def admin_finance_accounts_receivable(
             "Cartera operativa que separa ingreso presupuestado, facturado, "
             "reconocido y cobrado comprobado."
         ),
-        actions_html=form_html,
+        actions_html=(
+            '<a class="button secondary" href="/admin/ejecutivo">'
+            "Centro Ejecutivo</a>"
+            + form_html
+        ),
         side_html=(
             '<div class="eyebrow">Estado cobranza</div>'
             '<div style="font-size:1.2rem;font-weight:900;color:#0f172a;">'
@@ -7234,6 +7877,7 @@ async def admin_finance_accounts_receivable(
     )
     breadcrumb_html = _admin_breadcrumb_html(
         [
+            ("Centro Ejecutivo", "/admin/ejecutivo"),
             ("Finanzas", "/admin/finanzas"),
             ("Cuentas por Cobrar", None),
         ]
@@ -9784,10 +10428,13 @@ async def admin_tournaments(
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
-                min-height: 100vh;
+                min-height: 100dvh;
+                max-width: 100%;
+                overflow-x: hidden;
             }}
             .container {{
                 max-width: 1200px;
+                width: 100%;
                 margin: 0 auto;
                 background: white;
                 border-radius: 12px;
@@ -9809,6 +10456,7 @@ async def admin_tournaments(
                 padding: 20px;
                 border-radius: 8px;
                 margin-bottom: 30px;
+                min-width: 0;
             }}
             .form-group {{
                 margin-bottom: 15px;
@@ -11920,10 +12568,13 @@ async def admin_empleados(
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
-                min-height: 100vh;
+                min-height: 100dvh;
+                max-width: 100%;
+                overflow-x: hidden;
             }}
             .container {{
                 max-width: 1200px;
+                width: 100%;
                 margin: 0 auto;
                 background: white;
                 border-radius: 12px;
@@ -11945,6 +12596,7 @@ async def admin_empleados(
                 padding: 20px;
                 border-radius: 8px;
                 margin-bottom: 30px;
+                min-width: 0;
             }}
             .form-group {{
                 margin-bottom: 15px;
@@ -12040,6 +12692,7 @@ async def admin_empleados(
             td {{
                 padding: 10px 12px;
                 border-bottom: 1px solid #ddd;
+                overflow-wrap: anywhere;
             }}
             tr:hover {{
                 background-color: #f9f9f9;
@@ -12061,6 +12714,32 @@ async def admin_empleados(
             .btn-small {{
                 padding: 8px 16px;
                 font-size: 14px;
+            }}
+            @media (max-width: 720px) {{
+                body {{
+                    padding: 12px;
+                }}
+                .container {{
+                    padding: 16px;
+                    border-radius: 10px;
+                }}
+                h1 {{
+                    font-size: 1.45rem;
+                    line-height: 1.15;
+                }}
+                h2 {{
+                    font-size: 1.05rem;
+                }}
+                .btn {{
+                    width: 100%;
+                    min-height: 42px;
+                    text-align: center;
+                    margin-left: 0;
+                    margin-top: 8px;
+                }}
+                .checkbox-group {{
+                    align-items: flex-start;
+                }}
             }}
         </style>
     </head>
@@ -17257,8 +17936,10 @@ async def edit_cuenta_contable_form(
     <head>
         <title>Editar Cuenta Contable - Copa Telmex</title>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
+            * {{ box-sizing: border-box; }}
+            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; overflow-x:hidden; }}
             .form-group {{ margin-bottom: 15px; }}
             label {{ display: block; margin-bottom: 5px; font-weight: 600; }}
             input[type="text"], select {{
@@ -17277,6 +17958,16 @@ async def edit_cuenta_contable_form(
             }}
             .btn-primary {{ background: #667eea; color: white; }}
             .btn-secondary {{ background: #6c757d; color: white; margin-left: 10px; }}
+            @media (max-width: 720px) {{
+                body {{ padding: 14px; }}
+                h1 {{ font-size: 1.45rem; line-height: 1.15; }}
+                .btn {{
+                    width: 100%;
+                    min-height: 42px;
+                    text-align: center;
+                    margin: 8px 0 0 0;
+                }}
+            }}
         </style>
     </head>
     <body>
@@ -24288,6 +24979,7 @@ async def gastos_sin_cuenta_contable(
                 justify-content:space-between;
                 align-items:center;
                 gap:12px;
+                flex-wrap:wrap;
                 padding-bottom:12px;
                 border-bottom:1px solid #e2e8f0;
                 margin-bottom:12px;
@@ -24319,6 +25011,26 @@ async def gastos_sin_cuenta_contable(
             @media (max-width: 900px) {{
                 .cleanup-detail-grid {{
                     grid-template-columns:1fr;
+                }}
+                .review-toolbar,
+                .toolbar-actions {{
+                    flex-direction:column;
+                    align-items:stretch;
+                }}
+                .cleanup-pill-stack {{
+                    min-width:0;
+                    align-items:flex-start;
+                }}
+                .cleanup-pill {{
+                    width:auto;
+                    max-width:100%;
+                    white-space:normal;
+                }}
+                .cfdi-selector {{
+                    min-width:0 !important;
+                }}
+                .cleanup-detail-row > td {{
+                    padding:0 8px 12px;
                 }}
             }}
         </style>
