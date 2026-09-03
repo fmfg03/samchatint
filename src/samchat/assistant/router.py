@@ -5199,7 +5199,7 @@ class SupabaseBridgeRequest(BaseModel):
 class AssistantReportExportRequest(BaseModel):
     conversation_id: str
     run_id: Optional[str] = None
-    format: Literal["csv", "pdf"] = "csv"
+    format: Literal["csv", "pdf", "xlsx"] = "csv"
     filename: Optional[str] = None
     report_data: Optional[Dict[str, Any]] = None
 
@@ -5427,18 +5427,7 @@ def _extract_report_payload_from_trace(tool_trace: Any) -> Optional[Dict[str, An
             "cashflow_statement",
             "budget_vs_actual",
         }:
-            rows = payload.get("rows") or []
-            return {
-                "title": payload.get("title") or f"Export {step.get('tool') or 'query'}",
-                "generated_at": datetime.utcnow().isoformat(),
-                "period": payload.get("period") or {},
-                "totals": payload.get("summary") or {"registros": len(rows)},
-                "budget": {},
-                "projection": {},
-                "breakdown": {"items": rows},
-                "trend_monthly": [],
-                "comparison_yoy": [],
-            }
+            return payload
         # Signature of finance_realtime_report output.
         if any(
             k in result
@@ -5487,6 +5476,158 @@ def _extract_report_payload_from_trace(tool_trace: Any) -> Optional[Dict[str, An
 
 def _has_exportable_report_trace(tool_trace: Any) -> bool:
     return _extract_report_payload_from_trace(tool_trace) is not None
+
+
+def _is_template_report(report: Dict[str, Any]) -> bool:
+    return str(report.get("report_type") or "") in {
+        "cashflow_statement",
+        "budget_vs_actual",
+    }
+
+
+def _template_report_table_rows(report: Dict[str, Any]) -> tuple[List[str], List[List[Any]]]:
+    columns = [str(column) for column in report.get("columns") or []]
+    rows = [row for row in report.get("rows") or [] if isinstance(row, dict)]
+    if report.get("report_type") == "cashflow_statement":
+        headers = columns or ["Segmento", "Total", "Nota"]
+        table_rows: List[List[Any]] = []
+        for row in rows:
+            month_values = list(row.get("months") or [])
+            if headers and len(headers) >= 14:
+                table_rows.append(
+                    [
+                        row.get("segment", ""),
+                        *month_values[:12],
+                        row.get("total", ""),
+                    ]
+                )
+            else:
+                table_rows.append(
+                    [row.get("segment", ""), row.get("total", ""), row.get("note", "")]
+                )
+        return headers, table_rows
+    if report.get("report_type") == "budget_vs_actual":
+        headers = columns or [
+            "Segmento",
+            "Presupuesto Mes",
+            "Presupuesto Acumulado",
+            "Real Mes",
+            "Real Acumulado",
+            "Variación Mes",
+            "Variación Acumulada",
+        ]
+        return headers, [
+            [
+                row.get("segment", ""),
+                row.get("budget_month", ""),
+                row.get("budget_accumulated", ""),
+                row.get("real_month", ""),
+                row.get("real_accumulated", ""),
+                row.get("variance_month", ""),
+                row.get("variance_accumulated", ""),
+            ]
+            for row in rows
+        ]
+    headers = columns or sorted({key for row in rows for key in row.keys()})
+    return headers, [[row.get(header, "") for header in headers] for row in rows]
+
+
+def _template_report_csv_bytes(report: Dict[str, Any]) -> bytes:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["title", report.get("title") or ""])
+    writer.writerow(["subtitle", report.get("subtitle") or ""])
+    writer.writerow(["report_type", report.get("report_type") or ""])
+    writer.writerow(["currency_scale", report.get("currency_scale") or ""])
+    writer.writerow([])
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    if summary:
+        writer.writerow(["summary_metric", "value"])
+        for key, value in summary.items():
+            writer.writerow([key, value])
+        writer.writerow([])
+    headers, table_rows = _template_report_table_rows(report)
+    writer.writerow(headers)
+    writer.writerows(table_rows)
+    source_notes = report.get("source_notes") or []
+    if source_notes:
+        writer.writerow([])
+        writer.writerow(["source_notes"])
+        for note in source_notes:
+            writer.writerow([note])
+    return output.getvalue().encode("utf-8")
+
+
+def _template_report_xlsx_bytes(report: Dict[str, Any]) -> bytes:
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Reporte ejecutivo"
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    white_font = Font(color="FFFFFF", bold=True)
+
+    ws["A1"] = report.get("title") or "Reporte ejecutivo"
+    ws["A1"].font = Font(size=16, bold=True)
+    ws["A2"] = report.get("subtitle") or ""
+    ws["A3"] = f"Tipo: {report.get('report_type') or ''}"
+    ws["A4"] = f"Escala: {report.get('currency_scale') or ''}"
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    row_cursor = 6
+    if summary:
+        ws.cell(row=row_cursor, column=1, value="Métrica")
+        ws.cell(row=row_cursor, column=2, value="Valor")
+        for cell in ws[row_cursor][:2]:
+            cell.fill = header_fill
+            cell.font = white_font
+        row_cursor += 1
+        for key, value in summary.items():
+            ws.cell(row=row_cursor, column=1, value=key)
+            ws.cell(row=row_cursor, column=2, value=value)
+            row_cursor += 1
+        row_cursor += 1
+
+    headers, table_rows = _template_report_table_rows(report)
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=row_cursor, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = white_font
+        cell.alignment = Alignment(horizontal="center")
+    for row_idx, row in enumerate(table_rows, start=row_cursor + 1):
+        for col_idx, value in enumerate(row, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=value)
+    ws.freeze_panes = ws.cell(row=row_cursor + 1, column=1).coordinate
+
+    max_col = max(1, len(headers))
+    max_row = max(row_cursor + len(table_rows), 4)
+    for col_idx in range(1, max_col + 1):
+        max_len = max(
+            len(str(ws.cell(row=row, column=col_idx).value or ""))
+            for row in range(1, max_row + 1)
+        )
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(
+            max(max_len + 2, 12),
+            42,
+        )
+
+    notes = report.get("source_notes") or []
+    if notes:
+        ws_notes = wb.create_sheet("Fuentes y limites")
+        ws_notes["A1"] = "Fuentes y límites"
+        ws_notes["A1"].font = Font(bold=True)
+        ws_notes["A3"] = "Nota"
+        ws_notes["A3"].fill = header_fill
+        ws_notes["A3"].font = white_font
+        for idx, note in enumerate(notes, start=4):
+            ws_notes.cell(row=idx, column=1, value=str(note))
+        ws_notes.column_dimensions["A"].width = 80
+
+    output = io.BytesIO()
+    wb.save(output)
+    return output.getvalue()
 
 
 def _is_failed_or_incomplete_assistant_message(message: str) -> bool:
@@ -6642,6 +6783,9 @@ def _verification_safe_answer(
 
 
 def _report_csv_bytes(report: Dict[str, Any]) -> bytes:
+    if _is_template_report(report):
+        return _template_report_csv_bytes(report)
+
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["section", "metric", "value"])
@@ -6988,6 +7132,15 @@ def _report_pdf_bytes(report: Dict[str, Any]) -> bytes:
 
     c.save()
     return buffer.getvalue()
+
+
+def _report_xlsx_bytes(report: Dict[str, Any]) -> bytes:
+    if _is_template_report(report):
+        return _template_report_xlsx_bytes(report)
+    raise HTTPException(
+        status_code=400,
+        detail="XLSX export is only supported for executive template reports",
+    )
 
 
 async def _build_executive_dashboard(
@@ -11952,6 +12105,20 @@ async def export_assistant_report(
         return Response(
             content=data,
             media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if payload.format == "xlsx":
+        data = _report_xlsx_bytes(report_data)
+        filename = _sanitize_filename(
+            payload.filename, default_stem="assistant_report", ext="xlsx"
+        )
+        return Response(
+            content=data,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
