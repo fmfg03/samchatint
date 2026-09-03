@@ -1,9 +1,11 @@
 from devnous.gastos.services.employee_debtor_accounting_service import (
     _debtor_account_match_score,
     _debtor_name_match_score,
+    _format_missing_expense_accounts,
 )
 
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -86,3 +88,55 @@ def test_debtor_accounting_supports_petty_cash_alternate_accounts_without_changi
     assert "resolve_cuenta_debtor_account" in source
     assert "beneficiario_alterno_tipo" in source
     assert "return await resolve_employee_debtor_account(session, empleado)" in source
+
+
+def test_debtor_comprobacion_missing_account_reason_lists_expense_references():
+    reason = _format_missing_expense_accounts(
+        [
+            SimpleNamespace(
+                id="expense-1",
+                numero_referencia="O-26000355",
+                concepto="Alimentos",
+                cuenta_contable=None,
+            ),
+            SimpleNamespace(
+                id="expense-2",
+                numero_referencia="O-26000351",
+                concepto="Gasolina",
+                cuenta_contable=None,
+            ),
+            SimpleNamespace(
+                id="expense-3",
+                numero_referencia="O-26000350",
+                concepto="Alimentos",
+                cuenta_contable=object(),
+            ),
+        ]
+    )
+
+    assert reason == (
+        "expense_missing_accounts:"
+        "O-26000355 Alimentos; O-26000351 Gasolina"
+    )
+    assert "expense-1" not in reason
+
+
+def test_edit_expense_unchecking_company_amex_applies_budget_concept_account_mapping():
+    source = read("src/devnous/gastos/routes/user_routes.py")
+
+    assert (
+        "from ..services.budget_concept_account_service import (\n"
+        "    apply_budget_concept_cuenta_mapping,\n"
+        ")"
+    ) in source
+    assert (
+        "reclassified_from_company_amex = (\n"
+        "        current_company_amex and not requested_company_amex\n"
+        "    )"
+    ) in source
+    assert (
+        "await apply_budget_concept_cuenta_mapping(\n"
+        "            session, expense\n"
+        "        )"
+    ) in source
+    assert "cuenta_contable asignada desde partida" in source

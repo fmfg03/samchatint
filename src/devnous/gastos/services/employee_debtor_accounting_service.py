@@ -75,6 +75,26 @@ class DebtorPostingResult:
     liability_account: Optional[CuentaContable] = None
 
 
+def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
+    missing = []
+    for expense in expenses:
+        if getattr(expense, "cuenta_contable", None) is not None:
+            continue
+        ref = (getattr(expense, "numero_referencia", None) or "").strip()
+        concepto = (getattr(expense, "concepto", None) or "").strip()
+        if ref and concepto:
+            missing.append(f"{ref} {concepto}")
+        elif ref:
+            missing.append(ref)
+        elif concepto:
+            missing.append(concepto)
+        else:
+            missing.append(str(getattr(expense, "id", "gasto sin referencia")))
+    if not missing:
+        return "expense_missing_accounts"
+    return "expense_missing_accounts:" + "; ".join(missing)
+
+
 def _money(value: Any) -> Decimal:
     return Decimal(str(value or 0)).quantize(MONEY_QUANT, rounding=ROUND_HALF_UP)
 
@@ -936,13 +956,15 @@ async def ensure_debtor_comprobacion_posting_for_informe(
         cuenta_gastos_id=cuenta_gastos_id,
         documento_id=informe_documento.id,
     )
+    missing_account_reason = _format_missing_expense_accounts(expenses)
+    if missing_account_reason != "expense_missing_accounts":
+        return DebtorPostingResult(
+            status="pending",
+            reason=missing_account_reason,
+            debtor_account=debtor,
+        )
+
     for expense in expenses:
-        if getattr(expense, "cuenta_contable", None) is None:
-            return DebtorPostingResult(
-                status="pending",
-                reason=f"expense_missing_account:{expense.id}",
-                debtor_account=debtor,
-            )
         preview = await build_expense_accounting_preview(
             session,
             expense,
@@ -1289,6 +1311,7 @@ __all__ = [
     "ensure_debtor_payment_posting_for_document",
     "ensure_debtor_settlement_posting",
     "format_samchat_poliza_concept",
+    "_format_missing_expense_accounts",
     "list_employees_missing_debtor_account",
     "resolve_employee_debtor_account",
     "resolve_cuenta_debtor_account",
