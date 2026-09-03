@@ -114,15 +114,21 @@ async def _solicitud_linked_informe_is_approved(
     return informe is not None and informe.estado == "aprobado"
 
 
+def is_employee_reimbursement_solicitud(documento: Documento) -> bool:
+    concept = str(getattr(documento, "concepto_pago", None) or "")
+    return (
+        documento.tipo == "SOLICITUD"
+        and documento.cuenta_gastos_id is not None
+        and concept.startswith(EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX)
+    )
+
+
 async def _sync_reimbursement_budget_or_raise(
     session: AsyncSession, documento: Documento
 ) -> None:
     """Prevent reimbursement approval routing before informe budget assignment."""
-    concept = str(getattr(documento, "concepto_pago", None) or "")
     if (
-        documento.tipo != "SOLICITUD"
-        or documento.cuenta_gastos_id is None
-        or not concept.startswith(EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX)
+        not is_employee_reimbursement_solicitud(documento)
         or getattr(documento, "budget_concept_id", None)
     ):
         return
@@ -135,6 +141,17 @@ async def _sync_reimbursement_budget_or_raise(
             "Control Presupuestal asigne partida al informe vinculado.",
         )
     documento.budget_concept_id = informe.budget_concept_id
+
+
+async def _sync_reimbursement_budget_from_informe(
+    session: AsyncSession, documento: Documento
+) -> Optional[Documento]:
+    if not is_employee_reimbursement_solicitud(documento):
+        return None
+    informe = await _informe_documento_for_cuenta(session, documento.cuenta_gastos_id)
+    if informe is not None and getattr(informe, "budget_concept_id", None):
+        documento.budget_concept_id = informe.budget_concept_id
+    return informe
 
 
 async def _linked_informe_approval_actor_id(
@@ -157,6 +174,30 @@ async def _linked_informe_approval_actor_id(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def approve_reimbursement_solicitud_for_approved_informe(
+    session: AsyncSession,
+    documento: Documento,
+    *,
+    now: Optional[datetime] = None,
+    comentario: Optional[str] = None,
+) -> Optional[Aprobacion]:
+    """Approve a reimbursement solicitud using the linked informe approval."""
+    informe = await _sync_reimbursement_budget_from_informe(session, documento)
+    if informe is None or informe.estado != "aprobado":
+        return None
+    aprobador_id = await _linked_informe_approval_actor_id(session, documento)
+    if aprobador_id is None:
+        return None
+    aprobacion = _auto_approve_solicitud_with_approved_informe(
+        documento=documento,
+        aprobador_id=aprobador_id,
+        now=now or utc_now(),
+        comentario=comentario,
+    )
+    session.add(aprobacion)
+    return aprobacion
 
 
 async def _document_has_recorded_approval(
@@ -212,12 +253,15 @@ async def promote_solicitudes_ready_for_payment(
     *,
     actor_id: Optional[UUID | str] = None,
 ) -> int:
-    """Promote enviado solicitudes when their linked informe is approved."""
+    """Promote reimbursement solicitudes when their linked informe is approved."""
     result = await session.execute(
         select(Documento).where(
             Documento.tipo == "SOLICITUD",
-            Documento.estado == "enviado",
+            Documento.estado.in_(["borrador", "enviado"]),
             Documento.cuenta_gastos_id.isnot(None),
+            Documento.concepto_pago.like(
+                f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"
+            ),
         )
     )
     solicitudes = result.scalars().all()
@@ -230,16 +274,13 @@ async def promote_solicitudes_ready_for_payment(
     promoted = 0
     promoted_ids: list[UUID] = []
     for documento in solicitudes:
-        aprobador_id = await _linked_informe_approval_actor_id(session, documento)
-        if aprobador_id is None:
-            continue
-        session.add(
-            _auto_approve_solicitud_with_approved_informe(
-                documento=documento,
-                aprobador_id=aprobador_id,
-                now=now,
-            )
+        aprobacion = await approve_reimbursement_solicitud_for_approved_informe(
+            session,
+            documento,
+            now=now,
         )
+        if aprobacion is None:
+            continue
         promoted += 1
         promoted_ids.append(documento.id)
 
@@ -460,6 +501,15 @@ async def transition_documento_workflow(
                     "antes de poder enviarse.",
                 )
         await _sync_reimbursement_budget_or_raise(session, documento)
+        if is_employee_reimbursement_solicitud(
+            documento
+        ) and not await _solicitud_linked_informe_is_approved(session, documento):
+            raise DocumentoWorkflowValidationError(
+                "informe_approval_required",
+                "La solicitud de reembolso no se envía a aprobación separada; "
+                "pasará a Programación de Pago cuando se apruebe el informe "
+                "de gastos vinculado.",
+            )
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
@@ -487,6 +537,14 @@ async def transition_documento_workflow(
             raise DocumentoWorkflowValidationError(
                 "invalid_estado",
                 "El documento solo puede aprobarse cuando está en estado 'enviado'.",
+            )
+        if is_employee_reimbursement_solicitud(
+            documento
+        ) and not await _solicitud_linked_informe_is_approved(session, documento):
+            raise DocumentoWorkflowValidationError(
+                "informe_approval_required",
+                "La solicitud de reembolso no se aprueba por separado; debe "
+                "aprobarse primero el informe de gastos vinculado.",
             )
         _raise_if_document_already_advanced(
             await _document_has_recorded_approval(session, documento_uuid)

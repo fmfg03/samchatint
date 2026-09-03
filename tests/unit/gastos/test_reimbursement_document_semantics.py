@@ -843,8 +843,13 @@ def test_existing_reimbursement_request_is_promoted_on_informe_approval() -> Non
         "src/devnous/gastos/services/reimbursement_payment_run_service.py"
     ).read_text()
 
-    assert 'existing_reembolso.estado == "enviado"' in reimbursement_service_source
-    assert "action=\"approve\"" in reimbursement_service_source
+    assert 'existing_reembolso.estado in {"borrador", "enviado"}' in (
+        reimbursement_service_source
+    )
+    assert "approve_reimbursement_solicitud_for_approved_informe" in (
+        reimbursement_service_source
+    )
+    assert "transition_documento_workflow" not in reimbursement_service_source
     assert (
         "ensure_fecha_pago_for_approved_solicitud(existing_reembolso)"
         in reimbursement_service_source
@@ -866,38 +871,46 @@ def test_telegram_approval_routes_reimbursement_to_payment_run() -> None:
 
 def test_reimbursement_created_from_unbudgeted_informe_stays_draft() -> None:
     route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
-    close_start = route_source.index("async def cerrar_cuenta_de_gastos(")
+    close_start = route_source.index(
+        "# Saldo a favor del empleado: auto-generate a reembolso SOLICITUD"
+    )
     close_end = route_source.index(
-        "# =============================================================================",
+        "    try:\n        doc_synced = await _sync_informe_documento_to_enviado",
         close_start,
     )
     close_block = route_source[close_start:close_end]
 
-    assert "if informe_doc.budget_concept_id:" in close_block
-    assert 'action="send"' in close_block
-    assert "quedará en borrador" in close_block
-    assert (
-        close_block.index("if informe_doc.budget_concept_id:")
-        < close_block.index('action="send"')
-    )
+    assert "new_solicitud = await create_solicitud_personal_document" in close_block
+    assert "transition_documento_workflow" not in close_block
+    assert 'action="send"' not in close_block
+    assert "quedó preparada" in close_block
+    assert "Programación de Pago cuando el informe sea aprobado" in close_block
 
 
 def test_budget_control_releases_draft_reimbursement_after_assignment() -> None:
     route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
 
-    assert "async def _release_budget_gated_reimbursement_solicitudes" in route_source
+    assert "async def _prepare_budget_gated_reimbursement_solicitudes" in route_source
     assert 'Documento.estado == "borrador"' in route_source
     assert "Documento.budget_concept_id.is_(None)" in route_source
     assert (
         "solicitud.budget_concept_id = informe_doc.budget_concept_id"
         in route_source
     )
-    assert 'solicitud.estado = "enviado"' in route_source
-    assert "released_reimbursements" in route_source
-    assert "_schedule_budget_control_release_notification(" in route_source
+    helper_start = route_source.index(
+        "async def _prepare_budget_gated_reimbursement_solicitudes"
+    )
+    helper_end = route_source.index(
+        "async def _reject_control_presupuestal_document",
+        helper_start,
+    )
+    helper_block = route_source[helper_start:helper_end]
+    assert 'solicitud.estado = "enviado"' not in helper_block
+    assert 'accion="asignar_partida_presupuestal"' in helper_block
+    assert "preparada para programación de pagos" in helper_block
 
 
-def test_workflow_blocks_reimbursement_send_until_informe_has_budget() -> None:
+def test_workflow_blocks_reimbursement_send_until_informe_is_approved() -> None:
     workflow_source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"
     ).read_text()
@@ -909,6 +922,10 @@ def test_workflow_blocks_reimbursement_send_until_informe_has_budget() -> None:
         "documento.budget_concept_id = informe.budget_concept_id"
         in workflow_source
     )
+    assert "async def approve_reimbursement_solicitud_for_approved_informe" in (
+        workflow_source
+    )
+    assert "informe_approval_required" in workflow_source
     send_start = workflow_source.index('if normalized_action == "send":')
     send_block = workflow_source[send_start:workflow_source.index(
         'elif normalized_action == "approve":',
@@ -916,5 +933,14 @@ def test_workflow_blocks_reimbursement_send_until_informe_has_budget() -> None:
     )]
     assert (
         send_block.index("await _sync_reimbursement_budget_or_raise")
+        < send_block.index("informe_approval_required")
+    )
+    assert (
+        send_block.index("informe_approval_required")
         < send_block.index("if documento_requires_budget_control(documento):")
     )
+    approve_start = workflow_source.index('elif normalized_action == "approve":')
+    approve_block = workflow_source[
+        approve_start:workflow_source.index('elif normalized_action == "reject":')
+    ]
+    assert "informe_approval_required" in approve_block
