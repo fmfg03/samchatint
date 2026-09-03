@@ -28980,6 +28980,8 @@ async def documentos_pendientes(
             Aprobacion.entidad_id == Documento.id,
             Aprobacion.aprobador_id == current_empleado.id,
             Aprobacion.accion.in_(["aprobar", "rechazar"]),
+            Aprobacion.fecha
+            >= func.coalesce(Documento.enviado_en, Documento.creado_en),
         )
     )
 

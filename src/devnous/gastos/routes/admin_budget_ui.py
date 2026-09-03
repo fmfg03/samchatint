@@ -277,6 +277,10 @@ def _sum_budget_line_periods(
     budget_view: str,
 ) -> list[dict[str, Any]]:
     buckets: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    has_unassigned_line = any(
+        not str(line.get("budget_concept_id") or "").strip()
+        for line in lines
+    )
     for week in range(1, BUDGET_WEEK_COUNT + 1):
         bucket_key, bucket_label = _budget_period_bucket(edition_year, week, period)
         if bucket_key not in buckets:
@@ -292,7 +296,7 @@ def _sum_budget_line_periods(
             concept_id = str(line.get("budget_concept_id") or "")
             actual_key = concept_id or "__unassigned__"
             plan = plan_map.get(line_id, {})
-            actuals = actuals_map.get(actual_key, actuals_map.get("__unassigned__", {}))
+            actuals = actuals_map.get(actual_key, {})
             week_plan = plan.get(week, {})
             week_actual = actuals.get(week, {})
             if budget_view == "income":
@@ -302,7 +306,38 @@ def _sum_budget_line_periods(
                 bucket["budget"] += float(week_plan.get("budget_expense_amount") or 0)
                 bucket["real"] += float(week_actual.get("real_expense_cash") or 0)
                 bucket["committed"] += float(week_actual.get("committed_unpaid") or 0)
+        if budget_view == "expenses" and not has_unassigned_line:
+            week_actual = actuals_map.get("__unassigned__", {}).get(week, {})
+            bucket["real"] += float(week_actual.get("real_expense_cash") or 0)
+            bucket["committed"] += float(week_actual.get("committed_unpaid") or 0)
     return list(buckets.values())
+
+
+def summarize_budget_actuals_for_lines(
+    lines: list[dict[str, Any]],
+    actuals_map: dict[str, dict[int, dict[str, float]]],
+) -> dict[str, float]:
+    """Summarize expense actuals using the same concept matching as the detail."""
+    real_total = 0.0
+    committed_total = 0.0
+    seen_actual_keys: set[str] = set()
+    for line in lines:
+        concept_id = str(line.get("budget_concept_id") or "").strip()
+        actual_key = concept_id or "__unassigned__"
+        if actual_key in seen_actual_keys:
+            continue
+        seen_actual_keys.add(actual_key)
+        for values in actuals_map.get(actual_key, {}).values():
+            real_total += float(values.get("real_expense_cash") or 0)
+            committed_total += float(values.get("committed_unpaid") or 0)
+    if "__unassigned__" not in seen_actual_keys:
+        for values in actuals_map.get("__unassigned__", {}).values():
+            real_total += float(values.get("real_expense_cash") or 0)
+            committed_total += float(values.get("committed_unpaid") or 0)
+    return {
+        "real_expense_total": round(real_total, 2),
+        "committed_pending_total": round(committed_total, 2),
+    }
 
 
 def _budget_executive_status(execution: float) -> tuple[str, str, str]:
@@ -484,8 +519,18 @@ def render_tournament_dashboard_cards(
         budget_total = float(
             rollup.get("budget_expense_total") or item.get("budget_total") or 0
         )
-        paid_total = float(comparison.get("paid_total") or 0)
-        committed_total = float(comparison.get("committed_total") or 0)
+        paid_total = float(
+            rollup.get("real_expense_total")
+            if rollup.get("real_expense_total") is not None
+            else comparison.get("actual_total")
+            if comparison.get("actual_total") is not None
+            else comparison.get("paid_total") or 0
+        )
+        committed_total = float(
+            rollup.get("committed_pending_total")
+            if rollup.get("committed_pending_total") is not None
+            else comparison.get("committed_total") or 0
+        )
         used_total = paid_total + committed_total
         execution = (used_total / budget_total * 100) if budget_total else 0.0
         executive_status, status_bg, status_color = _budget_executive_status(execution)
@@ -702,6 +747,153 @@ def _render_matrix_cuenta_search_script(cuentas_contables: list[dict[str, Any]])
     """
 
 
+def _actuals_for_budget_line(
+    actuals_map: dict[str, dict[int, dict[str, float]]],
+    concept_id: str,
+) -> dict[int, dict[str, float]]:
+    actual_key = concept_id or "__unassigned__"
+    return actuals_map.get(actual_key, {})
+
+
+def _actuals_has_expense_values(months: dict[int, dict[str, float]]) -> bool:
+    for values in months.values():
+        if float(values.get("real_expense_cash") or 0):
+            return True
+        if float(values.get("committed_unpaid") or 0):
+            return True
+    return False
+
+
+def _render_budget_aggregate_matrix(
+    lines: list[dict[str, Any]],
+    *,
+    plan_map: dict[str, dict[int, dict[str, float]]],
+    actuals_map: dict[str, dict[int, dict[str, float]]],
+    edition_year: int,
+    budget_period: str,
+    matrix_mode: str,
+    show_committed: bool,
+) -> str:
+    clean_view = "income" if matrix_mode == "income" else "expenses"
+    buckets = _sum_budget_line_periods(
+        lines,
+        plan_map=plan_map,
+        actuals_map=actuals_map,
+        edition_year=edition_year,
+        period=budget_period,
+        budget_view=clean_view,
+    )
+    available_label = "Variación" if clean_view == "income" else "Disponible"
+    rows: list[str] = []
+    for item in buckets:
+        budget = float(item.get("budget") or 0)
+        real = float(item.get("real") or 0)
+        committed = float(item.get("committed") or 0)
+        period_available = budget - real - (
+            committed if clean_view == "expenses" else 0
+        )
+        period_execution = (
+            ((real + (committed if clean_view == "expenses" else 0)) / budget * 100)
+            if budget
+            else 0.0
+        )
+        committed_cell = (
+            f"${committed:,.2f}"
+            if clean_view == "expenses" and show_committed
+            else "—"
+        )
+        rows.append(
+            f"""
+            <tr>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:800;color:#0f172a;">{escape(str(item.get("label") or ""))}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${budget:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${real:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">{committed_cell}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_available_style(period_available, income_view=clean_view == "income")}">${period_available:,.2f}</td>
+                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_execution_style(period_execution)}">{period_execution:.1f}%</td>
+            </tr>
+            """
+        )
+    if not rows:
+        rows.append(
+            '<tr><td colspan="6" style="padding:14px;color:#64748b;">'
+            "Sin partidas para los filtros actuales.</td></tr>"
+        )
+    return f"""
+        <div style="padding:12px;border:1px solid #dbe2ea;border-radius:12px;background:#f8fafc;color:#475569;font-size:13px;margin-bottom:12px;">
+            Vista agregada por periodo. La edición granular permanece en Semanal.
+            Los importes sin partida asignada se incluyen una sola vez.
+        </div>
+        <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:12px;">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                <thead>
+                    <tr style="background:#f8fafc;">
+                        <th style="padding:10px;text-align:left;border-bottom:1px solid #e2e8f0;">Periodo</th>
+                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Presupuesto gasto</th>
+                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Gasto real</th>
+                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Comprometido no pagado</th>
+                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">{available_label}</th>
+                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">% utilizado</th>
+                    </tr>
+                </thead>
+                <tbody>{''.join(rows)}</tbody>
+            </table>
+        </div>
+    """
+
+
+def _render_unassigned_budget_actuals_card(
+    actuals: dict[int, dict[str, float]],
+    *,
+    edition_year: int,
+) -> str:
+    headers = "".join(
+        f'<th title="{escape(_budget_period_bucket(edition_year, idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">Semana {idx}</th>'
+        for idx in range(1, BUDGET_WEEK_COUNT + 1)
+    )
+
+    def _actual_row(label: str, key: str, color: str) -> str:
+        total = 0.0
+        cells: list[str] = [
+            f'<td style="padding:6px 10px;font-weight:700;color:#475569;position:sticky;left:0;background:#fff;z-index:1;min-width:150px;">{escape(label)}</td>'
+        ]
+        for week in range(1, BUDGET_WEEK_COUNT + 1):
+            value = float(actuals.get(week, {}).get(key) or 0)
+            total += value
+            cells.append(
+                f'<td style="padding:6px;text-align:right;{color}">${value:,.2f}</td>'
+            )
+        cells.insert(
+            1,
+            f'<td style="padding:6px 10px;text-align:right;font-weight:800;position:sticky;left:150px;background:#fff;z-index:1;min-width:96px;">${total:,.2f}</td>',
+        )
+        return f"<tr>{''.join(cells)}</tr>"
+
+    return f"""
+        <div class="budget-excel-line-card" style="border:1px dashed #f59e0b;border-radius:14px;background:#fffbeb;padding:12px;margin-bottom:12px;">
+            <div style="font-weight:900;color:#92400e;margin-bottom:4px;">Sin partida asignada</div>
+            <div style="font-size:12px;color:#92400e;margin-bottom:10px;">
+                Importes reales pendientes de clasificación presupuestal; se muestran una sola vez y no son editables.
+            </div>
+            <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #fde68a;border-radius:12px;background:#fff;">
+                <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:11px;">
+                    <thead>
+                        <tr style="background:#fef3c7;">
+                            <th style="text-align:left;padding:6px 10px;border-bottom:1px solid #fde68a;position:sticky;left:0;background:#fef3c7;z-index:2;min-width:150px;">Renglón</th>
+                            <th style="padding:6px 10px;border-bottom:1px solid #fde68a;position:sticky;left:150px;background:#fef3c7;z-index:2;min-width:96px;">Monto total</th>
+                            {headers}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {_actual_row("Gasto real (caja)", "real_expense_cash", "color:#475569;")}
+                        {_actual_row("Comprometido no pagado", "committed_unpaid", "color:#92400e;")}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    """
+
+
 def render_budget_partida_matrix(
     lines: list[dict[str, Any]],
     *,
@@ -737,6 +929,18 @@ def render_budget_partida_matrix(
             + "</div>"
         )
     clean_mode = matrix_mode if matrix_mode in {"full", "expenses", "income"} else "full"
+    clean_period = _clean_budget_period(budget_period)
+    effective_year = int(edition_year or date.today().year)
+    if clean_period != "weekly":
+        return _render_budget_aggregate_matrix(
+            lines,
+            plan_map=plan_map,
+            actuals_map=actuals_map,
+            edition_year=effective_year,
+            budget_period=clean_period,
+            matrix_mode=clean_mode,
+            show_committed=show_committed,
+        )
 
     grouped: dict[str, list[dict[str, Any]]] = {}
     for line in lines:
@@ -744,6 +948,10 @@ def render_budget_partida_matrix(
         grouped.setdefault(phase, []).append(line)
 
     html_parts: list[str] = []
+    has_unassigned_line = any(
+        not str(line.get("budget_concept_id") or "").strip()
+        for line in lines
+    )
     for phase, phase_lines in sorted(grouped.items()):
         html_parts.append(
             f'<div style="margin-top:18px;"><div style="font-weight:800;color:#0f172a;margin-bottom:8px;">'
@@ -752,9 +960,8 @@ def render_budget_partida_matrix(
         for line in phase_lines:
             line_id = str(line.get("id") or "")
             concept_id = str(line.get("budget_concept_id") or "")
-            actual_key = concept_id or "__unassigned__"
             plan = plan_map.get(line_id, {})
-            actuals = actuals_map.get(actual_key, actuals_map.get("__unassigned__", {}))
+            actuals = _actuals_for_budget_line(actuals_map, concept_id)
             disabled = "" if can_edit else " disabled"
             cuenta_field_html = _render_matrix_cuenta_field(
                 line_id,
@@ -792,7 +999,7 @@ def render_budget_partida_matrix(
                                 <tr style="background:#f8fafc;">
                                     <th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:0;background:#f8fafc;z-index:2;min-width:150px;">Renglón</th>
                                     <th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:150px;background:#f8fafc;z-index:2;min-width:96px;">Monto total</th>
-                                    {''.join(f'<th title="{escape(_budget_period_bucket(int(edition_year or date.today().year), idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
+                                    {''.join(f'<th title="{escape(_budget_period_bucket(effective_year, idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
                                 </tr>
                             </thead>
                             <tbody>
@@ -848,7 +1055,7 @@ def render_budget_partida_matrix(
                         )
                     else:
                         value = 0.0
-                        cells.append(f'<td style="padding:6px;text-align:right;">—</td>')
+                        cells.append('<td style="padding:6px;text-align:right;">—</td>')
                     total += value
                 cells.insert(1, f'<td style="padding:6px 10px;text-align:right;font-weight:800;position:sticky;left:150px;background:#fff;z-index:1;min-width:96px;">${total:,.2f}</td>')
                 return f"<tr>{''.join(cells)}</tr>"
@@ -910,13 +1117,25 @@ def render_budget_partida_matrix(
             )
         html_parts.append("</div>")
 
+    unassigned_actuals = actuals_map.get("__unassigned__", {})
+    if (
+        clean_mode in {"full", "expenses"}
+        and not has_unassigned_line
+        and _actuals_has_expense_values(unassigned_actuals)
+    ):
+        html_parts.append(
+            _render_unassigned_budget_actuals_card(
+                unassigned_actuals,
+                edition_year=effective_year,
+            )
+        )
+
     if can_edit:
         html_parts.append(_render_budget_matrix_spreadsheet_script())
     if can_edit and cuentas_contables:
         html_parts.append(_render_matrix_cuenta_search_script(cuentas_contables))
 
     return "".join(html_parts)
-
 
 
 def _render_budget_matrix_spreadsheet_script() -> str:

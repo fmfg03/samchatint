@@ -1097,6 +1097,20 @@ def test_pending_approval_summary_shows_accumulated_amount() -> None:
     assert "pending_amount_display" in block
 
 
+def test_pending_approval_excludes_only_actions_after_latest_send() -> None:
+    source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = source.index("already_actioned_by_current_user = exists().where(")
+    end = source.index("filters = [Documento.estado == 'enviado'", start)
+    block = source[start:end]
+
+    assert 'Aprobacion.accion.in_(["aprobar", "rechazar"])' in block
+    assert (
+        "Aprobacion.fecha\n"
+        "            >= func.coalesce(Documento.enviado_en, Documento.creado_en)"
+        in block
+    )
+
+
 def test_pending_approval_page_has_workspace_navigation_context() -> None:
     source = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = source.index("async def documentos_pendientes")

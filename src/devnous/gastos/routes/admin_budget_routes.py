@@ -57,6 +57,7 @@ from .admin_budget_ui import (
     render_budget_matrix_filters,
     render_budget_partida_matrix,
     render_tournament_dashboard_cards,
+    summarize_budget_actuals_for_lines,
 )
 from ..services.cfdi_income_bridge_service import (
     CFDIIncomeBridgeError,
@@ -694,9 +695,21 @@ def register_presupuestos_routes(router) -> None:
                     for concept in actuals.values()
                     for month in concept.values()
                 )
+                expense_actual_lines = await list_budget_lines(
+                    session,
+                    version_id=selected_version["id"],
+                    tournament_id=str(item.get("tournament_id") or "") or None,
+                    tournament_code=str(item.get("tournament_code") or "") or None,
+                    line_direction="expense",
+                    limit=5000,
+                )
                 tournament_rollups[rollup_key] = {
                     **rollups,
                     "real_income_total": round(real_income, 2),
+                    **summarize_budget_actuals_for_lines(
+                        expense_actual_lines,
+                        actuals,
+                    ),
                 }
 
         year_options = "".join(
@@ -1494,6 +1507,7 @@ def register_presupuestos_routes(router) -> None:
             cuentas_contables=cuentas_contables,
             matrix_mode="expenses",
             budget_view="expenses",
+            budget_period=budget_period,
         )
         ingresos_matrix_html = render_budget_partida_matrix(
             filtered_income_lines,
@@ -1509,6 +1523,7 @@ def register_presupuestos_routes(router) -> None:
             cuentas_contables=cuentas_contables,
             matrix_mode="income",
             budget_view="income",
+            budget_period=budget_period,
         )
         active_visible_count = (
             len(filtered_income_lines)
