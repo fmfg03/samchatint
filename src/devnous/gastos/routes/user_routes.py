@@ -12306,6 +12306,10 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             .quick-air-shell table {{
                 min-width:760px;
             }}
+            .quick-expense-table,
+            .quick-air-table {{
+                min-width:760px;
+            }}
         }}
     """
 

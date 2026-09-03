@@ -1075,6 +1075,7 @@ def render_admin_navigation(
 
     inicio_items = [
         ("admin.gastos.dashboard", "/admin/gastos", "Resumen", "dashboard"),
+        ("executive.reports.read", "/admin/ejecutivo", "Ejecutivo", "ejecutivo"),
         ("admin.finanzas", "/admin/sam-inbox", "Sam Inbox", "sam_inbox"),
     ]
     finanzas_items = [
@@ -3218,6 +3219,151 @@ async def admin_dashboard(
     </html>
     """
     return html
+
+
+@router.get("/admin/ejecutivo", response_class=HTMLResponse)
+async def admin_executive_center(
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> HTMLResponse:
+    """Unified executive entrypoint for existing finance and owner-pack surfaces."""
+
+    cards = [
+        {
+            "title": "Asistente Ejecutivo",
+            "href": "/assistant",
+            "status": "Entrada principal",
+            "metric": "Preguntas con evidencia",
+            "description": (
+                "Pregunta por presupuesto, flujo, cobranza, Owner Pack y "
+                "faltantes sin salir del contexto ejecutivo."
+            ),
+        },
+        {
+            "title": "Presupuestos",
+            "href": "/admin/presupuestos",
+            "status": "Control financiero",
+            "metric": "Autorizado vs utilizado",
+            "description": (
+                "Revisa presupuesto autorizado, ejercido real, comprometido "
+                "pendiente y estado por torneo."
+            ),
+        },
+        {
+            "title": "Flujo de efectivo",
+            "href": "/admin/finanzas/cashflow",
+            "status": "Liquidez",
+            "metric": "Caja y proyección",
+            "description": (
+                "Separa entradas reales, salidas reales, pagos pendientes, "
+                "cobranza confirmada y proyección neta."
+            ),
+        },
+        {
+            "title": "Cuentas por cobrar",
+            "href": "/admin/finanzas/cuentas-por-cobrar",
+            "status": "Cobranza",
+            "metric": "Facturado, cobrado y pendiente",
+            "description": (
+                "Da seguimiento a cartera, vencimientos, vínculos de CFDI PSP "
+                "y conciliación de cobros."
+            ),
+        },
+        {
+            "title": "Owner Pack",
+            "href": "/api/assistant/owner-pack/export-preview.html",
+            "status": "Evidencia",
+            "metric": "Cobertura y faltantes",
+            "description": (
+                "Abre la vista ejecutiva de secciones, evidencia disponible, "
+                "faltantes y preguntas siguientes."
+            ),
+        },
+        {
+            "title": "Alertas ejecutivas",
+            "href": "/admin/finanzas",
+            "status": "Atención",
+            "metric": "Riesgos operativos",
+            "description": (
+                "Punto temporal para revisar pagos, documentos, COI, DIOT y "
+                "alertas financieras mientras se consolida el tablero dedicado."
+            ),
+        },
+    ]
+    cards_html = "".join(
+        f"""
+        <a href="{escape(card['href'])}" class="action-card">
+            <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">
+                <strong>{escape(card['title'])}</strong>
+                <span style="border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;white-space:nowrap;">
+                    {escape(card['status'])}
+                </span>
+            </div>
+            <p style="font-weight:800;color:#0f172a;margin-top:10px;">{escape(card['metric'])}</p>
+            <p>{escape(card['description'])}</p>
+        </a>
+        """
+        for card in cards
+    )
+    hero_actions_html = (
+        '<a class="button" href="/assistant">Abrir asistente</a>'
+        '<a class="button secondary" href="/admin/presupuestos">Presupuestos</a>'
+        '<a class="button secondary" href="/admin/finanzas/cashflow">Flujo de efectivo</a>'
+        '<a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar">Cuentas por cobrar</a>'
+    )
+    hero_side_html = """
+        <div class="meta-grid">
+            <div class="meta-card">
+                <span>Vista</span>
+                <strong>Ejecutiva</strong>
+                <small>Entrada única para tableros y evidencia.</small>
+            </div>
+            <div class="meta-card">
+                <span>Acciones</span>
+                <strong>Sin cambios</strong>
+                <small>Esta pantalla no modifica datos ni crea solicitudes.</small>
+            </div>
+        </div>
+    """
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Centro Ejecutivo - SamChat</title>
+        <style>{_admin_workspace_styles("1380px")}</style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "ejecutivo", subtitle="Entrada ejecutiva a presupuesto, flujo, cobranza, evidencia y asistente.")}
+            {_render_admin_workspace_hero(
+                eyebrow="Dirección",
+                title="Centro Ejecutivo",
+                description=(
+                    "Una sola entrada para revisar salud financiera, evidencia, "
+                    "faltantes y navegación hacia los tableros clave."
+                ),
+                actions_html=hero_actions_html,
+                side_html=hero_side_html,
+            )}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Tableros y reportes</div>
+                        <h2>Lectura ejecutiva consolidada</h2>
+                        <div class="section-note">
+                            Cada tarjeta abre la superficie dueña del dato. El centro
+                            organiza la navegación sin duplicar cálculos.
+                        </div>
+                    </div>
+                </div>
+                <div class="action-grid">{cards_html}</div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 
 @router.get("/admin/gastos/finance-training", response_class=HTMLResponse)
@@ -9785,10 +9931,13 @@ async def admin_tournaments(
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
-                min-height: 100vh;
+                min-height: 100dvh;
+                max-width: 100%;
+                overflow-x: hidden;
             }}
             .container {{
                 max-width: 1200px;
+                width: 100%;
                 margin: 0 auto;
                 background: white;
                 border-radius: 12px;
@@ -9810,6 +9959,7 @@ async def admin_tournaments(
                 padding: 20px;
                 border-radius: 8px;
                 margin-bottom: 30px;
+                min-width: 0;
             }}
             .form-group {{
                 margin-bottom: 15px;
@@ -11921,10 +12071,13 @@ async def admin_empleados(
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
-                min-height: 100vh;
+                min-height: 100dvh;
+                max-width: 100%;
+                overflow-x: hidden;
             }}
             .container {{
                 max-width: 1200px;
+                width: 100%;
                 margin: 0 auto;
                 background: white;
                 border-radius: 12px;
@@ -11946,6 +12099,7 @@ async def admin_empleados(
                 padding: 20px;
                 border-radius: 8px;
                 margin-bottom: 30px;
+                min-width: 0;
             }}
             .form-group {{
                 margin-bottom: 15px;
@@ -12041,6 +12195,7 @@ async def admin_empleados(
             td {{
                 padding: 10px 12px;
                 border-bottom: 1px solid #ddd;
+                overflow-wrap: anywhere;
             }}
             tr:hover {{
                 background-color: #f9f9f9;
@@ -12062,6 +12217,32 @@ async def admin_empleados(
             .btn-small {{
                 padding: 8px 16px;
                 font-size: 14px;
+            }}
+            @media (max-width: 720px) {{
+                body {{
+                    padding: 12px;
+                }}
+                .container {{
+                    padding: 16px;
+                    border-radius: 10px;
+                }}
+                h1 {{
+                    font-size: 1.45rem;
+                    line-height: 1.15;
+                }}
+                h2 {{
+                    font-size: 1.05rem;
+                }}
+                .btn {{
+                    width: 100%;
+                    min-height: 42px;
+                    text-align: center;
+                    margin-left: 0;
+                    margin-top: 8px;
+                }}
+                .checkbox-group {{
+                    align-items: flex-start;
+                }}
             }}
         </style>
     </head>
@@ -17258,8 +17439,10 @@ async def edit_cuenta_contable_form(
     <head>
         <title>Editar Cuenta Contable - Copa Telmex</title>
         <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
         <style>
-            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; }}
+            * {{ box-sizing: border-box; }}
+            body {{ font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; overflow-x:hidden; }}
             .form-group {{ margin-bottom: 15px; }}
             label {{ display: block; margin-bottom: 5px; font-weight: 600; }}
             input[type="text"], select {{
@@ -17278,6 +17461,16 @@ async def edit_cuenta_contable_form(
             }}
             .btn-primary {{ background: #667eea; color: white; }}
             .btn-secondary {{ background: #6c757d; color: white; margin-left: 10px; }}
+            @media (max-width: 720px) {{
+                body {{ padding: 14px; }}
+                h1 {{ font-size: 1.45rem; line-height: 1.15; }}
+                .btn {{
+                    width: 100%;
+                    min-height: 42px;
+                    text-align: center;
+                    margin: 8px 0 0 0;
+                }}
+            }}
         </style>
     </head>
     <body>
@@ -24289,6 +24482,7 @@ async def gastos_sin_cuenta_contable(
                 justify-content:space-between;
                 align-items:center;
                 gap:12px;
+                flex-wrap:wrap;
                 padding-bottom:12px;
                 border-bottom:1px solid #e2e8f0;
                 margin-bottom:12px;
@@ -24320,6 +24514,26 @@ async def gastos_sin_cuenta_contable(
             @media (max-width: 900px) {{
                 .cleanup-detail-grid {{
                     grid-template-columns:1fr;
+                }}
+                .review-toolbar,
+                .toolbar-actions {{
+                    flex-direction:column;
+                    align-items:stretch;
+                }}
+                .cleanup-pill-stack {{
+                    min-width:0;
+                    align-items:flex-start;
+                }}
+                .cleanup-pill {{
+                    width:auto;
+                    max-width:100%;
+                    white-space:normal;
+                }}
+                .cfdi-selector {{
+                    min-width:0 !important;
+                }}
+                .cleanup-detail-row > td {{
+                    padding:0 8px 12px;
                 }}
             }}
         </style>
