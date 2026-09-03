@@ -777,6 +777,10 @@ def test_render_budget_partida_matrix_monthly_view_is_aggregated_readonly():
 
     assert "Vista agregada por periodo" in html
     assert "Enero 2026" in html
+    assert "Hospedaje" in html
+    assert "Presupuesto gasto" in html
+    assert "Gasto real (caja)" in html
+    assert "Comprometido no pagado" in html
     assert "Semana 52" not in html
     assert 'name="month_52_expense"' not in html
     assert "Distribuir total" not in html
