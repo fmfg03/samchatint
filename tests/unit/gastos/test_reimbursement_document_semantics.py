@@ -862,3 +862,59 @@ def test_telegram_approval_routes_reimbursement_to_payment_run() -> None:
     )
     assert "informe_doc=workflow_result.documento" in runtime_source
     assert "programación de pagos" in runtime_source
+
+
+def test_reimbursement_created_from_unbudgeted_informe_stays_draft() -> None:
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    close_start = route_source.index("async def cerrar_cuenta_de_gastos(")
+    close_end = route_source.index(
+        "# =============================================================================",
+        close_start,
+    )
+    close_block = route_source[close_start:close_end]
+
+    assert "if informe_doc.budget_concept_id:" in close_block
+    assert 'action="send"' in close_block
+    assert "quedará en borrador" in close_block
+    assert (
+        close_block.index("if informe_doc.budget_concept_id:")
+        < close_block.index('action="send"')
+    )
+
+
+def test_budget_control_releases_draft_reimbursement_after_assignment() -> None:
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert "async def _release_budget_gated_reimbursement_solicitudes" in route_source
+    assert 'Documento.estado == "borrador"' in route_source
+    assert "Documento.budget_concept_id.is_(None)" in route_source
+    assert (
+        "solicitud.budget_concept_id = informe_doc.budget_concept_id"
+        in route_source
+    )
+    assert 'solicitud.estado = "enviado"' in route_source
+    assert "released_reimbursements" in route_source
+    assert "_schedule_budget_control_release_notification(" in route_source
+
+
+def test_workflow_blocks_reimbursement_send_until_informe_has_budget() -> None:
+    workflow_source = Path(
+        "src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+
+    assert "async def _sync_reimbursement_budget_or_raise" in workflow_source
+    assert "EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX" in workflow_source
+    assert "budget_concept_required" in workflow_source
+    assert (
+        "documento.budget_concept_id = informe.budget_concept_id"
+        in workflow_source
+    )
+    send_start = workflow_source.index('if normalized_action == "send":')
+    send_block = workflow_source[send_start:workflow_source.index(
+        'elif normalized_action == "approve":',
+        send_start,
+    )]
+    assert (
+        send_block.index("await _sync_reimbursement_budget_or_raise")
+        < send_block.index("if documento_requires_budget_control(documento):")
+    )

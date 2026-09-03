@@ -22,7 +22,10 @@ from .customer_success_audit import (
     AuditRequestContext,
     record_customer_success_audit_event,
 )
-from .documento_semantics import approval_subject_empleado
+from .documento_semantics import (
+    EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+    approval_subject_empleado,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +112,29 @@ async def _solicitud_linked_informe_is_approved(
         return False
     informe = await _informe_documento_for_cuenta(session, documento.cuenta_gastos_id)
     return informe is not None and informe.estado == "aprobado"
+
+
+async def _sync_reimbursement_budget_or_raise(
+    session: AsyncSession, documento: Documento
+) -> None:
+    """Prevent reimbursement approval routing before informe budget assignment."""
+    concept = str(getattr(documento, "concepto_pago", None) or "")
+    if (
+        documento.tipo != "SOLICITUD"
+        or documento.cuenta_gastos_id is None
+        or not concept.startswith(EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX)
+        or getattr(documento, "budget_concept_id", None)
+    ):
+        return
+
+    informe = await _informe_documento_for_cuenta(session, documento.cuenta_gastos_id)
+    if informe is None or not getattr(informe, "budget_concept_id", None):
+        raise DocumentoWorkflowValidationError(
+            "budget_concept_required",
+            "La solicitud de reembolso no puede enviarse a aprobación hasta que "
+            "Control Presupuestal asigne partida al informe vinculado.",
+        )
+    documento.budget_concept_id = informe.budget_concept_id
 
 
 async def _linked_informe_approval_actor_id(
@@ -433,6 +459,7 @@ async def transition_documento_workflow(
                     "El documento tipo INFORME debe tener al menos un gasto activo "
                     "antes de poder enviarse.",
                 )
+        await _sync_reimbursement_budget_or_raise(session, documento)
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
