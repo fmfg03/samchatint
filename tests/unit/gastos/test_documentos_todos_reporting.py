@@ -155,6 +155,26 @@ def test_documentos_todos_has_workspace_navigation_context():
     assert '("Todos los documentos", None)' in route
 
 
+def test_documentos_todos_summary_totals_follow_filtered_result_set():
+    text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
+    start = text.index("async def documentos_todos(")
+    end = text.index("async def _query_documentos_todos_for_export", start)
+    route = text[start:end]
+
+    assert (
+        "documents_amount_totals = _documentos_amount_totals_by_currency(documentos)"
+        in route
+    )
+    assert "active_filter_count = sum(" in route
+    assert "Monto filtrado" in route
+    assert "_currency_totals_html(documents_amount_totals)" in route
+    assert "Suma de los documentos visibles en esta vista." in route
+    assert (
+        "El monto cambia al filtrar por estado, tipo, situación o búsqueda."
+        in route
+    )
+
+
 def test_documentos_todos_rows_have_explicit_review_action():
     text = open("src/devnous/gastos/routes/user_routes.py", encoding="utf-8").read()
     start = text.index("async def documentos_todos(")

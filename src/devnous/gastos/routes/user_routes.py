@@ -29893,6 +29893,26 @@ def _documentos_todos_reporting_row_values(
     }
 
 
+def _documentos_amount_totals_by_currency(
+    documentos: Iterable[Documento],
+) -> Dict[str, Decimal]:
+    totals: Dict[str, Decimal] = {}
+    for documento in documentos:
+        currency = currency_for(documento)
+        try:
+            amount = Decimal(
+                str(
+                    getattr(documento, "monto_total", None)
+                    or getattr(documento, "monto_solicitado", None)
+                    or 0
+                )
+            )
+        except (InvalidOperation, ValueError, TypeError):
+            amount = Decimal("0")
+        totals[currency] = totals.get(currency, Decimal("0")) + amount
+    return totals
+
+
 @router.get("/documentos/todos", response_class=HTMLResponse)
 async def documentos_todos(
     request: Request,
@@ -30061,6 +30081,18 @@ async def documentos_todos(
     bulk_href = "/documentos/todos/exportar-exceles.zip"
     if bulk_params:
         bulk_href = f"{bulk_href}?{urlencode(bulk_params)}"
+    documents_amount_totals = _documentos_amount_totals_by_currency(documentos)
+    active_filter_count = sum(
+        1
+        for value in (
+            q_value,
+            (estado or "").strip(),
+            (tipo or "").strip(),
+            situacion_value,
+            (empleado_nombre or "").strip(),
+        )
+        if value
+    )
 
     # Build filter form HTML
     filter_form_html = f"""
@@ -30124,6 +30156,16 @@ async def documentos_todos(
                 <span>Documentos</span>
                 <strong>{len(documentos)}</strong>
                 <small>Resultado con filtros actuales.</small>
+            </div>
+            <div class="meta-card">
+                <span>Monto filtrado</span>
+                <strong>{_currency_totals_html(documents_amount_totals)}</strong>
+                <small>Suma de los documentos visibles en esta vista.</small>
+            </div>
+            <div class="meta-card">
+                <span>Filtros activos</span>
+                <strong>{active_filter_count}</strong>
+                <small>El monto cambia al filtrar por estado, tipo, situación o búsqueda.</small>
             </div>
         </div>
     """
