@@ -11981,6 +11981,7 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             --shell-red:#b91c1c;
         }}
         * {{ box-sizing:border-box; }}
+        html {{ max-width:100%; overflow-x:hidden; }}
         body {{
             font-family:"Segoe UI","Helvetica Neue",sans-serif;
             margin:0;
@@ -11990,10 +11991,13 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
                 radial-gradient(circle at top left, rgba(15,118,110,.10), transparent 26%),
                 radial-gradient(circle at top right, rgba(29,78,216,.08), transparent 22%),
                 linear-gradient(180deg, #eaf1f6 0%, #dfe9f1 100%);
-            min-height:100vh;
+            min-height:100dvh;
+            max-width:100%;
+            overflow-x:hidden;
         }}
         .container {{
             max-width:{max_width};
+            width:100%;
             margin:0 auto;
             background:var(--shell-card);
             border-radius:24px;
@@ -12009,6 +12013,7 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         }}
         .workspace-hero-main,
         .workspace-hero-side {{
+            min-width:0;
             border:1px solid var(--shell-line);
             border-radius:22px;
             background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
@@ -12081,10 +12086,11 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         }}
         .meta-grid {{
             display:grid;
-            grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns:repeat(auto-fit, minmax(min(180px, 100%), 1fr));
             gap:12px;
         }}
         .meta-card {{
+            min-width:0;
             border:1px solid var(--shell-line);
             border-radius:18px;
             padding:16px;
@@ -12103,6 +12109,7 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             font-size:1.45rem;
             letter-spacing:-.03em;
             color:var(--shell-ink);
+            overflow-wrap:anywhere;
         }}
         .meta-card small {{
             display:block;
@@ -12115,6 +12122,7 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             gap:16px;
         }}
         .surface {{
+            min-width:0;
             background:#ffffff;
             border:1px solid var(--shell-line);
             border-radius:20px;
@@ -12171,14 +12179,20 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         .notice.success {{ background:#ecfdf5; color:#166534; border-color:#86efac; }}
         .table-shell {{
             overflow:auto;
+            max-width:100%;
+            -webkit-overflow-scrolling:touch;
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
+        }}
+        .table-shell table {{
+            min-width:max-content;
         }}
         table {{
             width:100%;
             border-collapse:collapse;
             font-size:13px;
+            max-width:100%;
         }}
         th {{
             text-align:left;
@@ -12192,6 +12206,7 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             padding:12px 14px;
             border-bottom:1px solid #e2e8f0;
             vertical-align:top;
+            overflow-wrap:anywhere;
         }}
         tr:hover td {{ background:#f8fafc; }}
         .badge {{
@@ -12238,6 +12253,10 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             margin:0 0 14px;
             align-items:center;
         }}
+        .form-grid {{
+            display:grid;
+            gap:12px;
+        }}
         .split {{
             display:grid;
             grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);
@@ -12251,6 +12270,42 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         @media (max-width: 760px) {{
             body {{ padding:12px; }}
             .container {{ padding:14px; border-radius:18px; }}
+            .workspace-hero-main,
+            .workspace-hero-side,
+            .surface {{ border-radius:16px; padding:14px; }}
+            h1 {{ font-size:1.55rem; line-height:1.08; }}
+            .lead {{ font-size:13px; line-height:1.55; }}
+            .button {{
+                width:100%;
+                min-height:42px;
+                white-space:normal;
+                text-align:center;
+            }}
+            .form-grid,
+            .informes-filter-bar {{
+                grid-template-columns:1fr !important;
+            }}
+            .surface form[style*="grid-template-columns"],
+            .surface div[style*="grid-template-columns"],
+            .container form[style*="grid-template-columns"],
+            .container div[style*="grid-template-columns"] {{
+                grid-template-columns:1fr !important;
+            }}
+            .hero-actions,
+            .toolbar,
+            .inline-actions,
+            .section-head {{
+                align-items:stretch;
+            }}
+            .button,
+            .toolbar > *,
+            .inline-actions > * {{
+                width:100%;
+            }}
+            .quick-expense-shell table,
+            .quick-air-shell table {{
+                min-width:760px;
+            }}
         }}
     """
 
