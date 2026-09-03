@@ -4,7 +4,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
@@ -76,12 +76,16 @@ class DebtorPostingResult:
 
 
 def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
+    """Build a bounded, readable blocker reason for expenses missing accounts."""
+
     missing = []
     for expense in expenses:
         if getattr(expense, "cuenta_contable", None) is not None:
             continue
         ref = (getattr(expense, "numero_referencia", None) or "").strip()
         concepto = (getattr(expense, "concepto", None) or "").strip()
+        if len(concepto) > 80:
+            concepto = concepto[:77].rstrip() + "..."
         if ref and concepto:
             missing.append(f"{ref} {concepto}")
         elif ref:
@@ -92,7 +96,10 @@ def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
             missing.append(str(getattr(expense, "id", "gasto sin referencia")))
     if not missing:
         return "expense_missing_accounts"
-    return "expense_missing_accounts:" + "; ".join(missing)
+    visible = missing[:8]
+    remainder = len(missing) - len(visible)
+    suffix = f"; y {remainder} más" if remainder > 0 else ""
+    return "expense_missing_accounts:" + "; ".join(visible) + suffix
 
 
 def _money(value: Any) -> Decimal:
@@ -1311,7 +1318,6 @@ __all__ = [
     "ensure_debtor_payment_posting_for_document",
     "ensure_debtor_settlement_posting",
     "format_samchat_poliza_concept",
-    "_format_missing_expense_accounts",
     "list_employees_missing_debtor_account",
     "resolve_employee_debtor_account",
     "resolve_cuenta_debtor_account",

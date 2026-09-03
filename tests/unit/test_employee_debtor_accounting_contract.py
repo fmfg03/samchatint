@@ -1,11 +1,11 @@
+from pathlib import Path
+from types import SimpleNamespace
+
 from devnous.gastos.services.employee_debtor_accounting_service import (
     _debtor_account_match_score,
     _debtor_name_match_score,
     _format_missing_expense_accounts,
 )
-
-from pathlib import Path
-from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -90,7 +90,7 @@ def test_debtor_accounting_supports_petty_cash_alternate_accounts_without_changi
     assert "return await resolve_employee_debtor_account(session, empleado)" in source
 
 
-def test_debtor_comprobacion_missing_account_reason_lists_expense_references():
+def test_debtor_comprobacion_missing_account_reason_lists_expense_references() -> None:
     reason = _format_missing_expense_accounts(
         [
             SimpleNamespace(
@@ -121,22 +121,64 @@ def test_debtor_comprobacion_missing_account_reason_lists_expense_references():
     assert "expense-1" not in reason
 
 
-def test_edit_expense_unchecking_company_amex_applies_budget_concept_account_mapping():
-    source = read("src/devnous/gastos/routes/user_routes.py")
+def test_debtor_comprobacion_missing_account_reason_handles_empty_result() -> None:
+    assert _format_missing_expense_accounts([]) == "expense_missing_accounts"
+    assert (
+        _format_missing_expense_accounts(
+            [
+                SimpleNamespace(
+                    id="expense-1",
+                    numero_referencia="O-26000355",
+                    concepto="Alimentos",
+                    cuenta_contable=object(),
+                )
+            ]
+        )
+        == "expense_missing_accounts"
+    )
+
+
+def test_debtor_comprobacion_missing_account_reason_is_bounded() -> None:
+    reason = _format_missing_expense_accounts(
+        [
+            SimpleNamespace(
+                id=f"expense-{idx}",
+                numero_referencia=f"O-{idx:08d}",
+                concepto="Concepto con descripcion extremadamente larga " * 4,
+                cuenta_contable=None,
+            )
+            for idx in range(10)
+        ]
+    )
+
+    assert "y 2 más" in reason
+    assert "O-00000008" not in reason
+    assert len(reason) < 850
+
+
+def test_unchecking_company_amex_applies_budget_concept_account_mapping() -> None:
+    route_source = read("src/devnous/gastos/routes/user_routes.py")
+    service_source = read("src/devnous/gastos/services/amex_expense_service.py")
 
     assert (
         "from ..services.budget_concept_account_service import (\n"
         "    apply_budget_concept_cuenta_mapping,\n"
         ")"
-    ) in source
+    ) in route_source
     assert (
         "reclassified_from_company_amex = (\n"
         "        current_company_amex and not requested_company_amex\n"
         "    )"
-    ) in source
+    ) in route_source
     assert (
         "await apply_budget_concept_cuenta_mapping(\n"
         "            session, expense\n"
         "        )"
-    ) in source
-    assert "cuenta_contable asignada desde partida" in source
+    ) in route_source
+    assert "cuenta_contable asignada desde partida" in route_source
+    assert (
+        "from .budget_concept_account_service import "
+        "apply_budget_concept_cuenta_mapping"
+    ) in service_source
+    assert "if not mark_as_amex and expense.cuenta_contable_id is None:" in service_source
+    assert "Cuenta contable asignada automáticamente desde partida presupuestal" in service_source
