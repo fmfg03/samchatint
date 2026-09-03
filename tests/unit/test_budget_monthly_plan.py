@@ -404,6 +404,14 @@ def test_render_budget_executive_dashboard_rolls_up_monthly_expense_view():
     )
 
     assert "Tablero ejecutivo de presupuesto" in html
+    assert "Estado ejecutivo" in html
+    assert "Controlado" in html
+    assert "Presupuesto autorizado" in html
+    assert "Ejercido real" in html
+    assert "Comprometido pendiente" in html
+    assert "% utilizado" in html
+    assert "Lectura por periodo" in html
+    assert "read-only" not in html
     assert "Mensual" in html
     assert "Enero 2026" in html
     assert "$1,500.00" in html
@@ -437,7 +445,65 @@ def test_render_budget_executive_dashboard_supports_quarter_semester_annual_opti
     assert "Variación" in html
     assert "2026" in html
     assert "$0.00" in html
-    assert "read-only" in html
+    assert "Controlado" in html
+    assert "read-only" not in html
+
+
+def test_render_budget_executive_dashboard_status_warns_near_budget():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
+
+    html = render_budget_executive_dashboard(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Hospedaje",
+                "budget_concept_id": "concept-1",
+            }
+        ],
+        plan_map={"line-1": {1: {"budget_expense_amount": 1000.0}}},
+        actuals_map={
+            "concept-1": {
+                1: {"real_expense_cash": 800.0, "committed_unpaid": 100.0},
+            }
+        },
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="expenses",
+        budget_period="weekly",
+    )
+
+    assert "En observación" in html
+    assert "90.0%" in html
+
+
+def test_render_budget_executive_dashboard_status_flags_over_budget():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
+
+    html = render_budget_executive_dashboard(
+        [
+            {
+                "id": "line-1",
+                "concept_name": "Traslados",
+                "budget_concept_id": "concept-1",
+            }
+        ],
+        plan_map={"line-1": {1: {"budget_expense_amount": 1000.0}}},
+        actuals_map={
+            "concept-1": {
+                1: {"real_expense_cash": 1000.0, "committed_unpaid": 50.0},
+            }
+        },
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="expenses",
+        budget_period="weekly",
+    )
+
+    assert "Excedido" in html
+    assert "105.0%" in html
+
 
 def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
