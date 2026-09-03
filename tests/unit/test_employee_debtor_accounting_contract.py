@@ -156,6 +156,24 @@ def test_debtor_comprobacion_missing_account_reason_is_bounded() -> None:
     assert len(reason) < 850
 
 
+def test_debtor_comprobacion_missing_account_reason_caps_max_reference_length() -> None:
+    reason = _format_missing_expense_accounts(
+        [
+            SimpleNamespace(
+                id=f"expense-{idx}",
+                numero_referencia="O-" + ("9" * 100),
+                concepto="Concepto con descripcion extremadamente larga " * 4,
+                cuenta_contable=None,
+            )
+            for idx in range(10)
+        ]
+    )
+
+    assert reason.startswith("expense_missing_accounts:")
+    assert "y " in reason
+    assert len(reason) < 850
+
+
 def test_unchecking_company_amex_applies_budget_concept_account_mapping() -> None:
     route_source = read("src/devnous/gastos/routes/user_routes.py")
     service_source = read("src/devnous/gastos/services/amex_expense_service.py")

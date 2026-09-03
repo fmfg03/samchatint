@@ -78,6 +78,8 @@ class DebtorPostingResult:
 def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
     """Build a bounded, readable blocker reason for expenses missing accounts."""
 
+    prefix = "expense_missing_accounts:"
+    max_length = 840
     missing = []
     for expense in expenses:
         if getattr(expense, "cuenta_contable", None) is not None:
@@ -96,10 +98,25 @@ def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
             missing.append(str(getattr(expense, "id", "gasto sin referencia")))
     if not missing:
         return "expense_missing_accounts"
-    visible = missing[:8]
-    remainder = len(missing) - len(visible)
+    visible: list[str] = []
+    remainder = 0
+    for item in missing:
+        candidate_visible = visible + [item]
+        candidate_remainder = len(missing) - len(candidate_visible)
+        suffix = f"; y {candidate_remainder} más" if candidate_remainder > 0 else ""
+        candidate = prefix + "; ".join(candidate_visible) + suffix
+        if len(candidate) <= max_length and len(candidate_visible) <= 8:
+            visible = candidate_visible
+            remainder = candidate_remainder
+            continue
+        remainder = len(missing) - len(visible)
+        if not visible:
+            suffix = f"; y {len(missing) - 1} más" if len(missing) > 1 else ""
+            budget = max_length - len(prefix) - len(suffix)
+            return prefix + item[: max(1, budget)].rstrip() + suffix
+        break
     suffix = f"; y {remainder} más" if remainder > 0 else ""
-    return "expense_missing_accounts:" + "; ".join(visible) + suffix
+    return prefix + "; ".join(visible) + suffix
 
 
 def _money(value: Any) -> Decimal:
