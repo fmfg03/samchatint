@@ -28129,13 +28129,13 @@ async def _informe_budget_assignment_complete(session: AsyncSession, documento: 
     return bool(expenses) and all(getattr(expense, "budget_concept_id", None) for expense in expenses)
 
 
-async def _release_budget_gated_reimbursement_solicitudes(
+async def _prepare_budget_gated_reimbursement_solicitudes(
     session: AsyncSession,
     *,
     informe_doc: Documento,
     actor: Empleado,
 ) -> list[Documento]:
-    """Send draft reimbursement requests after the linked informe gets budget."""
+    """Copy informe budget to draft reimbursements without approval routing."""
     if (
         informe_doc.tipo != "INFORME"
         or not getattr(informe_doc, "cuenta_gastos_id", None)
@@ -28163,17 +28163,16 @@ async def _release_budget_gated_reimbursement_solicitudes(
     now = datetime.utcnow()
     for solicitud in solicitudes:
         solicitud.budget_concept_id = informe_doc.budget_concept_id
-        solicitud.estado = "enviado"
-        solicitud.enviado_en = now
         session.add(
             Aprobacion(
                 tipo_entidad="documento",
                 entidad_id=solicitud.id,
                 aprobador_id=actor.id,
-                accion="enviar",
+                accion="asignar_partida_presupuestal",
                 comentario=(
                     "Control Presupuestal asignó partida al informe vinculado; "
-                    "solicitud de reembolso enviada a aprobación."
+                    "solicitud de reembolso preparada para programación de pagos "
+                    "cuando se apruebe el informe."
                 ),
                 fecha=now,
             )
@@ -28683,12 +28682,10 @@ async def asignar_control_presupuestal(
             budget_concept_id=budget_concept_id,
             actor=current_empleado,
         )
-        released_reimbursements = (
-            await _release_budget_gated_reimbursement_solicitudes(
-                session,
-                informe_doc=documento,
-                actor=current_empleado,
-            )
+        await _prepare_budget_gated_reimbursement_solicitudes(
+            session,
+            informe_doc=documento,
+            actor=current_empleado,
         )
         await session.commit()
     except DocumentoWorkflowValidationError as exc:
@@ -28702,11 +28699,6 @@ async def asignar_control_presupuestal(
         )
 
     _schedule_budget_control_release_notification(documento.id, current_empleado.id)
-    for solicitud in released_reimbursements:
-        _schedule_budget_control_release_notification(
-            solicitud.id,
-            current_empleado.id,
-        )
     return RedirectResponse(
         url=_append_success_params(redirect_url, success_msg="Concepto asignado; documento enviado a aprobación."),
         status_code=303,
@@ -28873,7 +28865,6 @@ async def asignar_control_presupuestal_lote(
         )
 
     released: set[UUIDType] = set()
-    released_reimbursements: set[UUIDType] = set()
     assigned_count = 0
     try:
         for kind, item_id, budget_concept_id in items:
@@ -28886,12 +28877,11 @@ async def asignar_control_presupuestal_lote(
                 )
                 if did_release:
                     released.add(documento.id)
-                    for solicitud in await _release_budget_gated_reimbursement_solicitudes(
+                    await _prepare_budget_gated_reimbursement_solicitudes(
                         session,
                         informe_doc=documento,
                         actor=current_empleado,
-                    ):
-                        released_reimbursements.add(solicitud.id)
+                    )
             else:
                 documento, _budget_concept = await _apply_control_presupuestal_assignment(
                     session,
@@ -28900,12 +28890,11 @@ async def asignar_control_presupuestal_lote(
                     actor=current_empleado,
                 )
                 released.add(documento.id)
-                for solicitud in await _release_budget_gated_reimbursement_solicitudes(
+                await _prepare_budget_gated_reimbursement_solicitudes(
                     session,
                     informe_doc=documento,
                     actor=current_empleado,
-                ):
-                    released_reimbursements.add(solicitud.id)
+                )
             assigned_count += 1
         await session.commit()
     except DocumentoWorkflowValidationError as exc:
@@ -28918,8 +28907,6 @@ async def asignar_control_presupuestal_lote(
         )
 
     for documento_id in released:
-        _schedule_budget_control_release_notification(documento_id, current_empleado.id)
-    for documento_id in released_reimbursements:
         _schedule_budget_control_release_notification(documento_id, current_empleado.id)
     if released:
         msg = f"{assigned_count} elemento(s) asignado(s); {len(released)} documento(s) liberado(s) a aprobación."
@@ -42079,37 +42066,10 @@ async def cerrar_cuenta_de_gastos(
                         status_code=303,
                     )
                 reembolso_created = True
-                if informe_doc.budget_concept_id:
-                    try:
-                        await transition_documento_workflow(
-                            session,
-                            documento_id=new_solicitud.id,
-                            actor_id=cuenta.empleado_id,
-                            action="send",
-                            comentario=(
-                                "Generada al cerrar el informe "
-                                "(saldo a favor del empleado)."
-                            ),
-                            request_context=audit_context_from_request(request),
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Failed to send auto-generated reembolso solicitud",
-                            extra={
-                                "cuenta_id": str(cuenta_id),
-                                "solicitud_id": str(new_solicitud.id),
-                            },
-                        )
-                        reembolso_warning = (
-                            " La solicitud de reembolso se creó pero no pudo "
-                            "enviarse automáticamente; envíela manualmente "
-                            "desde el documento."
-                        )
-                else:
-                    reembolso_warning = (
-                        " La solicitud de reembolso quedará en borrador hasta "
-                        "que Control Presupuestal asigne partida."
-                    )
+                reembolso_warning = (
+                    " La solicitud de reembolso quedó preparada; pasará a "
+                    "Programación de Pago cuando el informe sea aprobado."
+                )
 
     try:
         doc_synced = await _sync_informe_documento_to_enviado(

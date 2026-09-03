@@ -36,9 +36,7 @@ from .documento_service import (
     create_solicitud_personal_document,
 )
 from .documento_workflow_service import (
-    DocumentoWorkflowPermissionError,
-    DocumentoWorkflowValidationError,
-    transition_documento_workflow,
+    approve_reimbursement_solicitud_for_approved_informe,
 )
 from .payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 
@@ -57,6 +55,22 @@ class InformeReimbursementRoutingResult:
     @property
     def changed(self) -> bool:
         return self.created or self.promoted
+
+
+def _schedule_pending_payment_notification(documento_id: UUID) -> None:
+    try:
+        from .documento_telegram import (
+            schedule_solicitud_pending_payment_telegram_notifications,
+        )
+
+        schedule_solicitud_pending_payment_telegram_notifications(
+            documento_id=str(documento_id),
+        )
+    except Exception:
+        logger.exception(
+            "Failed to schedule Finance pending payment Telegram notifications",
+            extra={"documento_id": str(documento_id)},
+        )
 
 
 def _normalize_name_for_similarity(name: Optional[str]) -> str:
@@ -292,30 +306,25 @@ async def ensure_approved_informe_reimbursement_for_payment_run(
         session, cuenta=cuenta
     )
     if existing_reembolso is not None:
-        if existing_reembolso.estado == "enviado":
-            try:
-                await transition_documento_workflow(
-                    session,
-                    documento_id=existing_reembolso.id,
-                    actor_id=actor_id,
-                    action="approve",
-                    comentario=(
-                        "Auto-aprobada al aprobar el informe "
-                        "(saldo a favor del empleado)."
-                    ),
-                    request_context=request_context,
-                )
-            except (
-                DocumentoWorkflowPermissionError,
-                DocumentoWorkflowValidationError,
-            ) as exc:
+        if existing_reembolso.estado in {"borrador", "enviado"}:
+            aprobacion = await approve_reimbursement_solicitud_for_approved_informe(
+                session,
+                existing_reembolso,
+                comentario=(
+                    "Auto-aprobada al aprobar el informe "
+                    "(saldo a favor del empleado)."
+                ),
+            )
+            if aprobacion is None:
                 return InformeReimbursementRoutingResult(
                     solicitud_id=existing_reembolso.id,
                     warning=(
                         "La solicitud de reembolso ya existía, pero no pudo "
-                        f"aprobarse automáticamente: {exc.message}"
+                        "aprobarse automáticamente desde el informe vinculado."
                     ),
                 )
+            await session.commit()
+            _schedule_pending_payment_notification(existing_reembolso.id)
             logger.info(
                 "Promoted reimbursement solicitud %s for approved informe %s",
                 existing_reembolso.id,
@@ -329,6 +338,7 @@ async def ensure_approved_informe_reimbursement_for_payment_run(
         if existing_reembolso.estado == "aprobado":
             if ensure_fecha_pago_for_approved_solicitud(existing_reembolso):
                 await session.commit()
+                _schedule_pending_payment_notification(existing_reembolso.id)
             return InformeReimbursementRoutingResult(
                 solicitud_id=existing_reembolso.id,
             )
@@ -361,32 +371,28 @@ async def ensure_approved_informe_reimbursement_for_payment_run(
             session,
             payload,
         )
-        await transition_documento_workflow(
+        aprobacion = await approve_reimbursement_solicitud_for_approved_informe(
             session,
-            documento_id=new_solicitud.id,
-            actor_id=cuenta.empleado_id,
-            action="send",
+            new_solicitud,
             comentario=(
-                "Generada al aprobar el informe "
+                "Auto-aprobada al aprobar el informe "
                 "(saldo a favor del empleado)."
             ),
-            request_context=request_context,
         )
+        if aprobacion is None:
+            await session.rollback()
+            return InformeReimbursementRoutingResult(
+                warning=(
+                    "No se pudo aprobar automáticamente la solicitud de "
+                    "reembolso desde el informe vinculado."
+                )
+            )
+        await session.commit()
+        _schedule_pending_payment_notification(new_solicitud.id)
     except SolicitudValidationError as exc:
         await session.rollback()
         return InformeReimbursementRoutingResult(
             warning=f"No se pudo generar la solicitud de reembolso: {str(exc)}"
-        )
-    except (
-        DocumentoWorkflowPermissionError,
-        DocumentoWorkflowValidationError,
-    ) as exc:
-        await session.rollback()
-        return InformeReimbursementRoutingResult(
-            warning=(
-                "La solicitud de reembolso se creó pero no pudo enviarse: "
-                f"{exc.message}"
-            )
         )
     except Exception:
         await session.rollback()
