@@ -3492,6 +3492,7 @@ async def admin_executive_center(
             </div>
         </div>
     """
+    breadcrumb_html = _admin_breadcrumb_html([("Centro Ejecutivo", None)])
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -3504,6 +3505,7 @@ async def admin_executive_center(
     <body>
         <div class="workspace-shell">
             {render_admin_navigation(current_empleado, "ejecutivo", subtitle="Entrada ejecutiva a presupuesto, flujo, cobranza, evidencia y asistente.")}
+            {breadcrumb_html}
             {_render_admin_workspace_hero(
                 eyebrow="Dirección",
                 title="Centro Ejecutivo",
@@ -7583,6 +7585,12 @@ async def admin_finance_cashflow(
         "cashflow",
         subtitle="Flujo de efectivo con caja, obligaciones, cobranza y proyección.",
     )
+    breadcrumb_html = _admin_breadcrumb_html(
+        [
+            ("Centro Ejecutivo", "/admin/ejecutivo"),
+            ("Flujo de efectivo", None),
+        ]
+    )
     hero_html = _render_admin_workspace_hero(
         eyebrow="Finanzas ejecutivas",
         title="Flujo de efectivo ejecutivo",
@@ -7591,7 +7599,11 @@ async def admin_finance_cashflow(
             "presupuestal, facturación reconocida, cobranza confirmada y "
             "proyección neta."
         ),
-        actions_html=form_html,
+        actions_html=(
+            '<a class="button secondary" href="/admin/ejecutivo">'
+            "Centro Ejecutivo</a>"
+            + form_html
+        ),
         side_html=(
             '<div class="eyebrow">Regla de cobranza</div>'
             '<div style="font-size:1.05rem;font-weight:900;color:#0f172a;">'
@@ -7614,6 +7626,7 @@ async def admin_finance_cashflow(
     <body>
         <div class="workspace-shell">
             {nav_html}
+            {breadcrumb_html}
             {hero_html}
             {render_cashflow_planning_html(payload)}
         </div>
@@ -7849,7 +7862,11 @@ async def admin_finance_accounts_receivable(
             "Cartera operativa que separa ingreso presupuestado, facturado, "
             "reconocido y cobrado comprobado."
         ),
-        actions_html=form_html,
+        actions_html=(
+            '<a class="button secondary" href="/admin/ejecutivo">'
+            "Centro Ejecutivo</a>"
+            + form_html
+        ),
         side_html=(
             '<div class="eyebrow">Estado cobranza</div>'
             '<div style="font-size:1.2rem;font-weight:900;color:#0f172a;">'
@@ -7860,6 +7877,7 @@ async def admin_finance_accounts_receivable(
     )
     breadcrumb_html = _admin_breadcrumb_html(
         [
+            ("Centro Ejecutivo", "/admin/ejecutivo"),
             ("Finanzas", "/admin/finanzas"),
             ("Cuentas por Cobrar", None),
         ]
