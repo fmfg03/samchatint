@@ -587,7 +587,6 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
     for route_source, leaf in [
         (informe_edit, "Editar"),
         (informe_nueva_solicitud, "Nueva solicitud"),
-        (informe_saldar, "Liquidación"),
         (informe_reembolso, "Liquidación"),
     ]:
         assert '_gastos_breadcrumb_html([' in route_source
@@ -597,6 +596,14 @@ def test_gastos_breadcrumbs_are_rendered_on_internal_pages():
             in route_source
         )
         assert f'("{leaf}", None)' in route_source
+
+    assert '_gastos_breadcrumb_html([' in informe_saldar
+    assert '("Informes de gastos", "/informes-de-gastos")' in informe_saldar
+    assert (
+        '(f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}")'
+        in informe_saldar
+    )
+    assert "(direction_title, None)" in informe_saldar
 
 
 def test_informe_document_visible_copy_has_clean_spanish_encoding():
@@ -765,6 +772,81 @@ def test_informe_detail_uses_human_status_and_single_back_action():
     assert detail_actions.count('href="/informes-de-gastos"') == 1
     assert "Volver a mis informes" in detail_actions
     assert "Abrir informes de gastos" not in detail_actions
+
+
+def test_devolucion_sobrantes_copy_is_used_for_positive_saldo_ctas():
+    route_path = "src/devnous/gastos/routes/user_routes.py"
+    source = open(route_path, encoding="utf-8").read()
+    document_detail = source[
+        source.index("async def ver_documento(") :
+        source.index(
+            '@router.get("/api/informes-de-gastos/activas"',
+            source.index("async def ver_documento("),
+        )
+    ]
+    informe_detail = source[
+        source.index("async def cuenta_de_gastos_detail(") :
+        source.index(
+            '@router.get("/informes-de-gastos/{cuenta_id}/editar"',
+            source.index("async def cuenta_de_gastos_detail("),
+        )
+    ]
+
+    assert "Registrar devolución de sobrantes" in document_detail
+    assert "El empleado devuelve el sobrante del anticipo a la empresa." in (
+        document_detail
+    )
+    assert "Registrar devolución de sobrantes" in informe_detail
+
+
+def test_saldar_form_uses_devolucion_sobrantes_copy():
+    route_path = "src/devnous/gastos/routes/user_routes.py"
+    source = open(route_path, encoding="utf-8").read()
+    saldar_form = source[
+        source.index("async def saldar_cuenta_form(") :
+        source.index(
+            '@router.post("/informes-de-gastos/{cuenta_id}/saldar")',
+            source.index("async def saldar_cuenta_form("),
+        )
+    ]
+
+    assert 'direction_title = "Devolución de Sobrantes"' in saldar_form
+    assert "Registra el sobrante que el empleado devuelve a la empresa." in (
+        saldar_form
+    )
+    assert "Comprobante de transferencia o depósito" in saldar_form
+    assert "Adjunta el comprobante de transferencia o depósito" in saldar_form
+    assert 'submit_label = (' in saldar_form
+    assert "Registrar devolución de sobrantes" in saldar_form
+    assert 'name="monto"' in saldar_form
+    assert 'name="saldo_snapshot"' in saldar_form
+    assert "No se permiten pagos parciales" not in saldar_form
+    assert "no se permiten pagos parciales" in saldar_form
+
+
+def test_saldar_submit_reports_devolucion_sobrantes_success():
+    route_path = "src/devnous/gastos/routes/user_routes.py"
+    source = open(route_path, encoding="utf-8").read()
+    saldar_submit = source[
+        source.index("async def saldar_cuenta_submit(") :
+        source.index(
+            '@router.get(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}"',
+            source.index("async def saldar_cuenta_submit("),
+        )
+    ]
+    reembolso_detail = source[
+        source.index("async def ver_reembolso_cuenta(") :
+        source.index(
+            '@router.post(\n    "/informes-de-gastos/{cuenta_id}/reembolsos/{reembolso_id}/cancelar"',
+            source.index("async def ver_reembolso_cuenta("),
+        )
+    ]
+
+    assert 'label = (' in saldar_submit
+    assert 'if result.tipo == "reembolso"' in saldar_submit
+    assert '"Devolución de Sobrantes"' in saldar_submit
+    assert "Cuenta saldada" in saldar_submit
+    assert "Devolución de Sobrantes" in reembolso_detail
 
 
 def test_document_detail_expenses_table_exposes_edit_actions():
