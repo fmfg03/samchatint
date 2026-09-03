@@ -1560,6 +1560,163 @@ def _safe_admin_cxc_return_url(return_to: Optional[str]) -> str:
     return "/admin/finanzas/cuentas-por-cobrar"
 
 
+def _executive_alert_severity(value: Any) -> str:
+    severity = str(value or "").strip().lower()
+    if severity in {"critical", "high", "alta"}:
+        return "high"
+    if severity in {"warning", "medium", "media"}:
+        return "medium"
+    return "low"
+
+
+def _executive_alert_priority_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    rank = {"high": 0, "medium": 1, "low": 2}
+    return (
+        rank.get(str(item.get("severity") or "low"), 9),
+        str(item.get("module") or "").lower(),
+        str(item.get("title") or "").lower(),
+    )
+
+
+def _executive_alert_card(
+    *,
+    severity: Any,
+    module: Any,
+    title: Any,
+    detail: Any,
+    owner: Any = "Dirección",
+    href: Any = "/admin/ejecutivo/alertas",
+    source: Any = "SamChat",
+) -> dict[str, Any]:
+    clean_href = str(href or "").strip()
+    if not (
+        clean_href.startswith("/admin/")
+        or clean_href.startswith("/assistant")
+    ):
+        clean_href = "/admin/ejecutivo/alertas"
+    return {
+        "severity": _executive_alert_severity(severity),
+        "module": str(module or "Dirección").strip() or "Dirección",
+        "title": str(title or "Alerta ejecutiva").strip() or "Alerta ejecutiva",
+        "detail": str(detail or "Revisar señal ejecutiva.").strip()
+        or "Revisar señal ejecutiva.",
+        "owner": str(owner or "Dirección").strip() or "Dirección",
+        "href": clean_href,
+        "source": str(source or "SamChat").strip() or "SamChat",
+    }
+
+
+def _build_consolidated_executive_alerts(
+    platform: dict[str, Any],
+    inbox_payload: dict[str, Any],
+) -> list[dict[str, Any]]:
+    alerts: list[dict[str, Any]] = []
+    for action in list((platform.get("action_queue") or {}).get("actions") or []):
+        alerts.append(
+            _executive_alert_card(
+                severity=action.get("severity"),
+                module=action.get("module") or "Finanzas",
+                title=action.get("title"),
+                detail=action.get("detail"),
+                owner=action.get("owner") or "Finanzas",
+                href=action.get("href") or "/admin/finanzas",
+                source="Finance Action Queue",
+            )
+        )
+
+    payment_run = platform.get("payment_run") or {}
+    if int(payment_run.get("payable_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="Pagos",
+                title="Pagos aprobados pendientes",
+                detail=(
+                    f"{int(payment_run.get('payable_count') or 0)} documentos "
+                    f"por ${_safe_money(payment_run.get('payable_total'))}."
+                ),
+                owner="Benjamín / Contabilidad",
+                href="/admin/finanzas/payment-run",
+                source="Payment Run",
+            )
+        )
+
+    tax_readiness = platform.get("tax_readiness") or {}
+    if int(tax_readiness.get("diot_blockers_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="DIOT / CFDI",
+                title="Bloqueos fiscales activos",
+                detail=(
+                    f"{int(tax_readiness.get('diot_blockers_count') or 0)} "
+                    "documentos o gastos requieren CFDI antes de cierre."
+                ),
+                owner="Contabilidad",
+                href="/admin/finanzas",
+                source="Tax Readiness",
+            )
+        )
+
+    accounting_close = platform.get("accounting_close_center") or {}
+    if int(accounting_close.get("unbalanced_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="high",
+                module="Pólizas COI",
+                title="Pólizas descuadradas",
+                detail=(
+                    f"{int(accounting_close.get('unbalanced_count') or 0)} "
+                    "pólizas tienen diferencia debe/haber."
+                ),
+                owner="Contabilidad",
+                href="/admin/finanzas",
+                source="Accounting Close Center",
+            )
+        )
+    if int(accounting_close.get("pending_coi_expenses_count") or 0) > 0:
+        alerts.append(
+            _executive_alert_card(
+                severity="medium",
+                module="Pólizas COI",
+                title="Gastos pendientes de clasificación COI",
+                detail=(
+                    f"{int(accounting_close.get('pending_coi_expenses_count') or 0)} "
+                    "gastos aún no están listos para prepóliza."
+                ),
+                owner="Contabilidad",
+                href="/admin/gastos/sin-cuenta-contable",
+                source="Accounting Close Center",
+            )
+        )
+
+    direction_alerts = (
+        (inbox_payload.get("direction") or {}).get("executive_alerts") or {}
+    ).get("alerts") or []
+    for alert in list(direction_alerts):
+        alerts.append(
+            _executive_alert_card(
+                severity=alert.get("severity"),
+                module="Dirección",
+                title=alert.get("title"),
+                detail=alert.get("detail") or alert.get("playbook"),
+                owner="Dirección",
+                href="/admin/sam-inbox?tab=direccion",
+                source="Sam Inbox Dirección",
+            )
+        )
+
+    deduped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for item in alerts:
+        key = (
+            str(item.get("severity") or ""),
+            str(item.get("module") or ""),
+            str(item.get("title") or ""),
+        )
+        deduped.setdefault(key, item)
+    return sorted(deduped.values(), key=_executive_alert_priority_key)
+
+
 def _render_admin_workspace_hero(
     *,
     eyebrow: str,
@@ -3280,12 +3437,12 @@ async def admin_executive_center(
         },
         {
             "title": "Alertas ejecutivas",
-            "href": "/admin/finanzas",
+            "href": "/admin/ejecutivo/alertas",
             "status": "Atención",
             "metric": "Riesgos operativos",
             "description": (
-                "Punto temporal para revisar pagos, documentos, COI, DIOT y "
-                "alertas financieras mientras se consolida el tablero dedicado."
+                "Consolida señales de pagos, COI, DIOT, cobranza y dirección "
+                "sin cambiar datos operativos."
             ),
         },
     ]
@@ -3358,6 +3515,174 @@ async def admin_executive_center(
                     </div>
                 </div>
                 <div class="action-grid">{cards_html}</div>
+            </section>
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/ejecutivo/alertas", response_class=HTMLResponse)
+async def admin_executive_alerts(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> HTMLResponse:
+    """Consolidated read-only executive alerts from existing snapshots."""
+    from samchat.finance_platform import (
+        build_finance_platform_snapshot,
+        build_finance_source_snapshot,
+    )
+
+    now = datetime.utcnow()
+    current_year = int(year or now.year)
+    current_month = max(1, min(int(month or now.month), 12))
+    source_errors: list[str] = []
+    platform: dict[str, Any] = {}
+    inbox_payload: dict[str, Any] = {}
+
+    try:
+        finance_source = await build_finance_source_snapshot(
+            session,
+            year=current_year,
+            month=current_month,
+            limit=300,
+        )
+        platform = build_finance_platform_snapshot(finance_source)
+    except Exception as exc:
+        logger.exception("Executive alerts finance snapshot failed")
+        source_errors.append(
+            f"Finanzas no disponible para alertas ejecutivas: {type(exc).__name__}."
+        )
+        platform = {"action_queue": {"actions": []}}
+
+    try:
+        inbox_payload = await build_sam_inbox_payload(
+            session,
+            current_empleado=current_empleado,
+            tab="direccion",
+        )
+    except Exception as exc:
+        logger.exception("Executive alerts Sam Inbox snapshot failed")
+        source_errors.append(
+            f"Sam Inbox Dirección no disponible: {type(exc).__name__}."
+        )
+        inbox_payload = {"direction": {"executive_alerts": {"alerts": []}}}
+
+    alerts = _build_consolidated_executive_alerts(platform, inbox_payload)
+    action_queue = platform.get("action_queue") or {}
+    payment_run = platform.get("payment_run") or {}
+    tax_readiness = platform.get("tax_readiness") or {}
+    accounting_close = platform.get("accounting_close_center") or {}
+    severity_counts = {
+        "high": sum(1 for item in alerts if item.get("severity") == "high"),
+        "medium": sum(1 for item in alerts if item.get("severity") == "medium"),
+        "low": sum(1 for item in alerts if item.get("severity") == "low"),
+    }
+
+    errors_html = "".join(
+        f"""
+        <div style="margin-bottom:12px;padding:12px 14px;border:1px solid #fcd34d;border-radius:14px;background:#fffbeb;color:#92400e;">
+            {escape(message)}
+        </div>
+        """
+        for message in source_errors
+    )
+    alert_rows = "".join(
+        f"""
+        <tr>
+            <td><span class="finance-pill finance-{escape(str(item.get("severity") or "low"))}">{escape(str(item.get("severity") or "-"))}</span></td>
+            <td>{escape(str(item.get("module") or "-"))}</td>
+            <td>{escape(str(item.get("title") or "-"))}</td>
+            <td>{escape(str(item.get("detail") or "-"))}</td>
+            <td>{escape(str(item.get("owner") or "-"))}</td>
+            <td>{escape(str(item.get("source") or "-"))}</td>
+            <td><a class="button secondary compact" href="{escape(str(item.get("href") or "/admin/ejecutivo/alertas"))}">Abrir</a></td>
+        </tr>
+        """
+        for item in alerts[:80]
+    ) or '<tr><td colspan="7">Sin alertas ejecutivas activas con las fuentes disponibles.</td></tr>'
+    quick_actions_html = "".join(
+        f"""
+        <a class="action-card" href="{escape(str(item.get("href") or "/admin/ejecutivo/alertas"))}">
+            <strong>{escape(str(item.get("title") or "Alerta"))}</strong>
+            <p>{escape(str(item.get("module") or "Dirección"))} · {escape(str(item.get("owner") or "Dirección"))}</p>
+        </a>
+        """
+        for item in alerts[:6]
+    ) or '<div class="section-note">Sin acciones prioritarias para este corte.</div>'
+    period_form_html = (
+        '<form method="GET" action="/admin/ejecutivo/alertas" '
+        'style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
+        f'<div><label>Año</label><input name="year" type="number" min="2020" max="2100" value="{current_year}"></div>'
+        f'<div><label>Mes</label><input name="month" type="number" min="1" max="12" value="{current_month}"></div>'
+        '<button class="button" type="submit">Actualizar alertas</button>'
+        "</form>"
+    )
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Alertas ejecutivas - SamChat</title>
+        <style>
+            {_admin_workspace_styles("1380px")}
+            .finance-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:14px; }}
+            .finance-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
+            .finance-table th, .finance-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
+            .finance-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            .finance-pill {{ display:inline-flex; padding:5px 9px; border-radius:999px; font-size:11px; font-weight:900; text-transform:uppercase; }}
+            .finance-high {{ background:#fee2e2; color:#991b1b; }}
+            .finance-medium {{ background:#fef3c7; color:#92400e; }}
+            .finance-low {{ background:#dcfce7; color:#166534; }}
+        </style>
+    </head>
+    <body>
+        <div class="workspace-shell">
+            {render_admin_navigation(current_empleado, "ejecutivo", subtitle="Alertas consolidadas para dirección y finanzas.")}
+            {_admin_breadcrumb_html([("Centro Ejecutivo", "/admin/ejecutivo"), ("Alertas ejecutivas", None)])}
+            {_render_admin_workspace_hero(
+                eyebrow="Dirección",
+                title="Alertas ejecutivas consolidadas",
+                description="Una sola vista read-only para riesgos de pagos, COI, DIOT/CFDI, pólizas y señales directivas desde snapshots existentes.",
+                actions_html=period_form_html,
+                side_html=(
+                    '<div class="eyebrow">Periodo</div>'
+                    f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{current_month}/{current_year}</div>'
+                    '<div style="margin-top:8px;color:#64748b;">Sin mutaciones ni tablas nuevas.</div>'
+                ),
+            )}
+            {errors_html}
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Semáforo ejecutivo</div>
+                <div class="workspace-section-subtitle">Resumen priorizado desde Finance Action Queue, Payment Run, Tax Readiness, Accounting Close y Sam Inbox Dirección.</div>
+                <div class="finance-grid" style="margin-top:14px;">
+                    {_sports_card("Alertas totales", len(alerts), "Consolidadas y deduplicadas")}
+                    {_sports_card("Alta prioridad", severity_counts["high"], "Atención inmediata")}
+                    {_sports_card("Media prioridad", severity_counts["medium"], "Seguimiento operativo")}
+                    {_sports_card("Pagos pendientes", payment_run.get("payable_count", 0), f"${_safe_money(payment_run.get('payable_total'))}")}
+                    {_sports_card("DIOT/CFDI bloqueado", tax_readiness.get("diot_blockers_count", 0), str(tax_readiness.get("status") or "sin fuente"))}
+                    {_sports_card("Pólizas descuadradas", accounting_close.get("unbalanced_count", 0), "Debe/haber")}
+                </div>
+            </section>
+            <section class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Acciones prioritarias</div>
+                <div class="workspace-section-subtitle">Atajos a los módulos canónicos. Esta pantalla no ejecuta acciones.</div>
+                <div class="action-grid" style="margin-top:14px;">{quick_actions_html}</div>
+            </section>
+            <section class="workspace-card">
+                <div class="workspace-section-title">Lista priorizada</div>
+                <div class="workspace-section-subtitle">Ordenada por severidad, módulo y título para revisión ejecutiva.</div>
+                <div class="table-shell" style="margin-top:14px;">
+                    <table class="finance-table">
+                        <thead><tr><th>Sev</th><th>Módulo</th><th>Alerta</th><th>Detalle</th><th>Responsable</th><th>Fuente</th><th>Acción</th></tr></thead>
+                        <tbody>{alert_rows}</tbody>
+                    </table>
+                </div>
             </section>
         </div>
     </body>

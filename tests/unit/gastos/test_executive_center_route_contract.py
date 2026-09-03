@@ -12,7 +12,7 @@ def _executive_center_block() -> str:
         '@router.get("/admin/ejecutivo"',
         maxsplit=1,
     )[1].split(
-        '@router.get("/admin/gastos/finance-training"',
+        '@router.get("/admin/ejecutivo/alertas"',
         maxsplit=1,
     )[0]
 
