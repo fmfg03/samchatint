@@ -28,7 +28,7 @@ from urllib.parse import quote, unquote, parse_qs, urlparse, urlencode
 from dotenv import dotenv_values
 from fastapi import APIRouter, Request, Form, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, Response, JSONResponse
-from sqlalchemy import select, func, and_, or_, text
+from sqlalchemy import select, func, and_, or_, text, exists
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload, undefer
@@ -28905,7 +28905,16 @@ async def documentos_pendientes(
         .outerjoin(cuenta_torneo_alias, CuentaDeGastos.torneo_id == cuenta_torneo_alias.id)
     )
 
-    filters = [Documento.estado == 'enviado']
+    already_actioned_by_current_user = exists().where(
+        and_(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == Documento.id,
+            Aprobacion.aprobador_id == current_empleado.id,
+            Aprobacion.accion.in_(["aprobar", "rechazar"]),
+        )
+    )
+
+    filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
     if current_empleado.rol not in ('superadmin', 'super_admin'):
         filters.append(
             or_(
@@ -29179,7 +29188,12 @@ async def documentos_pendientes(
                 eyebrow="Aprobaciones",
                 title="Pendientes por aprobar",
                 description="Bandeja operativa para revisar documentos enviados y decidir sin entrar todav\u00eda al historial.",
-                actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
+                actions_html=(
+                    '<a href="/documentos/pendientes" class="button primary">Pendientes</a>'
+                    '<a href="/documentos/historial-aprobador" class="button secondary">'
+                    'Ya autorizadas</a>'
+                    '<a href="/panel" class="button secondary">Volver al panel</a>'
+                ),
                 side_html=pendientes_side_html,
             )}
             <div class="stack">
@@ -29716,6 +29730,11 @@ async def historial_aprobador(
             getattr(documento, "referencia_operaciones", None),
             kind="referencia_operaciones",
         )
+        monto_total = getattr(documento, "monto_total", None) or getattr(
+            documento, "monto_solicitado", None
+        )
+        monto_total_sort = _sort_value_attr(monto_total, kind="money")
+        monto_total_display = format_currency(monto_total, currency_for(documento))
 
         # Link to documento detail
         doc_link = f'<a href="/documentos/{documento.id}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
@@ -29738,6 +29757,7 @@ async def historial_aprobador(
             <td>{escape(row_values["empleado"])}</td>
             <td>{escape(row_values["tipo"])}</td>
             <td>{escape(row_values["estado"])}</td>
+            <td data-sort-value="{escape(monto_total_sort)}">{escape(monto_total_display)}</td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
@@ -29806,7 +29826,12 @@ async def historial_aprobador(
                 eyebrow="Aprobaciones",
                 title="Historial de aprobaciones",
                 description="Bitácora de decisiones tomadas sobre documentos para mantener contexto y trazabilidad.",
-                actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
+                actions_html=(
+                    '<a href="/documentos/pendientes" class="button secondary">Pendientes</a>'
+                    '<a href="/documentos/historial-aprobador" class="button primary">'
+                    'Ya autorizadas</a>'
+                    '<a href="/panel" class="button secondary">Volver al panel</a>'
+                ),
                 side_html=historial_side_html,
             )}
             <div class="stack">
@@ -29834,6 +29859,7 @@ async def historial_aprobador(
                         <th data-sort-key="empleado" data-sort-type="text">Empleado</th>
                         <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                         <th data-sort-key="estado_actual" data-sort-type="text">Estado Actual</th>
+                        <th data-sort-key="monto_total" data-sort-type="money">Monto</th>
                         <th data-sort-key="comentario" data-sort-type="text">Comentario</th>
                     </tr>
                 </thead>
