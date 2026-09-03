@@ -2,8 +2,60 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from devnous.gastos.routes import user_routes
+from devnous.gastos.services import documento_telegram, telegram_outbox_service
 from devnous.gastos.services.documento_workflow_service import documento_requires_budget_control
+
+
+class _ScalarResult:
+    def __init__(self, values):
+        self._values = values
+
+    def unique(self):
+        return self
+
+    def all(self):
+        return self._values
+
+
+class _ExecuteResult:
+    def __init__(self, *, scalar=None, values=None):
+        self._scalar = scalar
+        self._values = values or []
+
+    def scalar_one(self):
+        return self._scalar
+
+    def scalars(self):
+        return _ScalarResult(self._values)
+
+
+class _SequencedSession:
+    def __init__(self, results):
+        self._results = list(results)
+        self.added = []
+
+    async def execute(self, _query):
+        if not self._results:
+            raise AssertionError("Unexpected query")
+        return self._results.pop(0)
+
+    def add(self, value):
+        self.added.append(value)
+
+
+class _CommitOnlySession:
+    def __init__(self):
+        self.commits = 0
+        self.flushes = 0
+
+    async def commit(self):
+        self.commits += 1
+
+    async def flush(self):
+        self.flushes += 1
 
 
 def test_solicitud_without_budget_concept_requires_budget_control():
@@ -62,6 +114,179 @@ def test_budget_control_telegram_has_idempotent_outbox_type():
     assert '"budget_control_pending"' in outbox_source
     assert "Control Presupuestal pendiente" in outbox_source
     assert "resolve_budget_control_notification_recipients" in telegram_source
+
+
+@pytest.mark.asyncio
+async def test_budget_control_reentry_forwards_force_resend_to_delivery(
+    monkeypatch,
+):
+    recipient = SimpleNamespace(id=uuid4(), telegram_user_id=8798876703)
+    documento = SimpleNamespace(id=uuid4(), estado="control_presupuestal")
+    delivered = {}
+
+    async def fake_recipients(_session):
+        return [recipient]
+
+    async def fake_context(_session, _documento):
+        return {}
+
+    async def fake_deliver(_session, **kwargs):
+        delivered.update(kwargs)
+        return True
+
+    monkeypatch.setattr(
+        documento_telegram,
+        "resolve_budget_control_notification_recipients",
+        fake_recipients,
+    )
+    monkeypatch.setattr(documento_telegram, "build_documento_telegram_context", fake_context)
+    monkeypatch.setattr(
+        documento_telegram,
+        "format_documento_resumen_es",
+        lambda *_args, **_kwargs: "I-360002",
+    )
+    monkeypatch.setattr(
+        documento_telegram,
+        "deliver_telegram_notification",
+        fake_deliver,
+    )
+
+    await documento_telegram.notify_budget_control_pending_document(
+        object(),
+        documento,
+        actor=SimpleNamespace(nombre="Roberto"),
+        force_resend=True,
+    )
+
+    assert delivered["force_resend"] is True
+    assert delivered["documento_id"] == documento.id
+    assert delivered["recipient_empleado_id"] == recipient.id
+
+
+@pytest.mark.asyncio
+async def test_forced_outbox_resend_bypasses_sent_suppression_and_resets_retry_state(
+    monkeypatch,
+):
+    entry = SimpleNamespace(
+        id=uuid4(),
+        status="sent",
+        retry_count=1,
+        telegram_chat_id=8798876703,
+        sent_at=object(),
+        next_retry_at=object(),
+        header_text=None,
+        body_preview=None,
+        error_message=None,
+        updated_at=None,
+    )
+    sent_messages = []
+    scheduled_retries = []
+
+    async def fake_find(_session, **_kwargs):
+        return entry
+
+    async def fake_send(chat_id, text, reply_markup=None):
+        sent_messages.append((chat_id, text, reply_markup))
+        return False
+
+    monkeypatch.setattr(telegram_outbox_service, "find_outbox_entry", fake_find)
+    monkeypatch.setattr(telegram_outbox_service, "send_telegram_message", fake_send)
+    monkeypatch.setattr(
+        telegram_outbox_service,
+        "schedule_outbox_retry",
+        lambda entry_id: scheduled_retries.append(entry_id),
+    )
+
+    ok = await telegram_outbox_service.deliver_telegram_notification(
+        _CommitOnlySession(),
+        notification_type="budget_control_pending",
+        header_text="Control Presupuestal pendiente",
+        text="I-360002",
+        chat_id=entry.telegram_chat_id,
+        documento_id=uuid4(),
+        recipient_empleado_id=uuid4(),
+        force_resend=True,
+    )
+
+    assert ok is False
+    assert sent_messages == [(8798876703, "I-360002", None)]
+    assert entry.status == "failed"
+    assert entry.retry_count == 0
+    assert entry.next_retry_at is not None
+    assert scheduled_retries == [entry.id]
+
+
+@pytest.mark.asyncio
+async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_control():
+    documento = SimpleNamespace(
+        id=uuid4(),
+        estado="borrador",
+        budget_concept_id=uuid4(),
+        cuenta_gastos_id=uuid4(),
+        tipo="INFORME",
+        enviado_en="previous",
+    )
+    cuenta = SimpleNamespace(id=documento.cuenta_gastos_id)
+    actor = SimpleNamespace(id=uuid4())
+    expenses = [
+        SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+        SimpleNamespace(id=uuid4(), budget_concept_id=None),
+    ]
+    session = _SequencedSession(
+        [
+            _ExecuteResult(scalar=len(expenses)),
+            _ExecuteResult(values=expenses),
+        ]
+    )
+
+    synced = await user_routes._sync_informe_documento_to_enviado(
+        session,
+        cuenta=cuenta,
+        informe_doc=documento,
+        actor=actor,
+    )
+
+    assert synced is True
+    assert documento.estado == "control_presupuestal"
+    assert documento.enviado_en is None
+    assert session.added[-1].accion == "enviar_control_presupuestal"
+    assert "partidas activas sin concepto presupuestal" in session.added[-1].comentario
+
+
+@pytest.mark.asyncio
+async def test_informe_with_all_lines_assigned_goes_to_approval():
+    documento = SimpleNamespace(
+        id=uuid4(),
+        estado="borrador",
+        budget_concept_id=uuid4(),
+        cuenta_gastos_id=uuid4(),
+        tipo="INFORME",
+        enviado_en=None,
+    )
+    cuenta = SimpleNamespace(id=documento.cuenta_gastos_id)
+    actor = SimpleNamespace(id=uuid4())
+    expenses = [
+        SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+        SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+    ]
+    session = _SequencedSession(
+        [
+            _ExecuteResult(scalar=len(expenses)),
+            _ExecuteResult(values=expenses),
+        ]
+    )
+
+    synced = await user_routes._sync_informe_documento_to_enviado(
+        session,
+        cuenta=cuenta,
+        informe_doc=documento,
+        actor=actor,
+    )
+
+    assert synced is True
+    assert documento.estado == "enviado"
+    assert documento.enviado_en is not None
+    assert session.added[-1].accion == "enviar"
 
 
 def test_aprobaciones_action_constraint_admits_current_audit_actions():

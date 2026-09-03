@@ -118,12 +118,14 @@ def schedule_budget_control_telegram_notifications(
     *,
     documento_id: str,
     actor_id: str,
+    force_resend: bool = False,
 ) -> None:
     """Fire-and-forget hook when a document enters Control Presupuestal."""
     schedule_fire_and_forget(
         run_budget_control_telegram_notifications(
             documento_id=documento_id,
             actor_id=actor_id,
+            force_resend=force_resend,
         )
     )
 
@@ -158,6 +160,7 @@ async def run_budget_control_telegram_notifications(
     *,
     documento_id: str,
     actor_id: str,
+    force_resend: bool = False,
 ) -> None:
     session_maker = get_notification_session_maker()
     if not session_maker:
@@ -179,7 +182,7 @@ async def run_budget_control_telegram_notifications(
         actor = await session.get(Empleado, actor_uuid)
         try:
             await notify_budget_control_pending_document(
-                session, documento, actor=actor
+                session, documento, actor=actor, force_resend=force_resend
             )
         except Exception:
             logger.exception(
@@ -960,6 +963,7 @@ async def notify_budget_control_pending_document(
     documento: Documento,
     *,
     actor: Optional[Empleado] = None,
+    force_resend: bool = False,
 ) -> None:
     """Notify Control Presupuestal that a document needs budget concept assignment."""
     if getattr(documento, "estado", None) != "control_presupuestal":
@@ -996,6 +1000,7 @@ async def notify_budget_control_pending_document(
             documento_id=documento.id,
             recipient_empleado_id=recipient.id,
             reply_markup=None,
+            force_resend=force_resend,
         )
 
 

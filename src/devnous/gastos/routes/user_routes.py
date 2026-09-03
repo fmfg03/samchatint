@@ -28154,6 +28154,14 @@ async def _informe_budget_assignment_complete(session: AsyncSession, documento: 
     return bool(expenses) and all(getattr(expense, "budget_concept_id", None) for expense in expenses)
 
 
+async def _informe_has_unassigned_budget_lines(
+    session: AsyncSession,
+    documento: Documento,
+) -> bool:
+    expenses = await _active_informe_expenses_for_document(session, documento)
+    return any(not getattr(expense, "budget_concept_id", None) for expense in expenses)
+
+
 async def _prepare_budget_gated_reimbursement_solicitudes(
     session: AsyncSession,
     *,
@@ -37664,12 +37672,16 @@ async def _sync_informe_documento_to_enviado(
         )
 
     now = datetime.utcnow()
-    if not getattr(informe_doc, "budget_concept_id", None):
+    if (
+        not getattr(informe_doc, "budget_concept_id", None)
+        or await _informe_has_unassigned_budget_lines(session, informe_doc)
+    ):
         informe_doc.estado = "control_presupuestal"
         informe_doc.enviado_en = None
         aprobacion_accion = "enviar_control_presupuestal"
         aprobacion_comentario = (
-            "Enviado a Control Presupuestal al cerrar el informe de gastos."
+            "Enviado a Control Presupuestal al cerrar el informe de gastos; "
+            "hay partidas activas sin concepto presupuestal."
         )
     else:
         informe_doc.estado = "enviado"
@@ -42161,6 +42173,7 @@ async def cerrar_cuenta_de_gastos(
                 schedule_budget_control_telegram_notifications(
                     documento_id=str(informe_doc.id),
                     actor_id=str(current_empleado.id),
+                    force_resend=bool(informe_doc.budget_concept_id),
                 )
             else:
                 from ..services.documento_telegram import (
