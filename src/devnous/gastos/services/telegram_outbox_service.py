@@ -225,6 +225,7 @@ async def deliver_telegram_notification(
     documento_id: Optional[UUID] = None,
     recipient_empleado_id: Optional[UUID] = None,
     reply_markup: Optional[Dict[str, Any]] = None,
+    force_resend: bool = False,
 ) -> bool:
     """Persist outbox row, send via Telegram, update delivery status.
 
@@ -238,7 +239,7 @@ async def deliver_telegram_notification(
         documento_id=documento_id,
         recipient_empleado_id=recipient_empleado_id,
     )
-    if existing is not None and existing.status == "sent":
+    if existing is not None and existing.status == "sent" and not force_resend:
         return True
     if chat_id is None:
         if existing is None:
@@ -299,6 +300,10 @@ async def deliver_telegram_notification(
                 return True
     else:
         entry = existing
+        if force_resend:
+            entry.retry_count = 0
+            entry.sent_at = None
+            entry.next_retry_at = None
         entry.status = "pending"
         entry.header_text = (header_text or "").strip() or None
         entry.body_preview = _preview(text)
