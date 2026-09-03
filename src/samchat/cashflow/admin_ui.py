@@ -31,7 +31,10 @@ def _metric(label: str, value: Any, note: str) -> str:
 
 def _monthly_rows(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        return '<tr><td colspan="11" class="cashflow-muted">Sin buckets.</td></tr>'
+        return (
+            '<tr><td colspan="11" class="cashflow-muted">'
+            "Sin periodos para mostrar.</td></tr>"
+        )
     rendered = []
     for row in rows:
         rendered.append(
@@ -68,45 +71,45 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
         [
             _metric("Caja real neta", summary.get("actual_cash_net"), "Banco"),
             _metric(
-                "Obligaciones aprobadas",
+                "Pagos aprobados pendientes",
                 summary.get("approved_obligations"),
-                "AP / payment run",
+                "Programacion de pagos",
             ),
             _metric(
-                "Plan ingresos",
+                "Ingresos presupuestados",
                 summary.get("planned_budget_income"),
                 "Presupuesto",
             ),
             _metric(
-                "Plan egresos",
+                "Egresos presupuestados",
                 summary.get("planned_budget_expense"),
                 "Presupuesto",
             ),
             _metric(
-                "Ingreso reconocido",
+                "Ingreso facturado/reconocido",
                 summary.get("recognized_income"),
-                "CFDI income",
+                "Facturacion reconocida",
             ),
             _metric(
-                "Cobranza AR probada",
+                "Cobranza confirmada",
                 summary.get("collected_income"),
-                "Accepted matches",
+                "Pagos conciliados",
             ),
             _metric(
                 "Ingreso esperado no cobrado",
                 summary.get("expected_uncollected_income"),
-                "No caja",
+                "Pendiente de cobro",
             ),
-            _metric("Forecast derivado", summary.get("forecast_net"), "Calculado"),
+            _metric("Proyección neta", summary.get("forecast_net"), "Calculada"),
         ]
     )
     return f"""
         <section class="workspace-card cashflow-warning" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Cashflow Planning read-only</div>
+            <div class="workspace-section-title">Flujo de efectivo ejecutivo</div>
             <div class="workspace-section-subtitle">
-                Finance Spine. No usa candidatos AR como cobranza. Cobranza AR
-                probada viene solo de matches aceptados; forecast derivado se
-                mantiene separado de caja real y plan.
+                Separa caja real, pagos aprobados, presupuesto, facturación,
+                cobranza confirmada y proyección para evitar mezclar flujo real
+                con compromisos o estimaciones.
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
@@ -116,28 +119,28 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Buckets mensuales</div>
+            <div class="workspace-section-title">Vista mensual</div>
             <table class="cashflow-table">
                 <thead>
                     <tr>
                         <th>Mes</th>
-                        <th>Cash in</th>
-                        <th>Cash out</th>
+                        <th>Entradas reales</th>
+                        <th>Salidas reales</th>
                         <th>Caja neta</th>
-                        <th>Obligaciones</th>
-                        <th>Plan ingresos</th>
-                        <th>Plan egresos</th>
-                        <th>Ingreso reconocido</th>
-                        <th>Cobranza AR probada</th>
+                        <th>Pagos pendientes</th>
+                        <th>Ingresos presupuestados</th>
+                        <th>Egresos presupuestados</th>
+                        <th>Facturado/reconocido</th>
+                        <th>Cobranza confirmada</th>
                         <th>Esperado no cobrado</th>
-                        <th>Forecast derivado</th>
+                        <th>Proyección neta</th>
                     </tr>
                 </thead>
                 <tbody>{_monthly_rows(rows)}</tbody>
             </table>
         </section>
         <section class="workspace-card">
-            <div class="workspace-section-title">Source notes</div>
+            <div class="workspace-section-title">Notas de lectura</div>
             <ul>{_source_notes(notes)}</ul>
         </section>
     """

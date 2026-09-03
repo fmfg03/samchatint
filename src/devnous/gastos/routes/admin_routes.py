@@ -6857,7 +6857,7 @@ async def admin_finance_cashflow(
     horizon_months: int = Query(3),
     limit: int = Query(500),
 ) -> HTMLResponse:
-    """Read-only Finance Spine cashflow planning view."""
+    """Executive cashflow planning view."""
     from samchat.cashflow import (
         build_cashflow_planning_read_model,
         cashflow_admin_styles,
@@ -6950,29 +6950,30 @@ async def admin_finance_cashflow(
         "</div>"
         f'<div><label>Limite</label><input name="limit" type="number" '
         f'min="1" max="5000" value="{int(limit or 500)}"></div>'
-        '<div><button class="button" type="submit">Actualizar Cashflow</button></div>'
+        '<div><button class="button" type="submit">Actualizar flujo</button></div>'
         "</form>"
     )
     nav_html = render_admin_navigation(
         current_empleado,
         "cashflow",
-        subtitle="Cashflow planning read-only sobre Finance Spine.",
+        subtitle="Flujo de efectivo con caja, obligaciones, cobranza y proyección.",
     )
     hero_html = _render_admin_workspace_hero(
-        eyebrow="Finance Spine",
-        title="Cashflow Planning",
+        eyebrow="Finanzas ejecutivas",
+        title="Flujo de efectivo ejecutivo",
         description=(
-            "Vista read-only que separa caja real, obligaciones AP, plan "
-            "presupuestal, ingreso reconocido, cobranza AR probada y forecast "
-            "derivado."
+            "Vista que separa caja real, pagos aprobados pendientes, plan "
+            "presupuestal, facturación reconocida, cobranza confirmada y "
+            "proyección neta."
         ),
         actions_html=form_html,
         side_html=(
             '<div class="eyebrow">Regla de cobranza</div>'
             '<div style="font-size:1.05rem;font-weight:900;color:#0f172a;">'
-            "No usa candidatos AR como cobranza</div>"
+            "Sólo cobranza confirmada cuenta como entrada real</div>"
             '<div style="margin-top:8px;color:#64748b;">'
-            "Sólo accepted matches cuentan como cobranza AR probada.</div>"
+            "Los posibles vínculos pendientes permanecen separados hasta "
+            "conciliación.</div>"
         ),
     )
 

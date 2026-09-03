@@ -41,3 +41,14 @@ def test_cashflow_route_is_read_only_and_not_legacy_sourced():
     assert "UPDATE " not in block.upper()
     assert "DELETE " not in block.upper()
     assert "/admin/contabilidad/cash-flow" not in block
+
+
+def test_cashflow_route_uses_executive_visible_copy():
+    block = _cashflow_route_block()
+
+    assert "Flujo de efectivo ejecutivo" in block
+    assert "Finanzas ejecutivas" in block
+    assert "Sólo cobranza confirmada cuenta como entrada real" in block
+    assert "Cashflow Planning" not in block
+    assert "Finance Spine" not in block
+    assert "accepted matches" not in block
