@@ -1,6 +1,11 @@
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
+import pytest
+
+from devnous.gastos.services import amex_expense_service
+from devnous.gastos.services.amex_expense_service import set_company_amex_status
 from devnous.gastos.services.employee_debtor_accounting_service import (
     _debtor_account_match_score,
     _debtor_name_match_score,
@@ -9,6 +14,34 @@ from devnous.gastos.services.employee_debtor_accounting_service import (
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class _FakeScalarResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+
+class _FakeExecuteResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return _FakeScalarResult(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self._rows = rows
+        self.added = []
+
+    async def execute(self, _query):
+        return _FakeExecuteResult(self._rows)
+
+    def add(self, item):
+        self.added.append(item)
 
 
 def read(relpath: str) -> str:
@@ -200,3 +233,119 @@ def test_unchecking_company_amex_applies_budget_concept_account_mapping() -> Non
     ) in service_source
     assert "if not mark_as_amex and expense.cuenta_contable_id is None:" in service_source
     assert "Cuenta contable asignada automáticamente desde partida presupuestal" in service_source
+
+
+@pytest.mark.asyncio
+async def test_bulk_unchecking_company_amex_applies_budget_mapping(monkeypatch) -> None:
+    cuenta_id = uuid4()
+    mapped_account_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+        estado_gasto="activo",
+        pagado_con_amex_empresa=True,
+        origen=None,
+        cuenta_contable_id=None,
+    )
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
+    session = _FakeSession([expense])
+
+    async def fake_apply_mapping(_session, mapped_expense):
+        mapped_expense.cuenta_contable_id = mapped_account_id
+        return True
+
+    monkeypatch.setattr(
+        amex_expense_service,
+        "apply_budget_concept_cuenta_mapping",
+        fake_apply_mapping,
+    )
+
+    changed = await set_company_amex_status(
+        session,
+        cuenta_id=cuenta_id,
+        expense_ids=[expense.id],
+        mark_as_amex=False,
+        actor=actor,
+    )
+
+    assert changed == [expense]
+    assert expense.pagado_con_amex_empresa is False
+    assert expense.cuenta_contable_id == mapped_account_id
+    assert session.added
+    assert "Cuenta contable asignada automáticamente" in session.added[0].comentario
+
+
+@pytest.mark.asyncio
+async def test_bulk_company_amex_keeps_existing_account(monkeypatch) -> None:
+    cuenta_id = uuid4()
+    existing_account_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+        estado_gasto="activo",
+        pagado_con_amex_empresa=True,
+        origen=None,
+        cuenta_contable_id=existing_account_id,
+    )
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
+    session = _FakeSession([expense])
+    calls = []
+
+    async def fake_apply_mapping(_session, mapped_expense):
+        calls.append(mapped_expense.id)
+        return True
+
+    monkeypatch.setattr(
+        amex_expense_service,
+        "apply_budget_concept_cuenta_mapping",
+        fake_apply_mapping,
+    )
+
+    await set_company_amex_status(
+        session,
+        cuenta_id=cuenta_id,
+        expense_ids=[expense.id],
+        mark_as_amex=False,
+        actor=actor,
+    )
+
+    assert calls == []
+    assert expense.cuenta_contable_id == existing_account_id
+
+
+@pytest.mark.asyncio
+async def test_bulk_company_amex_noops_when_status_is_unchanged(monkeypatch) -> None:
+    cuenta_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+        estado_gasto="activo",
+        pagado_con_amex_empresa=True,
+        origen=None,
+        cuenta_contable_id=None,
+    )
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
+    session = _FakeSession([expense])
+    calls = []
+
+    async def fake_apply_mapping(_session, mapped_expense):
+        calls.append(mapped_expense.id)
+        return True
+
+    monkeypatch.setattr(
+        amex_expense_service,
+        "apply_budget_concept_cuenta_mapping",
+        fake_apply_mapping,
+    )
+
+    changed = await set_company_amex_status(
+        session,
+        cuenta_id=cuenta_id,
+        expense_ids=[expense.id],
+        mark_as_amex=True,
+        actor=actor,
+    )
+
+    assert changed == []
+    assert calls == []
+    assert expense.pagado_con_amex_empresa is True
