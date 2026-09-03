@@ -31,6 +31,12 @@ from samchat.assistant.executive_regression_suite import (  # noqa: E402
     evaluate_executive_regression_case,
     executive_regression_cases,
 )
+from samchat.assistant.owner_needs_eval import (  # noqa: E402
+    PASS,
+    PASS_WITH_CLASSIFIED_GAPS,
+    assess_owner_needs_prompt,
+    parse_owner_needs_eval_set,
+)
 from samchat.assistant.routing_contracts import (  # noqa: E402
     AssistantRoutingContractCase,
     assistant_routing_contract_cases,
@@ -38,6 +44,7 @@ from samchat.assistant.routing_contracts import (  # noqa: E402
 )
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
+OWNER_NEEDS_EVAL_PATH = ROOT / "docs" / "assistant" / "rqf-assistant-009e-evaluation-set.md"
 SCHEMA_VERSION = "samchat.assistant_executive_canary.v1"
 WRITE_TERMS = (
     "approve",
@@ -463,6 +470,62 @@ def run_fixture_routing_contracts(
     }
 
 
+def run_fixture_owner_needs_eval() -> dict[str, Any]:
+    prompts = parse_owner_needs_eval_set(
+        OWNER_NEEDS_EVAL_PATH.read_text(encoding="utf-8")
+    )
+    rows: list[dict[str, Any]] = []
+    acceptable_statuses = {PASS, PASS_WITH_CLASSIFIED_GAPS}
+    for prompt in prompts:
+        assessment = assess_owner_needs_prompt(prompt)
+        ok = (
+            assessment.status in acceptable_statuses
+            and assessment.writes_attempted == 0
+            and assessment.side_effects_detected == 0
+        )
+        rows.append(
+            {
+                "prompt_id": prompt.prompt_id,
+                "prompt": prompt.prompt,
+                "ok": ok,
+                "status": assessment.status,
+                "evidence_found": list(assessment.evidence_found),
+                "evidence_missing": list(assessment.evidence_missing),
+                "gap_count": len(assessment.gaps),
+                "gaps": [gap.to_dict() for gap in assessment.gaps],
+                "recommended_next_action": assessment.recommended_next_action,
+                "writes_attempted": assessment.writes_attempted,
+                "side_effects_detected": assessment.side_effects_detected,
+            }
+        )
+
+    failed = [row for row in rows if not row["ok"]]
+    status_counts: dict[str, int] = {}
+    gap_counts: dict[str, int] = {}
+    for row in rows:
+        status = str(row["status"])
+        status_counts[status] = status_counts.get(status, 0) + 1
+        for gap in row["gaps"]:
+            gap_type = str(gap.get("gap_type") or "unknown")
+            gap_counts[gap_type] = gap_counts.get(gap_type, 0) + 1
+
+    return {
+        "ok": not failed,
+        "summary": {
+            "total": len(rows),
+            "passed": len(rows) - len(failed),
+            "failed": len(failed),
+            "status_counts": status_counts,
+            "gap_counts": gap_counts,
+            "writes_attempted": sum(int(row["writes_attempted"]) for row in rows),
+            "side_effects_detected": sum(
+                int(row["side_effects_detected"]) for row in rows
+            ),
+        },
+        "cases": rows,
+    }
+
+
 def run_fixture_canary(
     *, fixture_responses: str | None = None
 ) -> dict[str, Any]:
@@ -483,11 +546,13 @@ def run_fixture_canary(
     routing_contracts = run_fixture_routing_contracts(
         fixture_responses=fixture_responses
     )
+    owner_needs_eval = run_fixture_owner_needs_eval()
     return _result_payload(
         mode="fixture",
         rows=rows,
         base_url=None,
         routing_contracts=routing_contracts,
+        owner_needs_eval=owner_needs_eval,
     )
 
 
@@ -597,15 +662,17 @@ def _result_payload(
     rows: list[dict[str, Any]],
     base_url: str | None,
     routing_contracts: Mapping[str, Any] | None = None,
+    owner_needs_eval: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     failed = [row for row in rows if not row["ok"]]
     timeouts = [row for row in rows if row["timeout"]]
     routing_ok = True if routing_contracts is None else bool(routing_contracts.get("ok"))
+    owner_needs_ok = True if owner_needs_eval is None else bool(owner_needs_eval.get("ok"))
     return {
         "schema_version": SCHEMA_VERSION,
         "mode": mode,
-        "ok": not failed and routing_ok,
-        "status": "pass" if not failed and routing_ok else "failed",
+        "ok": not failed and routing_ok and owner_needs_ok,
+        "status": "pass" if not failed and routing_ok and owner_needs_ok else "failed",
         "base_url": base_url,
         "summary": {
             "total": len(rows),
@@ -615,6 +682,7 @@ def _result_payload(
         },
         "cases": rows,
         **({"routing_contracts": routing_contracts} if routing_contracts is not None else {}),
+        **({"owner_needs_eval": owner_needs_eval} if owner_needs_eval is not None else {}),
     }
 
 

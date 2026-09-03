@@ -34,6 +34,29 @@ def test_fixture_canary_passes_all_current_executive_cases():
     assert result["routing_contracts"]["ok"] is True
     assert result["routing_contracts"]["summary"]["total"] >= 12
     assert result["routing_contracts"]["summary"]["failed"] == 0
+    assert result["owner_needs_eval"]["ok"] is True
+    assert result["owner_needs_eval"]["summary"]["total"] == 30
+    assert result["owner_needs_eval"]["summary"]["failed"] == 0
+    assert result["owner_needs_eval"]["summary"]["writes_attempted"] == 0
+    assert result["owner_needs_eval"]["summary"]["side_effects_detected"] == 0
+
+
+def test_fixture_canary_reports_owner_needs_eval_scope():
+    result = MODULE.run_fixture_canary()
+    owner_eval = result["owner_needs_eval"]
+    cases = {row["prompt_id"]: row for row in owner_eval["cases"]}
+
+    assert {"AI-OWNER-001", "AI-OWNER-013", "AI-OWNER-025", "AI-OWNER-030"} <= set(cases)
+    assert cases["AI-OWNER-001"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-013"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-025"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-030"]["status"] in {"PASS", "PASS_WITH_CLASSIFIED_GAPS"}
+    assert cases["AI-OWNER-001"]["writes_attempted"] == 0
+    assert cases["AI-OWNER-013"]["side_effects_detected"] == 0
+    assert any(
+        gap["requires"] == "business_diff_preview_and_human_approval"
+        for gap in cases["AI-OWNER-001"]["gaps"]
+    )
 
 
 def test_fixture_canary_flags_wrong_routing_contract(tmp_path):
