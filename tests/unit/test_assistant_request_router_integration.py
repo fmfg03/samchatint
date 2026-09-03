@@ -72,6 +72,84 @@ async def _run_message(
 
 
 @pytest.mark.asyncio
+async def test_cashflow_statement_request_uses_template_report_without_provider(monkeypatch):
+    from samchat.assistant import conversation_service as cs
+
+    async def adapter(*_args, **kwargs):
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": kwargs["intent"],
+            "source_function": "test.adapter",
+            "payload": {
+                "report_type": "cashflow_statement",
+                "title": "Flujo de Efectivo",
+                "subtitle": "Al Junio 2026 (cifras en miles de pesos)",
+                "summary": {
+                    "saldo_inicial": 0,
+                    "origen_total": 0,
+                    "aplicaciones_total": 1390.78,
+                    "saldo_final": -1392.7,
+                },
+                "rows": [{"segment": "SALDO INICIAL:"}, {"segment": "Origen"}],
+                "source_notes": ["missing_budget_version_id"],
+            },
+        }
+
+    monkeypatch.setattr(cs, "run_finance_read_adapter", adapter)
+
+    response = await _run_message("Dame el flujo de efectivo de Copa Telmex a junio")
+
+    assert "Flujo de Efectivo" in response.assistant_message
+    assert "Cashflow Planning read-only" not in response.assistant_message
+    assert "Filas exportables: 2." in response.assistant_message
+    assert "¿Quieres que te lo exporte ahora?" in response.assistant_message
+    trace = response.tool_trace[0]["assistant_finance_template_report"]
+    assert trace["intent"] == "cashflow.statement"
+    assert trace["provider_called"] is False
+    assert response.tool_trace[0]["result"]["payload"]["report_type"] == (
+        "cashflow_statement"
+    )
+
+
+@pytest.mark.asyncio
+async def test_budget_vs_actual_request_uses_template_report_without_provider(monkeypatch):
+    from samchat.assistant import conversation_service as cs
+
+    async def adapter(*_args, **kwargs):
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": kwargs["intent"],
+            "source_function": "test.adapter",
+            "payload": {
+                "report_type": "budget_vs_actual",
+                "title": "Presupuesto vs Real",
+                "subtitle": "Junio / Enero-Junio",
+                "summary": {
+                    "budget_accumulated_total": 13850,
+                    "real_accumulated_total": 11450,
+                    "variance_accumulated_total": 2400,
+                    "variance_month_total": 2400,
+                },
+                "rows": [{"segment": "Ingresos"}],
+            },
+        }
+
+    monkeypatch.setattr(cs, "run_finance_read_adapter", adapter)
+
+    response = await _run_message("Genera presupuesto vs real de Copa Telmex a junio")
+
+    assert "Presupuesto vs Real" in response.assistant_message
+    assert "Presupuesto read-only" not in response.assistant_message
+    assert "Variación acumulada: $2,400.00." in response.assistant_message
+    assert "¿Quieres que te lo exporte ahora?" in response.assistant_message
+    trace = response.tool_trace[0]["assistant_finance_template_report"]
+    assert trace["intent"] == "budget.vs_actual"
+    assert trace["provider_called"] is False
+
+
+@pytest.mark.asyncio
 async def test_deterministic_finance_request_bypasses_provider_and_exports():
     response = await _run_message(
         "Compara gasto 2026 vs 2025 por concepto",
@@ -230,7 +308,7 @@ async def test_owner_ai_folder_definition_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -256,7 +334,7 @@ async def test_owner_ai_owner_needs_brief_uses_owner_pack_without_provider():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -271,7 +349,7 @@ async def test_owner_ai_prepared_dashboards_message_is_data_gap_aware():
         "Ya estan preparados los tableros para el dueno, pero falta informacion?"
     )
 
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
     assert trace["provider_called"] is False
@@ -292,7 +370,7 @@ async def test_owner_pack_readiness_question_uses_readiness_tool_without_provide
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     assert "torneo=copa-telmex" in response.assistant_message
     assert "Frontera de autoridad" in response.assistant_message
@@ -317,7 +395,7 @@ async def test_broad_owner_data_question_uses_readiness_not_unmapped_variable():
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "No pude mapear" not in response.assistant_message
     assert "Faltantes para poder contestar sin inventar" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -486,7 +564,7 @@ async def test_owner_readiness_folder_gap_question_extracts_entity_without_provi
     )
 
     assert calls == []
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "entidad=Jalisco" in response.assistant_message
     assert "Faltantes" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]
@@ -591,7 +669,7 @@ async def test_owner_pack_readiness_without_tournament_requests_context():
         "Que tan listo esta el Owner Pack para responderle al dueno?"
     )
 
-    assert "Readiness del Owner Pack" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "schema" in response.assistant_message.lower()
     assert "De que torneo quieres revisar el Owner Pack" in response.assistant_message
     trace = response.tool_trace[0]["owner_pack_readiness"]

@@ -131,6 +131,46 @@ def _render_cashflow_summary(result: dict[str, Any], payload: dict[str, Any]) ->
     return "\n".join(lines)
 
 
+def _render_template_report(result: dict[str, Any], payload: dict[str, Any]) -> str:
+    summary = payload.get("summary") or {}
+    rows = payload.get("rows") or []
+    title = str(payload.get("title") or "Reporte ejecutivo").strip()
+    subtitle = str(payload.get("subtitle") or "").strip()
+    lines = [title]
+    if subtitle:
+        lines.append(f"- Periodo: {subtitle}.")
+    report_type = str(payload.get("report_type") or "")
+    if report_type == "cashflow_statement":
+        lines.extend(
+            [
+                f"- Saldo inicial: {_money(summary.get('saldo_inicial'))}.",
+                f"- Origen total: {_money(summary.get('origen_total'))}.",
+                f"- Aplicaciones total: {_money(summary.get('aplicaciones_total'))}.",
+                f"- Saldo final derivado: {_money(summary.get('saldo_final'))}.",
+            ]
+        )
+    elif report_type == "budget_vs_actual":
+        lines.extend(
+            [
+                f"- Presupuesto acumulado: "
+                f"{_money(summary.get('budget_accumulated_total'))}.",
+                f"- Real acumulado: {_money(summary.get('real_accumulated_total'))}.",
+                f"- Variación acumulada: "
+                f"{_money(summary.get('variance_accumulated_total'))}.",
+                f"- Variación del mes: {_money(summary.get('variance_month_total'))}.",
+            ]
+        )
+    lines.append(f"- Filas exportables: {_safe_int(len(rows))}.")
+    if rows:
+        lines.append("Principales renglones:")
+        for row in rows[:5]:
+            if isinstance(row, dict):
+                lines.append(f"- {row.get('segment') or 'Sin segmento'}")
+    lines.append("Este reporte es una previsualización ejecutiva; no cambia datos.")
+    lines.extend(_render_source_notes(result, payload))
+    return "\n".join(lines)
+
+
 def _render_budget_snapshot(result: dict[str, Any], payload: dict[str, Any]) -> str:
     summary = payload.get("summary") or {}
     forecast = payload.get("forecast") or {}
@@ -243,8 +283,12 @@ def render_finance_read_answer(result: dict[str, Any]) -> str:
         return _render_ar_prematching(result, payload)
     if intent == "cashflow.summary":
         return _render_cashflow_summary(result, payload)
+    if intent == "cashflow.statement":
+        return _render_template_report(result, payload)
     if intent == "budget.snapshot":
         return _render_budget_snapshot(result, payload)
+    if intent == "budget.vs_actual":
+        return _render_template_report(result, payload)
     if intent == "finance.platform":
         return _render_finance_platform(result, payload)
     if intent == "finance.exports":
@@ -256,7 +300,9 @@ def render_finance_read_answer(result: dict[str, Any]) -> str:
                 "ar.summary",
                 "ar.prematching",
                 "cashflow.summary",
+                "cashflow.statement",
                 "budget.snapshot",
+                "budget.vs_actual",
                 "finance.platform",
                 "finance.exports",
             ],

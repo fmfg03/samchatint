@@ -117,6 +117,38 @@ def test_render_cashflow_summary_separates_actuals_and_forecast() -> None:
     assert "Los candidatos AR no cuentan como cobrado." in answer
 
 
+def test_render_cashflow_statement_template_report() -> None:
+    result = {
+        "ok": True,
+        "intent": "cashflow.statement",
+        "source_notes": ["opening balance pending"],
+        "payload": {
+            "report_type": "cashflow_statement",
+            "title": "Flujo de Efectivo",
+            "subtitle": "Al Junio 2026 (cifras en miles de pesos)",
+            "summary": {
+                "saldo_inicial": 76000,
+                "origen_total": 150,
+                "aplicaciones_total": 50,
+                "saldo_final": 76100,
+            },
+            "rows": [{"segment": "Origen"}, {"segment": "Aplicaciones"}],
+        },
+    }
+
+    answer = render_finance_read_answer(result)
+
+    assert "Flujo de Efectivo" in answer
+    assert "Periodo: Al Junio 2026" in answer
+    assert "Saldo inicial: $76,000.00." in answer
+    assert "Origen total: $150.00." in answer
+    assert "Aplicaciones total: $50.00." in answer
+    assert "Saldo final derivado: $76,100.00." in answer
+    assert "Filas exportables: 2." in answer
+    assert "Este reporte es una previsualización ejecutiva" in answer
+    assert '{"name"' not in answer
+
+
 def test_render_budget_snapshot_shows_budget_totals_without_authority_language() -> None:
     result = {
         "ok": True,
@@ -154,6 +186,35 @@ def test_render_budget_snapshot_shows_budget_totals_without_authority_language()
     assert "Este snapshot no autoriza cambios de presupuesto." in answer
     assert "budget authority stays in Presupuestos" in answer
     assert "modificado" not in answer
+
+
+def test_render_budget_vs_actual_template_report() -> None:
+    result = {
+        "ok": True,
+        "intent": "budget.vs_actual",
+        "payload": {
+            "report_type": "budget_vs_actual",
+            "title": "Presupuesto vs Real",
+            "subtitle": "Junio / Enero-Junio",
+            "summary": {
+                "budget_accumulated_total": 13850,
+                "real_accumulated_total": 11450,
+                "variance_accumulated_total": 2400,
+                "variance_month_total": -15.31,
+            },
+            "rows": [{"segment": "Ingresos"}, {"segment": "Costos Directos"}],
+        },
+    }
+
+    answer = render_finance_read_answer(result)
+
+    assert "Presupuesto vs Real" in answer
+    assert "Presupuesto acumulado: $13,850.00." in answer
+    assert "Real acumulado: $11,450.00." in answer
+    assert "Variación acumulada: $2,400.00." in answer
+    assert "Variación del mes: $-15.31." in answer
+    assert "Ingresos" in answer
+    assert "Costos Directos" in answer
 
 
 def test_render_budget_snapshot_labels_artifact_fallback() -> None:

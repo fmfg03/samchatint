@@ -77,6 +77,7 @@ from .finance_accounting_qa import (
     render_finance_accounting_qa_answer,
 )
 from .finance_read_adapter import run_finance_read_adapter
+from .finance_read_answer import render_finance_read_answer
 from .receipt_workflow_draft import (
     advance_receipt_draft,
     start_receipt_draft,
@@ -1418,6 +1419,125 @@ def _finance_platform_read_intent(raw_message: str) -> bool:
     return detect_finance_accounting_qa_intent(raw_message) is not None
 
 
+_FINANCE_TEMPLATE_MONTHS = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "setiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+
+
+def _finance_direct_read_intent(raw_message: str) -> Optional[str]:
+    normalized = normalize_request_text(raw_message)
+    if any(term in normalized for term in ("presupuesto vs real", "budget vs actual")):
+        return "budget.vs_actual"
+    if "variacion presupuestal" in normalized or "variación presupuestal" in normalized:
+        return "budget.vs_actual"
+    if "cashflow planning" in normalized or "cash flow planning" in normalized:
+        return "cashflow.summary"
+    if any(term in normalized for term in ("flujo de efectivo", "cash flow")):
+        return "cashflow.statement"
+    if (
+        "pre matching" in normalized
+        or "pre-matching" in normalized
+        or "prematching" in normalized
+    ) and (
+        "revisa" in normalized
+        or "revision" in normalized
+        or "revisión" in normalized
+        or any(term in normalized for term in ("cxc", "cuentas por cobrar", "cobrar"))
+    ):
+        return "ar.prematching"
+    if any(term in normalized for term in ("cuanto falta por cobrar", "cuánto falta por cobrar")):
+        return "ar.summary"
+    if "cuentas por cobrar" in normalized and any(
+        term in normalized for term in ("resumen", "saldo", "saldos", "cartera")
+    ):
+        return "ar.summary"
+    if any(
+        term in normalized
+        for term in (
+            "snapshot de presupuesto",
+            "presupuesto general",
+            "resumen de presupuesto",
+        )
+    ):
+        return "budget.snapshot"
+    return None
+
+
+def _finance_template_report_month(raw_message: str) -> Optional[int]:
+    normalized = normalize_request_text(raw_message)
+    for label, month in _FINANCE_TEMPLATE_MONTHS.items():
+        if label in normalized:
+            return month
+    match = re.search(r"\b(?:mes\s*)?([1-9]|1[0-2])\b", normalized)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def _finance_template_report_year(raw_message: str) -> int:
+    match = re.search(r"\b(20[0-9]{2})\b", raw_message or "")
+    if match:
+        return int(match.group(1))
+    return datetime.now().year
+
+
+async def _build_finance_direct_read_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    intent = _finance_direct_read_intent(raw_message)
+    if intent is None:
+        return None
+
+    result = await run_finance_read_adapter(
+        session,
+        intent=intent,
+        tournament_code=owner_ai_tournament_slug_hint(raw_message),
+        year=_finance_template_report_year(raw_message),
+        month=_finance_template_report_month(raw_message),
+        limit=500,
+    )
+    rendered = render_finance_read_answer(result)
+    tool_trace = [
+        {
+            "assistant_finance_template_report": {
+                "stage": "deterministic_read_only_finance_read",
+                "intent": intent,
+                "source_function": result.get("source_function"),
+                "ok": bool(result.get("ok")),
+                "read_only": True,
+                "provider_called": False,
+                "writes_attempted": False,
+            },
+            "tool": "assistant_finance_read",
+            "result": result,
+        }
+    ]
+    rendered = maybe_append_export_prompt(rendered, tool_trace)
+    await _persist_document_conversation_messages(
+        raw_message=raw_message,
+        assistant_message=rendered,
+        conversation=conversation,
+        session=session,
+    )
+    return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
 async def _build_finance_platform_read_response(
     *,
     raw_message: str,
@@ -1982,6 +2102,15 @@ async def run_conversation_turn(
     if owner_entity_workspace_response is not None:
         return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
 
+    finance_direct_response = await _build_finance_direct_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_direct_response is not None:
+        return _with_work_frame_trace(finance_direct_response, work_frame)
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -2297,6 +2426,15 @@ async def run_message_turn_with_pending(
     )
     if owner_entity_workspace_response is not None:
         return _with_work_frame_trace(owner_entity_workspace_response, work_frame)
+
+    finance_direct_response = await _build_finance_direct_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_direct_response is not None:
+        return _with_work_frame_trace(finance_direct_response, work_frame)
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,

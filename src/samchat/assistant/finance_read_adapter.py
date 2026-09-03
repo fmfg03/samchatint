@@ -8,6 +8,10 @@ from samchat.ar.matching import build_ar_matching_workbench
 from samchat.ar.service import build_ar_read_model
 from samchat.budgets.service import build_budget_snapshot
 from samchat.cashflow.service import build_cashflow_planning_read_model
+from samchat.executive.template_reports import (
+    build_budget_vs_actual_report,
+    build_cashflow_statement_report,
+)
 from samchat.finance_platform.service import (
     build_finance_platform_snapshot,
     build_finance_source_snapshot,
@@ -55,7 +59,9 @@ ALLOWED_INTENTS = (
     "ar.summary",
     "ar.prematching",
     "cashflow.summary",
+    "cashflow.statement",
     "budget.snapshot",
+    "budget.vs_actual",
     "finance.platform",
     "finance.exports",
 )
@@ -263,6 +269,38 @@ async def run_finance_read_adapter(
             },
         )
 
+    if intent == "cashflow.statement":
+        source_payload = await build_cashflow_planning_read_model(
+            session,
+            budget_version_id=budget_version_id,
+            year=year,
+            month=month,
+            horizon_months=12,
+            limit=limit,
+        )
+        payload = build_cashflow_statement_report(
+            source_payload,
+            as_of_year=year,
+            as_of_month=month,
+        )
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": intent,
+            "source_function": (
+                "samchat.cashflow.service.build_cashflow_planning_read_model "
+                "+ samchat.executive.template_reports."
+                "build_cashflow_statement_report"
+            ),
+            "payload": payload,
+            "source_notes": _source_notes(
+                payload,
+                "cashflow statement template follows uploaded workbook structure",
+                "forecast and opening balance caveats must stay visible",
+            ),
+            "safety_labels": _safety_labels(*CASHFLOW_SAFETY_LABELS),
+        }
+
     if intent == "budget.snapshot":
         payload = await build_budget_snapshot(
             session,
@@ -285,6 +323,42 @@ async def run_finance_read_adapter(
             "read_only": True,
             "intent": intent,
             "source_function": "samchat.budgets.service.build_budget_snapshot",
+            "payload": payload,
+            "source_notes": _source_notes(payload, *source_note_overrides),
+            "safety_labels": _safety_labels(*BUDGET_SAFETY_LABELS),
+        }
+
+    if intent == "budget.vs_actual":
+        source_payload = await build_budget_snapshot(
+            session,
+            version_id=budget_version_id,
+            tournament_id=tournament_id,
+            tournament_slug=tournament_code,
+            edition_year=year or 2026,
+        )
+        payload = build_budget_vs_actual_report(
+            source_payload,
+            month=month,
+            year=year,
+        )
+        source_note_overrides = [
+            "budget vs real template follows uploaded workbook structure",
+            "budget authority stays in Presupuestos",
+        ]
+        if source_payload.get("source") != "budget_db":
+            source_note_overrides.append(
+                "budget snapshot used artifact fallback; verify runtime budget "
+                "version before treating it as live DB"
+            )
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": intent,
+            "source_function": (
+                "samchat.budgets.service.build_budget_snapshot "
+                "+ samchat.executive.template_reports."
+                "build_budget_vs_actual_report"
+            ),
             "payload": payload,
             "source_notes": _source_notes(payload, *source_note_overrides),
             "safety_labels": _safety_labels(*BUDGET_SAFETY_LABELS),

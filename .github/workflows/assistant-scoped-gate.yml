@@ -58,6 +58,7 @@ jobs:
             "tests/unit/test_assistant_request_reports.py"
             "tests/unit/test_assistant_request_router_integration.py"
             "tests/unit/test_assistant_request_export_guard.py"
+            "tests/unit/test_assistant_routing_contracts.py"
             "tests/unit/test_assistant_analyst_intent.py"
             "tests/unit/test_assistant_analyst_workbench.py"
             "tests/unit/test_assistant_analyst_routing_integration.py"
@@ -167,6 +168,7 @@ jobs:
             tests/unit/test_assistant_request_reports.py \
             tests/unit/test_assistant_request_router_integration.py \
             tests/unit/test_assistant_request_export_guard.py \
+            tests/unit/test_assistant_routing_contracts.py \
             tests/unit/test_assistant_analyst_intent.py \
             tests/unit/test_assistant_analyst_workbench.py \
             tests/unit/test_assistant_analyst_routing_integration.py \

@@ -31,6 +31,69 @@ def test_fixture_canary_passes_all_current_executive_cases():
     assert all(
         row["authority_posture"] == "read_only" for row in result["cases"]
     )
+    assert result["routing_contracts"]["ok"] is True
+    assert result["routing_contracts"]["summary"]["total"] >= 12
+    assert result["routing_contracts"]["summary"]["failed"] == 0
+    assert result["owner_needs_eval"]["ok"] is True
+    assert result["owner_needs_eval"]["summary"]["total"] == 30
+    assert result["owner_needs_eval"]["summary"]["failed"] == 0
+    assert result["owner_needs_eval"]["summary"]["writes_attempted"] == 0
+    assert result["owner_needs_eval"]["summary"]["side_effects_detected"] == 0
+
+
+def test_fixture_canary_reports_owner_needs_eval_scope():
+    result = MODULE.run_fixture_canary()
+    owner_eval = result["owner_needs_eval"]
+    cases = {row["prompt_id"]: row for row in owner_eval["cases"]}
+
+    assert {"AI-OWNER-001", "AI-OWNER-013", "AI-OWNER-025", "AI-OWNER-030"} <= set(cases)
+    assert cases["AI-OWNER-001"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-013"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-025"]["status"] == "PASS_WITH_CLASSIFIED_GAPS"
+    assert cases["AI-OWNER-030"]["status"] in {"PASS", "PASS_WITH_CLASSIFIED_GAPS"}
+    assert cases["AI-OWNER-001"]["writes_attempted"] == 0
+    assert cases["AI-OWNER-013"]["side_effects_detected"] == 0
+    assert any(
+        gap["requires"] == "business_diff_preview_and_human_approval"
+        for gap in cases["AI-OWNER-001"]["gaps"]
+    )
+
+
+def test_fixture_canary_flags_wrong_routing_contract(tmp_path):
+    overrides = tmp_path / "responses.jsonl"
+    overrides.write_text(
+        json.dumps(
+            {
+                "case_id": "ROUTE-FIN-CASHFLOW-STATEMENT-001",
+                "assistant_message": "Cashflow Planning read-only. No ejecute cambios.",
+                "tool_trace": [
+                    {
+                        "tool": "assistant_finance_read",
+                        "result": {
+                            "intent": "cashflow.summary",
+                            "provider_called": False,
+                            "writes_attempted": False,
+                        },
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = MODULE.run_fixture_canary(fixture_responses=str(overrides))
+
+    failed = [
+        row
+        for row in result["routing_contracts"]["cases"]
+        if row["case_id"] == "ROUTE-FIN-CASHFLOW-STATEMENT-001"
+    ][0]
+    assert result["ok"] is False
+    assert result["routing_contracts"]["ok"] is False
+    assert failed["ok"] is False
+    assert "missing_intent:cashflow.statement" in failed["failures"]
+    assert "missing_term:Flujo de Efectivo" in failed["failures"]
 
 
 def test_fixture_canary_flags_wrong_tool_from_override(tmp_path):

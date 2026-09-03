@@ -51,7 +51,9 @@ def test_assistant_finance_read_schema_is_bounded_to_approved_intents() -> None:
         "ar.summary",
         "ar.prematching",
         "cashflow.summary",
+        "cashflow.statement",
         "budget.snapshot",
+        "budget.vs_actual",
         "finance.platform",
         "finance.exports",
     ]
