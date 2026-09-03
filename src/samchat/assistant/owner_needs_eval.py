@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Dict, Iterable, List, Sequence
+from typing import Dict, Iterable, List, Mapping, Sequence
 
 
 PASS = "PASS"
@@ -224,12 +224,53 @@ def _preview_gap(prompt: OwnerNeedsPrompt) -> OwnerNeedsGap:
     )
 
 
+def _normalized_supported_evidence(
+    *,
+    prompt: OwnerNeedsPrompt,
+    available_evidence_sources: Iterable[str] | None,
+    available_evidence_by_prompt: Mapping[str, Iterable[str]] | None,
+) -> List[str]:
+    available = {
+        str(source or "").strip().lower()
+        for source in available_evidence_sources or []
+        if str(source or "").strip()
+    }
+    prompt_sources = (
+        available_evidence_by_prompt.get(prompt.prompt_id, [])
+        if available_evidence_by_prompt
+        else []
+    )
+    available.update(
+        str(source or "").strip().lower()
+        for source in prompt_sources
+        if str(source or "").strip()
+    )
+    return [
+        source
+        for source in prompt.expected_sources
+        if source in LIVE_EVIDENCE_SOURCE_TYPES and source in available
+    ]
+
+
 def assess_owner_needs_prompt(
     prompt: OwnerNeedsPrompt,
+    *,
+    available_evidence_sources: Iterable[str] | None = None,
+    available_evidence_by_prompt: Mapping[str, Iterable[str]] | None = None,
 ) -> OwnerNeedsAssessment:
     """Classify one prompt under the 009K read-only quality contract."""
 
-    missing_sources = _requires_live_evidence(prompt)
+    supported_live_sources = _normalized_supported_evidence(
+        prompt=prompt,
+        available_evidence_sources=available_evidence_sources,
+        available_evidence_by_prompt=available_evidence_by_prompt,
+    )
+    supported_live = set(supported_live_sources)
+    missing_sources = [
+        source
+        for source in _requires_live_evidence(prompt)
+        if source not in supported_live
+    ]
     gaps: List[OwnerNeedsGap] = []
     if missing_sources:
         gaps.append(_missing_evidence_gap(prompt, missing_sources))
@@ -241,12 +282,18 @@ def assess_owner_needs_prompt(
         evidence_found = [
             source
             for source in prompt.expected_sources
-            if source in CANON_SOURCE_TYPES
+            if source in CANON_SOURCE_TYPES or source in supported_live
         ]
-        confidence_limit = (
-            "Canon can define the required folder fields, but live facts are "
-            "not established for the missing evidence sources."
-        )
+        if supported_live_sources:
+            confidence_limit = (
+                "Some live operational evidence is available, but remaining "
+                "missing sources still limit any complete folder claim."
+            )
+        else:
+            confidence_limit = (
+                "Canon can define the required folder fields, but live facts are "
+                "not established for the missing evidence sources."
+            )
         if _has_sensitive_evidence_need(prompt):
             confidence_limit = (
                 "No concrete medical, accident, ambulance, insurance, or "
@@ -306,6 +353,12 @@ def build_owner_evidence_gap_response(
             f"{missing}. Puedo usar el canon para decir que debe revisarse, "
             "pero no debo presentarlo como hecho ocurrido."
         )
+    elif assessment.gaps:
+        answer = (
+            "Tengo evidencia suficiente para las fuentes requeridas, pero esta "
+            "accion necesita preview/diff y autorizacion antes de cualquier "
+            "cambio durable."
+        )
     else:
         answer = (
             "Puedo responder desde el canon versionado del owner-needs sin "
@@ -329,8 +382,18 @@ def build_owner_evidence_gap_response(
 
 def evaluate_owner_needs_prompts(
     prompts: Iterable[OwnerNeedsPrompt],
+    *,
+    available_evidence_sources: Iterable[str] | None = None,
+    available_evidence_by_prompt: Mapping[str, Iterable[str]] | None = None,
 ) -> Dict[str, object]:
-    assessments = [assess_owner_needs_prompt(prompt) for prompt in prompts]
+    assessments = [
+        assess_owner_needs_prompt(
+            prompt,
+            available_evidence_sources=available_evidence_sources,
+            available_evidence_by_prompt=available_evidence_by_prompt,
+        )
+        for prompt in prompts
+    ]
     status_counts: Dict[str, int] = {}
     gap_counts: Dict[str, int] = {}
     for assessment in assessments:
