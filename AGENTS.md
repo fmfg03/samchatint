@@ -42,6 +42,9 @@
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
 - Commit messages: imperative mood, concise summary + context in body if needed.
 - PRs: clear description, linked issues (`Closes #123`), screenshots/logs for UX/ops changes, and notes on testing & rollout.
+- Feature branches are temporary: after the PR is merged into `main`, delete the
+  branch. The permanent evidence is the commit history and the PR, not the
+  branch name.
 
 ## Security & Configuration Tips
 - Never commit secrets. Use `.env` (copy from `.env.example`).
