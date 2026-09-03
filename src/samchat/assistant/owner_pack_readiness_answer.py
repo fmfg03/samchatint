@@ -114,7 +114,7 @@ def _short_answer(report: OwnerPackReadinessReport) -> str:
 def _headline_for_report(report: OwnerPackReadinessReport) -> str:
     headline = str(report.headline or "").strip()
     if not headline or "readiness" in headline.casefold():
-        return "Estado ejecutivo del Owner Pack"
+        return "Readiness del Owner Pack"
     return headline
 
 
@@ -125,7 +125,6 @@ def _executive_visible_text(value: str) -> str:
         "contrato read-only": "contrato preparado",
         "diagnostico read-only": "diagnostico para revisión",
         "read-only": "segura",
-        "Readiness": "Estado",
         "readiness": "cobertura",
         "Entity folder": "Carpeta por entidad",
         "National phase": "Fase nacional",
