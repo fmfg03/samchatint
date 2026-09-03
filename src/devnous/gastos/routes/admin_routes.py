@@ -1258,6 +1258,7 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             --shell-accent:#0f766e;
         }}
         * {{ box-sizing:border-box; }}
+        html {{ max-width:100%; overflow-x:hidden; }}
         body {{
             font-family:"Segoe UI","Helvetica Neue",sans-serif;
             margin:0;
@@ -1267,11 +1268,14 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
                 radial-gradient(circle at top left, rgba(15,118,110,.10), transparent 26%),
                 radial-gradient(circle at top right, rgba(29,78,216,.08), transparent 22%),
                 linear-gradient(180deg, #eaf1f6 0%, #dfe9f1 100%);
-            min-height:100vh;
+            min-height:100dvh;
+            max-width:100%;
+            overflow-x:hidden;
         }}
         .container,
         .workspace-shell {{
             max-width:{max_width};
+            width:100%;
             margin:0 auto;
         }}
         .workspace-card {{
@@ -1303,6 +1307,7 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .workspace-hero-main,
         .workspace-hero-side,
         .surface {{
+            min-width:0;
             border:1px solid var(--shell-line);
             border-radius:22px;
             background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
@@ -1321,10 +1326,11 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .lead {{ margin:10px 0 0; color:var(--shell-muted); font-size:14px; line-height:1.65; max-width:72ch; }}
         .meta-grid {{
             display:grid;
-            grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+            grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr));
             gap:12px;
         }}
         .meta-card {{
+            min-width:0;
             border:1px solid var(--shell-line);
             border-radius:18px;
             padding:16px;
@@ -1343,6 +1349,7 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             font-size:1.45rem;
             letter-spacing:-.03em;
             color:var(--shell-ink);
+            overflow-wrap:anywhere;
         }}
         .meta-card small {{
             display:block;
@@ -1363,10 +1370,11 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .section-note {{ color:var(--shell-muted); font-size:13px; line-height:1.55; }}
         .action-grid {{
             display:grid;
-            grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+            grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));
             gap:14px;
         }}
         .action-card {{
+            min-width:0;
             display:block;
             text-decoration:none;
             padding:16px;
@@ -1417,8 +1425,79 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             border:1px solid var(--shell-line);
             box-shadow:none;
         }}
+        .table-shell {{
+            max-width:100%;
+            overflow-x:auto;
+            -webkit-overflow-scrolling:touch;
+            border:1px solid var(--shell-line);
+            border-radius:18px;
+            background:#fff;
+        }}
+        .table-shell table {{
+            min-width:max-content;
+        }}
+        table {{
+            max-width:100%;
+            border-collapse:collapse;
+        }}
+        th, td {{
+            overflow-wrap:anywhere;
+        }}
+        input,
+        select,
+        textarea {{
+            max-width:100%;
+        }}
+        .form-grid {{
+            display:grid;
+            gap:12px;
+        }}
         @media (max-width: 980px) {{
             .workspace-hero {{ grid-template-columns:1fr; }}
+        }}
+        @media (max-width: 720px) {{
+            body {{ padding:12px; }}
+            .container,
+            .workspace-shell {{ width:100%; }}
+            .workspace-card,
+            .workspace-hero-main,
+            .workspace-hero-side,
+            .surface {{
+                border-radius:16px;
+                padding:14px;
+            }}
+            h1 {{ font-size:1.55rem; line-height:1.08; }}
+            .lead {{ font-size:13px; line-height:1.55; }}
+            .button {{
+                width:100%;
+                min-height:42px;
+                white-space:normal;
+                text-align:center;
+            }}
+            .form-grid,
+            .filter-grid,
+            .review-toolbar,
+            .toolbar-actions {{
+                grid-template-columns:1fr !important;
+                width:100%;
+            }}
+            .workspace-card form[style*="grid-template-columns"],
+            .workspace-card div[style*="grid-template-columns"],
+            .surface form[style*="grid-template-columns"],
+            .surface div[style*="grid-template-columns"] {{
+                grid-template-columns:1fr !important;
+            }}
+            .filter-actions {{
+                flex-direction:column;
+                width:100%;
+            }}
+            .filter-actions button,
+            .toolbar-actions > * {{
+                width:100%;
+            }}
+            .hero-actions,
+            .inline-actions,
+            .section-head {{ align-items:stretch; }}
         }}
     """
 
@@ -16812,10 +16891,13 @@ async def admin_cuentas_contables(
                 font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
                 background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
                 padding: 20px;
-                min-height: 100vh;
+                min-height: 100dvh;
+                max-width: 100%;
+                overflow-x: hidden;
             }}
             .container {{
                 max-width: 1200px;
+                width: 100%;
                 margin: 0 auto;
                 background: white;
                 border-radius: 12px;
@@ -16837,6 +16919,7 @@ async def admin_cuentas_contables(
                 padding: 20px;
                 border-radius: 8px;
                 margin-bottom: 30px;
+                min-width: 0;
             }}
             .form-group {{
                 margin-bottom: 15px;
@@ -16919,6 +17002,7 @@ async def admin_cuentas_contables(
             td {{
                 padding: 10px 12px;
                 border-bottom: 1px solid #ddd;
+                overflow-wrap: anywhere;
             }}
             tr:hover {{
                 background-color: #f9f9f9;
@@ -16940,6 +17024,42 @@ async def admin_cuentas_contables(
             .btn-small {{
                 padding: 8px 16px;
                 font-size: 14px;
+            }}
+            .account-table-shell {{
+                max-width: 100%;
+                overflow-x: auto;
+                -webkit-overflow-scrolling: touch;
+                border-radius: 8px;
+            }}
+            .account-table-shell table {{
+                min-width: 720px;
+            }}
+            @media (max-width: 720px) {{
+                body {{
+                    padding: 12px;
+                }}
+                .container {{
+                    padding: 16px;
+                    border-radius: 10px;
+                }}
+                h1 {{
+                    font-size: 1.45rem;
+                    line-height: 1.15;
+                }}
+                h2 {{
+                    font-size: 1.05rem;
+                }}
+                .btn {{
+                    width: 100%;
+                    min-height: 42px;
+                    text-align: center;
+                    margin-left: 0;
+                    margin-top: 8px;
+                    white-space: normal;
+                }}
+                .checkbox-group {{
+                    align-items: flex-start;
+                }}
             }}
         </style>
     </head>
@@ -16993,6 +17113,7 @@ async def admin_cuentas_contables(
             <div style="margin-top: 30px;">
                 <h2 style="margin-bottom: 20px;">📋 Cuentas Contables ({len(cuentas)})</h2>
                 {"<p style='color: #666;'>No hay cuentas contables registradas aún.</p>" if not cuentas else ""}
+                <div class="account-table-shell">
                 <table>
                     <thead>
                         <tr>
@@ -17024,6 +17145,7 @@ async def admin_cuentas_contables(
     html_content += """
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
     </body>

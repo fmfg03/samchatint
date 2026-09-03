@@ -837,8 +837,10 @@ def register_presupuestos_routes(router) -> None:
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Versiones</div>
+                <div class="table-shell">
                 <table><thead><tr><th>Año</th><th>Versión</th><th>Status</th><th>Source</th><th>Actualizado</th><th>Acciones</th></tr></thead>
                 <tbody>{"".join(version_rows_parts) if version_rows_parts else '<tr><td colspan="6">Sin versiones.</td></tr>'}</tbody></table>
+                </div>
                 <div style="margin-top:14px;">{create_version_form}</div>
                 <div style="margin-top:14px;">{selected_version_edit_form}</div>
             </section>
