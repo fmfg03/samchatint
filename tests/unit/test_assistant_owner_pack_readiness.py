@@ -58,7 +58,15 @@ def test_owner_pack_readiness_without_tournament_is_schema_only_and_safe() -> No
     assert answer.status == OWNER_PACK_SCHEMA_ONLY
     assert answer.audit_language == OWNER_PACK_READINESS_ANSWER_ONLY
     assert "Owner Pack" in answer.rendered_text
-    assert "Frontera de autoridad" in answer.rendered_text
+    assert "Estado ejecutivo del Owner Pack" in answer.rendered_text
+    assert "cobertura 0%" in answer.rendered_text
+    assert "Secciones revisadas" in answer.rendered_text
+    assert "Límite de la vista" in answer.rendered_text
+    assert "Frontera de autoridad" not in answer.rendered_text
+    assert "Readiness" not in answer.rendered_text
+    assert "read-only" not in answer.rendered_text
+    assert "schema read-only" not in answer.rendered_text
+    assert "preview read-only" not in answer.rendered_text
     assert '{"name"' not in answer.rendered_text
 
 
@@ -200,12 +208,15 @@ async def test_owner_pack_readiness_conversation_renders_pack_del_dueno_question
     )
 
     assert response is not None
-    assert "Readiness" in response.assistant_message
+    assert "Estado ejecutivo del Owner Pack" in response.assistant_message
     assert "Owner Pack" in response.assistant_message
     assert "Estado" in response.assistant_message
     assert "assistant_owner_pack_readiness" not in response.assistant_message
+    assert "Readiness" not in response.assistant_message
+    assert "read-only" not in response.assistant_message
+    assert "Frontera de autoridad" not in response.assistant_message
     assert '{"name"' not in response.assistant_message
     assert response.tool_trace[0]["tool"] == "assistant_owner_pack_readiness"
     answer = response.tool_trace[0]["result"]["conversation_answer"]
     assert answer["status"] == OWNER_PACK_SCHEMA_ONLY
-    assert "Frontera de autoridad" in answer["rendered_text"]
+    assert "Límite de la vista" in answer["rendered_text"]

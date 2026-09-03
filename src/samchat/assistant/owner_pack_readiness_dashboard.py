@@ -30,8 +30,8 @@ _OWNER_PACK_SURFACE_ORDER = {
 }
 _OWNER_PACK_SURFACE_LABELS = {
     "tournament_context": "Torneo / contexto",
-    "entity_folder": "Entity folder",
-    "national_phase_folder": "National phase",
+    "entity_folder": "Carpeta por entidad",
+    "national_phase_folder": "Fase nacional",
     "marketing_activation_report": "Marketing",
 }
 
@@ -117,7 +117,7 @@ def _tournament_context_card(report: OwnerPackReadinessReport) -> OwnerPackReadi
         next_action=(
             "Usar este torneo como contexto para evaluar carpetas y superficies."
             if tournament_slug
-            else "Indicar el torneo que el dueno quiere revisar."
+            else "Indicar el torneo que Dirección quiere revisar."
         ),
         next_questions=[] if tournament_slug else ["De que torneo quieres revisar el Owner Pack?"],
         source_anchor="target",
@@ -193,7 +193,7 @@ def build_owner_pack_readiness_dashboard(
 
     return OwnerPackReadinessDashboard(
         dashboard_id="owner_pack_readiness_dashboard_v1",
-        headline="Owner Pack Readiness Dashboard",
+        headline="Estado ejecutivo del Owner Pack",
         summary=summary,
         target=dict(report.target or {}),
         overall_status=report.status,

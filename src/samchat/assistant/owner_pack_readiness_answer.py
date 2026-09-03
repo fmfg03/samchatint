@@ -73,8 +73,12 @@ def _target_line(report: OwnerPackReadinessReport) -> str | None:
 def _surface_lines(report: OwnerPackReadinessReport) -> list[str]:
     lines: list[str] = []
     for surface in report.surfaces[:6]:
+        label = {
+            "Entity folder": "Carpeta por entidad",
+            "National phase": "Fase nacional",
+        }.get(surface.label, surface.label)
         lines.append(
-            f"{surface.label}: {surface.status} "
+            f"{label}: {surface.status} "
             f"({surface.supported_field_count}/{surface.field_count} campos respaldados)"
         )
     return lines
@@ -90,7 +94,7 @@ def _missing_lines(report: OwnerPackReadinessReport) -> list[str]:
 
 def _short_answer(report: OwnerPackReadinessReport) -> str:
     if report.status == OWNER_PACK_READY_FOR_REVIEW:
-        return "El Owner Pack puede presentarse como preview read-only para revision humana."
+        return "El Owner Pack puede presentarse como vista segura para revision humana."
     if report.status == OWNER_PACK_PARTIAL_LIVE_EVIDENCE:
         return (
             "El Owner Pack ya tiene avance y evidencia viva parcial, pero todavia "
@@ -102,9 +106,34 @@ def _short_answer(report: OwnerPackReadinessReport) -> str:
             "objetivo exacto antes de evaluar evidencia viva."
         )
     return (
-        "El Owner Pack esta preparado como contrato/schema read-only, pero falta "
+        "El Owner Pack esta preparado como contrato, pero falta "
         "evidencia viva para declararlo listo."
     )
+
+
+def _headline_for_report(report: OwnerPackReadinessReport) -> str:
+    headline = str(report.headline or "").strip()
+    if not headline or "readiness" in headline.casefold():
+        return "Estado ejecutivo del Owner Pack"
+    return headline
+
+
+def _executive_visible_text(value: str) -> str:
+    replacements = {
+        "preview read-only": "vista segura",
+        "schema read-only": "contrato preparado",
+        "contrato read-only": "contrato preparado",
+        "diagnostico read-only": "diagnostico para revisión",
+        "read-only": "segura",
+        "Readiness": "Estado",
+        "readiness": "cobertura",
+        "Entity folder": "Carpeta por entidad",
+        "National phase": "Fase nacional",
+    }
+    text = str(value or "")
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
 
 
 def _rendered_text(
@@ -120,34 +149,42 @@ def _rendered_text(
     next_questions: Sequence[str],
     short_answer: str,
 ) -> str:
-    lines: list[str] = [headline, "", summary, "", status_line, "", short_answer]
+    lines: list[str] = [
+        _executive_visible_text(headline),
+        "",
+        _executive_visible_text(summary),
+        "",
+        _executive_visible_text(status_line),
+        "",
+        _executive_visible_text(short_answer),
+    ]
     if target_line:
-        lines.extend(["", target_line])
+        lines.extend(["", _executive_visible_text(target_line)])
 
-    lines.extend(["", "Superficies revisadas:"])
-    lines.extend(f"- {line}" for line in detail_lines)
+    lines.extend(["", "Secciones revisadas:"])
+    lines.extend(f"- {_executive_visible_text(line)}" for line in detail_lines)
 
     lines.extend(["", "Evidencia encontrada:"])
     if evidence_lines:
-        lines.extend(f"- {line}" for line in evidence_lines[:8])
+        lines.extend(f"- {_executive_visible_text(line)}" for line in evidence_lines[:8])
     else:
-        lines.append("- Aun no hay evidencia viva suficiente; solo contrato/schema preparado.")
+        lines.append("- Aun no hay evidencia viva suficiente; solo contrato preparado.")
 
     lines.extend(["", "Faltantes para poder contestar sin inventar:"])
-    lines.extend(f"- {line}" for line in missing_lines)
+    lines.extend(f"- {_executive_visible_text(line)}" for line in missing_lines)
 
     if next_actions:
         lines.extend(["", "Siguiente paso seguro:"])
-        lines.extend(f"- {line}" for line in next_actions[:4])
+        lines.extend(f"- {_executive_visible_text(line)}" for line in next_actions[:4])
     if next_questions:
-        lines.extend(["", "Pregunta minima para avanzar:"])
-        lines.extend(f"- {line}" for line in next_questions[:3])
+        lines.extend(["", "Pregunta mínima para avanzar:"])
+        lines.extend(f"- {_executive_visible_text(line)}" for line in next_questions[:3])
 
     lines.extend(
         [
             "",
-            "Frontera de autoridad: esto no crea carpetas, no modifica datos, "
-            "no manda mensajes y no autoriza nada. Es diagnostico read-only; "
+            "Límite de la vista: esto no crea carpetas, no modifica datos, "
+            "no manda mensajes y no autoriza nada. Es diagnostico para revisión; "
             "cualquier salida durable requiere aprobacion humana.",
         ]
     )
@@ -159,8 +196,8 @@ def render_owner_pack_readiness_answer(
 ) -> OwnerPackReadinessConversationalAnswer:
     """Render a readiness report into owner-facing Spanish."""
 
-    headline = report.headline or "Readiness del Owner Pack del dueno"
-    status_line = f"Estado: {report.status} - readiness {report.readiness_score}%"
+    headline = _headline_for_report(report)
+    status_line = f"Estado: {report.status} - cobertura {report.readiness_score}%"
     detail_lines = _surface_lines(report)
     evidence_lines = list(report.evidence_found[:8])
     missing_lines = _missing_lines(report)
