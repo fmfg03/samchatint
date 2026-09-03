@@ -505,6 +505,81 @@ def test_render_budget_executive_dashboard_status_flags_over_budget():
     assert "105.0%" in html
 
 
+def test_render_tournament_dashboard_cards_show_controlled_executive_state():
+    from devnous.gastos.routes.admin_budget_ui import render_tournament_dashboard_cards
+
+    html = render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": "torneo-1",
+                "tournament_name": "Copa Prueba",
+                "tournament_code": "CP",
+                "line_count": 4,
+                "comparison": {"paid_total": 200.0, "committed_total": 100.0},
+            }
+        ],
+        edition_year=2026,
+        version_id="version-1",
+        tournament_rollups={
+            "torneo-1": {
+                "budget_expense_total": 1000.0,
+                "expected_income_total": 500.0,
+                "real_income_total": 250.0,
+            }
+        },
+    )
+
+    assert "Estado ejecutivo" in html
+    assert "Controlado" in html
+    assert "30.0%" in html
+    assert "Presupuesto autorizado" in html
+    assert "Ejercido real" in html
+    assert "Comprometido pendiente" in html
+    assert "Abrir detalle" in html
+    assert "/admin/presupuestos/torneo/torneo-1" in html
+    assert "read-only" not in html
+
+
+def test_render_tournament_dashboard_cards_show_observation_state():
+    from devnous.gastos.routes.admin_budget_ui import render_tournament_dashboard_cards
+
+    html = render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": "torneo-1",
+                "tournament_name": "Copa Prueba",
+                "comparison": {"paid_total": 800.0, "committed_total": 100.0},
+            }
+        ],
+        edition_year=2026,
+        version_id="version-1",
+        tournament_rollups={"torneo-1": {"budget_expense_total": 1000.0}},
+    )
+
+    assert "En observación" in html
+    assert "90.0%" in html
+
+
+def test_render_tournament_dashboard_cards_show_exceeded_state():
+    from devnous.gastos.routes.admin_budget_ui import render_tournament_dashboard_cards
+
+    html = render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": "torneo-1",
+                "tournament_name": "Copa Prueba",
+                "comparison": {"paid_total": 1000.0, "committed_total": 50.0},
+            }
+        ],
+        edition_year=2026,
+        version_id="version-1",
+        tournament_rollups={"torneo-1": {"budget_expense_total": 1000.0}},
+    )
+
+    assert "Excedido" in html
+    assert "105.0%" in html
+
+
 def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
 
