@@ -149,7 +149,14 @@ def test_create_prompt_still_requires_preview_with_live_operational_evidence() -
     assessment = assess_owner_needs_prompt(
         prompt,
         available_evidence_by_prompt={
-            prompt.prompt_id: {"tournament", "entity", "team", "player", "finance", "memory"},
+            prompt.prompt_id: {
+                "tournament",
+                "entity",
+                "team",
+                "player",
+                "finance",
+                "memory",
+            },
         },
     )
     response = build_owner_evidence_gap_response(assessment)
@@ -163,7 +170,11 @@ def test_create_prompt_still_requires_preview_with_live_operational_evidence() -
 
 
 def test_evaluate_owner_needs_prompts_accepts_operational_evidence_map() -> None:
-    prompts = [_prompt("AI-OWNER-003"), _prompt("AI-OWNER-004"), _prompt("AI-OWNER-009")]
+    prompts = [
+        _prompt("AI-OWNER-003"),
+        _prompt("AI-OWNER-004"),
+        _prompt("AI-OWNER-009"),
+    ]
     summary = evaluate_owner_needs_prompts(
         prompts,
         available_evidence_by_prompt={
@@ -178,3 +189,98 @@ def test_evaluate_owner_needs_prompts_accepts_operational_evidence_map() -> None
     assert summary["status_counts"][PASS] == 3
     assert summary["writes_attempted"] == 0
     assert summary["side_effects_detected"] == 0
+
+
+def test_financial_live_evidence_can_satisfy_operator_payment_prompt() -> None:
+    assessment = assess_owner_needs_prompt(
+        _prompt("AI-OWNER-010"),
+        available_evidence_by_prompt={
+            "AI-OWNER-010": {"finance", "document", "sql"},
+        },
+    )
+
+    assert assessment.status == PASS
+    assert assessment.evidence_missing == []
+    assert {"finance", "document", "sql"} <= set(assessment.evidence_found)
+    assert assessment.writes_attempted == 0
+    assert assessment.side_effects_detected == 0
+
+
+def test_financial_live_evidence_can_satisfy_equipment_cost_prompt() -> None:
+    assessment = assess_owner_needs_prompt(
+        _prompt("AI-OWNER-011"),
+        available_evidence_by_prompt={
+            "AI-OWNER-011": {"finance", "document", "inventory/equipment"},
+        },
+    )
+
+    assert assessment.status == PASS
+    assert assessment.evidence_missing == []
+    assert "inventory/equipment" in assessment.evidence_found
+    assert "finance" in assessment.evidence_found
+    assert "document" in assessment.evidence_found
+
+
+def test_partial_financial_live_evidence_keeps_media_or_memory_gaps() -> None:
+    assessment = assess_owner_needs_prompt(
+        _prompt("AI-OWNER-012"),
+        available_evidence_by_prompt={
+            "AI-OWNER-012": {"finance", "document"},
+        },
+    )
+
+    assert assessment.status == PASS_WITH_CLASSIFIED_GAPS
+    assert "finance" in assessment.evidence_found
+    assert "document" in assessment.evidence_found
+    assert "media" in assessment.evidence_missing
+    assert "memory" in assessment.evidence_missing
+    assert "finance" not in assessment.evidence_missing
+    assert "document" not in assessment.evidence_missing
+
+
+def test_financial_live_evidence_can_satisfy_hotel_prompt() -> None:
+    assessment = assess_owner_needs_prompt(
+        _prompt("AI-OWNER-015"),
+        available_evidence_by_prompt={
+            "AI-OWNER-015": {"document", "finance"},
+        },
+    )
+    response = build_owner_evidence_gap_response(assessment)
+
+    assert assessment.status == PASS
+    assert assessment.evidence_missing == []
+    assert {"document", "finance"} <= set(assessment.evidence_found)
+    assert "canon versionado" in response["answer"]
+    assert response["side_effects_detected"] == 0
+
+
+def test_financial_live_evidence_can_satisfy_provider_payment_prompts() -> None:
+    prompts = [_prompt("AI-OWNER-020"), _prompt("AI-OWNER-022")]
+    summary = evaluate_owner_needs_prompts(
+        prompts,
+        available_evidence_by_prompt={
+            "AI-OWNER-020": {"finance", "document", "provider"},
+            "AI-OWNER-022": {"finance", "document", "provider"},
+        },
+    )
+
+    assert summary["total"] == 2
+    assert summary["final_decision"] == PASS
+    assert summary["status_counts"][PASS] == 2
+    assert summary["writes_attempted"] == 0
+    assert summary["side_effects_detected"] == 0
+
+
+def test_mixed_owner_comparison_can_pass_with_operational_and_finance_evidence() -> None:
+    assessment = assess_owner_needs_prompt(
+        _prompt("AI-OWNER-029"),
+        available_evidence_by_prompt={
+            "AI-OWNER-029": {"tournament", "team", "player", "finance"},
+        },
+    )
+
+    assert assessment.status == PASS
+    assert assessment.evidence_missing == []
+    assert {"tournament", "team", "player", "finance"} <= set(
+        assessment.evidence_found
+    )
