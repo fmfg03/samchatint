@@ -12,7 +12,7 @@ def _executive_center_block() -> str:
         '@router.get("/admin/ejecutivo"',
         maxsplit=1,
     )[1].split(
-        '@router.get("/admin/ejecutivo/alertas"',
+        '@router.get("/admin/ejecutivo/export.xlsx"',
         maxsplit=1,
     )[0]
 
@@ -36,6 +36,9 @@ def test_executive_center_links_to_key_surfaces() -> None:
     assert "/admin/finanzas/cuentas-por-cobrar" in block
     assert "/api/assistant/owner-pack/export-preview.html" in block
     assert "Alertas ejecutivas" in block
+    assert "Export ejecutivo" in block
+    assert "/admin/ejecutivo/export.xlsx" in block
+    assert "Descargar export ejecutivo" in block
     assert "render_admin_navigation" in block
 
 

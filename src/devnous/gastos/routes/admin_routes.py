@@ -3445,6 +3445,16 @@ async def admin_executive_center(
                 "sin cambiar datos operativos."
             ),
         },
+        {
+            "title": "Export ejecutivo",
+            "href": "/admin/ejecutivo/export.xlsx",
+            "status": "Excel",
+            "metric": "Paquete de dirección",
+            "description": (
+                "Descarga resumen, presupuesto, flujo, cobranza, alertas y "
+                "fuentes en un solo archivo."
+            ),
+        },
     ]
     cards_html = "".join(
         f"""
@@ -3466,6 +3476,7 @@ async def admin_executive_center(
         '<a class="button secondary" href="/admin/presupuestos">Presupuestos</a>'
         '<a class="button secondary" href="/admin/finanzas/cashflow">Flujo de efectivo</a>'
         '<a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar">Cuentas por cobrar</a>'
+        '<a class="button secondary" href="/admin/ejecutivo/export.xlsx">Descargar export ejecutivo</a>'
     )
     hero_side_html = """
         <div class="meta-grid">
@@ -3521,6 +3532,149 @@ async def admin_executive_center(
     </html>
     """
     return HTMLResponse(content=html)
+
+
+@router.get("/admin/ejecutivo/export.xlsx", response_class=Response)
+async def admin_executive_export_xlsx(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    edition_year: Optional[int] = Query(None),
+    budget_version_id: Optional[str] = Query(None),
+    dias_credito: int = Query(0),
+    limit: int = Query(500),
+) -> Response:
+    """Download the consolidated read-only executive workbook."""
+    from samchat.ar import build_ar_operational_rows, build_ar_read_model
+    from samchat.executive import generate_executive_export_xlsx
+    from samchat.finance_platform import (
+        build_finance_platform_snapshot,
+        build_finance_source_snapshot,
+    )
+
+    now = datetime.utcnow()
+    current_year = int(year or now.year)
+    current_month = max(1, min(int(month or now.month), 12))
+    resolved_edition_year = int(edition_year or current_year)
+    safe_limit = max(1, min(int(limit or 500), 5000))
+    safe_credit_days = max(0, min(int(dias_credito or 0), 365))
+    source_notes: list[str] = []
+    platform: dict[str, Any] = {
+        "period": {"year": current_year, "month": current_month},
+        "summary": {},
+        "action_queue": {"actions": []},
+    }
+    budget_snapshot: dict[str, Any] = {
+        "summary": {},
+        "forecast": {},
+        "executive_comparison": [],
+    }
+    ar_payload: dict[str, Any] = {"summary": {}}
+    ar_rows: list[dict[str, Any]] = []
+    inbox_payload: dict[str, Any] = {}
+
+    try:
+        finance_source = await build_finance_source_snapshot(
+            session,
+            year=current_year,
+            month=current_month,
+            limit=300,
+        )
+        platform = build_finance_platform_snapshot(finance_source)
+    except Exception as exc:
+        logger.exception("Executive export finance snapshot failed")
+        source_notes.append(f"Finanzas no disponible: {type(exc).__name__}.")
+
+    selected_version: Optional[dict[str, Any]] = None
+    try:
+        versions = await list_budget_versions(
+            session,
+            edition_year=resolved_edition_year,
+            ensure_schema=False,
+        )
+        if budget_version_id:
+            selected_version = next(
+                (
+                    item
+                    for item in versions
+                    if str(item.get("id")) == budget_version_id
+                ),
+                None,
+            )
+        if selected_version is None:
+            selected_version = resolve_definitive_budget_version_from_versions(
+                versions
+            )
+        if selected_version is None:
+            source_notes.append(
+                f"Presupuesto {resolved_edition_year} sin versión definitiva."
+            )
+        else:
+            budget_snapshot = await build_budget_snapshot(
+                session=session,
+                edition_year=resolved_edition_year,
+                version_id=str(selected_version["id"]),
+                ensure_schema=False,
+            )
+    except Exception as exc:
+        logger.exception("Executive export budget snapshot failed")
+        source_notes.append(f"Presupuestos no disponible: {type(exc).__name__}.")
+
+    try:
+        if selected_version is None:
+            source_notes.append(
+                "CxC no disponible porque no hay versión presupuestal seleccionada."
+            )
+        else:
+            ar_payload = await build_ar_read_model(
+                session,
+                budget_version_id=str(selected_version["id"]),
+                limit=safe_limit,
+                credit_days_default=safe_credit_days,
+                ensure_schema=False,
+            )
+            ar_rows = build_ar_operational_rows(
+                ar_payload,
+                sort_by="issued_date",
+                sort_dir="desc",
+            )
+    except Exception as exc:
+        logger.exception("Executive export AR snapshot failed")
+        source_notes.append(
+            f"Cuentas por cobrar no disponible: {type(exc).__name__}."
+        )
+
+    try:
+        inbox_payload = await build_sam_inbox_payload(
+            session,
+            current_empleado=current_empleado,
+            tab="direccion",
+        )
+    except Exception as exc:
+        logger.exception("Executive export Sam Inbox snapshot failed")
+        source_notes.append(
+            f"Sam Inbox Dirección no disponible: {type(exc).__name__}."
+        )
+        inbox_payload = {"direction": {"executive_alerts": {"alerts": []}}}
+
+    alerts = _build_consolidated_executive_alerts(platform, inbox_payload)
+    payload = generate_executive_export_xlsx(
+        finance_platform=platform,
+        budget_snapshot=budget_snapshot,
+        ar_payload=ar_payload,
+        ar_rows=ar_rows,
+        alerts=alerts,
+        source_notes=source_notes,
+    )
+    filename = f"export_ejecutivo_{current_year}_{current_month:02d}.xlsx"
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/ejecutivo/alertas", response_class=HTMLResponse)
