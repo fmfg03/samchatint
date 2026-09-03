@@ -519,6 +519,34 @@ def test_pending_documents_view_adds_search_filters_and_reporting_columns() -> N
     assert 'Search/filter is applied only inside that already-authorized visibility scope' in route_block
 
 
+def test_pending_documents_view_excludes_docs_current_approver_already_actioned() -> None:
+    source = Path(user_routes.__file__).read_text()
+    route_start = source.index('async def documentos_pendientes(')
+    route_end = source.index('@router.get("/documentos/historial-aprobador"', route_start)
+    route_block = source[route_start:route_end]
+
+    assert "already_actioned_by_current_user = exists().where(" in route_block
+    assert "Aprobacion.entidad_id == Documento.id" in route_block
+    assert "Aprobacion.aprobador_id == current_empleado.id" in route_block
+    assert 'Aprobacion.accion.in_(["aprobar", "rechazar"])' in route_block
+    assert "~already_actioned_by_current_user" in route_block
+
+
+def test_approver_pages_link_pending_and_authorized_tabs() -> None:
+    source = Path(user_routes.__file__).read_text()
+    pending_start = source.index('async def documentos_pendientes(')
+    pending_end = source.index('@router.get("/documentos/historial-aprobador"', pending_start)
+    pending_block = source[pending_start:pending_end]
+    history_start = pending_end
+    history_end = source.index("def _documentos_todos_reporting_type", history_start)
+    history_block = source[history_start:history_end]
+
+    for block in (pending_block, history_block):
+        assert 'href="/documentos/pendientes"' in block
+        assert 'href="/documentos/historial-aprobador"' in block
+        assert "Ya autorizadas" in block
+
+
 def test_approval_history_view_shows_operations_reference_column() -> None:
     source = Path(user_routes.__file__).read_text()
     route_start = source.index('async def historial_aprobador(')
@@ -555,6 +583,8 @@ def test_approval_history_view_shows_operational_context_columns() -> None:
     assert 'escape(row_values["torneo"])' in route_block
     assert 'escape(row_values["descripcion"])' in route_block
     assert 'escape(row_values["beneficiario"])' in route_block
+    assert 'data-sort-key="monto_total"' in route_block
+    assert "monto_total_display" in route_block
 
 
 def test_telegram_workflow_approval_triggers_odilon_finance_alert() -> None:
