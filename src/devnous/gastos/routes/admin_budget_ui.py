@@ -775,70 +775,181 @@ def _render_budget_aggregate_matrix(
     show_committed: bool,
 ) -> str:
     clean_view = "income" if matrix_mode == "income" else "expenses"
-    buckets = _sum_budget_line_periods(
-        lines,
-        plan_map=plan_map,
-        actuals_map=actuals_map,
-        edition_year=edition_year,
-        period=budget_period,
-        budget_view=clean_view,
+    period_labels: OrderedDict[str, str] = OrderedDict()
+    for week in range(1, BUDGET_WEEK_COUNT + 1):
+        key, label = _budget_period_bucket(edition_year, week, budget_period)
+        period_labels.setdefault(key, label)
+    header_cells = "".join(
+        f'<th style="padding:8px;border-bottom:1px solid #e2e8f0;min-width:120px;white-space:nowrap;text-align:right;">{escape(label)}</th>'
+        for label in period_labels.values()
     )
-    available_label = "Variación" if clean_view == "income" else "Disponible"
-    rows: list[str] = []
-    for item in buckets:
-        budget = float(item.get("budget") or 0)
-        real = float(item.get("real") or 0)
-        committed = float(item.get("committed") or 0)
-        period_available = budget - real - (
-            committed if clean_view == "expenses" else 0
+
+    def _aggregate_line_periods(
+        *,
+        plan: dict[int, dict[str, float]],
+        actuals: dict[int, dict[str, float]],
+    ) -> OrderedDict[str, dict[str, float]]:
+        buckets: OrderedDict[str, dict[str, float]] = OrderedDict(
+            (
+                key,
+                {
+                    "budget": 0.0,
+                    "real": 0.0,
+                    "committed": 0.0,
+                },
+            )
+            for key in period_labels
         )
-        period_execution = (
-            ((real + (committed if clean_view == "expenses" else 0)) / budget * 100)
-            if budget
-            else 0.0
+        for week in range(1, BUDGET_WEEK_COUNT + 1):
+            key, _ = _budget_period_bucket(edition_year, week, budget_period)
+            bucket = buckets[key]
+            week_plan = plan.get(week, {})
+            week_actual = actuals.get(week, {})
+            if clean_view == "income":
+                bucket["budget"] += float(
+                    week_plan.get("expected_income_amount") or 0
+                )
+                bucket["real"] += float(week_actual.get("real_income") or 0)
+            else:
+                bucket["budget"] += float(
+                    week_plan.get("budget_expense_amount") or 0
+                )
+                bucket["real"] += float(
+                    week_actual.get("real_expense_cash") or 0
+                )
+                bucket["committed"] += float(
+                    week_actual.get("committed_unpaid") or 0
+                )
+        return buckets
+
+    def _metric_row(
+        label: str,
+        values: OrderedDict[str, dict[str, float]],
+        key: str,
+        *,
+        color: str = "#475569",
+    ) -> str:
+        total = sum(float(item.get(key) or 0) for item in values.values())
+        cells = [
+            f'<td style="padding:8px 10px;font-weight:800;color:{color};position:sticky;left:0;background:#fff;z-index:1;min-width:170px;">{escape(label)}</td>',
+            f'<td style="padding:8px 10px;text-align:right;font-weight:900;position:sticky;left:170px;background:#fff;z-index:1;min-width:110px;">${total:,.2f}</td>',
+        ]
+        for item in values.values():
+            amount = float(item.get(key) or 0)
+            cells.append(
+                f'<td style="padding:8px;text-align:right;color:{color};">${amount:,.2f}</td>'
+            )
+        return f"<tr>{''.join(cells)}</tr>"
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for line in lines:
+        phase = budget_line_phase_label(line)
+        grouped.setdefault(phase, []).append(line)
+
+    cards: list[str] = []
+    for phase, phase_lines in sorted(grouped.items()):
+        cards.append(
+            f'<div style="margin-top:18px;"><div style="font-weight:800;color:#0f172a;margin-bottom:8px;">'
+            f"{escape(phase)}</div>"
         )
-        committed_cell = (
-            f"${committed:,.2f}"
-            if clean_view == "expenses" and show_committed
-            else "—"
-        )
-        rows.append(
+        for line in phase_lines:
+            line_id = str(line.get("id") or "")
+            concept_id = str(line.get("budget_concept_id") or "")
+            values = _aggregate_line_periods(
+                plan=plan_map.get(line_id, {}),
+                actuals=_actuals_for_budget_line(actuals_map, concept_id),
+            )
+            rows = []
+            if clean_view == "income":
+                rows.append(_metric_row("Ingreso esperado", values, "budget"))
+                rows.append(_metric_row("Ingreso real", values, "real"))
+            else:
+                rows.append(_metric_row("Presupuesto gasto", values, "budget"))
+                rows.append(_metric_row("Gasto real (caja)", values, "real"))
+                if show_committed:
+                    rows.append(
+                        _metric_row(
+                            "Comprometido no pagado",
+                            values,
+                            "committed",
+                            color="#92400e",
+                        )
+                    )
+            cards.append(
+                f"""
+                <div class="budget-excel-line-card" style="border:1px solid #dbe2ea;border-radius:14px;background:#fff;padding:12px;margin-bottom:12px;">
+                    <div style="font-weight:900;color:#0f172a;margin-bottom:10px;">
+                        {escape(str(line.get("concept_name") or "Partida"))}
+                    </div>
+                    <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:12px;">
+                        <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;">
+                            <thead>
+                                <tr style="background:#f8fafc;">
+                                    <th style="text-align:left;padding:8px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:0;background:#f8fafc;z-index:2;min-width:170px;">Renglón</th>
+                                    <th style="padding:8px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:170px;background:#f8fafc;z-index:2;min-width:110px;text-align:right;">Total</th>
+                                    {header_cells}
+                                </tr>
+                            </thead>
+                            <tbody>{''.join(rows)}</tbody>
+                        </table>
+                    </div>
+                </div>
+                """
+            )
+        cards.append("</div>")
+
+    has_unassigned_line = any(
+        not str(line.get("budget_concept_id") or "").strip()
+        for line in lines
+    )
+    unassigned_actuals = actuals_map.get("__unassigned__", {})
+    if (
+        clean_view == "expenses"
+        and not has_unassigned_line
+        and _actuals_has_expense_values(unassigned_actuals)
+    ):
+        values = _aggregate_line_periods(plan={}, actuals=unassigned_actuals)
+        rows = [
+            _metric_row("Gasto real (caja)", values, "real"),
+        ]
+        if show_committed:
+            rows.append(
+                _metric_row(
+                    "Comprometido no pagado",
+                    values,
+                    "committed",
+                    color="#92400e",
+                )
+            )
+        cards.append(
             f"""
-            <tr>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;font-weight:800;color:#0f172a;">{escape(str(item.get("label") or ""))}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${budget:,.2f}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">${real:,.2f}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;">{committed_cell}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_available_style(period_available, income_view=clean_view == "income")}">${period_available:,.2f}</td>
-                <td style="padding:10px;border-bottom:1px solid #e2e8f0;text-align:right;{_budget_execution_style(period_execution)}">{period_execution:.1f}%</td>
-            </tr>
+            <div class="budget-excel-line-card" style="border:1px dashed #f59e0b;border-radius:14px;background:#fffbeb;padding:12px;margin-top:12px;">
+                <div style="font-weight:900;color:#92400e;margin-bottom:4px;">Sin partida asignada</div>
+                <div style="font-size:12px;color:#92400e;margin-bottom:10px;">
+                    Importes reales pendientes de clasificación presupuestal; se muestran una sola vez y no son editables.
+                </div>
+                <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #fde68a;border-radius:12px;background:#fff;">
+                    <table style="width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;">
+                        <thead>
+                            <tr style="background:#fef3c7;">
+                                <th style="text-align:left;padding:8px 10px;border-bottom:1px solid #fde68a;position:sticky;left:0;background:#fef3c7;z-index:2;min-width:170px;">Renglón</th>
+                                <th style="padding:8px 10px;border-bottom:1px solid #fde68a;position:sticky;left:170px;background:#fef3c7;z-index:2;min-width:110px;text-align:right;">Total</th>
+                                {header_cells}
+                            </tr>
+                        </thead>
+                        <tbody>{''.join(rows)}</tbody>
+                    </table>
+                </div>
+            </div>
             """
         )
-    if not rows:
-        rows.append(
-            '<tr><td colspan="6" style="padding:14px;color:#64748b;">'
-            "Sin partidas para los filtros actuales.</td></tr>"
-        )
+
     return f"""
         <div style="padding:12px;border:1px solid #dbe2ea;border-radius:12px;background:#f8fafc;color:#475569;font-size:13px;margin-bottom:12px;">
             Vista agregada por periodo. La edición granular permanece en Semanal.
             Los importes sin partida asignada se incluyen una sola vez.
         </div>
-        <div class="budget-excel-grid" style="overflow-x:auto;border:1px solid #e2e8f0;border-radius:12px;">
-            <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                <thead>
-                    <tr style="background:#f8fafc;">
-                        <th style="padding:10px;text-align:left;border-bottom:1px solid #e2e8f0;">Periodo</th>
-                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Presupuesto gasto</th>
-                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Gasto real</th>
-                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">Comprometido no pagado</th>
-                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">{available_label}</th>
-                        <th style="padding:10px;text-align:right;border-bottom:1px solid #e2e8f0;">% utilizado</th>
-                    </tr>
-                </thead>
-                <tbody>{''.join(rows)}</tbody>
-            </table>
-        </div>
+        {''.join(cards)}
     """
 
 
