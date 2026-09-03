@@ -4,7 +4,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
@@ -73,6 +73,50 @@ class DebtorPostingResult:
     debtor_account: Optional[CuentaContable] = None
     bank_account: Optional[CuentaContable] = None
     liability_account: Optional[CuentaContable] = None
+
+
+def _format_missing_expense_accounts(expenses: Iterable[ExpenseReport]) -> str:
+    """Build a bounded, readable blocker reason for expenses missing accounts."""
+
+    prefix = "expense_missing_accounts:"
+    max_length = 840
+    missing = []
+    for expense in expenses:
+        if getattr(expense, "cuenta_contable", None) is not None:
+            continue
+        ref = (getattr(expense, "numero_referencia", None) or "").strip()
+        concepto = (getattr(expense, "concepto", None) or "").strip()
+        if len(concepto) > 80:
+            concepto = concepto[:77].rstrip() + "..."
+        if ref and concepto:
+            missing.append(f"{ref} {concepto}")
+        elif ref:
+            missing.append(ref)
+        elif concepto:
+            missing.append(concepto)
+        else:
+            missing.append(str(getattr(expense, "id", "gasto sin referencia")))
+    if not missing:
+        return "expense_missing_accounts"
+    visible: list[str] = []
+    remainder = 0
+    for item in missing:
+        candidate_visible = visible + [item]
+        candidate_remainder = len(missing) - len(candidate_visible)
+        suffix = f"; y {candidate_remainder} más" if candidate_remainder > 0 else ""
+        candidate = prefix + "; ".join(candidate_visible) + suffix
+        if len(candidate) <= max_length and len(candidate_visible) <= 8:
+            visible = candidate_visible
+            remainder = candidate_remainder
+            continue
+        remainder = len(missing) - len(visible)
+        if not visible:
+            suffix = f"; y {len(missing) - 1} más" if len(missing) > 1 else ""
+            budget = max_length - len(prefix) - len(suffix)
+            return prefix + item[: max(1, budget)].rstrip() + suffix
+        break
+    suffix = f"; y {remainder} más" if remainder > 0 else ""
+    return prefix + "; ".join(visible) + suffix
 
 
 def _money(value: Any) -> Decimal:
@@ -936,13 +980,15 @@ async def ensure_debtor_comprobacion_posting_for_informe(
         cuenta_gastos_id=cuenta_gastos_id,
         documento_id=informe_documento.id,
     )
+    missing_account_reason = _format_missing_expense_accounts(expenses)
+    if missing_account_reason != "expense_missing_accounts":
+        return DebtorPostingResult(
+            status="pending",
+            reason=missing_account_reason,
+            debtor_account=debtor,
+        )
+
     for expense in expenses:
-        if getattr(expense, "cuenta_contable", None) is None:
-            return DebtorPostingResult(
-                status="pending",
-                reason=f"expense_missing_account:{expense.id}",
-                debtor_account=debtor,
-            )
         preview = await build_expense_accounting_preview(
             session,
             expense,

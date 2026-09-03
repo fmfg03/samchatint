@@ -142,6 +142,9 @@ from ..services.access_control_service import (
     upsert_rule,
     visible_tools_for,
 )
+from ..services.budget_concept_account_service import (
+    apply_budget_concept_cuenta_mapping,
+)
 from ..services.expense_accounting_service import build_expense_accounting_preview
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
@@ -27609,6 +27612,9 @@ async def editar_gasto(
 
     requested_company_amex = _form_checkbox_checked(pagado_con_amex_empresa)
     current_company_amex = is_company_amex_expense(expense)
+    reclassified_from_company_amex = (
+        current_company_amex and not requested_company_amex
+    )
     company_amex_allowed = bool(
         linked_cuenta_for_amex and _cuenta_allows_company_amex(linked_cuenta_for_amex)
     )
@@ -27628,6 +27634,25 @@ async def editar_gasto(
             f"'{ 'si' if current_company_amex else 'no' }'->'{ 'si' if requested_company_amex else 'no' }'"
         )
         expense.pagado_con_amex_empresa = requested_company_amex
+    if reclassified_from_company_amex and expense.cuenta_contable_id is None:
+        old_cuenta_id = expense.cuenta_contable_id
+        mapped_from_partida = await apply_budget_concept_cuenta_mapping(
+            session, expense
+        )
+        if mapped_from_partida and expense.cuenta_contable_id != old_cuenta_id:
+            cuenta_result = await session.execute(
+                select(CuentaContable).where(
+                    CuentaContable.id == expense.cuenta_contable_id
+                )
+            )
+            cuenta = cuenta_result.scalar_one_or_none()
+            old_values["cuenta_contable_id"] = old_cuenta_id
+            new_values["cuenta_contable_id"] = expense.cuenta_contable_id
+            new_desc = cuenta.codigo if cuenta else str(expense.cuenta_contable_id)
+            changes.append(
+                "cuenta_contable asignada desde partida "
+                f"'(sin asignar)'->'{new_desc}'"
+            )
     if requested_company_amex and (expense.metodo_pago or "").strip().upper() != "TARJETA CREDITO AMEX":
         old_values["metodo_pago"] = expense.metodo_pago
         new_values["metodo_pago"] = "TARJETA CREDITO AMEX"

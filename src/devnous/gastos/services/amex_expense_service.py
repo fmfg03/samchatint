@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Aprobacion, Empleado, ExpenseReport
+from .budget_concept_account_service import apply_budget_concept_cuenta_mapping
 
 FINANCE_AMEX_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 
@@ -242,7 +243,17 @@ async def set_company_amex_status(
         if previous == mark_as_amex:
             continue
         expense.pagado_con_amex_empresa = mark_as_amex
+        mapped_from_partida = False
+        if not mark_as_amex and expense.cuenta_contable_id is None:
+            mapped_from_partida = await apply_budget_concept_cuenta_mapping(
+                session, expense
+            )
         changed.append(expense)
+        mapping_note = (
+            " Cuenta contable asignada automáticamente desde partida presupuestal."
+            if mapped_from_partida
+            else ""
+        )
         session.add(
             Aprobacion(
                 tipo_entidad="gasto",
@@ -251,7 +262,7 @@ async def set_company_amex_status(
                 accion="editar",
                 comentario=(
                     "Pago AMEX empresa actualizado por Finanzas: "
-                    f"{previous} -> {mark_as_amex}."
+                    f"{previous} -> {mark_as_amex}.{mapping_note}"
                 ),
                 fecha=now,
             )
