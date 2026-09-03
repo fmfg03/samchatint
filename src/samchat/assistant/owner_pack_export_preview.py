@@ -214,7 +214,7 @@ def build_owner_pack_export_preview(
     source_artifacts = _dedupe(_as_list(dashboard.get("source_reports")) + _as_list(readiness.get("source_reports")) + _as_list(workspace.get("source_reports")) + ["assistant.owner_pack_readiness", "assistant.owner_entity_folder_workspace"])
     digest = _digest({"target": merged_target, "status": status, "coverage": coverage_score, "missing": missing_items, "evidence": evidence_links})
     return OwnerPackExportPreview(
-        preview_id=f"owner-pack-preview-{digest}", schema_version=OWNER_PACK_EXPORT_PREVIEW_SCHEMA, title="Owner Pack - preview revisable", generated_at=datetime.now(timezone.utc).isoformat(), mode="read_only_preview", target=merged_target, status=status, coverage_score=coverage_score, sections=sections, evidence_links=evidence_links, missing_items=missing_items, non_claims=non_claims, next_questions=next_questions, source_artifacts=source_artifacts,
+        preview_id=f"owner-pack-preview-{digest}", schema_version=OWNER_PACK_EXPORT_PREVIEW_SCHEMA, title="Owner Pack ejecutivo", generated_at=datetime.now(timezone.utc).isoformat(), mode="read_only_preview", target=merged_target, status=status, coverage_score=coverage_score, sections=sections, evidence_links=evidence_links, missing_items=missing_items, non_claims=non_claims, next_questions=next_questions, source_artifacts=source_artifacts,
         formats={"html": {"available": True, "route": "/api/assistant/owner-pack/export-preview.html"}, "print": {"available": True, "route": "/api/assistant/owner-pack/export-preview.html?print=1"}, "pdf": {"available": pdf_canvas is not None and A4 is not None, "route": "/api/assistant/owner-pack/export-preview.pdf"}, "excel_index": {"available": True, "route": "/api/assistant/owner-pack/export-preview.csv"}},
         safety_summary={"read_only_preview": True, "writes_enabled": False, "approval_required_for_publication": True, "publishes_automatically": False, "source_artifacts_required": True},
     )
@@ -236,7 +236,7 @@ def render_owner_pack_preview_html(preview: OwnerPackExportPreview | Mapping[str
     rendered_sections = []
     for section in sections:
         rendered_sections.append("<div class='card section'>" + f"<h2>{html.escape(_safe_str(section.get('title')))}</h2><p class='status'>Estado: {html.escape(_safe_str(section.get('status')))} · Cobertura: {int(section.get('coverage_score') or 0)}%</p>" + "<div class='grid'>" + f"<div><strong>Soportado</strong>{_list_html(section.get('supported') or [])}</div>" + f"<div><strong>Faltantes</strong>{_list_html(section.get('missing') or [])}</div>" + f"<div><strong>Evidencia</strong>{_list_html(section.get('evidence') or [])}</div>" + "</div></div>")
-    return "<!doctype html><html lang='es'><head><meta charset='utf-8'><title>Owner Pack preview</title><style>" + css + "</style></head><body><main class='page'><span class='badge'>Read-only preview</span><h1>Owner Pack - preview revisable</h1><p class='muted'>No publica, no escribe datos, no notifica y no ejecuta acciones reales.</p><div class='grid'><div class='card'><div class='muted'>Estado</div><strong>" + html.escape(_safe_str(payload.get('status'))) + "</strong></div><div class='card'><div class='muted'>Cobertura</div><div class='score'>" + str(int(payload.get('coverage_score') or 0)) + "%</div></div>" + target_html + "</div><h2>Secciones</h2>" + "".join(rendered_sections) + "<div class='grid'><div class='card'><h2>Faltantes explicitos</h2>" + _list_html(payload.get('missing_items') or []) + "</div><div class='card'><h2>Non-claims</h2>" + _list_html(payload.get('non_claims') or []) + "</div><div class='card'><h2>Preguntas siguientes</h2>" + _list_html(payload.get('next_questions') or []) + "</div></div></main></body></html>"
+    return "<!doctype html><html lang='es'><head><meta charset='utf-8'><title>Owner Pack ejecutivo</title><style>" + css + "</style></head><body><main class='page'><span class='badge'>Vista previa segura</span><h1>Owner Pack ejecutivo</h1><p class='muted'>No publica, no escribe datos, no notifica y no ejecuta acciones reales.</p><div class='grid'><div class='card'><div class='muted'>Estado</div><strong>" + html.escape(_safe_str(payload.get('status'))) + "</strong></div><div class='card'><div class='muted'>Cobertura</div><div class='score'>" + str(int(payload.get('coverage_score') or 0)) + "%</div></div>" + target_html + "</div><h2>Secciones</h2>" + "".join(rendered_sections) + "<div class='grid'><div class='card'><h2>Faltantes explícitos</h2>" + _list_html(payload.get('missing_items') or []) + "</div><div class='card'><h2>Límites de la vista</h2>" + _list_html(payload.get('non_claims') or []) + "</div><div class='card'><h2>Preguntas siguientes</h2>" + _list_html(payload.get('next_questions') or []) + "</div></div></main></body></html>"
 
 
 def owner_pack_preview_excel_rows(preview: OwnerPackExportPreview | Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -273,8 +273,8 @@ def owner_pack_preview_pdf_bytes(preview: OwnerPackExportPreview | Mapping[str, 
             canvas.showPage(); y = height - 48
         canvas.setFont("Helvetica-Bold" if bold else "Helvetica", size)
         canvas.drawString(42, y, text[:110]); y -= size + 7
-    line("Owner Pack - preview revisable", 16, True)
-    line("Read-only: no publica, no escribe datos y no ejecuta acciones reales.", 10, True)
+    line("Owner Pack ejecutivo", 16, True)
+    line("Vista previa segura: no publica, no escribe datos y no ejecuta acciones reales.", 10, True)
     line(f"Estado: {_safe_str(payload.get('status'))} | Cobertura: {int(payload.get('coverage_score') or 0)}%")
     for key, value in _as_dict(payload.get("target")).items():
         line(f"{key}: {value}")
