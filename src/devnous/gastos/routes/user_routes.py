@@ -36541,8 +36541,11 @@ async def ver_documento(
         ):
             informe_settlement_html = f"""
             <div>
-                <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar" class="button primary">Registrar devolución</a>
-                <div class="section-note" style="margin-top:8px;">El empleado devuelve el saldo pendiente a la empresa.</div>
+                <a href="/informes-de-gastos/{documento.cuenta_gastos_id}/saldar"
+                   class="button primary">Registrar devolución de sobrantes</a>
+                <div class="section-note" style="margin-top:8px;">
+                    El empleado devuelve el sobrante del anticipo a la empresa.
+                </div>
             </div>
             """
         elif saldo_doc < 0 and rol_actual in finance_admin_roles:
@@ -40509,7 +40512,7 @@ async def cuenta_de_gastos_detail(
     if saldo > 0 and informe_doc_approved and _can_manage_cuenta and not has_active_settlement:
         saldar_cta_html = (
             f'<a href="/informes-de-gastos/{cuenta.id}/saldar" class="button primary" '
-            f'style="margin-top:10px;display:inline-block;">Registrar devolución</a>'
+            f'style="margin-top:10px;display:inline-block;">Registrar devolución de sobrantes</a>'
         )
     elif saldo < 0 and informe_doc_approved:
         rol_lower = (current_empleado.rol or "").strip().lower()
@@ -42340,9 +42343,9 @@ async def saldar_cuenta_form(
         pagador_label = f"{current_empleado.nombre} (finanzas)"
         receptor_label = empleado_cuenta.nombre if empleado_cuenta else "—"
     elif tipo == "devolucion":
-        direction_title = "Devolución a la empresa"
+        direction_title = "Devolución de Sobrantes"
         direction_desc = (
-            "El empleado debe devolver a la empresa el saldo pendiente."
+            "Registra el sobrante que el empleado devuelve a la empresa."
         )
         pagador_label = f"{current_empleado.nombre} (registra)"
         receptor_label = "Tesorería / cuenta de empresa"
@@ -42356,6 +42359,11 @@ async def saldar_cuenta_form(
     if not blocked:
         today_iso = date.today().isoformat()
         saldo_display = format_currency(saldo_abs)
+        submit_label = (
+            "Registrar devolución de sobrantes"
+            if tipo == "devolucion"
+            else "Registrar liquidación"
+        )
         form_html = f"""
         <form method="POST" action="/informes-de-gastos/{cuenta_id}/saldar"
               enctype="multipart/form-data" class="surface" style="padding:20px;">
@@ -42391,10 +42399,15 @@ async def saldar_cuenta_form(
                        maxlength="255" placeholder="Folio SPEI, últimos 4 de cuenta, etc.">
             </div>
             <div class="form-group">
-                <label for="comprobante_sld">Comprobante (PDF / JPG / PNG) *</label>
+                <label for="comprobante_sld">
+                    Comprobante de transferencia o depósito (PDF / JPG / PNG) *
+                </label>
                 <input type="file" name="comprobante" id="comprobante_sld"
                        accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" required>
-                <div class="section-note">Adjunta el comprobante de la transferencia o depósito.</div>
+                <div class="section-note">
+                    Adjunta el comprobante de transferencia o depósito a la
+                    cuenta bancaria de la empresa.
+                </div>
             </div>
             <div class="form-group">
                 <label for="notas_sld">Notas (opcional)</label>
@@ -42402,7 +42415,7 @@ async def saldar_cuenta_form(
                           placeholder="Contexto adicional del movimiento."></textarea>
             </div>
             <div class="inline-actions">
-                <button type="submit" class="button primary">Registrar liquidación</button>
+                <button type="submit" class="button primary">{escape(submit_label)}</button>
                 <a href="/informes-de-gastos/{cuenta_id}" class="button secondary">Cancelar</a>
             </div>
         </form>
@@ -42446,7 +42459,7 @@ async def saldar_cuenta_form(
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Saldar cuenta — I-{escape(cuenta.referencia_base)}</title>
+        <title>{escape(direction_title)} — I-{escape(cuenta.referencia_base)}</title>
         <style>
             {_workspace_shell_styles("1024px")}
         </style>
@@ -42458,12 +42471,12 @@ async def saldar_cuenta_form(
             {_gastos_breadcrumb_html([
                 ("Informes de gastos", "/informes-de-gastos"),
                 (f"I-{cuenta.referencia_base}", f"/informes-de-gastos/{cuenta.id}"),
-                ("Liquidación", None),
+                (direction_title, None),
             ])}
             {_render_workspace_hero(
                 eyebrow="Operación",
-                title=f"Saldar cuenta I-{escape(cuenta.referencia_base)}",
-                description="Registra el movimiento que cierra el saldo pendiente del informe.",
+                title=f"{escape(direction_title)} I-{escape(cuenta.referencia_base)}",
+                description=direction_desc,
                 actions_html=actions_html,
                 side_html=side_html,
             )}
@@ -42586,7 +42599,11 @@ async def saldar_cuenta_submit(
         result.tipo,
         monto,
     )
-    label = "Reembolso" if result.tipo == "reembolso" else "Devolución"
+    label = (
+        "Reembolso"
+        if result.tipo == "reembolso"
+        else "Devolución de Sobrantes"
+    )
     success_msg = f"{label} registrado exitosamente. Cuenta saldada."
     return RedirectResponse(
         url=_append_success_params(
@@ -42647,7 +42664,11 @@ async def ver_reembolso_cuenta(
     )
     adj_list = adjuntos_map.get(reembolso.id, [])
 
-    tipo_label = "Reembolso al empleado" if reembolso.tipo == "reembolso" else "Devolución a la empresa"
+    tipo_label = (
+        "Reembolso al empleado"
+        if reembolso.tipo == "reembolso"
+        else "Devolución de Sobrantes"
+    )
     estado_label = (reembolso.estado or "").capitalize() or "—"
     fecha_pago_str = reembolso.fecha_pago.strftime("%Y-%m-%d") if reembolso.fecha_pago else "—"
     pagador_nombre = pagador.nombre if pagador else "—"

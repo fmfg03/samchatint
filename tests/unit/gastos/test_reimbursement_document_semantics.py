@@ -18,6 +18,7 @@ from devnous.gastos.services.documento_semantics import (
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
+from devnous.gastos.services.amex_expense_service import compute_informe_saldo
 from devnous.gastos.utils.excel_exports import (
     INFORME_AUTORIZADO_ROW,
     INFORME_SALDO_ROW,
@@ -407,6 +408,24 @@ def test_telegram_informe_includes_project_phase_from_context() -> None:
     assert "*Proyecto* Gastos Administrativos - Operaciones" in text
     assert "*Etapa / subproyecto* Articulos varios" in text
     assert "*Monto gastado* $500.00 MXN" in text
+
+
+def test_devolucion_sobrantes_settles_positive_informe_saldo_to_zero() -> None:
+    before = compute_informe_saldo(
+        employee_paid=800.00,
+        monto_entregado=1000.00,
+    )
+    after = compute_informe_saldo(
+        employee_paid=800.00,
+        monto_entregado=1000.00,
+        settled_amount=200.00,
+    )
+
+    assert before.saldo == 200.00
+    assert before.settlement_tipo == "devolucion"
+    assert after.saldo == 0.00
+    assert after.settlement_tipo is None
+
 
 def test_telegram_informe_for_employee_beneficiary_does_not_call_employee_provider() -> None:
     beneficiary = MagicMock()
