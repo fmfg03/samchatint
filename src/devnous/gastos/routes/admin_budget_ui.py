@@ -865,7 +865,7 @@ def _render_budget_aggregate_matrix(
                 rows.append(_metric_row("Ingreso real", values, "real"))
             else:
                 rows.append(_metric_row("Presupuesto gasto", values, "budget"))
-                rows.append(_metric_row("Gasto real (caja)", values, "real"))
+                rows.append(_metric_row("Ejercido antes de impuestos", values, "real"))
                 if show_committed:
                     rows.append(
                         _metric_row(
@@ -910,7 +910,7 @@ def _render_budget_aggregate_matrix(
     ):
         values = _aggregate_line_periods(plan={}, actuals=unassigned_actuals)
         rows = [
-            _metric_row("Gasto real (caja)", values, "real"),
+            _metric_row("Ejercido antes de impuestos", values, "real"),
         ]
         if show_committed:
             rows.append(
@@ -996,7 +996,7 @@ def _render_unassigned_budget_actuals_card(
                         </tr>
                     </thead>
                     <tbody>
-                        {_actual_row("Gasto real (caja)", "real_expense_cash", "color:#475569;")}
+                        {_actual_row("Ejercido antes de impuestos", "real_expense_cash", "color:#475569;")}
                         {_actual_row("Comprometido no pagado", "committed_unpaid", "color:#92400e;")}
                     </tbody>
                 </table>
@@ -1173,7 +1173,7 @@ def render_budget_partida_matrix(
 
             if clean_mode in {"full", "expenses"}:
                 html_parts.append(_row("Presupuesto gasto", "expense_plan", editable=True))
-                html_parts.append(_row("Gasto real (caja)", "expense_real"))
+                html_parts.append(_row("Ejercido antes de impuestos", "expense_real"))
             if clean_mode in {"full", "income"}:
                 html_parts.append(_row("Ingreso esperado", "income_plan", editable=True))
                 html_parts.append(_row("Ingreso real", "income_real"))
@@ -1201,7 +1201,7 @@ def render_budget_partida_matrix(
             elif clean_mode == "expenses":
                 summary_html = (
                     f'<span>Presupuesto gasto: <strong>${plan_expense_total:,.2f}</strong></span>'
-                    f'<span>Gasto real: <strong>${real_expense_total:,.2f}</strong></span>'
+                    f'<span>Gasto presupuestal: <strong>${real_expense_total:,.2f}</strong></span>'
                 )
                 button_label = "Guardar gasto por semanas"
             else:

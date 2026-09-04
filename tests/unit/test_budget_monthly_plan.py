@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from samchat.budgets.service import (
+    _budget_expense_base_amount_sql,
     build_budget_monthly_actuals,
     _merge_monthly_actual,
     _monthly_actual_store,
@@ -61,6 +62,56 @@ def test_merge_monthly_actual_buckets_by_concept_and_month():
     assert bucket["real_expense_cash"] == 150.0
     assert bucket["committed_unpaid"] == 25.0
     assert bucket["real_income"] == 0.0
+
+
+def test_budget_expense_base_sql_prefers_cfdi_subtotal_without_fixed_tax_rate():
+    sql = _budget_expense_base_amount_sql("e", "cfdi")
+
+    assert "cfdi.subtotal" in sql
+    assert "cfdi.descuento" in sql
+    assert "e.gasto_cantidad" in sql
+    assert "e.iva" in sql
+    assert "e.propina_no_deducible" in sql
+    assert "WHEN cfdi.subtotal IS NOT NULL" in sql
+    assert (
+        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
+        in sql
+    )
+    assert "cfdi.subtotal IS NOT NULL AND cfdi.subtotal > 0" not in sql
+    assert "1.16" not in sql
+    assert "/ 1.16" not in sql
+
+
+def test_budget_expense_base_sql_allocates_shared_cfdi_once():
+    sql = _budget_expense_base_amount_sql("e", "cfdi")
+    net_base_index = sql.index(
+        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
+    )
+    denominator_index = sql.index("SELECT COUNT(*)")
+    propina_index = sql.index("+ COALESCE(e.propina_no_deducible, 0)")
+
+    assert "COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0)" in sql
+    assert "FROM expense_reports budget_cfdi_expense" in sql
+    assert "budget_cfdi_expense.cfdi_report_id = cfdi.id" in sql
+    assert "budget_cfdi_expense.estado_gasto != 'cancelado'" in sql
+    assert "/ GREATEST((" in sql
+    assert "), 1)" in sql
+    assert net_base_index < denominator_index < propina_index
+
+
+def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():
+    source = Path("src/samchat/budgets/service.py").read_text()
+    monthly_start = source.index("async def build_budget_monthly_actuals")
+    monthly_block = source[monthly_start:]
+    comparison_start = source.index("async def _build_budget_finance_comparison")
+    comparison_block = source[comparison_start:monthly_start]
+
+    assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in monthly_block
+    assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in comparison_block
+    assert "COALESCE(SUM(e.gasto_cantidad), 0) AS paid_total" not in monthly_block
+    assert "COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total" not in comparison_block
+    assert "1.16" not in monthly_block
+    assert "1.16" not in comparison_block
 
 
 @pytest.mark.asyncio
@@ -744,7 +795,7 @@ def test_render_budget_partida_matrix_does_not_fallback_to_unassigned_for_concep
     )
 
     assert "Sin partida asignada" in html
-    assert "Gasto real: <strong>$0.00</strong>" in html
+    assert "Gasto presupuestal: <strong>$0.00</strong>" in html
     assert html.count("$50.00") == 2
     assert html.count("$20.00") == 2
 
@@ -779,7 +830,7 @@ def test_render_budget_partida_matrix_monthly_view_is_aggregated_readonly():
     assert "Enero 2026" in html
     assert "Hospedaje" in html
     assert "Presupuesto gasto" in html
-    assert "Gasto real (caja)" in html
+    assert "Ejercido antes de impuestos" in html
     assert "Comprometido no pagado" in html
     assert "Semana 52" not in html
     assert 'name="month_52_expense"' not in html
@@ -839,7 +890,7 @@ def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
     )
 
     assert "Presupuesto gasto" in html
-    assert "Gasto real (caja)" in html
+    assert "Ejercido antes de impuestos" in html
     assert "Ingreso esperado" not in html
     assert "Ingreso real" not in html
     assert "Guardar gasto por semanas" in html
@@ -884,7 +935,7 @@ def test_render_budget_partida_matrix_income_mode_hides_expense_rows():
     assert "Ingreso real" in html
     assert 'name="month_1_income"' in html
     assert "Presupuesto gasto" not in html
-    assert "Gasto real (caja)" not in html
+    assert "Ejercido antes de impuestos" not in html
     assert "Comprometido no pagado" not in html
     assert "Guardar ingreso por semanas" in html
 
