@@ -723,6 +723,8 @@ def _build_budget_scope_filters(
     tournament_id: Optional[str],
     tournament_name: Optional[str],
     tournament_code: Optional[str],
+    document_tournament_id_sql: str = "d.torneo_id",
+    expense_tournament_id_sql: str = "d.torneo_id",
 ) -> tuple[list[str], list[str], dict[str, Any]]:
     aliases = budget_alias_candidates(
         _safe_str(tournament_name),
@@ -731,6 +733,7 @@ def _build_budget_scope_filters(
     date_from, date_to = _edition_bounds(edition_year)
     document_filter = [
         "d.tipo = 'SOLICITUD'",
+        "COALESCE(d.concepto_pago, '') NOT ILIKE 'Reembolso de saldo a favor%'",
         "DATE(d.creado_en) >= :date_from",
         "DATE(d.creado_en) <= :date_to",
     ]
@@ -741,8 +744,12 @@ def _build_budget_scope_filters(
     ]
     params: dict[str, Any] = {"date_from": date_from, "date_to": date_to}
     if tournament_id:
-        document_filter.append("d.torneo_id = :tournament_id")
-        expense_filter.append("(d.torneo_id = :tournament_id)")
+        document_filter.append(
+            f"({document_tournament_id_sql} = :tournament_id)"
+        )
+        expense_filter.append(
+            f"({expense_tournament_id_sql} = :tournament_id)"
+        )
         params["tournament_id"] = tournament_id
     elif aliases:
         alias_clauses = []
@@ -784,6 +791,33 @@ def _budget_expense_base_amount_sql(
                 WHEN {expense}.iva IS NOT NULL
                 THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
                 ELSE COALESCE({expense}.gasto_cantidad, 0)
+            END,
+            0
+        )
+    """
+
+
+def _budget_document_base_amount_sql(
+    document_alias: str = "d",
+    cfdi_alias: str = "document_cfdi",
+) -> str:
+    """Return the best available pre-tax amount for a budget document."""
+    document = _safe_str(document_alias) or "d"
+    cfdi = _safe_str(cfdi_alias) or "document_cfdi"
+    return f"""
+        GREATEST(
+            CASE
+                WHEN {cfdi}.subtotal IS NOT NULL
+                THEN GREATEST(
+                    COALESCE({cfdi}.subtotal, 0)
+                    - COALESCE({cfdi}.descuento, 0),
+                    0
+                )
+                ELSE COALESCE(
+                    {document}.monto_total,
+                    {document}.monto_solicitado,
+                    0
+                )
             END,
             0
         )
@@ -6809,13 +6843,35 @@ async def build_budget_monthly_actuals(
     tournament_id: Optional[str] = None,
     tournament_name: Optional[str] = None,
     tournament_code: Optional[str] = None,
+    phase_filter: Optional[str] = None,
 ) -> dict[str, dict[int, dict[str, float]]]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
+        document_tournament_id_sql=(
+            "COALESCE(d.torneo_id, document_cuenta.torneo_id)"
+        ),
+        expense_tournament_id_sql=(
+            "COALESCE(d.torneo_id, solicitud_doc.torneo_id, "
+            "informe_doc.torneo_id, cuenta.torneo_id)"
+        ),
     )
+    clean_phase = _safe_str(phase_filter)
+    if clean_phase:
+        normalized_phase = clean_phase.lower()
+        if normalized_phase.startswith("fase "):
+            normalized_phase = normalized_phase[5:]
+        params["phase_pattern"] = f"%{normalized_phase}%"
+        document_filter.append(
+            "LOWER(COALESCE(d.fase, document_cuenta.fase, '')) "
+            "LIKE :phase_pattern"
+        )
+        expense_filter.append(
+            "LOWER(COALESCE(e.fase_torneo, d.fase, solicitud_doc.fase, "
+            "informe_doc.fase, cuenta.fase, '')) LIKE :phase_pattern"
+        )
     store = _monthly_actual_store()
 
     document_paid_rows = (
@@ -6826,9 +6882,11 @@ async def build_budget_monthly_actuals(
                 SELECT
                     COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
                     LEAST(52, CASE WHEN (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date < (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date - (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM(COALESCE(d.monto_total, d.monto_solicitado, 0)), 0) AS paid_total
+                    COALESCE(SUM({_budget_document_base_amount_sql('d', 'document_cfdi')}), 0) AS paid_total
                 FROM documentos d
+                LEFT JOIN cuentas_de_gastos document_cuenta ON document_cuenta.id = d.cuenta_gastos_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 WHERE {' AND '.join(document_filter)}
                   AND d.tipo = 'SOLICITUD'
                   AND (
@@ -6836,6 +6894,17 @@ async def build_budget_monthly_actuals(
                     OR d.pagado_en IS NOT NULL
                   )
                   AND COALESCE(d.fecha_pago, DATE(d.pagado_en)) IS NOT NULL
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM expense_reports linked_expense
+                    WHERE linked_expense.estado_gasto != 'cancelado'
+                      AND (
+                        linked_expense.documento_id = d.id
+                        OR linked_expense.solicitud_documento_id = d.id
+                        OR linked_expense.informe_documento_id = d.id
+                        OR linked_expense.id = d.gasto_generado_id
+                      )
+                  )
                 GROUP BY 1, 2
                 """
                 ),
@@ -6863,16 +6932,18 @@ async def build_budget_monthly_actuals(
                     LEAST(52, CASE WHEN (DATE(d.creado_en))::date < (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((DATE(d.creado_en))::date - (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END))) / 7)::int END) AS month_number,
                     COALESCE(SUM(CASE
                         WHEN d.estado IN ('aprobado', 'pagado', 'cerrado')
-                        THEN COALESCE(d.monto_solicitado, d.monto_total, 0)
+                        THEN {_budget_document_base_amount_sql('d', 'document_cfdi')}
                         ELSE 0
                     END), 0) AS committed_total,
                     COALESCE(SUM(CASE
                         WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL
-                        THEN COALESCE(d.monto_total, d.monto_solicitado, 0)
+                        THEN {_budget_document_base_amount_sql('d', 'document_cfdi')}
                         ELSE 0
                     END), 0) AS paid_total
                 FROM documentos d
+                LEFT JOIN cuentas_de_gastos document_cuenta ON document_cuenta.id = d.cuenta_gastos_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 WHERE {' AND '.join(document_filter)}
                   AND d.tipo = 'SOLICITUD'
                 GROUP BY 1, 2
@@ -6894,74 +6965,65 @@ async def build_budget_monthly_actuals(
             committed_unpaid=max(committed - paid, 0),
         )
 
+    expense_recognition_date_sql = """
+        COALESCE(
+            CASE
+                WHEN informe_doc.estado IN ('aprobado', 'pagado', 'cerrado')
+                THEN DATE(COALESCE(
+                    informe_doc.aprobado_en,
+                    informe_doc.enviado_en,
+                    informe_doc.creado_en
+                ))
+            END,
+            CASE
+                WHEN solicitud_doc.estado IN ('pagado', 'cerrado')
+                  OR solicitud_doc.pagado_en IS NOT NULL
+                THEN COALESCE(
+                    solicitud_doc.fecha_pago,
+                    DATE(solicitud_doc.pagado_en)
+                )
+            END
+        )
+    """
     expense_paid_rows = (
         (
             await session.execute(
                 text(
                     f"""
                 SELECT
-                    COALESCE(CAST(e.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    LEAST(52, CASE WHEN (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date < (DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date - (DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(
-                        pay_doc.fecha_pago,
-                        DATE(pay_doc.pagado_en),
-                        inf_doc.fecha_pago,
-                        DATE(inf_doc.pagado_en)
-                    ))::date)::date)::int END))) / 7)::int END) AS month_number,
+                    COALESCE(
+                        CAST(e.budget_concept_id AS text),
+                        CAST(informe_doc.budget_concept_id AS text),
+                        CAST(solicitud_doc.budget_concept_id AS text),
+                        :unassigned_key
+                    ) AS concept_key,
+                    {_budget_week_number_sql(expense_recognition_date_sql)} AS month_number,
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS paid_total
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
-                LEFT JOIN documentos pay_doc ON pay_doc.id = COALESCE(e.documento_id, e.informe_documento_id)
-                LEFT JOIN documentos inf_doc ON inf_doc.id = e.informe_documento_id
-                LEFT JOIN tournaments t ON t.id = COALESCE(d.torneo_id, pay_doc.torneo_id, inf_doc.torneo_id)
+                LEFT JOIN documentos solicitud_doc ON solicitud_doc.id = COALESCE(
+                    e.solicitud_documento_id,
+                    CASE WHEN d.tipo = 'SOLICITUD' THEN d.id END
+                )
+                LEFT JOIN documentos informe_doc ON informe_doc.id = COALESCE(
+                    e.informe_documento_id,
+                    CASE WHEN d.tipo = 'INFORME' THEN d.id END
+                )
+                LEFT JOIN cuentas_de_gastos cuenta ON cuenta.id = COALESCE(
+                    e.cuenta_gastos_id,
+                    informe_doc.cuenta_gastos_id,
+                    solicitud_doc.cuenta_gastos_id,
+                    d.cuenta_gastos_id
+                )
+                LEFT JOIN tournaments t ON t.id = COALESCE(
+                    d.torneo_id,
+                    solicitud_doc.torneo_id,
+                    informe_doc.torneo_id,
+                    cuenta.torneo_id
+                )
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                  AND (
-                    pay_doc.estado IN ('pagado', 'cerrado')
-                    OR pay_doc.pagado_en IS NOT NULL
-                    OR inf_doc.estado IN ('pagado', 'cerrado')
-                    OR inf_doc.pagado_en IS NOT NULL
-                  )
-                  AND COALESCE(
-                    pay_doc.fecha_pago,
-                    DATE(pay_doc.pagado_en),
-                    inf_doc.fecha_pago,
-                    DATE(inf_doc.pagado_en)
-                  ) IS NOT NULL
+                  AND {expense_recognition_date_sql} IS NOT NULL
                 GROUP BY 1, 2
                 """
                 ),
