@@ -6859,6 +6859,7 @@ async def build_budget_monthly_actuals(
         ),
     )
     clean_phase = _safe_str(phase_filter)
+    income_phase_filter_sql: Optional[str] = None
     if clean_phase:
         document_phase_sql = (
             "COALESCE(NULLIF(TRIM(d.fase), ''), "
@@ -6871,9 +6872,11 @@ async def build_budget_monthly_actuals(
             "NULLIF(TRIM(informe_doc.fase), ''), "
             "NULLIF(TRIM(cuenta.fase), ''), '')"
         )
+        income_phase_sql = "COALESCE(NULLIF(TRIM(l.phase), ''), '')"
         if clean_phase == "__general__":
             document_filter.append(f"({document_phase_sql} = '')")
             expense_filter.append(f"({expense_phase_sql} = '')")
+            income_phase_filter_sql = f"{income_phase_sql} = ''"
         else:
             normalized_phase = clean_phase.lower()
             if normalized_phase.startswith("fase "):
@@ -6884,6 +6887,9 @@ async def build_budget_monthly_actuals(
             )
             expense_filter.append(
                 f"LOWER({expense_phase_sql}) LIKE :phase_pattern"
+            )
+            income_phase_filter_sql = (
+                f"LOWER({income_phase_sql}) LIKE :phase_pattern"
             )
     store = _monthly_actual_store()
 
@@ -7085,7 +7091,7 @@ async def build_budget_monthly_actuals(
         (
             await session.execute(
                 text(
-                    """
+                    f"""
                 SELECT
                     COALESCE(CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
                     LEAST(52, CASE WHEN (COALESCE(b.paid_at, b.created_at))::date < (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(b.paid_at, b.created_at))::date - (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END))) / 7)::int END) AS month_number,
@@ -7094,10 +7100,16 @@ async def build_budget_monthly_actuals(
                 JOIN budget_lines l ON l.id = b.budget_line_id
                 WHERE l.budget_version_id = :version_id
                   AND EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year
+                  {f"AND {income_phase_filter_sql}" if income_phase_filter_sql else ""}
                 GROUP BY 1, 2
                 """
                 ),
                 {
+                    **(
+                        {"phase_pattern": params["phase_pattern"]}
+                        if "phase_pattern" in params
+                        else {}
+                    ),
                     "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
                     "version_id": version_id,
                     "edition_year": edition_year,
@@ -7134,6 +7146,10 @@ async def build_budget_monthly_actuals(
             "UPPER(COALESCE(l.tournament_code, '')) = UPPER(:cfdi_tournament_code)"
         )
         cfdi_params["cfdi_tournament_code"] = tournament_code
+    if income_phase_filter_sql:
+        cfdi_filters.append(income_phase_filter_sql)
+        if "phase_pattern" in params:
+            cfdi_params["phase_pattern"] = params["phase_pattern"]
 
     cfdi_income_rows = (
         (

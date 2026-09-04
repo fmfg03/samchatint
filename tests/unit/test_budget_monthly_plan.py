@@ -169,6 +169,12 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
                         }
                     ]
                 )
+            if "FROM budget_income_bridge" in sql:
+                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
+                assert _params["phase_pattern"] == "%estatal%"
+            if "FROM budget_cfdi_income_links" in sql:
+                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
+                assert _params["phase_pattern"] == "%estatal%"
             return _Result([])
 
     actuals = await build_budget_monthly_actuals(
@@ -197,6 +203,12 @@ async def test_general_phase_filters_for_empty_effective_phase():
             if "FROM expense_reports e" in sql and "AS paid_total" in sql:
                 assert "NULLIF(TRIM(cuenta.fase), '')" in sql
                 assert "= ''" in sql
+                assert "phase_pattern" not in params
+            if "FROM budget_income_bridge" in sql:
+                assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
+                assert "phase_pattern" not in params
+            if "FROM budget_cfdi_income_links" in sql:
+                assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
                 assert "phase_pattern" not in params
             return _Result()
 
