@@ -73,6 +73,10 @@ def test_budget_expense_base_sql_prefers_cfdi_subtotal_without_fixed_tax_rate():
     assert "e.iva" in sql
     assert "e.propina_no_deducible" in sql
     assert "WHEN cfdi.subtotal IS NOT NULL" in sql
+    assert (
+        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
+        in sql
+    )
     assert "cfdi.subtotal IS NOT NULL AND cfdi.subtotal > 0" not in sql
     assert "1.16" not in sql
     assert "/ 1.16" not in sql
@@ -80,12 +84,19 @@ def test_budget_expense_base_sql_prefers_cfdi_subtotal_without_fixed_tax_rate():
 
 def test_budget_expense_base_sql_allocates_shared_cfdi_once():
     sql = _budget_expense_base_amount_sql("e", "cfdi")
+    net_base_index = sql.index(
+        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
+    )
+    denominator_index = sql.index("SELECT COUNT(*)")
+    propina_index = sql.index("+ COALESCE(e.propina_no_deducible, 0)")
 
     assert "COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0)" in sql
     assert "FROM expense_reports budget_cfdi_expense" in sql
     assert "budget_cfdi_expense.cfdi_report_id = cfdi.id" in sql
     assert "budget_cfdi_expense.estado_gasto != 'cancelado'" in sql
     assert "/ GREATEST((" in sql
+    assert "), 1)" in sql
+    assert net_base_index < denominator_index < propina_index
 
 
 def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():
