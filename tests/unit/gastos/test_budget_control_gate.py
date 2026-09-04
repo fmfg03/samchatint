@@ -73,6 +73,49 @@ def test_document_with_budget_concept_goes_to_regular_approval():
     assert documento_requires_budget_control(documento) is False
 
 
+@pytest.mark.asyncio
+async def test_budget_control_document_loads_full_tournament_catalog(monkeypatch):
+    tournament_id = uuid4()
+    captured = {}
+    rows = [
+        {
+            "id": uuid4(),
+            "concept_name": f"Partida {index:03d}",
+            "metadata": {},
+        }
+        for index in range(555)
+    ]
+
+    async def fake_list_budget_concepts(_session, **kwargs):
+        captured.update(kwargs)
+        return rows
+
+    monkeypatch.setattr(
+        user_routes,
+        "list_budget_concepts",
+        fake_list_budget_concepts,
+    )
+    documento = SimpleNamespace(
+        torneo_id=tournament_id,
+        fase="Fase Nacional",
+        cuenta_gastos=None,
+    )
+
+    concepts = await user_routes._budget_concepts_for_document(
+        SimpleNamespace(),
+        documento,
+    )
+
+    assert captured == {
+        "tournament_id": str(tournament_id),
+        "budget_direction": "expense",
+        "active_only": True,
+        "limit": 5000,
+    }
+    assert len(concepts) == 555
+    assert concepts[-1]["label"] == "Partida 554"
+
+
 def test_nomina_employee_route_imports_payment_profile_model():
     assert user_routes.PayrollEmployeePaymentProfile.__name__ == "PayrollEmployeePaymentProfile"
 
