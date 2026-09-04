@@ -771,8 +771,16 @@ def _budget_expense_base_amount_sql(
     return f"""
         GREATEST(
             CASE
-                WHEN {cfdi}.subtotal IS NOT NULL AND {cfdi}.subtotal > 0
-                THEN COALESCE({cfdi}.subtotal, 0) + COALESCE({expense}.propina_no_deducible, 0)
+                WHEN {cfdi}.subtotal IS NOT NULL
+                THEN (
+                    GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
+                    / GREATEST((
+                        SELECT COUNT(*)
+                        FROM expense_reports budget_cfdi_expense
+                        WHERE budget_cfdi_expense.cfdi_report_id = {cfdi}.id
+                          AND budget_cfdi_expense.estado_gasto != 'cancelado'
+                    ), 1)
+                ) + COALESCE({expense}.propina_no_deducible, 0)
                 WHEN {expense}.iva IS NOT NULL
                 THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
                 ELSE COALESCE({expense}.gasto_cantidad, 0)
