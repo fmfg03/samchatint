@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import samchat.budgets.service as budgets_service
+
 from samchat.budgets.service import (
+    _budget_document_base_amount_sql,
     _budget_expense_base_amount_sql,
     build_budget_monthly_actuals,
     _merge_monthly_actual,
@@ -99,8 +102,133 @@ def test_budget_expense_base_sql_allocates_shared_cfdi_once():
     assert net_base_index < denominator_index < propina_index
 
 
+def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
+    sql = _budget_document_base_amount_sql("d", "document_cfdi")
+
+    assert "document_cfdi.subtotal" in sql
+    assert "document_cfdi.descuento" in sql
+    assert "d.monto_total" in sql
+    assert "d.monto_solicitado" in sql
+    assert "1.16" not in sql
+
+
+def test_budget_actual_queries_enforce_reconciliation_precedence():
+    source = Path(budgets_service.__file__).read_text()
+    monthly_start = source.index("async def build_budget_monthly_actuals")
+    monthly_block = source[monthly_start:]
+
+    assert "LEFT JOIN documentos linked_document" in monthly_block
+    assert "LEFT JOIN documentos linked_informe" in monthly_block
+    assert "linked_expense.solicitud_documento_id" in monthly_block
+    assert "NOT EXISTS (" in monthly_block
+    assert "informe_doc.estado IN ('aprobado', 'pagado', 'cerrado')" in monthly_block
+    assert "informe_doc.aprobado_en" in monthly_block
+    assert "LEFT JOIN cuentas_de_gastos cuenta" in monthly_block
+    assert "cuenta.torneo_id" in monthly_block
+    assert "cuenta.fase" in monthly_block
+    assert "Reembolso de saldo a favor%" in source
+
+
+@pytest.mark.asyncio
+async def test_approved_informe_expense_is_merged_as_budget_real():
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "FROM documentos d" in sql and "linked_expense" in sql:
+                assert "LEFT JOIN documentos linked_document" in sql
+                assert "LEFT JOIN documentos linked_informe" in sql
+                assert "linked_document.tipo = 'SOLICITUD'" in sql
+                assert "linked_expense.documento_id = d.id" in sql
+                assert "linked_expense.id = d.gasto_generado_id" in sql
+            if "FROM expense_reports e" in sql and "AS paid_total" in sql:
+                assert "informe_doc.aprobado_en" in sql
+                assert "cuenta.fase" in sql
+                assert "solicitud_doc.concepto_pago" in sql
+                assert "Reembolso de saldo a favor%" in sql
+                assert _params["phase_pattern"] == "%estatal%"
+                assert f"{budgets_service._edition_bounds(2026)[0]}" in str(
+                    _params["date_from"]
+                )
+                assert "expense_recognition_date_sql" not in sql
+                assert ">= :date_from" in sql
+                assert "<= :date_to" in sql
+                return _Result(
+                    [
+                        {
+                            "concept_key": "report-concept",
+                            "month_number": 34,
+                            "paid_total": 480.0,
+                        }
+                    ]
+                )
+            if "FROM budget_income_bridge" in sql:
+                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
+                assert _params["phase_pattern"] == "%estatal%"
+                assert "CAST(l.tournament_id AS text) = :income_tournament_id" in sql
+                assert _params["income_tournament_id"] == (
+                    "22222222-2222-2222-2222-222222222222"
+                )
+            if "FROM budget_cfdi_income_links" in sql:
+                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
+                assert _params["phase_pattern"] == "%estatal%"
+            return _Result([])
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_id="22222222-2222-2222-2222-222222222222",
+        phase_filter="Fase Estatal",
+    )
+
+    assert actuals["report-concept"][34]["real_expense_cash"] == 480.0
+
+
+@pytest.mark.asyncio
+async def test_general_phase_filters_for_empty_effective_phase() -> None:
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "FROM expense_reports e" in sql and "AS paid_total" in sql:
+                assert "NULLIF(TRIM(cuenta.fase), '')" in sql
+                assert "= ''" in sql
+                assert "phase_pattern" not in params
+            if "FROM budget_income_bridge" in sql:
+                assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
+                assert "phase_pattern" not in params
+            if "FROM budget_cfdi_income_links" in sql:
+                assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
+                assert "phase_pattern" not in params
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_id="22222222-2222-2222-2222-222222222222",
+        phase_filter="__general__",
+    )
+
+
 def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():
-    source = Path("src/samchat/budgets/service.py").read_text()
+    source = Path(budgets_service.__file__).read_text()
     monthly_start = source.index("async def build_budget_monthly_actuals")
     monthly_block = source[monthly_start:]
     comparison_start = source.index("async def _build_budget_finance_comparison")
@@ -511,6 +639,51 @@ def test_render_budget_executive_dashboard_counts_unassigned_actuals_once():
     assert "35.0%" in html
 
 
+def test_budget_dashboard_counts_concepts_without_version_line_once():
+    from devnous.gastos.routes.admin_budget_ui import (
+        render_budget_executive_dashboard,
+        summarize_budget_actuals_for_lines,
+    )
+
+    lines = [
+        {
+            "id": "line-1",
+            "concept_name": "Balones",
+            "budget_concept_id": "concept-1",
+        }
+    ]
+    actuals = {
+        "concept-1": {
+            1: {"real_expense_cash": 10.0, "committed_unpaid": 5.0}
+        },
+        "concept-outside-version": {
+            1: {"real_expense_cash": 75.0, "committed_unpaid": 15.0}
+        },
+        "__unassigned__": {
+            1: {"real_expense_cash": 25.0, "committed_unpaid": 10.0}
+        },
+    }
+
+    summary = summarize_budget_actuals_for_lines(lines, actuals)
+    html = render_budget_executive_dashboard(
+        lines,
+        plan_map={"line-1": {1: {"budget_expense_amount": 200.0}}},
+        actuals_map=actuals,
+        tournament_key="copatest",
+        edition_year=2026,
+        version_id="version-1",
+        budget_view="expenses",
+        budget_period="weekly",
+    )
+
+    assert summary == {
+        "real_expense_total": 110.0,
+        "committed_pending_total": 30.0,
+    }
+    assert "Ejercido real</span><strong>$110.00</strong>" in html
+    assert "Comprometido pendiente</span><strong>$30.00</strong>" in html
+
+
 def test_render_budget_executive_dashboard_supports_quarter_semester_annual_options():
     from devnous.gastos.routes.admin_budget_ui import render_budget_executive_dashboard
 
@@ -769,7 +942,7 @@ def test_render_budget_partida_matrix_includes_editable_cuenta_search():
     assert 'name="month_52_expense"' in html
 
 
-def test_render_budget_partida_matrix_does_not_fallback_to_unassigned_for_concept():
+def test_render_budget_partida_matrix_shows_all_unbudgeted_movements_once():
     from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
 
     html = render_budget_partida_matrix(
@@ -786,7 +959,10 @@ def test_render_budget_partida_matrix_does_not_fallback_to_unassigned_for_concep
         actuals_map={
             "__unassigned__": {
                 1: {"real_expense_cash": 50.0, "committed_unpaid": 20.0}
-            }
+            },
+            "concept-outside-version": {
+                1: {"real_expense_cash": 30.0, "committed_unpaid": 10.0}
+            },
         },
         version_id="version-1",
         tournament_key="copatest",
@@ -794,10 +970,34 @@ def test_render_budget_partida_matrix_does_not_fallback_to_unassigned_for_concep
         matrix_mode="expenses",
     )
 
-    assert "Sin partida asignada" in html
+    assert "Sin línea presupuestal" in html
     assert "Gasto presupuestal: <strong>$0.00</strong>" in html
-    assert html.count("$50.00") == 2
-    assert html.count("$20.00") == 2
+    assert html.count("$80.00") == 2
+    assert html.count("$30.00") == 2
+
+
+def test_render_budget_partida_matrix_shows_unbudgeted_when_phase_has_no_lines():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [],
+        plan_map={},
+        actuals_map={
+            "concept-outside-version": {
+                1: {"real_expense_cash": 45.0, "committed_unpaid": 15.0}
+            }
+        },
+        version_id="version-1",
+        tournament_key="copatest",
+        can_edit=True,
+        matrix_mode="expenses",
+        filtered_empty=True,
+    )
+
+    assert "Sin línea presupuestal" in html
+    assert html.count("$45.00") == 2
+    assert html.count("$15.00") == 2
+    assert "No hay partidas para la fase" not in html
 
 
 def test_render_budget_partida_matrix_monthly_view_is_aggregated_readonly():

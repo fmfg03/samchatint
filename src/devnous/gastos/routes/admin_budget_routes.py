@@ -1459,6 +1459,7 @@ def register_presupuestos_routes(router) -> None:
             tournament_id=tournament_ctx.get("tournament_id"),
             tournament_name=tournament_ctx.get("tournament_name"),
             tournament_code=tournament_ctx.get("tournament_code"),
+            phase_filter=selected_phase_filter or None,
         )
         access = _budget_access_map(current_empleado)
         rollups = await build_budget_monthly_plan_rollups(
