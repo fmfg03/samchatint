@@ -12,11 +12,11 @@ from pathlib import Path
 
 try:
     from dotenv import load_dotenv
-
-    load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
-except Exception:
+except ImportError:
     # The systemd runtime normally supplies env files; keep local launches usable.
-    pass
+    logging.getLogger(__name__).debug("python-dotenv is unavailable")
+else:
+    load_dotenv(dotenv_path=Path(__file__).parent / ".env", override=False)
 
 
 sys.path.insert(0, str(Path(__file__).parent / "src"))
@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
+    """Create the Copa Telmex bot and run the Telegram polling loop."""
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
     anthropic_key = os.getenv("ANTHROPIC_API_KEY")
     openai_key = os.getenv("OPENAI_API_KEY")
@@ -61,6 +62,7 @@ async def main() -> None:
         logger.info("Stopped by user")
     except Exception as exc:
         logger.error("Copa Telmex bot failed: %s", exc, exc_info=True)
+        raise
 
 
 if __name__ == "__main__":
