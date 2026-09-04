@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import samchat.budgets.service as budgets_service
+
 from samchat.budgets.service import (
     _budget_document_base_amount_sql,
     _budget_expense_base_amount_sql,
@@ -111,12 +113,13 @@ def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
 
 
 def test_budget_actual_queries_enforce_reconciliation_precedence():
-    source = Path("src/samchat/budgets/service.py").read_text()
+    source = Path(budgets_service.__file__).read_text()
     monthly_start = source.index("async def build_budget_monthly_actuals")
     monthly_block = source[monthly_start:]
 
-    assert "linked_expense.solicitud_documento_id = d.id" in monthly_block
-    assert "linked_expense.id = d.gasto_generado_id" in monthly_block
+    assert "LEFT JOIN documentos linked_document" in monthly_block
+    assert "LEFT JOIN documentos linked_informe" in monthly_block
+    assert "linked_expense.solicitud_documento_id" in monthly_block
     assert "NOT EXISTS (" in monthly_block
     assert "informe_doc.estado IN ('aprobado', 'pagado', 'cerrado')" in monthly_block
     assert "informe_doc.aprobado_en" in monthly_block
@@ -141,10 +144,22 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
+            if "FROM documentos d" in sql and "linked_expense" in sql:
+                assert "LEFT JOIN documentos linked_document" in sql
+                assert "LEFT JOIN documentos linked_informe" in sql
+                assert "linked_document.tipo = 'SOLICITUD'" in sql
+                assert "linked_expense.documento_id = d.id" in sql
+                assert "linked_expense.id = d.gasto_generado_id" in sql
             if "FROM expense_reports e" in sql and "AS paid_total" in sql:
                 assert "informe_doc.aprobado_en" in sql
                 assert "cuenta.fase" in sql
                 assert _params["phase_pattern"] == "%estatal%"
+                assert f"{budgets_service._edition_bounds(2026)[0]}" in str(
+                    _params["date_from"]
+                )
+                assert "expense_recognition_date_sql" not in sql
+                assert ">= :date_from" in sql
+                assert "<= :date_to" in sql
                 return _Result(
                     [
                         {
@@ -165,6 +180,33 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
     )
 
     assert actuals["report-concept"][34]["real_expense_cash"] == 480.0
+
+
+@pytest.mark.asyncio
+async def test_general_phase_filters_for_empty_effective_phase():
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "FROM expense_reports e" in sql and "AS paid_total" in sql:
+                assert "NULLIF(TRIM(cuenta.fase), '')" in sql
+                assert "= ''" in sql
+                assert "phase_pattern" not in params
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_id="22222222-2222-2222-2222-222222222222",
+        phase_filter="__general__",
+    )
 
 
 def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():

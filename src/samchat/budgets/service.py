@@ -6860,18 +6860,31 @@ async def build_budget_monthly_actuals(
     )
     clean_phase = _safe_str(phase_filter)
     if clean_phase:
-        normalized_phase = clean_phase.lower()
-        if normalized_phase.startswith("fase "):
-            normalized_phase = normalized_phase[5:]
-        params["phase_pattern"] = f"%{normalized_phase}%"
-        document_filter.append(
-            "LOWER(COALESCE(d.fase, document_cuenta.fase, '')) "
-            "LIKE :phase_pattern"
+        document_phase_sql = (
+            "COALESCE(NULLIF(TRIM(d.fase), ''), "
+            "NULLIF(TRIM(document_cuenta.fase), ''), '')"
         )
-        expense_filter.append(
-            "LOWER(COALESCE(e.fase_torneo, d.fase, solicitud_doc.fase, "
-            "informe_doc.fase, cuenta.fase, '')) LIKE :phase_pattern"
+        expense_phase_sql = (
+            "COALESCE(NULLIF(TRIM(e.fase_torneo), ''), "
+            "NULLIF(TRIM(d.fase), ''), "
+            "NULLIF(TRIM(solicitud_doc.fase), ''), "
+            "NULLIF(TRIM(informe_doc.fase), ''), "
+            "NULLIF(TRIM(cuenta.fase), ''), '')"
         )
+        if clean_phase == "__general__":
+            document_filter.append(f"({document_phase_sql} = '')")
+            expense_filter.append(f"({expense_phase_sql} = '')")
+        else:
+            normalized_phase = clean_phase.lower()
+            if normalized_phase.startswith("fase "):
+                normalized_phase = normalized_phase[5:]
+            params["phase_pattern"] = f"%{normalized_phase}%"
+            document_filter.append(
+                f"LOWER({document_phase_sql}) LIKE :phase_pattern"
+            )
+            expense_filter.append(
+                f"LOWER({expense_phase_sql}) LIKE :phase_pattern"
+            )
     store = _monthly_actual_store()
 
     document_paid_rows = (
@@ -6897,12 +6910,37 @@ async def build_budget_monthly_actuals(
                   AND NOT EXISTS (
                     SELECT 1
                     FROM expense_reports linked_expense
+                    LEFT JOIN documentos linked_document
+                      ON linked_document.id = linked_expense.documento_id
+                    LEFT JOIN documentos linked_informe
+                      ON linked_informe.id = COALESCE(
+                        linked_expense.informe_documento_id,
+                        CASE
+                            WHEN linked_document.tipo = 'INFORME'
+                            THEN linked_document.id
+                        END
+                      )
                     WHERE linked_expense.estado_gasto != 'cancelado'
                       AND (
-                        linked_expense.documento_id = d.id
-                        OR linked_expense.solicitud_documento_id = d.id
-                        OR linked_expense.informe_documento_id = d.id
-                        OR linked_expense.id = d.gasto_generado_id
+                        COALESCE(
+                            linked_expense.solicitud_documento_id,
+                            CASE
+                                WHEN linked_document.tipo = 'SOLICITUD'
+                                THEN linked_document.id
+                            END
+                        ) = d.id
+                        OR (
+                            linked_informe.estado IN (
+                                'aprobado',
+                                'pagado',
+                                'cerrado'
+                            )
+                            AND (
+                                linked_expense.documento_id = d.id
+                                OR linked_expense.solicitud_documento_id = d.id
+                                OR linked_expense.id = d.gasto_generado_id
+                            )
+                        )
                       )
                   )
                 GROUP BY 1, 2
@@ -7024,6 +7062,8 @@ async def build_budget_monthly_actuals(
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                   AND {expense_recognition_date_sql} IS NOT NULL
+                  AND {expense_recognition_date_sql} >= :date_from
+                  AND {expense_recognition_date_sql} <= :date_to
                 GROUP BY 1, 2
                 """
                 ),
