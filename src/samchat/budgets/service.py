@@ -761,6 +761,27 @@ def _build_budget_scope_filters(
     return document_filter, expense_filter, params
 
 
+def _budget_expense_base_amount_sql(
+    expense_alias: str = "e",
+    cfdi_alias: str = "cfdi",
+) -> str:
+    """Return SQL for the amount that should affect budget before taxes."""
+    expense = _safe_str(expense_alias) or "e"
+    cfdi = _safe_str(cfdi_alias) or "cfdi"
+    return f"""
+        GREATEST(
+            CASE
+                WHEN {cfdi}.subtotal IS NOT NULL AND {cfdi}.subtotal > 0
+                THEN COALESCE({cfdi}.subtotal, 0) + COALESCE({expense}.propina_no_deducible, 0)
+                WHEN {expense}.iva IS NOT NULL
+                THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
+                ELSE COALESCE({expense}.gasto_cantidad, 0)
+            END,
+            0
+        )
+    """
+
+
 async def _build_budget_finance_breakdowns(
     session: AsyncSession,
     *,
@@ -823,12 +844,13 @@ async def _build_budget_finance_breakdowns(
                     f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
-                    COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total,
+                    COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
+                LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                 GROUP BY 1
                 """
@@ -892,12 +914,13 @@ async def _build_budget_finance_breakdowns(
                     f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
-                    COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total,
+                    COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN budget_concepts bc ON bc.id = e.budget_concept_id
+                LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                 GROUP BY 1
                 """
@@ -5809,11 +5832,12 @@ async def _build_budget_finance_comparison(
                 text(
                     f"""
                 SELECT
-                    COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total,
+                    COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
+                LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                 """
                 ),
@@ -6910,12 +6934,13 @@ async def build_budget_monthly_actuals(
                         inf_doc.fecha_pago,
                         DATE(inf_doc.pagado_en)
                     ))::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM(e.gasto_cantidad), 0) AS paid_total
+                    COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS paid_total
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN documentos pay_doc ON pay_doc.id = COALESCE(e.documento_id, e.informe_documento_id)
                 LEFT JOIN documentos inf_doc ON inf_doc.id = e.informe_documento_id
                 LEFT JOIN tournaments t ON t.id = COALESCE(d.torneo_id, pay_doc.torneo_id, inf_doc.torneo_id)
+                LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                   AND (
                     pay_doc.estado IN ('pagado', 'cerrado')
