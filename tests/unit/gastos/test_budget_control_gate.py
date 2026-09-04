@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict, List
 from uuid import uuid4
 
 import pytest
@@ -74,10 +75,12 @@ def test_document_with_budget_concept_goes_to_regular_approval():
 
 
 @pytest.mark.asyncio
-async def test_budget_control_document_loads_full_tournament_catalog(monkeypatch):
+async def test_budget_control_document_loads_full_tournament_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     tournament_id = uuid4()
-    captured = {}
-    rows = [
+    captured: Dict[str, Any] = {}
+    rows: List[Dict[str, Any]] = [
         {
             "id": uuid4(),
             "concept_name": f"Partida {index:03d}",
@@ -86,7 +89,10 @@ async def test_budget_control_document_loads_full_tournament_catalog(monkeypatch
         for index in range(555)
     ]
 
-    async def fake_list_budget_concepts(_session, **kwargs):
+    async def fake_list_budget_concepts(
+        _session: Any,
+        **kwargs: Any,
+    ) -> List[Dict[str, Any]]:
         captured.update(kwargs)
         return rows
 
