@@ -28051,7 +28051,7 @@ async def _budget_concepts_for_document(
         tournament_id=str(tournament_id),
         budget_direction="expense",
         active_only=True,
-        limit=500,
+        limit=5000,
     )
     return _filter_budget_concepts_for_fase(
         [
