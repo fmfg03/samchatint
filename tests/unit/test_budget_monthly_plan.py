@@ -153,6 +153,8 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
             if "FROM expense_reports e" in sql and "AS paid_total" in sql:
                 assert "informe_doc.aprobado_en" in sql
                 assert "cuenta.fase" in sql
+                assert "solicitud_doc.concepto_pago" in sql
+                assert "Reembolso de saldo a favor%" in sql
                 assert _params["phase_pattern"] == "%estatal%"
                 assert f"{budgets_service._edition_bounds(2026)[0]}" in str(
                     _params["date_from"]
@@ -172,6 +174,10 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
             if "FROM budget_income_bridge" in sql:
                 assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
                 assert _params["phase_pattern"] == "%estatal%"
+                assert "CAST(l.tournament_id AS text) = :income_tournament_id" in sql
+                assert _params["income_tournament_id"] == (
+                    "22222222-2222-2222-2222-222222222222"
+                )
             if "FROM budget_cfdi_income_links" in sql:
                 assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
                 assert _params["phase_pattern"] == "%estatal%"
@@ -189,7 +195,7 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
 
 
 @pytest.mark.asyncio
-async def test_general_phase_filters_for_empty_effective_phase():
+async def test_general_phase_filters_for_empty_effective_phase() -> None:
     class _Result:
         def mappings(self):
             return self
@@ -222,7 +228,7 @@ async def test_general_phase_filters_for_empty_effective_phase():
 
 
 def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():
-    source = Path("src/samchat/budgets/service.py").read_text()
+    source = Path(budgets_service.__file__).read_text()
     monthly_start = source.index("async def build_budget_monthly_actuals")
     monthly_block = source[monthly_start:]
     comparison_start = source.index("async def _build_budget_finance_comparison")

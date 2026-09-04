@@ -6845,6 +6845,12 @@ async def build_budget_monthly_actuals(
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
 ) -> dict[str, dict[int, dict[str, float]]]:
+    """Build monthly actuals keyed by budget concept and budget week.
+
+    ``phase_filter`` matches normalized line/document phases; ``__general__``
+    selects records without an effective phase. Each concept maps week numbers
+    to committed expense, real expense cash, and real income totals.
+    """
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
@@ -6857,6 +6863,10 @@ async def build_budget_monthly_actuals(
             "COALESCE(d.torneo_id, solicitud_doc.torneo_id, "
             "informe_doc.torneo_id, cuenta.torneo_id)"
         ),
+    )
+    expense_filter.append(
+        "COALESCE(solicitud_doc.concepto_pago, '') "
+        "NOT ILIKE 'Reembolso de saldo a favor%'"
     )
     clean_phase = _safe_str(phase_filter)
     income_phase_filter_sql: Optional[str] = None
@@ -7087,6 +7097,36 @@ async def build_budget_monthly_actuals(
             real_expense_cash=_safe_decimal(row["paid_total"]),
         )
 
+    income_filters = [
+        "l.budget_version_id = :version_id",
+        "EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year",
+    ]
+    income_params: dict[str, Any] = {
+        "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
+        "version_id": version_id,
+        "edition_year": edition_year,
+    }
+    income_aliases = budget_alias_candidates(
+        _safe_str(tournament_name),
+        _safe_str(tournament_code),
+    )
+    if tournament_id:
+        income_filters.append(
+            "(CAST(l.tournament_id AS text) = :income_tournament_id "
+            "OR UPPER(COALESCE(l.tournament_code, '')) = ANY(:income_aliases))"
+        )
+        income_params["income_tournament_id"] = tournament_id
+        income_params["income_aliases"] = list(sorted(income_aliases)) or [""]
+    elif income_aliases:
+        income_filters.append(
+            "UPPER(COALESCE(l.tournament_code, '')) = ANY(:income_aliases)"
+        )
+        income_params["income_aliases"] = list(sorted(income_aliases))
+    if income_phase_filter_sql:
+        income_filters.append(income_phase_filter_sql)
+        if "phase_pattern" in params:
+            income_params["phase_pattern"] = params["phase_pattern"]
+
     income_rows = (
         (
             await session.execute(
@@ -7098,22 +7138,11 @@ async def build_budget_monthly_actuals(
                     COALESCE(SUM(b.actual_amount), 0) AS income_total
                 FROM budget_income_bridge b
                 JOIN budget_lines l ON l.id = b.budget_line_id
-                WHERE l.budget_version_id = :version_id
-                  AND EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year
-                  {f"AND {income_phase_filter_sql}" if income_phase_filter_sql else ""}
+                WHERE {' AND '.join(income_filters)}
                 GROUP BY 1, 2
                 """
                 ),
-                {
-                    **(
-                        {"phase_pattern": params["phase_pattern"]}
-                        if "phase_pattern" in params
-                        else {}
-                    ),
-                    "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
-                    "version_id": version_id,
-                    "edition_year": edition_year,
-                },
+                income_params,
             )
         )
         .mappings()
