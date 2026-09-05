@@ -6858,7 +6858,7 @@ async def build_budget_monthly_plan_rollups(
 
 
 _ACCOUNTING_RESULT_ACCOUNT_PATTERN = (
-    r"^(4100|5100|5200|5300|6[0-9]{3}|7[0-9]{3})(-|$)"
+    r"^(4100|5[1-6]00|6[0-9]{3}|7[0-9]{3})(-|$)"
 )
 
 
@@ -7011,13 +7011,13 @@ async def build_budget_actuals_snapshot(
                                 bc.tournament_id
                             ) AS effective_tournament_id,
                             COALESCE(
-                                raw_doc.fase,
-                                e.fase_torneo,
-                                informe_doc.fase,
-                                solicitud_doc.fase,
-                                expense_doc.fase,
-                                cuenta.fase,
-                                bl.phase
+                                NULLIF(TRIM(raw_doc.fase), ''),
+                                NULLIF(TRIM(e.fase_torneo), ''),
+                                NULLIF(TRIM(informe_doc.fase), ''),
+                                NULLIF(TRIM(solicitud_doc.fase), ''),
+                                NULLIF(TRIM(expense_doc.fase), ''),
+                                NULLIF(TRIM(cuenta.fase), ''),
+                                NULLIF(TRIM(bl.phase), '')
                             ) AS effective_phase,
                             COALESCE(
                                 raw_doc.numero_referencia,
@@ -7136,6 +7136,18 @@ async def build_budget_actuals_snapshot(
                                 )
                             )
                         )
+                      )
+                      AND (
+                          COALESCE(scoped.origen, '') <> 'cxc_cfdi_income'
+                          OR EXISTS (
+                              SELECT 1
+                              FROM budget_cfdi_income_links income_link
+                              WHERE income_link.cfdi_report_id = scoped.cfdi_report_id
+                                AND income_link.budget_version_id = CAST(
+                                    :version_id AS uuid
+                                )
+                                AND income_link.unlinked_at IS NULL
+                          )
                       )
                       {phase_clause}
                     ORDER BY scoped.fecha_poliza, scoped.numero_poliza, scoped.line_no

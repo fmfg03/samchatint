@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -210,6 +211,19 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "debe": 0,
                             "haber": 250,
                         },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-5",
+                            "poliza_id": "poliza-3",
+                            "numero_poliza": "ND-1",
+                            "origen": "amex_informe_aprobado",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "5500-001",
+                            "document_id": "document-3",
+                            "expense_id": "expense-4",
+                            "debe": 50,
+                            "haber": 0,
+                        },
                     ]
                 )
             return _Result([])
@@ -223,7 +237,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
     )
 
     week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
-    assert actuals["report-concept"][week]["real_expense_cash"] == 4398.91
+    assert actuals["report-concept"][week]["real_expense_cash"] == 4448.91
     assert actuals["report-concept"][week]["real_income"] == 250.0
 
 
@@ -249,7 +263,7 @@ async def test_accounting_actuals_scope_aliases_without_tournament_id() -> None:
             if "FROM budget_income_bridge" in sql:
                 assert "l.tournament_code" in sql
                 assert "l.tournament_name" in sql
-            if "FROM budget_cfdi_income_links" in sql:
+            if "FROM budget_cfdi_income_links b" in sql:
                 assert "l.tournament_code" in sql
                 assert "l.tournament_name" in sql
             return _Result()
@@ -293,7 +307,7 @@ async def test_unknown_tournament_alias_fails_closed() -> None:
     document_sql = next(sql for sql in observed_sql if "FROM documentos d" in sql)
     income_sql = next(sql for sql in observed_sql if "FROM budget_income_bridge" in sql)
     cfdi_sql = next(
-        sql for sql in observed_sql if "FROM budget_cfdi_income_links" in sql
+        sql for sql in observed_sql if "FROM budget_cfdi_income_links b" in sql
     )
     assert ":tournament_scope_requested" in ledger_sql
     assert "AND FALSE" in document_sql
@@ -320,7 +334,7 @@ async def test_general_phase_filters_for_empty_effective_phase() -> None:
             if "FROM budget_income_bridge" in sql:
                 assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
                 assert "phase_pattern" not in params
-            if "FROM budget_cfdi_income_links" in sql:
+            if "FROM budget_cfdi_income_links b" in sql:
                 assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
                 assert "phase_pattern" not in params
             return _Result()
@@ -343,12 +357,18 @@ def test_budget_actual_queries_do_not_calculate_a_tax_base():
     comparison_block = source[comparison_start:monthly_start]
 
     assert "accounting_poliza_lines" in monthly_block
+    assert re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5500-001")
+    assert not re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5700-001")
     assert "LEFT JOIN cfdi_reports" not in monthly_block
     assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in comparison_block
     assert "cfdi.subtotal" not in monthly_block
     assert "COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total" not in comparison_block
     assert "1.16" not in monthly_block
     assert "1.16" not in comparison_block
+    assert "income_link.unlinked_at IS NULL" in monthly_block
+    assert "COALESCE(scoped.origen, '') <> 'cxc_cfdi_income'" in monthly_block
+    assert "NULLIF(TRIM(raw_doc.fase), '')" in monthly_block
+    assert "NULLIF(TRIM(e.fase_torneo), '')" in monthly_block
 
 
 def test_budget_backfill_is_lexical_and_isolates_each_document() -> None:
@@ -374,7 +394,7 @@ async def test_build_budget_monthly_actuals_includes_active_cfdi_income_links():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
-            if "FROM budget_cfdi_income_links" in sql:
+            if "FROM budget_cfdi_income_links b" in sql:
                 return _Result(
                     [
                         {
