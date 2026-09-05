@@ -5,7 +5,10 @@ from devnous.gastos.routes.admin_budget_routes import (
     _render_budget_status_message,
     _select_requested_budget_version,
 )
-from devnous.gastos.routes.admin_budget_ui import render_budget_matrix_filters
+from devnous.gastos.routes.admin_budget_ui import (
+    _render_budget_movement_details,
+    render_budget_matrix_filters,
+)
 
 
 ADMIN_ROUTES = Path("src/devnous/gastos/routes/admin_routes.py")
@@ -65,6 +68,7 @@ CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos/versiones/create",
     "/admin/presupuestos/versiones/copy-forward",
     "/admin/presupuestos/versiones/{version_id}/lineas/create",
+    "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing",
     "/admin/presupuestos/versiones/{version_id}/transition",
     "/admin/presupuestos/versiones/{version_id}/update",
     "/admin/presupuestos/lineas/{line_id}/update",
@@ -152,6 +156,31 @@ def test_presupuestos_canonical_routes_are_registered_from_budget_module() -> No
     assert '@router.get("/admin/presupuestos", response_class=HTMLResponse)' not in (
         admin_source
     )
+
+
+def test_assign_existing_rejects_negative_budget_amounts() -> None:
+    source = ADMIN_BUDGET_ROUTES.read_text()
+    route = source.split(
+        '"/admin/presupuestos/versiones/{version_id}/lineas/assign-existing"',
+        1,
+    )[1].split('@router.post("/admin/presupuestos/lineas/{line_id}/update")', 1)[0]
+
+    assert "if budget_amount < 0:" in route
+    assert "El monto presupuestal no puede ser negativo." in route
+
+
+def test_unassigned_budget_line_matches_unassigned_ledger_movement() -> None:
+    rendered = _render_budget_movement_details(
+        [{"budget_concept_id": None}],
+        [{"kind": "ledger_expense", "concept_key": "__unassigned__"}],
+        version_id="version-1",
+        tournament_key="LTTB",
+        edition_year=2026,
+        phase_filter=None,
+        can_edit=True,
+    )
+
+    assert rendered == ""
 
 
 def test_presupuestos_canonical_route_inventory_is_owned_by_budget_module() -> None:

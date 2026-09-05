@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+from datetime import date
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -12,6 +14,7 @@ import samchat.budgets.service as budgets_service
 from samchat.budgets.service import (
     _budget_document_base_amount_sql,
     _budget_expense_base_amount_sql,
+    build_budget_actuals_snapshot,
     build_budget_monthly_actuals,
     _merge_monthly_actual,
     _monthly_actual_store,
@@ -114,23 +117,26 @@ def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
 
 def test_budget_actual_queries_enforce_reconciliation_precedence():
     source = Path(budgets_service.__file__).read_text()
-    monthly_start = source.index("async def build_budget_monthly_actuals")
-    monthly_block = source[monthly_start:]
+    snapshot_start = source.index("async def build_budget_actuals_snapshot")
+    snapshot_end = source.index("async def build_budget_monthly_actuals", snapshot_start)
+    snapshot_block = source[snapshot_start:snapshot_end]
 
-    assert "LEFT JOIN documentos linked_document" in monthly_block
-    assert "LEFT JOIN documentos linked_informe" in monthly_block
-    assert "linked_expense.solicitud_documento_id" in monthly_block
-    assert "NOT EXISTS (" in monthly_block
-    assert "informe_doc.estado IN ('aprobado', 'pagado', 'cerrado')" in monthly_block
-    assert "informe_doc.aprobado_en" in monthly_block
-    assert "LEFT JOIN cuentas_de_gastos cuenta" in monthly_block
-    assert "cuenta.torneo_id" in monthly_block
-    assert "cuenta.fase" in monthly_block
+    assert "WITH candidate_lines AS" in snapshot_block
+    assert "accounting_poliza_lines" in snapshot_block
+    assert "SUM(COALESCE(apl.debe, 0))" in snapshot_block
+    assert "SUM(COALESCE(apl.haber, 0))" in snapshot_block
+    assert "apl.cuenta_codigo ~ :result_account_pattern" in snapshot_block
+    assert "ledger_document_ids" in snapshot_block
+    assert 'kind = "pending_accounting"' in snapshot_block
+    assert 'clause != "d.tipo = \'SOLICITUD\'"' in snapshot_block
+    assert "_budget_document_base_amount_sql" not in snapshot_block
+    assert "_budget_expense_base_amount_sql" not in snapshot_block
+    assert "ap.origen = 'cxc_cfdi_income'" in snapshot_block
     assert "Reembolso de saldo a favor%" in source
 
 
 @pytest.mark.asyncio
-async def test_approved_informe_expense_is_merged_as_budget_real():
+async def test_accounting_result_lines_are_merged_once_as_budget_real():
     class _Result:
         def __init__(self, rows):
             self._rows = rows
@@ -144,43 +150,82 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
-            if "FROM documentos d" in sql and "linked_expense" in sql:
-                assert "LEFT JOIN documentos linked_document" in sql
-                assert "LEFT JOIN documentos linked_informe" in sql
-                assert "linked_document.tipo = 'SOLICITUD'" in sql
-                assert "linked_expense.documento_id = d.id" in sql
-                assert "linked_expense.id = d.gasto_generado_id" in sql
-            if "FROM expense_reports e" in sql and "AS paid_total" in sql:
-                assert "informe_doc.aprobado_en" in sql
-                assert "cuenta.fase" in sql
-                assert "solicitud_doc.concepto_pago" in sql
-                assert "Reembolso de saldo a favor%" in sql
+            if "WITH candidate_lines AS" in sql:
+                assert "accounting_poliza_lines" in sql
+                assert "candidate_polizas AS" in sql
+                assert "JOIN candidate_polizas candidate" in sql
+                assert "scoped.id::text AS accounting_line_id" in sql
+                assert "scoped.effective_tournament_id IS NOT NULL" not in sql
                 assert _params["phase_pattern"] == "%estatal%"
-                assert f"{budgets_service._edition_bounds(2026)[0]}" in str(
-                    _params["date_from"]
-                )
-                assert "expense_recognition_date_sql" not in sql
-                assert ">= :date_from" in sql
-                assert "<= :date_to" in sql
                 return _Result(
                     [
                         {
                             "concept_key": "report-concept",
-                            "month_number": 34,
-                            "paid_total": 480.0,
-                        }
+                            "accounting_line_id": "line-1",
+                            "poliza_id": "poliza-1",
+                            "numero_poliza": "AMX-REP-1",
+                            "origen": "amex_informe_aprobado",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "5300-012-002",
+                            "document_id": "document-1",
+                            "expense_id": "expense-1",
+                            "debe": 94.43,
+                            "haber": 0,
+                        },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-2",
+                            "poliza_id": "poliza-1",
+                            "numero_poliza": "AMX-REP-1",
+                            "origen": "amex_informe_aprobado",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "5300-012-002",
+                            "document_id": "document-1",
+                            "expense_id": "expense-2",
+                            "debe": 3871.68,
+                            "haber": 0,
+                        },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-3",
+                            "poliza_id": "poliza-1",
+                            "numero_poliza": "AMX-REP-1",
+                            "origen": "amex_informe_aprobado",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "5300-012-002",
+                            "document_id": "document-1",
+                            "expense_id": "expense-3",
+                            "debe": 432.80,
+                            "haber": 0,
+                        },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-4",
+                            "poliza_id": "poliza-2",
+                            "numero_poliza": "ING-1",
+                            "origen": "cxc_cfdi_income",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "4100-001",
+                            "document_id": "document-2",
+                            "expense_id": None,
+                            "debe": 0,
+                            "haber": 250,
+                        },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-5",
+                            "poliza_id": "poliza-3",
+                            "numero_poliza": "ND-1",
+                            "origen": "amex_informe_aprobado",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "5500-001",
+                            "document_id": "document-3",
+                            "expense_id": "expense-4",
+                            "debe": 50,
+                            "haber": 0,
+                        },
                     ]
                 )
-            if "FROM budget_income_bridge" in sql:
-                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
-                assert _params["phase_pattern"] == "%estatal%"
-                assert "CAST(l.tournament_id AS text) = :income_tournament_id" in sql
-                assert _params["income_tournament_id"] == (
-                    "22222222-2222-2222-2222-222222222222"
-                )
-            if "FROM budget_cfdi_income_links" in sql:
-                assert "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), ''))" in sql
-                assert _params["phase_pattern"] == "%estatal%"
             return _Result([])
 
     actuals = await build_budget_monthly_actuals(
@@ -191,7 +236,83 @@ async def test_approved_informe_expense_is_merged_as_budget_real():
         phase_filter="Fase Estatal",
     )
 
-    assert actuals["report-concept"][34]["real_expense_cash"] == 480.0
+    week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
+    assert actuals["report-concept"][week]["real_expense_cash"] == 4448.91
+    assert actuals["report-concept"][week]["real_income"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_accounting_actuals_scope_aliases_without_tournament_id() -> None:
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            if "WITH candidate_lines AS" in sql:
+                assert "CAST(:tournament_aliases AS text[])" in sql
+                assert params["tournament_id"] == ""
+                assert params["tournament_aliases"] == ["LTTB"]
+                assert "%liga telmex telcel%" in params[
+                    "tournament_alias_patterns"
+                ]
+            if "FROM budget_income_bridge" in sql:
+                assert "l.tournament_code" in sql
+                assert "l.tournament_name" in sql
+            if "FROM budget_cfdi_income_links b" in sql:
+                assert "l.tournament_code" in sql
+                assert "l.tournament_name" in sql
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_name="Liga Telmex Telcel de Beisbol",
+    )
+
+
+@pytest.mark.asyncio
+async def test_unknown_tournament_alias_fails_closed() -> None:
+    observed_sql: list[str] = []
+
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            observed_sql.append(sql)
+            if "WITH candidate_lines AS" in sql:
+                assert params["tournament_scope_requested"] is True
+                assert params["tournament_aliases"] == []
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_name="Torneo desconocido",
+    )
+
+    ledger_sql = next(sql for sql in observed_sql if "WITH candidate_lines AS" in sql)
+    document_sql = next(sql for sql in observed_sql if "FROM documentos d" in sql)
+    income_sql = next(sql for sql in observed_sql if "FROM budget_income_bridge" in sql)
+    cfdi_sql = next(
+        sql for sql in observed_sql if "FROM budget_cfdi_income_links b" in sql
+    )
+    assert ":tournament_scope_requested" in ledger_sql
+    assert "AND FALSE" in document_sql
+    assert "AND FALSE" in income_sql
+    assert "AND FALSE" in cfdi_sql
 
 
 @pytest.mark.asyncio
@@ -206,14 +327,14 @@ async def test_general_phase_filters_for_empty_effective_phase() -> None:
     class _Session:
         async def execute(self, statement, params=None):
             sql = str(statement)
-            if "FROM expense_reports e" in sql and "AS paid_total" in sql:
-                assert "NULLIF(TRIM(cuenta.fase), '')" in sql
+            if "WITH candidate_lines AS" in sql:
+                assert "NULLIF(TRIM(scoped.effective_phase), '')" in sql
                 assert "= ''" in sql
                 assert "phase_pattern" not in params
             if "FROM budget_income_bridge" in sql:
                 assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
                 assert "phase_pattern" not in params
-            if "FROM budget_cfdi_income_links" in sql:
+            if "FROM budget_cfdi_income_links b" in sql:
                 assert "COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''" in sql
                 assert "phase_pattern" not in params
             return _Result()
@@ -227,19 +348,35 @@ async def test_general_phase_filters_for_empty_effective_phase() -> None:
     )
 
 
-def test_budget_actual_queries_join_cfdi_for_pre_tax_expense_base():
+def test_budget_actual_queries_do_not_calculate_a_tax_base():
     source = Path(budgets_service.__file__).read_text()
-    monthly_start = source.index("async def build_budget_monthly_actuals")
-    monthly_block = source[monthly_start:]
+    monthly_start = source.index("async def build_budget_actuals_snapshot")
+    monthly_end = source.index("async def build_budget_monthly_actuals", monthly_start)
+    monthly_block = source[monthly_start:monthly_end]
     comparison_start = source.index("async def _build_budget_finance_comparison")
     comparison_block = source[comparison_start:monthly_start]
 
-    assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in monthly_block
+    assert "accounting_poliza_lines" in monthly_block
+    assert re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5500-001")
+    assert not re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5700-001")
+    assert "LEFT JOIN cfdi_reports" not in monthly_block
     assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in comparison_block
-    assert "COALESCE(SUM(e.gasto_cantidad), 0) AS paid_total" not in monthly_block
+    assert "cfdi.subtotal" not in monthly_block
     assert "COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total" not in comparison_block
     assert "1.16" not in monthly_block
     assert "1.16" not in comparison_block
+    assert "income_link.unlinked_at IS NULL" in monthly_block
+    assert "COALESCE(scoped.origen, '') <> 'cxc_cfdi_income'" in monthly_block
+    assert "NULLIF(TRIM(raw_doc.fase), '')" in monthly_block
+    assert "NULLIF(TRIM(e.fase_torneo), '')" in monthly_block
+
+
+def test_budget_backfill_is_lexical_and_isolates_each_document() -> None:
+    source = Path("scripts/backfill_budget_accounting_actuals.py").read_text()
+
+    assert "sorted(set(requested_refs) - found_refs, key=int)" not in source
+    assert "sorted(set(requested_refs) - found_refs)" in source
+    assert "async with session.begin_nested():" in source
 
 
 @pytest.mark.asyncio
@@ -257,12 +394,12 @@ async def test_build_budget_monthly_actuals_includes_active_cfdi_income_links():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
-            if "FROM budget_cfdi_income_links" in sql:
+            if "FROM budget_cfdi_income_links b" in sql:
                 return _Result(
                     [
                         {
                             "concept_key": "concept-1",
-                            "month_number": 3,
+                            "recognized_at": date(2026, 1, 15),
                             "income_total": 2500,
                         }
                     ]
@@ -276,8 +413,78 @@ async def test_build_budget_monthly_actuals_includes_active_cfdi_income_links():
         tournament_id="22222222-2222-2222-2222-222222222222",
     )
 
-    assert actuals["concept-1"][3]["real_income"] == 2500.0
-    assert actuals["concept-1"][3]["real_expense_cash"] == 0.0
+    week = budgets_service._budget_week_number(date(2026, 1, 15), 2026)
+    assert actuals["concept-1"][week]["real_income"] == 2500.0
+    assert actuals["concept-1"][week]["real_expense_cash"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_advanced_documents_without_result_poliza_are_pending_not_real():
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "FROM documentos d" in sql:
+                return _Result(
+                    [
+                        {
+                            "document_id": "doc-paid",
+                            "document_reference": "S-26000069",
+                            "operation_reference": "27",
+                            "document_state": "pagado",
+                            "document_type": "SOLICITUD",
+                            "movement_concept": "Hospedaje",
+                            "budget_concept_id": "concept-1",
+                            "budget_concept_name": "Hospedaje",
+                            "effective_phase": "Estatal",
+                            "amount": 1000,
+                            "creado_en": date(2026, 2, 1),
+                            "aprobado_en": date(2026, 2, 2),
+                            "pagado_en": date(2026, 2, 3),
+                            "fecha_pago": date(2026, 2, 3),
+                        },
+                        {
+                            "document_id": "report-approved",
+                            "document_reference": "I-909645",
+                            "operation_reference": "29",
+                            "document_state": "aprobado",
+                            "document_type": "INFORME",
+                            "movement_concept": None,
+                            "budget_concept_id": None,
+                            "budget_concept_name": None,
+                            "effective_phase": "Estatal",
+                            "amount": 2400,
+                            "creado_en": date(2026, 2, 4),
+                            "aprobado_en": date(2026, 2, 5),
+                            "pagado_en": None,
+                            "fecha_pago": None,
+                        },
+                    ]
+                )
+            return _Result([])
+
+    snapshot = await build_budget_actuals_snapshot(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_id="22222222-2222-2222-2222-222222222222",
+    )
+
+    assert "concept-1" not in snapshot["monthly"]
+    assert [item["kind"] for item in snapshot["movements"]] == [
+        "pending_accounting",
+        "pending_accounting",
+    ]
+    assert [item["amount"] for item in snapshot["movements"]] == [1000.0, 2400.0]
 
 
 @pytest.mark.asyncio
@@ -1030,11 +1237,53 @@ def test_render_budget_partida_matrix_monthly_view_is_aggregated_readonly():
     assert "Enero 2026" in html
     assert "Hospedaje" in html
     assert "Presupuesto gasto" in html
-    assert "Ejercido antes de impuestos" in html
+    assert "Gasto Real" in html
     assert "Comprometido no pagado" in html
     assert "Semana 52" not in html
     assert 'name="month_52_expense"' not in html
     assert "Distribuir total" not in html
+
+
+def test_unbudgeted_detail_reuses_existing_concept_for_assignment():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [],
+        plan_map={},
+        actuals_map={
+            "concept-existing": {1: {"real_expense_cash": 4398.91}}
+        },
+        actual_movements=[
+            {
+                "concept_key": "concept-existing",
+                "kind": "ledger_expense",
+                "operation_reference": "56",
+                "document_reference": "I-138907",
+                "document_state": "aprobado",
+                "movement_concept": "Uniformes",
+                "cuenta_codigo": "5300-012-002",
+                "amount": 4398.91,
+                "numero_poliza": "AMX-REP-fb7e271a",
+                "fecha_poliza": date(2026, 8, 20),
+                "effective_phase": "Estatal",
+                "reason": "Póliza contable balanceada",
+            }
+        ],
+        version_id="version-1",
+        tournament_key="liga-telmex",
+        can_edit=True,
+        matrix_mode="expenses",
+        edition_year=2026,
+    )
+
+    assert "Movimientos por conciliar" in html
+    assert "I-138907" in html
+    assert "5300-012-002" in html
+    assert "$4,398.91" in html
+    assert 'name="budget_concept_id" value="concept-existing"' in html
+    assert "/lineas/assign-existing" in html
+    assert 'name="budget_amount"' in html
+    assert 'name="phase"' in html
 
 
 def test_budget_detail_route_passes_period_to_partida_matrix():
@@ -1090,7 +1339,7 @@ def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
     )
 
     assert "Presupuesto gasto" in html
-    assert "Ejercido antes de impuestos" in html
+    assert "Gasto Real" in html
     assert "Ingreso esperado" not in html
     assert "Ingreso real" not in html
     assert "Guardar gasto por semanas" in html
@@ -1135,7 +1384,7 @@ def test_render_budget_partida_matrix_income_mode_hides_expense_rows():
     assert "Ingreso real" in html
     assert 'name="month_1_income"' in html
     assert "Presupuesto gasto" not in html
-    assert "Ejercido antes de impuestos" not in html
+    assert "Gasto Real" not in html
     assert "Comprometido no pagado" not in html
     assert "Guardar ingreso por semanas" in html
 

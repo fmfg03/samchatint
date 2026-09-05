@@ -891,7 +891,7 @@ def _render_budget_aggregate_matrix(
                 rows.append(_metric_row("Ingreso real", values, "real"))
             else:
                 rows.append(_metric_row("Presupuesto gasto", values, "budget"))
-                rows.append(_metric_row("Ejercido antes de impuestos", values, "real"))
+                rows.append(_metric_row("Gasto Real", values, "real"))
                 if show_committed:
                     rows.append(
                         _metric_row(
@@ -931,7 +931,7 @@ def _render_budget_aggregate_matrix(
     ):
         values = _aggregate_line_periods(plan={}, actuals=unbudgeted_actuals)
         rows = [
-            _metric_row("Ejercido antes de impuestos", values, "real"),
+            _metric_row("Gasto Real", values, "real"),
         ]
         if show_committed:
             rows.append(
@@ -1017,7 +1017,7 @@ def _render_unbudgeted_expense_actuals_card(
                         </tr>
                     </thead>
                     <tbody>
-                        {_actual_row("Ejercido antes de impuestos", "real_expense_cash", "color:#475569;")}
+                        {_actual_row("Gasto Real", "real_expense_cash", "color:#475569;")}
                         {_actual_row("Comprometido no pagado", "committed_unpaid", "color:#92400e;")}
                     </tbody>
                 </table>
@@ -1026,11 +1026,103 @@ def _render_unbudgeted_expense_actuals_card(
     """
 
 
+def _render_budget_movement_details(
+    lines: list[dict[str, Any]],
+    movements: list[dict[str, Any]],
+    *,
+    version_id: str,
+    tournament_key: str,
+    edition_year: int,
+    phase_filter: Optional[str],
+    can_edit: bool,
+) -> str:
+    line_concepts = {
+        str(line.get("budget_concept_id") or "__unassigned__") for line in lines
+    }
+    visible: list[dict[str, Any]] = []
+    for movement in movements:
+        if movement.get("kind") == "ledger_income":
+            continue
+        concept_key = str(movement.get("concept_key") or "__unassigned__")
+        if concept_key not in line_concepts or movement.get("kind") == "pending_accounting":
+            visible.append(movement)
+    if not visible:
+        return ""
+
+    rows: list[str] = []
+    for movement in visible:
+        concept_key = str(movement.get("concept_key") or "__unassigned__")
+        has_existing_concept = concept_key != "__unassigned__"
+        kind = str(movement.get("kind") or "")
+        status = (
+            "Pendiente de contabilización"
+            if kind == "pending_accounting"
+            else "Sin línea en esta versión"
+        )
+        account = str(movement.get("cuenta_codigo") or "Sin cuenta")
+        poliza = str(movement.get("numero_poliza") or "Sin póliza")
+        poliza_date = movement.get("fecha_poliza") or ""
+        action = ""
+        if can_edit and has_existing_concept and concept_key not in line_concepts:
+            action = f"""
+                <form method="POST" action="/admin/presupuestos/versiones/{escape(version_id)}/lineas/assign-existing" style="display:grid;grid-template-columns:minmax(105px,1fr) minmax(110px,1fr) auto;gap:6px;align-items:end;min-width:330px;">
+                    <input type="hidden" name="budget_concept_id" value="{escape(concept_key)}">
+                    <input type="hidden" name="tournament_key" value="{escape(tournament_key)}">
+                    <input type="hidden" name="edition_year" value="{int(edition_year)}">
+                    <input type="hidden" name="budget_view" value="expenses">
+                    <input type="hidden" name="phase_filter" value="{escape(str(phase_filter or ''))}">
+                    <label style="font-size:11px;color:#475569;">Presupuesto
+                        <input name="budget_amount" type="number" min="0" step="0.01" required value="0.00" style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">
+                    </label>
+                    <label style="font-size:11px;color:#475569;">Fase
+                        <input name="phase" value="{escape(str(movement.get('effective_phase') or ''))}" style="width:100%;box-sizing:border-box;padding:6px;border:1px solid #cbd5e1;border-radius:6px;">
+                    </label>
+                    <button type="submit" style="padding:7px 10px;border:0;border-radius:6px;background:#0f766e;color:#fff;font-weight:800;cursor:pointer;">Asignar</button>
+                </form>
+            """
+        elif not has_existing_concept:
+            action = '<span style="color:#92400e;">Asigna primero un concepto al documento.</span>'
+        rows.append(
+            f"""
+            <tr>
+                <td style="padding:8px;white-space:nowrap;">{escape(str(movement.get('operation_reference') or '—'))}</td>
+                <td style="padding:8px;white-space:nowrap;font-weight:700;">{escape(str(movement.get('document_reference') or '—'))}</td>
+                <td style="padding:8px;">{escape(str(movement.get('document_state') or '—'))}</td>
+                <td style="padding:8px;min-width:180px;">{escape(str(movement.get('movement_concept') or movement.get('budget_concept_name') or 'Sin concepto'))}</td>
+                <td style="padding:8px;white-space:nowrap;">{escape(account)}</td>
+                <td style="padding:8px;text-align:right;white-space:nowrap;font-weight:800;">${float(movement.get('amount') or 0):,.2f}</td>
+                <td style="padding:8px;white-space:nowrap;">{escape(poliza)}<br><span style="color:#64748b;font-size:11px;">{escape(str(poliza_date)[:10])}</span></td>
+                <td style="padding:8px;min-width:190px;"><strong>{escape(status)}</strong><br><span style="color:#64748b;font-size:11px;">{escape(str(movement.get('reason') or ''))}</span></td>
+                <td style="padding:8px;">{action}</td>
+            </tr>
+            """
+        )
+    return f"""
+        <section style="margin:14px 0;border-top:3px solid #f59e0b;padding-top:12px;">
+            <h3 style="margin:0 0 4px;font-size:16px;color:#78350f;">Movimientos por conciliar</h3>
+            <p style="margin:0 0 10px;font-size:12px;color:#64748b;">Detalle trazable de movimientos sin línea en esta versión o sin póliza de resultados.</p>
+            <div style="overflow-x:auto;border:1px solid #fde68a;border-radius:6px;background:#fff;">
+                <table style="width:100%;min-width:1180px;border-collapse:collapse;font-size:12px;">
+                    <thead><tr style="background:#fef3c7;text-align:left;">
+                        <th style="padding:8px;">REF Op</th><th style="padding:8px;">Documento</th>
+                        <th style="padding:8px;">Estado</th><th style="padding:8px;">Concepto</th>
+                        <th style="padding:8px;">Cuenta</th><th style="padding:8px;text-align:right;">Monto</th>
+                        <th style="padding:8px;">Póliza</th><th style="padding:8px;">Diagnóstico</th>
+                        <th style="padding:8px;">Acción</th>
+                    </tr></thead>
+                    <tbody>{''.join(rows)}</tbody>
+                </table>
+            </div>
+        </section>
+    """
+
+
 def render_budget_partida_matrix(
     lines: list[dict[str, Any]],
     *,
     plan_map: dict[str, dict[int, dict[str, float]]],
     actuals_map: dict[str, dict[int, dict[str, float]]],
+    actual_movements: Optional[list[dict[str, Any]]] = None,
     version_id: str,
     tournament_key: str,
     can_edit: bool,
@@ -1046,6 +1138,19 @@ def render_budget_partida_matrix(
     clean_mode = matrix_mode if matrix_mode in {"full", "expenses", "income"} else "full"
     clean_period = _clean_budget_period(budget_period)
     effective_year = int(edition_year or date.today().year)
+    movement_details = (
+        _render_budget_movement_details(
+            lines,
+            actual_movements or [],
+            version_id=version_id,
+            tournament_key=tournament_key,
+            edition_year=effective_year,
+            phase_filter=phase_filter,
+            can_edit=can_edit,
+        )
+        if clean_mode in {"full", "expenses"}
+        else ""
+    )
     if not lines:
         unbudgeted_actuals = _unbudgeted_expense_actuals(lines, actuals_map)
         if (
@@ -1061,11 +1166,13 @@ def render_budget_partida_matrix(
                     budget_period=clean_period,
                     matrix_mode=clean_mode,
                     show_committed=show_committed,
-                )
+                ) + movement_details
             return _render_unbudgeted_expense_actuals_card(
                 unbudgeted_actuals,
                 edition_year=effective_year,
-            )
+            ) + movement_details
+        if movement_details:
+            return movement_details
         if filtered_empty:
             return (
                 '<div style="padding:16px;color:#64748b;">'
@@ -1091,7 +1198,7 @@ def render_budget_partida_matrix(
             budget_period=clean_period,
             matrix_mode=clean_mode,
             show_committed=show_committed,
-        )
+        ) + movement_details
 
     grouped: dict[str, list[dict[str, Any]]] = {}
     for line in lines:
@@ -1209,7 +1316,7 @@ def render_budget_partida_matrix(
 
             if clean_mode in {"full", "expenses"}:
                 html_parts.append(_row("Presupuesto gasto", "expense_plan", editable=True))
-                html_parts.append(_row("Ejercido antes de impuestos", "expense_real"))
+                html_parts.append(_row("Gasto Real", "expense_real"))
             if clean_mode in {"full", "income"}:
                 html_parts.append(_row("Ingreso esperado", "income_plan", editable=True))
                 html_parts.append(_row("Ingreso real", "income_real"))
@@ -1280,6 +1387,8 @@ def render_budget_partida_matrix(
         html_parts.append(_render_budget_matrix_spreadsheet_script())
     if can_edit and cuentas_contables:
         html_parts.append(_render_matrix_cuenta_search_script(cuentas_contables))
+    if movement_details:
+        html_parts.append(movement_details)
 
     return "".join(html_parts)
 
@@ -1318,6 +1427,7 @@ def _render_budget_matrix_spreadsheet_script() -> str:
       })();
     </script>
     """
+
 
 def render_budget_detail_section_nav(
     *,

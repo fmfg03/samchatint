@@ -726,6 +726,9 @@ def _build_budget_scope_filters(
     document_tournament_id_sql: str = "d.torneo_id",
     expense_tournament_id_sql: str = "d.torneo_id",
 ) -> tuple[list[str], list[str], dict[str, Any]]:
+    tournament_scope_requested = bool(
+        _safe_str(tournament_name) or _safe_str(tournament_code)
+    )
     aliases = budget_alias_candidates(
         _safe_str(tournament_name),
         _safe_str(tournament_code),
@@ -765,6 +768,9 @@ def _build_budget_scope_filters(
             )
         document_filter.append(f"({' OR '.join(alias_clauses)})")
         expense_filter.append(f"({' OR '.join(expense_alias_clauses)})")
+    elif tournament_scope_requested:
+        document_filter.append("FALSE")
+        expense_filter.append("FALSE")
     return document_filter, expense_filter, params
 
 
@@ -6315,6 +6321,22 @@ def _budget_week_number_sql(date_sql: str) -> str:
     )
 
 
+def _budget_week_number(value: Any, edition_year: int) -> int:
+    """Return the Python equivalent of ``_budget_week_number_sql``."""
+    if isinstance(value, datetime):
+        current = value.date()
+    elif isinstance(value, date):
+        current = value
+    else:
+        current = date.fromisoformat(str(value)[:10])
+    jan1 = date(int(edition_year), 1, 1)
+    days_to_next_monday = 7 if jan1.isoweekday() == 1 else 8 - jan1.isoweekday()
+    first_monday = jan1 + timedelta(days=days_to_next_monday)
+    if current < first_monday:
+        return 1
+    return min(52, 2 + (current - first_monday).days // 7)
+
+
 async def list_budget_line_monthly_allocations(
     session: AsyncSession,
     *,
@@ -6835,6 +6857,573 @@ async def build_budget_monthly_plan_rollups(
     }
 
 
+_ACCOUNTING_RESULT_ACCOUNT_PATTERN = (
+    r"^(4100|5[1-6]00|6[0-9]{3}|7[0-9]{3})(-|$)"
+)
+
+
+async def build_budget_actuals_snapshot(
+    session: AsyncSession,
+    *,
+    edition_year: int,
+    version_id: str,
+    tournament_id: Optional[str] = None,
+    tournament_name: Optional[str] = None,
+    tournament_code: Optional[str] = None,
+    phase_filter: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return budget actuals backed by balanced accounting result lines.
+
+    Result-account lines are the only source of ``real_expense_cash`` and
+    ledger-backed ``real_income``. Approved requests without a result posting
+    remain commitments; paid documents without one are surfaced as pending
+    accounting instead of being converted into an estimated tax base.
+    """
+    tournament_scope_requested = bool(
+        _safe_str(tournament_name) or _safe_str(tournament_code)
+    )
+    aliases = sorted(
+        budget_alias_candidates(
+            _safe_str(tournament_name),
+            _safe_str(tournament_code),
+        )
+    )
+    alias_patterns = sorted(
+        {
+            f"%{term.lower()}%"
+            for code, terms in _BUDGET_ALIAS_RULES
+            if code in aliases
+            for term in terms
+        }
+    )
+    params: dict[str, Any] = {
+        "edition_year": int(edition_year),
+        "version_id": _safe_str(version_id),
+        "tournament_id": _safe_str(tournament_id),
+        "tournament_aliases": aliases,
+        "tournament_alias_patterns": alias_patterns,
+        "tournament_scope_requested": tournament_scope_requested,
+        "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
+        "result_account_pattern": _ACCOUNTING_RESULT_ACCOUNT_PATTERN,
+    }
+    phase_clause = ""
+    clean_phase = _safe_str(phase_filter)
+    if clean_phase == "__general__":
+        phase_clause = "AND COALESCE(NULLIF(TRIM(scoped.effective_phase), ''), '') = ''"
+    elif clean_phase:
+        normalized_phase = clean_phase.lower()
+        if normalized_phase.startswith("fase "):
+            normalized_phase = normalized_phase[5:]
+        params["phase_pattern"] = f"%{normalized_phase}%"
+        phase_clause = (
+            "AND LOWER(COALESCE(NULLIF(TRIM(scoped.effective_phase), ''), '')) "
+            "LIKE :phase_pattern"
+        )
+
+    uuid_pattern = (
+        "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+        "[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    )
+    ledger_rows = (
+        (
+            await session.execute(
+                text(
+                    f"""
+                    WITH candidate_lines AS (
+                        SELECT
+                            apl.*,
+                            ap.fecha_poliza,
+                            ap.numero_poliza,
+                            ap.origen,
+                            ap.cfdi_report_id
+                        FROM accounting_poliza_lines apl
+                        JOIN accounting_polizas ap ON ap.id = apl.poliza_id
+                        WHERE EXTRACT(YEAR FROM ap.fecha_poliza)::int = :edition_year
+                          AND apl.cuenta_codigo ~ :result_account_pattern
+                    ), candidate_polizas AS (
+                        SELECT DISTINCT poliza_id
+                        FROM candidate_lines
+                    ), balanced AS (
+                        SELECT apl.poliza_id
+                        FROM accounting_poliza_lines apl
+                        JOIN candidate_polizas candidate
+                          ON candidate.poliza_id = apl.poliza_id
+                        GROUP BY apl.poliza_id
+                        HAVING ABS(
+                            SUM(COALESCE(apl.debe, 0))
+                            - SUM(COALESCE(apl.haber, 0))
+                        ) <= 0.01
+                    ), extracted AS (
+                        SELECT
+                            candidate_lines.*,
+                            CASE WHEN COALESCE(
+                                candidate_lines.raw_row_json->>'documento_id',
+                                candidate_lines.raw_row_json->>'document_id'
+                            ) ~* '{uuid_pattern}' THEN COALESCE(
+                                candidate_lines.raw_row_json->>'documento_id',
+                                candidate_lines.raw_row_json->>'document_id'
+                            )::uuid END AS raw_document_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'expense_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'expense_id'
+                                )::uuid END
+                                AS raw_expense_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'budget_concept_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'budget_concept_id'
+                                )::uuid END
+                                AS raw_budget_concept_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'budget_line_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'budget_line_id'
+                                )::uuid END
+                                AS raw_budget_line_id
+                        FROM candidate_lines
+                        JOIN balanced
+                          ON balanced.poliza_id = candidate_lines.poliza_id
+                    ), scoped AS (
+                        SELECT
+                            extracted.*,
+                            COALESCE(
+                                extracted.raw_document_id,
+                                informe_doc.id,
+                                solicitud_doc.id,
+                                expense_doc.id
+                            ) AS effective_document_id,
+                            COALESCE(
+                                extracted.raw_budget_concept_id,
+                                e.budget_concept_id,
+                                informe_doc.budget_concept_id,
+                                solicitud_doc.budget_concept_id,
+                                expense_doc.budget_concept_id,
+                                bl.budget_concept_id
+                            ) AS effective_budget_concept_id,
+                            COALESCE(
+                                raw_doc.torneo_id,
+                                informe_doc.torneo_id,
+                                solicitud_doc.torneo_id,
+                                expense_doc.torneo_id,
+                                cuenta.torneo_id,
+                                bl.tournament_id,
+                                bc.tournament_id
+                            ) AS effective_tournament_id,
+                            COALESCE(
+                                NULLIF(TRIM(raw_doc.fase), ''),
+                                NULLIF(TRIM(e.fase_torneo), ''),
+                                NULLIF(TRIM(informe_doc.fase), ''),
+                                NULLIF(TRIM(solicitud_doc.fase), ''),
+                                NULLIF(TRIM(expense_doc.fase), ''),
+                                NULLIF(TRIM(cuenta.fase), ''),
+                                NULLIF(TRIM(bl.phase), '')
+                            ) AS effective_phase,
+                            COALESCE(
+                                raw_doc.numero_referencia,
+                                informe_doc.numero_referencia,
+                                solicitud_doc.numero_referencia,
+                                expense_doc.numero_referencia
+                            ) AS document_reference,
+                            COALESCE(
+                                raw_doc.referencia_operaciones,
+                                informe_doc.referencia_operaciones,
+                                solicitud_doc.referencia_operaciones,
+                                expense_doc.referencia_operaciones
+                            ) AS operation_reference,
+                            COALESCE(raw_doc.estado, informe_doc.estado,
+                                solicitud_doc.estado, expense_doc.estado) AS document_state,
+                            COALESCE(e.concepto, extracted.concepto) AS movement_concept,
+                            COALESCE(bc.concept_name, bl.concept_name) AS budget_concept_name,
+                            COALESCE(t.name, bc.tournament_name) AS tournament_name,
+                            bc.tournament_code AS tournament_code
+                        FROM extracted
+                        LEFT JOIN documentos raw_doc ON raw_doc.id = extracted.raw_document_id
+                        LEFT JOIN expense_reports e ON e.id = extracted.raw_expense_id
+                        LEFT JOIN documentos expense_doc ON expense_doc.id = e.documento_id
+                        LEFT JOIN documentos informe_doc ON informe_doc.id = COALESCE(
+                            e.informe_documento_id,
+                            CASE WHEN expense_doc.tipo = 'INFORME' THEN expense_doc.id END
+                        )
+                        LEFT JOIN documentos solicitud_doc ON solicitud_doc.id = COALESCE(
+                            e.solicitud_documento_id,
+                            CASE WHEN expense_doc.tipo = 'SOLICITUD' THEN expense_doc.id END
+                        )
+                        LEFT JOIN cuentas_de_gastos cuenta ON cuenta.id = COALESCE(
+                            e.cuenta_gastos_id,
+                            raw_doc.cuenta_gastos_id,
+                            informe_doc.cuenta_gastos_id,
+                            solicitud_doc.cuenta_gastos_id,
+                            expense_doc.cuenta_gastos_id
+                        )
+                        LEFT JOIN budget_lines bl ON bl.id = extracted.raw_budget_line_id
+                          AND bl.budget_version_id = CAST(:version_id AS uuid)
+                        LEFT JOIN budget_concepts bc ON bc.id = COALESCE(
+                            extracted.raw_budget_concept_id,
+                            e.budget_concept_id,
+                            raw_doc.budget_concept_id,
+                            informe_doc.budget_concept_id,
+                            solicitud_doc.budget_concept_id,
+                            expense_doc.budget_concept_id,
+                            bl.budget_concept_id
+                        )
+                        LEFT JOIN tournaments t ON t.id = COALESCE(
+                            raw_doc.torneo_id,
+                            informe_doc.torneo_id,
+                            solicitud_doc.torneo_id,
+                            expense_doc.torneo_id,
+                            cuenta.torneo_id,
+                            bl.tournament_id,
+                            bc.tournament_id
+                        )
+                    )
+                    SELECT
+                        scoped.id::text AS accounting_line_id,
+                        scoped.poliza_id::text AS poliza_id,
+                        scoped.numero_poliza,
+                        scoped.origen,
+                        scoped.fecha_poliza,
+                        scoped.cuenta_codigo,
+                        scoped.effective_document_id::text AS document_id,
+                        scoped.raw_expense_id::text AS expense_id,
+                        COALESCE(
+                            scoped.effective_budget_concept_id::text,
+                            :unassigned_key
+                        ) AS concept_key,
+                        scoped.document_reference,
+                        scoped.operation_reference,
+                        scoped.document_state,
+                        scoped.movement_concept,
+                        scoped.budget_concept_name,
+                        scoped.effective_phase,
+                        scoped.tournament_name,
+                        scoped.debe,
+                        scoped.haber
+                    FROM scoped
+                    WHERE (
+                        (
+                            NULLIF(:tournament_id, '') IS NOT NULL
+                            AND scoped.effective_tournament_id::text = :tournament_id
+                        )
+                        OR (
+                            NULLIF(:tournament_id, '') IS NULL
+                            AND (
+                                NOT CAST(
+                                    :tournament_scope_requested AS boolean
+                                )
+                                OR (
+                                    COALESCE(
+                                        cardinality(
+                                            CAST(:tournament_aliases AS text[])
+                                        ),
+                                        0
+                                    ) > 0
+                                    AND (
+                                        UPPER(COALESCE(
+                                            scoped.tournament_code, ''
+                                        )) = ANY(
+                                            CAST(:tournament_aliases AS text[])
+                                        )
+                                        OR LOWER(COALESCE(
+                                            scoped.tournament_name, ''
+                                        )) LIKE ANY(
+                                            CAST(
+                                                :tournament_alias_patterns
+                                                AS text[]
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                      )
+                      AND (
+                          COALESCE(scoped.origen, '') <> 'cxc_cfdi_income'
+                          OR EXISTS (
+                              SELECT 1
+                              FROM budget_cfdi_income_links income_link
+                              WHERE income_link.cfdi_report_id = scoped.cfdi_report_id
+                                AND income_link.budget_version_id = CAST(
+                                    :version_id AS uuid
+                                )
+                                AND income_link.unlinked_at IS NULL
+                          )
+                      )
+                      {phase_clause}
+                    ORDER BY scoped.fecha_poliza, scoped.numero_poliza, scoped.line_no
+                    """
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+
+    store = _monthly_actual_store()
+    movements: list[dict[str, Any]] = []
+    ledger_document_ids: set[str] = set()
+    for raw_row in ledger_rows:
+        row = dict(raw_row)
+        account_code = _safe_str(row.get("cuenta_codigo"))
+        is_income = account_code == "4100" or account_code.startswith("4100-")
+        amount = (
+            _safe_decimal(row.get("haber")) - _safe_decimal(row.get("debe"))
+            if is_income
+            else _safe_decimal(row.get("debe")) - _safe_decimal(row.get("haber"))
+        )
+        if abs(amount) < 0.005:
+            continue
+        concept_key = _safe_str(row.get("concept_key")) or _UNASSIGNED_BUDGET_CONCEPT_KEY
+        week = _budget_week_number(row.get("fecha_poliza"), edition_year)
+        _merge_monthly_actual(
+            store,
+            concept_key=concept_key,
+            month_number=week,
+            real_income=amount if is_income else 0,
+            real_expense_cash=0 if is_income else amount,
+        )
+        document_id = _safe_str(row.get("document_id"))
+        if document_id:
+            ledger_document_ids.add(document_id)
+        movements.append(
+            {
+                **row,
+                "kind": "ledger_income" if is_income else "ledger_expense",
+                "amount": round(amount, 2),
+                "month_number": week,
+                "reason": "Póliza contable balanceada",
+            }
+        )
+
+    document_filter, _, document_params = _build_budget_scope_filters(
+        edition_year=edition_year,
+        tournament_id=tournament_id,
+        tournament_name=tournament_name,
+        tournament_code=tournament_code,
+        document_tournament_id_sql="COALESCE(d.torneo_id, document_cuenta.torneo_id)",
+        expense_tournament_id_sql="d.torneo_id",
+    )
+    document_filter = [
+        clause for clause in document_filter if clause != "d.tipo = 'SOLICITUD'"
+    ]
+    if clean_phase:
+        document_phase_sql = (
+            "COALESCE(NULLIF(TRIM(d.fase), ''), "
+            "NULLIF(TRIM(document_cuenta.fase), ''), '')"
+        )
+        if clean_phase == "__general__":
+            document_filter.append(f"{document_phase_sql} = ''")
+        else:
+            document_params["phase_pattern"] = params["phase_pattern"]
+            document_filter.append(
+                f"LOWER({document_phase_sql}) LIKE :phase_pattern"
+            )
+    document_rows = (
+        (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT
+                        d.id::text AS document_id,
+                        d.numero_referencia AS document_reference,
+                        d.referencia_operaciones AS operation_reference,
+                        d.estado AS document_state,
+                        d.tipo AS document_type,
+                        d.concepto_pago AS movement_concept,
+                        d.budget_concept_id::text AS budget_concept_id,
+                        bc.concept_name AS budget_concept_name,
+                        COALESCE(d.fase, document_cuenta.fase) AS effective_phase,
+                        COALESCE(d.monto_total, d.monto_solicitado, 0) AS amount,
+                        d.creado_en,
+                        d.aprobado_en,
+                        d.pagado_en,
+                        d.fecha_pago
+                    FROM documentos d
+                    LEFT JOIN cuentas_de_gastos document_cuenta
+                      ON document_cuenta.id = d.cuenta_gastos_id
+                    LEFT JOIN tournaments t ON t.id = COALESCE(
+                        d.torneo_id, document_cuenta.torneo_id
+                    )
+                    LEFT JOIN budget_concepts bc ON bc.id = d.budget_concept_id
+                    WHERE {' AND '.join(document_filter)}
+                      AND d.tipo IN ('SOLICITUD', 'INFORME')
+                      AND d.estado IN ('aprobado', 'pagado', 'cerrado')
+                      AND COALESCE(d.concepto_pago, '')
+                        NOT ILIKE 'Reembolso de saldo a favor%'
+                    ORDER BY d.creado_en, d.numero_referencia
+                    """
+                ),
+                document_params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for raw_row in document_rows:
+        row = dict(raw_row)
+        document_id = _safe_str(row.get("document_id"))
+        if document_id in ledger_document_ids:
+            continue
+        state = _safe_str(row.get("document_state"))
+        amount = _safe_decimal(row.get("amount"))
+        concept_key = (
+            _safe_str(row.get("budget_concept_id"))
+            or _UNASSIGNED_BUDGET_CONCEPT_KEY
+        )
+        recognition_date = (
+            row.get("fecha_pago")
+            or row.get("pagado_en")
+            or row.get("aprobado_en")
+            or row.get("creado_en")
+        )
+        week = _budget_week_number(recognition_date, edition_year)
+        if state == "aprobado" and row.get("document_type") == "SOLICITUD":
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                committed_unpaid=amount,
+            )
+            kind = "commitment"
+            reason = "Solicitud aprobada pendiente de póliza contable"
+        else:
+            kind = "pending_accounting"
+            reason = "Documento avanzado sin póliza de resultados trazable"
+        movements.append(
+            {
+                **row,
+                "concept_key": concept_key,
+                "kind": kind,
+                "amount": round(amount, 2),
+                "month_number": week,
+                "reason": reason,
+                "accounting_line_id": None,
+                "poliza_id": None,
+                "numero_poliza": None,
+                "cuenta_codigo": None,
+            }
+        )
+
+    income_filters = [
+        "l.budget_version_id = CAST(:version_id AS uuid)",
+        "EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year",
+    ]
+    if tournament_id:
+        income_filters.append("l.tournament_id = CAST(:tournament_id AS uuid)")
+    elif tournament_scope_requested:
+        if aliases:
+            income_filters.append(
+                "(UPPER(COALESCE(l.tournament_code, '')) = "
+                "ANY(CAST(:tournament_aliases AS text[])) OR "
+                "LOWER(COALESCE(l.tournament_name, '')) LIKE "
+                "ANY(CAST(:tournament_alias_patterns AS text[])))"
+            )
+        else:
+            income_filters.append("FALSE")
+    if clean_phase == "__general__":
+        income_filters.append("COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''")
+    elif clean_phase:
+        income_filters.append(
+            "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), '')) LIKE :phase_pattern"
+        )
+    income_rows = (
+        (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT l.budget_concept_id::text AS concept_key,
+                           COALESCE(b.paid_at, b.created_at) AS recognized_at,
+                           SUM(b.actual_amount) AS income_total
+                    FROM budget_income_bridge b
+                    JOIN budget_lines l ON l.id = b.budget_line_id
+                    WHERE {' AND '.join(income_filters)}
+                    GROUP BY l.budget_concept_id, COALESCE(b.paid_at, b.created_at)
+                    """
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for row in income_rows:
+        week = _budget_week_number(row["recognized_at"], edition_year)
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"])
+            or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=week,
+            real_income=_safe_decimal(row["income_total"]),
+        )
+
+    cfdi_filters = [
+        "l.budget_version_id = CAST(:version_id AS uuid)",
+        "b.budget_version_id = CAST(:version_id AS uuid)",
+        "b.unlinked_at IS NULL",
+        "EXTRACT(YEAR FROM b.income_date)::int = :edition_year",
+        "NOT EXISTS (SELECT 1 FROM accounting_polizas ap "
+        "WHERE ap.origen = 'cxc_cfdi_income' "
+        "AND ap.cfdi_report_id = b.cfdi_report_id)",
+    ]
+    if tournament_id:
+        cfdi_filters.append("b.tournament_id = CAST(:tournament_id AS uuid)")
+    elif tournament_scope_requested:
+        if aliases:
+            cfdi_filters.append(
+                "(UPPER(COALESCE(l.tournament_code, '')) = "
+                "ANY(CAST(:tournament_aliases AS text[])) OR "
+                "LOWER(COALESCE(l.tournament_name, '')) LIKE "
+                "ANY(CAST(:tournament_alias_patterns AS text[])))"
+            )
+        else:
+            cfdi_filters.append("FALSE")
+    if clean_phase == "__general__":
+        cfdi_filters.append("COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''")
+    elif clean_phase:
+        cfdi_filters.append(
+            "LOWER(COALESCE(NULLIF(TRIM(l.phase), ''), '')) LIKE :phase_pattern"
+        )
+    cfdi_rows = (
+        (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT COALESCE(
+                               b.budget_concept_id::text,
+                               l.budget_concept_id::text,
+                               :unassigned_key
+                           ) AS concept_key,
+                           b.income_date AS recognized_at,
+                           SUM(b.amount) AS income_total
+                    FROM budget_cfdi_income_links b
+                    JOIN budget_lines l ON l.id = b.budget_line_id
+                    WHERE {' AND '.join(cfdi_filters)}
+                    GROUP BY 1, b.income_date
+                    """
+                ),
+                params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for row in cfdi_rows:
+        week = _budget_week_number(row["recognized_at"], edition_year)
+        _merge_monthly_actual(
+            store,
+            concept_key=_safe_str(row["concept_key"])
+            or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+            month_number=week,
+            real_income=_safe_decimal(row["income_total"]),
+        )
+
+    return {
+        "monthly": {key: dict(months) for key, months in store.items()},
+        "movements": movements,
+    }
+
+
 async def build_budget_monthly_actuals(
     session: AsyncSession,
     *,
@@ -6845,371 +7434,16 @@ async def build_budget_monthly_actuals(
     tournament_code: Optional[str] = None,
     phase_filter: Optional[str] = None,
 ) -> dict[str, dict[int, dict[str, float]]]:
-    """Build monthly actuals keyed by budget concept and budget week.
-
-    ``phase_filter`` matches normalized line/document phases; ``__general__``
-    selects records without an effective phase. Each concept maps week numbers
-    to committed expense, real expense cash, and real income totals.
-    """
-    document_filter, expense_filter, params = _build_budget_scope_filters(
+    snapshot = await build_budget_actuals_snapshot(
+        session,
         edition_year=edition_year,
+        version_id=version_id,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
-        document_tournament_id_sql=(
-            "COALESCE(d.torneo_id, document_cuenta.torneo_id)"
-        ),
-        expense_tournament_id_sql=(
-            "COALESCE(d.torneo_id, solicitud_doc.torneo_id, "
-            "informe_doc.torneo_id, cuenta.torneo_id)"
-        ),
+        phase_filter=phase_filter,
     )
-    expense_filter.append(
-        "COALESCE(solicitud_doc.concepto_pago, '') "
-        "NOT ILIKE 'Reembolso de saldo a favor%'"
-    )
-    clean_phase = _safe_str(phase_filter)
-    income_phase_filter_sql: Optional[str] = None
-    if clean_phase:
-        document_phase_sql = (
-            "COALESCE(NULLIF(TRIM(d.fase), ''), "
-            "NULLIF(TRIM(document_cuenta.fase), ''), '')"
-        )
-        expense_phase_sql = (
-            "COALESCE(NULLIF(TRIM(e.fase_torneo), ''), "
-            "NULLIF(TRIM(d.fase), ''), "
-            "NULLIF(TRIM(solicitud_doc.fase), ''), "
-            "NULLIF(TRIM(informe_doc.fase), ''), "
-            "NULLIF(TRIM(cuenta.fase), ''), '')"
-        )
-        income_phase_sql = "COALESCE(NULLIF(TRIM(l.phase), ''), '')"
-        if clean_phase == "__general__":
-            document_filter.append(f"({document_phase_sql} = '')")
-            expense_filter.append(f"({expense_phase_sql} = '')")
-            income_phase_filter_sql = f"{income_phase_sql} = ''"
-        else:
-            normalized_phase = clean_phase.lower()
-            if normalized_phase.startswith("fase "):
-                normalized_phase = normalized_phase[5:]
-            params["phase_pattern"] = f"%{normalized_phase}%"
-            document_filter.append(
-                f"LOWER({document_phase_sql}) LIKE :phase_pattern"
-            )
-            expense_filter.append(
-                f"LOWER({expense_phase_sql}) LIKE :phase_pattern"
-            )
-            income_phase_filter_sql = (
-                f"LOWER({income_phase_sql}) LIKE :phase_pattern"
-            )
-    store = _monthly_actual_store()
-
-    document_paid_rows = (
-        (
-            await session.execute(
-                text(
-                    f"""
-                SELECT
-                    COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    LEAST(52, CASE WHEN (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date < (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date - (DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(d.fecha_pago, DATE(d.pagado_en)))::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM({_budget_document_base_amount_sql('d', 'document_cfdi')}), 0) AS paid_total
-                FROM documentos d
-                LEFT JOIN cuentas_de_gastos document_cuenta ON document_cuenta.id = d.cuenta_gastos_id
-                LEFT JOIN tournaments t ON t.id = d.torneo_id
-                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
-                WHERE {' AND '.join(document_filter)}
-                  AND d.tipo = 'SOLICITUD'
-                  AND (
-                    d.estado IN ('pagado', 'cerrado')
-                    OR d.pagado_en IS NOT NULL
-                  )
-                  AND COALESCE(d.fecha_pago, DATE(d.pagado_en)) IS NOT NULL
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM expense_reports linked_expense
-                    LEFT JOIN documentos linked_document
-                      ON linked_document.id = linked_expense.documento_id
-                    LEFT JOIN documentos linked_informe
-                      ON linked_informe.id = COALESCE(
-                        linked_expense.informe_documento_id,
-                        CASE
-                            WHEN linked_document.tipo = 'INFORME'
-                            THEN linked_document.id
-                        END
-                      )
-                    WHERE linked_expense.estado_gasto != 'cancelado'
-                      AND (
-                        COALESCE(
-                            linked_expense.solicitud_documento_id,
-                            CASE
-                                WHEN linked_document.tipo = 'SOLICITUD'
-                                THEN linked_document.id
-                            END
-                        ) = d.id
-                        OR (
-                            linked_informe.estado IN (
-                                'aprobado',
-                                'pagado',
-                                'cerrado'
-                            )
-                            AND (
-                                linked_expense.documento_id = d.id
-                                OR linked_expense.solicitud_documento_id = d.id
-                                OR linked_expense.id = d.gasto_generado_id
-                            )
-                        )
-                      )
-                  )
-                GROUP BY 1, 2
-                """
-                ),
-                {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in document_paid_rows:
-        _merge_monthly_actual(
-            store,
-            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
-            month_number=int(row["month_number"] or 0),
-            real_expense_cash=_safe_decimal(row["paid_total"]),
-        )
-
-    document_committed_rows = (
-        (
-            await session.execute(
-                text(
-                    f"""
-                SELECT
-                    COALESCE(CAST(d.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    LEAST(52, CASE WHEN (DATE(d.creado_en))::date < (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((DATE(d.creado_en))::date - (DATE_TRUNC('year', (DATE(d.creado_en))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (DATE(d.creado_en))::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM(CASE
-                        WHEN d.estado IN ('aprobado', 'pagado', 'cerrado')
-                        THEN {_budget_document_base_amount_sql('d', 'document_cfdi')}
-                        ELSE 0
-                    END), 0) AS committed_total,
-                    COALESCE(SUM(CASE
-                        WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL
-                        THEN {_budget_document_base_amount_sql('d', 'document_cfdi')}
-                        ELSE 0
-                    END), 0) AS paid_total
-                FROM documentos d
-                LEFT JOIN cuentas_de_gastos document_cuenta ON document_cuenta.id = d.cuenta_gastos_id
-                LEFT JOIN tournaments t ON t.id = d.torneo_id
-                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
-                WHERE {' AND '.join(document_filter)}
-                  AND d.tipo = 'SOLICITUD'
-                GROUP BY 1, 2
-                """
-                ),
-                {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in document_committed_rows:
-        committed = _safe_decimal(row["committed_total"])
-        paid = _safe_decimal(row["paid_total"])
-        _merge_monthly_actual(
-            store,
-            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
-            month_number=int(row["month_number"] or 0),
-            committed_unpaid=max(committed - paid, 0),
-        )
-
-    expense_recognition_date_sql = """
-        COALESCE(
-            CASE
-                WHEN informe_doc.estado IN ('aprobado', 'pagado', 'cerrado')
-                THEN DATE(COALESCE(
-                    informe_doc.aprobado_en,
-                    informe_doc.enviado_en,
-                    informe_doc.creado_en
-                ))
-            END,
-            CASE
-                WHEN solicitud_doc.estado IN ('pagado', 'cerrado')
-                  OR solicitud_doc.pagado_en IS NOT NULL
-                THEN COALESCE(
-                    solicitud_doc.fecha_pago,
-                    DATE(solicitud_doc.pagado_en)
-                )
-            END
-        )
-    """
-    expense_paid_rows = (
-        (
-            await session.execute(
-                text(
-                    f"""
-                SELECT
-                    COALESCE(
-                        CAST(e.budget_concept_id AS text),
-                        CAST(informe_doc.budget_concept_id AS text),
-                        CAST(solicitud_doc.budget_concept_id AS text),
-                        :unassigned_key
-                    ) AS concept_key,
-                    {_budget_week_number_sql(expense_recognition_date_sql)} AS month_number,
-                    COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS paid_total
-                FROM expense_reports e
-                LEFT JOIN documentos d ON d.id = e.documento_id
-                LEFT JOIN documentos solicitud_doc ON solicitud_doc.id = COALESCE(
-                    e.solicitud_documento_id,
-                    CASE WHEN d.tipo = 'SOLICITUD' THEN d.id END
-                )
-                LEFT JOIN documentos informe_doc ON informe_doc.id = COALESCE(
-                    e.informe_documento_id,
-                    CASE WHEN d.tipo = 'INFORME' THEN d.id END
-                )
-                LEFT JOIN cuentas_de_gastos cuenta ON cuenta.id = COALESCE(
-                    e.cuenta_gastos_id,
-                    informe_doc.cuenta_gastos_id,
-                    solicitud_doc.cuenta_gastos_id,
-                    d.cuenta_gastos_id
-                )
-                LEFT JOIN tournaments t ON t.id = COALESCE(
-                    d.torneo_id,
-                    solicitud_doc.torneo_id,
-                    informe_doc.torneo_id,
-                    cuenta.torneo_id
-                )
-                LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
-                WHERE {' AND '.join(expense_filter)}
-                  AND {expense_recognition_date_sql} IS NOT NULL
-                  AND {expense_recognition_date_sql} >= :date_from
-                  AND {expense_recognition_date_sql} <= :date_to
-                GROUP BY 1, 2
-                """
-                ),
-                {**params, "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in expense_paid_rows:
-        _merge_monthly_actual(
-            store,
-            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
-            month_number=int(row["month_number"] or 0),
-            real_expense_cash=_safe_decimal(row["paid_total"]),
-        )
-
-    income_filters = [
-        "l.budget_version_id = :version_id",
-        "EXTRACT(YEAR FROM COALESCE(b.paid_at, b.created_at))::int = :edition_year",
-    ]
-    income_params: dict[str, Any] = {
-        "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
-        "version_id": version_id,
-        "edition_year": edition_year,
-    }
-    income_aliases = budget_alias_candidates(
-        _safe_str(tournament_name),
-        _safe_str(tournament_code),
-    )
-    if tournament_id:
-        income_filters.append(
-            "(CAST(l.tournament_id AS text) = :income_tournament_id "
-            "OR UPPER(COALESCE(l.tournament_code, '')) = ANY(:income_aliases))"
-        )
-        income_params["income_tournament_id"] = tournament_id
-        income_params["income_aliases"] = list(sorted(income_aliases)) or [""]
-    elif income_aliases:
-        income_filters.append(
-            "UPPER(COALESCE(l.tournament_code, '')) = ANY(:income_aliases)"
-        )
-        income_params["income_aliases"] = list(sorted(income_aliases))
-    if income_phase_filter_sql:
-        income_filters.append(income_phase_filter_sql)
-        if "phase_pattern" in params:
-            income_params["phase_pattern"] = params["phase_pattern"]
-
-    income_rows = (
-        (
-            await session.execute(
-                text(
-                    f"""
-                SELECT
-                    COALESCE(CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    LEAST(52, CASE WHEN (COALESCE(b.paid_at, b.created_at))::date < (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((COALESCE(b.paid_at, b.created_at))::date - (DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (COALESCE(b.paid_at, b.created_at))::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM(b.actual_amount), 0) AS income_total
-                FROM budget_income_bridge b
-                JOIN budget_lines l ON l.id = b.budget_line_id
-                WHERE {' AND '.join(income_filters)}
-                GROUP BY 1, 2
-                """
-                ),
-                income_params,
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in income_rows:
-        _merge_monthly_actual(
-            store,
-            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
-            month_number=int(row["month_number"] or 0),
-            real_income=_safe_decimal(row["income_total"]),
-        )
-
-    cfdi_filters = [
-        "l.budget_version_id = :version_id",
-        "b.budget_version_id = :version_id",
-        "b.unlinked_at IS NULL",
-        "EXTRACT(YEAR FROM b.income_date)::int = :edition_year",
-    ]
-    cfdi_params: dict[str, Any] = {
-        "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
-        "version_id": version_id,
-        "edition_year": edition_year,
-    }
-    if tournament_id:
-        cfdi_filters.append("b.tournament_id = CAST(:cfdi_tournament_id AS uuid)")
-        cfdi_params["cfdi_tournament_id"] = tournament_id
-    elif tournament_code:
-        cfdi_filters.append(
-            "UPPER(COALESCE(l.tournament_code, '')) = UPPER(:cfdi_tournament_code)"
-        )
-        cfdi_params["cfdi_tournament_code"] = tournament_code
-    if income_phase_filter_sql:
-        cfdi_filters.append(income_phase_filter_sql)
-        if "phase_pattern" in params:
-            cfdi_params["phase_pattern"] = params["phase_pattern"]
-
-    cfdi_income_rows = (
-        (
-            await session.execute(
-                text(
-                    f"""
-                SELECT
-                    COALESCE(CAST(b.budget_concept_id AS text), CAST(l.budget_concept_id AS text), :unassigned_key) AS concept_key,
-                    LEAST(52, CASE WHEN (b.income_date)::date < (DATE_TRUNC('year', (b.income_date)::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int END)) THEN 1 ELSE 2 + FLOOR(((b.income_date)::date - (DATE_TRUNC('year', (b.income_date)::date)::date + (CASE WHEN EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int = 1 THEN 7 ELSE 8 - EXTRACT(ISODOW FROM DATE_TRUNC('year', (b.income_date)::date)::date)::int END))) / 7)::int END) AS month_number,
-                    COALESCE(SUM(b.amount), 0) AS income_total
-                FROM budget_cfdi_income_links b
-                JOIN budget_lines l ON l.id = b.budget_line_id
-                WHERE {' AND '.join(cfdi_filters)}
-                GROUP BY 1, 2
-                """
-                ),
-                cfdi_params,
-            )
-        )
-        .mappings()
-        .all()
-    )
-    for row in cfdi_income_rows:
-        _merge_monthly_actual(
-            store,
-            concept_key=_safe_str(row["concept_key"]) or _UNASSIGNED_BUDGET_CONCEPT_KEY,
-            month_number=int(row["month_number"] or 0),
-            real_income=_safe_decimal(row["income_total"]),
-        )
-
-    return {key: dict(months) for key, months in store.items()}
+    return snapshot["monthly"]
 
 
 async def resolve_budget_tournament_context(
