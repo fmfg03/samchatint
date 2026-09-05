@@ -726,6 +726,9 @@ def _build_budget_scope_filters(
     document_tournament_id_sql: str = "d.torneo_id",
     expense_tournament_id_sql: str = "d.torneo_id",
 ) -> tuple[list[str], list[str], dict[str, Any]]:
+    tournament_scope_requested = bool(
+        _safe_str(tournament_name) or _safe_str(tournament_code)
+    )
     aliases = budget_alias_candidates(
         _safe_str(tournament_name),
         _safe_str(tournament_code),
@@ -765,6 +768,9 @@ def _build_budget_scope_filters(
             )
         document_filter.append(f"({' OR '.join(alias_clauses)})")
         expense_filter.append(f"({' OR '.join(expense_alias_clauses)})")
+    elif tournament_scope_requested:
+        document_filter.append("FALSE")
+        expense_filter.append("FALSE")
     return document_filter, expense_filter, params
 
 
@@ -6873,6 +6879,9 @@ async def build_budget_actuals_snapshot(
     remain commitments; paid documents without one are surfaced as pending
     accounting instead of being converted into an estimated tax base.
     """
+    tournament_scope_requested = bool(
+        _safe_str(tournament_name) or _safe_str(tournament_code)
+    )
     aliases = sorted(
         budget_alias_candidates(
             _safe_str(tournament_name),
@@ -6893,6 +6902,7 @@ async def build_budget_actuals_snapshot(
         "tournament_id": _safe_str(tournament_id),
         "tournament_aliases": aliases,
         "tournament_alias_patterns": alias_patterns,
+        "tournament_scope_requested": tournament_scope_requested,
         "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
         "result_account_pattern": _ACCOUNTING_RESULT_ACCOUNT_PATTERN,
     }
@@ -7098,20 +7108,32 @@ async def build_budget_actuals_snapshot(
                         OR (
                             NULLIF(:tournament_id, '') IS NULL
                             AND (
-                                COALESCE(
-                                    cardinality(
-                                        CAST(:tournament_aliases AS text[])
-                                    ),
-                                    0
-                                ) = 0
-                                OR UPPER(COALESCE(scoped.tournament_code, ''))
-                                    = ANY(
-                                        CAST(:tournament_aliases AS text[])
+                                NOT CAST(
+                                    :tournament_scope_requested AS boolean
+                                )
+                                OR (
+                                    COALESCE(
+                                        cardinality(
+                                            CAST(:tournament_aliases AS text[])
+                                        ),
+                                        0
+                                    ) > 0
+                                    AND (
+                                        UPPER(COALESCE(
+                                            scoped.tournament_code, ''
+                                        )) = ANY(
+                                            CAST(:tournament_aliases AS text[])
+                                        )
+                                        OR LOWER(COALESCE(
+                                            scoped.tournament_name, ''
+                                        )) LIKE ANY(
+                                            CAST(
+                                                :tournament_alias_patterns
+                                                AS text[]
+                                            )
+                                        )
                                     )
-                                OR LOWER(COALESCE(scoped.tournament_name, ''))
-                                    LIKE ANY(
-                                        CAST(:tournament_alias_patterns AS text[])
-                                    )
+                                )
                             )
                         )
                       )
@@ -7277,6 +7299,16 @@ async def build_budget_actuals_snapshot(
     ]
     if tournament_id:
         income_filters.append("l.tournament_id = CAST(:tournament_id AS uuid)")
+    elif tournament_scope_requested:
+        if aliases:
+            income_filters.append(
+                "(UPPER(COALESCE(l.tournament_code, '')) = "
+                "ANY(CAST(:tournament_aliases AS text[])) OR "
+                "LOWER(COALESCE(l.tournament_name, '')) LIKE "
+                "ANY(CAST(:tournament_alias_patterns AS text[])))"
+            )
+        else:
+            income_filters.append("FALSE")
     if clean_phase == "__general__":
         income_filters.append("COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''")
     elif clean_phase:
@@ -7324,6 +7356,16 @@ async def build_budget_actuals_snapshot(
     ]
     if tournament_id:
         cfdi_filters.append("b.tournament_id = CAST(:tournament_id AS uuid)")
+    elif tournament_scope_requested:
+        if aliases:
+            cfdi_filters.append(
+                "(UPPER(COALESCE(l.tournament_code, '')) = "
+                "ANY(CAST(:tournament_aliases AS text[])) OR "
+                "LOWER(COALESCE(l.tournament_name, '')) LIKE "
+                "ANY(CAST(:tournament_alias_patterns AS text[])))"
+            )
+        else:
+            cfdi_filters.append("FALSE")
     if clean_phase == "__general__":
         cfdi_filters.append("COALESCE(NULLIF(TRIM(l.phase), ''), '') = ''")
     elif clean_phase:

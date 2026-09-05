@@ -238,13 +238,20 @@ async def test_accounting_actuals_scope_aliases_without_tournament_id() -> None:
 
     class _Session:
         async def execute(self, statement, params=None):
-            if "WITH candidate_lines AS" in str(statement):
-                assert "CAST(:tournament_aliases AS text[])" in str(statement)
+            sql = str(statement)
+            if "WITH candidate_lines AS" in sql:
+                assert "CAST(:tournament_aliases AS text[])" in sql
                 assert params["tournament_id"] == ""
                 assert params["tournament_aliases"] == ["LTTB"]
                 assert "%liga telmex telcel%" in params[
                     "tournament_alias_patterns"
                 ]
+            if "FROM budget_income_bridge" in sql:
+                assert "l.tournament_code" in sql
+                assert "l.tournament_name" in sql
+            if "FROM budget_cfdi_income_links" in sql:
+                assert "l.tournament_code" in sql
+                assert "l.tournament_name" in sql
             return _Result()
 
     await build_budget_monthly_actuals(
@@ -253,6 +260,45 @@ async def test_accounting_actuals_scope_aliases_without_tournament_id() -> None:
         version_id="11111111-1111-1111-1111-111111111111",
         tournament_name="Liga Telmex Telcel de Beisbol",
     )
+
+
+@pytest.mark.asyncio
+async def test_unknown_tournament_alias_fails_closed() -> None:
+    observed_sql: list[str] = []
+
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            sql = str(statement)
+            observed_sql.append(sql)
+            if "WITH candidate_lines AS" in sql:
+                assert params["tournament_scope_requested"] is True
+                assert params["tournament_aliases"] == []
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_name="Torneo desconocido",
+    )
+
+    ledger_sql = next(sql for sql in observed_sql if "WITH candidate_lines AS" in sql)
+    document_sql = next(sql for sql in observed_sql if "FROM documentos d" in sql)
+    income_sql = next(sql for sql in observed_sql if "FROM budget_income_bridge" in sql)
+    cfdi_sql = next(
+        sql for sql in observed_sql if "FROM budget_cfdi_income_links" in sql
+    )
+    assert ":tournament_scope_requested" in ledger_sql
+    assert "AND FALSE" in document_sql
+    assert "AND FALSE" in income_sql
+    assert "AND FALSE" in cfdi_sql
 
 
 @pytest.mark.asyncio
