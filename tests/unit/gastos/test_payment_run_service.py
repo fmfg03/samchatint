@@ -1,9 +1,13 @@
 from types import SimpleNamespace
 from uuid import uuid4
 
+import pytest
+
 from devnous.gastos.services.payment_run_service import (
     DEFAULT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS,
     DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS,
+    PaymentRunValidationError,
+    _document_amount,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
     configured_payment_run_payment_confirmer_ids,
@@ -107,3 +111,29 @@ def test_payment_run_payment_confirmer_ids_accept_env_key(monkeypatch) -> None:
     )
 
     assert str(empleado_id) in configured_payment_run_payment_confirmer_ids()
+
+
+def test_payment_run_reimbursement_requires_final_total() -> None:
+    document = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="S-260005",
+        concepto_pago="Reembolso de saldo a favor - I-235650",
+        monto_total=None,
+        monto_solicitado=56020,
+    )
+
+    with pytest.raises(PaymentRunValidationError, match="sin monto_total"):
+        _document_amount(document)
+
+    document.monto_total = 48120
+    assert _document_amount(document) == 48120
+
+
+def test_payment_run_ordinary_request_prefers_final_total() -> None:
+    document = SimpleNamespace(
+        concepto_pago="Pago a tercero",
+        monto_total=120,
+        monto_solicitado=150,
+    )
+
+    assert _document_amount(document) == 120

@@ -128,9 +128,10 @@ def test_budget_actual_queries_enforce_reconciliation_precedence():
     assert "apl.cuenta_codigo ~ :result_account_pattern" in snapshot_block
     assert "ledger_document_ids" in snapshot_block
     assert 'kind = "pending_accounting"' in snapshot_block
-    assert 'clause != "d.tipo = \'SOLICITUD\'"' in snapshot_block
-    assert "_budget_document_base_amount_sql" not in snapshot_block
-    assert "_budget_expense_base_amount_sql" not in snapshot_block
+    assert "_BUDGET_COMMITMENT_DOCUMENT_STATES" in snapshot_block
+    assert "_BUDGET_TERMINAL_DOCUMENT_STATES" in snapshot_block
+    assert "_budget_document_base_amount_sql" in snapshot_block
+    assert "_budget_expense_base_amount_sql" in snapshot_block
     assert "ap.origen = 'cxc_cfdi_income'" in snapshot_block
     assert "Reembolso de saldo a favor%" in source
 
@@ -168,6 +169,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "fecha_poliza": date(2026, 8, 20),
                             "cuenta_codigo": "5300-012-002",
                             "document_id": "document-1",
+                            "document_state": "pagado",
                             "expense_id": "expense-1",
                             "debe": 94.43,
                             "haber": 0,
@@ -181,6 +183,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "fecha_poliza": date(2026, 8, 20),
                             "cuenta_codigo": "5300-012-002",
                             "document_id": "document-1",
+                            "document_state": "pagado",
                             "expense_id": "expense-2",
                             "debe": 3871.68,
                             "haber": 0,
@@ -194,6 +197,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "fecha_poliza": date(2026, 8, 20),
                             "cuenta_codigo": "5300-012-002",
                             "document_id": "document-1",
+                            "document_state": "pagado",
                             "expense_id": "expense-3",
                             "debe": 432.80,
                             "haber": 0,
@@ -207,6 +211,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "fecha_poliza": date(2026, 8, 20),
                             "cuenta_codigo": "4100-001",
                             "document_id": "document-2",
+                            "document_state": None,
                             "expense_id": None,
                             "debe": 0,
                             "haber": 250,
@@ -220,6 +225,7 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "fecha_poliza": date(2026, 8, 20),
                             "cuenta_codigo": "5500-001",
                             "document_id": "document-3",
+                            "document_state": "pagado",
                             "expense_id": "expense-4",
                             "debe": 50,
                             "haber": 0,
@@ -239,6 +245,403 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
     week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
     assert actuals["report-concept"][week]["real_expense_cash"] == 4448.91
     assert actuals["report-concept"][week]["real_income"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_approved_document_ledger_line_remains_committed() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "WITH candidate_lines AS" not in str(statement):
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "concept_key": "concept-1",
+                        "accounting_line_id": "line-1",
+                        "poliza_id": "poliza-1",
+                        "numero_poliza": "EG-1",
+                        "origen": "informe_aprobado",
+                        "fecha_poliza": date(2026, 8, 20),
+                        "cuenta_codigo": "5300-012-002",
+                        "document_id": "document-1",
+                        "document_state": "aprobado",
+                        "expense_id": "expense-1",
+                        "debe": 500,
+                        "haber": 0,
+                    }
+                ]
+            )
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
+    assert actuals["concept-1"][week]["committed_unpaid"] == 500.0
+    assert actuals["concept-1"][week]["real_expense_cash"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_commitment_date_outside_edition_uses_posting_date() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "WITH candidate_lines AS" not in str(statement):
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "concept_key": "concept-1",
+                        "fecha_poliza": date(2026, 8, 20),
+                        "cuenta_codigo": "5300-012-002",
+                        "document_id": "document-1",
+                        "document_type": "SOLICITUD",
+                        "document_state": "aprobado",
+                        "document_commitment_at": date(2025, 12, 20),
+                        "debe": 500,
+                        "haber": 0,
+                    }
+                ]
+            )
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    posting_week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
+    assert actuals["concept-1"][posting_week]["committed_unpaid"] == 500.0
+
+
+@pytest.mark.asyncio
+async def test_settled_approved_report_ledger_is_real_expense() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "WITH candidate_lines AS" not in str(statement):
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "concept_key": "concept-1",
+                        "fecha_poliza": date(2026, 8, 20),
+                        "cuenta_codigo": "5300-012-002",
+                        "document_id": "report-1",
+                        "document_type": "INFORME",
+                        "document_state": "aprobado",
+                        "settlement_at": date(2026, 9, 2),
+                        "debe": 500,
+                        "haber": 0,
+                    }
+                ]
+            )
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    settlement_week = budgets_service._budget_week_number(date(2026, 9, 2), 2026)
+    assert actuals["concept-1"][settlement_week]["real_expense_cash"] == 500.0
+    assert actuals["concept-1"][settlement_week]["committed_unpaid"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_unassigned_ledger_expense_does_not_affect_budget_totals() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "WITH candidate_lines AS" not in str(statement):
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "concept_key": "__unassigned__",
+                        "accounting_line_id": "line-1",
+                        "poliza_id": "poliza-1",
+                        "numero_poliza": "EG-1",
+                        "origen": "informe_pagado",
+                        "fecha_poliza": date(2026, 8, 20),
+                        "cuenta_codigo": "5300-012-002",
+                        "document_id": "document-1",
+                        "document_state": "pagado",
+                        "expense_id": "expense-1",
+                        "debe": 500,
+                        "haber": 0,
+                    }
+                ]
+            )
+
+    snapshot = await build_budget_actuals_snapshot(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    assert "__unassigned__" not in snapshot["monthly"]
+    assert snapshot["movements"][0]["kind"] == "pending_budget_assignment"
+
+
+@pytest.mark.asyncio
+async def test_reimbursement_ledger_line_does_not_duplicate_report_budget() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "WITH candidate_lines AS" not in str(statement):
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "concept_key": "concept-1",
+                        "accounting_line_id": "line-1",
+                        "poliza_id": "poliza-1",
+                        "numero_poliza": "EG-1",
+                        "origen": "reembolso_pagado",
+                        "fecha_poliza": date(2026, 8, 20),
+                        "cuenta_codigo": "5300-012-002",
+                        "document_id": "reimbursement-1",
+                        "document_state": "pagado",
+                        "document_payment_concept": (
+                            "Reembolso de saldo a favor - I-764369"
+                        ),
+                        "expense_id": None,
+                        "debe": 500,
+                        "haber": 0,
+                    }
+                ]
+            )
+
+    snapshot = await build_budget_actuals_snapshot(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    assert "concept-1" not in snapshot["monthly"]
+    assert snapshot["movements"][0]["kind"] == "excluded_reimbursement"
+
+
+@pytest.mark.asyncio
+async def test_budget_assigned_submitted_request_is_committed() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "FROM documentos d" not in sql:
+                return _Result([])
+            return _Result(
+                [
+                    {
+                        "document_id": "request-1",
+                        "document_reference": "S-26000128",
+                        "operation_reference": "128",
+                        "document_state": "enviado",
+                        "document_type": "SOLICITUD",
+                        "movement_concept": "Hospedaje",
+                        "budget_concept_id": "concept-1",
+                        "budget_concept_name": "Hospedaje",
+                        "effective_phase": "Estatal",
+                        "amount": 1250,
+                        "creado_en": date(2026, 2, 1),
+                        "enviado_en": date(2026, 2, 2),
+                        "aprobado_en": None,
+                        "pagado_en": None,
+                        "fecha_pago": None,
+                    }
+                ]
+            )
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    week = budgets_service._budget_week_number(date(2026, 2, 2), 2026)
+    assert actuals["concept-1"][week]["committed_unpaid"] == 1250.0
+    assert actuals["concept-1"][week]["real_expense_cash"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_report_commitment_is_split_across_expense_budget_concepts() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            if "JOIN LATERAL" not in str(statement):
+                return _Result([])
+            base = {
+                "document_id": "report-1",
+                "document_reference": "I-360002",
+                "operation_reference": "101",
+                "document_state": "aprobado",
+                "document_type": "INFORME",
+                "effective_phase": "Estatal",
+                "expense_date": date(2026, 2, 10),
+                "creado_en": date(2025, 12, 28),
+                "enviado_en": date(2025, 12, 29),
+                "aprobado_en": date(2025, 12, 30),
+                "pagado_en": None,
+                "fecha_pago": None,
+            }
+            return _Result(
+                [
+                    {
+                        **base,
+                        "expense_id": "expense-1",
+                        "movement_concept": "Gasolina",
+                        "budget_concept_id": "concept-gas",
+                        "budget_concept_name": "Gasolina",
+                        "amount": 500,
+                    },
+                    {
+                        **base,
+                        "expense_id": "expense-2",
+                        "movement_concept": "Medicinas",
+                        "budget_concept_id": "concept-med",
+                        "budget_concept_name": "Medicinas",
+                        "amount": 300,
+                    },
+                ]
+            )
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    week = budgets_service._budget_week_number(date(2026, 2, 10), 2026)
+    assert actuals["concept-gas"][week]["committed_unpaid"] == 500.0
+    assert actuals["concept-med"][week]["committed_unpaid"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_linked_request_and_report_are_not_both_committed() -> None:
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "WITH candidate_lines AS" in sql:
+                return _Result([])
+            if "FROM documentos d" in sql:
+                return _Result(
+                    [
+                        {
+                            "document_id": "request-1",
+                            "document_state": "aprobado",
+                            "document_type": "SOLICITUD",
+                            "budget_concept_id": "request-concept",
+                            "amount": 1000,
+                            "creado_en": date(2026, 2, 1),
+                            "enviado_en": date(2026, 2, 2),
+                        }
+                    ]
+                )
+            if "JOIN LATERAL" in sql:
+                assert "SELECT COUNT(*)" in sql
+                return _Result(
+                    [
+                        {
+                            "expense_id": "expense-1",
+                            "document_id": "report-1",
+                            "solicitud_documento_id": "request-1",
+                            "document_state": "aprobado",
+                            "document_type": "INFORME",
+                            "budget_concept_id": "report-concept",
+                            "amount": 1000,
+                            "creado_en": date(2026, 2, 1),
+                            "enviado_en": date(2026, 2, 2),
+                        }
+                    ]
+                )
+            return _Result([])
+
+    actuals = await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+    )
+
+    week = budgets_service._budget_week_number(date(2026, 2, 2), 2026)
+    assert actuals["request-concept"][week]["committed_unpaid"] == 1000.0
+    assert "report-concept" not in actuals
 
 
 @pytest.mark.asyncio
@@ -359,9 +762,10 @@ def test_budget_actual_queries_do_not_calculate_a_tax_base():
     assert "accounting_poliza_lines" in monthly_block
     assert re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5500-001")
     assert not re.match(budgets_service._ACCOUNTING_RESULT_ACCOUNT_PATTERN, "5700-001")
-    assert "LEFT JOIN cfdi_reports" not in monthly_block
+    assert "LEFT JOIN cfdi_reports" in monthly_block
     assert "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id" in comparison_block
-    assert "cfdi.subtotal" not in monthly_block
+    assert "_budget_document_base_amount_sql('d', 'document_cfdi')" in monthly_block
+    assert "_budget_expense_base_amount_sql('e', 'expense_cfdi')" in monthly_block
     assert "COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total" not in comparison_block
     assert "1.16" not in monthly_block
     assert "1.16" not in comparison_block
@@ -433,6 +837,29 @@ async def test_advanced_documents_without_result_poliza_are_pending_not_real():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
+            if "JOIN LATERAL" in sql:
+                return _Result(
+                    [
+                        {
+                            "expense_id": "expense-report-1",
+                            "document_id": "report-approved",
+                            "document_reference": "I-909645",
+                            "operation_reference": "29",
+                            "document_state": "aprobado",
+                            "document_type": "INFORME",
+                            "movement_concept": "Hospedaje",
+                            "budget_concept_id": "report-concept",
+                            "budget_concept_name": "Hospedaje",
+                            "effective_phase": "Estatal",
+                            "amount": 2400,
+                            "creado_en": date(2026, 2, 4),
+                            "enviado_en": date(2026, 2, 5),
+                            "aprobado_en": date(2026, 2, 6),
+                            "pagado_en": None,
+                            "fecha_pago": None,
+                        }
+                    ]
+                )
             if "FROM documentos d" in sql:
                 return _Result(
                     [
@@ -452,22 +879,6 @@ async def test_advanced_documents_without_result_poliza_are_pending_not_real():
                             "pagado_en": date(2026, 2, 3),
                             "fecha_pago": date(2026, 2, 3),
                         },
-                        {
-                            "document_id": "report-approved",
-                            "document_reference": "I-909645",
-                            "operation_reference": "29",
-                            "document_state": "aprobado",
-                            "document_type": "INFORME",
-                            "movement_concept": None,
-                            "budget_concept_id": None,
-                            "budget_concept_name": None,
-                            "effective_phase": "Estatal",
-                            "amount": 2400,
-                            "creado_en": date(2026, 2, 4),
-                            "aprobado_en": date(2026, 2, 5),
-                            "pagado_en": None,
-                            "fecha_pago": None,
-                        },
                     ]
                 )
             return _Result([])
@@ -480,9 +891,13 @@ async def test_advanced_documents_without_result_poliza_are_pending_not_real():
     )
 
     assert "concept-1" not in snapshot["monthly"]
+    report_week = budgets_service._budget_week_number(date(2026, 2, 5), 2026)
+    assert snapshot["monthly"]["report-concept"][report_week][
+        "committed_unpaid"
+    ] == 2400.0
     assert [item["kind"] for item in snapshot["movements"]] == [
         "pending_accounting",
-        "pending_accounting",
+        "commitment",
     ]
     assert [item["amount"] for item in snapshot["movements"]] == [1000.0, 2400.0]
 

@@ -183,6 +183,7 @@ from ..services.documento_workflow_service import (
 from ..services.reimbursement_payment_run_service import (
     ensure_approved_informe_reimbursement_for_payment_run,
 )
+from ..services.document_amount_service import resolve_payable_document_amount
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
 from .admin_budget_ui import render_cfdi_income_bridge_panel
 from ..services.cfdi_income_bridge_service import (
@@ -21295,13 +21296,9 @@ async def contabilidad_cuentas_por_pagar_view(
 
 
 def _cashflow_document_total(documento: Documento) -> float:
-    """Use the final document total, falling back only when it is absent."""
-    amount = (
-        documento.monto_total
-        if documento.monto_total is not None
-        else documento.monto_solicitado
-    )
-    return float(amount or 0)
+    """Use the canonical payable amount; invalid reimbursements contribute zero."""
+    amount = resolve_payable_document_amount(documento)
+    return float(amount) if amount is not None else 0.0
 
 
 @router.get("/admin/contabilidad/cash-flow", response_class=HTMLResponse)

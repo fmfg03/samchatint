@@ -9,6 +9,27 @@ from fastapi import HTTPException
 from devnous.gastos.routes import admin_routes
 
 
+def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
+    document_id = uuid4()
+    html = admin_routes._render_payment_run_items(
+        [
+            {
+                "id": document_id,
+                "numero_referencia": "S-260005",
+                "concepto_pago": "Reembolso de saldo a favor",
+                "monto": Decimal("0.00"),
+                "currency": "MXN",
+                "status": "programada",
+                "can_close": False,
+                "amount_issue": "Reembolso sin monto_total; requiere conciliacion.",
+            }
+        ]
+    )
+
+    assert "requiere conciliacion" in html
+    assert f'name="document_ids" value="{document_id}"' not in html
+
+
 @pytest.mark.asyncio
 async def test_payment_run_page_rejects_non_finance_non_manager() -> None:
     with pytest.raises(HTTPException) as exc:
