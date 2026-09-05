@@ -6860,6 +6860,15 @@ async def build_budget_monthly_plan_rollups(
 _ACCOUNTING_RESULT_ACCOUNT_PATTERN = (
     r"^(4100|5[1-6]00|6[0-9]{3}|7[0-9]{3})(-|$)"
 )
+_BUDGET_COMMITMENT_DOCUMENT_STATES = {"enviado", "aprobado", "en_proceso_pago"}
+_BUDGET_TERMINAL_DOCUMENT_STATES = {
+    "pagado",
+    "cerrado",
+    "comprobado",
+    "reembolsado",
+    "aplicado",
+    "liquidado",
+}
 
 
 async def build_budget_actuals_snapshot(
@@ -6875,9 +6884,9 @@ async def build_budget_actuals_snapshot(
     """Return budget actuals backed by balanced accounting result lines.
 
     Result-account lines are the only source of ``real_expense_cash`` and
-    ledger-backed ``real_income``. Approved requests without a result posting
-    remain commitments; paid documents without one are surfaced as pending
-    accounting instead of being converted into an estimated tax base.
+    ledger-backed ``real_income``. Lines tied to non-terminal documents remain
+    commitments. Terminal documents without a result posting are surfaced as
+    pending accounting instead of being converted into an estimated tax base.
     """
     tournament_scope_requested = bool(
         _safe_str(tournament_name) or _safe_str(tournament_code)
@@ -7033,6 +7042,23 @@ async def build_budget_actuals_snapshot(
                             ) AS operation_reference,
                             COALESCE(raw_doc.estado, informe_doc.estado,
                                 solicitud_doc.estado, expense_doc.estado) AS document_state,
+                            COALESCE(
+                                raw_doc.concepto_pago,
+                                informe_doc.concepto_pago,
+                                solicitud_doc.concepto_pago,
+                                expense_doc.concepto_pago,
+                                ''
+                            ) AS document_payment_concept,
+                            COALESCE(
+                                raw_doc.enviado_en,
+                                informe_doc.enviado_en,
+                                solicitud_doc.enviado_en,
+                                expense_doc.enviado_en,
+                                raw_doc.aprobado_en,
+                                informe_doc.aprobado_en,
+                                solicitud_doc.aprobado_en,
+                                expense_doc.aprobado_en
+                            ) AS document_commitment_at,
                             COALESCE(e.concepto, extracted.concepto) AS movement_concept,
                             COALESCE(bc.concept_name, bl.concept_name) AS budget_concept_name,
                             COALESCE(t.name, bc.tournament_name) AS tournament_name,
@@ -7093,6 +7119,8 @@ async def build_budget_actuals_snapshot(
                         scoped.document_reference,
                         scoped.operation_reference,
                         scoped.document_state,
+                        scoped.document_payment_concept,
+                        scoped.document_commitment_at,
                         scoped.movement_concept,
                         scoped.budget_concept_name,
                         scoped.effective_phase,
@@ -7175,49 +7203,97 @@ async def build_budget_actuals_snapshot(
         if abs(amount) < 0.005:
             continue
         concept_key = _safe_str(row.get("concept_key")) or _UNASSIGNED_BUDGET_CONCEPT_KEY
-        week = _budget_week_number(row.get("fecha_poliza"), edition_year)
-        _merge_monthly_actual(
-            store,
-            concept_key=concept_key,
-            month_number=week,
-            real_income=amount if is_income else 0,
-            real_expense_cash=0 if is_income else amount,
-        )
         document_id = _safe_str(row.get("document_id"))
-        if document_id:
+        document_state = _safe_str(row.get("document_state")).lower()
+        is_reimbursement = _safe_str(
+            row.get("document_payment_concept")
+        ).lower().startswith("reembolso de saldo a favor")
+        recognition_date = row.get("fecha_poliza")
+        if document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
+            recognition_date = row.get("document_commitment_at") or recognition_date
+        week = _budget_week_number(recognition_date, edition_year)
+        if document_id and not is_income:
             ledger_document_ids.add(document_id)
+        if is_income:
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                real_income=amount,
+            )
+            kind = "ledger_income"
+            reason = "Póliza contable balanceada"
+        elif is_reimbursement:
+            kind = "excluded_reimbursement"
+            reason = "Solicitud de reembolso representada por su informe"
+        elif concept_key == _UNASSIGNED_BUDGET_CONCEPT_KEY:
+            kind = "pending_budget_assignment"
+            reason = "Póliza sin partida presupuestal asignada"
+        elif document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                committed_unpaid=amount,
+            )
+            kind = "commitment"
+            reason = "Póliza de resultados vinculada a documento no terminal"
+        elif (
+            not document_id
+            or not document_state
+            or document_state in _BUDGET_TERMINAL_DOCUMENT_STATES
+        ):
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                real_expense_cash=amount,
+            )
+            kind = "ledger_expense"
+            reason = "Póliza contable balanceada de documento terminal"
+        else:
+            kind = "excluded_state"
+            reason = "Póliza vinculada a documento fuera del ciclo presupuestal"
         movements.append(
             {
                 **row,
-                "kind": "ledger_income" if is_income else "ledger_expense",
+                "kind": kind,
                 "amount": round(amount, 2),
                 "month_number": week,
-                "reason": "Póliza contable balanceada",
+                "reason": reason,
             }
         )
 
-    document_filter, _, document_params = _build_budget_scope_filters(
+    document_filter, expense_filter, document_params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
         document_tournament_id_sql="COALESCE(d.torneo_id, document_cuenta.torneo_id)",
-        expense_tournament_id_sql="d.torneo_id",
+        expense_tournament_id_sql=(
+            "COALESCE(d.torneo_id, expense_cuenta.torneo_id)"
+        ),
     )
-    document_filter = [
-        clause for clause in document_filter if clause != "d.tipo = 'SOLICITUD'"
-    ]
     if clean_phase:
         document_phase_sql = (
             "COALESCE(NULLIF(TRIM(d.fase), ''), "
             "NULLIF(TRIM(document_cuenta.fase), ''), '')"
         )
+        expense_phase_sql = (
+            "COALESCE(NULLIF(TRIM(e.fase_torneo), ''), "
+            "NULLIF(TRIM(d.fase), ''), "
+            "NULLIF(TRIM(expense_cuenta.fase), ''), '')"
+        )
         if clean_phase == "__general__":
             document_filter.append(f"{document_phase_sql} = ''")
+            expense_filter.append(f"{expense_phase_sql} = ''")
         else:
             document_params["phase_pattern"] = params["phase_pattern"]
             document_filter.append(
                 f"LOWER({document_phase_sql}) LIKE :phase_pattern"
+            )
+            expense_filter.append(
+                f"LOWER({expense_phase_sql}) LIKE :phase_pattern"
             )
     document_rows = (
         (
@@ -7234,8 +7310,10 @@ async def build_budget_actuals_snapshot(
                         d.budget_concept_id::text AS budget_concept_id,
                         bc.concept_name AS budget_concept_name,
                         COALESCE(d.fase, document_cuenta.fase) AS effective_phase,
-                        COALESCE(d.monto_total, d.monto_solicitado, 0) AS amount,
+                        {_budget_document_base_amount_sql('d', 'document_cfdi')}
+                            AS amount,
                         d.creado_en,
+                        d.enviado_en,
                         d.aprobado_en,
                         d.pagado_en,
                         d.fecha_pago
@@ -7246,11 +7324,15 @@ async def build_budget_actuals_snapshot(
                         d.torneo_id, document_cuenta.torneo_id
                     )
                     LEFT JOIN budget_concepts bc ON bc.id = d.budget_concept_id
+                    LEFT JOIN cfdi_reports document_cfdi
+                      ON document_cfdi.id = d.cfdi_report_id
                     WHERE {' AND '.join(document_filter)}
-                      AND d.tipo IN ('SOLICITUD', 'INFORME')
-                      AND d.estado IN ('aprobado', 'pagado', 'cerrado')
-                      AND COALESCE(d.concepto_pago, '')
-                        NOT ILIKE 'Reembolso de saldo a favor%'
+                      AND d.budget_concept_id IS NOT NULL
+                      AND d.estado IN (
+                          'enviado', 'aprobado', 'en_proceso_pago',
+                          'pagado', 'cerrado', 'comprobado', 'reembolsado',
+                          'aplicado', 'liquidado'
+                      )
                     ORDER BY d.creado_en, d.numero_referencia
                     """
                 ),
@@ -7265,20 +7347,33 @@ async def build_budget_actuals_snapshot(
         document_id = _safe_str(row.get("document_id"))
         if document_id in ledger_document_ids:
             continue
-        state = _safe_str(row.get("document_state"))
+        state = _safe_str(row.get("document_state")).lower()
         amount = _safe_decimal(row.get("amount"))
         concept_key = (
             _safe_str(row.get("budget_concept_id"))
             or _UNASSIGNED_BUDGET_CONCEPT_KEY
         )
-        recognition_date = (
-            row.get("fecha_pago")
-            or row.get("pagado_en")
-            or row.get("aprobado_en")
-            or row.get("creado_en")
-        )
+        if (
+            state in _BUDGET_COMMITMENT_DOCUMENT_STATES
+            and row.get("document_type") == "SOLICITUD"
+        ):
+            recognition_date = (
+                row.get("enviado_en")
+                or row.get("aprobado_en")
+                or row.get("creado_en")
+            )
+        else:
+            recognition_date = (
+                row.get("pagado_en")
+                or row.get("fecha_pago")
+                or row.get("aprobado_en")
+                or row.get("creado_en")
+            )
         week = _budget_week_number(recognition_date, edition_year)
-        if state == "aprobado" and row.get("document_type") == "SOLICITUD":
+        if (
+            state in _BUDGET_COMMITMENT_DOCUMENT_STATES
+            and row.get("document_type") == "SOLICITUD"
+        ):
             _merge_monthly_actual(
                 store,
                 concept_key=concept_key,
@@ -7286,10 +7381,135 @@ async def build_budget_actuals_snapshot(
                 committed_unpaid=amount,
             )
             kind = "commitment"
-            reason = "Solicitud aprobada pendiente de póliza contable"
+            reason = "Solicitud con presupuesto asignado pendiente de liquidación"
         else:
             kind = "pending_accounting"
             reason = "Documento avanzado sin póliza de resultados trazable"
+        movements.append(
+            {
+                **row,
+                "concept_key": concept_key,
+                "kind": kind,
+                "amount": round(amount, 2),
+                "month_number": week,
+                "reason": reason,
+                "accounting_line_id": None,
+                "poliza_id": None,
+                "numero_poliza": None,
+                "cuenta_codigo": None,
+            }
+        )
+
+    report_expense_rows = (
+        (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT
+                        e.id::text AS expense_id,
+                        d.id::text AS document_id,
+                        d.numero_referencia AS document_reference,
+                        d.referencia_operaciones AS operation_reference,
+                        d.estado AS document_state,
+                        d.tipo AS document_type,
+                        e.concepto AS movement_concept,
+                        e.budget_concept_id::text AS budget_concept_id,
+                        bc.concept_name AS budget_concept_name,
+                        COALESCE(
+                            e.fase_torneo, d.fase, expense_cuenta.fase
+                        ) AS effective_phase,
+                        {_budget_expense_base_amount_sql('e', 'expense_cfdi')}
+                            AS amount,
+                        d.creado_en,
+                        d.enviado_en,
+                        d.aprobado_en,
+                        d.pagado_en,
+                        d.fecha_pago
+                    FROM expense_reports e
+                    JOIN LATERAL (
+                        SELECT report.*
+                        FROM documentos report
+                        WHERE report.tipo = 'INFORME'
+                          AND (
+                              report.id = e.informe_documento_id
+                              OR report.id = e.documento_id
+                              OR (
+                                  e.cuenta_gastos_id IS NOT NULL
+                                  AND report.cuenta_gastos_id = e.cuenta_gastos_id
+                              )
+                          )
+                        ORDER BY
+                            CASE
+                                WHEN report.id = e.informe_documento_id THEN 0
+                                WHEN report.id = e.documento_id THEN 1
+                                ELSE 2
+                            END,
+                            report.creado_en ASC
+                        LIMIT 1
+                    ) d ON TRUE
+                    LEFT JOIN cuentas_de_gastos expense_cuenta
+                      ON expense_cuenta.id = COALESCE(
+                          e.cuenta_gastos_id, d.cuenta_gastos_id
+                      )
+                    LEFT JOIN tournaments t ON t.id = COALESCE(
+                        d.torneo_id, expense_cuenta.torneo_id
+                    )
+                    LEFT JOIN budget_concepts bc
+                      ON bc.id = e.budget_concept_id
+                    LEFT JOIN cfdi_reports expense_cfdi
+                      ON expense_cfdi.id = e.cfdi_report_id
+                    WHERE {' AND '.join(expense_filter)}
+                      AND e.budget_concept_id IS NOT NULL
+                      AND d.estado IN (
+                          'enviado', 'aprobado', 'en_proceso_pago',
+                          'pagado', 'cerrado', 'comprobado', 'reembolsado',
+                          'aplicado', 'liquidado'
+                      )
+                    ORDER BY d.creado_en, d.numero_referencia, e.fecha, e.id
+                    """
+                ),
+                document_params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    for raw_row in report_expense_rows:
+        row = dict(raw_row)
+        document_id = _safe_str(row.get("document_id"))
+        if document_id in ledger_document_ids:
+            continue
+        state = _safe_str(row.get("document_state")).lower()
+        amount = _safe_decimal(row.get("amount"))
+        concept_key = (
+            _safe_str(row.get("budget_concept_id"))
+            or _UNASSIGNED_BUDGET_CONCEPT_KEY
+        )
+        if state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
+            recognition_date = (
+                row.get("enviado_en")
+                or row.get("aprobado_en")
+                or row.get("creado_en")
+            )
+            week = _budget_week_number(recognition_date, edition_year)
+            _merge_monthly_actual(
+                store,
+                concept_key=concept_key,
+                month_number=week,
+                committed_unpaid=amount,
+            )
+            kind = "commitment"
+            reason = "Gasto de informe con presupuesto asignado"
+        else:
+            recognition_date = (
+                row.get("pagado_en")
+                or row.get("fecha_pago")
+                or row.get("aprobado_en")
+                or row.get("creado_en")
+            )
+            week = _budget_week_number(recognition_date, edition_year)
+            kind = "pending_accounting"
+            reason = "Informe terminal sin póliza de resultados trazable"
         movements.append(
             {
                 **row,

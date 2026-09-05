@@ -23,6 +23,10 @@ from devnous.gastos.services.customer_success_audit import (
     is_superadmin_role,
     record_customer_success_audit_event,
 )
+from devnous.gastos.services.document_amount_service import (
+    EMPLOYEE_REIMBURSEMENT_PREFIX,
+    resolve_payable_document_amount,
+)
 
 
 PAYMENT_RUN_MANAGER_ENV_KEYS = (
@@ -251,7 +255,14 @@ def _money(value: Any) -> Decimal:
 
 
 def _document_amount(documento: Documento) -> Decimal:
-    return _money(documento.monto_solicitado or documento.monto_total or 0)
+    amount = resolve_payable_document_amount(documento)
+    if amount is None:
+        reference = documento.numero_referencia or str(documento.id)
+        raise PaymentRunValidationError(
+            f"{reference} es un reembolso sin monto_total; "
+            "requiere conciliacion."
+        )
+    return amount
 
 
 async def ensure_payment_run_schema(session: AsyncSession) -> None:
@@ -393,7 +404,12 @@ async def list_payment_run_items(
                 d.pago_urgente,
                 d.concepto_pago,
                 d.currency,
-                COALESCE(d.monto_solicitado, d.monto_total, 0) AS monto,
+                CASE
+                    WHEN LOWER(TRIM(COALESCE(d.concepto_pago, '')))
+                         LIKE :reimbursement_prefix
+                    THEN d.monto_total
+                    ELSE COALESCE(d.monto_total, d.monto_solicitado, 0)
+                END AS monto,
                 e.nombre AS solicitante_nombre,
                 b.nombre AS beneficiario_nombre,
                 pc.nombre AS proveedor_nombre,
@@ -413,7 +429,10 @@ async def list_payment_run_items(
             LIMIT :limit
             """
         ),
-        params,
+        {
+            **params,
+            "reimbursement_prefix": f"{EMPLOYEE_REIMBURSEMENT_PREFIX}%",
+        },
     )
     rows = []
     for mapping in result.mappings().all():
@@ -422,6 +441,13 @@ async def list_payment_run_items(
         row["can_edit_fecha_pago"] = row["status"] in {"programada", "vencida"}
         row["can_close"] = row["status"] in {"programada", "vencida"}
         row["can_upload_payment_proof"] = row["status"] == "en proceso de pago"
+        row["amount_issue"] = (
+            "Reembolso sin monto_total; requiere conciliacion."
+            if row.get("monto") is None
+            else None
+        )
+        if row["amount_issue"]:
+            row["can_close"] = False
         row["monto"] = _money(row.get("monto"))
         rows.append(row)
     return rows

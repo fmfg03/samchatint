@@ -9206,6 +9206,15 @@ def _render_payment_run_items(
             else f"/documentos/{documento_id}"
         )
         type_label = "Préstamo" if entity_type == "prestamo" else "Solicitud"
+        amount_issue = str(row.get("amount_issue") or "").strip()
+        amount_html = _payment_run_money(
+            row.get("monto"), str(row.get("currency") or "MXN")
+        )
+        if amount_issue:
+            amount_html += (
+                '<div style="color:#991b1b;font-size:12px;font-weight:700;">'
+                f"{escape(amount_issue)}</div>"
+            )
         rendered_rows.append(
             f"""
             <tr>
@@ -9215,7 +9224,7 @@ def _render_payment_run_items(
                 <td>{escape(str(row.get("solicitante_nombre") or "-"))}</td>
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
                 <td data-sort-value="{escape(fecha_sort)}">{fecha_html}</td>
-                <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{amount_html}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
                 <td>{proof_html}</td>
                 <td>{closure_html}</td>

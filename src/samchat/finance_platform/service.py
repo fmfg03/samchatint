@@ -9,12 +9,22 @@ from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from devnous.gastos.services.document_amount_service import (
+    resolve_payable_document_amount,
+)
+
 
 def _safe_float(value: Any) -> float:
     try:
         return round(float(value or 0), 2)
     except (TypeError, ValueError):
         return 0.0
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return _safe_float(value)
 
 
 def _safe_str(value: Any) -> str:
@@ -123,7 +133,7 @@ async def build_finance_source_snapshot(
                 and_(Documento.creado_en >= start, Documento.creado_en < end),
                 and_(Documento.aprobado_en >= start, Documento.aprobado_en < end),
                 and_(Documento.pagado_en >= start, Documento.pagado_en < end),
-                Documento.estado.in_(["enviado", "aprobado"]),
+                Documento.estado.in_(["enviado", "aprobado", "en_proceso_pago"]),
             )
         )
         .order_by(Documento.creado_en.desc())
@@ -203,8 +213,11 @@ def _serialize_document(document: Any) -> dict[str, Any]:
         "tipo": getattr(document, "tipo", None),
         "numero_referencia": getattr(document, "numero_referencia", None),
         "estado": getattr(document, "estado", None),
-        "monto_total": _safe_float(getattr(document, "monto_total", None)),
-        "monto_solicitado": _safe_float(getattr(document, "monto_solicitado", None)),
+        "monto_total": _optional_float(getattr(document, "monto_total", None)),
+        "monto_solicitado": _optional_float(
+            getattr(document, "monto_solicitado", None)
+        ),
+        "concepto_pago": getattr(document, "concepto_pago", None),
         "creado_en": _iso(getattr(document, "creado_en", None)),
         "aprobado_en": _iso(getattr(document, "aprobado_en", None)),
         "pagado_en": _iso(getattr(document, "pagado_en", None)),
@@ -280,23 +293,33 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
         ref = _safe_str(document.get("numero_referencia")) or _safe_str(
             document.get("id")
         )
-        amount = _safe_float(
-            document.get("monto_total") or document.get("monto_solicitado")
-        )
+        resolved_amount = resolve_payable_document_amount(document)
+        amount = _safe_float(resolved_amount)
         if (
             tipo == "SOLICITUD"
             and estado == "aprobado"
             and not document.get("pagado_en")
         ):
-            actions.append(
-                _action_item(
-                    severity="high",
-                    module="Pagos",
-                    title=f"Pagar {tipo or 'documento'} {ref}",
-                    detail=f"Autorizado y no pagado por ${amount:,.2f}.",
-                    href=f"/admin/documentos/{document.get('id')}",
+            if resolved_amount is None:
+                actions.append(
+                    _action_item(
+                        severity="high",
+                        module="Pagos",
+                        title=f"Conciliar importe de {ref}",
+                        detail="Reembolso autorizado sin monto total final.",
+                        href=f"/admin/documentos/{document.get('id')}",
+                    )
                 )
-            )
+            else:
+                actions.append(
+                    _action_item(
+                        severity="high",
+                        module="Pagos",
+                        title=f"Pagar {tipo or 'documento'} {ref}",
+                        detail=f"Autorizado y no pagado por ${amount:,.2f}.",
+                        href=f"/admin/documentos/{document.get('id')}",
+                    )
+                )
         if (
             tipo == "INFORME"
             and estado in {"aprobado", "cerrado"}
@@ -405,13 +428,19 @@ def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
     approved_unpaid = [
         row
         for row in documents
-        if _safe_str(row.get("estado")).lower() == "aprobado"
+        if _safe_str(row.get("estado")).lower()
+        in {"aprobado", "en_proceso_pago"}
+        and _safe_str(row.get("tipo")).upper() == "SOLICITUD"
         and not row.get("pagado_en")
     ]
     paid_documents = [
         row
         for row in documents
-        if _safe_str(row.get("estado")).lower() == "pagado" or row.get("pagado_en")
+        if _safe_str(row.get("tipo")).upper() == "SOLICITUD"
+        and (
+            _safe_str(row.get("estado")).lower() == "pagado"
+            or row.get("pagado_en")
+        )
     ]
     income_polizas = [
         row
@@ -419,12 +448,11 @@ def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
         if _safe_str(row.get("tipo_poliza")).lower() in {"ig", "ingreso"}
     ]
     approved_unpaid_total = sum(
-        _safe_float(row.get("monto_total") or row.get("monto_solicitado"))
+        _safe_float(resolve_payable_document_amount(row))
         for row in approved_unpaid
     )
     paid_total = sum(
-        _safe_float(row.get("monto_total") or row.get("monto_solicitado"))
-        for row in paid_documents
+        _safe_float(resolve_payable_document_amount(row)) for row in paid_documents
     )
     income_total = sum(
         max(_safe_float(row.get("debe")), _safe_float(row.get("haber")))
@@ -523,26 +551,44 @@ def _build_tax_readiness(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_payment_run(snapshot: dict[str, Any]) -> dict[str, Any]:
-    payable = [
+    payable_candidates = [
         row
         for row in snapshot.get("documents") or []
-        if _safe_str(row.get("estado")).lower() == "aprobado"
+        if _safe_str(row.get("estado")).lower()
+        in {"aprobado", "en_proceso_pago"}
         and _safe_str(row.get("tipo")).upper() == "SOLICITUD"
         and not row.get("pagado_en")
     ]
-    payable_total = sum(
-        _safe_float(row.get("monto_total") or row.get("monto_solicitado"))
-        for row in payable
-    )
+    payable: list[dict[str, Any]] = []
+    inconsistencies: list[dict[str, Any]] = []
+    payable_total = 0.0
+    for row in payable_candidates:
+        amount = resolve_payable_document_amount(row)
+        if amount is None:
+            inconsistencies.append(
+                {
+                    **row,
+                    "reason": "Reembolso sin monto_total; requiere conciliacion.",
+                }
+            )
+            continue
+        payable.append(row)
+        payable_total += _safe_float(amount)
     return {
         "title": "Payment Run",
         "payable_count": len(payable),
         "payable_total": round(payable_total, 2),
         "items": payable[:20],
+        "amount_inconsistency_count": len(inconsistencies),
+        "amount_inconsistencies": inconsistencies[:20],
         "next_step": (
             "Registrar pago y generar póliza"
             if payable
-            else "Sin pagos autorizados pendientes"
+            else (
+                "Conciliar importes de reembolso"
+                if inconsistencies
+                else "Sin pagos autorizados pendientes"
+            )
         ),
     }
 
