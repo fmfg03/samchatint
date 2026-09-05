@@ -7477,6 +7477,7 @@ async def build_budget_actuals_snapshot(
                     f"""
                     SELECT
                         e.id::text AS expense_id,
+                        e.fecha AS expense_date,
                         d.id::text AS document_id,
                         e.solicitud_documento_id::text AS solicitud_documento_id,
                         d.numero_referencia AS document_reference,
@@ -7585,6 +7586,7 @@ async def build_budget_actuals_snapshot(
                 row.get("enviado_en"),
                 row.get("aprobado_en"),
                 row.get("creado_en"),
+                row.get("expense_date"),
             )
             week = _budget_week_number(recognition_date, edition_year)
             _merge_monthly_actual(
@@ -7603,6 +7605,7 @@ async def build_budget_actuals_snapshot(
                 row.get("fecha_pago"),
                 row.get("aprobado_en"),
                 row.get("creado_en"),
+                row.get("expense_date"),
             )
             week = _budget_week_number(recognition_date, edition_year)
             kind = "pending_accounting"

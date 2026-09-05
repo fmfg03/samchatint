@@ -544,9 +544,10 @@ async def test_report_commitment_is_split_across_expense_budget_concepts() -> No
                 "document_state": "aprobado",
                 "document_type": "INFORME",
                 "effective_phase": "Estatal",
-                "creado_en": date(2026, 2, 1),
-                "enviado_en": date(2026, 2, 2),
-                "aprobado_en": date(2026, 2, 3),
+                "expense_date": date(2026, 2, 10),
+                "creado_en": date(2025, 12, 28),
+                "enviado_en": date(2025, 12, 29),
+                "aprobado_en": date(2025, 12, 30),
                 "pagado_en": None,
                 "fecha_pago": None,
             }
@@ -577,7 +578,7 @@ async def test_report_commitment_is_split_across_expense_budget_concepts() -> No
         version_id="11111111-1111-1111-1111-111111111111",
     )
 
-    week = budgets_service._budget_week_number(date(2026, 2, 2), 2026)
+    week = budgets_service._budget_week_number(date(2026, 2, 10), 2026)
     assert actuals["concept-gas"][week]["committed_unpaid"] == 500.0
     assert actuals["concept-med"][week]["committed_unpaid"] == 300.0
 
