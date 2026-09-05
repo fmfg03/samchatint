@@ -65,6 +65,7 @@ CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos/versiones/create",
     "/admin/presupuestos/versiones/copy-forward",
     "/admin/presupuestos/versiones/{version_id}/lineas/create",
+    "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing",
     "/admin/presupuestos/versiones/{version_id}/transition",
     "/admin/presupuestos/versiones/{version_id}/update",
     "/admin/presupuestos/lineas/{line_id}/update",

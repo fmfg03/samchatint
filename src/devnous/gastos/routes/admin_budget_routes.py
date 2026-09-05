@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from samchat.budgets.service import (
     DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE,
     attach_cuenta_contable_to_budget_lines,
+    build_budget_actuals_snapshot,
     build_budget_monthly_actuals,
     build_budget_monthly_plan_rollups,
     build_budget_snapshot,
@@ -39,6 +40,7 @@ from samchat.budgets.service import (
     update_budget_concept,
     update_budget_line,
     update_budget_version_metadata,
+    upsert_budget_line_for_concept,
     validate_active_cuenta_contable_id,
 )
 from samchat.budgets.exporter import (
@@ -1148,6 +1150,68 @@ def register_presupuestos_routes(router) -> None:
                 status_code=303,
             )
 
+    @router.post(
+        "/admin/presupuestos/versiones/{version_id}/lineas/assign-existing"
+    )
+    async def admin_presupuestos_assign_existing_line(
+        version_id: UUIDType,
+        budget_concept_id: UUIDType = Form(...),
+        budget_amount: float = Form(...),
+        phase: Optional[str] = Form(None),
+        tournament_key: Optional[str] = Form(None),
+        edition_year: Optional[int] = Form(None),
+        budget_view: Optional[str] = Form("expenses"),
+        phase_filter: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            line = await upsert_budget_line_for_concept(
+                session,
+                version_id=str(version_id),
+                budget_concept_id=str(budget_concept_id),
+                budget_amount=budget_amount,
+                actor_empleado_id=str(current_empleado.id),
+                phase=phase,
+                line_direction="expense",
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    success_msg=(
+                        "Partida asignada al concepto existente: "
+                        f"{line.get('concept_name') or ''}"
+                    ),
+                ),
+                status_code=303,
+            )
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "Unexpected error assigning existing budget concept",
+                extra={
+                    "version_id": str(version_id),
+                    "budget_concept_id": str(budget_concept_id),
+                    "actor_id": str(getattr(current_empleado, "id", "")),
+                },
+            )
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    error_msg=_OPERATION_GENERIC_ERROR,
+                ),
+                status_code=303,
+            )
+
     @router.post("/admin/presupuestos/lineas/{line_id}/update")
     async def admin_presupuestos_update_line(
         request: Request,
@@ -1452,7 +1516,7 @@ def register_presupuestos_routes(router) -> None:
                 line["id"] for line in (filtered_expense_lines + filtered_income_lines)
             ],
         )
-        actuals_map = await build_budget_monthly_actuals(
+        actuals_snapshot = await build_budget_actuals_snapshot(
             session,
             edition_year=resolved_year,
             version_id=selected_version["id"],
@@ -1461,6 +1525,7 @@ def register_presupuestos_routes(router) -> None:
             tournament_code=tournament_ctx.get("tournament_code"),
             phase_filter=selected_phase_filter or None,
         )
+        actuals_map = actuals_snapshot["monthly"]
         access = _budget_access_map(current_empleado)
         rollups = await build_budget_monthly_plan_rollups(
             session,
@@ -1498,6 +1563,7 @@ def register_presupuestos_routes(router) -> None:
             filtered_expense_lines,
             plan_map=plan_map,
             actuals_map=actuals_map,
+            actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
             tournament_key=tournament_key,
             can_edit=bool(access.get("line_update")),
@@ -1514,6 +1580,7 @@ def register_presupuestos_routes(router) -> None:
             filtered_income_lines,
             plan_map=plan_map,
             actuals_map=actuals_map,
+            actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
             tournament_key=tournament_key,
             can_edit=bool(access.get("line_update")),

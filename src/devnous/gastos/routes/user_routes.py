@@ -21294,6 +21294,16 @@ async def contabilidad_cuentas_por_pagar_view(
     return HTMLResponse(content=html)
 
 
+def _cashflow_document_total(documento: Documento) -> float:
+    """Use the final document total, falling back only when it is absent."""
+    amount = (
+        documento.monto_total
+        if documento.monto_total is not None
+        else documento.monto_solicitado
+    )
+    return float(amount or 0)
+
+
 @router.get("/admin/contabilidad/cash-flow", response_class=HTMLResponse)
 async def contabilidad_cash_flow_view(
     request: Request,
@@ -21456,8 +21466,12 @@ async def contabilidad_cash_flow_view(
     committed_docs = committed_result.scalars().all()
     approved_pending = [d for d in committed_docs if (d.estado or "").lower() == "aprobado"]
     submitted_pending = [d for d in committed_docs if (d.estado or "").lower() == "enviado"]
-    approved_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in approved_pending)
-    submitted_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in submitted_pending)
+    approved_pending_total = sum(
+        _cashflow_document_total(document) for document in approved_pending
+    )
+    submitted_pending_total = sum(
+        _cashflow_document_total(document) for document in submitted_pending
+    )
 
     amex_conditions = [
         ExpenseReport.estado_gasto == "activo",
@@ -21744,7 +21758,7 @@ async def contabilidad_cash_flow_view(
 
     for doc in committed_docs:
         bucket = _cashflow_bucket(doc.fecha_pago)
-        bucket["committed_out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["committed_out"] += _cashflow_document_total(doc)
         bucket["committed_count"] += 1
 
     for row in payable_unprocessed_rows:
@@ -21817,7 +21831,7 @@ async def contabilidad_cash_flow_view(
 
     for doc in committed_docs:
         bucket = liquidity_buckets[_cash_bucket_for(doc.fecha_pago)]
-        bucket["out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out"] += _cashflow_document_total(doc)
         bucket["out_count"] += 1
 
     daily_cash_rows: Dict[date, Dict[str, Any]] = {}
@@ -21845,7 +21859,7 @@ async def contabilidad_cash_flow_view(
         bucket = _daily_bucket(doc.fecha_pago)
         if bucket is None:
             continue
-        amount = float(doc.monto_solicitado or doc.monto_total or 0)
+        amount = _cashflow_document_total(doc)
         bucket["out"] += amount
         bucket["out_count"] += 1
         bucket["notes"].append(f"Solicitud {doc.numero_referencia or '—'} {format_currency(amount, currency_for(doc))}")
@@ -22000,7 +22014,7 @@ async def contabilidad_cash_flow_view(
         return "—"
 
     upcoming_rows = "".join(
-        f"<tr><td>{escape(d.numero_referencia or '—')}</td><td>{escape(d.estado or '—')}</td><td>{d.fecha_pago.isoformat() if d.fecha_pago else 'Sin fecha'}</td><td>{escape(_doc_party(d))}</td><td>{format_currency(float(d.monto_solicitado or d.monto_total or 0), currency_for(d))}</td><td>{escape((d.torneo.name if d.torneo else d.proyecto_otro) or '—')}</td></tr>"
+        f"<tr><td>{escape(d.numero_referencia or '—')}</td><td>{escape(d.estado or '—')}</td><td>{d.fecha_pago.isoformat() if d.fecha_pago else 'Sin fecha'}</td><td>{escape(_doc_party(d))}</td><td>{format_currency(_cashflow_document_total(d), currency_for(d))}</td><td>{escape((d.torneo.name if d.torneo else d.proyecto_otro) or '—')}</td></tr>"
         for d in committed_docs[:25]
     )
     account_summary_rows = "".join(
@@ -22291,8 +22305,16 @@ async def contabilidad_cash_flow_export_xlsx(
         .order_by(Documento.fecha_pago.asc().nulls_last(), Documento.creado_en.asc())
     )
     committed_docs = committed_result.scalars().all()
-    approved_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in committed_docs if (d.estado or "").lower() == "aprobado")
-    submitted_pending_total = sum(float(d.monto_solicitado or d.monto_total or 0) for d in committed_docs if (d.estado or "").lower() == "enviado")
+    approved_pending_total = sum(
+        _cashflow_document_total(document)
+        for document in committed_docs
+        if (document.estado or "").lower() == "aprobado"
+    )
+    submitted_pending_total = sum(
+        _cashflow_document_total(document)
+        for document in committed_docs
+        if (document.estado or "").lower() == "enviado"
+    )
 
     cfdi_conditions_common = [CFDIReport.fecha >= start_dt, CFDIReport.fecha < end_dt]
     if platform_rfcs:
@@ -22505,7 +22527,7 @@ async def contabilidad_cash_flow_export_xlsx(
         bucket["in_count"] += 1
     for doc in committed_docs:
         bucket = buckets[_bucket_for(doc.fecha_pago)]
-        bucket["out"] += float(doc.monto_solicitado or doc.monto_total or 0)
+        bucket["out"] += _cashflow_document_total(doc)
         bucket["out_count"] += 1
     for row in payable_unprocessed_rows:
         target_date = row["cfdi"].fecha.date() if row["cfdi"].fecha else None
@@ -22538,7 +22560,7 @@ async def contabilidad_cash_flow_export_xlsx(
         bucket = _daily_bucket(doc.fecha_pago)
         if bucket is None:
             continue
-        amount = float(doc.monto_solicitado or doc.monto_total or 0)
+        amount = _cashflow_document_total(doc)
         bucket["out"] += amount
         bucket["out_count"] += 1
         bucket["notes"].append(f"Solicitud {doc.numero_referencia or '—'}")
@@ -22703,7 +22725,7 @@ async def contabilidad_cash_flow_export_xlsx(
     docs_rows = [["Documento", "Estado", "Fecha pago", "Beneficiario", "Monto", "Proyecto"]]
     for doc in committed_docs:
         party = doc.proveedor_cliente.nombre if doc.proveedor_cliente and doc.proveedor_cliente.nombre else (doc.beneficiario_empleado.nombre if doc.beneficiario_empleado and doc.beneficiario_empleado.nombre else "")
-        docs_rows.append([doc.numero_referencia, doc.estado, doc.fecha_pago.isoformat() if doc.fecha_pago else None, party, float(doc.monto_solicitado or doc.monto_total or 0), (doc.torneo.name if doc.torneo else doc.proyecto_otro) or ""])
+        docs_rows.append([doc.numero_referencia, doc.estado, doc.fecha_pago.isoformat() if doc.fecha_pago else None, party, _cashflow_document_total(doc), (doc.torneo.name if doc.torneo else doc.proyecto_otro) or ""])
     write_rows(ws6, docs_rows)
 
     output = io.BytesIO()
