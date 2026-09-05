@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 from devnous.gastos.routes.user_routes import _cashflow_document_total
 from samchat.finance_platform.service import build_finance_platform_snapshot
 
 
-def _document(*, state: str, paid_at: str | None = None) -> dict:
+def _document(*, state: str, paid_at: str | None = None) -> dict[str, Any]:
     return {
         "id": "document-1",
         "tipo": "SOLICITUD",
@@ -19,7 +20,7 @@ def _document(*, state: str, paid_at: str | None = None) -> dict:
     }
 
 
-def test_cashflow_prefers_final_total_and_only_falls_back_when_absent():
+def test_cashflow_prefers_final_total_and_only_falls_back_when_absent() -> None:
     assert _cashflow_document_total(
         SimpleNamespace(monto_total=120, monto_solicitado=100)
     ) == 120.0
@@ -29,9 +30,15 @@ def test_cashflow_prefers_final_total_and_only_falls_back_when_absent():
     assert _cashflow_document_total(
         SimpleNamespace(monto_total=0, monto_solicitado=100)
     ) == 0.0
+    assert _cashflow_document_total(
+        SimpleNamespace(monto_total=-120, monto_solicitado=100)
+    ) == -120.0
+    assert _cashflow_document_total(
+        SimpleNamespace(monto_total=None, monto_solicitado=-100)
+    ) == -100.0
 
 
-def test_approved_to_paid_transition_does_not_duplicate_obligation():
+def test_approved_to_paid_transition_does_not_duplicate_obligation() -> None:
     approved = build_finance_platform_snapshot(
         {"documents": [_document(state="aprobado")], "expenses": [], "polizas": []}
     )
@@ -53,7 +60,7 @@ def test_approved_to_paid_transition_does_not_duplicate_obligation():
     assert paid["cash_control_center"]["paid_total"] == 120.0
 
 
-def test_legacy_cashflow_commitments_use_current_state_and_total_helper():
+def test_legacy_cashflow_commitments_use_current_state_and_total_helper() -> None:
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
     view = source.split(
         '@router.get("/admin/contabilidad/cash-flow"', 1

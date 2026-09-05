@@ -120,9 +120,10 @@ def test_budget_actual_queries_enforce_reconciliation_precedence():
     snapshot_end = source.index("async def build_budget_monthly_actuals", snapshot_start)
     snapshot_block = source[snapshot_start:snapshot_end]
 
-    assert "WITH balanced AS" in snapshot_block
+    assert "WITH candidate_lines AS" in snapshot_block
     assert "accounting_poliza_lines" in snapshot_block
-    assert "SUM(COALESCE(debe, 0)) - SUM(COALESCE(haber, 0))" in snapshot_block
+    assert "SUM(COALESCE(apl.debe, 0))" in snapshot_block
+    assert "SUM(COALESCE(apl.haber, 0))" in snapshot_block
     assert "apl.cuenta_codigo ~ :result_account_pattern" in snapshot_block
     assert "ledger_document_ids" in snapshot_block
     assert 'kind = "pending_accounting"' in snapshot_block
@@ -148,9 +149,12 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
     class _Session:
         async def execute(self, statement, _params=None):
             sql = str(statement)
-            if "WITH balanced AS" in sql:
+            if "WITH candidate_lines AS" in sql:
                 assert "accounting_poliza_lines" in sql
+                assert "candidate_polizas AS" in sql
+                assert "JOIN candidate_polizas candidate" in sql
                 assert "scoped.id::text AS accounting_line_id" in sql
+                assert "scoped.effective_tournament_id IS NOT NULL" not in sql
                 assert _params["phase_pattern"] == "%estatal%"
                 return _Result(
                     [
@@ -193,6 +197,19 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
                             "debe": 432.80,
                             "haber": 0,
                         },
+                        {
+                            "concept_key": "report-concept",
+                            "accounting_line_id": "line-4",
+                            "poliza_id": "poliza-2",
+                            "numero_poliza": "ING-1",
+                            "origen": "cxc_cfdi_income",
+                            "fecha_poliza": date(2026, 8, 20),
+                            "cuenta_codigo": "4100-001",
+                            "document_id": "document-2",
+                            "expense_id": None,
+                            "debe": 0,
+                            "haber": 250,
+                        },
                     ]
                 )
             return _Result([])
@@ -207,6 +224,35 @@ async def test_accounting_result_lines_are_merged_once_as_budget_real():
 
     week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
     assert actuals["report-concept"][week]["real_expense_cash"] == 4398.91
+    assert actuals["report-concept"][week]["real_income"] == 250.0
+
+
+@pytest.mark.asyncio
+async def test_accounting_actuals_scope_aliases_without_tournament_id() -> None:
+    class _Result:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class _Session:
+        async def execute(self, statement, params=None):
+            if "WITH candidate_lines AS" in str(statement):
+                assert "CAST(:tournament_aliases AS text[])" in str(statement)
+                assert params["tournament_id"] == ""
+                assert params["tournament_aliases"] == ["LTTB"]
+                assert "%liga telmex telcel%" in params[
+                    "tournament_alias_patterns"
+                ]
+            return _Result()
+
+    await build_budget_monthly_actuals(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-1111-1111-111111111111",
+        tournament_name="Liga Telmex Telcel de Beisbol",
+    )
 
 
 @pytest.mark.asyncio
@@ -221,7 +267,7 @@ async def test_general_phase_filters_for_empty_effective_phase() -> None:
     class _Session:
         async def execute(self, statement, params=None):
             sql = str(statement)
-            if "WITH balanced AS" in sql:
+            if "WITH candidate_lines AS" in sql:
                 assert "NULLIF(TRIM(scoped.effective_phase), '')" in sql
                 assert "= ''" in sql
                 assert "phase_pattern" not in params
@@ -257,6 +303,14 @@ def test_budget_actual_queries_do_not_calculate_a_tax_base():
     assert "COALESCE(SUM(e.gasto_cantidad), 0) AS actual_total" not in comparison_block
     assert "1.16" not in monthly_block
     assert "1.16" not in comparison_block
+
+
+def test_budget_backfill_is_lexical_and_isolates_each_document() -> None:
+    source = Path("scripts/backfill_budget_accounting_actuals.py").read_text()
+
+    assert "sorted(set(requested_refs) - found_refs, key=int)" not in source
+    assert "sorted(set(requested_refs) - found_refs)" in source
+    assert "async with session.begin_nested():" in source
 
 
 @pytest.mark.asyncio

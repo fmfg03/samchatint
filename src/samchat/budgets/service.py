@@ -6878,12 +6878,21 @@ async def build_budget_actuals_snapshot(
             _safe_str(tournament_name),
             _safe_str(tournament_code),
         )
-    ) or [""]
+    )
+    alias_patterns = sorted(
+        {
+            f"%{term.lower()}%"
+            for code, terms in _BUDGET_ALIAS_RULES
+            if code in aliases
+            for term in terms
+        }
+    )
     params: dict[str, Any] = {
         "edition_year": int(edition_year),
         "version_id": _safe_str(version_id),
         "tournament_id": _safe_str(tournament_id),
         "tournament_aliases": aliases,
+        "tournament_alias_patterns": alias_patterns,
         "unassigned_key": _UNASSIGNED_BUDGET_CONCEPT_KEY,
         "result_account_pattern": _ACCOUNTING_RESULT_ACCOUNT_PATTERN,
     }
@@ -6910,41 +6919,61 @@ async def build_budget_actuals_snapshot(
             await session.execute(
                 text(
                     f"""
-                    WITH balanced AS (
-                        SELECT poliza_id
-                        FROM accounting_poliza_lines
-                        GROUP BY poliza_id
-                        HAVING ABS(
-                            SUM(COALESCE(debe, 0)) - SUM(COALESCE(haber, 0))
-                        ) <= 0.01
-                    ), extracted AS (
+                    WITH candidate_lines AS (
                         SELECT
                             apl.*,
                             ap.fecha_poliza,
                             ap.numero_poliza,
                             ap.origen,
-                            ap.cfdi_report_id,
-                            CASE WHEN COALESCE(
-                                apl.raw_row_json->>'documento_id',
-                                apl.raw_row_json->>'document_id'
-                            ) ~* '{uuid_pattern}' THEN COALESCE(
-                                apl.raw_row_json->>'documento_id',
-                                apl.raw_row_json->>'document_id'
-                            )::uuid END AS raw_document_id,
-                            CASE WHEN apl.raw_row_json->>'expense_id' ~* '{uuid_pattern}'
-                                THEN (apl.raw_row_json->>'expense_id')::uuid END
-                                AS raw_expense_id,
-                            CASE WHEN apl.raw_row_json->>'budget_concept_id' ~* '{uuid_pattern}'
-                                THEN (apl.raw_row_json->>'budget_concept_id')::uuid END
-                                AS raw_budget_concept_id,
-                            CASE WHEN apl.raw_row_json->>'budget_line_id' ~* '{uuid_pattern}'
-                                THEN (apl.raw_row_json->>'budget_line_id')::uuid END
-                                AS raw_budget_line_id
+                            ap.cfdi_report_id
                         FROM accounting_poliza_lines apl
-                        JOIN balanced ON balanced.poliza_id = apl.poliza_id
                         JOIN accounting_polizas ap ON ap.id = apl.poliza_id
                         WHERE EXTRACT(YEAR FROM ap.fecha_poliza)::int = :edition_year
                           AND apl.cuenta_codigo ~ :result_account_pattern
+                    ), candidate_polizas AS (
+                        SELECT DISTINCT poliza_id
+                        FROM candidate_lines
+                    ), balanced AS (
+                        SELECT apl.poliza_id
+                        FROM accounting_poliza_lines apl
+                        JOIN candidate_polizas candidate
+                          ON candidate.poliza_id = apl.poliza_id
+                        GROUP BY apl.poliza_id
+                        HAVING ABS(
+                            SUM(COALESCE(apl.debe, 0))
+                            - SUM(COALESCE(apl.haber, 0))
+                        ) <= 0.01
+                    ), extracted AS (
+                        SELECT
+                            candidate_lines.*,
+                            CASE WHEN COALESCE(
+                                candidate_lines.raw_row_json->>'documento_id',
+                                candidate_lines.raw_row_json->>'document_id'
+                            ) ~* '{uuid_pattern}' THEN COALESCE(
+                                candidate_lines.raw_row_json->>'documento_id',
+                                candidate_lines.raw_row_json->>'document_id'
+                            )::uuid END AS raw_document_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'expense_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'expense_id'
+                                )::uuid END
+                                AS raw_expense_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'budget_concept_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'budget_concept_id'
+                                )::uuid END
+                                AS raw_budget_concept_id,
+                            CASE WHEN candidate_lines.raw_row_json->>'budget_line_id'
+                                ~* '{uuid_pattern}'
+                                THEN (
+                                    candidate_lines.raw_row_json->>'budget_line_id'
+                                )::uuid END
+                                AS raw_budget_line_id
+                        FROM candidate_lines
+                        JOIN balanced
+                          ON balanced.poliza_id = candidate_lines.poliza_id
                     ), scoped AS (
                         SELECT
                             extracted.*,
@@ -6996,7 +7025,8 @@ async def build_budget_actuals_snapshot(
                                 solicitud_doc.estado, expense_doc.estado) AS document_state,
                             COALESCE(e.concepto, extracted.concepto) AS movement_concept,
                             COALESCE(bc.concept_name, bl.concept_name) AS budget_concept_name,
-                            t.name AS tournament_name
+                            COALESCE(t.name, bc.tournament_name) AS tournament_name,
+                            bc.tournament_code AS tournament_code
                         FROM extracted
                         LEFT JOIN documentos raw_doc ON raw_doc.id = extracted.raw_document_id
                         LEFT JOIN expense_reports e ON e.id = extracted.raw_expense_id
@@ -7061,12 +7091,29 @@ async def build_budget_actuals_snapshot(
                         scoped.haber
                     FROM scoped
                     WHERE (
-                        NULLIF(:tournament_id, '') IS NULL
-                        OR scoped.effective_tournament_id::text = :tournament_id
-                    )
-                      AND (
-                        scoped.effective_tournament_id IS NOT NULL
-                        OR UPPER(COALESCE(scoped.tournament_name, '')) = ANY(:tournament_aliases)
+                        (
+                            NULLIF(:tournament_id, '') IS NOT NULL
+                            AND scoped.effective_tournament_id::text = :tournament_id
+                        )
+                        OR (
+                            NULLIF(:tournament_id, '') IS NULL
+                            AND (
+                                COALESCE(
+                                    cardinality(
+                                        CAST(:tournament_aliases AS text[])
+                                    ),
+                                    0
+                                ) = 0
+                                OR UPPER(COALESCE(scoped.tournament_code, ''))
+                                    = ANY(
+                                        CAST(:tournament_aliases AS text[])
+                                    )
+                                OR LOWER(COALESCE(scoped.tournament_name, ''))
+                                    LIKE ANY(
+                                        CAST(:tournament_alias_patterns AS text[])
+                                    )
+                            )
+                        )
                       )
                       {phase_clause}
                     ORDER BY scoped.fecha_poliza, scoped.numero_poliza, scoped.line_no

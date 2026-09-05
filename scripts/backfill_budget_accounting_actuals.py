@@ -155,7 +155,7 @@ async def _run(args: argparse.Namespace) -> int:
                 str(document.referencia_operaciones or "")
                 for document in documents
             }
-            for missing in sorted(set(requested_refs) - found_refs, key=int):
+            for missing in sorted(set(requested_refs) - found_refs):
                 receipt = {
                     "ref_op": missing,
                     "status": "blocked",
@@ -172,7 +172,8 @@ async def _run(args: argparse.Namespace) -> int:
                     "state": document.estado,
                 }
                 try:
-                    receipts = await _post_document(session, document)
+                    async with session.begin_nested():
+                        receipts = await _post_document(session, document)
                     item["postings"] = receipts
                     for receipt in receipts:
                         totals[receipt["status"]] = (
@@ -205,6 +206,7 @@ async def _run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    """Parse command-line arguments and run the accounting backfill."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Persist postings")
     parser.add_argument("--env-file")

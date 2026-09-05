@@ -1166,6 +1166,18 @@ def register_presupuestos_routes(router) -> None:
         current_empleado=Depends(get_current_empleado),
     ):
         _require_budget_access(current_empleado, "line_update")
+        if budget_amount < 0:
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=str(version_id),
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    error_msg="El monto presupuestal no puede ser negativo.",
+                ),
+                status_code=303,
+            )
         try:
             line = await upsert_budget_line_for_concept(
                 session,

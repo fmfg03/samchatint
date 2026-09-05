@@ -1037,7 +1037,7 @@ def _render_budget_movement_details(
     can_edit: bool,
 ) -> str:
     line_concepts = {
-        str(line.get("budget_concept_id") or "") for line in lines
+        str(line.get("budget_concept_id") or "__unassigned__") for line in lines
     }
     visible: list[dict[str, Any]] = []
     for movement in movements:
