@@ -125,6 +125,9 @@ def test_payment_run_reimbursement_requires_final_total() -> None:
     with pytest.raises(PaymentRunValidationError, match="sin monto_total"):
         _document_amount(document)
 
+    document.monto_total = 48120
+    assert _document_amount(document) == 48120
+
 
 def test_payment_run_ordinary_request_prefers_final_total() -> None:
     document = SimpleNamespace(

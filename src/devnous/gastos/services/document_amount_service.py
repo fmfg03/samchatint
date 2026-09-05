@@ -16,6 +16,7 @@ def _value(document: Any, field: str) -> Any:
 
 
 def is_employee_reimbursement_document(document: Any) -> bool:
+    """Normalize the payment concept and match the employee reimbursement prefix."""
     concept = str(_value(document, "concepto_pago") or "").strip().lower()
     return concept.startswith(EMPLOYEE_REIMBURSEMENT_PREFIX)
 

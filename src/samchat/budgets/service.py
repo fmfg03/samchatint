@@ -6337,6 +6337,27 @@ def _budget_week_number(value: Any, edition_year: int) -> int:
     return min(52, 2 + (current - first_monday).days // 7)
 
 
+def _date_in_edition_year(value: Any, edition_year: int) -> bool:
+    """Return whether a date-like value belongs to the requested edition year."""
+    if value is None:
+        return False
+    try:
+        current = value.date() if isinstance(value, datetime) else value
+        if not isinstance(current, date):
+            current = date.fromisoformat(str(current)[:10])
+    except (TypeError, ValueError):
+        return False
+    return current.year == int(edition_year)
+
+
+def _first_date_in_edition_year(edition_year: int, *values: Any) -> Any:
+    """Return the first candidate that falls inside the edition calendar year."""
+    return next(
+        (value for value in values if _date_in_edition_year(value, edition_year)),
+        date(int(edition_year), 1, 1),
+    )
+
+
 async def list_budget_line_monthly_allocations(
     session: AsyncSession,
     *,
@@ -7003,6 +7024,12 @@ async def build_budget_actuals_snapshot(
                                 expense_doc.id
                             ) AS effective_document_id,
                             COALESCE(
+                                raw_doc.tipo,
+                                informe_doc.tipo,
+                                solicitud_doc.tipo,
+                                expense_doc.tipo
+                            ) AS effective_document_type,
+                            COALESCE(
                                 extracted.raw_budget_concept_id,
                                 e.budget_concept_id,
                                 informe_doc.budget_concept_id,
@@ -7059,6 +7086,13 @@ async def build_budget_actuals_snapshot(
                                 solicitud_doc.aprobado_en,
                                 expense_doc.aprobado_en
                             ) AS document_commitment_at,
+                            COALESCE(
+                                e.cuenta_gastos_id,
+                                raw_doc.cuenta_gastos_id,
+                                informe_doc.cuenta_gastos_id,
+                                solicitud_doc.cuenta_gastos_id,
+                                expense_doc.cuenta_gastos_id
+                            ) AS effective_cuenta_gastos_id,
                             COALESCE(e.concepto, extracted.concepto) AS movement_concept,
                             COALESCE(bc.concept_name, bl.concept_name) AS budget_concept_name,
                             COALESCE(t.name, bc.tournament_name) AS tournament_name,
@@ -7119,8 +7153,22 @@ async def build_budget_actuals_snapshot(
                         scoped.document_reference,
                         scoped.operation_reference,
                         scoped.document_state,
+                        scoped.effective_document_type AS document_type,
                         scoped.document_payment_concept,
                         scoped.document_commitment_at,
+                        (
+                            SELECT MAX(COALESCE(r.fecha_pago, r.creado_en))
+                            FROM reembolsos r
+                            WHERE r.estado <> 'cancelado'
+                              AND (
+                                  r.documento_id = scoped.effective_document_id
+                                  OR (
+                                      scoped.effective_cuenta_gastos_id IS NOT NULL
+                                      AND r.cuenta_gastos_id =
+                                          scoped.effective_cuenta_gastos_id
+                                  )
+                              )
+                        ) AS settlement_at,
                         scoped.movement_concept,
                         scoped.budget_concept_name,
                         scoped.effective_phase,
@@ -7191,6 +7239,7 @@ async def build_budget_actuals_snapshot(
     store = _monthly_actual_store()
     movements: list[dict[str, Any]] = []
     ledger_document_ids: set[str] = set()
+    included_document_ids: set[str] = set()
     for raw_row in ledger_rows:
         row = dict(raw_row)
         account_code = _safe_str(row.get("cuenta_codigo"))
@@ -7208,9 +7257,19 @@ async def build_budget_actuals_snapshot(
         is_reimbursement = _safe_str(
             row.get("document_payment_concept")
         ).lower().startswith("reembolso de saldo a favor")
+        is_settled_report = (
+            _safe_str(row.get("document_type")).upper() == "INFORME"
+            and row.get("settlement_at") is not None
+        )
         recognition_date = row.get("fecha_poliza")
-        if document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
-            recognition_date = row.get("document_commitment_at") or recognition_date
+        if is_settled_report and _date_in_edition_year(
+            row.get("settlement_at"), edition_year
+        ):
+            recognition_date = row.get("settlement_at")
+        elif document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
+            commitment_at = row.get("document_commitment_at")
+            if _date_in_edition_year(commitment_at, edition_year):
+                recognition_date = commitment_at
         week = _budget_week_number(recognition_date, edition_year)
         if document_id and not is_income:
             ledger_document_ids.add(document_id)
@@ -7229,19 +7288,25 @@ async def build_budget_actuals_snapshot(
         elif concept_key == _UNASSIGNED_BUDGET_CONCEPT_KEY:
             kind = "pending_budget_assignment"
             reason = "Póliza sin partida presupuestal asignada"
-        elif document_id and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
+        elif (
+            document_id
+            and document_state in _BUDGET_COMMITMENT_DOCUMENT_STATES
+            and not is_settled_report
+        ):
             _merge_monthly_actual(
                 store,
                 concept_key=concept_key,
                 month_number=week,
                 committed_unpaid=amount,
             )
+            included_document_ids.add(document_id)
             kind = "commitment"
             reason = "Póliza de resultados vinculada a documento no terminal"
         elif (
             not document_id
             or not document_state
             or document_state in _BUDGET_TERMINAL_DOCUMENT_STATES
+            or is_settled_report
         ):
             _merge_monthly_actual(
                 store,
@@ -7249,6 +7314,8 @@ async def build_budget_actuals_snapshot(
                 month_number=week,
                 real_expense_cash=amount,
             )
+            if document_id:
+                included_document_ids.add(document_id)
             kind = "ledger_expense"
             reason = "Póliza contable balanceada de documento terminal"
         else:
@@ -7357,17 +7424,19 @@ async def build_budget_actuals_snapshot(
             state in _BUDGET_COMMITMENT_DOCUMENT_STATES
             and row.get("document_type") == "SOLICITUD"
         ):
-            recognition_date = (
-                row.get("enviado_en")
-                or row.get("aprobado_en")
-                or row.get("creado_en")
+            recognition_date = _first_date_in_edition_year(
+                edition_year,
+                row.get("enviado_en"),
+                row.get("aprobado_en"),
+                row.get("creado_en"),
             )
         else:
-            recognition_date = (
-                row.get("pagado_en")
-                or row.get("fecha_pago")
-                or row.get("aprobado_en")
-                or row.get("creado_en")
+            recognition_date = _first_date_in_edition_year(
+                edition_year,
+                row.get("pagado_en"),
+                row.get("fecha_pago"),
+                row.get("aprobado_en"),
+                row.get("creado_en"),
             )
         week = _budget_week_number(recognition_date, edition_year)
         if (
@@ -7380,6 +7449,7 @@ async def build_budget_actuals_snapshot(
                 month_number=week,
                 committed_unpaid=amount,
             )
+            included_document_ids.add(document_id)
             kind = "commitment"
             reason = "Solicitud con presupuesto asignado pendiente de liquidación"
         else:
@@ -7408,6 +7478,7 @@ async def build_budget_actuals_snapshot(
                     SELECT
                         e.id::text AS expense_id,
                         d.id::text AS document_id,
+                        e.solicitud_documento_id::text AS solicitud_documento_id,
                         d.numero_referencia AS document_reference,
                         d.referencia_operaciones AS operation_reference,
                         d.estado AS document_state,
@@ -7424,7 +7495,19 @@ async def build_budget_actuals_snapshot(
                         d.enviado_en,
                         d.aprobado_en,
                         d.pagado_en,
-                        d.fecha_pago
+                        d.fecha_pago,
+                        (
+                            SELECT MAX(COALESCE(r.fecha_pago, r.creado_en))
+                            FROM reembolsos r
+                            WHERE r.estado <> 'cancelado'
+                              AND (
+                                  r.documento_id = d.id
+                                  OR (
+                                      d.cuenta_gastos_id IS NOT NULL
+                                      AND r.cuenta_gastos_id = d.cuenta_gastos_id
+                                  )
+                              )
+                        ) AS settlement_at
                     FROM expense_reports e
                     JOIN LATERAL (
                         SELECT report.*
@@ -7436,6 +7519,13 @@ async def build_budget_actuals_snapshot(
                               OR (
                                   e.cuenta_gastos_id IS NOT NULL
                                   AND report.cuenta_gastos_id = e.cuenta_gastos_id
+                                  AND 1 = (
+                                      SELECT COUNT(*)
+                                      FROM documentos account_report
+                                      WHERE account_report.tipo = 'INFORME'
+                                        AND account_report.cuenta_gastos_id =
+                                            e.cuenta_gastos_id
+                                  )
                               )
                           )
                         ORDER BY
@@ -7479,17 +7569,22 @@ async def build_budget_actuals_snapshot(
         document_id = _safe_str(row.get("document_id"))
         if document_id in ledger_document_ids:
             continue
+        solicitud_documento_id = _safe_str(row.get("solicitud_documento_id"))
+        if solicitud_documento_id in included_document_ids:
+            continue
         state = _safe_str(row.get("document_state")).lower()
+        is_settled = row.get("settlement_at") is not None
         amount = _safe_decimal(row.get("amount"))
         concept_key = (
             _safe_str(row.get("budget_concept_id"))
             or _UNASSIGNED_BUDGET_CONCEPT_KEY
         )
-        if state in _BUDGET_COMMITMENT_DOCUMENT_STATES:
-            recognition_date = (
-                row.get("enviado_en")
-                or row.get("aprobado_en")
-                or row.get("creado_en")
+        if state in _BUDGET_COMMITMENT_DOCUMENT_STATES and not is_settled:
+            recognition_date = _first_date_in_edition_year(
+                edition_year,
+                row.get("enviado_en"),
+                row.get("aprobado_en"),
+                row.get("creado_en"),
             )
             week = _budget_week_number(recognition_date, edition_year)
             _merge_monthly_actual(
@@ -7501,11 +7596,13 @@ async def build_budget_actuals_snapshot(
             kind = "commitment"
             reason = "Gasto de informe con presupuesto asignado"
         else:
-            recognition_date = (
-                row.get("pagado_en")
-                or row.get("fecha_pago")
-                or row.get("aprobado_en")
-                or row.get("creado_en")
+            recognition_date = _first_date_in_edition_year(
+                edition_year,
+                row.get("settlement_at"),
+                row.get("pagado_en"),
+                row.get("fecha_pago"),
+                row.get("aprobado_en"),
+                row.get("creado_en"),
             )
             week = _budget_week_number(recognition_date, edition_year)
             kind = "pending_accounting"
