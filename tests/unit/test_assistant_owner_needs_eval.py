@@ -7,9 +7,11 @@ from samchat.assistant.owner_needs_eval import (
     PASS,
     PASS_WITH_CLASSIFIED_GAPS,
     assess_owner_needs_prompt,
+    assess_owner_needs_live_response,
     build_owner_evidence_gap_response,
     evaluate_owner_needs_prompts,
     parse_owner_needs_eval_set,
+    selected_live_canary_owner_prompts,
 )
 
 
@@ -38,6 +40,107 @@ def test_owner_needs_eval_set_executes_all_30_prompts() -> None:
     assert summary["writes_attempted"] == 0
     assert summary["side_effects_detected"] == 0
     assert summary["gap_counts"][EVIDENCE_DATA_MISSING] >= 1
+
+
+def test_live_canary_selects_the_fixed_non_mutating_owner_cohort() -> None:
+    prompts = selected_live_canary_owner_prompts(EVAL_SET.read_text(encoding="utf-8"))
+
+    assert [prompt.prompt_id for prompt in prompts] == [
+        "AI-OWNER-002",
+        "AI-OWNER-003",
+        "AI-OWNER-004",
+        "AI-OWNER-005",
+        "AI-OWNER-007",
+        "AI-OWNER-009",
+        "AI-OWNER-010",
+        "AI-OWNER-015",
+        "AI-OWNER-018",
+        "AI-OWNER-029",
+    ]
+    assert all("crea" not in prompt.prompt.lower() for prompt in prompts)
+    assert all("actualiza" not in prompt.prompt.lower() for prompt in prompts)
+
+
+def test_live_canary_requires_an_explicit_gap_without_observed_sources() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-015"),
+        assistant_message="No tengo evidencia suficiente de hoteles o camas-noche.",
+        tool_trace=[],
+    )
+
+    assert verdict.status == PASS_WITH_CLASSIFIED_GAPS
+    assert verdict.evidence_gap_declared is True
+    assert verdict.manual_review_required is True
+    assert "document" in verdict.missing_expected_sources
+    assert verdict.policy_failures == []
+
+
+def test_live_canary_fails_an_unsupported_claim_without_gap_disclosure() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-015"),
+        assistant_message="Los hoteles y camas-noche ya estan confirmados.",
+        tool_trace=[],
+    )
+
+    assert verdict.status == "FAIL"
+    assert "missing_evidence_disclosure" in verdict.policy_failures
+
+
+def test_live_canary_reports_trace_categories_not_raw_retrieval_payload() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-010"),
+        assistant_message="La evidencia esta disponible para revision.",
+        tool_trace=[
+            {
+                "retrieval_context": {
+                    "sources": ["finance", "document", "sql"],
+                    "document_id": "private-document-123",
+                }
+            }
+        ],
+    )
+
+    payload = verdict.to_dict()
+    assert verdict.status == PASS_WITH_CLASSIFIED_GAPS
+    assert verdict.manual_review_required is True
+    assert set(verdict.observed_trace_source_categories) == {
+        "finance",
+        "document",
+        "sql",
+    }
+    assert "private-document-123" not in str(payload)
+
+
+def test_live_canary_reads_owner_pack_evidence_type_metadata() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-003"),
+        assistant_message="La evidencia disponible requiere revision humana.",
+        tool_trace=[
+            {
+                "owner_pack": {
+                    "real_teams": {"evidence_type": "team"},
+                    "tournament_snapshot": {"evidence_type": "tournament"},
+                }
+            }
+        ],
+    )
+
+    assert {"team", "tournament"} <= set(
+        verdict.observed_trace_source_categories
+    )
+    assert "team" not in verdict.missing_expected_sources
+    assert "tournament" not in verdict.missing_expected_sources
+
+
+def test_live_canary_does_not_treat_a_tool_name_as_evidence_source() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-015"),
+        assistant_message="No tengo evidencia suficiente para confirmar hoteles.",
+        tool_trace=[{"tool": "document.approve", "result": {}}],
+    )
+
+    assert verdict.observed_trace_source_categories == []
+    assert {"document", "finance"} <= set(verdict.missing_expected_sources)
 
 
 def test_owner_needs_gap_records_use_approved_categories() -> None:
