@@ -212,3 +212,58 @@ async def test_payment_run_question_uses_finance_qa_before_provider() -> None:
         item.get("assistant_finance_accounting_qa", {}).get("question_type") == "payment_run"
         for item in response.tool_trace
     )
+
+
+@pytest.mark.asyncio
+async def test_cfdi_gap_question_uses_finance_qa_before_document_matching() -> None:
+    async def adapter(_session, **kwargs):
+        assert kwargs["intent"] == "finance.platform"
+        return {
+            "ok": True,
+            "read_only": True,
+            "intent": "finance.platform",
+            "source_function": "test.finance.snapshot",
+            "payload": {
+                "summary": {"documents": 3, "expenses": 2, "polizas": 1},
+                "tax_readiness": {
+                    "cfdi_missing_count": 2,
+                    "blockers": [{"numero_referencia": "O-2"}],
+                },
+                "period": {"year": 2026, "month": 8},
+            },
+            "source_notes": ["test snapshot"],
+            "safety_labels": ["finance_platform_read_only"],
+        }
+
+    with patch("samchat.assistant.conversation_service.run_finance_read_adapter", new=adapter):
+        response = await run_message_turn_with_pending(
+            raw_message="¿Qué CFDIs faltan vincular?",
+            conversation=SimpleNamespace(id="conv-cfdi-gap", updated_at=None),
+            current_empleado=SimpleNamespace(id="emp-1"),
+            session=_FakeSession(),
+            request=None,
+            tournament_key=None,
+            bi_year=None,
+            bi_scope=None,
+            bi_segment=None,
+            assistant_mode=None,
+            openai_api_key=None,
+            latest_pending_run_for_conversation=_pending_none,
+            is_explicit_approval_message=lambda _text: False,
+            is_explicit_rejection_message=lambda _text: False,
+            confirm_pending_run=_provider_must_not_be_called,
+            deterministic_pending_builders=[],
+            build_deterministic_pending_response=_provider_must_not_be_called,
+            assistant_turn=_provider_must_not_be_called,
+            maybe_append_export_prompt=_maybe_append_export_prompt,
+        )
+
+    assert "CFDI" in response.assistant_message
+    assert "Evidencia visible" in response.assistant_message
+    assert "/admin/gastos/cfdis/matching" in response.assistant_message
+    assert "No ejecuté cambios" in response.assistant_message
+    assert any(
+        item.get("assistant_finance_accounting_qa", {}).get("question_type")
+        == "missing_cfdi"
+        for item in response.tool_trace
+    )

@@ -2,6 +2,9 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -197,6 +200,36 @@ def test_pending_confirmation_and_write_trace_fail_boundary(tmp_path):
     assert failed["write_detected"] is True
     assert "pending_confirmation" in failed["failures"]
     assert failed["authority_posture"] == "failed_write_boundary"
+
+
+def test_write_detector_ignores_blocked_write_capability_metadata() -> None:
+    trace = [
+        {
+            "assistant_agent_runtime": {
+                "available_tools": ["workspace_task_file_write"],
+                "writes_enabled": False,
+                "write_handlers_invoked": 0,
+                "side_effects_detected": 0,
+            }
+        }
+    ]
+
+    assert MODULE._trace_has_write(trace) is False
+
+
+@pytest.mark.parametrize(
+    "trace",
+    (
+        [{"side_effects_detected": 1}],
+        [{"operational_writes": True}],
+        [{"handler_invoked": True, "operation_type": "write"}],
+        [{"name": "document.approve"}],
+    ),
+)
+def test_write_detector_rejects_explicit_execution_signals(
+    trace: list[dict[str, Any]],
+) -> None:
+    assert MODULE._trace_has_write(trace) is True
 
 
 def test_live_canary_requires_auth_before_http_messages(monkeypatch):

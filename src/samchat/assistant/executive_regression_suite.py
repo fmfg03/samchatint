@@ -169,7 +169,7 @@ def executive_regression_cases() -> tuple[ExecutiveRegressionCase, ...]:
             expected_answer_class="readiness_or_explicit_gap",
             expected_source_class="owner_pack_readiness",
             expected_tools=("assistant_owner_pack_readiness",),
-            required_answer_terms=("Owner Pack", "Readiness", "Frontera de autoridad"),
+            required_answer_terms=("Owner Pack", "cobertura", "Límite de la vista"),
             forbidden_answer_terms=('"name":', "assistant_owner_pack_readiness", "tenemos datos cargados"),
             allow_gap_answer=True,
             notes="Must render an executive readiness answer, not a raw tool call.",
