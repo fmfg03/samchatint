@@ -16,6 +16,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from dataclasses import dataclass
 from http.cookiejar import MozillaCookieJar
 from pathlib import Path
@@ -722,6 +723,8 @@ def _owner_needs_live_row(
         "http_status": http_status,
         "latency_seconds": round(float(latency_seconds or 0.0), 3),
         "timeout": bool(timeout),
+        "provider": _extract_first(payload, ("provider", "model_provider")),
+        "model": _extract_first(payload, ("model", "model_name")),
         "tool_count": len(_trace_tools(tool_trace)),
         "tools": _trace_tools(tool_trace),
         "expected_sources": verdict.expected_sources,
@@ -769,7 +772,7 @@ def run_live_owner_needs_canary(
         OWNER_NEEDS_EVAL_PATH.read_text(encoding="utf-8")
     )
     headers = _headers(cookie=cookie, bearer=bearer)
-    marker = f"rqf-009e-owner-needs-canary-{int(time.time())}"
+    marker = f"rqf-009e-owner-needs-canary-{uuid.uuid4().hex}"
     rows: list[dict[str, Any]] = []
 
     for prompt in prompts:

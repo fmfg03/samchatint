@@ -70,6 +70,7 @@ def test_live_canary_requires_an_explicit_gap_without_observed_sources() -> None
 
     assert verdict.status == PASS_WITH_CLASSIFIED_GAPS
     assert verdict.evidence_gap_declared is True
+    assert verdict.manual_review_required is True
     assert "document" in verdict.missing_expected_sources
     assert verdict.policy_failures == []
 
@@ -108,6 +109,27 @@ def test_live_canary_reports_trace_categories_not_raw_retrieval_payload() -> Non
         "sql",
     }
     assert "private-document-123" not in str(payload)
+
+
+def test_live_canary_reads_owner_pack_evidence_type_metadata() -> None:
+    verdict = assess_owner_needs_live_response(
+        _prompt("AI-OWNER-003"),
+        assistant_message="La evidencia disponible requiere revision humana.",
+        tool_trace=[
+            {
+                "owner_pack": {
+                    "real_teams": {"evidence_type": "team"},
+                    "tournament_snapshot": {"evidence_type": "tournament"},
+                }
+            }
+        ],
+    )
+
+    assert {"team", "tournament"} <= set(
+        verdict.observed_trace_source_categories
+    )
+    assert "team" not in verdict.missing_expected_sources
+    assert "tournament" not in verdict.missing_expected_sources
 
 
 def test_live_canary_does_not_treat_a_tool_name_as_evidence_source() -> None:

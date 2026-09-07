@@ -234,6 +234,7 @@ def _trace_source_values(value: object):
                 "source_type",
                 "sources",
                 "source_categories",
+                "evidence_type",
             }:
                 if isinstance(item, str):
                     yield item
@@ -296,10 +297,11 @@ def assess_owner_needs_live_response(
         reason = "Automated contract failure; inspect the safe canary metadata."
     elif missing:
         status = PASS_WITH_CLASSIFIED_GAPS
-        manual_review = False
+        manual_review = True
         reason = (
-            "The response declared an evidence limit; missing live sources are "
-            "reported as a classified gap."
+            "The response declared an evidence limit, but human semantic review "
+            "is still required to ensure it did not pair that caveat with an "
+            "unsupported factual claim."
         )
     else:
         status = PASS_WITH_CLASSIFIED_GAPS

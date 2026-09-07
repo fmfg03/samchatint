@@ -332,6 +332,8 @@ def test_live_owner_needs_canary_isolated_safe_and_never_serializes_secrets(
                         "No tengo evidencia suficiente para afirmar ese dato."
                     ),
                     "tool_trace": [],
+                    "provider": "test-provider",
+                    "model": "test-model",
                 },
                 latency_seconds=0.2,
             )
@@ -352,6 +354,8 @@ def test_live_owner_needs_canary_isolated_safe_and_never_serializes_secrets(
     assert len(created) == 10
     assert len(prompts) == 10
     assert all(row["authority_posture"] == "read_only" for row in result["cases"])
+    assert all(row["provider"] == "test-provider" for row in result["cases"])
+    assert all(row["model"] == "test-model" for row in result["cases"])
     assert "secret-cookie" not in serialized
     assert "secret-bearer" not in serialized
     assert "No tengo evidencia suficiente" not in serialized
