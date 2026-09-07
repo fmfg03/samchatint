@@ -170,6 +170,88 @@ async def test_payment_run_page_queries_approved_and_in_process_sections(
     assert loan_list_mock.await_args_list[1].kwargs["query"] == "S-26000146"
 
 
+def test_payment_run_navigation_is_available_to_payment_confirmer(monkeypatch) -> None:
+    empleado_id = uuid4()
+    monkeypatch.setenv(
+        "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
+        str(empleado_id),
+    )
+
+    navigation = admin_routes.render_admin_navigation(
+        SimpleNamespace(
+            id=empleado_id,
+            nombre="Dani",
+            rol="empleado",
+            departamento="Contabilidad",
+        )
+    )
+
+    assert 'href="/admin/finanzas/payment-run"' in navigation
+    assert 'href="/admin/finanzas/payment-history"' not in navigation
+
+
+@pytest.mark.asyncio
+async def test_payment_run_hides_payment_date_editor_from_accounting(
+    monkeypatch,
+) -> None:
+    documento_id = uuid4()
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_items",
+        AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": documento_id,
+                        "numero_referencia": "S-26000048",
+                        "solicitante_nombre": "Benjamin",
+                        "beneficiario_nombre": "Proveedor Demo",
+                        "concepto_pago": "Uniformes",
+                        "fecha_pago": None,
+                        "monto": Decimal("1200.00"),
+                        "currency": "MXN",
+                        "status": "programada",
+                        "can_edit_fecha_pago": True,
+                        "can_close": True,
+                        "can_upload_payment_proof": False,
+                    }
+                ],
+                [],
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_closures",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_prestamo_payment_run_items",
+        AsyncMock(side_effect=[[], []]),
+    )
+
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="empleado",
+            departamento="Contabilidad",
+            nombre="Dani",
+        ),
+        status="pendientes",
+        date_from=None,
+        date_to=None,
+        q=None,
+    )
+    html = response.body.decode("utf-8")
+
+    assert 'name="fecha_pago"' not in html
+    assert 'name="document_ids"' not in html
+    assert "Cerrar corte" not in html
+
+
 @pytest.mark.asyncio
 async def test_payment_run_close_uses_close_service(monkeypatch) -> None:
     empleado_id = uuid4()

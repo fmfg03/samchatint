@@ -146,6 +146,7 @@ from ..services.access_control_service import is_catalog_admin_user
 from ..services.payment_run_service import (
     PaymentRunPermissionError,
     PaymentRunValidationError,
+    can_access_payment_run,
     can_manage_payment_run,
     close_payment_run,
     get_payment_run_closure,
@@ -1098,10 +1099,13 @@ def render_admin_navigation(
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "limpieza"),
     ]
+    if can_access_payment_run(current_empleado):
+        finanzas_items.append(
+            ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run")
+        )
     if can_manage_payment_run(current_empleado):
         finanzas_items.extend(
             [
-                ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run"),
                 (
                     "admin.finanzas",
                     "/admin/finanzas/payment-history",
@@ -9142,6 +9146,7 @@ def _render_payment_run_items(
     *,
     can_close_run: bool = True,
     can_confirm_payment: bool = False,
+    can_edit_payment_date: bool = False,
 ) -> str:
     rendered_rows = []
     for row in sorted(rows, key=_payment_run_sort_key):
@@ -9172,7 +9177,7 @@ def _render_payment_run_items(
             if can_close and can_close_run
             else '<span style="color:#94a3b8;">-</span>'
             )
-        if can_edit:
+        if can_edit and can_edit_payment_date:
             fecha_html = f"""
                 <form method="POST" action="/admin/finanzas/payment-run/documentos/{documento_id}/fecha-pago" style="display:flex;gap:8px;align-items:center;">
                     <input type="date" name="fecha_pago" value="{escape(fecha_value)}" style="min-width:150px;">
@@ -9384,7 +9389,7 @@ async def admin_finance_payment_run(
                 <div style="overflow:auto;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
-	                        <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False)}</tbody>
+                        <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False, can_edit_payment_date=can_close_run)}</tbody>
 	                    </table>
                 </div>
                 {close_form_html}

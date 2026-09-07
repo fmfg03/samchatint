@@ -114,6 +114,39 @@ async def test_pending_payment_retries_skipped_entry_after_telegram_linking(
 
 
 @pytest.mark.asyncio
+async def test_pending_payment_reserves_shared_chat_id_when_first_entry_is_sent(
+    monkeypatch,
+):
+    documento = _approved_solicitud()
+    sent_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
+    second_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
+    session = _RecipientSession([sent_recipient, second_recipient])
+    build_context = AsyncMock()
+    deliver = AsyncMock()
+
+    async def fake_find(_session, **kwargs):
+        if kwargs["recipient_empleado_id"] == sent_recipient.id:
+            return SimpleNamespace(status="sent")
+        return None
+
+    monkeypatch.setattr(documento_telegram, "find_outbox_entry", fake_find)
+    monkeypatch.setattr(
+        documento_telegram, "build_documento_telegram_context", build_context
+    )
+    monkeypatch.setattr(
+        documento_telegram, "deliver_telegram_notification", deliver
+    )
+
+    sent = await documento_telegram.notify_finance_pending_payment_on_solicitud_approve(
+        session, documento
+    )
+
+    assert sent == 0
+    build_context.assert_not_awaited()
+    deliver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_backfill_reloads_document_with_canonical_telegram_loader(
     monkeypatch,
 ):
@@ -136,6 +169,30 @@ async def test_backfill_reloads_document_with_canonical_telegram_loader(
     assert sent == 2
     load.assert_awaited_once_with(session, stale_documento.id)
     notify.assert_awaited_once_with(session, loaded_documento)
+
+
+@pytest.mark.asyncio
+async def test_backfill_stops_when_canonical_telegram_document_is_missing(
+    monkeypatch,
+):
+    stale_documento = SimpleNamespace(id=uuid4())
+    session = object()
+    load = AsyncMock(return_value=None)
+    notify = AsyncMock()
+    monkeypatch.setattr(documento_telegram, "load_documento_for_telegram", load)
+    monkeypatch.setattr(
+        documento_telegram,
+        "notify_finance_pending_payment_on_solicitud_approve",
+        notify,
+    )
+
+    sent = await documento_telegram.ensure_finance_pending_payment_notifications(
+        session, stale_documento
+    )
+
+    assert sent == 0
+    load.assert_awaited_once_with(session, stale_documento.id)
+    notify.assert_not_awaited()
 
 
 @pytest.mark.asyncio

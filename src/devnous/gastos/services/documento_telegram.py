@@ -1302,6 +1302,10 @@ async def notify_finance_pending_payment_on_solicitud_approve(
             if recipient.telegram_user_id is not None
             else None
         )
+        if chat_id is not None:
+            if chat_id in seen_chat_ids:
+                continue
+            seen_chat_ids.add(chat_id)
         existing = await find_outbox_entry(
             session,
             notification_type="finance_pending_payment",
@@ -1315,10 +1319,6 @@ async def notify_finance_pending_payment_on_solicitud_approve(
             "sent",
         }:
             continue
-        if chat_id is not None and chat_id in seen_chat_ids:
-            continue
-        if chat_id is not None:
-            seen_chat_ids.add(chat_id)
         pending_recipients.append((recipient, chat_id))
 
     if not pending_recipients:
