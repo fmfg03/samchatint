@@ -1314,10 +1314,7 @@ async def notify_finance_pending_payment_on_solicitud_approve(
         )
         if chat_id is None and existing is not None and existing.status == "skipped":
             continue
-        if chat_id is not None and existing is not None and existing.status in {
-            "pending",
-            "sent",
-        }:
+        if existing is not None and existing.status in {"pending", "sent"}:
             continue
         pending_recipients.append((recipient, chat_id))
 

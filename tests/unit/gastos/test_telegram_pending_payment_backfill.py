@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -11,30 +12,30 @@ from devnous.gastos.services import documento_telegram
 
 
 class _RecipientsResult:
-    def __init__(self, recipients):
+    def __init__(self, recipients: list[Any]) -> None:
         self._recipients = recipients
 
-    def scalars(self):
+    def scalars(self) -> "_RecipientsResult":
         return self
 
-    def all(self):
+    def all(self) -> list[Any]:
         return self._recipients
 
 
 class _RecipientSession:
-    def __init__(self, recipients):
+    def __init__(self, recipients: list[Any]) -> None:
         self.execute = AsyncMock(return_value=_RecipientsResult(recipients))
 
 
 class _SingleResult:
-    def __init__(self, value):
+    def __init__(self, value: Any) -> None:
         self._value = value
 
-    def scalar_one_or_none(self):
+    def scalar_one_or_none(self) -> Any:
         return self._value
 
 
-def _approved_solicitud():
+def _approved_solicitud() -> SimpleNamespace:
     return SimpleNamespace(
         id=uuid4(),
         tipo="SOLICITUD",
@@ -45,8 +46,8 @@ def _approved_solicitud():
 
 @pytest.mark.asyncio
 async def test_pending_payment_skips_message_build_when_outbox_is_complete(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     documento = _approved_solicitud()
     sent_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
     skipped_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=None)
@@ -54,7 +55,7 @@ async def test_pending_payment_skips_message_build_when_outbox_is_complete(
     build_context = AsyncMock()
     deliver = AsyncMock()
 
-    async def fake_find(_session, **kwargs):
+    async def fake_find(_session: Any, **kwargs: Any) -> Any:
         if kwargs["recipient_empleado_id"] == sent_recipient.id:
             return SimpleNamespace(status="sent")
         return SimpleNamespace(status="skipped")
@@ -78,8 +79,8 @@ async def test_pending_payment_skips_message_build_when_outbox_is_complete(
 
 @pytest.mark.asyncio
 async def test_pending_payment_retries_skipped_entry_after_telegram_linking(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     documento = _approved_solicitud()
     recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
     session = _RecipientSession([recipient])
@@ -115,8 +116,8 @@ async def test_pending_payment_retries_skipped_entry_after_telegram_linking(
 
 @pytest.mark.asyncio
 async def test_pending_payment_reserves_shared_chat_id_when_first_entry_is_sent(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     documento = _approved_solicitud()
     sent_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
     second_recipient = SimpleNamespace(id=uuid4(), telegram_user_id=101)
@@ -124,7 +125,7 @@ async def test_pending_payment_reserves_shared_chat_id_when_first_entry_is_sent(
     build_context = AsyncMock()
     deliver = AsyncMock()
 
-    async def fake_find(_session, **kwargs):
+    async def fake_find(_session: Any, **kwargs: Any) -> Any:
         if kwargs["recipient_empleado_id"] == sent_recipient.id:
             return SimpleNamespace(status="sent")
         return None
@@ -147,9 +148,40 @@ async def test_pending_payment_reserves_shared_chat_id_when_first_entry_is_sent(
 
 
 @pytest.mark.asyncio
+async def test_pending_payment_preserves_sent_entry_after_telegram_unlink(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documento = _approved_solicitud()
+    recipient = SimpleNamespace(id=uuid4(), telegram_user_id=None)
+    session = _RecipientSession([recipient])
+    build_context = AsyncMock()
+    deliver = AsyncMock()
+
+    monkeypatch.setattr(
+        documento_telegram,
+        "find_outbox_entry",
+        AsyncMock(return_value=SimpleNamespace(status="sent")),
+    )
+    monkeypatch.setattr(
+        documento_telegram, "build_documento_telegram_context", build_context
+    )
+    monkeypatch.setattr(
+        documento_telegram, "deliver_telegram_notification", deliver
+    )
+
+    sent = await documento_telegram.notify_finance_pending_payment_on_solicitud_approve(
+        session, documento
+    )
+
+    assert sent == 0
+    build_context.assert_not_awaited()
+    deliver.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_backfill_reloads_document_with_canonical_telegram_loader(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stale_documento = SimpleNamespace(id=uuid4())
     loaded_documento = _approved_solicitud()
     session = object()
@@ -173,8 +205,8 @@ async def test_backfill_reloads_document_with_canonical_telegram_loader(
 
 @pytest.mark.asyncio
 async def test_backfill_stops_when_canonical_telegram_document_is_missing(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     stale_documento = SimpleNamespace(id=uuid4())
     session = object()
     load = AsyncMock(return_value=None)
@@ -197,8 +229,8 @@ async def test_backfill_stops_when_canonical_telegram_document_is_missing(
 
 @pytest.mark.asyncio
 async def test_document_detail_denies_before_payment_or_telegram_side_effects(
-    monkeypatch,
-):
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     documento_id = uuid4()
     documento = SimpleNamespace(empleado_id=uuid4())
     session = SimpleNamespace(
