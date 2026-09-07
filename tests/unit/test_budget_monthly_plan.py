@@ -16,10 +16,13 @@ from samchat.budgets.service import (
     _budget_expense_base_amount_sql,
     build_budget_actuals_snapshot,
     build_budget_monthly_actuals,
+    build_budget_monthly_plan_rollups,
     _merge_monthly_actual,
     _monthly_actual_store,
     build_budget_yoy_comparison,
+    copy_budget_version_forward,
     distribute_even_monthly_allocations,
+    validate_budget_expense_plan_total,
 )
 
 
@@ -27,6 +30,95 @@ def test_distribute_even_monthly_allocations_sums_to_total():
     allocations = distribute_even_monthly_allocations(1200.0)
     assert len(allocations) == 52
     assert round(sum(allocations.values()), 2) == 1200.0
+
+
+def test_budget_expense_plan_must_reconcile_to_authorized_total():
+    plan = {
+        1: {"budget_expense_amount": 121.06},
+        2: {"budget_expense_amount": 121.12},
+    }
+
+    assert validate_budget_expense_plan_total(plan, budget_amount=242.18) == 242.18
+    with pytest.raises(ValueError, match="debe sumar el monto total autorizado"):
+        validate_budget_expense_plan_total(plan, budget_amount=300)
+
+
+@pytest.mark.asyncio
+async def test_budget_rollup_uses_authorized_line_total(monkeypatch):
+    monkeypatch.setattr(
+        budgets_service,
+        "list_budget_lines",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "line-1",
+                    "line_direction": "expense",
+                    "budget_amount": 6295.18,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets_service,
+        "list_monthly_plan_for_lines",
+        AsyncMock(
+            return_value={
+                "line-1": {1: {"budget_expense_amount": 0, "expected_income_amount": 0}}
+            }
+        ),
+    )
+
+    result = await build_budget_monthly_plan_rollups(
+        object(),
+        version_id="version-1",
+    )
+
+    assert result["budget_expense_total"] == 6295.18
+
+
+@pytest.mark.asyncio
+async def test_copy_forward_rejects_mismatch_before_creating_version(monkeypatch):
+    monkeypatch.setattr(budgets_service, "ensure_budget_schema", AsyncMock())
+    monkeypatch.setattr(
+        budgets_service,
+        "get_budget_version",
+        AsyncMock(return_value={"version_name": "Presupuesto fuente"}),
+    )
+    monkeypatch.setattr(
+        budgets_service,
+        "list_budget_lines",
+        AsyncMock(
+            return_value=[
+                {
+                    "id": "line-1",
+                    "line_direction": "expense",
+                    "budget_amount": 100.0,
+                }
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        budgets_service,
+        "list_monthly_plan_for_lines",
+        AsyncMock(return_value={"line-1": {1: {"budget_expense_amount": 50.0}}}),
+    )
+    monkeypatch.setattr(
+        budgets_service,
+        "list_monthly_allocations_for_lines",
+        AsyncMock(return_value={}),
+    )
+    create_version = AsyncMock()
+    monkeypatch.setattr(budgets_service, "create_budget_version", create_version)
+
+    with pytest.raises(ValueError, match="debe sumar el monto total autorizado"):
+        await copy_budget_version_forward(
+            object(),
+            source_version_id="version-source",
+            target_edition_year=2027,
+            version_name="Presupuesto destino",
+        )
+
+    create_version.assert_not_awaited()
 
 
 
@@ -581,6 +673,74 @@ async def test_report_commitment_is_split_across_expense_budget_concepts() -> No
     week = budgets_service._budget_week_number(date(2026, 2, 10), 2026)
     assert actuals["concept-gas"][week]["committed_unpaid"] == 500.0
     assert actuals["concept-med"][week]["committed_unpaid"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_report_commitment_includes_configured_budget_account() -> None:
+    concept_id = "22222222-2222-4222-8222-222222222222"
+
+    class _Result:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "JOIN LATERAL" in sql:
+                return _Result(
+                    [
+                        {
+                            "expense_id": "expense-1",
+                            "document_id": "report-1",
+                            "solicitud_documento_id": None,
+                            "document_reference": "I-145494",
+                            "operation_reference": "100",
+                            "document_state": "enviado",
+                            "document_type": "INFORME",
+                            "movement_concept": "Comida",
+                            "budget_concept_id": concept_id,
+                            "budget_concept_name": "Alimentos",
+                            "effective_phase": "Estatal",
+                            "amount": 850,
+                            "expense_date": date(2026, 2, 2),
+                            "creado_en": date(2026, 2, 1),
+                            "enviado_en": date(2026, 2, 2),
+                            "aprobado_en": None,
+                            "pagado_en": None,
+                            "fecha_pago": None,
+                            "settlement_at": None,
+                        }
+                    ]
+                )
+            if "FROM budget_concepts bc" in sql:
+                assert _params["concept_ids"] == [concept_id]
+                return _Result(
+                    [
+                        {
+                            "budget_concept_id": concept_id,
+                            "budget_account_code": "5300-012-018",
+                            "budget_account_name": "ALIMENTOS",
+                        }
+                    ]
+                )
+            return _Result([])
+
+    snapshot = await build_budget_actuals_snapshot(
+        _Session(),
+        edition_year=2026,
+        version_id="11111111-1111-4111-8111-111111111111",
+    )
+
+    movement = snapshot["movements"][0]
+    assert movement["kind"] == "commitment"
+    assert movement["cuenta_codigo"] is None
+    assert movement["budget_account_code"] == "5300-012-018"
 
 
 @pytest.mark.asyncio
@@ -1699,6 +1859,45 @@ def test_unbudgeted_detail_reuses_existing_concept_for_assignment():
     assert "/lineas/assign-existing" in html
     assert 'name="budget_amount"' in html
     assert 'name="phase"' in html
+
+
+def test_unbudgeted_detail_distinguishes_budget_and_accounting_accounts():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [],
+        plan_map={},
+        actuals_map={"concept-existing": {1: {"committed_unpaid": 850.0}}},
+        actual_movements=[
+            {
+                "concept_key": "concept-existing",
+                "kind": "commitment",
+                "operation_reference": "100",
+                "document_reference": "I-145494",
+                "document_state": "enviado",
+                "budget_concept_name": "Alimentos",
+                "movement_concept": "Consumo de alimentos",
+                "budget_account_code": "5300-012-018",
+                "cuenta_codigo": None,
+                "amount": 850.0,
+                "numero_poliza": None,
+                "reason": "Gasto de informe con presupuesto asignado",
+            }
+        ],
+        version_id="version-1",
+        tournament_key="liga-telmex",
+        can_edit=True,
+        matrix_mode="expenses",
+        edition_year=2026,
+    )
+
+    assert "Concepto presupuestal" in html
+    assert "Cuenta presupuestal" in html
+    assert "Cuenta contabilizada" in html
+    assert "Alimentos" in html
+    assert "5300-012-018" in html
+    assert "Sin presupuesto autorizado en esta versión" in html
+    assert "Sin cuenta" not in html
 
 
 def test_budget_detail_route_passes_period_to_partida_matrix():
