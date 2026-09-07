@@ -34,8 +34,13 @@ from samchat.assistant.executive_regression_suite import (  # noqa: E402
 from samchat.assistant.owner_needs_eval import (  # noqa: E402
     PASS,
     PASS_WITH_CLASSIFIED_GAPS,
+    assess_owner_needs_live_response,
     assess_owner_needs_prompt,
     parse_owner_needs_eval_set,
+    selected_live_canary_owner_prompts,
+)
+from samchat.assistant.response_quality_gate import (  # noqa: E402
+    evaluate_response_quality,
 )
 from samchat.assistant.routing_contracts import (  # noqa: E402
     AssistantRoutingContractCase,
@@ -46,6 +51,7 @@ from samchat.assistant.routing_contracts import (  # noqa: E402
 DEFAULT_BASE_URL = "http://127.0.0.1:8000"
 OWNER_NEEDS_EVAL_PATH = ROOT / "docs" / "assistant" / "rqf-assistant-009e-evaluation-set.md"
 SCHEMA_VERSION = "samchat.assistant_executive_canary.v1"
+OWNER_NEEDS_LIVE_SCHEMA_VERSION = "samchat.assistant_owner_needs_canary.v1"
 WRITE_TERMS = (
     "approve",
     "aprobar",
@@ -671,6 +677,195 @@ def run_live_canary(
     return result
 
 
+def _owner_needs_live_row(
+    *,
+    prompt: Any,
+    payload: Mapping[str, Any],
+    http_status: int | None,
+    latency_seconds: float,
+    timeout: bool,
+) -> dict[str, Any]:
+    """Return safe metadata for one owner-needs live turn.
+
+    Assistant prose and raw tool payloads deliberately remain out of the
+    artifact: they may contain operational facts unrelated to the evaluation.
+    """
+
+    assistant_message = str(payload.get("assistant_message") or "")
+    tool_trace = (
+        payload.get("tool_trace")
+        if isinstance(payload.get("tool_trace"), list)
+        else []
+    )
+    verdict = assess_owner_needs_live_response(
+        prompt,
+        assistant_message=assistant_message,
+        tool_trace=tool_trace,
+    )
+    failures = list(verdict.policy_failures)
+    quality = evaluate_response_quality(assistant_message)
+    if not quality.ok:
+        failures.append(f"quality:{quality.reason}")
+    pending_confirmation = bool(payload.get("pending_confirmation"))
+    write_detected = _trace_has_write(tool_trace)
+    if timeout:
+        failures.append("provider_timeout")
+    if pending_confirmation:
+        failures.append("pending_confirmation")
+    if write_detected:
+        failures.append("write_or_side_effect_detected")
+    status = "FAIL" if failures else verdict.status
+    return {
+        "prompt_id": prompt.prompt_id,
+        "ok": status != "FAIL",
+        "status": status,
+        "http_status": http_status,
+        "latency_seconds": round(float(latency_seconds or 0.0), 3),
+        "timeout": bool(timeout),
+        "tool_count": len(_trace_tools(tool_trace)),
+        "tools": _trace_tools(tool_trace),
+        "expected_sources": verdict.expected_sources,
+        "observed_trace_source_categories": (
+            verdict.observed_trace_source_categories
+        ),
+        "missing_expected_sources": verdict.missing_expected_sources,
+        "evidence_gap_declared": verdict.evidence_gap_declared,
+        "manual_review_required": verdict.manual_review_required,
+        "manual_review_reason": verdict.manual_review_reason,
+        "forbidden_behaviors": list(prompt.forbidden_behaviors),
+        "failures": failures,
+        "quality": quality.reason,
+        "pending_confirmation": pending_confirmation,
+        "write_detected": write_detected,
+        "authority_posture": (
+            "failed_write_boundary"
+            if (pending_confirmation or write_detected)
+            else "read_only"
+        ),
+    }
+
+
+def run_live_owner_needs_canary(
+    *,
+    base_url: str,
+    cookie: str | None,
+    bearer: str | None,
+    timeout: float,
+) -> dict[str, Any]:
+    """Run the fixed 009E cohort in isolated, read-only assistant turns."""
+
+    if not cookie and not bearer:
+        return {
+            "schema_version": OWNER_NEEDS_LIVE_SCHEMA_VERSION,
+            "mode": "live_owner_needs",
+            "ok": False,
+            "status": "authentication_required",
+            "base_url": base_url,
+            "summary": {"total": 0, "passed": 0, "failed": 0, "timeouts": 0},
+            "cases": [],
+        }
+
+    prompts = selected_live_canary_owner_prompts(
+        OWNER_NEEDS_EVAL_PATH.read_text(encoding="utf-8")
+    )
+    headers = _headers(cookie=cookie, bearer=bearer)
+    marker = f"rqf-009e-owner-needs-canary-{int(time.time())}"
+    rows: list[dict[str, Any]] = []
+
+    for prompt in prompts:
+        created = _request(
+            method="POST",
+            url=_join_url(base_url, "/api/assistant/conversations"),
+            headers=headers,
+            payload={
+                "title": "RQF-009E Owner Needs Canary",
+                "module_key": "assistant_owner_needs_canary",
+                "module_label": "Assistant owner-needs canary",
+                "external_session_id": f"{marker}-{prompt.prompt_id}",
+                "module_context": {
+                    "rqf": "RQF-009E",
+                    "side_effects": "assistant_conversation_only",
+                    "prompt_id": prompt.prompt_id,
+                },
+            },
+            timeout=timeout,
+        )
+        conversation_id = (
+            str(created.payload.get("conversation_id") or "")
+            if isinstance(created.payload, Mapping)
+            else ""
+        )
+        if not created.ok or not conversation_id:
+            rows.append(
+                _owner_needs_live_row(
+                    prompt=prompt,
+                    payload={},
+                    http_status=created.status,
+                    latency_seconds=created.latency_seconds,
+                    timeout=created.timeout,
+                )
+            )
+            continue
+
+        turn = _request(
+            method="POST",
+            url=_join_url(
+                base_url,
+                f"/api/assistant/conversations/{conversation_id}/messages",
+            ),
+            headers=headers,
+            payload={
+                "message": prompt.prompt,
+                "module_key": "assistant_owner_needs_canary",
+                "module_label": "Assistant owner-needs canary",
+                "assistant_mode": "balanceado",
+            },
+            timeout=max(timeout, 30.0),
+        )
+        payload = turn.payload if isinstance(turn.payload, Mapping) else {}
+        rows.append(
+            _owner_needs_live_row(
+                prompt=prompt,
+                payload=payload,
+                http_status=turn.status,
+                latency_seconds=turn.latency_seconds,
+                timeout=turn.timeout,
+            )
+        )
+
+    failed = [row for row in rows if not row["ok"]]
+    classified_gaps = [
+        row for row in rows if row["status"] == PASS_WITH_CLASSIFIED_GAPS
+    ]
+    return {
+        "schema_version": OWNER_NEEDS_LIVE_SCHEMA_VERSION,
+        "mode": "live_owner_needs",
+        "ok": not failed,
+        "status": "pass" if not failed else "failed",
+        "base_url": base_url,
+        "summary": {
+            "total": len(rows),
+            "passed": len(rows) - len(failed),
+            "failed": len(failed),
+            "classified_gaps": len(classified_gaps),
+            "timeouts": sum(1 for row in rows if row["timeout"]),
+            "manual_review_required": sum(
+                1 for row in rows if row["manual_review_required"]
+            ),
+            "conversation_records_created": len(rows),
+        },
+        "cases": rows,
+        "authority_boundary": {
+            "posture": "read_only_business_actions",
+            "allowed_persistence": "assistant_conversation_only",
+            "writes_detected": sum(1 for row in rows if row["write_detected"]),
+            "pending_confirmations": sum(
+                1 for row in rows if row["pending_confirmation"]
+            ),
+        },
+    }
+
+
 def _result_payload(
     *,
     mode: str,
@@ -714,6 +909,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run against authenticated /api/assistant",
     )
+    mode.add_argument(
+        "--live-owner-needs",
+        action="store_true",
+        help="Run the fixed authenticated RQF-009E owner-needs cohort",
+    )
     parser.add_argument(
         "--fixture-responses",
         default=None,
@@ -736,6 +936,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.live:
         result = run_live_canary(
+            base_url=args.base_url,
+            cookie=args.cookie or _read_cookie_file(args.cookie_file),
+            bearer=args.bearer,
+            timeout=args.timeout,
+        )
+    elif args.live_owner_needs:
+        result = run_live_owner_needs_canary(
             base_url=args.base_url,
             cookie=args.cookie or _read_cookie_file(args.cookie_file),
             bearer=args.bearer,

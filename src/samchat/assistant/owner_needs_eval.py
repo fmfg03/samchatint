@@ -85,6 +85,33 @@ WRITE_INTENT_TERMS = (
     "publica",
 )
 
+# This is deliberately a small, read-only cross-section of the owner-needs
+# canon.  Create/update prompts are evaluated by the separate preview-boundary
+# contract and are not submitted by the authenticated live measurement.
+LIVE_CANARY_OWNER_PROMPT_IDS = (
+    "AI-OWNER-002",
+    "AI-OWNER-003",
+    "AI-OWNER-004",
+    "AI-OWNER-005",
+    "AI-OWNER-007",
+    "AI-OWNER-009",
+    "AI-OWNER-010",
+    "AI-OWNER-015",
+    "AI-OWNER-018",
+    "AI-OWNER-029",
+)
+
+_EXPLICIT_GAP_PHRASES = (
+    "no tengo evidencia",
+    "no hay evidencia",
+    "faltan datos",
+    "falta informacion",
+    "falta información",
+    "informacion insuficiente",
+    "información insuficiente",
+    "evidencia insuficiente",
+)
+
 
 @dataclass(frozen=True)
 class OwnerNeedsPrompt:
@@ -130,6 +157,24 @@ class OwnerNeedsAssessment:
         return payload
 
 
+@dataclass(frozen=True)
+class OwnerNeedsLiveCanaryVerdict:
+    """Safe, metadata-only verdict for one authenticated owner-needs turn."""
+
+    prompt_id: str
+    status: str
+    expected_sources: List[str]
+    observed_trace_source_categories: List[str]
+    missing_expected_sources: List[str]
+    evidence_gap_declared: bool
+    manual_review_required: bool
+    manual_review_reason: str
+    policy_failures: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, object]:
+        return asdict(self)
+
+
 def _split_cell(value: str) -> List[str]:
     return [
         item.strip().lower()
@@ -160,6 +205,121 @@ def parse_owner_needs_eval_set(markdown: str) -> List[OwnerNeedsPrompt]:
             )
         )
     return prompts
+
+
+def selected_live_canary_owner_prompts(markdown: str) -> List[OwnerNeedsPrompt]:
+    """Return the fixed, non-mutating measurement cohort in canon order."""
+
+    prompts_by_id = {
+        prompt.prompt_id: prompt for prompt in parse_owner_needs_eval_set(markdown)
+    }
+    missing = [
+        prompt_id
+        for prompt_id in LIVE_CANARY_OWNER_PROMPT_IDS
+        if prompt_id not in prompts_by_id
+    ]
+    if missing:
+        raise ValueError(
+            "owner_needs_live_canary_prompts_missing:" + ",".join(missing)
+        )
+    return [prompts_by_id[prompt_id] for prompt_id in LIVE_CANARY_OWNER_PROMPT_IDS]
+
+
+def _trace_source_values(value: object):
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            normalized_key = str(key).strip().lower()
+            if normalized_key in {
+                "source",
+                "source_type",
+                "sources",
+                "source_categories",
+            }:
+                if isinstance(item, str):
+                    yield item
+                elif isinstance(item, (list, tuple, set)):
+                    for candidate in item:
+                        if isinstance(candidate, str):
+                            yield candidate
+            yield from _trace_source_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _trace_source_values(item)
+
+
+def observed_trace_source_categories(
+    prompt: OwnerNeedsPrompt,
+    tool_trace: Iterable[Mapping[str, object]] | None,
+) -> List[str]:
+    """Report only canon source *categories* seen in a trace, never raw refs.
+
+    A category appearing here is observability metadata, not proof that a
+    business fact is correct.  Raw retrieval entries can include operational
+    identifiers, so they intentionally do not leave the runner.
+    """
+
+    source_values = {
+        value.strip().lower()
+        for value in _trace_source_values(list(tool_trace or []))
+        if value.strip()
+    }
+    return [
+        source
+        for source in prompt.expected_sources
+        if source in LIVE_EVIDENCE_SOURCE_TYPES and source in source_values
+    ]
+
+
+def assess_owner_needs_live_response(
+    prompt: OwnerNeedsPrompt,
+    *,
+    assistant_message: str,
+    tool_trace: Iterable[Mapping[str, object]] | None,
+) -> OwnerNeedsLiveCanaryVerdict:
+    """Classify a live response without retaining its text or trace payload."""
+
+    message = (assistant_message or "").strip().lower()
+    observed = observed_trace_source_categories(prompt, tool_trace)
+    expected_live = _requires_live_evidence(prompt)
+    missing = [source for source in expected_live if source not in observed]
+    gap_declared = any(phrase in message for phrase in _EXPLICIT_GAP_PHRASES)
+    failures: List[str] = []
+
+    if not message:
+        failures.append("empty_assistant_message")
+    if missing and not gap_declared:
+        failures.append("missing_evidence_disclosure")
+
+    if failures:
+        status = "FAIL"
+        manual_review = False
+        reason = "Automated contract failure; inspect the safe canary metadata."
+    elif missing:
+        status = PASS_WITH_CLASSIFIED_GAPS
+        manual_review = False
+        reason = (
+            "The response declared an evidence limit; missing live sources are "
+            "reported as a classified gap."
+        )
+    else:
+        status = PASS_WITH_CLASSIFIED_GAPS
+        manual_review = True
+        reason = (
+            "Trace categories were observed, but factual correctness and the "
+            "prompt-specific forbidden behaviors require human semantic review."
+        )
+
+    return OwnerNeedsLiveCanaryVerdict(
+        prompt_id=prompt.prompt_id,
+        status=status,
+        expected_sources=list(prompt.expected_sources),
+        observed_trace_source_categories=observed,
+        missing_expected_sources=missing,
+        evidence_gap_declared=gap_declared,
+        manual_review_required=manual_review,
+        manual_review_reason=reason,
+        policy_failures=failures,
+    )
 
 
 def _summary(prompt: OwnerNeedsPrompt) -> str:
@@ -425,14 +585,18 @@ __all__ = [
     "EVIDENCE_DATA_MISSING",
     "EXPECTED_LIMITATION",
     "GAP_TYPES",
+    "LIVE_CANARY_OWNER_PROMPT_IDS",
     "PASS",
     "PASS_WITH_CLASSIFIED_GAPS",
     "OwnerNeedsAssessment",
     "OwnerNeedsGap",
+    "OwnerNeedsLiveCanaryVerdict",
     "OwnerNeedsPrompt",
     "assess_owner_needs_prompt",
+    "assess_owner_needs_live_response",
     "build_owner_evidence_gap_response",
     "evaluate_owner_needs_prompts",
     "parse_owner_needs_eval_set",
     "recommended_next_action",
+    "selected_live_canary_owner_prompts",
 ]

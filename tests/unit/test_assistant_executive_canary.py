@@ -289,6 +289,102 @@ def test_live_canary_never_includes_cookie_or_bearer_in_result(monkeypatch):
     assert result["summary"]["total"] >= 7
 
 
+def test_live_owner_needs_canary_requires_auth_before_http_messages(monkeypatch):
+    calls = []
+
+    def fake_request(**kwargs):
+        calls.append(kwargs["url"])
+        raise AssertionError("should not call without auth")
+
+    monkeypatch.setattr(MODULE, "_request", fake_request)
+    result = MODULE.run_live_owner_needs_canary(
+        base_url="http://testserver", cookie=None, bearer=None, timeout=1
+    )
+
+    assert result["status"] == "authentication_required"
+    assert calls == []
+
+
+def test_live_owner_needs_canary_isolated_safe_and_never_serializes_secrets(
+    monkeypatch,
+):
+    created = []
+    prompts = []
+
+    def fake_request(**kwargs):
+        url = kwargs["url"]
+        if url.endswith("/api/assistant/conversations"):
+            created.append(kwargs["payload"])
+            return MODULE.HttpResult(
+                ok=True,
+                status=200,
+                url=url,
+                payload={"conversation_id": f"c{len(created)}"},
+            )
+        if "/messages" in url:
+            prompts.append(kwargs["payload"]["message"])
+            return MODULE.HttpResult(
+                ok=True,
+                status=200,
+                url=url,
+                payload={
+                    "assistant_message": (
+                        "No tengo evidencia suficiente para afirmar ese dato."
+                    ),
+                    "tool_trace": [],
+                },
+                latency_seconds=0.2,
+            )
+        raise AssertionError(url)
+
+    monkeypatch.setattr(MODULE, "_request", fake_request)
+    result = MODULE.run_live_owner_needs_canary(
+        base_url="http://testserver",
+        cookie="session=secret-cookie",
+        bearer="secret-bearer",
+        timeout=1,
+    )
+    serialized = json.dumps(result, sort_keys=True)
+
+    assert result["ok"] is True
+    assert result["mode"] == "live_owner_needs"
+    assert result["summary"]["total"] == 10
+    assert len(created) == 10
+    assert len(prompts) == 10
+    assert all(row["authority_posture"] == "read_only" for row in result["cases"])
+    assert "secret-cookie" not in serialized
+    assert "secret-bearer" not in serialized
+    assert "No tengo evidencia suficiente" not in serialized
+
+
+def test_live_owner_needs_canary_fails_write_or_confirmation_boundary():
+    prompt = MODULE.selected_live_canary_owner_prompts(
+        MODULE.OWNER_NEEDS_EVAL_PATH.read_text(encoding="utf-8")
+    )[0]
+    row = MODULE._owner_needs_live_row(
+        prompt=prompt,
+        payload={
+            "assistant_message": "No tengo evidencia suficiente para afirmar ese dato.",
+            "pending_confirmation": {"tool_name": "document.approve"},
+            "tool_trace": [
+                {
+                    "tool": "document.approve",
+                    "result": {"writes_attempted": True},
+                }
+            ],
+        },
+        http_status=200,
+        latency_seconds=0.1,
+        timeout=False,
+    )
+
+    assert row["ok"] is False
+    assert row["status"] == "FAIL"
+    assert "pending_confirmation" in row["failures"]
+    assert "write_or_side_effect_detected" in row["failures"]
+    assert row["authority_posture"] == "failed_write_boundary"
+
+
 def test_rqf_054h_fixture_gate_artifact_contract():
     result = json.loads(ARTIFACT_RESULT.read_text(encoding="utf-8"))
     readme = ARTIFACT_README.read_text(encoding="utf-8")
