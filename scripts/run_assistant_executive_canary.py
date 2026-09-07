@@ -678,6 +678,18 @@ def run_live_canary(
     return result
 
 
+def _top_level_label(
+    payload: Mapping[str, Any], keys: tuple[str, ...]
+) -> str | None:
+    """Return a bounded scalar label from the response body only."""
+
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, (str, int, float)) and str(value).strip():
+            return str(value).strip()[:120]
+    return None
+
+
 def _owner_needs_live_row(
     *,
     prompt: Any,
@@ -723,8 +735,8 @@ def _owner_needs_live_row(
         "http_status": http_status,
         "latency_seconds": round(float(latency_seconds or 0.0), 3),
         "timeout": bool(timeout),
-        "provider": _extract_first(payload, ("provider", "model_provider")),
-        "model": _extract_first(payload, ("model", "model_name")),
+        "provider": _top_level_label(payload, ("provider", "model_provider")),
+        "model": _top_level_label(payload, ("model", "model_name")),
         "tool_count": len(_trace_tools(tool_trace)),
         "tools": _trace_tools(tool_trace),
         "expected_sources": verdict.expected_sources,
@@ -774,6 +786,7 @@ def run_live_owner_needs_canary(
     headers = _headers(cookie=cookie, bearer=bearer)
     marker = f"rqf-009e-owner-needs-canary-{uuid.uuid4().hex}"
     rows: list[dict[str, Any]] = []
+    conversations_created = 0
 
     for prompt in prompts:
         created = _request(
@@ -810,6 +823,7 @@ def run_live_owner_needs_canary(
             )
             continue
 
+        conversations_created += 1
         turn = _request(
             method="POST",
             url=_join_url(
@@ -855,7 +869,7 @@ def run_live_owner_needs_canary(
             "manual_review_required": sum(
                 1 for row in rows if row["manual_review_required"]
             ),
-            "conversation_records_created": len(rows),
+            "conversation_records_created": conversations_created,
         },
         "cases": rows,
         "authority_boundary": {
