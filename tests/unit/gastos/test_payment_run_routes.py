@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from devnous.gastos.routes import admin_routes
+from devnous.gastos.routes import admin_routes, dependencies
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
@@ -168,6 +168,125 @@ async def test_payment_run_page_queries_approved_and_in_process_sections(
     assert loan_list_mock.await_args_list[1].kwargs["status_filter"] == "cerradas"
     assert loan_list_mock.await_args_list[0].kwargs["query"] == "S-26000146"
     assert loan_list_mock.await_args_list[1].kwargs["query"] == "S-26000146"
+
+
+def test_payment_run_navigation_is_available_to_payment_confirmer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empleado_id = uuid4()
+    monkeypatch.setenv(
+        "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
+        str(empleado_id),
+    )
+
+    navigation = admin_routes.render_admin_navigation(
+        SimpleNamespace(
+            id=empleado_id,
+            nombre="Dani",
+            rol="empleado",
+            departamento="Contabilidad",
+            visible_tool_keys={"panel.home"},
+        )
+    )
+
+    assert 'href="/admin/finanzas/payment-run"' in navigation
+    assert 'href="/admin/finanzas/payment-history"' not in navigation
+
+
+@pytest.mark.asyncio
+async def test_payment_run_gateway_allows_authorized_confirmer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empleado_id = uuid4()
+    empleado = SimpleNamespace(id=empleado_id, activo=True)
+    request = SimpleNamespace(
+        session={"empleado_id": str(empleado_id)},
+        url=SimpleNamespace(path="/admin/finanzas/payment-run"),
+        method="GET",
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "_load_empleado_proxy_by_id",
+        AsyncMock(return_value=empleado),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "visible_tools_for",
+        AsyncMock(return_value={"panel.home"}),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "can_access_path",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(dependencies, "can_access_payment_run", lambda _: True)
+
+    resolved = await dependencies.get_current_empleado(request, AsyncMock())
+
+    assert resolved is empleado
+    assert resolved.can_access_path is True
+
+
+@pytest.mark.asyncio
+async def test_payment_run_hides_payment_date_editor_from_accounting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    documento_id = uuid4()
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_items",
+        AsyncMock(
+            side_effect=[
+                [
+                    {
+                        "id": documento_id,
+                        "numero_referencia": "S-26000048",
+                        "solicitante_nombre": "Benjamin",
+                        "beneficiario_nombre": "Proveedor Demo",
+                        "concepto_pago": "Uniformes",
+                        "fecha_pago": None,
+                        "monto": Decimal("1200.00"),
+                        "currency": "MXN",
+                        "status": "programada",
+                        "can_edit_fecha_pago": True,
+                        "can_close": True,
+                        "can_upload_payment_proof": False,
+                    }
+                ],
+                [],
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_closures",
+        AsyncMock(return_value=[]),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "list_prestamo_payment_run_items",
+        AsyncMock(side_effect=[[], []]),
+    )
+
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="empleado",
+            departamento="Contabilidad",
+            nombre="Dani",
+        ),
+        status="pendientes",
+        date_from=None,
+        date_to=None,
+        q=None,
+    )
+    html = response.body.decode("utf-8")
+
+    assert 'name="fecha_pago"' not in html
+    assert 'name="document_ids"' not in html
+    assert "Cerrar corte" not in html
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Empleado
 from ..services.access_control_service import can_access_path, visible_tools_for
+from ..services.payment_run_service import can_access_payment_run
 
 logger = logging.getLogger(__name__)
 
@@ -224,12 +225,19 @@ async def get_current_empleado(
     empleado.impersonator_rol = request.session.get("impersonator_rol")
     try:
         empleado.visible_tool_keys = await visible_tools_for(session, empleado)
+        request_path = str(getattr(request.url, "path", "") or "")
         empleado.can_access_path = await can_access_path(
             session,
             empleado,
-            str(getattr(request.url, "path", "") or ""),
+            request_path,
             str(getattr(request, "method", "GET") or "GET"),
         )
+        if (
+            not empleado.can_access_path
+            and request_path.startswith("/admin/finanzas/payment-run")
+            and can_access_payment_run(empleado)
+        ):
+            empleado.can_access_path = True
     except Exception as exc:
         logger.debug("Access-control visibility lookup failed: %s", exc)
         empleado.visible_tool_keys = set()
