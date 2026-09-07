@@ -211,23 +211,38 @@ def _trace_tools(tool_trace: Iterable[Mapping[str, Any]] | None) -> list[str]:
 
 
 def _trace_has_write(tool_trace: Iterable[Mapping[str, Any]] | None) -> bool:
-    for item in tool_trace or []:
-        if item.get("writes_attempted") or item.get("side_effects_detected"):
-            return True
-        for value in _walk_values(item):
-            if value is True and any(
-                key in item
-                for key in ("writes_attempted", "side_effects_detected")
+    def has_write_signal(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            if value.get("writes_attempted"):
+                return True
+            if value.get("side_effects_detected"):
+                return True
+            if value.get("operational_writes"):
+                return True
+            if (
+                value.get("handler_invoked") is True
+                and value.get("operation_type") == "write"
             ):
                 return True
-            if isinstance(value, str):
-                lowered = value.lower().replace(".", "_").replace("-", "_")
-                if any(term in lowered for term in WRITE_TERMS):
-                    if not lowered.startswith(
-                        ("read", "get", "list", "search", "assistant_owner")
-                    ):
-                        return True
-    return False
+
+            # Only tool/action fields describe an invoked operation. Do not
+            # scan arbitrary telemetry strings: runtime capability listings
+            # legitimately name blocked write tools without invoking them.
+            for key in ("tool", "tool_name", "canonical_action", "name"):
+                candidate = value.get(key)
+                if isinstance(candidate, str):
+                    lowered = candidate.lower().replace(".", "_").replace("-", "_")
+                    if any(term in lowered for term in WRITE_TERMS):
+                        if not lowered.startswith(
+                            ("read", "get", "list", "search", "assistant_owner")
+                        ):
+                            return True
+            return any(has_write_signal(item) for item in value.values())
+        if isinstance(value, list):
+            return any(has_write_signal(item) for item in value)
+        return False
+
+    return any(has_write_signal(item) for item in tool_trace or [])
 
 
 def _extract_first(payload: Any, keys: tuple[str, ...]) -> Any:
@@ -253,9 +268,9 @@ def _fixture_response_for_case(
     fixtures: dict[str, tuple[str, str]] = {
         "OWNER-READINESS-001": (
             "assistant_owner_pack_readiness",
-            "Owner Pack Readiness: faltantes visibles. "
+            "Owner Pack: cobertura con faltantes visibles. "
             "Fuente: assistant.owner_pack_readiness. "
-            "Frontera de autoridad: No ejecute cambios; respuesta read-only.",
+            "Límite de la vista: No ejecute cambios; respuesta read-only.",
         ),
         "OWNER-PAYMENT-EVIDENCE-001": (
             "assistant_owner_variable_query",

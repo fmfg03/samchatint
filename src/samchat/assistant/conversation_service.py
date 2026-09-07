@@ -161,7 +161,7 @@ from .response_sufficiency import (
 )
 from .tool_adjudicator import build_tool_adjudication_trace
 from .work_turn_renderer import render_work_turn_answer
-from .work_frame import WorkFrame, build_work_frame
+from .work_frame import WorkFrame, build_work_frame, normalize_work_text
 
 AssistantTurnFn = Callable[..., Awaitable[Any]]
 AppendExportPromptFn = Callable[[str, Any], str]
@@ -1419,6 +1419,19 @@ def _finance_platform_read_intent(raw_message: str) -> bool:
     return detect_finance_accounting_qa_intent(raw_message) is not None
 
 
+def _is_explicit_cfdi_matching_request(raw_message: str) -> bool:
+    """Keep document-matching views separate from finance readiness questions."""
+
+    normalized = normalize_work_text(raw_message)
+    return "cfdi" in normalized and (
+        "matching" in normalized
+        or "sin gasto" in normalized
+        or "sin vincular" in normalized
+        or "pendiente" in normalized
+        or "vinculado" in normalized
+    )
+
+
 _FINANCE_TEMPLATE_MONTHS = {
     "enero": 1,
     "febrero": 2,
@@ -1548,6 +1561,11 @@ async def _build_finance_platform_read_response(
     intent = detect_finance_accounting_qa_intent(raw_message)
     if intent is None:
         return None
+    if (
+        intent.question_type == "missing_cfdi"
+        and _is_explicit_cfdi_matching_request(raw_message)
+    ):
+        return None
 
     result = await run_finance_read_adapter(
         session,
@@ -1590,6 +1608,26 @@ async def _build_finance_platform_read_response(
         session=session,
     )
     return _response_object(assistant_message=rendered, tool_trace=tool_trace)
+
+
+async def _build_prioritized_cfdi_gap_response(
+    *,
+    raw_message: str,
+    conversation: Any,
+    session: Any,
+    maybe_append_export_prompt: MaybeAppendExportPromptFn,
+) -> Optional[Any]:
+    """Prioritize generic CFDI-gap questions without reordering other domains."""
+
+    intent = detect_finance_accounting_qa_intent(raw_message)
+    if intent is None or intent.question_type != "missing_cfdi":
+        return None
+    return await _build_finance_platform_read_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
 
 
 async def _build_request_intelligence_response(
@@ -2111,6 +2149,15 @@ async def run_conversation_turn(
     if finance_direct_response is not None:
         return _with_work_frame_trace(finance_direct_response, work_frame)
 
+    finance_platform_response = await _build_prioritized_cfdi_gap_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_platform_response is not None:
+        return _with_work_frame_trace(finance_platform_response, work_frame)
+
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
         conversation=conversation,
@@ -2435,6 +2482,15 @@ async def run_message_turn_with_pending(
     )
     if finance_direct_response is not None:
         return _with_work_frame_trace(finance_direct_response, work_frame)
+
+    finance_platform_response = await _build_prioritized_cfdi_gap_response(
+        raw_message=raw_message,
+        conversation=conversation,
+        session=session,
+        maybe_append_export_prompt=maybe_append_export_prompt,
+    )
+    if finance_platform_response is not None:
+        return _with_work_frame_trace(finance_platform_response, work_frame)
 
     specialist_preview_response = await _build_specialist_preview_surface_response(
         raw_message=raw_message,
