@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
+from fastapi import HTTPException
+
+import samchat.assistant.router as assistant_router
 
 from samchat.assistant.soul_data_coverage import (
     INSUFFICIENT,
@@ -8,10 +13,12 @@ from samchat.assistant.soul_data_coverage import (
     READY,
     SOURCE_MISSING,
     build_soul_data_coverage_report,
+    build_tournament_soul_coverage_report,
     evaluate_accounting_historical_sources,
     evaluate_sam_inbox_payload,
     evaluate_tournament_soul_snapshot,
     render_soul_data_coverage_answer,
+    render_tournament_soul_coverage_answer,
 )
 
 
@@ -66,6 +73,65 @@ def test_incomplete_tournament_soul_snapshot_names_missing_data() -> None:
     assert "missing_entities" in codes
     assert "missing_categories" in codes
     assert "missing_phases" in codes
+
+
+def test_tournament_coverage_does_not_mix_inbox_or_accounting_sources() -> None:
+    report = build_tournament_soul_coverage_report(
+        tournament_slug="copa-test",
+        soul_snapshot={
+            "tournament": {"name": "Copa Test"},
+            "soul": {
+                "operations": {
+                    "categories": ["Sub-13"],
+                    "phases": [{"start_date": "2026-09-01", "activities": ["registro"]}],
+                },
+                "entity_folders_seed": {"entities": [{"name": "Jalisco"}]},
+            },
+        },
+    )
+
+    assert report.status == READY
+    assert report.tool_policy == "tournament_soul_coverage_only"
+    assert report.coverage.artifact_id == "tournament.soul_snapshot"
+    assert "contable" not in render_tournament_soul_coverage_answer(report).lower()
+
+
+def test_tournament_coverage_reports_unavailable_source() -> None:
+    report = build_tournament_soul_coverage_report(
+        tournament_slug="inexistente",
+        source_available=False,
+    )
+
+    assert report.status == SOURCE_MISSING
+    assert report.coverage.findings[0].code == "tournament_soul_source_unavailable"
+
+
+def test_tournament_coverage_understands_live_snapshot_entities_and_matches() -> None:
+    report = build_tournament_soul_coverage_report(
+        tournament_slug="copa-viva",
+        soul_snapshot={
+            "tournament": {"name": "Copa Viva"},
+            "soul": {
+                "operations": {
+                    "entities": [{"name": "Jalisco"}],
+                    "categories": [{"name": "Sub-13"}],
+                    "matches": [
+                        {"phase": "Estatal", "match_date": "2026-09-01"},
+                        {"phase": "Estatal", "match_date": "2026-09-02"},
+                    ],
+                },
+                "entity_folders_seed": [{"entity_name": "Jalisco"}],
+            },
+        },
+    )
+
+    assert report.status == READY
+    assert report.coverage.available_sources == (
+        "torneo:Copa Viva",
+        "entidades",
+        "categorias",
+        "fases",
+    )
 
 
 def test_historical_accounting_sources_distinguish_missing_and_balance_only(tmp_path) -> None:
@@ -133,3 +199,54 @@ async def test_router_exposes_soul_data_coverage_as_read_only_tool() -> None:
     assert payload["status"] == INSUFFICIENT
     assert "conversation_answer" in payload
     assert "No ejecut? cambios" in payload["conversation_answer"]
+
+
+@pytest.mark.asyncio
+async def test_router_exposes_tournament_scoped_soul_coverage(monkeypatch) -> None:
+    monkeypatch.setattr(
+        assistant_router,
+        "build_tournament_soul_snapshot",
+        AsyncMock(
+            return_value={
+                "tournaments": [{"slug": "copa-test", "name": "Copa Test"}],
+                "tournament": {"name": "Copa Test"},
+                "soul": {
+                    "operations": {
+                        "categories": ["Sub-13"],
+                        "phases": [
+                            {"start_date": "2026-09-01", "activities": ["registro"]}
+                        ],
+                    },
+                    "entity_folders_seed": {"entities": [{"name": "Jalisco"}]},
+                },
+            }
+        ),
+    )
+
+    payload = await assistant_router._run_read_tool(
+        "assistant_tournament_soul_coverage",
+        {"tournament_slug": "copa-test"},
+        gastos_session=None,
+        tournament_key_default=None,
+        current_role="admin",
+    )
+
+    assert payload["read_only"] is True
+    assert payload["tool_policy"] == "tournament_soul_coverage_only"
+    assert payload["tournament_slug"] == "copa-test"
+    assert payload["coverage"]["artifact_id"] == "tournament.soul_snapshot"
+    assert "No ejecute cambios" in payload["conversation_answer"]["rendered_text"]
+
+
+@pytest.mark.asyncio
+async def test_tournament_scoped_soul_coverage_requires_slug() -> None:
+    with pytest.raises(HTTPException, match="tournament_slug is required") as exc_info:
+        await assistant_router._run_read_tool(
+            "assistant_tournament_soul_coverage",
+            {},
+            gastos_session=None,
+            tournament_key_default=None,
+            current_role="admin",
+        )
+
+    assert exc_info.value.status_code == 400

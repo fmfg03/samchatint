@@ -182,6 +182,13 @@ SEMANTIC_TOOL_REGISTRY: Dict[str, SemanticAssistantToolSpec] = {
         evidence_outputs=("owner_variable_source", "live_evidence_or_missing_reason"),
         rejected_interpretations=("pending_payment_queue",),
     ),
+    "assistant_tournament_soul_coverage": SemanticAssistantToolSpec(
+        name="assistant_tournament_soul_coverage",
+        domains=("operations",),
+        task_kinds=("data_coverage",),
+        evidence_outputs=("soul_snapshot", "phase_dates", "phase_activities"),
+        rejected_interpretations=("claim_complete_tournament_without_soul",),
+    ),
     "assistant_finance_accounting_qa": SemanticAssistantToolSpec(
         name="assistant_finance_accounting_qa",
         domains=("finance", "mixed"),

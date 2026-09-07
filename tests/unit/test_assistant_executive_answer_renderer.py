@@ -33,6 +33,20 @@ def test_router_deterministic_answer_renders_owner_variable_tool_result() -> Non
     assert '{"name"' not in answer
 
 
+def test_router_deterministic_answer_preserves_tournament_soul_coverage_text() -> None:
+    result = {
+        "conversation_answer": {
+            "rendered_text": "Cobertura SOUL de copa-test: partial (50%).\nNo ejecute cambios."
+        }
+    }
+
+    answer = _assistant_deterministic_tool_answer(
+        "assistant_tournament_soul_coverage", result
+    )
+
+    assert answer == result["conversation_answer"]["rendered_text"]
+
+
 def test_executive_renderer_synthesizes_structured_report_without_raw_json() -> None:
     result = {
         "headline": "Estado de carpeta de entidad",

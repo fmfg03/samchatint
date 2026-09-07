@@ -178,7 +178,9 @@ from .owner_response_pack import build_response_pack_from_live_snapshot
 from .sports_operations_status import build_sports_operations_status_from_tournament_source
 from .soul_data_coverage import (
     build_soul_data_coverage_report,
+    build_tournament_soul_coverage_report,
     render_soul_data_coverage_answer,
+    render_tournament_soul_coverage_answer,
 )
 from .readonly_workspace import (
     readonly_workspace_allowed as _readonly_workspace_allowed,
@@ -2490,6 +2492,7 @@ READ_TOOLS = {
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
     "assistant_soul_data_coverage",
+    "assistant_tournament_soul_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -2557,6 +2560,7 @@ FINANCE_READ_TOOLS = {
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
     "assistant_soul_data_coverage",
+    "assistant_tournament_soul_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -2600,6 +2604,7 @@ TOURNAMENT_READ_TOOLS = {
     "assistant_owner_pack_readiness",
     "assistant_owner_pack_readiness_dashboard",
     "assistant_soul_data_coverage",
+    "assistant_tournament_soul_coverage",
     "assistant_owner_pack_export_preview",
     "assistant_owner_variable_query",
     "assistant_owner_pack_live_brief",
@@ -3371,6 +3376,21 @@ def _tool_defs() -> List[Dict[str, Any]]:
                         "include_live_soul": {"type": "boolean", "default": True},
                     },
                     "required": [],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "assistant_tournament_soul_coverage",
+                "description": "Evalua en modo solo lectura la cobertura SOUL de un torneo: entidades, categorias, fases, fechas y actividades; declara faltantes sin afirmar que el Owner Pack este completo.",
+                "parameters": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "tournament_slug": {"type": "string"},
+                    },
+                    "required": ["tournament_slug"],
                 },
             },
         },
@@ -9402,6 +9422,34 @@ async def _run_read_tool(
         report = build_soul_data_coverage_report(soul_snapshot=soul_snapshot)
         payload = report.to_dict()
         payload["conversation_answer"] = render_soul_data_coverage_answer(report)
+        return payload
+
+    if tool_name == "assistant_tournament_soul_coverage":
+        tournament_slug = str(args.get("tournament_slug") or "").strip()
+        if not tournament_slug:
+            raise HTTPException(status_code=400, detail="tournament_slug is required")
+        source_available = True
+        soul_snapshot = None
+        try:
+            soul_snapshot = await build_tournament_soul_snapshot(
+                tournament_key="all",
+                tournament_slug=tournament_slug,
+                include_media=False,
+                include_communications=False,
+                limit=120,
+            )
+            source_available = bool(soul_snapshot.get("tournaments"))
+        except Exception:
+            source_available = False
+        report = build_tournament_soul_coverage_report(
+            tournament_slug=tournament_slug,
+            soul_snapshot=soul_snapshot,
+            source_available=source_available,
+        )
+        payload = report.to_dict()
+        payload["conversation_answer"] = {
+            "rendered_text": render_tournament_soul_coverage_answer(report)
+        }
         return payload
 
     if tool_name == "assistant_owner_pack_readiness_dashboard":
