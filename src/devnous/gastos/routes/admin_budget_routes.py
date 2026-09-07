@@ -41,6 +41,7 @@ from samchat.budgets.service import (
     update_budget_line,
     update_budget_version_metadata,
     upsert_budget_line_for_concept,
+    validate_budget_expense_plan_total,
     validate_active_cuenta_contable_id,
 )
 from samchat.budgets.exporter import (
@@ -1243,12 +1244,16 @@ def register_presupuestos_routes(router) -> None:
         budget_amount: Optional[float] = Form(None),
         criteria_note: Optional[str] = Form(None),
         observations: Optional[str] = Form(None),
+        save_scope: Optional[str] = Form(None),
         session: AsyncSession = Depends(get_db_session),
         current_empleado=Depends(get_current_empleado),
     ):
         _require_budget_access(current_empleado, "line_update")
         try:
             form = await request.form()
+            requested_scope = str(save_scope or form.get("save_scope") or "").strip()
+            save_line_data = requested_scope != "plan"
+            save_plan = requested_scope != "line"
             cuenta_contable_id_raw = str(
                 cuenta_contable_id or form.get("cuenta_contable_id") or ""
             ).strip()
@@ -1256,7 +1261,9 @@ def register_presupuestos_routes(router) -> None:
                 account_code_final or form.get("account_code_final") or ""
             ).strip()
             concept_cuenta_update: Optional[str] = None
-            if "cuenta_contable_id" in form or cuenta_contable_id is not None:
+            if save_line_data and (
+                "cuenta_contable_id" in form or cuenta_contable_id is not None
+            ):
                 if cuenta_contable_id_raw:
                     concept_cuenta_update = await validate_active_cuenta_contable_id(
                         session,
@@ -1279,7 +1286,7 @@ def register_presupuestos_routes(router) -> None:
                         (account_row or {}).get("codigo") or account_code_from_form
                     ).strip()
 
-            line_level_updates = {
+            candidate_line_updates = {
                 key: value
                 for key, value in {
                     "budget_concept_id": budget_concept_id,
@@ -1294,39 +1301,55 @@ def register_presupuestos_routes(router) -> None:
                 }.items()
                 if value is not None
             }
+            if requested_scope == "line":
+                candidate_line_updates.pop("budget_amount", None)
+            elif requested_scope == "plan":
+                candidate_line_updates = {
+                    key: value
+                    for key, value in candidate_line_updates.items()
+                    if key == "budget_amount"
+                }
+            line_level_updates = candidate_line_updates
             if concept_cuenta_update and "account_code_final" not in line_level_updates:
                 line_level_updates["account_code_final"] = (
                     account_code_from_form or None
                 )
             monthly_plan: dict[int, dict[str, float]] = {}
-            for key in form.keys():
-                key_str = str(key)
-                if key_str.startswith("month_") and (
-                    key_str.endswith("_expense") or key_str.endswith("_income")
-                ):
-                    try:
-                        parts = key_str.split("_")
-                        month_number = int(parts[1])
-                        field = parts[2]
-                        monthly_plan.setdefault(month_number, {})
-                        monthly_plan[month_number][
-                            "budget_expense_amount"
-                            if field == "expense"
-                            else "expected_income_amount"
-                        ] = float(form.get(key) or 0)
-                    except (TypeError, ValueError, IndexError):
-                        continue
-                elif key_str.startswith("month_"):
-                    try:
-                        month_number = int(key_str.split("_", 1)[1])
-                        monthly_plan.setdefault(month_number, {})
-                        monthly_plan[month_number]["budget_expense_amount"] = float(
-                            form.get(key) or 0
-                        )
-                    except (TypeError, ValueError):
-                        continue
+            if save_plan:
+                for key in form.keys():
+                    key_str = str(key)
+                    if key_str.startswith("month_") and (
+                        key_str.endswith("_expense") or key_str.endswith("_income")
+                    ):
+                        try:
+                            parts = key_str.split("_")
+                            month_number = int(parts[1])
+                            field = parts[2]
+                            monthly_plan.setdefault(month_number, {})
+                            monthly_plan[month_number][
+                                "budget_expense_amount"
+                                if field == "expense"
+                                else "expected_income_amount"
+                            ] = float(form.get(key) or 0)
+                        except (TypeError, ValueError, IndexError):
+                            continue
+                    elif key_str.startswith("month_"):
+                        try:
+                            month_number = int(key_str.split("_", 1)[1])
+                            monthly_plan.setdefault(month_number, {})
+                            monthly_plan[month_number][
+                                "budget_expense_amount"
+                            ] = float(form.get(key) or 0)
+                        except (TypeError, ValueError):
+                            continue
             if not line_level_updates and not monthly_plan:
                 raise ValueError("No budget line updates were provided")
+
+            if monthly_plan and str(budget_view or "expenses") != "income":
+                validate_budget_expense_plan_total(
+                    monthly_plan,
+                    budget_amount=budget_amount,
+                )
 
             if line_level_updates:
                 line = await update_budget_line(
@@ -1334,6 +1357,7 @@ def register_presupuestos_routes(router) -> None:
                     line_id=str(line_id),
                     actor_empleado_id=str(current_empleado.id),
                     updates=line_level_updates,
+                    commit=not monthly_plan,
                 )
             else:
                 current = (
@@ -1369,7 +1393,7 @@ def register_presupuestos_routes(router) -> None:
                         cuenta_contable_id=concept_cuenta_update,
                         cuenta_contable_provided=True,
                         actor_empleado_id=str(current_empleado.id),
-                        commit=True,
+                        commit=not monthly_plan,
                     )
 
             if monthly_plan:
@@ -1389,6 +1413,19 @@ def register_presupuestos_routes(router) -> None:
                     budget_view=budget_view,
                     phase_filter=phase_filter,
                     success_msg=msg,
+                ),
+                status_code=303,
+            )
+        except ValueError as exc:
+            await session.rollback()
+            return RedirectResponse(
+                url=_presupuestos_redirect_url(
+                    edition_year=edition_year,
+                    version_id=version_id,
+                    tournament_key=tournament_key,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    error_msg=str(exc),
                 ),
                 status_code=303,
             )

@@ -4171,6 +4171,11 @@ async def import_budget_lines_upload(
                 monthly_plan[month]["budget_expense_amount"] = _safe_decimal(
                     month_value
                 )
+        if monthly_plan and clean_direction == "expense":
+            validate_budget_expense_plan_total(
+                monthly_plan,
+                budget_amount=budget_amount,
+            )
         existing_line = existing_by_scope.get(line_key)
         if existing_line:
             updated_line = await update_budget_line(
@@ -5630,6 +5635,7 @@ async def update_budget_line(
     line_id: str,
     actor_empleado_id: Optional[str] = None,
     updates: dict[str, Any],
+    commit: bool = True,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
     current = (
@@ -5789,7 +5795,10 @@ async def update_budget_line(
             "after": update_payload,
         },
     )
-    await session.commit()
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
     lines = await list_budget_lines(
         session,
         version_id=_safe_str(current["budget_version_id"]),
@@ -6727,6 +6736,35 @@ async def list_monthly_plan_for_lines(
     return dict(result)
 
 
+def validate_budget_expense_plan_total(
+    plan: dict[int, dict[str, Any]],
+    *,
+    budget_amount: Any,
+) -> float:
+    """Require the expense schedule to reconcile to the authorized total."""
+    authorized_total = round(_safe_decimal(budget_amount), 2)
+    scheduled_total = round(
+        sum(
+            round(
+                _safe_decimal(
+                    payload.get("budget_expense_amount", 0)
+                    if isinstance(payload, dict)
+                    else 0
+                ),
+                2,
+            )
+            for payload in plan.values()
+        ),
+        2,
+    )
+    if abs(authorized_total - scheduled_total) > 0.005:
+        raise ValueError(
+            "La calendarización del gasto debe sumar el monto total autorizado "
+            f"(${authorized_total:,.2f}); actualmente suma ${scheduled_total:,.2f}."
+        )
+    return scheduled_total
+
+
 async def replace_budget_line_monthly_plan(
     session: AsyncSession,
     *,
@@ -6743,7 +6781,11 @@ async def replace_budget_line_monthly_plan(
             await session.execute(
                 text(
                     """
-                SELECT l.budget_version_id, v.status AS version_status
+                SELECT
+                    l.budget_version_id,
+                    l.budget_amount,
+                    COALESCE(l.line_direction, 'expense') AS line_direction,
+                    v.status AS version_status
                 FROM budget_lines l
                 JOIN budget_versions v ON v.id = l.budget_version_id
                 WHERE l.id = :budget_line_id
@@ -6760,6 +6802,11 @@ async def replace_budget_line_monthly_plan(
         raise ValueError("Budget line not found")
     if not _editable_version_status(current.get("version_status")):
         raise ValueError("Only draft or reforecast versions allow line edits")
+    if normalize_budget_line_direction(current.get("line_direction")) == "expense":
+        validate_budget_expense_plan_total(
+            plan,
+            budget_amount=current.get("budget_amount"),
+        )
     before_plan = (
         await list_monthly_plan_for_lines(session, line_ids=[clean_line_id])
     ).get(clean_line_id, {})
@@ -6861,17 +6908,13 @@ async def build_budget_monthly_plan_rollups(
     expected_income_total = 0.0
     for line in lines:
         monthly = plan_map.get(line["id"], {})
+        if normalize_budget_line_direction(line.get("line_direction")) == "expense":
+            budget_expense_total += float(line.get("budget_amount") or 0)
         if monthly:
-            budget_expense_total += sum(
-                float(item.get("budget_expense_amount") or 0)
-                for item in monthly.values()
-            )
             expected_income_total += sum(
                 float(item.get("expected_income_amount") or 0)
                 for item in monthly.values()
             )
-        else:
-            budget_expense_total += float(line.get("budget_amount") or 0)
     return {
         "budget_expense_total": round(budget_expense_total, 2),
         "expected_income_total": round(expected_income_total, 2),
@@ -7738,6 +7781,51 @@ async def build_budget_actuals_snapshot(
             real_income=_safe_decimal(row["income_total"]),
         )
 
+    concept_ids = sorted(
+        {
+            _safe_str(movement.get("concept_key"))
+            for movement in movements
+            if re.fullmatch(uuid_pattern, _safe_str(movement.get("concept_key")))
+        }
+    )
+    budget_accounts: dict[str, dict[str, Optional[str]]] = {}
+    if concept_ids:
+        account_rows = (
+            (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                            bc.id::text AS budget_concept_id,
+                            cc.codigo AS budget_account_code,
+                            cc.nombre AS budget_account_name
+                        FROM budget_concepts bc
+                        LEFT JOIN cuentas_contables cc
+                          ON cc.id = bc.cuenta_contable_id
+                        WHERE bc.id = ANY(CAST(:concept_ids AS uuid[]))
+                        """
+                    ),
+                    {"concept_ids": concept_ids},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        budget_accounts = {
+            _safe_str(row["budget_concept_id"]): {
+                "budget_account_code": _safe_str(row["budget_account_code"]) or None,
+                "budget_account_name": _safe_str(row["budget_account_name"]) or None,
+            }
+            for row in account_rows
+        }
+    for movement in movements:
+        movement.update(
+            budget_accounts.get(
+                _safe_str(movement.get("concept_key")),
+                {"budget_account_code": None, "budget_account_name": None},
+            )
+        )
+
     return {
         "monthly": {key: dict(months) for key, months in store.items()},
         "movements": movements,
@@ -7819,14 +7907,6 @@ async def copy_budget_version_forward(
     source = await get_budget_version(session, version_id=source_version_id)
     if source is None:
         raise ValueError("Source budget version not found")
-    target = await create_budget_version(
-        session,
-        edition_year=target_edition_year,
-        version_name=version_name,
-        source="copy_forward",
-        notes=f"Copiado desde {source.get('version_name') or source_version_id}",
-        created_by_empleado_id=actor_empleado_id,
-    )
     source_lines = await list_budget_lines(
         session,
         version_id=source_version_id,
@@ -7839,6 +7919,34 @@ async def copy_budget_version_forward(
     allocation_map = await list_monthly_allocations_for_lines(
         session,
         line_ids=[line["id"] for line in source_lines],
+    )
+    source_plans: dict[str, dict[int, dict[str, Any]]] = {}
+    for line in source_lines:
+        monthly_plan = plan_map.get(line["id"]) or {}
+        if not monthly_plan:
+            monthly_plan = {
+                month: {
+                    "budget_expense_amount": amount,
+                    "expected_income_amount": 0.0,
+                }
+                for month, amount in allocation_map.get(line["id"], {}).items()
+            }
+        if monthly_plan and normalize_budget_line_direction(
+            line.get("line_direction")
+        ) == "expense":
+            validate_budget_expense_plan_total(
+                monthly_plan,
+                budget_amount=line.get("budget_amount"),
+            )
+        source_plans[line["id"]] = monthly_plan
+
+    target = await create_budget_version(
+        session,
+        edition_year=target_edition_year,
+        version_name=version_name,
+        source="copy_forward",
+        notes=f"Copiado desde {source.get('version_name') or source_version_id}",
+        created_by_empleado_id=actor_empleado_id,
     )
     copied_lines = 0
     for line in source_lines:
@@ -7860,12 +7968,7 @@ async def copy_budget_version_forward(
             criteria_note=line.get("criteria_note"),
             observations=line.get("observations"),
         )
-        monthly_plan = plan_map.get(line["id"]) or {}
-        if not monthly_plan:
-            monthly_plan = {
-                month: {"budget_expense_amount": amount, "expected_income_amount": 0.0}
-                for month, amount in allocation_map.get(line["id"], {}).items()
-            }
+        monthly_plan = source_plans[line["id"]]
         if monthly_plan:
             await replace_budget_line_monthly_plan(
                 session,

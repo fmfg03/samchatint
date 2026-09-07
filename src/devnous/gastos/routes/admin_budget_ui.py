@@ -1048,19 +1048,33 @@ def _render_budget_movement_details(
             visible.append(movement)
     if not visible:
         return ""
+    visible.sort(
+        key=lambda movement: (
+            str(movement.get("budget_concept_name") or "Sin concepto").lower(),
+            str(movement.get("document_reference") or ""),
+            str(movement.get("operation_reference") or ""),
+            str(movement.get("movement_concept") or "").lower(),
+        )
+    )
 
     rows: list[str] = []
+    current_group = ""
     for movement in visible:
         concept_key = str(movement.get("concept_key") or "__unassigned__")
         has_existing_concept = concept_key != "__unassigned__"
         kind = str(movement.get("kind") or "")
-        status = (
-            "Pendiente de contabilización"
-            if kind == "pending_accounting"
-            else "Sin línea en esta versión"
+        diagnostics: list[str] = []
+        if concept_key not in line_concepts:
+            diagnostics.append("Sin presupuesto autorizado en esta versión")
+        if kind == "pending_accounting":
+            diagnostics.append("Pendiente de contabilización")
+        status = " · ".join(diagnostics) or "Requiere conciliación"
+        budget_concept_name = str(
+            movement.get("budget_concept_name") or "Sin concepto presupuestal"
         )
-        account = str(movement.get("cuenta_codigo") or "Sin cuenta")
-        poliza = str(movement.get("numero_poliza") or "Sin póliza")
+        budget_account = str(movement.get("budget_account_code") or "No configurada")
+        accounting_account = str(movement.get("cuenta_codigo") or "Pendiente")
+        poliza = str(movement.get("numero_poliza") or "Pendiente")
         poliza_date = movement.get("fecha_poliza") or ""
         action = ""
         if can_edit and has_existing_concept and concept_key not in line_concepts:
@@ -1082,14 +1096,24 @@ def _render_budget_movement_details(
             """
         elif not has_existing_concept:
             action = '<span style="color:#92400e;">Asigna primero un concepto al documento.</span>'
+        if budget_concept_name != current_group:
+            current_group = budget_concept_name
+            rows.append(
+                '<tr style="background:#fffbeb;">'
+                '<td colspan="11" style="padding:8px;font-weight:900;color:#78350f;">'
+                f'{escape(budget_concept_name)} · Cuenta presupuestal: '
+                f'{escape(budget_account)}</td></tr>'
+            )
         rows.append(
             f"""
             <tr>
                 <td style="padding:8px;white-space:nowrap;">{escape(str(movement.get('operation_reference') or '—'))}</td>
                 <td style="padding:8px;white-space:nowrap;font-weight:700;">{escape(str(movement.get('document_reference') or '—'))}</td>
                 <td style="padding:8px;">{escape(str(movement.get('document_state') or '—'))}</td>
-                <td style="padding:8px;min-width:180px;">{escape(str(movement.get('movement_concept') or movement.get('budget_concept_name') or 'Sin concepto'))}</td>
-                <td style="padding:8px;white-space:nowrap;">{escape(account)}</td>
+                <td style="padding:8px;min-width:180px;font-weight:700;">{escape(budget_concept_name)}</td>
+                <td style="padding:8px;min-width:180px;">{escape(str(movement.get('movement_concept') or '—'))}</td>
+                <td style="padding:8px;white-space:nowrap;">{escape(budget_account)}</td>
+                <td style="padding:8px;white-space:nowrap;">{escape(accounting_account)}</td>
                 <td style="padding:8px;text-align:right;white-space:nowrap;font-weight:800;">${float(movement.get('amount') or 0):,.2f}</td>
                 <td style="padding:8px;white-space:nowrap;">{escape(poliza)}<br><span style="color:#64748b;font-size:11px;">{escape(str(poliza_date)[:10])}</span></td>
                 <td style="padding:8px;min-width:190px;"><strong>{escape(status)}</strong><br><span style="color:#64748b;font-size:11px;">{escape(str(movement.get('reason') or ''))}</span></td>
@@ -1102,11 +1126,14 @@ def _render_budget_movement_details(
             <h3 style="margin:0 0 4px;font-size:16px;color:#78350f;">Movimientos por conciliar</h3>
             <p style="margin:0 0 10px;font-size:12px;color:#64748b;">Detalle trazable de movimientos sin línea en esta versión o sin póliza de resultados.</p>
             <div style="overflow-x:auto;border:1px solid #fde68a;border-radius:6px;background:#fff;">
-                <table style="width:100%;min-width:1180px;border-collapse:collapse;font-size:12px;">
+                <table style="width:100%;min-width:1480px;border-collapse:collapse;font-size:12px;">
                     <thead><tr style="background:#fef3c7;text-align:left;">
                         <th style="padding:8px;">REF Op</th><th style="padding:8px;">Documento</th>
-                        <th style="padding:8px;">Estado</th><th style="padding:8px;">Concepto</th>
-                        <th style="padding:8px;">Cuenta</th><th style="padding:8px;text-align:right;">Monto</th>
+                        <th style="padding:8px;">Estado</th><th style="padding:8px;">Concepto presupuestal</th>
+                        <th style="padding:8px;">Detalle del gasto</th>
+                        <th style="padding:8px;">Cuenta presupuestal</th>
+                        <th style="padding:8px;">Cuenta contabilizada</th>
+                        <th style="padding:8px;text-align:right;">Monto</th>
                         <th style="padding:8px;">Póliza</th><th style="padding:8px;">Diagnóstico</th>
                         <th style="padding:8px;">Acción</th>
                     </tr></thead>
@@ -1364,7 +1391,7 @@ def render_budget_partida_matrix(
                         <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#475569;">
                             {summary_html}
                         </div>
-                        {f'<button type="submit" style="margin-top:10px;background:#0f766e;color:#fff;border:none;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">{button_label}</button>' if can_edit else '<div style="margin-top:8px;color:#64748b;">Sin permiso para editar.</div>'}
+                        {f'<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;"><button type="submit" name="save_scope" value="line" style="background:#e2e8f0;color:#0f172a;border:1px solid #cbd5e1;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">Guardar datos de partida</button><button type="submit" name="save_scope" value="plan" style="background:#0f766e;color:#fff;border:none;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">{button_label}</button></div>' if can_edit else '<div style="margin-top:8px;color:#64748b;">Sin permiso para editar.</div>'}
                     </form>
                 </div>
                 """

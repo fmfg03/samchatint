@@ -5,7 +5,12 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from devnous.gastos.routes import admin_routes, operations_analytics_routes, user_routes
+from devnous.gastos.routes import (
+    admin_budget_routes,
+    admin_routes,
+    operations_analytics_routes,
+    user_routes,
+)
 from devnous.gastos.services import access_control_service
 from samchat.budgets import service as budget_service
 
@@ -424,3 +429,134 @@ async def test_budget_update_line_post_rejects_operations_user_before_reading_fo
     assert exc_info.value.status_code == 403
     request.form.assert_not_awaited()
     update_line.assert_not_awaited()
+
+
+def _budget_update_kwargs(
+    *, save_scope: str, budget_amount: float | None, concept_name: str | None = None
+):
+    return {
+        "version_id": str(uuid4()),
+        "tournament_key": "liga-telmex",
+        "edition_year": 2026,
+        "budget_view": "expenses",
+        "phase_filter": None,
+        "budget_concept_id": None,
+        "concept_name": concept_name,
+        "account_code_final": None,
+        "cuenta_contable_id": None,
+        "phase": None,
+        "owner_name": None,
+        "priority": None,
+        "budget_amount": budget_amount,
+        "criteria_note": None,
+        "observations": None,
+        "save_scope": save_scope,
+    }
+
+
+def _canonical_budget_update_endpoint():
+    return next(
+        route.endpoint
+        for route in admin_routes.router.routes
+        if route.path == "/admin/presupuestos/lineas/{line_id}/update"
+        and "POST" in route.methods
+    )
+
+
+@pytest.mark.asyncio
+async def test_budget_line_metadata_save_preserves_monthly_plan(monkeypatch) -> None:
+    update_line = AsyncMock(
+        return_value={"concept_name": "Envío de material", "budget_concept_id": None}
+    )
+    replace_plan = AsyncMock()
+    monkeypatch.setattr(admin_budget_routes, "update_budget_line", update_line)
+    monkeypatch.setattr(
+        admin_budget_routes, "replace_budget_line_monthly_plan", replace_plan
+    )
+    session = SimpleNamespace(rollback=AsyncMock(), commit=AsyncMock())
+
+    response = await _canonical_budget_update_endpoint()(
+        request=SimpleNamespace(
+            form=AsyncMock(return_value={"month_1_expense": "0", "save_scope": "line"})
+        ),
+        line_id=uuid4(),
+        session=session,
+        current_empleado=SimpleNamespace(
+            id=uuid4(), rol="superadmin", departamento="Finanzas", correo="super@example.com"
+        ),
+        **_budget_update_kwargs(
+            save_scope="line",
+            budget_amount=6295.18,
+            concept_name="Envío de material",
+        ),
+    )
+
+    assert response.status_code == 303
+    assert update_line.await_args.kwargs["updates"] == {
+        "concept_name": "Envío de material"
+    }
+    assert update_line.await_args.kwargs["commit"] is True
+    replace_plan.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_budget_plan_save_rejects_mismatch_before_mutation(monkeypatch) -> None:
+    update_line = AsyncMock()
+    replace_plan = AsyncMock()
+    monkeypatch.setattr(admin_budget_routes, "update_budget_line", update_line)
+    monkeypatch.setattr(
+        admin_budget_routes, "replace_budget_line_monthly_plan", replace_plan
+    )
+    session = SimpleNamespace(rollback=AsyncMock(), commit=AsyncMock())
+
+    response = await _canonical_budget_update_endpoint()(
+        request=SimpleNamespace(
+            form=AsyncMock(return_value={"month_1_expense": "50", "save_scope": "plan"})
+        ),
+        line_id=uuid4(),
+        session=session,
+        current_empleado=SimpleNamespace(
+            id=uuid4(), rol="superadmin", departamento="Finanzas", correo="super@example.com"
+        ),
+        **_budget_update_kwargs(save_scope="plan", budget_amount=100),
+    )
+
+    assert response.status_code == 303
+    assert "calendarizaci" in response.headers["location"]
+    update_line.assert_not_awaited()
+    replace_plan.assert_not_awaited()
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_budget_plan_save_updates_line_and_plan_in_one_commit(monkeypatch) -> None:
+    update_line = AsyncMock(
+        return_value={"concept_name": "Envío de material", "budget_concept_id": None}
+    )
+    replace_plan = AsyncMock()
+    monkeypatch.setattr(admin_budget_routes, "update_budget_line", update_line)
+    monkeypatch.setattr(
+        admin_budget_routes, "replace_budget_line_monthly_plan", replace_plan
+    )
+    session = SimpleNamespace(rollback=AsyncMock(), commit=AsyncMock())
+    line_id = uuid4()
+
+    response = await _canonical_budget_update_endpoint()(
+        request=SimpleNamespace(
+            form=AsyncMock(return_value={"month_1_expense": "100", "save_scope": "plan"})
+        ),
+        line_id=line_id,
+        session=session,
+        current_empleado=SimpleNamespace(
+            id=uuid4(), rol="superadmin", departamento="Finanzas", correo="super@example.com"
+        ),
+        **_budget_update_kwargs(save_scope="plan", budget_amount=100),
+    )
+
+    assert response.status_code == 303
+    assert update_line.await_args.kwargs["updates"] == {"budget_amount": 100}
+    assert update_line.await_args.kwargs["commit"] is False
+    assert replace_plan.await_args.kwargs["plan"] == {
+        1: {"budget_expense_amount": 100.0}
+    }
+    session.commit.assert_awaited_once()
