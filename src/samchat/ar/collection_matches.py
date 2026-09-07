@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import json
+from uuid import uuid4
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -58,6 +59,11 @@ def _snapshot(row: dict[str, Any] | None) -> dict[str, Any]:
     return dict(row or {})
 
 
+def _bank_reference(value: Any) -> str:
+    """Normalize the statement account reference without guessing its GL code."""
+    return re.sub(r"[^A-Z0-9]", "", _safe_str(value).upper())
+
+
 async def ensure_ar_collection_match_schema(session: Any) -> None:
     """Create AR collection match tables and indexes idempotently."""
 
@@ -87,7 +93,27 @@ async def ensure_ar_collection_match_schema(session: Any) -> None:
         )
         """,
         """
-        CREATE UNIQUE INDEX IF NOT EXISTS ux_ar_collection_matches_active_ar_item
+        ALTER TABLE ar_collection_matches
+        ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL
+        REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL
+        """,
+        """
+        ALTER TABLE ar_collection_matches
+        ADD COLUMN IF NOT EXISTS reversal_poliza_id UUID NULL
+        REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS ar_bank_account_mappings (
+            bank_account_reference TEXT PRIMARY KEY,
+            cuenta_contable_id UUID NOT NULL REFERENCES cuentas_contables(id)
+                ON UPDATE CASCADE ON DELETE RESTRICT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+        "DROP INDEX IF EXISTS ux_ar_collection_matches_active_ar_item",
+        """
+        CREATE INDEX IF NOT EXISTS ix_ar_collection_matches_active_ar_item
         ON ar_collection_matches(ar_item_id)
         WHERE status = 'accepted_collection_match'
         """,
@@ -131,7 +157,7 @@ async def _load_bank_movement(session: Any, bank_movement_id: str) -> dict[str, 
             await session.execute(
                 text(
                     """
-                    SELECT id, signo, importe, fecha, rfc_ordenante,
+                    SELECT id, signo, importe, fecha, cuenta_bancaria, rfc_ordenante,
                            nombre_ordenante, descripcion, concepto_banco,
                            conciliacion_estado
                     FROM bank_movements
@@ -146,6 +172,94 @@ async def _load_bank_movement(session: Any, bank_movement_id: str) -> dict[str, 
         .first()
     )
     return dict(row or {})
+
+
+async def _resolve_bank_account(session: Any, bank_movement: dict[str, Any], account_id: str) -> dict[str, Any]:
+    reference = _bank_reference(bank_movement.get("cuenta_bancaria"))
+    if not reference:
+        raise ARCollectionMatchError("bank_account_reference_missing")
+    account = (await session.execute(text("""
+        SELECT id, codigo, nombre FROM cuentas_contables
+        WHERE id = CAST(:account_id AS uuid) AND activo IS TRUE AND LOWER(tipo) = 'banco'
+    """), {"account_id": _safe_str(account_id)})).mappings().first()
+    if not account:
+        raise ARCollectionMatchError("bank_account_not_configured")
+    mapping = (await session.execute(text("""
+        SELECT cuenta_contable_id FROM ar_bank_account_mappings
+        WHERE bank_account_reference = :reference
+    """), {"reference": reference})).mappings().first()
+    if mapping and str(mapping["cuenta_contable_id"]) != str(account["id"]):
+        raise ARCollectionMatchError("bank_account_mapping_conflict")
+    if not mapping:
+        await session.execute(text("""
+            INSERT INTO ar_bank_account_mappings (bank_account_reference, cuenta_contable_id)
+            VALUES (:reference, CAST(:account_id AS uuid))
+        """), {"reference": reference, "account_id": str(account["id"])})
+    return dict(account)
+
+
+async def _resolve_cxc_account(session: Any, cfdi_report_id: str) -> dict[str, Any]:
+    row = (await session.execute(text("""
+        SELECT line.cuenta_contable_id AS id, line.cuenta_codigo AS codigo
+        FROM accounting_polizas poliza
+        JOIN accounting_poliza_lines line ON line.poliza_id = poliza.id
+        WHERE poliza.origen = 'cxc_cfdi_income'
+          AND poliza.cfdi_report_id = CAST(:cfdi_report_id AS uuid)
+          AND COALESCE(line.raw_row_json->>'movement', '') = 'debe_cxc'
+          AND COALESCE(line.debe, 0) > 0
+        ORDER BY line.created_at ASC LIMIT 1
+    """), {"cfdi_report_id": _safe_str(cfdi_report_id)})).mappings().first()
+    if not row or not row.get("id"):
+        raise ARCollectionMatchError("cxc_source_posting_missing")
+    return dict(row)
+
+
+async def _create_collection_poliza(
+    session: Any, *, match_id: str, match: dict[str, Any], bank_account: dict[str, Any], cxc_account: dict[str, Any], reversal: bool = False
+) -> str:
+    poliza_id = str(uuid4())
+    amount = _safe_float(match.get("accepted_amount"))
+    number_prefix = "AR-REV" if reversal else "AR-COL"
+    concept_prefix = "Reversa cobro CxC" if reversal else "Cobro CxC"
+    concepto = f"{concept_prefix} / {match.get('ar_item_id') or match_id}"
+    await session.execute(text("""
+        INSERT INTO accounting_polizas (
+            id, source_file, source_sheet, tipo_poliza, numero_poliza, fecha_poliza,
+            beneficiario_nombre, concepto, concepto_resumen, line_count_declared,
+            line_count_actual, cfdi_report_id, origen, created_at, updated_at
+        ) VALUES (
+            CAST(:id AS uuid), :source_file, 'ar_collection_match', 'Ig', :numero,
+            :fecha, :beneficiario, :concepto, :concepto, 2, 2,
+            CAST(:cfdi_report_id AS uuid), :origen, NOW(), NOW()
+        )
+    """), {
+        "id": poliza_id, "source_file": f"ar_collection_match:{match_id}",
+        "numero": f"{number_prefix}-{match_id}",
+        "fecha": match.get("collection_date") or datetime.now(timezone.utc),
+        "beneficiario": _safe_str(match.get("payer_name")), "concepto": concepto,
+        "cfdi_report_id": _safe_str(match.get("cfdi_report_id")) or None,
+        "origen": "ar_collection_match_reversal" if reversal else "ar_collection_match",
+    })
+    specs = ((bank_account, amount, 0.0, "debe_banco"), (cxc_account, 0.0, amount, "haber_cxc"))
+    if reversal:
+        specs = ((bank_account, 0.0, amount, "haber_banco"), (cxc_account, amount, 0.0, "debe_cxc"))
+    for line_no, (account, debe, haber, movement) in enumerate(specs, start=1):
+        await session.execute(text("""
+            INSERT INTO accounting_poliza_lines (
+                id, poliza_id, line_no, cuenta_codigo, cuenta_contable_id, concepto,
+                movimiento_no, debe, haber, raw_row_json, created_at
+            ) VALUES (
+                CAST(:id AS uuid), CAST(:poliza_id AS uuid), :line_no, :codigo,
+                CAST(:account_id AS uuid), :concepto, :movement_no, :debe, :haber,
+                CAST(:raw AS jsonb), NOW()
+            )
+        """), {
+            "id": str(uuid4()), "poliza_id": poliza_id, "line_no": line_no,
+            "codigo": account["codigo"], "account_id": str(account["id"]),
+            "concepto": concepto, "movement_no": str(line_no), "debe": debe, "haber": haber,
+            "raw": json.dumps({"origin": "ar_collection_match", "match_id": match_id, "movement": movement}),
+        })
+    return poliza_id
 
 
 async def _find_active_match(
@@ -359,6 +473,7 @@ def _validate_acceptance(
     bank_movement: dict[str, Any],
     acceptance_reason: str,
     tolerance: float,
+    already_collected: float = 0.0,
 ) -> None:
     if not _safe_str(ar_item.get("ar_item_id")):
         raise ARCollectionMatchError("missing_ar_item_id")
@@ -372,8 +487,11 @@ def _validate_acceptance(
     bank_amount = _safe_float(bank_movement.get("importe"))
     if ar_amount <= 0 or bank_amount <= 0:
         raise ARCollectionMatchError("invalid_amount")
-    if abs(ar_amount - bank_amount) > tolerance:
-        raise ARCollectionMatchError("amount_incompatible")
+    outstanding = round(ar_amount - already_collected, 2)
+    if outstanding <= 0:
+        raise ARCollectionMatchError("ar_item_already_collected")
+    if bank_amount > outstanding + tolerance:
+        raise ARCollectionMatchError("amount_exceeds_outstanding")
     if not _identity_matches(ar_item, bank_movement) and not acceptance_reason:
         raise ARCollectionMatchError("manual_reason_required")
 
@@ -422,10 +540,11 @@ async def accept_ar_collection_match(
     bank_movement_id: str,
     actor_empleado_id: Optional[str],
     acceptance_reason: str,
+    bank_account_id: str = "",
     tolerance: float = 1.0,
     evidence: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """Accept a one-to-one AR collection match without touching bank state."""
+    """Accept a collection and post the matching bank/CxC accounting entry."""
 
     await ensure_ar_collection_match_schema(session)
     clean_reason = _safe_str(acceptance_reason)
@@ -436,19 +555,28 @@ async def accept_ar_collection_match(
         bank_movement=bank_movement,
         acceptance_reason=clean_reason,
         tolerance=safe_tolerance,
+        already_collected=0.0,
     )
-    active_ar = await _find_active_match(
-        session,
-        ar_item_id=_safe_str(ar_item.get("ar_item_id")),
-    )
-    if active_ar:
-        raise ARCollectionMatchError("active_match_exists_for_ar_item")
     active_bank = await _find_active_match(
         session,
         bank_movement_id=_safe_str(bank_movement.get("id")),
     )
     if active_bank:
         raise ARCollectionMatchError("active_match_exists_for_bank_movement")
+    previously_collected = (await session.execute(text("""
+        SELECT COALESCE(SUM(accepted_amount), 0) AS total
+        FROM ar_collection_matches
+        WHERE ar_item_id = :ar_item_id AND status = :status
+    """), {"ar_item_id": _safe_str(ar_item.get("ar_item_id")), "status": ACCEPTED_STATUS})).mappings().first()
+    _validate_acceptance(
+        ar_item=ar_item, bank_movement=bank_movement, acceptance_reason=clean_reason,
+        tolerance=safe_tolerance, already_collected=_safe_float((previously_collected or {}).get("total")),
+    )
+
+    bank_account = await _resolve_bank_account(session, bank_movement, bank_account_id)
+    if not _safe_str(ar_item.get("cfdi_report_id")):
+        raise ARCollectionMatchError("cfdi_report_id_required_for_collection_posting")
+    cxc_account = await _resolve_cxc_account(session, _safe_str(ar_item.get("cfdi_report_id")))
 
     evidence_payload = {
         "accepted_at": _now_iso(),
@@ -464,6 +592,16 @@ async def accept_ar_collection_match(
         acceptance_reason=clean_reason,
         evidence=evidence_payload,
     )
+    poliza_id = await _create_collection_poliza(
+        session, match_id=_safe_str(row.get("id")), match=row,
+        bank_account=bank_account, cxc_account=cxc_account,
+    )
+    await session.execute(text("""
+        UPDATE ar_collection_matches
+        SET accounting_poliza_id = CAST(:poliza_id AS uuid), updated_at = NOW()
+        WHERE id = CAST(:match_id AS uuid)
+    """), {"poliza_id": poliza_id, "match_id": _safe_str(row.get("id"))})
+    row["accounting_poliza_id"] = poliza_id
     await _audit_match_event(
         session,
         collection_match_id=_safe_str(row.get("id")),
@@ -494,12 +632,35 @@ async def reverse_ar_collection_match(
         raise ARCollectionMatchError("collection_match_not_found")
     if _safe_str(before.get("status")) != ACCEPTED_STATUS:
         raise ARCollectionMatchError("collection_match_not_active")
+    if not before.get("accounting_poliza_id"):
+        raise ARCollectionMatchError("collection_posting_missing")
+    bank_movement = await _load_bank_movement(session, _safe_str(before.get("bank_movement_id")))
+    bank_reference = _bank_reference(bank_movement.get("cuenta_bancaria"))
+    mapping = (await session.execute(text("""
+        SELECT map.cuenta_contable_id AS id, account.codigo
+        FROM ar_bank_account_mappings map
+        JOIN cuentas_contables account ON account.id = map.cuenta_contable_id
+        WHERE map.bank_account_reference = :reference AND account.activo IS TRUE
+    """), {"reference": bank_reference})).mappings().first()
+    if not mapping:
+        raise ARCollectionMatchError("bank_account_mapping_missing")
+    cxc_account = await _resolve_cxc_account(session, _safe_str(before.get("cfdi_report_id")))
+    reversal_poliza_id = await _create_collection_poliza(
+        session, match_id=_safe_str(before.get("id")), match=before,
+        bank_account=dict(mapping), cxc_account=cxc_account, reversal=True,
+    )
     after = await _update_match_reversed(
         session,
         match_id=match_id,
         actor_empleado_id=actor_empleado_id,
         reversal_reason=clean_reason,
     )
+    await session.execute(text("""
+        UPDATE ar_collection_matches
+        SET reversal_poliza_id = CAST(:poliza_id AS uuid), updated_at = NOW()
+        WHERE id = CAST(:match_id AS uuid)
+    """), {"poliza_id": reversal_poliza_id, "match_id": match_id})
+    after["reversal_poliza_id"] = reversal_poliza_id
     await _audit_match_event(
         session,
         collection_match_id=_safe_str(after.get("id") or before.get("id")),

@@ -7763,6 +7763,16 @@ async def admin_finance_accounts_receivable(
         return_to_url = f"{return_to_url}?{request.url.query}"
 
     if selected_version:
+        bank_accounts = [
+            {"id": str(account.id), "codigo": account.codigo, "nombre": account.nombre}
+            for account in (
+                await session.execute(
+                    select(CuentaContable)
+                    .where(CuentaContable.activo.is_(True), func.lower(CuentaContable.tipo) == "banco")
+                    .order_by(CuentaContable.codigo.asc())
+                )
+            ).scalars().all()
+        ]
         payload = await build_ar_read_model(
             session,
             budget_version_id=str(selected_version["id"]),
@@ -7799,6 +7809,7 @@ async def admin_finance_accounts_receivable(
                 matching_payload,
                 return_to=str(request.url),
                 can_operate_matches=_can_operate_ar_cxc(current_empleado),
+                bank_accounts=bank_accounts,
             )
         )
     else:
@@ -8049,6 +8060,7 @@ async def admin_finance_ar_match_accept(
     bank_movement_id: str = Form(...),
     ar_amount: float = Form(...),
     acceptance_reason: str = Form(...),
+    bank_account_id: str = Form(...),
     budget_line_id: Optional[str] = Form(None),
     cfdi_report_id: Optional[str] = Form(None),
     payer_rfc: Optional[str] = Form(None),
@@ -8057,7 +8069,7 @@ async def admin_finance_ar_match_accept(
     current_empleado: Empleado = require_admin_finanzas(),
     session: AsyncSession = Depends(get_db_session),
 ) -> RedirectResponse:
-    """Accept a dedicated AR collection match without touching bank state."""
+    """Accept a collection match and create its bank/CxC accounting policy."""
     from samchat.ar.collection_matches import (
         ARCollectionMatchError,
         accept_ar_collection_match,
@@ -8080,6 +8092,7 @@ async def admin_finance_ar_match_accept(
             bank_movement_id=bank_movement_id,
             actor_empleado_id=str(current_empleado.id),
             acceptance_reason=acceptance_reason,
+            bank_account_id=bank_account_id,
             evidence={"source": "admin_finance_ar_match_accept"},
         )
         await session.commit()
