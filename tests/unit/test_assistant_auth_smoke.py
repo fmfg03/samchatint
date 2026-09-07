@@ -44,7 +44,6 @@ def test_run_smoke_stops_before_mutation_when_me_requires_auth(monkeypatch):
         base_url="http://testserver",
         cookie=None,
         bearer=None,
-        openai_api_key=None,
         message="hola",
         timeout=1,
     )
@@ -91,7 +90,6 @@ def test_run_smoke_passes_readonly_turn(monkeypatch):
         base_url="http://testserver",
         cookie="session=abc",
         bearer=None,
-        openai_api_key=None,
         message="hola",
         timeout=1,
     )
@@ -100,6 +98,10 @@ def test_run_smoke_passes_readonly_turn(monkeypatch):
     assert result["status"] == "pass"
     assert result["employee"]["nombre"] == "Tester"
     assert result["assistant_turn"]["pending_confirmation"] is False
+    assert MODULE._headers(cookie="session=abc", bearer=None) == {
+        "Accept": "application/json",
+        "Cookie": "session=abc",
+    }
 
 
 def test_run_smoke_fails_when_turn_requests_write_confirmation(monkeypatch):
@@ -134,7 +136,6 @@ def test_run_smoke_fails_when_turn_requests_write_confirmation(monkeypatch):
         base_url="http://testserver",
         cookie="session=abc",
         bearer=None,
-        openai_api_key=None,
         message="hola",
         timeout=1,
     )

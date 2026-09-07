@@ -100,14 +100,12 @@ def _read_cookie_file(path: str | None) -> str | None:
     return "; ".join(pairs) if pairs else None
 
 
-def _headers(*, cookie: str | None, bearer: str | None, openai_api_key: str | None) -> dict[str, str]:
+def _headers(*, cookie: str | None, bearer: str | None) -> dict[str, str]:
     headers = {"Accept": "application/json"}
     if cookie:
         headers["Cookie"] = cookie
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
-    if openai_api_key:
-        headers["X-OpenAI-API-Key"] = openai_api_key
     return headers
 
 
@@ -211,12 +209,11 @@ def run_smoke(
     base_url: str,
     cookie: str | None,
     bearer: str | None,
-    openai_api_key: str | None,
     message: str,
     timeout: float,
     skip_turn: bool = False,
 ) -> dict[str, Any]:
-    headers = _headers(cookie=cookie, bearer=bearer, openai_api_key=openai_api_key)
+    headers = _headers(cookie=cookie, bearer=bearer)
     marker = f"rqf-053b-auth-smoke-{int(time.time())}"
     steps: list[dict[str, Any]] = []
 
@@ -362,7 +359,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cookie", default=None, help="Raw Cookie header for an authenticated browser session")
     parser.add_argument("--cookie-file", default=None, help="Raw Cookie header or Netscape cookie jar file")
     parser.add_argument("--bearer", default=None, help="Bearer token, if enabled by the deployment")
-    parser.add_argument("--openai-api-key", default=None, help="Optional provider key header; never printed")
     parser.add_argument("--message", default=DEFAULT_MESSAGE)
     parser.add_argument("--timeout", type=float, default=5.0)
     parser.add_argument("--skip-turn", action="store_true", help="Only verify auth and conversation persistence")
@@ -373,7 +369,6 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         cookie=cookie,
         bearer=args.bearer,
-        openai_api_key=args.openai_api_key,
         message=args.message,
         timeout=args.timeout,
         skip_turn=args.skip_turn,
