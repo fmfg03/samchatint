@@ -1,4 +1,5 @@
 from io import BytesIO
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -19,6 +20,9 @@ from devnous.gastos.services.documento_semantics import (
     reimbursement_concept_from_cuenta,
 )
 from devnous.gastos.services.amex_expense_service import compute_informe_saldo
+from devnous.gastos.services.document_amount_service import (
+    resolve_payable_document_amount,
+)
 from devnous.gastos.utils.excel_exports import (
     INFORME_AUTORIZADO_ROW,
     INFORME_SALDO_ROW,
@@ -36,6 +40,22 @@ def test_effective_account_beneficiary_prefers_selected_employee():
     )
 
     assert effective_account_beneficiary_id(cuenta) == beneficiary_id
+
+
+def test_reimbursement_payable_amount_uses_total_and_individual_export_uses_resolver():
+    documento = SimpleNamespace(
+        concepto_pago="Reembolso de saldo a favor - informe I-360002",
+        monto_solicitado=Decimal("80000.00"),
+        monto_total=Decimal("56020.00"),
+    )
+
+    assert resolve_payable_document_amount(documento) == Decimal("56020.00")
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    export_start = route_source.index("async def exportar_informe_gastos")
+    export_end = route_source.index("    # Fallback: Build CSV", export_start)
+    assert "cantidad_a_pagar = resolve_payable_document_amount(documento)" in route_source[
+        export_start:export_end
+    ]
 
 
 def test_effective_account_beneficiary_falls_back_to_requester():

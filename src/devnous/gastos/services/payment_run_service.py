@@ -332,6 +332,27 @@ def _status_for_row(
     return "programada"
 
 
+def _payment_instruction_status(
+    *,
+    beneficiary: Any,
+    bank: Any,
+    account: Any,
+    clabe: Any,
+    used_current_registry: bool,
+) -> str:
+    missing: list[str] = []
+    if not str(beneficiary or "").strip():
+        missing.append("beneficiario")
+    if not str(bank or "").strip():
+        missing.append("banco")
+    if not (str(account or "").strip() or str(clabe or "").strip()):
+        missing.append("cuenta o CLABE")
+    status = "Listo" if not missing else f"Falta {', '.join(missing)}."
+    if used_current_registry:
+        status += " Datos bancarios recuperados del registro vigente."
+    return status
+
+
 async def list_payment_run_items(
     session: AsyncSession,
     *,
@@ -653,6 +674,17 @@ async def close_payment_run(
                 None,
             ),
             "proveedor": getattr(documento.proveedor_cliente, "nombre", None),
+            "payment_beneficiario": (
+                getattr(documento.beneficiario_empleado, "nombre", None)
+                or getattr(documento.proveedor_cliente, "nombre", None)
+            ),
+            "payment_banco": getattr(documento.proveedor_cliente, "banco", None),
+            "payment_cuenta_bancaria": getattr(
+                documento.proveedor_cliente, "cuenta_bancaria", None
+            ),
+            "payment_cuenta_clabe": getattr(
+                documento.proveedor_cliente, "cuenta_clabe", None
+            ),
         }
         documento.estado = "en_proceso_pago"
         session.add(documento)
@@ -749,9 +781,20 @@ async def get_payment_run_closure(
                 i.estado_documento,
                 i.snapshot,
                 d.pagado_en,
-                d.gasto_generado_id
+                d.gasto_generado_id,
+                d.referencia_operaciones,
+                d.concepto_pago,
+                e.nombre AS solicitante_nombre,
+                b.nombre AS beneficiario_nombre,
+                pc.nombre AS proveedor_nombre,
+                pc.banco,
+                pc.cuenta_bancaria,
+                pc.cuenta_clabe
             FROM payment_run_closure_items i
             LEFT JOIN documentos d ON d.id = i.documento_id
+            LEFT JOIN empleados e ON e.id = d.empleado_id
+            LEFT JOIN empleados b ON b.id = d.beneficiario_empleado_id
+            LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
             WHERE i.closure_id = :closure_id
             ORDER BY i.fecha_pago NULLS LAST, i.numero_referencia
             """
@@ -764,5 +807,54 @@ async def get_payment_run_closure(
     for mapping in items_result.mappings().all():
         item = dict(mapping)
         item["monto"] = _money(item.get("monto"))
+        snapshot = item.get("snapshot")
+        if not isinstance(snapshot, dict):
+            snapshot = {}
+        has_instruction_snapshot = any(
+            key in snapshot
+            for key in (
+                "payment_beneficiario",
+                "payment_banco",
+                "payment_cuenta_bancaria",
+                "payment_cuenta_clabe",
+            )
+        )
+        item["beneficiario"] = (
+            snapshot.get("payment_beneficiario")
+            or snapshot.get("beneficiario")
+            or snapshot.get("proveedor")
+            or item.get("beneficiario_nombre")
+            or item.get("proveedor_nombre")
+        )
+        item["solicitante"] = snapshot.get("solicitante") or item.get(
+            "solicitante_nombre"
+        )
+        item["banco"] = (
+            snapshot.get("payment_banco")
+            if has_instruction_snapshot
+            else item.get("banco")
+        )
+        item["cuenta_bancaria"] = (
+            snapshot.get("payment_cuenta_bancaria")
+            if has_instruction_snapshot
+            else item.get("cuenta_bancaria")
+        )
+        item["cuenta_clabe"] = (
+            snapshot.get("payment_cuenta_clabe")
+            if has_instruction_snapshot
+            else item.get("cuenta_clabe")
+        )
+        item["payment_data_status"] = _payment_instruction_status(
+            beneficiary=item["beneficiario"],
+            bank=item["banco"],
+            account=item["cuenta_bancaria"],
+            clabe=item["cuenta_clabe"],
+            used_current_registry=not has_instruction_snapshot,
+        )
         closure["items"].append(item)
+    closure["missing_payment_data_count"] = sum(
+        1
+        for item in closure["items"]
+        if str(item.get("payment_data_status") or "").startswith("Falta ")
+    )
     return closure
