@@ -125,6 +125,7 @@ def render_budget_matrix_filters(
     show_committed: bool = True,
     budget_view: str = "expenses",
     budget_period: str = "weekly",
+    can_edit: bool = False,
     visible_count: int,
     total_count: int,
 ) -> str:
@@ -155,6 +156,21 @@ def render_budget_matrix_filters(
         if total_count
         else "Sin partidas en este año."
     )
+    edit_action_html = ""
+    if can_edit and _clean_budget_period(budget_period) != "weekly":
+        edit_url = budget_tournament_detail_url(
+            tournament_key,
+            edition_year=edition_year,
+            version_id=version_id,
+            budget_view=budget_view,
+            phase_filter=selected_phase_filter or None,
+            show_committed=show_committed,
+            budget_period="weekly",
+        )
+        edit_action_html = (
+            f'<a class="button" href="{escape(edit_url)}">'
+            "Editar presupuesto</a>"
+        )
     return f"""
     <form
         method="GET"
@@ -184,6 +200,7 @@ def render_budget_matrix_filters(
         <div>
             <button type="submit" class="button" style="width:100%;">Filtrar matriz</button>
         </div>
+        {edit_action_html}
         <div style="grid-column:1/-1;font-size:12px;color:#64748b;line-height:1.55;">
             {count_note}
             La matriz partida × semana es la <strong>fuente única operativa</strong> para el año
@@ -1250,6 +1267,17 @@ def render_budget_partida_matrix(
                 can_edit=can_edit,
             )
             budget_amount_value = float(line.get("budget_amount") or 0)
+            budget_amount_label_html = (
+                f'<label for="budget-amount-{escape(line_id)}" '
+                'style="display:block;font-size:11px;font-weight:800;'
+                'color:#475569;margin-bottom:4px;letter-spacing:.04em;'
+                'text-transform:uppercase;">Monto autorizado</label>'
+            )
+            budget_amount_header_html = (
+                '<th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;'
+                'position:sticky;left:150px;background:#f8fafc;z-index:2;'
+                'min-width:96px;">Monto autorizado</th>'
+            )
             html_parts.append(
                 f"""
                 <div class="budget-excel-line-card" style="border:1px solid #dbe2ea;border-radius:14px;background:#fff;padding:12px;margin-bottom:12px;">
@@ -1260,7 +1288,7 @@ def render_budget_partida_matrix(
                                 <div style="font-weight:800;color:#0f172a;padding:9px 0;">{escape(str(line.get("concept_name") or ""))}</div>
                             </div>
                             <div>
-                                <label for="budget-amount-{escape(line_id)}" style="display:block;font-size:11px;font-weight:800;color:#475569;margin-bottom:4px;letter-spacing:.04em;text-transform:uppercase;">Monto total</label>
+                                {budget_amount_label_html}
                                 <input id="budget-amount-{escape(line_id)}" class="budget-line-total" type="number" step="0.01" min="0" name="budget_amount" value="{budget_amount_value:.2f}" data-line-id="{escape(line_id)}" style="width:100%;padding:9px 10px;border:1px solid #cbd5e1;border-radius:8px;font-weight:800;box-sizing:border-box;"{disabled}>
                             </div>
                             <div>{cuenta_field_html if can_edit else _render_matrix_cuenta_field(line_id, line, can_edit=False)}</div>
@@ -1279,7 +1307,7 @@ def render_budget_partida_matrix(
                             <thead>
                                 <tr style="background:#f8fafc;">
                                     <th style="text-align:left;padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:0;background:#f8fafc;z-index:2;min-width:150px;">Renglón</th>
-                                    <th style="padding:6px 10px;border-bottom:1px solid #e2e8f0;position:sticky;left:150px;background:#f8fafc;z-index:2;min-width:96px;">Monto total</th>
+                                    {budget_amount_header_html}
                                     {''.join(f'<th title="{escape(_budget_period_bucket(effective_year, idx, "weekly")[1])}" style="padding:6px;border-bottom:1px solid #e2e8f0;min-width:88px;white-space:nowrap;">Semana {idx}</th>' for idx in range(1, BUDGET_WEEK_COUNT + 1))}
                                 </tr>
                             </thead>
@@ -1373,7 +1401,7 @@ def render_budget_partida_matrix(
                     f'<span>Presupuesto gasto: <strong>${plan_expense_total:,.2f}</strong></span>'
                     f'<span>Gasto presupuestal: <strong>${real_expense_total:,.2f}</strong></span>'
                 )
-                button_label = "Guardar gasto por semanas"
+                button_label = "Guardar monto autorizado y semanas"
             else:
                 net_plan = plan_income_total - plan_expense_total
                 net_real = real_income_total - real_expense_total
@@ -1383,6 +1411,17 @@ def render_budget_partida_matrix(
                 )
                 button_label = "Guardar plan por semanas"
 
+            action_controls_html = (
+                '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">'
+                '<button type="submit" name="save_scope" value="line" '
+                'style="background:#e2e8f0;color:#0f172a;border:1px solid #cbd5e1;'
+                'border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">'
+                "Guardar cuenta y datos de partida</button>"
+                '<button type="submit" name="save_scope" value="plan" '
+                'style="background:#0f766e;color:#fff;border:none;border-radius:999px;'
+                'padding:8px 14px;font-weight:700;cursor:pointer;">'
+                f"{button_label}</button></div>"
+            )
             html_parts.append(
                 f"""
                             </tbody>
@@ -1391,7 +1430,7 @@ def render_budget_partida_matrix(
                         <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:#475569;">
                             {summary_html}
                         </div>
-                        {f'<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;"><button type="submit" name="save_scope" value="line" style="background:#e2e8f0;color:#0f172a;border:1px solid #cbd5e1;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">Guardar datos de partida</button><button type="submit" name="save_scope" value="plan" style="background:#0f766e;color:#fff;border:none;border-radius:999px;padding:8px 14px;font-weight:700;cursor:pointer;">{button_label}</button></div>' if can_edit else '<div style="margin-top:8px;color:#64748b;">Sin permiso para editar.</div>'}
+                        {action_controls_html if can_edit else '<div style="margin-top:8px;color:#64748b;">Sin permiso para editar.</div>'}
                     </form>
                 </div>
                 """
