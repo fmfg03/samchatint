@@ -659,11 +659,16 @@ def _accept_match_form(
     action_base: str,
     return_to: str,
     can_operate_matches: bool = True,
+    bank_accounts: list[dict[str, Any]] | None = None,
 ) -> str:
     if not can_operate_matches:
         return '<span class="ar-muted">sin permiso operativo</span>'
-    if item.get("status") != "candidate_match":
+    if item.get("status") not in {"candidate_match", "manual_match_required"}:
         return '<span class="ar-muted">revision requerida</span>'
+    account_options = '<option value="">Selecciona cuenta banco</option>' + "".join(
+        f'<option value="{_text(account.get("id"), "")}">{_text(account.get("codigo"), "")} · {_text(account.get("nombre"), "")}</option>'
+        for account in (bank_accounts or [])
+    )
     hidden = {
         "budget_version_id": budget_version_id,
         "ar_item_id": item.get("ar_item_id"),
@@ -684,6 +689,7 @@ def _accept_match_form(
         <form method="POST" action="{escape(action_base)}/matches/accept"
               style="display:grid;gap:6px;min-width:180px;">
             {hidden_html}
+            <select name="bank_account_id" required>{account_options}</select>
             <input name="acceptance_reason" required
                    placeholder="Razon de aceptacion">
             <button class="button secondary" type="submit">Aceptar match</button>
@@ -698,6 +704,7 @@ def _prematch_rows(
     action_base: str,
     return_to: str,
     can_operate_matches: bool,
+    bank_accounts: list[dict[str, Any]] | None = None,
 ) -> str:
     if not rows:
         return _empty_row(8, "Sin items AR para pre-matching.")
@@ -795,6 +802,7 @@ def render_ar_matching_workbench_html(
     action_base: str = "/admin/finanzas/cuentas-por-cobrar",
     return_to: str = "",
     can_operate_matches: bool = True,
+    bank_accounts: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render AR S3 pre-matching as a read-only admin fragment."""
 
@@ -840,8 +848,9 @@ def render_ar_matching_workbench_html(
         <section class="workspace-card ar-warning" id="prematching" style="margin-bottom:18px;">
             <div class="workspace-section-title">Pre-matching AR</div>
             <div class="workspace-section-subtitle">
-                Evidencia candidata; no prueba cobranza. Esta seccion no acepta
-                matches, no escribe en banco y no cambia saldos.
+                Evidencia candidata; no prueba cobranza hasta su aceptación.
+                Al aceptar se registra el match y su póliza Banco contra CxC;
+                no modifica la conciliación bancaria legacy.
             </div>
             <div class="ar-metrics">{summary_cards}</div>
         </section>
@@ -873,6 +882,7 @@ def render_ar_matching_workbench_html(
                         action_base=action_base,
                         return_to=return_to,
                         can_operate_matches=can_operate_matches,
+                        bank_accounts=bank_accounts,
                     )}
                 </tbody>
             </table>
