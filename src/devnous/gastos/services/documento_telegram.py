@@ -33,7 +33,6 @@ from .telegram_outbox_service import (
     create_outbox_entry,
     deliver_telegram_notification,
     find_outbox_entry,
-    outbox_entry_exists,
 )
 
 logger = logging.getLogger(__name__)
@@ -1295,6 +1294,36 @@ async def notify_finance_pending_payment_on_solicitud_approve(
         )
         return 0
 
+    pending_recipients: list[tuple[Empleado, Optional[int]]] = []
+    seen_chat_ids: set[int] = set()
+    for recipient in recipients:
+        chat_id = (
+            int(recipient.telegram_user_id)
+            if recipient.telegram_user_id is not None
+            else None
+        )
+        existing = await find_outbox_entry(
+            session,
+            notification_type="finance_pending_payment",
+            documento_id=documento.id,
+            recipient_empleado_id=recipient.id,
+        )
+        if chat_id is None and existing is not None and existing.status == "skipped":
+            continue
+        if chat_id is not None and existing is not None and existing.status in {
+            "pending",
+            "sent",
+        }:
+            continue
+        if chat_id is not None and chat_id in seen_chat_ids:
+            continue
+        if chat_id is not None:
+            seen_chat_ids.add(chat_id)
+        pending_recipients.append((recipient, chat_id))
+
+    if not pending_recipients:
+        return 0
+
     ctx = await build_documento_telegram_context(session, documento)
     body = format_documento_resumen_es(
         documento, context=ctx, include_actions_hint=False
@@ -1305,24 +1334,7 @@ async def notify_finance_pending_payment_on_solicitud_approve(
     text = header + "\n\n" + body
 
     sent = 0
-    seen_chat_ids: set[int] = set()
-    for recipient in recipients:
-        if await outbox_entry_exists(
-            session,
-            notification_type="finance_pending_payment",
-            documento_id=documento.id,
-            recipient_empleado_id=recipient.id,
-        ):
-            continue
-        chat_id = (
-            int(recipient.telegram_user_id)
-            if recipient.telegram_user_id is not None
-            else None
-        )
-        if chat_id is not None and chat_id in seen_chat_ids:
-            continue
-        if chat_id is not None:
-            seen_chat_ids.add(chat_id)
+    for recipient, chat_id in pending_recipients:
         if await deliver_telegram_notification(
             session,
             notification_type="finance_pending_payment",
@@ -1344,8 +1356,11 @@ async def ensure_finance_pending_payment_notifications(
 
     Idempotent: skips recipients that already have an outbox row.
     """
+    loaded_documento = await load_documento_for_telegram(session, documento.id)
+    if loaded_documento is None:
+        return 0
     return await notify_finance_pending_payment_on_solicitud_approve(
-        session, documento
+        session, loaded_documento
     )
 
 

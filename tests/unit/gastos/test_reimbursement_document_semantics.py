@@ -714,6 +714,30 @@ def test_document_detail_inherits_project_context_from_expense_account() -> None
     assert "project_doc_display = documento_project_name(documento, torneo)" in block
 
 
+def test_document_detail_authorizes_before_pending_payment_side_effects() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def ver_documento")
+    end = source.index("    # Load empleado with aprobador relationship", start)
+    block = source[start:end]
+
+    assert "selectinload(Documento.empleado)" in block
+    assert block.index("documento.empleado_id != current_empleado.id") < block.index(
+        "if ensure_fecha_pago_for_approved_solicitud(documento)"
+    )
+    assert block.index("documento.empleado_id != current_empleado.id") < block.index(
+        "await ensure_finance_pending_payment_notifications(session, documento)"
+    )
+
+
+def test_document_detail_eager_loads_approval_actor() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("    # Load aprobaciones")
+    end = source.index("    solicitud_cancelada", start)
+    block = source[start:end]
+
+    assert ".options(selectinload(Aprobacion.aprobador))" in block
+
+
 
 def test_document_workflow_allows_assigned_non_admin_approver_before_role_gate() -> None:
     source = Path("src/devnous/gastos/services/documento_workflow_service.py").read_text()

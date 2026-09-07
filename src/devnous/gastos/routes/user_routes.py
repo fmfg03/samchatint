@@ -35736,6 +35736,7 @@ async def ver_documento(
     doc_result = await session.execute(
         select(Documento)
         .options(
+            selectinload(Documento.empleado),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.torneo),
@@ -35752,9 +35753,16 @@ async def ver_documento(
     if not documento:
         raise HTTPException(status_code=404, detail="Documento not found")
 
+    # Do not let a document view trigger a write or notification before access is known.
+    if (
+        documento.empleado_id != current_empleado.id
+        and current_empleado.rol
+        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+    ):
+        return _render_documento_access_denied_page(current_empleado)
+
     if ensure_fecha_pago_for_approved_solicitud(documento):
         await session.commit()
-        await session.refresh(documento)
 
     if (
         documento.tipo == "SOLICITUD"
@@ -35768,11 +35776,6 @@ async def ver_documento(
                 "Finance pending payment Telegram backfill failed",
                 extra={"documento_id": str(documento_id)},
             )
-
-    # Verify document belongs to current empleado (or user has privileged role)
-    # Owner, coordinador, finanzas, or admin can view
-    if documento.empleado_id != current_empleado.id and current_empleado.rol not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']:
-        return _render_documento_access_denied_page(current_empleado)
 
     # Load empleado with aprobador relationship to check permissions
     empleado_result = await session.execute(
@@ -35895,6 +35898,7 @@ async def ver_documento(
     # Load aprobaciones
     aprobaciones_result = await session.execute(
         select(Aprobacion)
+        .options(selectinload(Aprobacion.aprobador))
         .where(
             and_(
                 Aprobacion.tipo_entidad == 'documento',
