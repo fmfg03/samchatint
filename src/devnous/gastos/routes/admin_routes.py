@@ -159,6 +159,7 @@ from ..services.payment_run_service import (
     require_payment_run_payment_confirmation,
     update_payment_run_fecha_pago,
 )
+from ..services.payment_run_exporter import generate_payment_run_order_xlsx
 from ..services.loan_request_service import (
     PRESTAMO_STATUS_APROBADA,
     PRESTAMO_STATUS_EN_PROCESO_PAGO,
@@ -9693,6 +9694,38 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
 
+@router.get(
+    "/admin/finanzas/payment-run/closures/{closure_id}/orden-pago.xlsx",
+    response_class=Response,
+)
+async def admin_finance_payment_run_closure_order_export(
+    closure_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> Response:
+    """Download the controlled payment instructions for one closed cutoff."""
+    try:
+        require_payment_run_manager(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    closure = await get_payment_run_closure(session, closure_id=closure_id)
+    if not closure:
+        raise HTTPException(status_code=404, detail="Corte no encontrado.")
+    payload = generate_payment_run_order_xlsx(closure=closure)
+    short_id = str(closure.get("id") or closure_id)[:8]
+    return Response(
+        content=payload,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="orden_pago_corte_{short_id}.xlsx"'
+            )
+        },
+    )
+
+
 @router.get("/admin/finanzas/payment-run/closures/{closure_id}", response_class=HTMLResponse)
 async def admin_finance_payment_run_closure_detail(
     closure_id: str,
@@ -9706,6 +9739,14 @@ async def admin_finance_payment_run_closure_detail(
     closure = await get_payment_run_closure(session, closure_id=closure_id)
     if not closure:
         raise HTTPException(status_code=404, detail="Corte no encontrado.")
+    can_export_order = can_manage_payment_run(current_empleado)
+    order_export_html = (
+        '<a class="button" href="/admin/finanzas/payment-run/closures/'
+        f'{escape(str(closure.get("id")))}/orden-pago.xlsx">'
+        "Descargar orden de pago</a>"
+        if can_export_order
+        else ""
+    )
     rows = "".join(
         f"""
         <tr>
@@ -9739,12 +9780,16 @@ async def admin_finance_payment_run_closure_detail(
                 eyebrow="Corte Payment Run",
                 title=f"Corte {escape(str(closure.get('id') or ''))[:8]}",
                 description="Snapshot operativo de solicitudes incluidas en el corte. Los pagos se completan subiendo el testigo desde Payment Run.",
-                actions_html='<a class="button secondary" href="/admin/finanzas/payment-run">Volver a Payment Run</a>',
+                actions_html=(
+                    f'{order_export_html}'
+                    '<a class="button secondary" href="/admin/finanzas/payment-run">Volver a Payment Run</a>'
+                ),
                 side_html=(
                     '<div class="eyebrow">Resumen</div>'
                     f'<div style="font-size:1.3rem;font-weight:900;color:#0f172a;">{int(closure.get("item_count") or 0)} solicitudes</div>'
                     f'<div style="margin-top:8px;color:#64748b;">Total {_payment_run_money(closure.get("total_amount"))}</div>'
                     f'<div style="margin-top:8px;color:#64748b;">Cerrado {escape(str(closure.get("closed_at") or "-"))[:19]}</div>'
+                    f'<div style="margin-top:8px;color:#991b1b;">Datos de pago incompletos: {int(closure.get("missing_payment_data_count") or 0)}</div>'
                 ),
             )}
             <section class="workspace-card">

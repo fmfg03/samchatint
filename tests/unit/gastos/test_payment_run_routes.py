@@ -1,12 +1,13 @@
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
 
 from devnous.gastos.routes import admin_routes, dependencies
+from devnous.gastos.services import payment_run_service
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
@@ -28,6 +29,45 @@ def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
 
     assert "requiere conciliacion" in html
     assert f'name="document_ids" value="{document_id}"' not in html
+
+
+@pytest.mark.asyncio
+async def test_payment_run_closure_preserves_empty_snapshotted_beneficiary(monkeypatch) -> None:
+    closure_id = uuid4()
+    header_result = MagicMock()
+    header_result.mappings.return_value.first.return_value = {
+        "id": closure_id,
+        "total_amount": Decimal("100.00"),
+    }
+    items_result = MagicMock()
+    items_result.mappings.return_value.all.return_value = [
+        {
+            "monto": Decimal("100.00"),
+            "snapshot": {
+                "payment_beneficiario": None,
+                "payment_banco": "Banco de prueba",
+                "payment_cuenta_bancaria": "1234567890",
+                "payment_cuenta_clabe": None,
+            },
+            "beneficiario_nombre": "No debe usarse",
+            "proveedor_nombre": "Tampoco debe usarse",
+        }
+    ]
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=[header_result, items_result])
+    monkeypatch.setattr(
+        payment_run_service, "ensure_payment_run_schema", AsyncMock()
+    )
+
+    closure = await payment_run_service.get_payment_run_closure(
+        session, closure_id=closure_id
+    )
+
+    assert closure is not None
+    assert closure["items"][0]["beneficiario"] is None
+    assert closure["items"][0]["payment_data_status"].startswith(
+        "Falta beneficiario"
+    )
 
 
 @pytest.mark.asyncio
@@ -319,6 +359,90 @@ async def test_payment_run_close_uses_close_service(monkeypatch) -> None:
         "doc-1",
         "doc-2",
     ]
+
+
+@pytest.mark.asyncio
+async def test_payment_run_order_export_requires_manager_and_returns_workbook(monkeypatch) -> None:
+    manager_id = uuid4()
+    closure = {"id": uuid4(), "items": [], "total_amount": Decimal("0.00")}
+    monkeypatch.setenv("SAMCHAT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS", str(manager_id))
+    monkeypatch.setattr(
+        admin_routes,
+        "get_payment_run_closure",
+        AsyncMock(return_value=closure),
+    )
+    monkeypatch.setattr(
+        admin_routes,
+        "generate_payment_run_order_xlsx",
+        lambda *, closure: b"payment-order",
+    )
+
+    response = await admin_routes.admin_finance_payment_run_closure_order_export(
+        closure_id=str(closure["id"]),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(id=manager_id, rol="finanzas"),
+    )
+
+    assert response.status_code == 200
+    assert response.body == b"payment-order"
+    assert "orden_pago_corte_" in response.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_payment_run_order_export_rejects_accounting_user() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await admin_routes.admin_finance_payment_run_closure_order_export(
+            closure_id=str(uuid4()),
+            session=AsyncMock(),
+            current_empleado=SimpleNamespace(
+                id=uuid4(), rol="usuario", departamento="Contabilidad"
+            ),
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_payment_run_closure_detail_hides_full_bank_instructions(monkeypatch) -> None:
+    manager_id = uuid4()
+    closure_id = uuid4()
+    monkeypatch.setenv("SAMCHAT_PAYMENT_RUN_MANAGER_EMPLOYEE_IDS", str(manager_id))
+    monkeypatch.setattr(
+        admin_routes,
+        "get_payment_run_closure",
+        AsyncMock(
+            return_value={
+                "id": closure_id,
+                "item_count": 1,
+                "total_amount": Decimal("1200.00"),
+                "closed_at": "2026-09-07T10:00:00",
+                "missing_payment_data_count": 0,
+                "items": [
+                    {
+                        "numero_referencia": "S-260007",
+                        "fecha_pago": "2026-09-08",
+                        "monto": Decimal("1200.00"),
+                        "currency": "MXN",
+                        "estado_documento": "en_proceso_pago",
+                        "pagado_en": None,
+                        "cuenta_clabe": "012345678901234567",
+                    }
+                ],
+            }
+        ),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_closure_detail(
+        closure_id=str(closure_id),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=manager_id, rol="finanzas", nombre="Benjamin"
+        ),
+    )
+    html = response.body.decode("utf-8")
+
+    assert "012345678901234567" not in html
+    assert "Descargar orden de pago" in html
 
 
 @pytest.mark.asyncio

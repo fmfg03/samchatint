@@ -33082,11 +33082,7 @@ async def exportar_informe_gastos(
             banco = documento.proveedor_cliente.banco or ""
             cuenta = documento.proveedor_cliente.cuenta_bancaria or ""
             cuenta_clabe = documento.proveedor_cliente.cuenta_clabe or ""
-        cantidad_a_pagar = None
-        if documento.monto_solicitado is not None:
-            cantidad_a_pagar = float(documento.monto_solicitado)
-        elif documento.monto_total is not None:
-            cantidad_a_pagar = float(documento.monto_total)
+        cantidad_a_pagar = resolve_payable_document_amount(documento)
         proyecto_str = documento_project_name(documento, torneo)
         fase_export = documento_fase_display(documento)
         if documento.cuenta_gastos_id:
