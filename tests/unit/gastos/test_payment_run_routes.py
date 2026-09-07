@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from devnous.gastos.routes import admin_routes
+from devnous.gastos.routes import admin_routes, dependencies
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
@@ -185,11 +185,46 @@ def test_payment_run_navigation_is_available_to_payment_confirmer(
             nombre="Dani",
             rol="empleado",
             departamento="Contabilidad",
+            visible_tool_keys={"panel.home"},
         )
     )
 
     assert 'href="/admin/finanzas/payment-run"' in navigation
     assert 'href="/admin/finanzas/payment-history"' not in navigation
+
+
+@pytest.mark.asyncio
+async def test_payment_run_gateway_allows_authorized_confirmer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    empleado_id = uuid4()
+    empleado = SimpleNamespace(id=empleado_id, activo=True)
+    request = SimpleNamespace(
+        session={"empleado_id": str(empleado_id)},
+        url=SimpleNamespace(path="/admin/finanzas/payment-run"),
+        method="GET",
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "_load_empleado_proxy_by_id",
+        AsyncMock(return_value=empleado),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "visible_tools_for",
+        AsyncMock(return_value={"panel.home"}),
+    )
+    monkeypatch.setattr(
+        dependencies,
+        "can_access_path",
+        AsyncMock(return_value=False),
+    )
+    monkeypatch.setattr(dependencies, "can_access_payment_run", lambda _: True)
+
+    resolved = await dependencies.get_current_empleado(request, AsyncMock())
+
+    assert resolved is empleado
+    assert resolved.can_access_path is True
 
 
 @pytest.mark.asyncio

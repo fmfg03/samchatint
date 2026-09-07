@@ -1099,9 +1099,12 @@ def render_admin_navigation(
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "limpieza"),
     ]
+    payment_run_item = None
     if can_access_payment_run(current_empleado):
-        finanzas_items.append(
-            ("admin.finanzas", "/admin/finanzas/payment-run", "Payment Run", "payment_run")
+        payment_run_item = (
+            "/admin/finanzas/payment-run",
+            "Payment Run",
+            "payment_run",
         )
     if can_manage_payment_run(current_empleado):
         finanzas_items.extend(
@@ -1151,6 +1154,8 @@ def render_admin_navigation(
         )
     inicio_items = [(href, label, key) for tool_key, href, label, key in inicio_items if can_nav(tool_key)]
     finanzas_items = [(href, label, key) for tool_key, href, label, key in finanzas_items if can_nav(tool_key)]
+    if payment_run_item is not None:
+        finanzas_items.append(payment_run_item)
     catalogos_items = [(href, label, key) for tool_key, href, label, key in catalogos_items if can_nav(tool_key)]
     avanzado_items = [(href, label, key) for tool_key, href, label, key in avanzado_items if can_nav(tool_key)]
     avanzado_keys = {key for _, _, key in avanzado_items}
