@@ -1,12 +1,17 @@
 import re
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from devnous.gastos.routes.admin_budget_routes import (
+    _budget_version_allows_line_edits,
     _render_budget_status_message,
     _select_requested_budget_version,
 )
 from devnous.gastos.routes.admin_budget_ui import (
     _render_budget_movement_details,
+    budget_tournament_detail_url,
     render_budget_matrix_filters,
 )
 
@@ -122,6 +127,16 @@ def test_requested_budget_version_must_match_id_and_year() -> None:
     )
 
 
+def test_only_draft_and_reforecast_budget_versions_allow_line_edits() -> None:
+    assert _budget_version_allows_line_edits("draft")
+    assert _budget_version_allows_line_edits("reforecast")
+    assert _budget_version_allows_line_edits(" DRAFT ")
+    assert _budget_version_allows_line_edits("ReFoReCaSt")
+    assert not _budget_version_allows_line_edits(None)
+    assert not _budget_version_allows_line_edits("approved")
+    assert not _budget_version_allows_line_edits("frozen")
+
+
 def test_budget_matrix_filters_preserve_selected_version() -> None:
     rendered = render_budget_matrix_filters(
         tournament_key="torneo-1",
@@ -136,6 +151,81 @@ def test_budget_matrix_filters_preserve_selected_version() -> None:
     assert 'name="version_id"' in rendered
     assert 'value="draft-2026&quot;&gt;&lt;script&gt;"' in rendered
     assert "<script>" not in rendered
+
+
+def test_budget_tournament_detail_url_preserves_full_version_uuid() -> None:
+    version_id = "64d963a7-61b1-402a-b58a-7efcb96cd71a"
+
+    url = budget_tournament_detail_url(
+        "torneo-1",
+        edition_year=2026,
+        version_id=version_id,
+        budget_period="weekly",
+    )
+
+    assert f"version_id={version_id}" in url
+
+
+@pytest.mark.asyncio
+async def test_tournament_detail_redirects_to_canonical_selected_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from devnous.gastos.routes import admin_budget_routes
+    from devnous.gastos.routes import admin_routes
+
+    async def _none(*_args, **_kwargs):
+        return None
+
+    async def _context(*_args, **_kwargs):
+        return {"tournament_id": "torneo-1", "tournament_code": "T-1"}
+
+    async def _versions(*_args, **_kwargs):
+        return [
+            {
+                "id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+                "edition_year": 2026,
+                "status": "draft",
+            }
+        ]
+
+    async def _definitive(*_args, **_kwargs):
+        return (await _versions())[0]
+
+    monkeypatch.setattr(admin_budget_routes, "ensure_budget_schema", _none)
+    monkeypatch.setattr(admin_budget_routes, "resolve_budget_tournament_context", _context)
+    monkeypatch.setattr(admin_budget_routes, "list_budget_versions", _versions)
+    monkeypatch.setattr(
+        admin_budget_routes,
+        "resolve_definitive_budget_version",
+        _definitive,
+    )
+    route = next(
+        item
+        for item in admin_routes.router.routes
+        if getattr(item, "path", "") == "/admin/presupuestos/torneo/{tournament_key}"
+    )
+
+    response = await route.endpoint(
+        tournament_key="torneo-1",
+        session=object(),
+        current_empleado=SimpleNamespace(rol="superadmin"),
+        edition_year=2026,
+        version_id="64d963a7-61b1-402a-b58a-7efcb96cd71",
+        budget_view="expenses",
+        phase_filter=None,
+        show_committed=1,
+        show_yoy=0,
+        budget_period="annual",
+        success_msg="Partida actualizada",
+        error_msg="",
+    )
+
+    assert response.status_code == 303
+    assert "version_id=64d963a7-61b1-402a-b58a-7efcb96cd71a" in response.headers[
+        "location"
+    ]
+    assert "budget_period=annual" in response.headers["location"]
+    assert "success_msg=Partida%20actualizada" in response.headers["location"]
 
 
 def test_presupuestos_canonical_routes_are_registered_from_budget_module() -> None:

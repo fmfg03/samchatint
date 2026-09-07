@@ -75,6 +75,10 @@ from ..models import CuentaContable, Tournament
 logger = logging.getLogger(__name__)
 
 
+def _budget_version_allows_line_edits(status: Optional[str]) -> bool:
+    return str(status or "").strip().lower() in {"draft", "reforecast"}
+
+
 def _safe_cfdi_income_return_url(return_to: Optional[str], fallback_url: str) -> str:
     clean = str(return_to or "").strip()
     if clean.startswith("/admin/contabilidad/cuentas-por-cobrar") or clean.startswith(
@@ -1500,6 +1504,24 @@ def register_presupuestos_routes(router) -> None:
                 status_code=303,
             )
 
+        canonical_version_id = str(selected_version["id"])
+        if str(version_id or "") != canonical_version_id:
+            return RedirectResponse(
+                url=budget_tournament_detail_url(
+                    tournament_key,
+                    edition_year=resolved_year,
+                    version_id=canonical_version_id,
+                    budget_view=budget_view,
+                    phase_filter=phase_filter,
+                    show_committed=bool(show_committed),
+                    show_yoy=bool(show_yoy),
+                    budget_period=budget_period,
+                    success_msg=success_msg,
+                    error_msg=error_msg,
+                ),
+                status_code=303,
+            )
+
         expense_lines = await list_budget_lines(
             session,
             version_id=selected_version["id"],
@@ -1576,6 +1598,9 @@ def register_presupuestos_routes(router) -> None:
         )
         actuals_map = actuals_snapshot["monthly"]
         access = _budget_access_map(current_empleado)
+        can_edit_lines = bool(
+            access.get("line_update")
+        ) and _budget_version_allows_line_edits(selected_version.get("status"))
         rollups = await build_budget_monthly_plan_rollups(
             session,
             version_id=selected_version["id"],
@@ -1615,7 +1640,7 @@ def register_presupuestos_routes(router) -> None:
             actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
             tournament_key=tournament_key,
-            can_edit=bool(access.get("line_update")),
+            can_edit=can_edit_lines,
             show_committed=bool(show_committed),
             edition_year=resolved_year,
             phase_filter=selected_phase_filter or None,
@@ -1632,7 +1657,7 @@ def register_presupuestos_routes(router) -> None:
             actual_movements=actuals_snapshot["movements"],
             version_id=selected_version["id"],
             tournament_key=tournament_key,
-            can_edit=bool(access.get("line_update")),
+            can_edit=can_edit_lines,
             show_committed=False,
             edition_year=resolved_year,
             phase_filter=selected_phase_filter or None,
@@ -1662,6 +1687,7 @@ def register_presupuestos_routes(router) -> None:
             show_committed=bool(show_committed),
             budget_view=selected_budget_view,
             budget_period=budget_period,
+            can_edit=can_edit_lines,
             visible_count=active_visible_count,
             total_count=active_total_count,
         )
@@ -1671,7 +1697,7 @@ def register_presupuestos_routes(router) -> None:
         )
         create_expense_line_form = ""
         create_income_line_form = ""
-        if access.get("line_update"):
+        if can_edit_lines:
             create_expense_line_form = render_add_tournament_line_form(
                 version_id=str(selected_version["id"]),
                 tournament_key=tournament_key,
@@ -1712,7 +1738,7 @@ def register_presupuestos_routes(router) -> None:
             f"?edition_year={int(resolved_year)}&version_id={quote(str(selected_version['id']))}"
         )
         income_import_html = ""
-        if access.get("line_update"):
+        if can_edit_lines:
             income_import_html = f"""
                 <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/ingresos/import" enctype="multipart/form-data" style="display:flex;flex-wrap:wrap;gap:10px;align-items:end;margin:12px 0;">
                     <input type="hidden" name="edition_year" value="{int(resolved_year)}">

@@ -1272,6 +1272,30 @@ def test_render_budget_matrix_filters_includes_year_and_phase_controls():
     assert "Copiar del año anterior" not in html
 
 
+def test_render_budget_matrix_filters_offers_weekly_edit_for_editors_only() -> None:
+    from devnous.gastos.routes.admin_budget_ui import render_budget_matrix_filters
+
+    kwargs = {
+        "tournament_key": "copatest",
+        "edition_year": 2026,
+        "version_id": "64d963a7-61b1-402a-b58a-7efcb96cd71a",
+        "all_versions": [{"edition_year": 2026}],
+        "phase_options": [],
+        "budget_view": "expenses",
+        "budget_period": "annual",
+        "visible_count": 1,
+        "total_count": 1,
+    }
+
+    editor_html = render_budget_matrix_filters(can_edit=True, **kwargs)
+    viewer_html = render_budget_matrix_filters(can_edit=False, **kwargs)
+
+    assert "Editar presupuesto" in editor_html
+    assert "budget_period=weekly" in editor_html
+    assert "version_id=64d963a7-61b1-402a-b58a-7efcb96cd71a" in editor_html
+    assert "Editar presupuesto" not in viewer_html
+
+
 def test_render_cfdi_income_bridge_panel_uses_searchable_line_inputs_without_phase_controls():
     from devnous.gastos.routes.admin_budget_ui import render_cfdi_income_bridge_panel
 
@@ -1967,7 +1991,8 @@ def test_render_budget_partida_matrix_expenses_mode_hides_income_rows():
     assert "Gasto Real" in html
     assert "Ingreso esperado" not in html
     assert "Ingreso real" not in html
-    assert "Guardar gasto por semanas" in html
+    assert "Guardar monto autorizado y semanas" in html
+    assert "Guardar cuenta y datos de partida" in html
 
 
 def test_render_budget_partida_matrix_income_mode_hides_expense_rows():
