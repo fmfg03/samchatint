@@ -19,6 +19,12 @@ def _text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def _safe_cell_text(value: Any) -> str:
+    """Prevent spreadsheet programs from evaluating untrusted text as formulas."""
+    text = _text(value)
+    return f"'{text}" if text.startswith(("=", "+", "-", "@")) else text
+
+
 def _money(value: Any) -> float:
     try:
         return round(float(value or 0), 2)
@@ -65,18 +71,18 @@ def generate_payment_run_order_xlsx(*, closure: dict[str, Any]) -> bytes:
         closure.get("items") or [], start=header_row + 1
     ):
         row = [
-            item.get("numero_referencia"),
-            item.get("referencia_operaciones"),
-            item.get("solicitante"),
-            item.get("beneficiario"),
-            item.get("banco"),
-            item.get("cuenta_bancaria"),
-            item.get("cuenta_clabe"),
-            item.get("concepto_pago"),
-            item.get("fecha_pago"),
-            item.get("currency") or "MXN",
+            _safe_cell_text(item.get("numero_referencia")),
+            _safe_cell_text(item.get("referencia_operaciones")),
+            _safe_cell_text(item.get("solicitante")),
+            _safe_cell_text(item.get("beneficiario")),
+            _safe_cell_text(item.get("banco")),
+            _safe_cell_text(item.get("cuenta_bancaria")),
+            _safe_cell_text(item.get("cuenta_clabe")),
+            _safe_cell_text(item.get("concepto_pago")),
+            _safe_cell_text(item.get("fecha_pago")),
+            _safe_cell_text(item.get("currency") or "MXN"),
             _money(item.get("monto")),
-            item.get("payment_data_status"),
+            _safe_cell_text(item.get("payment_data_status")),
         ]
         for column, value in enumerate(row, start=1):
             cell = sheet.cell(row=row_number, column=column, value=value)

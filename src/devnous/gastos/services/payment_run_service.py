@@ -821,10 +821,13 @@ async def get_payment_run_closure(
         )
         item["beneficiario"] = (
             snapshot.get("payment_beneficiario")
-            or snapshot.get("beneficiario")
-            or snapshot.get("proveedor")
-            or item.get("beneficiario_nombre")
-            or item.get("proveedor_nombre")
+            if has_instruction_snapshot
+            else (
+                snapshot.get("beneficiario")
+                or snapshot.get("proveedor")
+                or item.get("beneficiario_nombre")
+                or item.get("proveedor_nombre")
+            )
         )
         item["solicitante"] = snapshot.get("solicitante") or item.get(
             "solicitante_nombre"

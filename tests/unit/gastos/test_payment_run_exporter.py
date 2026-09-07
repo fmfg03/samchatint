@@ -59,3 +59,22 @@ def test_payment_order_export_marks_missing_payment_instructions() -> None:
 
     workbook = load_workbook(BytesIO(payload), data_only=True)
     assert workbook["Orden de pago"]["L7"].value == "Falta banco, cuenta o CLABE."
+
+
+def test_payment_order_export_escapes_formula_like_text() -> None:
+    payload = generate_payment_run_order_xlsx(
+        closure={
+            "id": "0f702abc-3341-4ad6-bcc5-ef697baf235a",
+            "items": [
+                {
+                    "numero_referencia": "=HYPERLINK(\"https://example.test\")",
+                    "currency": "MXN",
+                    "monto": "1.00",
+                    "payment_data_status": "Listo",
+                }
+            ],
+        }
+    )
+
+    workbook = load_workbook(BytesIO(payload), data_only=False)
+    assert workbook["Orden de pago"]["A7"].value.startswith("'=")
