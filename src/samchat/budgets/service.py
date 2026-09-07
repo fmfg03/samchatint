@@ -6745,10 +6745,13 @@ def validate_budget_expense_plan_total(
     authorized_total = round(_safe_decimal(budget_amount), 2)
     scheduled_total = round(
         sum(
-            _safe_decimal(
-                payload.get("budget_expense_amount", 0)
-                if isinstance(payload, dict)
-                else 0
+            round(
+                _safe_decimal(
+                    payload.get("budget_expense_amount", 0)
+                    if isinstance(payload, dict)
+                    else 0
+                ),
+                2,
             )
             for payload in plan.values()
         ),

@@ -43,6 +43,17 @@ def test_budget_expense_plan_must_reconcile_to_authorized_total():
         validate_budget_expense_plan_total(plan, budget_amount=300)
 
 
+def test_budget_expense_plan_validates_values_at_persisted_precision():
+    plan = {
+        week: {"budget_expense_amount": 1.001}
+        for week in range(1, 53)
+    }
+
+    assert validate_budget_expense_plan_total(plan, budget_amount=52) == 52
+    with pytest.raises(ValueError, match="actualmente suma \\$52.00"):
+        validate_budget_expense_plan_total(plan, budget_amount=52.05)
+
+
 @pytest.mark.asyncio
 async def test_budget_rollup_uses_authorized_line_total(monkeypatch):
     monkeypatch.setattr(
