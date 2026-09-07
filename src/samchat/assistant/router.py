@@ -14317,12 +14317,13 @@ async def create_media_message(
 @router.post("/conversations/{conversation_id}/confirm", response_model=MessageResponse)
 async def confirm_write(
     payload: ConfirmRequest,
-    request: Request,
     conversation_id: str = PathParam(...),
     current_empleado=Depends(get_current_empleado),
     session: AsyncSession = Depends(get_db_session),
+    request: Request = None,
 ):
-    _reject_client_openai_api_key(request)
+    if request is not None:
+        _reject_client_openai_api_key(request)
     _enforce_rate_limit(empleado_id=current_empleado.id, kind="confirm")
     try:
         conversation = await _load_conversation(

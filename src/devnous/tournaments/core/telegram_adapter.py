@@ -2132,7 +2132,6 @@ class TelegramAdapter:
                     assistant_mode=self._assistant_mode(chat_id),
                 ),
                 conversation_id=conv_id,
-                openai_api_key=self._assistant_openai_key(),
                 current_empleado=empleado,
                 session=session,
             )
