@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from collections import defaultdict
 from typing import Any
 
 from openpyxl import Workbook
@@ -32,8 +33,19 @@ def _money(value: Any) -> float:
         return 0.0
 
 
+def _totals_by_currency(items: list[dict[str, Any]]) -> str:
+    totals: dict[str, float] = defaultdict(float)
+    for item in items:
+        currency = _text(item.get("currency") or "MXN").upper()
+        totals[currency] += _money(item.get("monto"))
+    return " | ".join(
+        f"{currency} {amount:,.2f}" for currency, amount in sorted(totals.items())
+    ) or "Sin partidas"
+
+
 def generate_payment_run_order_xlsx(*, closure: dict[str, Any]) -> bytes:
     """Build the controlled payment-order workbook for one closed cutoff."""
+    items = list(closure.get("items") or [])
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "Orden de pago"
@@ -42,7 +54,7 @@ def generate_payment_run_order_xlsx(*, closure: dict[str, Any]) -> bytes:
     sheet["A1"].font = _TITLE_FONT
     sheet["A2"] = f"Corte: {_text(closure.get('id'))}"
     sheet["A3"] = f"Fecha de corte: {_text(closure.get('run_date') or '-')}"
-    sheet["A4"] = f"Total del corte: {_money(closure.get('total_amount')):,.2f}"
+    sheet["A4"] = f"Totales por moneda: {_totals_by_currency(items)}"
 
     headers = [
         "Solicitud",
@@ -68,7 +80,7 @@ def generate_payment_run_order_xlsx(*, closure: dict[str, Any]) -> bytes:
         )
 
     for row_number, item in enumerate(
-        closure.get("items") or [], start=header_row + 1
+        items, start=header_row + 1
     ):
         row = [
             _safe_cell_text(item.get("numero_referencia")),

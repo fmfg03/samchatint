@@ -61,6 +61,23 @@ def test_payment_order_export_marks_missing_payment_instructions() -> None:
     assert workbook["Orden de pago"]["L7"].value == "Falta banco, cuenta o CLABE."
 
 
+def test_payment_order_export_separates_totals_by_currency() -> None:
+    payload = generate_payment_run_order_xlsx(
+        closure={
+            "id": "0f702abc-3341-4ad6-bcc5-ef697baf235a",
+            "items": [
+                {"currency": "MXN", "monto": "100.00"},
+                {"currency": "USD", "monto": "100.00"},
+            ],
+        }
+    )
+
+    workbook = load_workbook(BytesIO(payload), data_only=True)
+    assert workbook["Orden de pago"]["A4"].value == (
+        "Totales por moneda: MXN 100.00 | USD 100.00"
+    )
+
+
 def test_payment_order_export_escapes_formula_like_text() -> None:
     payload = generate_payment_run_order_xlsx(
         closure={
