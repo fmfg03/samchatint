@@ -170,7 +170,9 @@ async def test_payment_run_page_queries_approved_and_in_process_sections(
     assert loan_list_mock.await_args_list[1].kwargs["query"] == "S-26000146"
 
 
-def test_payment_run_navigation_is_available_to_payment_confirmer(monkeypatch) -> None:
+def test_payment_run_navigation_is_available_to_payment_confirmer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     empleado_id = uuid4()
     monkeypatch.setenv(
         "SAMCHAT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS",
@@ -192,7 +194,7 @@ def test_payment_run_navigation_is_available_to_payment_confirmer(monkeypatch) -
 
 @pytest.mark.asyncio
 async def test_payment_run_hides_payment_date_editor_from_accounting(
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     documento_id = uuid4()
     monkeypatch.setattr(
