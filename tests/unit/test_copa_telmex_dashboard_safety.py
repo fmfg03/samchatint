@@ -82,6 +82,18 @@ def test_explicit_cors_origin_can_enable_local_development(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_password_change_discovery_redirects_to_authenticated_flow() -> None:
+    response = await dashboard.password_change_discovery()
+
+    assert any(
+        getattr(route, "path", None) == "/.well-known/change-password"
+        for route in dashboard.app.routes
+    )
+    assert response.status_code == 302
+    assert response.headers["location"] == "/login?next=/panel/cambiar-contrasena"
+
+
+@pytest.mark.asyncio
 async def test_telmex_spa_missing_dist_returns_404_instead_of_500(monkeypatch) -> None:
     monkeypatch.setattr(dashboard, "copa_telmex_dist_dir", None)
 

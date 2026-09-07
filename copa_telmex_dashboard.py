@@ -1931,6 +1931,16 @@ app.include_router(assistant_router)
 # Mount assistant API there too so the SPA can reach it reliably.
 app.include_router(assistant_router, prefix="/copa-america", include_in_schema=False)
 
+
+@app.get("/.well-known/change-password", include_in_schema=False)
+async def password_change_discovery() -> RedirectResponse:
+    """Send password managers to SamChat's authenticated password-change flow."""
+    return RedirectResponse(
+        url="/login?next=/panel/cambiar-contrasena",
+        status_code=302,
+    )
+
+
 # Database setup: use DATABASE_URL in production (e.g. sam.chat) so the same DB backs /admin/gastos
 _db_url = _require_database_url_for_runtime()
 if _db_url.startswith("postgresql://") and "+asyncpg" not in _db_url:
