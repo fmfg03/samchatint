@@ -1,6 +1,6 @@
 # RQF-SAMCHAT-ASSISTANT-009E - Evaluation Set
 
-Status: OPEN_DRAFT
+Status: IMPLEMENTED_LOCAL_PENDING_VALIDATION
 Source inputs:
 
 - `docs/assistant/product-canon.md`
@@ -78,3 +78,30 @@ Run at least 10 of these prompts in read-only canary after deploying 009A-009E. 
 - tool count;
 - whether answer cites missing data;
 - pass/fail against forbidden behaviors.
+
+## RQF-009E authenticated live cohort
+
+The first live measurement uses ten independent, non-mutating prompts:
+
+`AI-OWNER-002`, `AI-OWNER-003`, `AI-OWNER-004`, `AI-OWNER-005`,
+`AI-OWNER-007`, `AI-OWNER-009`, `AI-OWNER-010`, `AI-OWNER-015`,
+`AI-OWNER-018`, and `AI-OWNER-029`.
+
+Run it only with explicit authenticated-canary approval:
+
+```bash
+./.venv/bin/python scripts/run_assistant_executive_canary.py \
+  --live-owner-needs --cookie-file /path/to/ephemeral-cookie-header
+```
+
+Each prompt gets its own assistant conversation to prevent prior answers from
+changing the context of the next measurement. That technical conversation
+record is the only allowed persistence; business writes, pending confirmations,
+raw payloads, response prose, and credentials are prohibited from the result.
+
+The report records expected sources, source categories observed in the trace,
+and missing sources separately. Observed trace categories are observability
+metadata, not proof that a business fact is true. A response can pass with a
+classified gap only when it explicitly declares the evidence limitation. Cases
+with apparent factual support remain marked for human semantic review because
+the runner cannot prove every prompt-specific forbidden behavior mechanically.
