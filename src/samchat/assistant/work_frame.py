@@ -316,22 +316,6 @@ def build_work_frame(raw_message: str) -> WorkFrame:
             answer_contract=_answer_contract(audience="finance", domain="finance", task_kind=kind),
         )
 
-    if _contains_any(text, owner_terms) and _question_like(text):
-        return WorkFrame(
-            frame_id=_frame_id(message),
-            user_message=message,
-            interpreted_goal="Answer a concrete Owner Pack variable from supported operational evidence.",
-            audience="owner",
-            domain="owner",
-            task_kind="evidence",
-            confidence=0.78,
-            explicit_entities=entities,
-            temporal_scope=temporal,
-            required_evidence=("owner_variable_source", "live_evidence_or_missing_reason"),
-            forbidden_interpretations=("invented_person", "invented_amount", "invented_date"),
-            answer_contract=_answer_contract(audience="owner", domain="owner", task_kind="evidence"),
-        )
-
     if _contains_any(text, ("soul", "fases", "fechas", "actividades por fase")):
         return WorkFrame(
             frame_id=_frame_id(message),
@@ -346,6 +330,22 @@ def build_work_frame(raw_message: str) -> WorkFrame:
             required_evidence=("soul_snapshot", "phase_dates", "phase_activities"),
             forbidden_interpretations=("claim_complete_tournament_without_soul",),
             answer_contract=_answer_contract(audience="operator", domain="operations", task_kind="data_coverage"),
+        )
+
+    if _contains_any(text, owner_terms) and _question_like(text):
+        return WorkFrame(
+            frame_id=_frame_id(message),
+            user_message=message,
+            interpreted_goal="Answer a concrete Owner Pack variable from supported operational evidence.",
+            audience="owner",
+            domain="owner",
+            task_kind="evidence",
+            confidence=0.78,
+            explicit_entities=entities,
+            temporal_scope=temporal,
+            required_evidence=("owner_variable_source", "live_evidence_or_missing_reason"),
+            forbidden_interpretations=("invented_person", "invented_amount", "invented_date"),
+            answer_contract=_answer_contract(audience="owner", domain="owner", task_kind="evidence"),
         )
 
     return WorkFrame(

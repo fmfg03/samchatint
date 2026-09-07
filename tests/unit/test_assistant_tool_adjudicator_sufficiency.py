@@ -103,6 +103,19 @@ def test_semantic_registry_rejects_owner_readiness_for_finance_question():
     assert decision.reason == "semantic_registry_candidate_does_not_match_work_frame"
 
 
+def test_tournament_soul_coverage_matches_operations_data_coverage_question():
+    work_frame = build_work_frame("Que cobertura SOUL tiene el torneo Copa Telmex?")
+
+    decision = adjudicate_tool_candidate(
+        work_frame=work_frame,
+        tool="assistant_tournament_soul_coverage",
+    )
+
+    assert decision.accepted is True
+    assert decision.reason == "semantic_registry_candidate_matches_work_frame"
+    assert "phase_dates" in decision.required_evidence
+
+
 def test_work_turn_trace_is_appended_before_work_frame_for_qna():
     from types import SimpleNamespace
 

@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 
 SOUL_DATA_COVERAGE_ONLY = "soul_data_coverage_only"
+TOURNAMENT_SOUL_COVERAGE_ONLY = "tournament_soul_coverage_only"
 
 READY = "ready"
 PARTIAL = "partial"
@@ -69,6 +70,36 @@ class SoulDataCoverageReport:
             "read_only": self.read_only,
             "tool_policy": self.tool_policy,
             "artifacts": [artifact.to_dict() for artifact in self.artifacts],
+        }
+
+
+@dataclass(frozen=True)
+class TournamentSoulCoverageReport:
+    """Read-only SOUL coverage scoped to one requested tournament."""
+
+    tournament_slug: str
+    coverage: ArtifactCoverage
+    executive_summary: str
+    read_only: bool = True
+    tool_policy: str = TOURNAMENT_SOUL_COVERAGE_ONLY
+
+    @property
+    def status(self) -> str:
+        return self.coverage.status
+
+    @property
+    def score(self) -> float:
+        return self.coverage.score
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tournament_slug": self.tournament_slug,
+            "status": self.status,
+            "score": self.score,
+            "executive_summary": self.executive_summary,
+            "read_only": self.read_only,
+            "tool_policy": self.tool_policy,
+            "coverage": self.coverage.to_dict(),
         }
 
 
@@ -137,7 +168,24 @@ def _score(findings: Sequence[CoverageFinding], *, total_checks: int, has_source
 def _phase_rows(soul: Mapping[str, Any]) -> Sequence[Any]:
     operations = _as_mapping(soul.get("operations"))
     phases = operations.get("phases") or soul.get("phases")
-    return _as_sequence(phases)
+    if _as_sequence(phases):
+        return _as_sequence(phases)
+
+    # The live tournament snapshot exposes scheduled matches rather than a
+    # separate phases collection. Preserve the distinction: a phase is only
+    # inferred when the source names it, and its dates come from those matches.
+    derived: dict[str, dict[str, Any]] = {}
+    for match in _as_sequence(operations.get("matches")):
+        row = _as_mapping(match)
+        phase_name = _clean(row.get("phase"))
+        if not phase_name:
+            continue
+        phase = derived.setdefault(phase_name, {"name": phase_name, "activities": []})
+        match_date = _clean(row.get("match_date"))
+        if match_date and not phase.get("date"):
+            phase["date"] = match_date
+        phase["activities"].append("partido_programado")
+    return tuple(derived.values())
 
 
 def _phase_has_date(phase: Any) -> bool:
@@ -196,8 +244,15 @@ def evaluate_tournament_soul_snapshot(snapshot: Mapping[str, Any] | None) -> Art
             )
         )
 
-    entity_seed = _as_mapping(soul.get("entity_folders_seed"))
-    entities = _as_sequence(entity_seed.get("entities") or soul.get("entities"))
+    entity_seed_raw = soul.get("entity_folders_seed")
+    entity_seed = _as_mapping(entity_seed_raw)
+    operations = _as_mapping(soul.get("operations"))
+    entities = _as_sequence(
+        entity_seed.get("entities")
+        or entity_seed_raw
+        or operations.get("entities")
+        or soul.get("entities")
+    )
     if entities:
         sources.append("entidades")
     else:
@@ -209,7 +264,6 @@ def evaluate_tournament_soul_snapshot(snapshot: Mapping[str, Any] | None) -> Art
             )
         )
 
-    operations = _as_mapping(soul.get("operations"))
     categories = _as_sequence(operations.get("categories") or soul.get("categories"))
     if categories:
         sources.append("categorias")
@@ -510,6 +564,57 @@ def build_soul_data_coverage_report(
     return SoulDataCoverageReport(status=status, score=score, artifacts=artifacts, executive_summary=summary)
 
 
+def build_tournament_soul_coverage_report(
+    *,
+    tournament_slug: str,
+    soul_snapshot: Mapping[str, Any] | None = None,
+    source_available: bool = True,
+) -> TournamentSoulCoverageReport:
+    """Report only the requested tournament's SOUL readiness.
+
+    This intentionally does not blend unrelated accounting or inbox coverage
+    into an Owner Pack decision for a particular tournament.
+    """
+
+    normalized_slug = _clean(tournament_slug)
+    if not normalized_slug:
+        raise ValueError("tournament_slug is required")
+
+    if source_available:
+        coverage = evaluate_tournament_soul_snapshot(soul_snapshot)
+    else:
+        coverage = ArtifactCoverage(
+            artifact_id="tournament.soul_snapshot",
+            status=SOURCE_MISSING,
+            score=0.0,
+            summary="No se encontro una fuente SOUL para el torneo solicitado.",
+            findings=(
+                _finding(
+                    "tournament_soul_source_unavailable",
+                    "No se encontro el torneo o su fuente SOUL no estuvo disponible.",
+                    remediation="Confirmar el slug del torneo y la disponibilidad de la fuente operativa.",
+                ),
+            ),
+            next_questions=(
+                "Cual es el slug exacto del torneo?",
+                "La fuente operativa del torneo esta disponible para consulta?",
+            ),
+            safety={"read_only": True, "can_answer_owner_pack": False},
+        )
+
+    if coverage.status == READY:
+        summary = "El SOUL del torneo tiene cobertura para preguntas operativas base."
+    elif coverage.status == PARTIAL:
+        summary = "El SOUL del torneo permite respuestas parciales con advertencias explicitas."
+    else:
+        summary = "El SOUL del torneo no permite afirmar que el Owner Pack este completo."
+    return TournamentSoulCoverageReport(
+        tournament_slug=normalized_slug,
+        coverage=coverage,
+        executive_summary=summary,
+    )
+
+
 def render_soul_data_coverage_answer(report: SoulDataCoverageReport) -> str:
     """Render a concise Spanish executive answer for the assistant UI."""
 
@@ -533,13 +638,35 @@ def render_soul_data_coverage_answer(report: SoulDataCoverageReport) -> str:
     return "\n".join(lines)
 
 
+def render_tournament_soul_coverage_answer(report: TournamentSoulCoverageReport) -> str:
+    """Render a source-scoped, non-claiming executive answer."""
+
+    coverage = report.coverage
+    lines = [
+        f"Cobertura SOUL de {report.tournament_slug}: {coverage.status} ({coverage.score:.0%}).",
+        report.executive_summary,
+    ]
+    for finding in coverage.findings[:4]:
+        lines.append(f"- Falta: {finding.label}")
+    if coverage.available_sources:
+        lines.append(f"Fuentes disponibles: {', '.join(coverage.available_sources)}.")
+    if coverage.next_questions:
+        lines.append(f"Siguiente paso: {coverage.next_questions[0]}")
+    lines.append("No ejecute cambios; esta revision es solo lectura.")
+    return "\n".join(lines)
+
+
 __all__ = [
     "ArtifactCoverage",
     "CoverageFinding",
     "SoulDataCoverageReport",
+    "TOURNAMENT_SOUL_COVERAGE_ONLY",
+    "TournamentSoulCoverageReport",
     "build_soul_data_coverage_report",
+    "build_tournament_soul_coverage_report",
     "evaluate_accounting_historical_sources",
     "evaluate_sam_inbox_payload",
     "evaluate_tournament_soul_snapshot",
     "render_soul_data_coverage_answer",
+    "render_tournament_soul_coverage_answer",
 ]
