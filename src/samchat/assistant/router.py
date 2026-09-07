@@ -1327,6 +1327,17 @@ def _get_openai_client(api_key_override: Optional[str] = None) -> Any:
     return _provider_get_openai_client(api_key_override)
 
 
+def _reject_client_openai_api_key(request: Request) -> None:
+    """Keep provider credentials at the server boundary, never in HTTP clients."""
+
+    headers = getattr(request, "headers", {}) or {}
+    if any(str(name).lower() == "x-openai-api-key" for name in headers):
+        raise HTTPException(
+            status_code=400,
+            detail="X-OpenAI-API-Key is not accepted; use server-side provider credentials",
+        )
+
+
 def _get_anthropic_client(api_key_override: Optional[str] = None) -> Any:
     return _provider_get_anthropic_client(api_key_override)
 
@@ -14115,10 +14126,10 @@ async def create_message(
     payload: MessageCreateRequest,
     request: Request,
     conversation_id: str = PathParam(...),
-    openai_api_key: Optional[str] = Header(default=None, alias="X-OpenAI-API-Key"),
     current_empleado=Depends(get_current_empleado),
     session: AsyncSession = Depends(get_db_session),
 ):
+    _reject_client_openai_api_key(request)
     _enforce_rate_limit(empleado_id=current_empleado.id, kind="message")
     try:
         conversation = await _load_conversation(
@@ -14169,7 +14180,7 @@ async def create_message(
             bi_scope=payload.bi_scope,
             bi_segment=payload.bi_segment,
             assistant_mode=payload.assistant_mode,
-            openai_api_key=openai_api_key,
+            openai_api_key=None,
             latest_pending_run_for_conversation=_latest_pending_run_for_conversation,
             is_explicit_approval_message=_is_explicit_approval_message,
             is_explicit_rejection_message=_is_explicit_rejection_message,
@@ -14218,10 +14229,10 @@ async def create_media_message(
     bi_segment: Optional[str] = Form(default=None),
     assistant_mode: Optional[str] = Form(default=None),
     file: UploadFile = File(...),
-    openai_api_key: Optional[str] = Header(default=None, alias="X-OpenAI-API-Key"),
     current_empleado=Depends(get_current_empleado),
     session: AsyncSession = Depends(get_db_session),
 ):
+    _reject_client_openai_api_key(request)
     _enforce_rate_limit(empleado_id=current_empleado.id, kind="message")
     try:
         conversation = await _load_conversation(
@@ -14266,7 +14277,7 @@ async def create_media_message(
             upload=file,
             note=note,
             raw=raw_file,
-            openai_api_key=openai_api_key,
+            openai_api_key=None,
             extract_text_from_image_anthropic=_extract_text_from_image_anthropic,
             assistant_provider_order=_assistant_provider_order,
             get_openai_client=_get_openai_client,
@@ -14283,7 +14294,7 @@ async def create_media_message(
             bi_scope=bi_scope,
             bi_segment=bi_segment,
             assistant_mode=assistant_mode,
-            openai_api_key=openai_api_key,
+            openai_api_key=None,
             assistant_turn=_assistant_turn,
             maybe_append_export_prompt=_maybe_append_export_prompt,
             document_action_router_executor=None,
@@ -14306,11 +14317,12 @@ async def create_media_message(
 @router.post("/conversations/{conversation_id}/confirm", response_model=MessageResponse)
 async def confirm_write(
     payload: ConfirmRequest,
+    request: Request,
     conversation_id: str = PathParam(...),
-    openai_api_key: Optional[str] = Header(default=None, alias="X-OpenAI-API-Key"),
     current_empleado=Depends(get_current_empleado),
     session: AsyncSession = Depends(get_db_session),
 ):
+    _reject_client_openai_api_key(request)
     _enforce_rate_limit(empleado_id=current_empleado.id, kind="confirm")
     try:
         conversation = await _load_conversation(
@@ -14338,7 +14350,7 @@ async def confirm_write(
             conversation=conversation,
             approve=payload.approve,
             assistant_mode=payload.assistant_mode,
-            openai_api_key=openai_api_key,
+            openai_api_key=None,
             current_empleado=current_empleado,
             session=session,
         )

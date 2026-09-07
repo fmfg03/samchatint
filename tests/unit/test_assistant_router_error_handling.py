@@ -15,6 +15,42 @@ def _empleado():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("handler", ("message", "media", "confirm"))
+async def test_assistant_endpoints_reject_client_provider_header(handler: str) -> None:
+    request = SimpleNamespace(headers={"x-openai-api-key": ""})
+
+    with pytest.raises(HTTPException) as exc_info:
+        if handler == "message":
+            await assistant_router.create_message(
+                payload=assistant_router.MessageCreateRequest(message="hola"),
+                request=request,
+                conversation_id=str(uuid.uuid4()),
+                current_empleado=None,
+                session=None,
+            )
+        elif handler == "media":
+            await assistant_router.create_media_message(
+                request=request,
+                conversation_id=str(uuid.uuid4()),
+                kind="text",
+                file=SimpleNamespace(),
+                current_empleado=None,
+                session=None,
+            )
+        else:
+            await assistant_router.confirm_write(
+                payload=assistant_router.ConfirmRequest(run_id=str(uuid.uuid4())),
+                request=request,
+                conversation_id=str(uuid.uuid4()),
+                current_empleado=None,
+                session=None,
+            )
+
+    assert exc_info.value.status_code == 400
+    assert "server-side provider credentials" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
 async def test_create_conversation_rolls_back_on_unexpected_commit_error(monkeypatch):
     empleado = _empleado()
     session = AsyncMock()
@@ -206,9 +242,8 @@ async def test_create_message_rolls_back_on_unexpected_turn_error(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await assistant_router.create_message(
             payload=assistant_router.MessageCreateRequest(message="hola"),
-            request=SimpleNamespace(),
+            request=SimpleNamespace(headers={}),
             conversation_id=str(uuid.uuid4()),
-            openai_api_key=None,
             current_empleado=empleado,
             session=session,
         )
@@ -242,8 +277,8 @@ async def test_confirm_write_rolls_back_on_unexpected_confirm_error(monkeypatch)
     with pytest.raises(HTTPException) as exc_info:
         await assistant_router.confirm_write(
             payload=assistant_router.ConfirmRequest(run_id=str(uuid.uuid4())),
+            request=SimpleNamespace(headers={}),
             conversation_id=str(uuid.uuid4()),
-            openai_api_key=None,
             current_empleado=empleado,
             session=session,
         )
@@ -281,8 +316,8 @@ async def test_confirm_write_returns_receipt_validation_error_without_500(monkey
     with pytest.raises(HTTPException) as exc_info:
         await assistant_router.confirm_write(
             payload=assistant_router.ConfirmRequest(run_id=str(uuid.uuid4())),
+            request=SimpleNamespace(headers={}),
             conversation_id=str(uuid.uuid4()),
-            openai_api_key=None,
             current_empleado=empleado,
             session=session,
         )
@@ -336,9 +371,8 @@ async def test_chat_confirmation_returns_receipt_validation_error_without_500(
     with pytest.raises(HTTPException) as exc_info:
         await assistant_router.create_message(
             payload=assistant_router.MessageCreateRequest(message="confirmo"),
-            request=SimpleNamespace(),
+            request=SimpleNamespace(headers={}),
             conversation_id=str(conversation.id),
-            openai_api_key=None,
             current_empleado=empleado,
             session=session,
         )
