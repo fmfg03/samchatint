@@ -25,14 +25,19 @@ async def send_weekly_unbilled_income_alert(
         SELECT COALESCE(SUM(p.expected_income_amount), 0) AS amount
         FROM budget_line_monthly_plan p
         JOIN budget_lines l ON l.id = p.budget_line_id
+        JOIN budget_versions v ON v.id = l.budget_version_id
         WHERE COALESCE(l.line_direction, 'expense') = 'income'
           AND p.month_number <= :month
-    """), {"month": cutoff.month})).scalar_one()
+          AND v.edition_year = :year
+          AND v.status IN ('approved', 'active')
+    """), {"month": cutoff.month, "year": cutoff.year})).scalar_one()
     invoiced = (await session.execute(text("""
         SELECT COALESCE(SUM(amount), 0) AS amount
-        FROM budget_cfdi_income_links
-        WHERE status = 'approved' AND income_date::date <= :cutoff
-    """), {"cutoff": cutoff})).scalar_one()
+        FROM budget_cfdi_income_links link
+        JOIN budget_versions v ON v.id = link.budget_version_id
+        WHERE link.status = 'approved' AND link.income_date::date <= :cutoff
+          AND v.edition_year = :year AND v.status IN ('approved', 'active')
+    """), {"cutoff": cutoff, "year": cutoff.year})).scalar_one()
     pending = max(0.0, float(expected or 0) - float(invoiced or 0))
     iso_year, iso_week, _ = cutoff.isocalendar()
     notification_type = f"income_unbilled_weekly_{iso_year}_{iso_week:02d}"

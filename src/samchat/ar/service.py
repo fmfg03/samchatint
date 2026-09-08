@@ -381,6 +381,15 @@ async def build_ar_read_model(
         payer_rfc = _safe_str(link.get("receptor_rfc")) or None
         payer_name = _safe_str(link.get("receptor_nombre")) or None
         amount = _safe_float(link.get("amount"))
+        direct_collection = (
+            {
+                "accepted_amount": amount,
+                "collection_date": link.get("collection_date"),
+                "accounting_poliza_id": link.get("collection_poliza_id"),
+            }
+            if link.get("collection_poliza_id") and link.get("collection_date")
+            else None
+        )
         linked_item = _apply_collection_match(
             {
                 "ar_item_id": item_id,
@@ -419,7 +428,7 @@ async def build_ar_read_model(
                 "outstanding_amount": None,
                 "outstanding_amount_status": "unknown",
             },
-            matches_by_item.get(item_id),
+            matches_by_item.get(item_id) or direct_collection,
         )
         linked_item["balance_amount"] = (
             _safe_float(

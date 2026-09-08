@@ -1372,6 +1372,10 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_status ON budget_cfdi_income_links(status)",
     ),
     (
+        "budget_cfdi_income_links_legacy_posting_backfill",
+        "UPDATE budget_cfdi_income_links link SET status = 'approved' WHERE link.unlinked_at IS NULL AND link.status = 'pending_approval' AND EXISTS (SELECT 1 FROM accounting_polizas poliza WHERE poliza.origen = 'cxc_cfdi_income' AND poliza.cfdi_report_id = link.cfdi_report_id)",
+    ),
+    (
         "expense_reports_origen_column",
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NULL",
     ),
@@ -1816,7 +1820,8 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                                 ARRAY[
                                     'documento'::text,
                                     'gasto'::text,
-                                    'beneficiary_onboarding'::text
+                                    'beneficiary_onboarding'::text,
+                                    'budget_cfdi_income_link'::text
                                 ]
                             )
                         );

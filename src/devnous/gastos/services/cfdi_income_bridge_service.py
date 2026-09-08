@@ -123,8 +123,8 @@ async def _load_budget_line(
             text(
                 """
                 SELECT bl.id, bl.budget_version_id, bl.budget_concept_id, bl.tournament_id,
-                       tournament_code, tournament_name, phase, concept_name,
-                       account_code_final, account_code_suggested,
+                       bl.tournament_code, bl.tournament_name, bl.phase, bl.concept_name,
+                       bl.account_code_final, bl.account_code_suggested,
                        bc.cxc_cuenta_contable_id,
                        COALESCE(bl.line_direction, 'expense') AS line_direction
                 FROM budget_lines bl
@@ -242,12 +242,6 @@ async def assign_cfdi_income_tournament(
             "metadata": json.dumps(metadata, ensure_ascii=False),
         },
     )
-    await session.execute(text("""
-        INSERT INTO aprobaciones (id, tipo_entidad, entidad_id, aprobador_id, accion, comentario, fecha)
-        VALUES (CAST(:id AS uuid), 'budget_cfdi_income_link', CAST(:link_id AS uuid),
-                CAST(:actor AS uuid), 'enviar', NULL, NOW())
-    """), {"id": str(uuid.uuid4()), "link_id": link_id,
-            "actor": str(actor_empleado_id or "") or None})
     await session.commit()
     return {"status": "assigned", "tournament_id": str(tournament_id)}
 
@@ -537,7 +531,7 @@ async def list_budget_cfdi_income_links(
         filters.append("l.tournament_id = CAST(:tournament_id AS uuid)")
         params["tournament_id"] = str(tournament_id)
     if approved_only:
-        filters.append("l.status = 'approved'")
+        filters.extend(["l.status = 'approved'", "l.unlinked_at IS NULL"])
     rows = (
         await session.execute(
             text(
@@ -689,6 +683,12 @@ async def create_cfdi_income_link(
             "metadata": json.dumps(metadata, ensure_ascii=False),
         },
     )
+    await session.execute(text("""
+        INSERT INTO aprobaciones (id, tipo_entidad, entidad_id, aprobador_id, accion, comentario, fecha)
+        VALUES (CAST(:id AS uuid), 'budget_cfdi_income_link', CAST(:link_id AS uuid),
+                CAST(:actor AS uuid), 'enviar', NULL, NOW())
+    """), {"id": str(uuid.uuid4()), "link_id": link_id,
+            "actor": str(actor_empleado_id or "") or None})
     await session.commit()
     return {"status": "pending_approval", "id": link_id}
 
@@ -715,7 +715,8 @@ async def decide_cfdi_income_link(
         await session.execute(text("""
             UPDATE budget_cfdi_income_links
             SET status = 'rejected', rejected_by_empleado_id = CAST(:actor AS uuid),
-                rejected_at = NOW(), decision_comment = :comment, updated_at = NOW()
+                rejected_at = NOW(), decision_comment = :comment, unlinked_at = NOW(),
+                unlinked_by_empleado_id = CAST(:actor AS uuid), updated_at = NOW()
             WHERE id = CAST(:link_id AS uuid)
         """), {"link_id": link_id, "actor": actor_empleado_id,
                 "comment": comment.strip() or None})

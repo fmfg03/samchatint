@@ -311,7 +311,7 @@ async def _insert_match(
         "budget_line_id": _safe_str(ar_item.get("budget_line_id")) or None,
         "cfdi_report_id": _safe_str(ar_item.get("cfdi_report_id")) or None,
         "bank_movement_id": _safe_str(bank_movement.get("id")),
-        "accepted_amount": _ar_amount(ar_item),
+        "accepted_amount": _safe_float(bank_movement.get("importe")),
         "collection_date": bank_movement.get("fecha"),
         "payer_rfc": _safe_str(ar_item.get("payer_rfc")) or None,
         "payer_name": _safe_str(ar_item.get("payer_name")) or None,
