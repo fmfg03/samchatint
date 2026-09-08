@@ -388,6 +388,81 @@ def test_aprobaciones_tipo_entidad_constraint_admits_beneficiary_onboarding():
     assert "'beneficiary_onboarding'::text" in migration
 
 
+def test_billing_collections_schema_is_migrated_and_health_checked():
+    from devnous.gastos import schema_guard
+
+    migration = Path(
+        "database/migrations/20260908_billing_collections_approval_schema.sql"
+    ).read_text()
+    required_columns = {
+        (item.table, item.column) for item in schema_guard.REQUIRED_COLUMNS
+    }
+    required_indexes = {
+        (item.table, item.index) for item in schema_guard.REQUIRED_INDEXES
+    }
+    required_constraints = {
+        (item.table, item.constraint, item.required_definition_tokens)
+        for item in schema_guard.REQUIRED_CONSTRAINTS
+    }
+    patches = dict(schema_guard.SCHEMA_PATCHES)
+
+    expected_link_columns = {
+        "status",
+        "approved_by_empleado_id",
+        "approved_at",
+        "rejected_by_empleado_id",
+        "rejected_at",
+        "decision_comment",
+        "accounting_poliza_id",
+        "collection_date",
+        "collected_by_empleado_id",
+        "collection_poliza_id",
+    }
+    assert all(
+        ("budget_cfdi_income_links", column) in required_columns
+        for column in expected_link_columns
+    )
+    assert ("budget_concepts", "cxc_cuenta_contable_id") in required_columns
+    assert (
+        "budget_cfdi_income_links",
+        "ix_budget_cfdi_income_links_status",
+    ) in required_indexes
+    assert (
+        "aprobaciones",
+        "aprobaciones_tipo_entidad_check",
+        (
+            "documento",
+            "gasto",
+            "beneficiary_onboarding",
+            "budget_cfdi_income_link",
+        ),
+    ) in required_constraints
+
+    billing_patch_names = {
+        name for name in patches if name.startswith("budget_cfdi_income_links_")
+    }
+    assert "budget_cfdi_income_links_approval_columns" not in billing_patch_names
+    assert "budget_cfdi_income_links_collection_columns" not in billing_patch_names
+    assert all(";" not in patches[name] for name in billing_patch_names)
+
+    assert "cxc_cuenta_contable_id" in migration
+    assert "collection_poliza_id" in migration
+    assert "ix_budget_cfdi_income_links_status" in migration
+    assert "budget_cfdi_income_link" in migration
+    assert "IF current_def IS NULL" in migration
+    assert "IF current_def IS NOT NULL THEN" in migration
+
+    schema_guard_source = Path(
+        "src/devnous/gastos/schema_guard.py"
+    ).read_text()
+    approval_repair_start = schema_guard_source.index(
+        "aprobaciones_tipo_entidad_check_beneficiary_onboarding"
+    )
+    approval_repair = schema_guard_source[approval_repair_start:]
+    assert "IF current_def IS NULL" in approval_repair
+    assert "IF current_def IS NOT NULL THEN" in approval_repair
+
+
 def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():
     source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"
