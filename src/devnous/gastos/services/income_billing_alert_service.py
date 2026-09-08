@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .telegram_outbox_service import deliver_telegram_notification
+from samchat.budgets.service import resolve_definitive_budget_version
 
 
 async def send_weekly_unbilled_income_alert(
@@ -21,23 +22,26 @@ async def send_weekly_unbilled_income_alert(
     week idempotent while allowing a fresh alert next week.
     """
     cutoff = as_of or date.today()
+    definitive_version = await resolve_definitive_budget_version(
+        session, edition_year=cutoff.year
+    )
+    if not definitive_version:
+        return {"expected": 0.0, "invoiced": 0.0, "pending": 0.0, "recipients": 0, "sent": 0}
+    version_id = str(definitive_version["id"])
     expected = (await session.execute(text("""
         SELECT COALESCE(SUM(p.expected_income_amount), 0) AS amount
         FROM budget_line_monthly_plan p
         JOIN budget_lines l ON l.id = p.budget_line_id
-        JOIN budget_versions v ON v.id = l.budget_version_id
         WHERE COALESCE(l.line_direction, 'expense') = 'income'
           AND p.month_number <= :month
-          AND v.edition_year = :year
-          AND v.status IN ('approved', 'active')
-    """), {"month": cutoff.month, "year": cutoff.year})).scalar_one()
+          AND l.budget_version_id = CAST(:version_id AS uuid)
+    """), {"month": cutoff.month, "version_id": version_id})).scalar_one()
     invoiced = (await session.execute(text("""
         SELECT COALESCE(SUM(amount), 0) AS amount
         FROM budget_cfdi_income_links link
-        JOIN budget_versions v ON v.id = link.budget_version_id
         WHERE link.status = 'approved' AND link.income_date::date <= :cutoff
-          AND v.edition_year = :year AND v.status IN ('approved', 'active')
-    """), {"cutoff": cutoff, "year": cutoff.year})).scalar_one()
+          AND link.budget_version_id = CAST(:version_id AS uuid)
+    """), {"cutoff": cutoff, "version_id": version_id})).scalar_one()
     pending = max(0.0, float(expected or 0) - float(invoiced or 0))
     iso_year, iso_week, _ = cutoff.isocalendar()
     notification_type = f"income_unbilled_weekly_{iso_year}_{iso_week:02d}"

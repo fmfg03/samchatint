@@ -1811,7 +1811,8 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
               AND conname = 'aprobaciones_tipo_entidad_check';
 
             IF current_def IS NOT NULL THEN
-                IF position('beneficiary_onboarding' in current_def) = 0 THEN
+                IF position('beneficiary_onboarding' in current_def) = 0
+                   OR position('budget_cfdi_income_link' in current_def) = 0 THEN
                     ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_tipo_entidad_check;
                     ALTER TABLE aprobaciones
                         ADD CONSTRAINT aprobaciones_tipo_entidad_check

@@ -563,6 +563,9 @@ async def accept_ar_collection_match(
     )
     if active_bank:
         raise ARCollectionMatchError("active_match_exists_for_bank_movement")
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:ar_item_id))"), {
+        "ar_item_id": _safe_str(ar_item.get("ar_item_id")),
+    })
     previously_collected = (await session.execute(text("""
         SELECT COALESCE(SUM(accepted_amount), 0) AS total
         FROM ar_collection_matches
@@ -632,6 +635,7 @@ async def reverse_ar_collection_match(
         raise ARCollectionMatchError("collection_match_not_found")
     if _safe_str(before.get("status")) != ACCEPTED_STATUS:
         raise ARCollectionMatchError("collection_match_not_active")
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:match_id))"), {"match_id": match_id})
     if not before.get("accounting_poliza_id"):
         raise ARCollectionMatchError("collection_posting_missing")
     bank_movement = await _load_bank_movement(session, _safe_str(before.get("bank_movement_id")))

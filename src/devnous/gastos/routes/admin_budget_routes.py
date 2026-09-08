@@ -2088,10 +2088,11 @@ def register_presupuestos_routes(router) -> None:
         current_empleado=Depends(get_current_empleado),
     ):
         _require_budget_access(current_empleado, "approve")
-        approve = decision.strip().lower() == "approve"
-        if decision.strip().lower() not in {"approve", "reject"}:
-            raise ValueError("Decisión de vínculo no válida.")
         try:
+            clean_decision = decision.strip().lower()
+            if clean_decision not in {"approve", "reject"}:
+                raise CFDIIncomeBridgeError("Decisión de vínculo no válida.")
+            approve = clean_decision == "approve"
             result = await decide_cfdi_income_link(
                 session, link_id=link_id, actor_empleado_id=str(current_empleado.id),
                 approve=approve, comment=comment,
