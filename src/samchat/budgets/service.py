@@ -3110,6 +3110,7 @@ async def create_budget_concept(
     scope_labels: Optional[list[str]] = None,
     cuenta_contable_id: Optional[str] = None,
     pasivo_cuenta_contable_id: Optional[str] = None,
+    cxc_cuenta_contable_id: Optional[str] = None,
     budget_direction: Optional[str] = None,
     actor_empleado_id: Optional[str] = None,
     source: str = "admin_ui",
@@ -3173,18 +3174,21 @@ async def create_budget_concept(
         resolved_pasivo_id = await validate_active_cuenta_contable_id(
             session, clean_pasivo
         )
+    resolved_cxc_id: Optional[str] = None
+    if _safe_str(cxc_cuenta_contable_id):
+        resolved_cxc_id = await validate_active_cuenta_contable_id(session, _safe_str(cxc_cuenta_contable_id))
     await session.execute(
         text(
             """
             INSERT INTO budget_concepts (
                 id, tournament_id, tournament_code, tournament_name,
                 concept_name, concept_key, budget_direction, active, source, metadata,
-                cuenta_contable_id, pasivo_cuenta_contable_id,
+                cuenta_contable_id, pasivo_cuenta_contable_id, cxc_cuenta_contable_id,
                 created_by_empleado_id, created_at, updated_at
             ) VALUES (
                 :id, :tournament_id, :tournament_code, :tournament_name,
                 :concept_name, :concept_key, :budget_direction, TRUE, :source, CAST(:metadata AS jsonb),
-                :cuenta_contable_id, :pasivo_cuenta_contable_id,
+                :cuenta_contable_id, :pasivo_cuenta_contable_id, :cxc_cuenta_contable_id,
                 :created_by_empleado_id, NOW(), NOW()
             )
             """
@@ -3201,6 +3205,7 @@ async def create_budget_concept(
             "metadata": json.dumps(metadata, ensure_ascii=False),
             "cuenta_contable_id": resolved_cuenta_id,
             "pasivo_cuenta_contable_id": resolved_pasivo_id,
+            "cxc_cuenta_contable_id": resolved_cxc_id,
             "created_by_empleado_id": actor_empleado_id,
         },
     )
@@ -3225,6 +3230,8 @@ async def update_budget_concept(
     cuenta_contable_provided: bool = False,
     pasivo_cuenta_contable_id: Optional[str] = None,
     pasivo_cuenta_contable_provided: bool = False,
+    cxc_cuenta_contable_id: Optional[str] = None,
+    cxc_cuenta_contable_provided: bool = False,
     budget_direction: Optional[str] = None,
     budget_direction_provided: bool = False,
     active: Optional[bool] = None,
@@ -3349,6 +3356,11 @@ async def update_budget_concept(
             )
         else:
             updates["pasivo_cuenta_contable_id"] = None
+    if cxc_cuenta_contable_provided:
+        clean_cxc = _safe_str(cxc_cuenta_contable_id)
+        updates["cxc_cuenta_contable_id"] = (
+            await validate_active_cuenta_contable_id(session, clean_cxc) if clean_cxc else None
+        )
     if budget_direction_provided:
         updates["budget_direction"] = normalize_budget_line_direction(
             budget_direction
@@ -4753,6 +4765,16 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 income_date TIMESTAMPTZ NOT NULL,
                 linked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 source VARCHAR(80) NOT NULL DEFAULT 'admin_ui',
+                status VARCHAR(40) NOT NULL DEFAULT 'pending_approval',
+                approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                approved_at TIMESTAMPTZ NULL,
+                rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                rejected_at TIMESTAMPTZ NULL,
+                decision_comment TEXT NULL,
+                accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                collection_date TIMESTAMPTZ NULL,
+                collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4770,6 +4792,32 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
             """
         )
     )
+    await session.execute(text("ALTER TABLE budget_concepts ADD COLUMN IF NOT EXISTS cxc_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL"))
+    for column_sql in (
+        "ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
+        "ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS decision_comment TEXT NULL",
+        "ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ):
+        await session.execute(text(f"ALTER TABLE budget_cfdi_income_links {column_sql}"))
+    # Links created by the prior workflow already have a CxC policy. Preserve
+    # their recognized-income semantics when introducing approval states.
+    await session.execute(text("""
+        UPDATE budget_cfdi_income_links link
+        SET status = 'approved'
+        WHERE link.unlinked_at IS NULL AND link.status = 'pending_approval'
+          AND EXISTS (
+              SELECT 1 FROM accounting_polizas poliza
+              WHERE poliza.origen = 'cxc_cfdi_income'
+                AND poliza.cfdi_report_id = link.cfdi_report_id
+          )
+    """))
     await session.execute(
         text(
             """
@@ -7762,6 +7810,7 @@ async def build_budget_actuals_snapshot(
                     FROM budget_cfdi_income_links b
                     JOIN budget_lines l ON l.id = b.budget_line_id
                     WHERE {' AND '.join(cfdi_filters)}
+                      AND b.status = 'approved'
                     GROUP BY 1, b.income_date
                     """
                 ),

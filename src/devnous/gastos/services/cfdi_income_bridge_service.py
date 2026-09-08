@@ -122,12 +122,14 @@ async def _load_budget_line(
         await session.execute(
             text(
                 """
-                SELECT id, budget_version_id, budget_concept_id, tournament_id,
-                       tournament_code, tournament_name, phase, concept_name,
-                       account_code_final, account_code_suggested,
-                       COALESCE(line_direction, 'expense') AS line_direction
-                FROM budget_lines
-                WHERE id = CAST(:budget_line_id AS uuid)
+                SELECT bl.id, bl.budget_version_id, bl.budget_concept_id, bl.tournament_id,
+                       bl.tournament_code, bl.tournament_name, bl.phase, bl.concept_name,
+                       bl.account_code_final, bl.account_code_suggested,
+                       bc.cxc_cuenta_contable_id,
+                       COALESCE(bl.line_direction, 'expense') AS line_direction
+                FROM budget_lines bl
+                LEFT JOIN budget_concepts bc ON bc.id = bl.budget_concept_id
+                WHERE bl.id = CAST(:budget_line_id AS uuid)
                 LIMIT 1
                 """
             ),
@@ -252,6 +254,7 @@ async def list_psp_cfdi_income_candidates(
     assigned_only: bool = False,
     unassigned_only: bool = False,
     limit: int = 100,
+    calendar_year: Optional[int] = None,
     ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
     if ensure_schema:
@@ -261,8 +264,10 @@ async def list_psp_cfdi_income_candidates(
         return []
     link_version_filter = ""
     assignment_filter = ""
+    resolved_year = int(calendar_year or datetime.now(timezone.utc).year)
     params: dict[str, Any] = {
         "allowed_rfcs": sorted(allowlist.keys()),
+        "calendar_year": resolved_year,
         "limit": max(1, min(int(limit or 100), 500)),
     }
     if budget_version_id:
@@ -295,13 +300,14 @@ async def list_psp_cfdi_income_candidates(
                     '',
                     'g'
                 ) = ANY(CAST(:allowed_rfcs AS text[]))
+                  AND EXTRACT(YEAR FROM COALESCE(c.fecha, c.created_at)) = :calendar_year
                   {assignment_filter}
                   AND NOT EXISTS (
                     SELECT 1
                     FROM budget_cfdi_income_links l
                     WHERE l.cfdi_report_id = c.id
                       AND l.unlinked_at IS NULL
-                      {link_version_filter}
+                      AND l.status IN ('pending_approval', 'approved')
                   )
                 ORDER BY COALESCE(c.fecha, c.created_at) DESC
                 LIMIT :limit
@@ -313,16 +319,6 @@ async def list_psp_cfdi_income_candidates(
     return [dict(row) for row in rows]
 
 
-
-
-def _receivable_account_code_for_budget_line(line: dict[str, Any]) -> str:
-    concept = " ".join(
-        str(line.get(key) or "")
-        for key in ("tournament_name", "concept_name", "account_code_final", "account_code_suggested")
-    ).lower()
-    if "patrocin" in concept or "intercambio" in concept or "4100-001-008" in concept:
-        return "1150-001-003"
-    return "1150-001-001"
 
 
 async def _load_account_by_code(session: AsyncSession, code: str) -> dict[str, Any]:
@@ -371,10 +367,18 @@ async def ensure_cfdi_income_receivable_posting(
     if iva >= total:
         iva = Decimal("0.00")
     ingreso_base = (total - iva).quantize(Decimal("0.01"))
-    receivable = await _load_account_by_code(
-        session,
-        _receivable_account_code_for_budget_line(line),
-    )
+    receivable_id = str(line.get("cxc_cuenta_contable_id") or "").strip()
+    if not receivable_id:
+        raise CFDIIncomeBridgeError(
+            "El concepto presupuestal no tiene una subcuenta de Clientes configurada."
+        )
+    receivable = dict((await session.execute(text("""
+        SELECT id, codigo, nombre FROM cuentas_contables
+        WHERE id = CAST(:account_id AS uuid) AND activo IS TRUE AND codigo LIKE '1150-%'
+        LIMIT 1
+    """), {"account_id": receivable_id})).mappings().first() or {})
+    if not receivable:
+        raise CFDIIncomeBridgeError("La subcuenta de Clientes configurada no está activa o no es 1150.")
     income_code = str(line.get("account_code_final") or line.get("account_code_suggested") or "").strip()
     if not income_code:
         raise CFDIIncomeBridgeError("La partida de ingreso no tiene cuenta contable 4100 asignada.")
@@ -519,19 +523,23 @@ async def list_budget_cfdi_income_links(
     *,
     budget_version_id: str,
     tournament_id: Optional[str],
+    approved_only: bool = False,
 ) -> list[dict[str, Any]]:
     filters = ["l.budget_version_id = CAST(:budget_version_id AS uuid)"]
     params: dict[str, Any] = {"budget_version_id": str(budget_version_id)}
     if tournament_id:
         filters.append("l.tournament_id = CAST(:tournament_id AS uuid)")
         params["tournament_id"] = str(tournament_id)
+    if approved_only:
+        filters.extend(["l.status = 'approved'", "l.unlinked_at IS NULL"])
     rows = (
         await session.execute(
             text(
                 f"""
                 SELECT l.id, l.cfdi_report_id, l.budget_line_id, l.budget_version_id,
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
-                       l.income_date, l.source, l.created_at, l.unlinked_at,
+                       l.income_date, l.source, l.status, l.collection_date,
+                       l.collection_poliza_id, l.created_at, l.unlinked_at,
                        c.cfdi_uuid, c.fecha AS cfdi_fecha,
                        c.total_impuestos_trasladados,
                        c.emisor_rfc, c.emisor_nombre,
@@ -589,11 +597,11 @@ async def create_cfdi_income_link(
         await session.execute(
             text(
                 """
-                SELECT id, budget_line_id
+                SELECT id, budget_line_id, status
                 FROM budget_cfdi_income_links
                 WHERE cfdi_report_id = CAST(:cfdi_report_id AS uuid)
-                  AND budget_version_id = CAST(:budget_version_id AS uuid)
                   AND unlinked_at IS NULL
+                  AND status IN ('pending_approval', 'approved')
                 LIMIT 1
                 """
             ),
@@ -605,6 +613,8 @@ async def create_cfdi_income_link(
     ).mappings().first()
     if existing:
         if str(existing["budget_line_id"]) == str(line["id"]):
+            if str(existing.get("status") or "") == "approved":
+                raise CFDIIncomeBridgeError("El CFDI ya fue aprobado y no puede modificarse.")
             await session.execute(
                 text(
                     """
@@ -621,15 +631,8 @@ async def create_cfdi_income_link(
                     "income_date": resolved_income_date,
                 },
             )
-            posting = await ensure_cfdi_income_receivable_posting(
-                session,
-                cfdi_report_id=str(cfdi_report_id),
-                budget_line_id=str(line["id"]),
-                amount=resolved_amount,
-                income_date=resolved_income_date,
-            )
             await session.commit()
-            return {"status": "updated", "id": str(existing["id"]), "posting": posting}
+            return {"status": "pending_updated", "id": str(existing["id"])}
         raise CFDIIncomeBridgeError(
             "Este CFDI ya cuenta como ingreso real en otra partida de esta versión."
         )
@@ -648,7 +651,7 @@ async def create_cfdi_income_link(
             INSERT INTO budget_cfdi_income_links (
                 id, cfdi_report_id, budget_line_id, budget_version_id,
                 tournament_id, phase, budget_concept_id, amount, income_date,
-                linked_by_empleado_id, source, metadata, created_at, updated_at
+                linked_by_empleado_id, source, status, metadata, created_at, updated_at
             ) VALUES (
                 CAST(:id AS uuid),
                 CAST(:cfdi_report_id AS uuid),
@@ -659,6 +662,7 @@ async def create_cfdi_income_link(
                 CAST(:budget_concept_id AS uuid), :amount, :income_date,
                 CAST(:linked_by_empleado_id AS uuid),
                 :source,
+                'pending_approval',
                 CAST(:metadata AS jsonb),
                 NOW(), NOW()
             )
@@ -679,15 +683,138 @@ async def create_cfdi_income_link(
             "metadata": json.dumps(metadata, ensure_ascii=False),
         },
     )
-    posting = await ensure_cfdi_income_receivable_posting(
-        session,
-        cfdi_report_id=str(cfdi_report_id),
-        budget_line_id=str(line["id"]),
-        amount=resolved_amount,
-        income_date=resolved_income_date,
-    )
+    await session.execute(text("""
+        INSERT INTO aprobaciones (id, tipo_entidad, entidad_id, aprobador_id, accion, comentario, fecha)
+        VALUES (CAST(:id AS uuid), 'budget_cfdi_income_link', CAST(:link_id AS uuid),
+                CAST(:actor AS uuid), 'enviar', NULL, NOW())
+    """), {"id": str(uuid.uuid4()), "link_id": link_id,
+            "actor": str(actor_empleado_id or "") or None})
     await session.commit()
-    return {"status": "linked", "id": link_id, "posting": posting}
+    return {"status": "pending_approval", "id": link_id}
+
+
+async def decide_cfdi_income_link(
+    session: AsyncSession,
+    *,
+    link_id: str,
+    actor_empleado_id: str,
+    approve: bool,
+    comment: str = "",
+) -> dict[str, Any]:
+    """Resolve a proposed link and post CxC only on approval."""
+    row = (await session.execute(text("""
+        SELECT id, cfdi_report_id, budget_line_id, amount, income_date, status
+        FROM budget_cfdi_income_links
+        WHERE id = CAST(:link_id AS uuid) AND unlinked_at IS NULL FOR UPDATE
+    """), {"link_id": link_id})).mappings().first()
+    if not row:
+        raise CFDIIncomeBridgeError("Vínculo de CFDI no encontrado.")
+    if str(row["status"] or "") != "pending_approval":
+        raise CFDIIncomeBridgeError("El vínculo ya fue resuelto.")
+    if not approve:
+        await session.execute(text("""
+            UPDATE budget_cfdi_income_links
+            SET status = 'rejected', rejected_by_empleado_id = CAST(:actor AS uuid),
+                rejected_at = NOW(), decision_comment = :comment, unlinked_at = NOW(),
+                unlinked_by_empleado_id = CAST(:actor AS uuid), updated_at = NOW()
+            WHERE id = CAST(:link_id AS uuid)
+        """), {"link_id": link_id, "actor": actor_empleado_id,
+                "comment": comment.strip() or None})
+        await session.execute(text("""
+            INSERT INTO aprobaciones (id, tipo_entidad, entidad_id, aprobador_id, accion, comentario, fecha)
+            VALUES (CAST(:id AS uuid), 'budget_cfdi_income_link', CAST(:link_id AS uuid),
+                    CAST(:actor AS uuid), 'rechazar', :comment, NOW())
+        """), {"id": str(uuid.uuid4()), "link_id": link_id, "actor": actor_empleado_id,
+                "comment": comment.strip() or None})
+        await session.commit()
+        return {"status": "rejected", "id": link_id}
+    posting = await ensure_cfdi_income_receivable_posting(
+        session, cfdi_report_id=str(row["cfdi_report_id"]),
+        budget_line_id=str(row["budget_line_id"]), amount=row["amount"],
+        income_date=row["income_date"],
+    )
+    await session.execute(text("""
+        UPDATE budget_cfdi_income_links
+        SET status = 'approved', approved_by_empleado_id = CAST(:actor AS uuid),
+            approved_at = NOW(), decision_comment = :comment,
+            accounting_poliza_id = CAST(:poliza_id AS uuid), updated_at = NOW()
+        WHERE id = CAST(:link_id AS uuid)
+    """), {"link_id": link_id, "actor": actor_empleado_id,
+            "comment": comment.strip() or None, "poliza_id": posting["poliza_id"]})
+    await session.execute(text("""
+        INSERT INTO aprobaciones (id, tipo_entidad, entidad_id, aprobador_id, accion, comentario, fecha)
+        VALUES (CAST(:id AS uuid), 'budget_cfdi_income_link', CAST(:link_id AS uuid),
+                CAST(:actor AS uuid), 'aprobar', :comment, NOW())
+    """), {"id": str(uuid.uuid4()), "link_id": link_id, "actor": actor_empleado_id,
+            "comment": comment.strip() or None})
+    await session.commit()
+    return {"status": "approved", "id": link_id, "posting": posting}
+
+
+async def confirm_cfdi_income_collection(
+    session: AsyncSession,
+    *,
+    link_id: str,
+    actor_empleado_id: str,
+    collection_date: Any,
+) -> dict[str, Any]:
+    """Record a dated collection and clear the exact CxC line created at billing."""
+    collected_at = _coerce_income_datetime(collection_date)
+    if collected_at is None:
+        raise CFDIIncomeBridgeError("La fecha de cobro es obligatoria.")
+    link = (await session.execute(text("""
+        SELECT id, cfdi_report_id, amount, accounting_poliza_id, collection_poliza_id,
+               status, collection_date
+        FROM budget_cfdi_income_links WHERE id = CAST(:link_id AS uuid) FOR UPDATE
+    """), {"link_id": link_id})).mappings().first()
+    if not link or str(link["status"] or "") != "approved":
+        raise CFDIIncomeBridgeError("Sólo puede cobrarse un CFDI aprobado.")
+    if link.get("collection_poliza_id"):
+        return {"status": "already_collected", "poliza_id": str(link["collection_poliza_id"])}
+    cxc_line = (await session.execute(text("""
+        SELECT cuenta_codigo, cuenta_contable_id, debe
+        FROM accounting_poliza_lines
+        WHERE poliza_id = CAST(:poliza_id AS uuid)
+          AND raw_row_json->>'movement' = 'debe_cxc'
+        LIMIT 1
+    """), {"poliza_id": str(link["accounting_poliza_id"])})).mappings().first()
+    if not cxc_line:
+        raise CFDIIncomeBridgeError("No se encontró la subcuenta CxC de la facturación.")
+    bank = await _load_account_by_code(session, "1120-001-001")
+    poliza_id = str(uuid.uuid4())
+    amount = _safe_decimal(cxc_line.get("debe") or link.get("amount"))
+    concept = "Cobranza CFDI " + str(link["cfdi_report_id"])[:8]
+    await session.execute(text("""
+        INSERT INTO accounting_polizas (id, source_file, source_sheet, tipo_poliza,
+          numero_poliza, fecha_poliza, concepto, concepto_resumen, line_count_declared,
+          line_count_actual, cfdi_report_id, origen, created_at, updated_at)
+        VALUES (CAST(:id AS uuid), :source, 'cxc_collection', 'Diario', :number,
+          :date, :concept, :concept, 2, 2, CAST(:cfdi AS uuid), 'cxc_collection', NOW(), NOW())
+    """), {"id": poliza_id, "source": f"samchat:cobranza:{link['cfdi_report_id']}",
+            "number": f"COB-{str(link['cfdi_report_id'])[:8]}", "date": collected_at,
+            "concept": concept, "cfdi": str(link["cfdi_report_id"])})
+    for line_no, account, debe, haber, movement in (
+        (1, bank, amount, Decimal("0.00"), "debe_bancos"),
+        (2, dict(cxc_line), Decimal("0.00"), amount, "haber_cxc"),
+    ):
+        await session.execute(text("""
+            INSERT INTO accounting_poliza_lines (id, poliza_id, line_no, cuenta_codigo,
+             cuenta_contable_id, concepto, movimiento_no, debe, haber, raw_row_json, created_at)
+            VALUES (CAST(:id AS uuid), CAST(:poliza AS uuid), :line_no, :code,
+             CAST(:account_id AS uuid), :concept, :movement, :debe, :haber,
+             CAST(:raw AS jsonb), NOW())
+        """), {"id": str(uuid.uuid4()), "poliza": poliza_id, "line_no": line_no,
+                "code": account["codigo"] if "codigo" in account else account["cuenta_codigo"],
+                "account_id": str(account["id"] if "id" in account else account["cuenta_contable_id"]),
+                "concept": concept, "movement": str(line_no), "debe": float(debe), "haber": float(haber),
+                "raw": json.dumps({"origin": "cxc_collection", "cfdi_report_id": str(link["cfdi_report_id"]), "movement": movement})})
+    await session.execute(text("""
+        UPDATE budget_cfdi_income_links SET collection_date = :date,
+          collected_by_empleado_id = CAST(:actor AS uuid), collection_poliza_id = CAST(:poliza AS uuid),
+          updated_at = NOW() WHERE id = CAST(:link AS uuid)
+    """), {"date": collected_at, "actor": actor_empleado_id, "poliza": poliza_id, "link": link_id})
+    await session.commit()
+    return {"status": "collected", "poliza_id": poliza_id}
 
 
 async def ingest_and_link_cfdi_income(

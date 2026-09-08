@@ -65,6 +65,8 @@ from .admin_budget_ui import (
 from ..services.cfdi_income_bridge_service import (
     CFDIIncomeBridgeError,
     create_cfdi_income_link,
+    confirm_cfdi_income_collection,
+    decide_cfdi_income_link,
     ingest_and_link_cfdi_income,
     list_budget_cfdi_income_links,
     list_psp_cfdi_income_candidates,
@@ -1075,6 +1077,7 @@ def register_presupuestos_routes(router) -> None:
         tournament_name: Optional[str] = Form(None),
         concept_name: Optional[str] = Form(None),
         cuenta_contable_id: Optional[str] = Form(None),
+        cxc_cuenta_contable_id: Optional[str] = Form(None),
         account_code_final: Optional[str] = Form(None),
         phase: Optional[str] = Form(None),
         owner_name: Optional[str] = Form(None),
@@ -1100,6 +1103,7 @@ def register_presupuestos_routes(router) -> None:
                     concept_name=concept_name or "",
                     scope_labels=[phase] if str(phase or "").strip() else [],
                     cuenta_contable_id=cuenta_contable_id,
+                    cxc_cuenta_contable_id=cxc_cuenta_contable_id,
                     budget_direction=line_direction,
                     actor_empleado_id=str(current_empleado.id),
                     source="admin_budget_detail_add_line",
@@ -2032,9 +2036,9 @@ def register_presupuestos_routes(router) -> None:
                 source="admin_ui",
             )
             msg = (
-                "CFDI PSP actualizado con el monto enviado."
-                if result.get("status") == "updated"
-                else "CFDI PSP vinculado a ingreso real."
+                "Solicitud de vínculo actualizada; queda pendiente de aprobación."
+                if result.get("status") == "pending_updated"
+                else "CFDI PSP enviado a aprobación."
             )
             fallback_url = budget_tournament_detail_url(
                 tournament_key,
@@ -2071,6 +2075,69 @@ def register_presupuestos_routes(router) -> None:
                 url=_safe_cfdi_income_return_url(return_to, fallback_url),
                 status_code=303,
             )
+
+    @router.post("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/decision")
+    async def admin_presupuestos_decide_cfdi_income(
+        tournament_key: str,
+        link_id: str,
+        decision: str = Form(...),
+        comment: str = Form(""),
+        edition_year: Optional[int] = Form(None),
+        return_to: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        _require_budget_access(current_empleado, "approve")
+        try:
+            clean_decision = decision.strip().lower()
+            if clean_decision not in {"approve", "reject"}:
+                raise CFDIIncomeBridgeError("Decisión de vínculo no válida.")
+            approve = clean_decision == "approve"
+            result = await decide_cfdi_income_link(
+                session, link_id=link_id, actor_empleado_id=str(current_empleado.id),
+                approve=approve, comment=comment,
+            )
+            message = "CFDI aprobado y póliza CxC generada." if approve else "CFDI rechazado."
+            fallback_url = budget_tournament_detail_url(
+                tournament_key, edition_year=edition_year, budget_view="income", success_msg=message
+            )
+            return RedirectResponse(url=_safe_cfdi_income_return_url(return_to, fallback_url), status_code=303)
+        except CFDIIncomeBridgeError as exc:
+            await session.rollback()
+            fallback_url = budget_tournament_detail_url(
+                tournament_key, edition_year=edition_year, budget_view="income", error_msg=str(exc)
+            )
+            return RedirectResponse(url=_safe_cfdi_income_return_url(return_to, fallback_url), status_code=303)
+
+    @router.post("/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/collection")
+    async def admin_presupuestos_confirm_cfdi_income_collection(
+        tournament_key: str,
+        link_id: str,
+        collection_date: str = Form(...),
+        edition_year: Optional[int] = Form(None),
+        return_to: Optional[str] = Form(None),
+        session: AsyncSession = Depends(get_db_session),
+        current_empleado=Depends(get_current_empleado),
+    ):
+        # Contabilidad (Benjamín y auxiliares) opera el cobro; no necesita
+        # autoridad de aprobación para registrar la fecha bancaria.
+        _require_budget_access(current_empleado, "line_update")
+        try:
+            await confirm_cfdi_income_collection(
+                session, link_id=link_id, actor_empleado_id=str(current_empleado.id),
+                collection_date=collection_date,
+            )
+            fallback_url = budget_tournament_detail_url(
+                tournament_key, edition_year=edition_year, budget_view="income",
+                success_msg="Cobranza confirmada y póliza bancaria generada.",
+            )
+            return RedirectResponse(url=_safe_cfdi_income_return_url(return_to, fallback_url), status_code=303)
+        except CFDIIncomeBridgeError as exc:
+            await session.rollback()
+            fallback_url = budget_tournament_detail_url(
+                tournament_key, edition_year=edition_year, budget_view="income", error_msg=str(exc)
+            )
+            return RedirectResponse(url=_safe_cfdi_income_return_url(return_to, fallback_url), status_code=303)
 
     @router.post(
         "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link"

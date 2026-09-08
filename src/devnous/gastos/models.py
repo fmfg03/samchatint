@@ -568,6 +568,31 @@ class BudgetCFDIIncomeLink(Base):
         index=True,
     )
     source = Column(String(80), nullable=False, default="admin_ui")
+    # A link is a proposed accounting classification until an authorized
+    # approver accepts it.  Keeping the lifecycle on the bridge prevents a
+    # second source of truth for a CFDI's budget assignment.
+    status = Column(String(40), nullable=False, default="pending_approval", index=True)
+    approved_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    rejected_by_empleado_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("empleados.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    rejected_at = Column(DateTime(timezone=True), nullable=True)
+    decision_comment = Column(Text, nullable=True)
+    accounting_poliza_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("accounting_polizas.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     metadata_json = Column("metadata", JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
     updated_at = Column(
