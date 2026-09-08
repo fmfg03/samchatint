@@ -1610,7 +1610,12 @@ def render_cfdi_income_bridge_panel(
         is_active = not link.get("unlinked_at")
         amount = float(link.get("amount") or 0)
         income_date = str(link.get("income_date") or "")[:10]
-        status = "Activo" if is_active else "Desvinculado"
+        link_status = str(link.get("status") or "pending_approval")
+        status = "Desvinculado" if not is_active else {
+            "pending_approval": "Pendiente de aprobación",
+            "approved": "Aprobado",
+            "rejected": "Rechazado",
+        }.get(link_status, link_status)
         unlink_form = ""
         if can_edit and is_active:
             unlink_form = f"""
@@ -1622,6 +1627,24 @@ def render_cfdi_income_bridge_panel(
                     </button>
                 </form>
             """
+        decision_form = ""
+        if can_edit and is_active and link_status == "pending_approval":
+            decision_form = f"""
+                <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/{escape(str(link.get('id') or ''))}/decision" style="display:flex;gap:4px;">
+                    <input type="hidden" name="edition_year" value="{int(edition_year)}">{return_to_hidden}
+                    <button name="decision" value="approve" type="submit">Aprobar</button>
+                    <button name="decision" value="reject" type="submit">Rechazar</button>
+                </form>
+            """
+        collection_form = ""
+        if can_edit and is_active and link_status == "approved" and not link.get("collection_date"):
+            collection_form = f"""
+                <form method="POST" action="/admin/presupuestos/torneo/{quote(str(tournament_key))}/cfdi-ingresos/{escape(str(link.get('id') or ''))}/collection" style="display:flex;gap:4px;">
+                    <input type="hidden" name="edition_year" value="{int(edition_year)}">{return_to_hidden}
+                    <input type="date" name="collection_date" required>
+                    <button type="submit">Confirmar cobro</button>
+                </form>
+            """
         row_html = f"""
             <tr>
                 <td><code>{escape(str(link.get("cfdi_uuid") or ""))}</code></td>
@@ -1631,7 +1654,7 @@ def render_cfdi_income_bridge_panel(
                 <td style="text-align:right;">${amount:,.2f}</td>
                 <td>{escape(income_date)}</td>
                 <td>{status}</td>
-                <td>{unlink_form}</td>
+                <td>{decision_form}{collection_form}{unlink_form}</td>
             </tr>
         """
         if is_active:

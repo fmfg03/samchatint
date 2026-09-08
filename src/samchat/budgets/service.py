@@ -4753,6 +4753,16 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 income_date TIMESTAMPTZ NOT NULL,
                 linked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 source VARCHAR(80) NOT NULL DEFAULT 'admin_ui',
+                status VARCHAR(40) NOT NULL DEFAULT 'pending_approval',
+                approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                approved_at TIMESTAMPTZ NULL,
+                rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                rejected_at TIMESTAMPTZ NULL,
+                decision_comment TEXT NULL,
+                accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                collection_date TIMESTAMPTZ NULL,
+                collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
+                collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4770,6 +4780,20 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
             """
         )
     )
+    await session.execute(text("ALTER TABLE budget_concepts ADD COLUMN IF NOT EXISTS cxc_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL"))
+    for column_sql in (
+        "ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
+        "ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS decision_comment TEXT NULL",
+        "ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ NULL",
+        "ADD COLUMN IF NOT EXISTS collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ):
+        await session.execute(text(f"ALTER TABLE budget_cfdi_income_links {column_sql}"))
     await session.execute(
         text(
             """
@@ -7762,6 +7786,7 @@ async def build_budget_actuals_snapshot(
                     FROM budget_cfdi_income_links b
                     JOIN budget_lines l ON l.id = b.budget_line_id
                     WHERE {' AND '.join(cfdi_filters)}
+                      AND b.status = 'approved'
                     GROUP BY 1, b.income_date
                     """
                 ),

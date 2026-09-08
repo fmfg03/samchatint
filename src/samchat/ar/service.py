@@ -287,6 +287,7 @@ async def build_ar_read_model(
         session,
         budget_version_id=clean_version_id,
         tournament_id=clean_tournament_id,
+        approved_only=True,
     )
     candidates = await list_psp_cfdi_income_candidates(
         session,

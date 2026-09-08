@@ -1352,6 +1352,26 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         """,
     ),
     (
+        "budget_concepts_cxc_cuenta_contable_id_column",
+        "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS cxc_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_status_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
+    ),
+    (
+        "budget_cfdi_income_links_approval_columns",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS decision_comment TEXT NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_collection_columns",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "ix_budget_cfdi_income_links_status",
+        "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_status ON budget_cfdi_income_links(status)",
+    ),
+    (
         "expense_reports_origen_column",
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS origen VARCHAR(50) NULL",
     ),

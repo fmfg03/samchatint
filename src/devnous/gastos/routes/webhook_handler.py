@@ -11,7 +11,7 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Dict, Any, Optional
 from uuid import UUID
 
@@ -28,6 +28,7 @@ from ..utils.receipt_bytes import upsert_gasto_tocino_adjunto
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
 
 PRODUCTION_ENV_VALUES = frozenset({"production", "prod", "live"})
 
@@ -266,6 +267,20 @@ async def get_db_session() -> AsyncSession:
         raise RuntimeError("Database session maker not set. Call set_db_session_maker() first.")
     async with _db_session_maker() as session:
         yield session
+
+
+@router.post("/income-billing-weekly-alert")
+async def income_billing_weekly_alert(
+    x_income_billing_alert_secret: Optional[str] = Header(None, alias="X-Income-Billing-Alert-Secret"),
+    session: AsyncSession = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Cron entrypoint for the weekly expected-but-unbilled income alert."""
+    secret = (os.getenv("INCOME_BILLING_ALERT_SECRET") or "").strip()
+    if not secret or not hmac.compare_digest(x_income_billing_alert_secret or "", secret):
+        raise HTTPException(status_code=401, detail="Invalid or missing alert secret")
+    from ..services.income_billing_alert_service import send_weekly_unbilled_income_alert
+    result = await send_weekly_unbilled_income_alert(session, as_of=date.today())
+    return {"status": "ok", **result}
 
 
 def tocino_status_response_to_webhook_payload(data: Dict[str, Any]) -> Dict[str, Any]:
