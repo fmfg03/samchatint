@@ -449,6 +449,18 @@ def test_billing_collections_schema_is_migrated_and_health_checked():
     assert "collection_poliza_id" in migration
     assert "ix_budget_cfdi_income_links_status" in migration
     assert "budget_cfdi_income_link" in migration
+    assert "IF current_def IS NULL" in migration
+    assert "IF current_def IS NOT NULL THEN" in migration
+
+    schema_guard_source = Path(
+        "src/devnous/gastos/schema_guard.py"
+    ).read_text()
+    approval_repair_start = schema_guard_source.index(
+        "aprobaciones_tipo_entidad_check_beneficiary_onboarding"
+    )
+    approval_repair = schema_guard_source[approval_repair_start:]
+    assert "IF current_def IS NULL" in approval_repair
+    assert "IF current_def IS NOT NULL THEN" in approval_repair
 
 
 def test_approved_document_cannot_be_reapproved_or_rejected_by_previous_approver():

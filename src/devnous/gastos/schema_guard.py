@@ -1871,23 +1871,24 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
             WHERE conrelid = 'aprobaciones'::regclass
               AND conname = 'aprobaciones_tipo_entidad_check';
 
-            IF current_def IS NOT NULL THEN
-                IF position('beneficiary_onboarding' in current_def) = 0
-                   OR position('budget_cfdi_income_link' in current_def) = 0 THEN
+            IF current_def IS NULL
+               OR position('beneficiary_onboarding' in current_def) = 0
+               OR position('budget_cfdi_income_link' in current_def) = 0 THEN
+                IF current_def IS NOT NULL THEN
                     ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_tipo_entidad_check;
-                    ALTER TABLE aprobaciones
-                        ADD CONSTRAINT aprobaciones_tipo_entidad_check
-                        CHECK (
-                            tipo_entidad = ANY (
-                                ARRAY[
-                                    'documento'::text,
-                                    'gasto'::text,
-                                    'beneficiary_onboarding'::text,
-                                    'budget_cfdi_income_link'::text
-                                ]
-                            )
-                        );
                 END IF;
+                ALTER TABLE aprobaciones
+                    ADD CONSTRAINT aprobaciones_tipo_entidad_check
+                    CHECK (
+                        tipo_entidad = ANY (
+                            ARRAY[
+                                'documento'::text,
+                                'gasto'::text,
+                                'beneficiary_onboarding'::text,
+                                'budget_cfdi_income_link'::text
+                            ]
+                        )
+                    );
             END IF;
         END $$;
         """,
