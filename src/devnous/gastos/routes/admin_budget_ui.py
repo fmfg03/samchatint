@@ -900,7 +900,9 @@ def _render_budget_aggregate_matrix(
             concept_id = str(line.get("budget_concept_id") or "")
             values = _aggregate_line_periods(
                 plan=plan_map.get(line_id, {}),
-                actuals=_actuals_for_budget_line(actuals_map, concept_id),
+                actuals=_actuals_for_budget_line(
+                    actuals_map, line_id if clean_view == "expenses" else concept_id
+                ),
             )
             rows = []
             if clean_view == "income":
@@ -1053,15 +1055,16 @@ def _render_budget_movement_details(
     phase_filter: Optional[str],
     can_edit: bool,
 ) -> str:
-    line_concepts = {
-        str(line.get("budget_concept_id") or "__unassigned__") for line in lines
-    }
+    line_ids = {str(line.get("id") or "") for line in lines}
     visible: list[dict[str, Any]] = []
     for movement in movements:
         if movement.get("kind") == "ledger_income":
             continue
         concept_key = str(movement.get("concept_key") or "__unassigned__")
-        if concept_key not in line_concepts or movement.get("kind") == "pending_accounting":
+        if (
+            str(movement.get("budget_line_id") or "") not in line_ids
+            or movement.get("kind") == "pending_accounting"
+        ):
             visible.append(movement)
     if not visible:
         return ""
@@ -1081,7 +1084,7 @@ def _render_budget_movement_details(
         has_existing_concept = concept_key != "__unassigned__"
         kind = str(movement.get("kind") or "")
         diagnostics: list[str] = []
-        if concept_key not in line_concepts:
+        if str(movement.get("budget_line_id") or "") not in line_ids:
             diagnostics.append("Sin presupuesto autorizado en esta versión")
         if kind == "pending_accounting":
             diagnostics.append("Pendiente de contabilización")
@@ -1094,10 +1097,23 @@ def _render_budget_movement_details(
         poliza = str(movement.get("numero_poliza") or "Pendiente")
         poliza_date = movement.get("fecha_poliza") or ""
         action = ""
-        if can_edit and has_existing_concept and concept_key not in line_concepts:
+        movement_key = str(movement.get("movement_key") or "")
+        if not movement_key and movement.get("accounting_line_id"):
+            movement_key = f"accounting:{movement['accounting_line_id']}"
+        elif not movement_key and movement.get("expense_id"):
+            movement_key = f"expense:{movement['expense_id']}"
+        elif not movement_key and movement.get("document_id"):
+            movement_key = f"document:{movement['document_id']}"
+        if (
+            can_edit
+            and has_existing_concept
+            and movement_key
+            and str(movement.get("budget_line_id") or "") not in line_ids
+        ):
             action = f"""
                 <form method="POST" action="/admin/presupuestos/versiones/{escape(version_id)}/lineas/assign-existing" style="display:grid;grid-template-columns:minmax(105px,1fr) minmax(110px,1fr) auto;gap:6px;align-items:end;min-width:330px;">
                     <input type="hidden" name="budget_concept_id" value="{escape(concept_key)}">
+                    <input type="hidden" name="movement_key" value="{escape(movement_key)}">
                     <input type="hidden" name="tournament_key" value="{escape(tournament_key)}">
                     <input type="hidden" name="edition_year" value="{int(edition_year)}">
                     <input type="hidden" name="budget_view" value="expenses">
@@ -1259,7 +1275,9 @@ def render_budget_partida_matrix(
             line_id = str(line.get("id") or "")
             concept_id = str(line.get("budget_concept_id") or "")
             plan = plan_map.get(line_id, {})
-            actuals = _actuals_for_budget_line(actuals_map, concept_id)
+            actuals = _actuals_for_budget_line(
+                actuals_map, line_id if clean_mode == "expenses" else concept_id
+            )
             disabled = "" if can_edit else " disabled"
             cuenta_field_html = _render_matrix_cuenta_field(
                 line_id,

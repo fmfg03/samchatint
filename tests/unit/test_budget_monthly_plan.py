@@ -1866,6 +1866,7 @@ def test_unbudgeted_detail_reuses_existing_concept_for_assignment():
         actual_movements=[
             {
                 "concept_key": "concept-existing",
+                "accounting_line_id": "accounting-line-1",
                 "kind": "ledger_expense",
                 "operation_reference": "56",
                 "document_reference": "I-138907",
@@ -1891,9 +1892,74 @@ def test_unbudgeted_detail_reuses_existing_concept_for_assignment():
     assert "5300-012-002" in html
     assert "$4,398.91" in html
     assert 'name="budget_concept_id" value="concept-existing"' in html
+    assert 'name="movement_key" value="accounting:accounting-line-1"' in html
     assert "/lineas/assign-existing" in html
     assert 'name="budget_amount"' in html
     assert 'name="phase"' in html
+
+
+def test_explicit_movement_assignment_leaves_shared_reference_unconciled():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [{"id": "line-1", "budget_concept_id": "concept-shared", "concept_name": "Hospedaje", "budget_amount": 0, "phase": "Estatal"}],
+        plan_map={},
+        actuals_map={"line-1": {1: {"real_expense_cash": 100}}, "__unassigned__": {1: {"real_expense_cash": 200}}},
+        actual_movements=[
+            {"concept_key": "concept-shared", "budget_line_id": "line-1", "movement_key": "accounting:a", "kind": "ledger_expense", "operation_reference": "REF-1", "document_reference": "D-1", "amount": 100},
+            {"concept_key": "concept-shared", "movement_key": "accounting:b", "kind": "ledger_expense", "operation_reference": "REF-2", "document_reference": "D-2", "amount": 200},
+        ],
+        version_id="version-1", tournament_key="copa-telmex", edition_year=2026,
+        phase_filter=None, can_edit=True,
+    )
+
+    assert "REF-1" not in html
+    assert "REF-2" in html
+    assert 'name="movement_key" value="accounting:b"' in html
+
+
+@pytest.mark.asyncio
+async def test_explicit_movement_assignment_routes_actuals_by_line_not_concept():
+    class _Result:
+        def __init__(self, rows): self.rows = rows
+        def mappings(self): return self
+        def all(self): return self.rows
+
+    class _Session:
+        async def execute(self, statement, _params=None):
+            sql = str(statement)
+            if "WITH candidate_lines AS" in sql:
+                return _Result([
+                    {"concept_key": "concept-shared", "accounting_line_id": "a", "fecha_poliza": date(2026, 8, 20), "cuenta_codigo": "5300-012-002", "document_state": "pagado", "debe": 100, "haber": 0},
+                    {"concept_key": "concept-shared", "accounting_line_id": "b", "fecha_poliza": date(2026, 8, 20), "cuenta_codigo": "5300-012-002", "document_state": "pagado", "debe": 200, "haber": 0},
+                ])
+            if "FROM budget_movement_assignments" in sql:
+                return _Result([{"movement_key": "accounting:a", "budget_concept_id": "concept-shared", "budget_line_id": "line-1"}])
+            if "FROM budget_lines" in sql and "line_direction" in sql:
+                return _Result([{"id": "line-1", "budget_concept_id": "concept-shared"}])
+            return _Result([])
+
+    snapshot = await build_budget_actuals_snapshot(
+        _Session(), edition_year=2026, version_id="11111111-1111-1111-1111-111111111111"
+    )
+    week = budgets_service._budget_week_number(date(2026, 8, 20), 2026)
+    assert snapshot["monthly"]["line-1"][week]["real_expense_cash"] == 100.0
+    assert snapshot["monthly"]["__unassigned__"][week]["real_expense_cash"] == 200.0
+
+
+def test_pending_accounting_remains_visible_after_explicit_assignment():
+    from devnous.gastos.routes.admin_budget_ui import render_budget_partida_matrix
+
+    html = render_budget_partida_matrix(
+        [{"id": "line-1", "budget_concept_id": "concept-1", "concept_name": "Hospedaje", "budget_amount": 0, "phase": "Estatal"}],
+        plan_map={}, actuals_map={},
+        actual_movements=[{"concept_key": "concept-1", "budget_line_id": "line-1", "movement_key": "document:d-1", "kind": "pending_accounting", "operation_reference": "REF-1", "document_reference": "D-1", "amount": 100}],
+        version_id="version-1", tournament_key="copa-telmex", edition_year=2026,
+        phase_filter=None, can_edit=True,
+    )
+
+    assert "REF-1" in html
+    assert "Pendiente de contabilización" in html
 
 
 def test_unbudgeted_detail_distinguishes_budget_and_accounting_accounts():

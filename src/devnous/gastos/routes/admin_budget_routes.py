@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from samchat.budgets.service import (
     DEFAULT_BUDGET_CONCEPT_PASIVO_ACCOUNT_CODE,
     attach_cuenta_contable_to_budget_lines,
+    assign_budget_movement_to_line,
     build_budget_actuals_snapshot,
     build_budget_monthly_actuals,
     build_budget_monthly_plan_rollups,
@@ -1165,6 +1166,7 @@ def register_presupuestos_routes(router) -> None:
     async def admin_presupuestos_assign_existing_line(
         version_id: UUIDType,
         budget_concept_id: UUIDType = Form(...),
+        movement_key: str = Form(...),
         budget_amount: float = Form(...),
         phase: Optional[str] = Form(None),
         tournament_key: Optional[str] = Form(None),
@@ -1196,7 +1198,18 @@ def register_presupuestos_routes(router) -> None:
                 actor_empleado_id=str(current_empleado.id),
                 phase=phase,
                 line_direction="expense",
+                commit=False,
             )
+            await assign_budget_movement_to_line(
+                session,
+                budget_version_id=str(version_id),
+                budget_concept_id=str(budget_concept_id),
+                budget_line_id=str(line["id"]),
+                movement_key=movement_key,
+                actor_empleado_id=str(current_empleado.id),
+                ensure_schema=False,
+            )
+            await session.commit()
             return RedirectResponse(
                 url=_presupuestos_redirect_url(
                     edition_year=edition_year,

@@ -4620,6 +4620,23 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
     await session.execute(
         text(
             """
+            CREATE TABLE IF NOT EXISTS budget_movement_assignments (
+                id UUID PRIMARY KEY,
+                budget_version_id UUID NOT NULL REFERENCES budget_versions(id) ON DELETE CASCADE,
+                budget_concept_id UUID NOT NULL REFERENCES budget_concepts(id) ON DELETE RESTRICT,
+                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON DELETE RESTRICT,
+                movement_key VARCHAR(200) NOT NULL,
+                assigned_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (budget_version_id, movement_key)
+            )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
             CREATE TABLE IF NOT EXISTS budget_version_audit_log (
                 id UUID PRIMARY KEY,
                 budget_version_id UUID NOT NULL REFERENCES budget_versions(id) ON DELETE CASCADE,
@@ -4704,6 +4721,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_budget_lines_budget_concept "
             "ON budget_lines(budget_concept_id)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_movement_assignments_version_concept "
+            "ON budget_movement_assignments(budget_version_id, budget_concept_id)"
         )
     )
     await session.execute(
@@ -6623,6 +6646,7 @@ async def upsert_budget_line_for_concept(
     phase: Optional[str] = None,
     line_direction: Optional[str] = None,
     monthly_allocations: Optional[dict[int, Any]] = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
     clean_direction = normalize_budget_line_direction(line_direction)
@@ -6699,7 +6723,8 @@ async def upsert_budget_line_for_concept(
         budget_line_id=line_id,
         allocations=allocations,
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     refreshed = await list_budget_lines(
         session,
         version_id=version_id,
@@ -6710,6 +6735,64 @@ async def upsert_budget_line_for_concept(
         if item["id"] == line_id:
             return {**item, "monthly_allocations": monthly}
     raise ValueError("Budget line not found after upsert")
+
+
+def budget_movement_key(movement: dict[str, Any]) -> str:
+    """Return the stable source identity used for budget reconciliation."""
+    accounting_line_id = _safe_str(movement.get("accounting_line_id"))
+    if accounting_line_id:
+        return f"accounting:{accounting_line_id}"
+    expense_id = _safe_str(movement.get("expense_id"))
+    if expense_id:
+        return f"expense:{expense_id}"
+    document_id = _safe_str(movement.get("document_id"))
+    if document_id:
+        return f"document:{document_id}"
+    return ""
+
+
+async def assign_budget_movement_to_line(
+    session: AsyncSession,
+    *,
+    budget_version_id: str,
+    budget_concept_id: str,
+    budget_line_id: str,
+    movement_key: str,
+    actor_empleado_id: Optional[str],
+    ensure_schema: bool = True,
+) -> None:
+    """Persist an explicit, per-movement assignment for a budget version."""
+    clean_key = _safe_str(movement_key)
+    if not clean_key or ":" not in clean_key:
+        raise ValueError("Budget movement key is required")
+    if ensure_schema:
+        await ensure_budget_schema(session)
+    await session.execute(
+        text(
+            """
+            INSERT INTO budget_movement_assignments (
+                id, budget_version_id, budget_concept_id, budget_line_id,
+                movement_key, assigned_by_empleado_id, created_at, updated_at
+            ) VALUES (
+                :id, :budget_version_id, :budget_concept_id, :budget_line_id,
+                :movement_key, :actor_empleado_id, NOW(), NOW()
+            )
+            ON CONFLICT (budget_version_id, movement_key) DO UPDATE SET
+                budget_concept_id = EXCLUDED.budget_concept_id,
+                budget_line_id = EXCLUDED.budget_line_id,
+                assigned_by_empleado_id = EXCLUDED.assigned_by_empleado_id,
+                updated_at = NOW()
+            """
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "budget_version_id": _safe_str(budget_version_id),
+            "budget_concept_id": _safe_str(budget_concept_id),
+            "budget_line_id": _safe_str(budget_line_id),
+            "movement_key": clean_key,
+            "actor_empleado_id": _safe_str(actor_empleado_id) or None,
+        },
+    )
 
 
 _UNASSIGNED_BUDGET_CONCEPT_KEY = "__unassigned__"
@@ -6739,6 +6822,98 @@ def _merge_monthly_actual(
     bucket = store[concept_key][month_number]
     for key, value in values.items():
         bucket[key] = round(bucket.get(key, 0.0) + _safe_decimal(value), 2)
+
+
+async def _apply_explicit_movement_assignments(
+    session: AsyncSession,
+    *,
+    budget_version_id: str,
+    movements: list[dict[str, Any]],
+    store: dict[str, dict[int, dict[str, float]]],
+) -> None:
+    """Attach movements to lines, preserving concept-based behavior for legacy data."""
+    assignment_rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT movement_key, budget_concept_id::text AS budget_concept_id,
+                           budget_line_id::text AS budget_line_id
+                    FROM budget_movement_assignments
+                    WHERE budget_version_id = CAST(:budget_version_id AS uuid)
+                    """
+                ),
+                {"budget_version_id": _safe_str(budget_version_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    assignments = {
+        _safe_str(row["movement_key"]): _safe_str(row["budget_line_id"])
+        for row in assignment_rows
+    }
+    activated_concepts = {
+        _safe_str(row["budget_concept_id"]) for row in assignment_rows
+    }
+    line_rows = (
+        (
+            await session.execute(
+                text(
+                    """
+                    SELECT id::text AS id, budget_concept_id::text AS budget_concept_id
+                    FROM budget_lines
+                    WHERE budget_version_id = CAST(:budget_version_id AS uuid)
+                      AND COALESCE(line_direction, 'expense') = 'expense'
+                    """
+                ),
+                {"budget_version_id": _safe_str(budget_version_id)},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    legacy_lines = {
+        _safe_str(row["budget_concept_id"]): _safe_str(row["id"])
+        for row in line_rows
+        if _safe_str(row["budget_concept_id"])
+    }
+    # Lightweight unit seams and versions with no expense lines retain the
+    # legacy concept-keyed actuals; there is nothing to reconcile to yet.
+    if not legacy_lines and not assignment_rows:
+        for movement in movements:
+            movement["movement_key"] = budget_movement_key(movement) or None
+            movement["budget_line_id"] = None
+            movement["reconciliation_status"] = "unassigned"
+        return
+
+    for months in store.values():
+        for values in months.values():
+            values["real_expense_cash"] = 0.0
+            values["committed_unpaid"] = 0.0
+    for movement in movements:
+        concept_id = _safe_str(movement.get("concept_key"))
+        movement_key = budget_movement_key(movement)
+        line_id = assignments.get(movement_key)
+        if not line_id and concept_id not in activated_concepts:
+            line_id = legacy_lines.get(concept_id)
+        movement["movement_key"] = movement_key or None
+        movement["budget_line_id"] = line_id or None
+        movement["reconciliation_status"] = "assigned" if line_id else "unassigned"
+        if movement.get("kind") == "ledger_expense":
+            _merge_monthly_actual(
+                store,
+                concept_key=line_id or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+                month_number=int(movement.get("month_number") or 1),
+                real_expense_cash=_safe_decimal(movement.get("amount")),
+            )
+        elif movement.get("kind") == "commitment":
+            _merge_monthly_actual(
+                store,
+                concept_key=line_id or _UNASSIGNED_BUDGET_CONCEPT_KEY,
+                month_number=int(movement.get("month_number") or 1),
+                committed_unpaid=_safe_decimal(movement.get("amount")),
+            )
 
 
 async def list_monthly_plan_for_lines(
@@ -7829,6 +8004,13 @@ async def build_budget_actuals_snapshot(
             month_number=week,
             real_income=_safe_decimal(row["income_total"]),
         )
+
+    await _apply_explicit_movement_assignments(
+        session,
+        budget_version_id=version_id,
+        movements=movements,
+        store=store,
+    )
 
     concept_ids = sorted(
         {
