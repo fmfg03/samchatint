@@ -28,6 +28,13 @@ class RequiredIndex:
     index: str
 
 
+@dataclass(frozen=True)
+class RequiredConstraint:
+    table: str
+    constraint: str
+    required_definition_tokens: Tuple[str, ...] = ()
+
+
 REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("expense_reports", "origen"),
     RequiredColumn("expense_reports", "numero_factura"),
@@ -126,6 +133,17 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("support_ticket_comments", "body"),
     RequiredColumn("budget_concepts", "budget_direction"),
     RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id"),
+    RequiredColumn("budget_concepts", "cxc_cuenta_contable_id"),
+    RequiredColumn("budget_cfdi_income_links", "status"),
+    RequiredColumn("budget_cfdi_income_links", "approved_by_empleado_id"),
+    RequiredColumn("budget_cfdi_income_links", "approved_at"),
+    RequiredColumn("budget_cfdi_income_links", "rejected_by_empleado_id"),
+    RequiredColumn("budget_cfdi_income_links", "rejected_at"),
+    RequiredColumn("budget_cfdi_income_links", "decision_comment"),
+    RequiredColumn("budget_cfdi_income_links", "accounting_poliza_id"),
+    RequiredColumn("budget_cfdi_income_links", "collection_date"),
+    RequiredColumn("budget_cfdi_income_links", "collected_by_empleado_id"),
+    RequiredColumn("budget_cfdi_income_links", "collection_poliza_id"),
     RequiredColumn("budget_lines", "line_direction"),
     RequiredColumn("access_control_rules", "tool_key"),
     RequiredColumn("access_control_rules", "role_key"),
@@ -252,6 +270,7 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("budget_concepts", "ix_budget_concepts_direction"),
     RequiredIndex("budget_concepts", "ix_budget_concepts_pasivo_cuenta_contable_id"),
     RequiredIndex("budget_lines", "ix_budget_lines_direction"),
+    RequiredIndex("budget_cfdi_income_links", "ix_budget_cfdi_income_links_status"),
     RequiredIndex("access_control_rules", "ux_access_control_rules_unique"),
     RequiredIndex("access_control_rules", "ix_access_control_rules_tool"),
     RequiredIndex("access_control_rules", "ix_access_control_rules_role_area"),
@@ -268,6 +287,20 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex(
         "telegram_notification_outbox",
         "ux_telegram_notification_outbox_logical_recipient",
+    ),
+)
+
+
+REQUIRED_CONSTRAINTS: Sequence[RequiredConstraint] = (
+    RequiredConstraint(
+        "aprobaciones",
+        "aprobaciones_tipo_entidad_check",
+        (
+            "documento",
+            "gasto",
+            "beneficiary_onboarding",
+            "budget_cfdi_income_link",
+        ),
     ),
 )
 
@@ -1360,12 +1393,40 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
     ),
     (
-        "budget_cfdi_income_links_approval_columns",
-        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS decision_comment TEXT NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "budget_cfdi_income_links_approved_by_empleado_id_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
     (
-        "budget_cfdi_income_links_collection_columns",
-        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL; ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+        "budget_cfdi_income_links_approved_at_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL",
+    ),
+    (
+        "budget_cfdi_income_links_rejected_by_empleado_id_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_rejected_at_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMPTZ NULL",
+    ),
+    (
+        "budget_cfdi_income_links_decision_comment_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS decision_comment TEXT NULL",
+    ),
+    (
+        "budget_cfdi_income_links_accounting_poliza_id_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS accounting_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_collection_date_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_date TIMESTAMPTZ NULL",
+    ),
+    (
+        "budget_cfdi_income_links_collected_by_empleado_id_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collected_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_collection_poliza_id_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
     (
         "ix_budget_cfdi_income_links_status",
@@ -3183,9 +3244,12 @@ async def check_schema_health(conn: AsyncConnection) -> Dict[str, Any]:
     missing_tables: List[str] = []
     missing_columns: List[Dict[str, str]] = []
     missing_indexes: List[Dict[str, str]] = []
+    missing_constraints: List[Dict[str, str]] = []
 
     required_tables = sorted(
-        {c.table for c in REQUIRED_COLUMNS} | {i.table for i in REQUIRED_INDEXES}
+        {c.table for c in REQUIRED_COLUMNS}
+        | {i.table for i in REQUIRED_INDEXES}
+        | {c.table for c in REQUIRED_CONSTRAINTS}
     )
     for table in required_tables:
         exists = await conn.scalar(
@@ -3223,10 +3287,31 @@ async def check_schema_health(conn: AsyncConnection) -> Dict[str, Any]:
         if not exists:
             missing_indexes.append({"table": item.table, "index": item.index})
 
-    ok = not missing_tables and not missing_columns and not missing_indexes
+    for item in REQUIRED_CONSTRAINTS:
+        definition = await conn.scalar(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conrelid = to_regclass(:table) AND conname = :constraint"
+            ),
+            {"table": item.table, "constraint": item.constraint},
+        )
+        if definition is None or any(
+            token not in definition for token in item.required_definition_tokens
+        ):
+            missing_constraints.append(
+                {"table": item.table, "constraint": item.constraint}
+            )
+
+    ok = not (
+        missing_tables
+        or missing_columns
+        or missing_indexes
+        or missing_constraints
+    )
     return {
         "ok": ok,
         "missing_tables": missing_tables,
         "missing_columns": missing_columns,
         "missing_indexes": missing_indexes,
+        "missing_constraints": missing_constraints,
     }
