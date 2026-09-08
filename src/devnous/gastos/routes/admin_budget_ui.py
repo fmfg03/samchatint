@@ -9,7 +9,7 @@ from html import escape
 from typing import Any, Optional
 from urllib.parse import quote
 
-from samchat.budgets.service import BUDGET_WEEK_COUNT
+from samchat.budgets.service import BUDGET_WEEK_COUNT, budget_movement_key
 
 GENERAL_PHASE_FILTER = "__general__"
 
@@ -288,9 +288,9 @@ def _unbudgeted_expense_actuals(
     lines: list[dict[str, Any]],
     actuals_map: dict[str, dict[int, dict[str, float]]],
 ) -> dict[int, dict[str, float]]:
-    """Aggregate expense movements whose concept has no line in this view."""
+    """Aggregate expense movements whose linked line is not in this view."""
     matched_keys = {
-        str(line.get("budget_concept_id") or "").strip() or "__unassigned__"
+        str(line.get("id") or "").strip() or "__unassigned__"
         for line in lines
     }
     unmatched: dict[int, dict[str, float]] = {}
@@ -335,7 +335,8 @@ def _sum_budget_line_periods(
         for line in lines:
             line_id = str(line.get("id") or "")
             concept_id = str(line.get("budget_concept_id") or "")
-            actual_key = concept_id or "__unassigned__"
+            actual_key = line_id if budget_view != "income" else concept_id
+            actual_key = actual_key or "__unassigned__"
             plan = plan_map.get(line_id, {})
             actuals = actuals_map.get(actual_key, {})
             week_plan = plan.get(week, {})
@@ -358,13 +359,12 @@ def summarize_budget_actuals_for_lines(
     lines: list[dict[str, Any]],
     actuals_map: dict[str, dict[int, dict[str, float]]],
 ) -> dict[str, float]:
-    """Summarize expense actuals using the same concept matching as the detail."""
+    """Summarize expense actuals using the same line matching as the detail."""
     real_total = 0.0
     committed_total = 0.0
     seen_actual_keys: set[str] = set()
     for line in lines:
-        concept_id = str(line.get("budget_concept_id") or "").strip()
-        actual_key = concept_id or "__unassigned__"
+        actual_key = str(line.get("id") or "").strip() or "__unassigned__"
         if actual_key in seen_actual_keys:
             continue
         seen_actual_keys.add(actual_key)
@@ -1097,13 +1097,9 @@ def _render_budget_movement_details(
         poliza = str(movement.get("numero_poliza") or "Pendiente")
         poliza_date = movement.get("fecha_poliza") or ""
         action = ""
-        movement_key = str(movement.get("movement_key") or "")
-        if not movement_key and movement.get("accounting_line_id"):
-            movement_key = f"accounting:{movement['accounting_line_id']}"
-        elif not movement_key and movement.get("expense_id"):
-            movement_key = f"expense:{movement['expense_id']}"
-        elif not movement_key and movement.get("document_id"):
-            movement_key = f"document:{movement['document_id']}"
+        movement_key = str(movement.get("movement_key") or "") or budget_movement_key(
+            movement
+        )
         if (
             can_edit
             and has_existing_concept
@@ -1276,7 +1272,7 @@ def render_budget_partida_matrix(
             concept_id = str(line.get("budget_concept_id") or "")
             plan = plan_map.get(line_id, {})
             actuals = _actuals_for_budget_line(
-                actuals_map, line_id if clean_mode == "expenses" else concept_id
+                actuals_map, line_id if clean_mode != "income" else concept_id
             )
             disabled = "" if can_edit else " disabled"
             cuenta_field_html = _render_matrix_cuenta_field(

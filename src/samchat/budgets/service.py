@@ -4068,7 +4068,9 @@ async def import_budget_lines_upload(
     line_direction: Optional[str] = None,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
-    current = await get_budget_version(session, version_id=version_id)
+    current = await get_budget_version(
+        session, version_id=version_id, ensure_schema=False
+    )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line imports")
     rows = _load_tabular_upload_rows(file_bytes=file_bytes, filename=filename)
@@ -4624,13 +4626,40 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 id UUID PRIMARY KEY,
                 budget_version_id UUID NOT NULL REFERENCES budget_versions(id) ON DELETE CASCADE,
                 budget_concept_id UUID NOT NULL REFERENCES budget_concepts(id) ON DELETE RESTRICT,
-                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON DELETE RESTRICT,
+                budget_line_id UUID NOT NULL REFERENCES budget_lines(id) ON DELETE CASCADE,
                 movement_key VARCHAR(200) NOT NULL,
                 assigned_by_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 UNIQUE (budget_version_id, movement_key)
             )
+            """
+        )
+    )
+    await session.execute(
+        text(
+            """
+            DO $$
+            DECLARE constraint_name text;
+            BEGIN
+                SELECT con.conname INTO constraint_name
+                FROM pg_constraint con
+                WHERE con.conrelid = 'budget_movement_assignments'::regclass
+                  AND con.confrelid = 'budget_lines'::regclass
+                  AND con.contype = 'f'
+                  AND con.confdeltype <> 'c'
+                LIMIT 1;
+                IF constraint_name IS NOT NULL THEN
+                    EXECUTE format(
+                        'ALTER TABLE budget_movement_assignments DROP CONSTRAINT %I',
+                        constraint_name
+                    );
+                    ALTER TABLE budget_movement_assignments
+                    ADD CONSTRAINT budget_movement_assignments_budget_line_id_fkey
+                    FOREIGN KEY (budget_line_id) REFERENCES budget_lines(id)
+                    ON DELETE CASCADE;
+                END IF;
+            END $$;
             """
         )
     )
@@ -5361,9 +5390,12 @@ async def create_budget_line(
     reference_amount: Any = 0,
     criteria_note: Optional[str] = None,
     observations: Optional[str] = None,
+    commit: bool = True,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
-    current = await get_budget_version(session, version_id=version_id)
+    current = await get_budget_version(
+        session, version_id=version_id, ensure_schema=False
+    )
     if not _editable_version_status(current.get("status")):
         raise ValueError("Only draft or reforecast versions allow line creation")
 
@@ -5442,8 +5474,13 @@ async def create_budget_line(
             "budget_amount": amount,
         },
     )
-    await session.commit()
-    lines = await list_budget_lines(session, version_id=version_id, limit=500)
+    if commit:
+        await session.commit()
+    else:
+        await session.flush()
+    lines = await list_budget_lines(
+        session, version_id=version_id, limit=500, ensure_schema=False
+    )
     for line in lines:
         if line["id"] == line_id:
             return line
@@ -5538,8 +5575,9 @@ async def get_budget_version(
     session: AsyncSession,
     *,
     version_id: str,
+    ensure_schema: bool = True,
 ) -> dict[str, Any]:
-    versions = await list_budget_versions(session)
+    versions = await list_budget_versions(session, ensure_schema=ensure_schema)
     for version in versions:
         if version["id"] == version_id:
             return version
@@ -5874,6 +5912,7 @@ async def update_budget_line(
         session,
         version_id=_safe_str(current["budget_version_id"]),
         limit=500,
+        ensure_schema=False,
     )
     for line in lines:
         if line["id"] == line_id:
@@ -6442,8 +6481,10 @@ async def list_budget_line_monthly_allocations(
     session: AsyncSession,
     *,
     budget_line_id: str,
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     rows = (
         (
             await session.execute(
@@ -6510,8 +6551,10 @@ async def replace_budget_line_monthly_allocations(
     *,
     budget_line_id: str,
     allocations: dict[int, Any],
+    ensure_schema: bool = True,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    if ensure_schema:
+        await ensure_budget_schema(session)
     clean_line_id = _safe_str(budget_line_id)
     if not clean_line_id:
         raise ValueError("Budget line id is required")
@@ -6548,7 +6591,7 @@ async def replace_budget_line_monthly_allocations(
             },
         )
     return await list_budget_line_monthly_allocations(
-        session, budget_line_id=clean_line_id
+        session, budget_line_id=clean_line_id, ensure_schema=False
     )
 
 
@@ -6697,6 +6740,7 @@ async def upsert_budget_line_for_concept(
             line_id=_safe_str(existing["id"]),
             actor_empleado_id=actor_empleado_id,
             updates={"budget_amount": amount, "phase": resolved_phase},
+            commit=commit,
         )
         line_id = line["id"]
     else:
@@ -6712,6 +6756,7 @@ async def upsert_budget_line_for_concept(
             phase=resolved_phase,
             line_direction=clean_direction,
             budget_amount=amount,
+            commit=commit,
         )
         line_id = line["id"]
 
@@ -6722,6 +6767,7 @@ async def upsert_budget_line_for_concept(
         session,
         budget_line_id=line_id,
         allocations=allocations,
+        ensure_schema=False,
     )
     if commit:
         await session.commit()
@@ -6730,6 +6776,7 @@ async def upsert_budget_line_for_concept(
         version_id=version_id,
         line_direction=clean_direction,
         limit=5000,
+        ensure_schema=False,
     )
     for item in refreshed:
         if item["id"] == line_id:
