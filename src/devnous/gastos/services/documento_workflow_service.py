@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,8 @@ from .documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
     approval_subject_empleado,
 )
+from .documento_service import allocate_next_referencia_operaciones
+from .project_authorization_service import actor_is_route_approver, resolve_and_snapshot_document_route
 
 logger = logging.getLogger(__name__)
 
@@ -531,6 +533,9 @@ async def transition_documento_workflow(
                     aprobador_id=informe_aprobador_id,
                     now=now,
                 )
+        route = await resolve_and_snapshot_document_route(session, documento)
+        if route and route.requires_operations_reference and not documento.referencia_operaciones:
+            documento.referencia_operaciones = await allocate_next_referencia_operaciones(session)
 
     elif normalized_action == "approve":
         if documento.estado != "enviado":
@@ -549,8 +554,11 @@ async def transition_documento_workflow(
         _raise_if_document_already_advanced(
             await _document_has_recorded_approval(session, documento_uuid)
         )
+        route_exists = (await session.execute(text("SELECT 1 FROM documento_authorization_routes WHERE documento_id = :documento_id"), {"documento_id": str(documento.id)})).scalar_one_or_none() is not None
+        if route_exists and not await actor_is_route_approver(session, actor_id=actor.id, documento_id=documento.id) and actor.rol not in {"superadmin", "super_admin"}:
+            raise DocumentoWorkflowValidationError("not_route_approver", "No ocupas un puesto autorizado para esta solicitud.")
         approval_subject = approval_subject_empleado(documento)
-        if approval_subject is not None and approval_subject.aprobador_id:
+        if not route_exists and approval_subject is not None and approval_subject.aprobador_id:
             es_aprobador_asignado = approval_subject.aprobador_id == actor.id
             es_finanzas_o_admin = actor.rol in FINANCE_ADMIN_ROLES
             es_superadmin = actor.rol in {"superadmin", "super_admin"}

@@ -130,6 +130,7 @@ from ..services.authorization_profile_service import (
     summarize_profile_rules,
     update_authorization_profile_rules,
 )
+from ..services.project_authorization_service import list_position_assignments, replace_position_holders
 from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
@@ -2090,6 +2091,26 @@ async def estrategias_autorizacion_save_rules(
             url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&error_msg={quote(str(exc))}",
             status_code=303,
         )
+
+
+@router.get("/admin/puestos-autorizacion", response_class=HTMLResponse)
+async def puestos_autorizacion_page(request: Request, session: AsyncSession = Depends(get_db_session), current_empleado: Empleado = Depends(get_current_empleado)) -> str:
+    _require_authorization_strategy_admin(current_empleado)
+    positions = await list_position_assignments(session)
+    employees = list((await session.execute(select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre))).scalars())
+    cards = ""
+    for position in positions:
+        selected = {holder["id"] for holder in position["holders"]}
+        options = "".join(f'<option value="{employee.id}" {"selected" if str(employee.id) in selected else ""}>{escape(employee.nombre)}</option>' for employee in employees)
+        cards += f'<form method="post" action="/admin/puestos-autorizacion/{escape(position["key"])}"><h2>{escape(position["label"])}</h2><select name="employee_ids" multiple size="8">{options}</select><button type="submit">Guardar titulares</button></form>'
+    return f"<html><body>{render_top_navigation(current_empleado, 'admin')}<h1>Puestos de autorización</h1><p>La ruta usa puestos, no nombres. Los cambios aplican a solicitudes futuras.</p>{cards}</body></html>"
+
+
+@router.post("/admin/puestos-autorizacion/{position_key}")
+async def guardar_puestos_autorizacion(position_key: str, session: AsyncSession = Depends(get_db_session), current_empleado: Empleado = Depends(get_current_empleado), employee_ids: List[str] = Form(default=[])) -> RedirectResponse:
+    _require_authorization_strategy_admin(current_empleado)
+    await replace_position_holders(session, position_key=position_key, employee_ids=employee_ids)
+    return RedirectResponse("/admin/puestos-autorizacion", status_code=303)
 
 
 def _payroll_subnav(active: str) -> str:
