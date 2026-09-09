@@ -15,7 +15,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import selectinload
 
@@ -33,29 +33,6 @@ from devnous.gastos.services.employee_debtor_accounting_service import (  # noqa
     ensure_provider_approval_posting,
     ensure_provider_payment_posting,
 )
-
-
-DEFAULT_OPERATION_REFS = [
-    "1",
-    "14",
-    "27",
-    "29",
-    "32",
-    "42",
-    "53",
-    "56",
-    "58",
-    "59",
-    "60",
-    "65",
-    "66",
-    "67",
-    "93",
-    "108",
-    "109",
-    "128",
-    "129",
-]
 
 
 def _load_env_file(path: str | None) -> None:
@@ -128,16 +105,33 @@ async def _post_document(
 
 async def _run(args: argparse.Namespace) -> int:
     _load_env_file(args.env_file)
-    engine = create_async_engine(_database_url())
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    requested_refs = [
+    requested_operation_refs = [
         str(value).strip() for value in args.refs if str(value).strip()
     ]
+    requested_document_refs = [
+        str(value).strip() for value in args.document_refs if str(value).strip()
+    ]
+    if not requested_operation_refs and not requested_document_refs:
+        raise SystemExit("at least one --refs or --document-refs value is required")
+    engine = create_async_engine(_database_url())
+    maker = async_sessionmaker(engine, expire_on_commit=False)
     totals = {"created": 0, "exists": 0, "blocked": 0, "skipped": 0}
     output: list[dict[str, Any]] = []
     try:
         async with maker() as session:
-            result = await session.execute(
+            selectors = []
+            if requested_operation_refs:
+                selectors.append(
+                    Documento.referencia_operaciones.in_(requested_operation_refs)
+                )
+            if requested_document_refs:
+                selectors.append(
+                    and_(
+                        Documento.numero_referencia.in_(requested_document_refs),
+                        Documento.tipo == "SOLICITUD",
+                    )
+                )
+            query = (
                 select(Documento)
                 .options(
                     selectinload(Documento.proveedor_cliente),
@@ -145,27 +139,45 @@ async def _run(args: argparse.Namespace) -> int:
                     selectinload(Documento.cuenta_gastos),
                 )
                 .where(
-                    Documento.referencia_operaciones.in_(requested_refs),
+                    or_(*selectors),
                     Documento.estado.in_(["aprobado", "pagado", "cerrado"]),
                 )
-                .order_by(Documento.referencia_operaciones, Documento.tipo)
+                .order_by(Documento.numero_referencia, Documento.tipo)
+            )
+            result = await session.execute(
+                query
             )
             documents = list(result.scalars().all())
-            found_refs = {
+            found_operation_refs = {
                 str(document.referencia_operaciones or "")
                 for document in documents
             }
-            for missing in sorted(set(requested_refs) - found_refs):
+            found_document_refs = {
+                str(document.numero_referencia or "") for document in documents
+            }
+            for missing in sorted(
+                set(requested_operation_refs) - found_operation_refs
+            ):
                 receipt = {
-                    "ref_op": missing,
+                    "operation_ref": missing,
                     "status": "blocked",
                     "reason": "document_not_found_or_not_approved",
                 }
                 output.append(receipt)
                 totals["blocked"] += 1
+            for missing in sorted(
+                set(requested_document_refs) - found_document_refs
+            ):
+                receipt = {
+                    "document_ref": missing,
+                    "status": "blocked",
+                    "reason": "document_not_found_not_solicitud_or_not_approved",
+                }
+                output.append(receipt)
+                totals["blocked"] += 1
             for document in documents:
                 item = {
-                    "ref_op": str(document.referencia_operaciones or ""),
+                    "operation_ref": str(document.referencia_operaciones or ""),
                     "document": document.numero_referencia,
                     "document_id": str(document.id),
                     "type": document.tipo,
@@ -210,7 +222,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="Persist postings")
     parser.add_argument("--env-file")
-    parser.add_argument("--refs", nargs="+", default=DEFAULT_OPERATION_REFS)
+    parser.add_argument("--refs", nargs="*", default=[])
+    parser.add_argument("--document-refs", nargs="*", default=[])
     return asyncio.run(_run(parser.parse_args()))
 
 
