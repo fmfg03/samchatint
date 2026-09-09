@@ -906,8 +906,10 @@ def test_existing_reimbursement_request_is_promoted_on_informe_approval() -> Non
         "src/devnous/gastos/services/reimbursement_payment_run_service.py"
     ).read_text()
 
-    assert 'existing_reembolso.estado in {"borrador", "enviado"}' in (
-        reimbursement_service_source
+    assert (
+        'existing_reembolso.estado in '
+        '{"borrador", "control_presupuestal", "enviado"}'
+        in reimbursement_service_source
     )
     assert "approve_reimbursement_solicitud_for_approved_informe" in (
         reimbursement_service_source
@@ -971,6 +973,17 @@ def test_budget_control_releases_draft_reimbursement_after_assignment() -> None:
     assert 'solicitud.estado = "enviado"' not in helper_block
     assert 'accion="asignar_partida_presupuestal"' in helper_block
     assert "preparada para programación de pagos" in helper_block
+
+
+def test_payment_run_sweep_recovers_reimbursements_stuck_in_budget_control() -> None:
+    workflow_source = Path(
+        "src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+
+    assert (
+        'Documento.estado.in_(["borrador", "control_presupuestal", "enviado"])'
+        in workflow_source
+    )
 
 
 def test_workflow_blocks_reimbursement_send_until_informe_is_approved() -> None:
