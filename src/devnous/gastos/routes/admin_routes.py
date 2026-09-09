@@ -7664,6 +7664,7 @@ async def admin_finance_accounts_receivable(
     dias_credito: int = Query(0),
     sort_by: str = Query("issued_date"),
     sort_dir: str = Query("desc"),
+    cfdi_report_id: Optional[str] = Query(None),
 ):
     """Operational CxC consumer over budget income, PSP CFDI links, and accepted matches."""
     from samchat.ar import (
@@ -7762,6 +7763,74 @@ async def admin_finance_accounts_receivable(
     if request.url.query:
         return_to_url = f"{return_to_url}?{request.url.query}"
 
+    cfdi_link_html = ""
+    if selected_version:
+        from devnous.gastos.services.cfdi_income_bridge_service import (
+            list_psp_cfdi_income_candidates,
+        )
+
+        cfdi_candidates = await list_psp_cfdi_income_candidates(
+            session,
+            budget_version_id=str(selected_version["id"]),
+            limit=min(safe_limit, 500),
+            calendar_year=resolved_year,
+            ensure_schema=False,
+        )
+        income_lines = await list_budget_lines(
+            session,
+            version_id=str(selected_version["id"]),
+            line_direction="income",
+            limit=5000,
+            ensure_schema=False,
+        )
+        candidate_payload = []
+        for item in cfdi_candidates:
+            item_id = str(item.get("id") or "")
+            if not item_id:
+                continue
+            candidate_payload.append({
+                "id": item_id,
+                "label": " / ".join(str(value) for value in (
+                    item.get("cfdi_uuid") or item_id,
+                    item.get("receptor_nombre") or item.get("receptor_rfc") or "sin cliente",
+                    item.get("descripcion_concepto_principal") or "sin descripción",
+                    f"${float(item.get('total') or 0):,.2f}",
+                    str(item.get("fecha") or "")[:10] or "sin fecha",
+                )),
+                "client": str(item.get("receptor_nombre") or item.get("receptor_rfc") or ""),
+                "description": str(item.get("descripcion_concepto_principal") or ""),
+                "amount": f"{float(item.get('total') or 0):.2f}",
+                "date": str(item.get("fecha") or "")[:10],
+            })
+        line_options = "".join(
+            f'<option value="{escape(str(line.get("id") or ""))}">'
+            f'{escape(" / ".join(part for part in (str(line.get("tournament_name") or ""), str(line.get("concept_name") or "Partida"), str(line.get("phase") or "")) if part))}</option>'
+            for line in income_lines if line.get("id")
+        )
+        month_options = "".join(
+            f'<option value="{number}"{" selected" if number == date.today().month else ""}>{number:02d}</option>'
+            for number in range(1, 13)
+        )
+        cfdi_link_html = f"""
+        <section class="workspace-card" style="margin-bottom:18px;">
+          <div class="workspace-section-title">Vincular CFDI a presupuesto</div>
+          <div class="workspace-section-subtitle">Primero selecciona un CFDI emitido disponible. Sus datos fiscales se prellenan; después asigna la partida y período presupuestal.</div>
+          <form method="POST" action="/admin/finanzas/cuentas-por-cobrar/cfdi-link" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end;margin-top:14px;">
+            <input type="hidden" id="ar-cfdi-id" name="cfdi_report_id" value="{escape(str(cfdi_report_id or ''), quote=True)}" required>
+            <input type="hidden" name="return_to" value="{escape(return_to_url, quote=True)}">
+            <div style="grid-column:span 2;"><label>CFDI emitido</label><input id="ar-cfdi-picker" list="ar-cfdi-options" placeholder="UUID, cliente, concepto, monto o fecha" required><datalist id="ar-cfdi-options">{''.join(f'<option value="{escape(item["label"], quote=True)}" data-id="{escape(item["id"], quote=True)}"></option>' for item in candidate_payload)}</datalist></div>
+            <div><label>Cliente</label><input id="ar-cfdi-client" readonly></div>
+            <div><label>Descripción CFDI</label><input id="ar-cfdi-description" readonly></div>
+            <div><label>Monto</label><input id="ar-cfdi-amount" name="amount" type="number" step="0.01" min="0" required></div>
+            <div><label>Fecha CFDI</label><input id="ar-cfdi-date" name="income_date" type="date" required></div>
+            <div><label>Año presupuestal</label><input value="{resolved_year}" readonly></div>
+            <div><label>Mes presupuestal</label><select name="budget_month" required>{month_options}</select></div>
+            <div style="grid-column:span 2;"><label>Torneo / concepto presupuestal</label><select name="budget_line_id" required><option value="">Selecciona partida de ingreso</option>{line_options}</select></div>
+            <div><button class="button" type="submit">Enviar vínculo a aprobación</button></div>
+          </form>
+          <script>(function(){{const data={json.dumps(candidate_payload, ensure_ascii=False)};const input=document.getElementById('ar-cfdi-picker');const id=document.getElementById('ar-cfdi-id');if(!input||!id)return;function sync(){{const item=data.find(x=>x.label===input.value);id.value=item?item.id:'';['client','description','amount','date'].forEach(k=>{{const el=document.getElementById('ar-cfdi-'+k);if(el)el.value=item?item[k]:'';}})}}input.addEventListener('input',sync);}})();</script>
+        </section>"""
+
     if selected_version:
         bank_accounts = [
             {"id": str(account.id), "codigo": account.codigo, "nombre": account.nombre}
@@ -7793,7 +7862,7 @@ async def admin_finance_accounts_receivable(
             limit=safe_limit,
             ensure_schema=False,
         )
-        body_html = (
+        body_html = (cfdi_link_html +
             render_ar_read_model_html(
                 payload,
                 status_filter=estado,
@@ -7924,6 +7993,40 @@ async def admin_finance_accounts_receivable(
     </html>
     """
     return HTMLResponse(content=html)
+
+
+@router.post("/admin/finanzas/cuentas-por-cobrar/cfdi-link")
+async def admin_finance_ar_cfdi_link(
+    cfdi_report_id: str = Form(...),
+    budget_line_id: str = Form(...),
+    amount: str = Form(""),
+    income_date: str = Form(""),
+    budget_month: int = Form(...),
+    return_to: str = Form("/admin/finanzas/cuentas-por-cobrar"),
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+) -> RedirectResponse:
+    """Submit a CFDI-first CxC budget link; approval remains a separate action."""
+    from devnous.gastos.services.cfdi_income_bridge_service import (
+        CFDIIncomeBridgeError,
+        create_cfdi_income_link,
+    )
+    target = _safe_admin_cxc_return_url(return_to)
+    try:
+        await create_cfdi_income_link(
+            session,
+            cfdi_report_id=cfdi_report_id,
+            budget_line_id=budget_line_id,
+            actor_empleado_id=str(current_empleado.id),
+            amount=amount,
+            income_date=income_date,
+            budget_month=budget_month,
+            source="finance_spine_cxc",
+        )
+    except CFDIIncomeBridgeError as exc:
+        await session.rollback()
+        return RedirectResponse(url=target + "?error_msg=" + quote(str(exc)), status_code=303)
+    return RedirectResponse(url=target + "?success_msg=" + quote("CFDI enviado a aprobación presupuestal."), status_code=303)
 
 
 @router.get(

@@ -144,6 +144,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("budget_cfdi_income_links", "collection_date"),
     RequiredColumn("budget_cfdi_income_links", "collected_by_empleado_id"),
     RequiredColumn("budget_cfdi_income_links", "collection_poliza_id"),
+    RequiredColumn("budget_cfdi_income_links", "budget_month"),
     RequiredColumn("budget_lines", "line_direction"),
     RequiredColumn("access_control_rules", "tool_key"),
     RequiredColumn("access_control_rules", "role_key"),
@@ -271,6 +272,7 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("budget_concepts", "ix_budget_concepts_pasivo_cuenta_contable_id"),
     RequiredIndex("budget_lines", "ix_budget_lines_direction"),
     RequiredIndex("budget_cfdi_income_links", "ix_budget_cfdi_income_links_status"),
+    RequiredIndex("budget_cfdi_income_links", "ix_budget_cfdi_income_links_budget_month"),
     RequiredIndex("access_control_rules", "ux_access_control_rules_unique"),
     RequiredIndex("access_control_rules", "ix_access_control_rules_tool"),
     RequiredIndex("access_control_rules", "ix_access_control_rules_role_area"),
@@ -1427,6 +1429,18 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "budget_cfdi_income_links_collection_poliza_id_column",
         "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "budget_cfdi_income_links_budget_month_column",
+        "ALTER TABLE IF EXISTS budget_cfdi_income_links ADD COLUMN IF NOT EXISTS budget_month SMALLINT NULL",
+    ),
+    (
+        "budget_cfdi_income_links_budget_month_backfill",
+        "UPDATE budget_cfdi_income_links SET budget_month = EXTRACT(MONTH FROM income_date)::smallint WHERE budget_month IS NULL AND income_date IS NOT NULL",
+    ),
+    (
+        "ix_budget_cfdi_income_links_budget_month",
+        "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_budget_month ON budget_cfdi_income_links(budget_version_id, budget_month)",
     ),
     (
         "ix_budget_cfdi_income_links_status",
