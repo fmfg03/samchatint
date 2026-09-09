@@ -130,6 +130,7 @@ from ..services.authorization_profile_service import (
     summarize_profile_rules,
     update_authorization_profile_rules,
 )
+from ..services.project_authorization_service import list_position_assignments, replace_position_holders
 from ..services.access_control_service import (
     ACCESS_TOOLS,
     ALL_ROLES,
@@ -2090,6 +2091,26 @@ async def estrategias_autorizacion_save_rules(
             url=f"/admin/estrategias-autorizacion?profile_id={quote(profile_id)}&error_msg={quote(str(exc))}",
             status_code=303,
         )
+
+
+@router.get("/admin/puestos-autorizacion", response_class=HTMLResponse)
+async def puestos_autorizacion_page(request: Request, session: AsyncSession = Depends(get_db_session), current_empleado: Empleado = Depends(get_current_empleado)) -> str:
+    _require_authorization_strategy_admin(current_empleado)
+    positions = await list_position_assignments(session)
+    employees = list((await session.execute(select(Empleado).where(Empleado.activo.is_(True)).order_by(Empleado.nombre))).scalars())
+    cards = ""
+    for position in positions:
+        selected = {holder["id"] for holder in position["holders"]}
+        options = "".join(f'<option value="{employee.id}" {"selected" if str(employee.id) in selected else ""}>{escape(employee.nombre)}</option>' for employee in employees)
+        cards += f'<form method="post" action="/admin/puestos-autorizacion/{escape(position["key"])}"><h2>{escape(position["label"])}</h2><select name="employee_ids" multiple size="8">{options}</select><button type="submit">Guardar titulares</button></form>'
+    return f"<html><body>{render_top_navigation(current_empleado, 'admin')}<h1>Puestos de autorización</h1><p>La ruta usa puestos, no nombres. Los cambios aplican a solicitudes futuras.</p>{cards}</body></html>"
+
+
+@router.post("/admin/puestos-autorizacion/{position_key}")
+async def guardar_puestos_autorizacion(position_key: str, session: AsyncSession = Depends(get_db_session), current_empleado: Empleado = Depends(get_current_empleado), employee_ids: List[str] = Form(default=[])) -> RedirectResponse:
+    _require_authorization_strategy_admin(current_empleado)
+    await replace_position_holders(session, position_key=position_key, employee_ids=employee_ids)
+    return RedirectResponse("/admin/puestos-autorizacion", status_code=303)
 
 
 def _payroll_subnav(active: str) -> str:
@@ -11754,10 +11775,21 @@ async def _can_review_pending_approvals(
     if not empleado_id:
         return False
     try:
-        result = await session.execute(
+        legacy_result = await session.execute(
             select(Empleado.id).where(Empleado.aprobador_id == empleado_id).limit(1)
         )
-        return result.scalar_one_or_none() is not None
+        if legacy_result.scalar_one_or_none() is not None:
+            return True
+        route_result = await session.execute(
+            text(
+                "SELECT 1 FROM documento_authorization_routes route "
+                "WHERE :employee_id IN ("
+                "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
+                ") LIMIT 1"
+            ),
+            {"employee_id": str(empleado_id)},
+        )
+        return route_result.scalar_one_or_none() is not None
     except Exception:
         logger.exception(
             "Failed to determine pending approval visibility",
@@ -29217,18 +29249,35 @@ async def documentos_pendientes(
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
     if current_empleado.rol not in ('superadmin', 'super_admin'):
+        has_no_project_route = text(
+            "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+            "WHERE route.documento_id = documentos.id)"
+        )
         filters.append(
             or_(
-                beneficiario_alias.aprobador_id == current_empleado.id,
+                text(
+                    "EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                    "WHERE route.documento_id = documentos.id "
+                    "AND :route_employee_id IN ("
+                    "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
+                    "))"
+                ),
                 and_(
+                    has_no_project_route,
+                    beneficiario_alias.aprobador_id == current_empleado.id,
+                ),
+                and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.is_(None),
                     solicitante_alias.aprobador_id == current_empleado.id,
                 ),
                 and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.isnot(None),
                     beneficiario_alias.aprobador_id.is_(None),
                 ),
                 and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.is_(None),
                     solicitante_alias.aprobador_id.is_(None),
                 ),
@@ -29274,6 +29323,8 @@ async def documentos_pendientes(
         query.where(and_(*filters))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
     )
+    if current_empleado.rol not in ('superadmin', 'super_admin'):
+        query = query.params(route_employee_id=str(current_empleado.id))
 
     result = await session.execute(query)
     documentos = result.scalars().unique().all()

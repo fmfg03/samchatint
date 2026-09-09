@@ -289,7 +289,9 @@ class TelegramDocumentRuntime:
             doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
             return bool(
                 doc
-                and gastos_tg.approver_can_see_document_in_queue(empleado, doc)
+                and await gastos_tg.approver_can_see_document_in_queue_live(
+                    session, empleado, doc
+                )
             )
 
     async def handle_callback(self, callback_query: Dict[str, Any]) -> bool:
@@ -333,8 +335,8 @@ class TelegramDocumentRuntime:
         if prefix == gastos_tg.CB_DETAIL_APPROVER:
             async with session_maker() as session:
                 doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
-                if not doc or not gastos_tg.approver_can_see_document_in_queue(
-                    empleado, doc
+                if not doc or not await gastos_tg.approver_can_see_document_in_queue_live(
+                    session, empleado, doc
                 ):
                     await self.gateway.answer_callback_query(callback_id, "No disponible")
                     return True
@@ -353,7 +355,9 @@ class TelegramDocumentRuntime:
         if prefix == gastos_tg.CB_APPROVE:
             async with session_maker() as session:
                 doc = await gastos_tg.load_documento_for_telegram(session, doc_uuid)
-                if not doc or not gastos_tg.approver_can_see_document_in_queue(empleado, doc):
+                if not doc or not await gastos_tg.approver_can_see_document_in_queue_live(
+                    session, empleado, doc
+                ):
                     await self.gateway.answer_callback_query(callback_id, "Ya no está pendiente")
                     await self.gateway.send_message(
                         chat_id,
