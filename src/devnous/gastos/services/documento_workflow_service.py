@@ -188,7 +188,7 @@ async def approve_reimbursement_solicitud_for_approved_informe(
     if (
         informe is None
         or informe.estado != "aprobado"
-        or not getattr(documento, "budget_concept_id", None)
+        or not getattr(informe, "budget_concept_id", None)
     ):
         return None
     aprobador_id = await _linked_informe_approval_actor_id(session, documento)
