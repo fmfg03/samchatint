@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -8,6 +9,7 @@ from devnous.gastos.services.payment_run_service import (
     DEFAULT_PAYMENT_RUN_PAYMENT_CONFIRMER_EMPLOYEE_IDS,
     PaymentRunValidationError,
     _document_amount,
+    _status_for_row,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
     configured_payment_run_payment_confirmer_ids,
@@ -137,3 +139,26 @@ def test_payment_run_ordinary_request_prefers_final_total() -> None:
     )
 
     assert _document_amount(document) == 120
+
+
+def test_payment_history_does_not_classify_budget_control_as_scheduled() -> None:
+    assert (
+        _status_for_row(
+            {
+                "estado": "control_presupuestal",
+                "pagado_en": None,
+                "closure_id": None,
+                "fecha_pago": None,
+            }
+        )
+        == "control presupuestal"
+    )
+
+
+def test_payment_history_all_filter_excludes_ineligible_documents() -> None:
+    source = Path(
+        "src/devnous/gastos/services/payment_run_service.py"
+    ).read_text()
+    assert (
+        "d.estado IN ('aprobado', 'en_proceso_pago', 'pagado')" in source
+    )
