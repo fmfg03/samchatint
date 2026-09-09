@@ -306,7 +306,7 @@ async def ensure_approved_informe_reimbursement_for_payment_run(
         session, cuenta=cuenta
     )
     if existing_reembolso is not None:
-        if existing_reembolso.estado in {"borrador", "enviado"}:
+        if existing_reembolso.estado in {"borrador", "control_presupuestal", "enviado"}:
             aprobacion = await approve_reimbursement_solicitud_for_approved_informe(
                 session,
                 existing_reembolso,
