@@ -949,8 +949,14 @@ def test_budget_actual_queries_do_not_calculate_a_tax_base():
 def test_budget_backfill_is_lexical_and_isolates_each_document() -> None:
     source = Path("scripts/backfill_budget_accounting_actuals.py").read_text()
 
-    assert "sorted(set(requested_refs) - found_refs, key=int)" not in source
-    assert "sorted(set(requested_refs) - found_refs)" in source
+    assert "DEFAULT_OPERATION_REFS" not in source
+    assert 'parser.add_argument("--document-refs", nargs="*", default=[])' in source
+    assert "at least one --refs or --document-refs value is required" in source
+    assert "Documento.numero_referencia.in_(requested_document_refs)" in source
+    assert "and_(" in source
+    assert 'Documento.tipo == "SOLICITUD"' in source
+    assert "set(requested_operation_refs) - found_operation_refs" in source
+    assert "set(requested_document_refs) - found_document_refs" in source
     assert "async with session.begin_nested():" in source
 
 
