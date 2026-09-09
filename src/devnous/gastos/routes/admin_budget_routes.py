@@ -1167,7 +1167,7 @@ def register_presupuestos_routes(router) -> None:
         version_id: UUIDType,
         budget_concept_id: UUIDType = Form(...),
         movement_key: str = Form(...),
-        budget_amount: float = Form(...),
+        budget_amount: Optional[float] = Form(None),
         phase: Optional[str] = Form(None),
         tournament_key: Optional[str] = Form(None),
         edition_year: Optional[int] = Form(None),
@@ -1177,7 +1177,7 @@ def register_presupuestos_routes(router) -> None:
         current_empleado=Depends(get_current_empleado),
     ):
         _require_budget_access(current_empleado, "line_update")
-        if budget_amount < 0:
+        if budget_amount is not None and budget_amount < 0:
             return RedirectResponse(
                 url=_presupuestos_redirect_url(
                     edition_year=edition_year,
@@ -1199,6 +1199,7 @@ def register_presupuestos_routes(router) -> None:
                 phase=phase,
                 line_direction="expense",
                 commit=False,
+                preserve_existing=True,
             )
             await assign_budget_movement_to_line(
                 session,

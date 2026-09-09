@@ -6690,6 +6690,7 @@ async def upsert_budget_line_for_concept(
     line_direction: Optional[str] = None,
     monthly_allocations: Optional[dict[int, Any]] = None,
     commit: bool = True,
+    preserve_existing: bool = False,
 ) -> dict[str, Any]:
     await ensure_budget_schema(session)
     clean_direction = normalize_budget_line_direction(line_direction)
@@ -6725,7 +6726,6 @@ async def upsert_budget_line_for_concept(
         .first()
     )
 
-    amount = round(_safe_decimal(budget_amount), 2)
     metadata = (
         concept.get("metadata") if isinstance(concept.get("metadata"), dict) else {}
     )
@@ -6734,41 +6734,52 @@ async def upsert_budget_line_for_concept(
         str(phase_labels[0]).strip() if phase_labels else None
     )
 
-    if existing:
-        line = await update_budget_line(
+    if existing and preserve_existing:
+        line_id = _safe_str(existing["id"])
+        monthly = await list_budget_line_monthly_allocations(
             session,
-            line_id=_safe_str(existing["id"]),
-            actor_empleado_id=actor_empleado_id,
-            updates={"budget_amount": amount, "phase": resolved_phase},
-            commit=commit,
+            budget_line_id=line_id,
+            ensure_schema=False,
         )
-        line_id = line["id"]
     else:
-        line = await create_budget_line(
-            session,
-            version_id=version_id,
-            actor_empleado_id=actor_empleado_id,
-            budget_concept_id=budget_concept_id,
-            concept_name=_safe_str(concept.get("concept_name")),
-            tournament_code=_safe_str(concept.get("tournament_code")) or None,
-            tournament_name=_safe_str(concept.get("tournament_name"))
-            or "Presupuesto general",
-            phase=resolved_phase,
-            line_direction=clean_direction,
-            budget_amount=amount,
-            commit=commit,
-        )
-        line_id = line["id"]
+        if budget_amount is None:
+            raise ValueError("Budget amount is required when creating a line")
+        amount = round(_safe_decimal(budget_amount), 2)
+        if existing:
+            line = await update_budget_line(
+                session,
+                line_id=_safe_str(existing["id"]),
+                actor_empleado_id=actor_empleado_id,
+                updates={"budget_amount": amount, "phase": resolved_phase},
+                commit=commit,
+            )
+            line_id = line["id"]
+        else:
+            line = await create_budget_line(
+                session,
+                version_id=version_id,
+                actor_empleado_id=actor_empleado_id,
+                budget_concept_id=budget_concept_id,
+                concept_name=_safe_str(concept.get("concept_name")),
+                tournament_code=_safe_str(concept.get("tournament_code")) or None,
+                tournament_name=_safe_str(concept.get("tournament_name"))
+                or "Presupuesto general",
+                phase=resolved_phase,
+                line_direction=clean_direction,
+                budget_amount=amount,
+                commit=commit,
+            )
+            line_id = line["id"]
 
-    allocations = monthly_allocations
-    if allocations is None:
-        allocations = distribute_even_monthly_allocations(amount)
-    monthly = await replace_budget_line_monthly_allocations(
-        session,
-        budget_line_id=line_id,
-        allocations=allocations,
-        ensure_schema=False,
-    )
+        allocations = monthly_allocations
+        if allocations is None:
+            allocations = distribute_even_monthly_allocations(amount)
+        monthly = await replace_budget_line_monthly_allocations(
+            session,
+            budget_line_id=line_id,
+            allocations=allocations,
+            ensure_schema=False,
+        )
     if commit:
         await session.commit()
     refreshed = await list_budget_lines(
@@ -6786,15 +6797,15 @@ async def upsert_budget_line_for_concept(
 
 def budget_movement_key(movement: dict[str, Any]) -> str:
     """Return the stable source identity used for budget reconciliation."""
-    accounting_line_id = _safe_str(movement.get("accounting_line_id"))
-    if accounting_line_id:
-        return f"accounting:{accounting_line_id}"
-    expense_id = _safe_str(movement.get("expense_id"))
-    if expense_id:
-        return f"expense:{expense_id}"
     document_id = _safe_str(movement.get("document_id"))
     if document_id:
         return f"document:{document_id}"
+    expense_id = _safe_str(movement.get("expense_id"))
+    if expense_id:
+        return f"expense:{expense_id}"
+    accounting_line_id = _safe_str(movement.get("accounting_line_id"))
+    if accounting_line_id:
+        return f"accounting:{accounting_line_id}"
     return ""
 
 

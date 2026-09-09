@@ -1918,6 +1918,83 @@ def test_explicit_movement_assignment_leaves_shared_reference_unconciled():
     assert 'name="movement_key" value="accounting:b"' in html
 
 
+def test_unbudgeted_expense_actuals_excludes_assigned_line_totals():
+    from devnous.gastos.routes.admin_budget_ui import _unbudgeted_expense_actuals
+
+    actuals = _unbudgeted_expense_actuals(
+        [{"id": "line-1"}],
+        {
+            "line-1": {1: {"real_expense_cash": 100}},
+            "__unassigned__": {1: {"real_expense_cash": 200}},
+        },
+    )
+
+    assert actuals[1]["real_expense_cash"] == 200.0
+
+
+def test_budget_movement_key_prefers_stable_document_identity():
+    assert budgets_service.budget_movement_key(
+        {
+            "document_id": "document-1",
+            "expense_id": "expense-1",
+            "accounting_line_id": "accounting-1",
+        }
+    ) == "document:document-1"
+
+
+@pytest.mark.asyncio
+async def test_upsert_reconciliation_preserves_existing_budget_line(monkeypatch):
+    class _Result:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"id": "line-1"}
+
+    class _Session:
+        async def execute(self, *_args, **_kwargs):
+            return _Result()
+
+    async def _schema(*_args, **_kwargs):
+        return None
+
+    async def _concept(*_args, **_kwargs):
+        return {"metadata": {}}
+
+    async def _allocations(*_args, **_kwargs):
+        return {1: {"allocated_amount": 100.0}}
+
+    async def _lines(*_args, **_kwargs):
+        return [{"id": "line-1", "concept_name": "Hospedaje"}]
+
+    async def _must_not_mutate(*_args, **_kwargs):
+        raise AssertionError("existing reconciliation must not change the budget")
+
+    monkeypatch.setattr(budgets_service, "ensure_budget_schema", _schema)
+    monkeypatch.setattr(budgets_service, "resolve_budget_concept", _concept)
+    monkeypatch.setattr(
+        budgets_service, "list_budget_line_monthly_allocations", _allocations
+    )
+    monkeypatch.setattr(budgets_service, "list_budget_lines", _lines)
+    monkeypatch.setattr(budgets_service, "update_budget_line", _must_not_mutate)
+    monkeypatch.setattr(
+        budgets_service, "replace_budget_line_monthly_allocations", _must_not_mutate
+    )
+
+    line = await budgets_service.upsert_budget_line_for_concept(
+        _Session(),
+        version_id="version-1",
+        budget_concept_id="concept-1",
+        budget_amount=None,
+        line_direction="expense",
+        preserve_existing=True,
+        commit=False,
+    )
+
+    assert line["id"] == "line-1"
+    assert line["monthly_allocations"][1]["allocated_amount"] == 100.0
+
+
 @pytest.mark.asyncio
 async def test_explicit_movement_assignment_routes_actuals_by_line_not_concept():
     class _Result:
