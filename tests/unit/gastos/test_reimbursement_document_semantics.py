@@ -987,8 +987,8 @@ def test_reimbursement_promotion_requires_inherited_budget_concept() -> None:
     )
     helper_block = workflow_source[helper_start:helper_end]
 
-    assert 'or not getattr(documento, "budget_concept_id", None)' in helper_block
-    assert helper_block.index('or not getattr(documento, "budget_concept_id", None)') < (
+    assert 'or not getattr(informe, "budget_concept_id", None)' in helper_block
+    assert helper_block.index('or not getattr(informe, "budget_concept_id", None)') < (
         helper_block.index("_auto_approve_solicitud_with_approved_informe")
     )
 
