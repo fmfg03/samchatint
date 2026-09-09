@@ -15,6 +15,16 @@ def test_admin_routes_exposes_finance_ar_read_only_route():
     assert "Cuentas por Cobrar" in source
 
 
+def test_finance_ar_exposes_cfdi_first_budget_link_workflow():
+    source = ADMIN_ROUTES.read_text()
+
+    assert '"/admin/finanzas/cuentas-por-cobrar/cfdi-link"' in source
+    assert "Vincular CFDI a presupuesto" in source
+    assert "Primero selecciona un CFDI emitido disponible" in source
+    assert "list_psp_cfdi_income_candidates" in source
+    assert "budget_month=budget_month" in source
+
+
 def test_admin_route_consumes_canonical_ar_read_model():
     source = ADMIN_ROUTES.read_text()
     route_body = source.split(

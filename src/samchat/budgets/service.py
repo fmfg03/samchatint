@@ -4815,6 +4815,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 amount NUMERIC(18,2) NOT NULL DEFAULT 0,
                 income_date TIMESTAMPTZ NOT NULL,
+                budget_month SMALLINT NULL CHECK (budget_month BETWEEN 1 AND 12),
                 linked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 source VARCHAR(80) NOT NULL DEFAULT 'admin_ui',
                 status VARCHAR(40) NOT NULL DEFAULT 'pending_approval',
@@ -4846,6 +4847,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
     )
     await session.execute(text("ALTER TABLE budget_concepts ADD COLUMN IF NOT EXISTS cxc_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL"))
     for column_sql in (
+        "ADD COLUMN IF NOT EXISTS budget_month SMALLINT NULL CHECK (budget_month BETWEEN 1 AND 12)",
         "ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
         "ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
         "ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL",
@@ -4858,6 +4860,11 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         "ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ):
         await session.execute(text(f"ALTER TABLE budget_cfdi_income_links {column_sql}"))
+    await session.execute(text("""
+        UPDATE budget_cfdi_income_links
+        SET budget_month = EXTRACT(MONTH FROM income_date)::smallint
+        WHERE budget_month IS NULL AND income_date IS NOT NULL
+    """))
     # Links created by the prior workflow already have a CxC policy. Preserve
     # their recognized-income semantics when introducing approval states.
     await session.execute(text("""
@@ -4934,6 +4941,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_income_date "
             "ON budget_cfdi_income_links(income_date)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_budget_month "
+            "ON budget_cfdi_income_links(budget_version_id, budget_month)"
         )
     )
     await session.execute(
@@ -8005,7 +8018,7 @@ async def build_budget_actuals_snapshot(
         "l.budget_version_id = CAST(:version_id AS uuid)",
         "b.budget_version_id = CAST(:version_id AS uuid)",
         "b.unlinked_at IS NULL",
-        "EXTRACT(YEAR FROM b.income_date)::int = :edition_year",
+        "b.budget_month IS NOT NULL",
         "NOT EXISTS (SELECT 1 FROM accounting_polizas ap "
         "WHERE ap.origen = 'cxc_cfdi_income' "
         "AND ap.cfdi_report_id = b.cfdi_report_id)",
@@ -8039,12 +8052,13 @@ async def build_budget_actuals_snapshot(
                                :unassigned_key
                            ) AS concept_key,
                            b.income_date AS recognized_at,
+                           b.budget_month AS budget_month,
                            SUM(b.amount) AS income_total
                     FROM budget_cfdi_income_links b
                     JOIN budget_lines l ON l.id = b.budget_line_id
                     WHERE {' AND '.join(cfdi_filters)}
                       AND b.status = 'approved'
-                    GROUP BY 1, b.income_date
+                    GROUP BY 1, b.income_date, b.budget_month
                     """
                 ),
                 params,
@@ -8054,7 +8068,7 @@ async def build_budget_actuals_snapshot(
         .all()
     )
     for row in cfdi_rows:
-        week = _budget_week_number(row["recognized_at"], edition_year)
+        week = int(row.get("budget_month") or _budget_week_number(row["recognized_at"], edition_year))
         _merge_monthly_actual(
             store,
             concept_key=_safe_str(row["concept_key"])

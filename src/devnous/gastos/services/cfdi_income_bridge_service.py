@@ -300,6 +300,7 @@ async def list_psp_cfdi_income_candidates(
                     '',
                     'g'
                 ) = ANY(CAST(:allowed_rfcs AS text[]))
+                  AND UPPER(COALESCE(c.tipo_de_comprobante, '')) = 'I'
                   AND EXTRACT(YEAR FROM COALESCE(c.fecha, c.created_at)) = :calendar_year
                   {assignment_filter}
                   AND NOT EXISTS (
@@ -570,6 +571,7 @@ async def create_cfdi_income_link(
     actor_empleado_id: Optional[str],
     amount: Optional[Any] = None,
     income_date: Optional[Any] = None,
+    budget_month: Optional[Any] = None,
     source: str = "admin_ui",
 ) -> dict[str, Any]:
     allowlist = await list_configured_rfc_allowlist(session)
@@ -592,6 +594,14 @@ async def create_cfdi_income_link(
         or _coerce_income_datetime(cfdi.get("fecha"))
         or datetime.now(timezone.utc)
     )
+    try:
+        resolved_budget_month = int(
+            budget_month if budget_month not in (None, "") else resolved_income_date.month
+        )
+    except (TypeError, ValueError) as exc:
+        raise CFDIIncomeBridgeError("El mes presupuestal no es válido.") from exc
+    if not 1 <= resolved_budget_month <= 12:
+        raise CFDIIncomeBridgeError("El mes presupuestal debe estar entre 1 y 12.")
 
     existing = (
         await session.execute(
@@ -621,6 +631,7 @@ async def create_cfdi_income_link(
                     UPDATE budget_cfdi_income_links
                     SET amount = :amount,
                         income_date = :income_date,
+                        budget_month = :budget_month,
                         updated_at = NOW()
                     WHERE id = CAST(:link_id AS uuid)
                     """
@@ -629,6 +640,7 @@ async def create_cfdi_income_link(
                     "link_id": str(existing["id"]),
                     "amount": str(resolved_amount),
                     "income_date": resolved_income_date,
+                    "budget_month": resolved_budget_month,
                 },
             )
             await session.commit()
@@ -650,7 +662,7 @@ async def create_cfdi_income_link(
             """
             INSERT INTO budget_cfdi_income_links (
                 id, cfdi_report_id, budget_line_id, budget_version_id,
-                tournament_id, phase, budget_concept_id, amount, income_date,
+                tournament_id, phase, budget_concept_id, amount, income_date, budget_month,
                 linked_by_empleado_id, source, status, metadata, created_at, updated_at
             ) VALUES (
                 CAST(:id AS uuid),
@@ -659,7 +671,7 @@ async def create_cfdi_income_link(
                 CAST(:budget_version_id AS uuid),
                 CAST(:tournament_id AS uuid),
                 :phase,
-                CAST(:budget_concept_id AS uuid), :amount, :income_date,
+                CAST(:budget_concept_id AS uuid), :amount, :income_date, :budget_month,
                 CAST(:linked_by_empleado_id AS uuid),
                 :source,
                 'pending_approval',
@@ -678,6 +690,7 @@ async def create_cfdi_income_link(
             "budget_concept_id": str(line["budget_concept_id"] or "") or None,
             "amount": str(resolved_amount),
             "income_date": resolved_income_date,
+            "budget_month": resolved_budget_month,
             "linked_by_empleado_id": str(actor_empleado_id or "") or None,
             "source": source,
             "metadata": json.dumps(metadata, ensure_ascii=False),
@@ -826,6 +839,7 @@ async def ingest_and_link_cfdi_income(
     pdf_bytes: Optional[bytes] = None,
     amount: Optional[Any] = None,
     income_date: Optional[Any] = None,
+    budget_month: Optional[Any] = None,
 ) -> dict[str, Any]:
     result = await ingest_cfdi_from_upload(
         session,
@@ -842,6 +856,7 @@ async def ingest_and_link_cfdi_income(
         actor_empleado_id=actor_empleado_id,
         amount=amount,
         income_date=income_date,
+        budget_month=budget_month,
         source="upload",
     )
 
