@@ -912,6 +912,10 @@ async def query_pending_documentos_for_approver(
 
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
+    has_no_project_route = text(
+        "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+        "WHERE route.documento_id = documentos.id)"
+    )
     result = await session.execute(
         select(Documento)
         .options(*base_opts)
@@ -924,14 +928,24 @@ async def query_pending_documentos_for_approver(
             and_(
                 Documento.estado == "enviado",
                 or_(
-                    beneficiario_alias.aprobador_id == empleado.id,
+                    text(
+                        "EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                        "WHERE route.documento_id = documentos.id "
+                        "AND :route_employee_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids)))"
+                    ),
                     and_(
+                        has_no_project_route,
+                        beneficiario_alias.aprobador_id == empleado.id,
+                    ),
+                    and_(
+                        has_no_project_route,
                         Documento.beneficiario_empleado_id.is_(None),
                         solicitante_alias.aprobador_id == empleado.id,
                     ),
                 ),
             )
         )
+        .params(route_employee_id=str(empleado.id))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
         .limit(limit)
     )

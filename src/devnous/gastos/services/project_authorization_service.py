@@ -112,11 +112,19 @@ async def ensure_project_authorization_schema(session: AsyncSession) -> None:
             documento_id UUID PRIMARY KEY
                 REFERENCES documentos(id) ON DELETE CASCADE,
             eligible_position_keys JSONB NOT NULL,
+            eligible_empleado_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
             requires_operations_reference BOOLEAN NOT NULL DEFAULT FALSE,
             source VARCHAR(100) NOT NULL,
             resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """
+        )
+    )
+    await session.execute(
+        text(
+            "ALTER TABLE documento_authorization_routes "
+            "ADD COLUMN IF NOT EXISTS eligible_empleado_ids "
+            "JSONB NOT NULL DEFAULT '[]'::jsonb"
         )
     )
 
@@ -187,14 +195,23 @@ async def resolve_and_snapshot_document_route(
     )
     if route is None:
         return None
+    holders = await session.execute(
+        text(
+            "SELECT empleado_id FROM authorization_position_assignments "
+            "WHERE active = TRUE "
+            "AND position_key = ANY(CAST(:positions AS text[]))"
+        ),
+        {"positions": list(route.eligible_position_keys)},
+    )
+    employee_ids = [str(value) for value in holders.scalars().all()]
     await session.execute(
         text(
             """
         INSERT INTO documento_authorization_routes (
-            documento_id, eligible_position_keys,
+            documento_id, eligible_position_keys, eligible_empleado_ids,
             requires_operations_reference, source
         ) VALUES (
-            :documento_id, CAST(:positions AS jsonb),
+            :documento_id, CAST(:positions AS jsonb), CAST(:employee_ids AS jsonb),
             :requires_reference, :source
         )
     """
@@ -202,6 +219,7 @@ async def resolve_and_snapshot_document_route(
         {
             "documento_id": document_id,
             "positions": json.dumps(route.eligible_position_keys),
+            "employee_ids": json.dumps(employee_ids),
             "requires_reference": route.requires_operations_reference,
             "source": route.source,
         },
@@ -209,25 +227,25 @@ async def resolve_and_snapshot_document_route(
     return route
 
 
+async def invalidate_document_route(session: AsyncSession, documento_id: object) -> None:
+    """Discard a prior route before a draft document is resubmitted."""
+    await session.execute(
+        text("DELETE FROM documento_authorization_routes WHERE documento_id = :documento_id"),
+        {"documento_id": str(documento_id)},
+    )
+
+
 async def actor_is_route_approver(
     session: AsyncSession, *, actor_id: object, documento_id: object
 ) -> bool:
-    """True only for an active holder of a snapshotted eligible position."""
+    """True only for a holder snapshotted when the route was resolved."""
     result = await session.execute(
         text(
             """
         SELECT 1
         FROM documento_authorization_routes route
-        JOIN authorization_position_assignments assignment
-          ON assignment.position_key = ANY(
-              ARRAY(
-                  SELECT jsonb_array_elements_text(
-                      route.eligible_position_keys
-                  )
-              )
-          )
         WHERE route.documento_id = :documento_id
-          AND assignment.empleado_id = :actor_id AND assignment.active = TRUE
+          AND :actor_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
         LIMIT 1
     """
         ),
@@ -254,15 +272,9 @@ async def route_approvers_for_document(
             """
             SELECT e.id
             FROM empleados e
-            JOIN authorization_position_assignments assignment
-              ON assignment.empleado_id = e.id AND assignment.active = TRUE
             JOIN documento_authorization_routes route
               ON route.documento_id = :documento_id
-             AND assignment.position_key = ANY(
-                ARRAY(
-                    SELECT jsonb_array_elements_text(route.eligible_position_keys)
-                )
-             )
+             AND e.id::text IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids))
             WHERE e.activo = TRUE
             ORDER BY e.nombre
             """
@@ -317,6 +329,15 @@ async def replace_position_holders(
     if exists.scalar_one_or_none() is None:
         raise ValueError("Puesto de autorización no encontrado.")
     valid = list(dict.fromkeys(str(value) for value in employee_ids if value))
+    active = await session.execute(
+        text(
+            "SELECT id::text FROM empleados WHERE activo = TRUE "
+            "AND id = ANY(CAST(:employee_ids AS uuid[]))"
+        ),
+        {"employee_ids": valid},
+    )
+    if set(active.scalars().all()) != set(valid):
+        raise ValueError("Todos los titulares deben ser empleados activos.")
     await session.execute(
         text(
             "UPDATE authorization_position_assignments SET active = FALSE "

@@ -11775,10 +11775,21 @@ async def _can_review_pending_approvals(
     if not empleado_id:
         return False
     try:
-        result = await session.execute(
+        legacy_result = await session.execute(
             select(Empleado.id).where(Empleado.aprobador_id == empleado_id).limit(1)
         )
-        return result.scalar_one_or_none() is not None
+        if legacy_result.scalar_one_or_none() is not None:
+            return True
+        route_result = await session.execute(
+            text(
+                "SELECT 1 FROM documento_authorization_routes route "
+                "WHERE :employee_id IN ("
+                "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
+                ") LIMIT 1"
+            ),
+            {"employee_id": str(empleado_id)},
+        )
+        return route_result.scalar_one_or_none() is not None
     except Exception:
         logger.exception(
             "Failed to determine pending approval visibility",
@@ -29238,18 +29249,35 @@ async def documentos_pendientes(
 
     filters = [Documento.estado == 'enviado', ~already_actioned_by_current_user]
     if current_empleado.rol not in ('superadmin', 'super_admin'):
+        has_no_project_route = text(
+            "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+            "WHERE route.documento_id = documentos.id)"
+        )
         filters.append(
             or_(
-                beneficiario_alias.aprobador_id == current_empleado.id,
+                text(
+                    "EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                    "WHERE route.documento_id = documentos.id "
+                    "AND :route_employee_id IN ("
+                    "SELECT jsonb_array_elements_text(route.eligible_empleado_ids)"
+                    "))"
+                ),
                 and_(
+                    has_no_project_route,
+                    beneficiario_alias.aprobador_id == current_empleado.id,
+                ),
+                and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.is_(None),
                     solicitante_alias.aprobador_id == current_empleado.id,
                 ),
                 and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.isnot(None),
                     beneficiario_alias.aprobador_id.is_(None),
                 ),
                 and_(
+                    has_no_project_route,
                     Documento.beneficiario_empleado_id.is_(None),
                     solicitante_alias.aprobador_id.is_(None),
                 ),
@@ -29295,6 +29323,8 @@ async def documentos_pendientes(
         query.where(and_(*filters))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
     )
+    if current_empleado.rol not in ('superadmin', 'super_admin'):
+        query = query.params(route_employee_id=str(current_empleado.id))
 
     result = await session.execute(query)
     documentos = result.scalars().unique().all()

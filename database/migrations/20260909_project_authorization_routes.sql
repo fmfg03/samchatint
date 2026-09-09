@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS project_authorization_rules (
 CREATE TABLE IF NOT EXISTS documento_authorization_routes (
     documento_id UUID PRIMARY KEY REFERENCES documentos(id) ON DELETE CASCADE,
     eligible_position_keys JSONB NOT NULL,
+    eligible_empleado_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
     requires_operations_reference BOOLEAN NOT NULL DEFAULT FALSE,
     source VARCHAR(100) NOT NULL,
     resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -74,14 +75,30 @@ FROM tournaments WHERE name IN (
   'Gastos Administrativos - Administración y Finanzas',
   'Gastos Administrativos - Dirección General', 'Promoción de Negocios'
 )
-ON CONFLICT (tournament_id) DO UPDATE SET eligible_position_keys = EXCLUDED.eligible_position_keys, active = TRUE;
+ON CONFLICT (tournament_id) DO UPDATE SET
+  eligible_position_keys = EXCLUDED.eligible_position_keys,
+  requires_operations_reference = FALSE,
+  active = TRUE;
 
 -- Reprocess only the two explicitly requested live requests.  They retain
 -- Control Presupuestal; this supplies the new route and its required RO.
 INSERT INTO documento_authorization_routes(
-    documento_id, eligible_position_keys, requires_operations_reference, source
+    documento_id, eligible_position_keys, eligible_empleado_ids,
+    requires_operations_reference, source
 )
-SELECT d.id, rule.eligible_position_keys, rule.requires_operations_reference, 'migration_reprocess'
+SELECT
+  d.id,
+  rule.eligible_position_keys,
+  COALESCE((
+    SELECT jsonb_agg(assignment.empleado_id::text ORDER BY assignment.empleado_id)
+    FROM authorization_position_assignments assignment
+    WHERE assignment.active = TRUE
+      AND assignment.position_key = ANY(
+        ARRAY(SELECT jsonb_array_elements_text(rule.eligible_position_keys))
+      )
+  ), '[]'::jsonb),
+  rule.requires_operations_reference,
+  'migration_reprocess'
 FROM documentos d
 JOIN project_authorization_rules rule ON rule.tournament_id = d.torneo_id
 WHERE d.numero_referencia IN ('S-26000200', 'S-26000201')
@@ -107,4 +124,7 @@ WHERE d.id = targets.id;
 INSERT INTO project_authorization_rules(tournament_id, eligible_position_keys)
 SELECT id, '["direccion_goat", "direccion_general"]'::jsonb
 FROM tournaments WHERE name IN ('Gestión de Patrocinios', 'Gestión RRSS y Transmisiones')
-ON CONFLICT (tournament_id) DO UPDATE SET eligible_position_keys = EXCLUDED.eligible_position_keys, active = TRUE;
+ON CONFLICT (tournament_id) DO UPDATE SET
+  eligible_position_keys = EXCLUDED.eligible_position_keys,
+  requires_operations_reference = FALSE,
+  active = TRUE;
