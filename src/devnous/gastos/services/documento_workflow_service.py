@@ -257,7 +257,7 @@ async def promote_solicitudes_ready_for_payment(
     result = await session.execute(
         select(Documento).where(
             Documento.tipo == "SOLICITUD",
-            Documento.estado.in_(["borrador", "enviado"]),
+            Documento.estado.in_(["borrador", "control_presupuestal", "enviado"]),
             Documento.cuenta_gastos_id.isnot(None),
             Documento.concepto_pago.like(
                 f"{EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX}%"
