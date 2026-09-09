@@ -3639,6 +3639,20 @@ async def import_budget_concepts_upload(
         for item in concepts
         if _safe_str(item.get("id"))
     }
+    concepts_by_stable_key: dict[tuple[str, str], list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
+    concepts_by_semantic_identity: dict[
+        tuple[str, ...], list[dict[str, Any]]
+    ] = defaultdict(list)
+    for item in concepts:
+        tournament_id = _safe_str(item.get("tournament_id"))
+        concept_key = _safe_str(item.get("concept_key"))
+        if tournament_id and concept_key:
+            concepts_by_stable_key[(tournament_id, concept_key)].append(item)
+        identity = budget_concept_semantic_identity(item)
+        if identity is not None:
+            concepts_by_semantic_identity[identity].append(item)
     prepared_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     for index, row in enumerate(rows, start=2):
@@ -3746,6 +3760,11 @@ async def import_budget_concepts_upload(
                 errors.append(f"Fila {index}: {exc}")
                 continue
         if existing is None:
+            stable_key = (
+                tournament_id,
+                _scoped_budget_concept_key(partida, sub_proyecto),
+            )
+            stable_matches = concepts_by_stable_key.get(stable_key, [])
             candidate_identity = budget_concept_semantic_identity(
                 {
                     "tournament_id": tournament_id,
@@ -3757,19 +3776,22 @@ async def import_budget_concepts_upload(
                     ),
                 }
             )
-            semantic_matches = [
-                item
-                for item in concepts
-                if budget_concept_semantic_identity(item) == candidate_identity
-            ]
-            if len(semantic_matches) > 1:
+            semantic_matches = concepts_by_semantic_identity.get(
+                candidate_identity, []
+            )
+            matches_by_id = {
+                _safe_str(item.get("id")): item
+                for item in [*stable_matches, *semantic_matches]
+                if _safe_str(item.get("id"))
+            }
+            if len(matches_by_id) > 1:
                 errors.append(
                     f"Fila {index}: el catálogo contiene partidas duplicadas; "
                     "depúrelas antes de importar."
                 )
                 continue
-            if semantic_matches:
-                existing = semantic_matches[0]
+            if matches_by_id:
+                existing = next(iter(matches_by_id.values()))
         prepared_rows.append(
             {
                 "concept_id": _safe_str((existing or {}).get("id"))

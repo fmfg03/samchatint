@@ -34,6 +34,7 @@ from samchat.budgets.deduplication import (  # noqa: E402
 REFERENCE_TABLES = (
     "budget_cfdi_income_links",
     "budget_lines",
+    "budget_movement_assignments",
     "documentos",
     "expense_reports",
 )
@@ -69,6 +70,8 @@ async def _catalog_rows(session: Any) -> list[dict[str, Any]]:
                    (SELECT count(*) FROM budget_cfdi_income_links x
                      WHERE x.budget_concept_id = bc.id)
                    + (SELECT count(*) FROM budget_lines x
+                      WHERE x.budget_concept_id = bc.id)
+                   + (SELECT count(*) FROM budget_movement_assignments x
                       WHERE x.budget_concept_id = bc.id)
                    + (SELECT count(*) FROM documentos x
                       WHERE x.budget_concept_id = bc.id)

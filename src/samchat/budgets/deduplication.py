@@ -43,15 +43,18 @@ def is_valid_budget_concept_identifier(value: Any) -> bool:
 
 
 def budget_concept_phase_identity(metadata: Any) -> str:
-    """Extract the first visible phase/subproject from catalog metadata."""
+    """Build an order-independent identity from all visible scope labels."""
     payload = metadata if isinstance(metadata, dict) else {}
+    normalized_labels: set[str] = set()
     for key in ("applicable_phase_labels", "applicable_subproject_labels"):
         labels = payload.get(key)
         if isinstance(labels, list):
             for label in labels:
                 normalized = normalize_budget_identity_value(label)
                 if normalized:
-                    return normalized
+                    normalized_labels.add(normalized)
+    if normalized_labels:
+        return "|".join(sorted(normalized_labels))
     return normalize_budget_identity_value(payload.get("ssot_subproyecto"))
 
 
