@@ -17,6 +17,12 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from samchat.budgets.deduplication import (
+    budget_concept_semantic_identity,
+    is_valid_budget_concept_identifier,
+    normalize_budget_identity_value,
+)
+
 _ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BUDGET_ARTIFACT = (
     _ROOT / "Conta2025" / "reportes_2025" / "borrador_presupuesto_2026.csv"
@@ -3633,19 +3639,14 @@ async def import_budget_concepts_upload(
         for item in concepts
         if _safe_str(item.get("id"))
     }
-    concepts_by_scope = {
-        (
-            _safe_str(item.get("tournament_id")),
-            _safe_str(item.get("concept_key")),
-            _budget_catalog_scope_key_from_metadata(item.get("metadata")),
-        ): item
-        for item in concepts
-    }
-
     prepared_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     for index, row in enumerate(rows, start=2):
-        concept_id = _safe_str(_pick_upload_value(row, "id", "concept_id"))
+        raw_concept_id = _pick_upload_value(row, "id", "concept_id")
+        concept_id = _safe_str(raw_concept_id)
+        if not is_valid_budget_concept_identifier(raw_concept_id):
+            errors.append(f"Fila {index}: id de partida inválido.")
+            continue
         partida = _safe_str(
             _pick_upload_value(row, "partida", "concepto", "concept_name")
         )
@@ -3745,14 +3746,30 @@ async def import_budget_concepts_upload(
                 errors.append(f"Fila {index}: {exc}")
                 continue
         if existing is None:
-            scoped_concept_key = _scoped_budget_concept_key(partida, sub_proyecto)
-            existing = concepts_by_scope.get(
-                (
-                    tournament_id,
-                    scoped_concept_key,
-                    _normalize_budget_scope_key(sub_proyecto),
-                )
+            candidate_identity = budget_concept_semantic_identity(
+                {
+                    "tournament_id": tournament_id,
+                    "concept_name": partida,
+                    "budget_direction": budget_direction,
+                    "cuenta_contable_id": cuenta_id,
+                    "metadata": build_budget_concept_scope_metadata(
+                        [sub_proyecto] if sub_proyecto else []
+                    ),
+                }
             )
+            semantic_matches = [
+                item
+                for item in concepts
+                if budget_concept_semantic_identity(item) == candidate_identity
+            ]
+            if len(semantic_matches) > 1:
+                errors.append(
+                    f"Fila {index}: el catálogo contiene partidas duplicadas; "
+                    "depúrelas antes de importar."
+                )
+                continue
+            if semantic_matches:
+                existing = semantic_matches[0]
         prepared_rows.append(
             {
                 "concept_id": _safe_str((existing or {}).get("id"))
