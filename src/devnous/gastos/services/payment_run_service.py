@@ -325,6 +325,8 @@ def _status_for_row(
         return "pagada"
     if estado == "en_proceso_pago" or row.get("closure_id"):
         return "en proceso de pago"
+    if estado != "aprobado":
+        return estado.replace("_", " ") or "no elegible"
     fecha_pago = row.get("fecha_pago")
     today = today or date.today()
     if isinstance(fecha_pago, date) and fecha_pago < today:
@@ -375,7 +377,12 @@ async def list_payment_run_items(
         filters.append("d.pagado_en IS NULL")
     elif normalized_status == "pagadas":
         filters.append("(d.estado = 'pagado' OR d.pagado_en IS NOT NULL)")
-    elif normalized_status != "todas":
+    elif normalized_status == "todas":
+        filters.append(
+            "(d.estado IN ('aprobado', 'en_proceso_pago', 'pagado') "
+            "OR d.pagado_en IS NOT NULL OR ci.documento_id IS NOT NULL)"
+        )
+    else:
         filters.append("d.estado = 'aprobado'")
         filters.append("d.pagado_en IS NULL")
         filters.append("ci.documento_id IS NULL")
