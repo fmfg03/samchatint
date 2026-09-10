@@ -8,7 +8,6 @@ import asyncio
 import hashlib
 import json
 import os
-import sys
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -358,8 +357,16 @@ def main() -> int:
     parser.add_argument("--commit", default="unknown")
     parser.add_argument("--limit", type=int, default=100)
     parser.add_argument("--statement-timeout-ms", type=int, default=30_000)
-    receipt = asyncio.run(_run(parser.parse_args()))
-    print(json.dumps({"output": sys.argv[sys.argv.index("--output") + 1], "exception_count": receipt["exception_count"]}))
+    args = parser.parse_args()
+    receipt = asyncio.run(_run(args))
+    print(
+        json.dumps(
+            {
+                "output": str(_validate_output_path(args.output)),
+                "exception_count": receipt["exception_count"],
+            }
+        )
+    )
     return 0
 
 

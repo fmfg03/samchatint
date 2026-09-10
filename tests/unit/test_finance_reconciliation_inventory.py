@@ -1,6 +1,7 @@
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import re
+import sys
 
 import pytest
 
@@ -27,7 +28,7 @@ def test_inventory_query_plan_is_observational_and_covers_required_domains():
     for item in plan:
         sql = item["sql"].upper()
         assert sql.lstrip().startswith(("SELECT", "WITH"))
-        assert not any(re.search(rf"\\b{token}\\b", sql) for token in forbidden)
+        assert not any(re.search(rf"\b{token}\b", sql) for token in forbidden)
 
 
 def test_inventory_excludes_payroll_from_cxc_by_classifying_it_for_finance():
@@ -50,3 +51,17 @@ def test_inventory_requires_receipt_outside_repository(tmp_path):
     assert MODULE._validate_output_path(str(outside)) == outside.resolve()
     with pytest.raises(SystemExit, match="output_path_must_be_outside_repository"):
         MODULE._validate_output_path(str(Path("finance-receipt.json")))
+
+
+def test_main_accepts_equals_style_output_argument(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "receipt.json"
+
+    async def fake_run(args):
+        assert args.output == str(output)
+        return {"exception_count": 7}
+
+    monkeypatch.setattr(MODULE, "_run", fake_run)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), f"--output={output}", "--env-file", "/tmp/env"])
+
+    assert MODULE.main() == 0
+    assert '"exception_count": 7' in capsys.readouterr().out
