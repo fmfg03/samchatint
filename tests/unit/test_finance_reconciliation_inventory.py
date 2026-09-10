@@ -1,0 +1,83 @@
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import re
+import sys
+
+import pytest
+
+
+SCRIPT = Path("scripts/audit_finance_reconciliation_inventory.py")
+SPEC = spec_from_file_location("finance_reconciliation_inventory", SCRIPT)
+assert SPEC and SPEC.loader
+MODULE = module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+def test_inventory_query_plan_is_observational_and_covers_required_domains():
+    plan = MODULE._query_plan()
+    names = {item["name"] for item in plan}
+    assert {
+        "document_states",
+        "cfdi_type_counts",
+        "ar_match_states",
+        "bank_movement_states",
+        "payment_run_closure_states",
+        "poliza_origins",
+    }.issubset(names)
+    forbidden = ("INSERT", "UPDATE", "DELETE", "ALTER", "CREATE", "DROP", "TRUNCATE")
+    for item in plan:
+        sql = item["sql"].upper()
+        assert sql.lstrip().startswith(("SELECT", "WITH"))
+        assert not any(re.search(rf"\b{token}\b", sql) for token in forbidden)
+
+
+def test_inventory_excludes_payroll_from_cxc_by_classifying_it_for_finance():
+    payroll_query = next(
+        item for item in MODULE._query_plan() if item["name"] == "payroll_cfdi_in_cxc"
+    )
+    assert payroll_query["classification"] == "FINANCE_DECISION"
+    assert "tipo_de_comprobante" in payroll_query["sql"]
+    assert "'N'" in payroll_query["sql"]
+
+
+def test_exception_queries_report_total_candidates_before_limiting_references():
+    for item in MODULE._query_plan():
+        if item["kind"] == "exception":
+            assert "COUNT(*) OVER() AS total_candidates" in item["sql"]
+
+
+def test_outflow_inventory_honors_both_accepted_treasury_match_types():
+    outflow_query = next(
+        item
+        for item in MODULE._query_plan()
+        if item["name"] == "bank_outflows_without_paid_request_match"
+    )
+    assert "accept_treasury_cfdi_match" in outflow_query["sql"]
+    assert "undo_treasury_cfdi_match" in outflow_query["sql"]
+
+
+def test_inventory_transaction_uses_repeatable_read_and_read_only():
+    assert MODULE.READ_ONLY_TRANSACTION_SQL == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+    )
+
+
+def test_inventory_requires_receipt_outside_repository(tmp_path):
+    outside = tmp_path / "receipt.json"
+    assert MODULE._validate_output_path(str(outside)) == outside.resolve()
+    with pytest.raises(SystemExit, match="output_path_must_be_outside_repository"):
+        MODULE._validate_output_path(str(Path("finance-receipt.json")))
+
+
+def test_main_accepts_equals_style_output_argument(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "receipt.json"
+
+    async def fake_run(args):
+        assert args.output == str(output)
+        return {"exception_count": 7}
+
+    monkeypatch.setattr(MODULE, "_run", fake_run)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), f"--output={output}", "--env-file", "/tmp/env"])
+
+    assert MODULE.main() == 0
+    assert '"exception_count": 7' in capsys.readouterr().out
