@@ -51,6 +51,8 @@ def test_routes_snapshot_employee_holders_and_resubmission_recomputes_route():
     assert "await invalidate_document_route(session, documento.id)" in workflow
     assert "eligible_empleado_ids JSONB NOT NULL" in migration
     assert "ADD COLUMN IF NOT EXISTS eligible_empleado_ids" in migration
+    assert "UPDATE documento_authorization_routes route" in migration
+    assert "ON CONFLICT (documento_id) DO UPDATE SET" in migration
     assert "requires_operations_reference = FALSE" in migration
 
 

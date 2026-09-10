@@ -61,6 +61,19 @@ SELECT 'direccion_general', id FROM empleados
 WHERE nombre = 'FEDERICO GONZALEZ Y VEGA'
 ON CONFLICT (position_key, empleado_id) DO UPDATE SET active = TRUE;
 
+-- Releases created before holder snapshots retain the route's position keys.
+-- Reconstruct their eligible employees before the new authorization checks run.
+UPDATE documento_authorization_routes route
+SET eligible_empleado_ids = COALESCE((
+    SELECT jsonb_agg(assignment.empleado_id::text ORDER BY assignment.empleado_id)
+    FROM authorization_position_assignments assignment
+    WHERE assignment.active = TRUE
+      AND assignment.position_key = ANY(
+        ARRAY(SELECT jsonb_array_elements_text(route.eligible_position_keys))
+      )
+), '[]'::jsonb)
+WHERE route.eligible_empleado_ids = '[]'::jsonb;
+
 INSERT INTO project_authorization_rules(tournament_id, eligible_position_keys, requires_operations_reference)
 SELECT id, '["director_operaciones"]'::jsonb, TRUE
 FROM tournaments WHERE name IN (
@@ -107,7 +120,12 @@ SELECT
 FROM documentos d
 JOIN project_authorization_rules rule ON rule.tournament_id = d.torneo_id
 WHERE d.numero_referencia IN ('S-26000200', 'S-26000201')
-ON CONFLICT (documento_id) DO NOTHING;
+ON CONFLICT (documento_id) DO UPDATE SET
+  eligible_position_keys = EXCLUDED.eligible_position_keys,
+  eligible_empleado_ids = EXCLUDED.eligible_empleado_ids,
+  requires_operations_reference = EXCLUDED.requires_operations_reference,
+  source = EXCLUDED.source,
+  resolved_at = NOW();
 
 SELECT pg_advisory_xact_lock(5842910472931);
 WITH next_reference AS (
