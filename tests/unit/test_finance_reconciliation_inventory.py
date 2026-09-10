@@ -46,6 +46,22 @@ def test_exception_queries_report_total_candidates_before_limiting_references():
             assert "COUNT(*) OVER() AS total_candidates" in item["sql"]
 
 
+def test_outflow_inventory_honors_both_accepted_treasury_match_types():
+    outflow_query = next(
+        item
+        for item in MODULE._query_plan()
+        if item["name"] == "bank_outflows_without_paid_request_match"
+    )
+    assert "accept_treasury_cfdi_match" in outflow_query["sql"]
+    assert "undo_treasury_cfdi_match" in outflow_query["sql"]
+
+
+def test_inventory_transaction_uses_repeatable_read_and_read_only():
+    assert MODULE.READ_ONLY_TRANSACTION_SQL == (
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+    )
+
+
 def test_inventory_requires_receipt_outside_repository(tmp_path):
     outside = tmp_path / "receipt.json"
     assert MODULE._validate_output_path(str(outside)) == outside.resolve()

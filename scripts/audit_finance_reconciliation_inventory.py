@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
 ROOT = Path(__file__).resolve().parents[1]
+READ_ONLY_TRANSACTION_SQL = "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
 
 
 def _load_env_file(path: str | None) -> None:
@@ -208,7 +209,9 @@ def _query_plan() -> list[dict[str, str]]:
                            bank_movement_id, action
                     FROM reconciliation_audit_logs
                     WHERE action IN (
+                        'accept_treasury_cfdi_match',
                         'accept_treasury_payment_request_match',
+                        'undo_treasury_cfdi_match',
                         'undo_treasury_payment_request_match'
                     )
                     ORDER BY bank_movement_id, created_at DESC
@@ -222,7 +225,10 @@ def _query_plan() -> list[dict[str, str]]:
                 LEFT JOIN latest_treasury latest
                   ON latest.bank_movement_id = movement.id
                 WHERE movement.signo = '-'
-                  AND COALESCE(latest.action, '') <> 'accept_treasury_payment_request_match'
+                  AND COALESCE(latest.action, '') NOT IN (
+                      'accept_treasury_cfdi_match',
+                      'accept_treasury_payment_request_match'
+                  )
                 ORDER BY movement.fecha NULLS LAST, movement.id
                 LIMIT :limit
             """,
@@ -316,7 +322,7 @@ async def _run(args: argparse.Namespace) -> dict[str, Any]:
     maker = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with maker() as session:
-            await session.execute(text("SET TRANSACTION READ ONLY"))
+            await session.execute(text(READ_ONLY_TRANSACTION_SQL))
             await session.execute(text(f"SET LOCAL statement_timeout = {timeout_ms}"))
             aggregates, exception_summary, exceptions = await _run_queries(
                 session, limit=row_limit
