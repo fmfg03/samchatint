@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS documento_authorization_routes (
     resolved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Existing deployments created this table before route holders were snapshotted.
+-- CREATE TABLE IF NOT EXISTS does not evolve that schema.
+ALTER TABLE documento_authorization_routes
+    ADD COLUMN IF NOT EXISTS eligible_empleado_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+
 INSERT INTO authorization_positions(position_key, label) VALUES
   ('director_operaciones', 'Director de Operaciones'),
   ('direccion_administracion_finanzas', 'Dirección de Administración y Finanzas'),
