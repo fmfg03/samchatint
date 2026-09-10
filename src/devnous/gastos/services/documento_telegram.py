@@ -587,6 +587,12 @@ async def resolve_workflow_approval_notification_recipients(
     recipients: list[Empleado] = []
     seen: set[Any] = set()
 
+    from .project_authorization_service import route_approvers_for_document
+
+    route_approvers = await route_approvers_for_document(session, documento.id)
+    if route_approvers is not None:
+        return [employee for employee in route_approvers if employee is not None]
+
     approval_subject = approval_subject_empleado(documento)
     subject_approver_id = (
         getattr(approval_subject, "aprobador_id", None)
@@ -850,6 +856,32 @@ def approver_can_see_document_in_queue(empleado: Empleado, documento: Documento)
     return approval_subject.aprobador_id == empleado.id
 
 
+async def approver_can_see_document_in_queue_live(
+    session: AsyncSession, empleado: Empleado, documento: Documento
+) -> bool:
+    """Apply a persisted project route before falling back to the legacy lane."""
+    if documento.estado != "enviado":
+        return False
+    if (getattr(empleado, "rol", "") or "").strip().lower() in SUPERADMIN_ROLES:
+        return True
+    from .project_authorization_service import actor_is_route_approver
+
+    route_exists = (
+        await session.execute(
+            text(
+                "SELECT 1 FROM documento_authorization_routes "
+                "WHERE documento_id = :documento_id"
+            ),
+            {"documento_id": str(documento.id)},
+        )
+    ).scalar_one_or_none()
+    if route_exists is not None:
+        return await actor_is_route_approver(
+            session, actor_id=empleado.id, documento_id=documento.id
+        )
+    return approver_can_see_document_in_queue(empleado, documento)
+
+
 def requester_can_view_document(empleado: Empleado, documento: Documento) -> bool:
     return documento.empleado_id == empleado.id
 
@@ -880,6 +912,10 @@ async def query_pending_documentos_for_approver(
 
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
+    has_no_project_route = text(
+        "NOT EXISTS (SELECT 1 FROM documento_authorization_routes route "
+        "WHERE route.documento_id = documentos.id)"
+    )
     result = await session.execute(
         select(Documento)
         .options(*base_opts)
@@ -892,14 +928,24 @@ async def query_pending_documentos_for_approver(
             and_(
                 Documento.estado == "enviado",
                 or_(
-                    beneficiario_alias.aprobador_id == empleado.id,
+                    text(
+                        "EXISTS (SELECT 1 FROM documento_authorization_routes route "
+                        "WHERE route.documento_id = documentos.id "
+                        "AND :route_employee_id IN (SELECT jsonb_array_elements_text(route.eligible_empleado_ids)))"
+                    ),
                     and_(
+                        has_no_project_route,
+                        beneficiario_alias.aprobador_id == empleado.id,
+                    ),
+                    and_(
+                        has_no_project_route,
                         Documento.beneficiario_empleado_id.is_(None),
                         solicitante_alias.aprobador_id == empleado.id,
                     ),
                 ),
             )
         )
+        .params(route_employee_id=str(empleado.id))
         .order_by(Documento.enviado_en.desc().nulls_last(), Documento.creado_en.desc())
         .limit(limit)
     )

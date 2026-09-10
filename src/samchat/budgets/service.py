@@ -17,6 +17,12 @@ from openpyxl import Workbook, load_workbook
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from samchat.budgets.deduplication import (
+    budget_concept_semantic_identity,
+    is_valid_budget_concept_identifier,
+    normalize_budget_identity_value,
+)
+
 _ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BUDGET_ARTIFACT = (
     _ROOT / "Conta2025" / "reportes_2025" / "borrador_presupuesto_2026.csv"
@@ -3633,19 +3639,28 @@ async def import_budget_concepts_upload(
         for item in concepts
         if _safe_str(item.get("id"))
     }
-    concepts_by_scope = {
-        (
-            _safe_str(item.get("tournament_id")),
-            _safe_str(item.get("concept_key")),
-            _budget_catalog_scope_key_from_metadata(item.get("metadata")),
-        ): item
-        for item in concepts
-    }
-
+    concepts_by_stable_key: dict[tuple[str, str], list[dict[str, Any]]] = (
+        defaultdict(list)
+    )
+    concepts_by_semantic_identity: dict[
+        tuple[str, ...], list[dict[str, Any]]
+    ] = defaultdict(list)
+    for item in concepts:
+        tournament_id = _safe_str(item.get("tournament_id"))
+        concept_key = _safe_str(item.get("concept_key"))
+        if tournament_id and concept_key:
+            concepts_by_stable_key[(tournament_id, concept_key)].append(item)
+        identity = budget_concept_semantic_identity(item)
+        if identity is not None:
+            concepts_by_semantic_identity[identity].append(item)
     prepared_rows: list[dict[str, Any]] = []
     errors: list[str] = []
     for index, row in enumerate(rows, start=2):
-        concept_id = _safe_str(_pick_upload_value(row, "id", "concept_id"))
+        raw_concept_id = _pick_upload_value(row, "id", "concept_id")
+        concept_id = _safe_str(raw_concept_id)
+        if not is_valid_budget_concept_identifier(raw_concept_id):
+            errors.append(f"Fila {index}: id de partida inválido.")
+            continue
         partida = _safe_str(
             _pick_upload_value(row, "partida", "concepto", "concept_name")
         )
@@ -3745,14 +3760,38 @@ async def import_budget_concepts_upload(
                 errors.append(f"Fila {index}: {exc}")
                 continue
         if existing is None:
-            scoped_concept_key = _scoped_budget_concept_key(partida, sub_proyecto)
-            existing = concepts_by_scope.get(
-                (
-                    tournament_id,
-                    scoped_concept_key,
-                    _normalize_budget_scope_key(sub_proyecto),
-                )
+            stable_key = (
+                tournament_id,
+                _scoped_budget_concept_key(partida, sub_proyecto),
             )
+            stable_matches = concepts_by_stable_key.get(stable_key, [])
+            candidate_identity = budget_concept_semantic_identity(
+                {
+                    "tournament_id": tournament_id,
+                    "concept_name": partida,
+                    "budget_direction": budget_direction,
+                    "cuenta_contable_id": cuenta_id,
+                    "metadata": build_budget_concept_scope_metadata(
+                        [sub_proyecto] if sub_proyecto else []
+                    ),
+                }
+            )
+            semantic_matches = concepts_by_semantic_identity.get(
+                candidate_identity, []
+            )
+            matches_by_id = {
+                _safe_str(item.get("id")): item
+                for item in [*stable_matches, *semantic_matches]
+                if _safe_str(item.get("id"))
+            }
+            if len(matches_by_id) > 1:
+                errors.append(
+                    f"Fila {index}: el catálogo contiene partidas duplicadas; "
+                    "depúrelas antes de importar."
+                )
+                continue
+            if matches_by_id:
+                existing = next(iter(matches_by_id.values()))
         prepared_rows.append(
             {
                 "concept_id": _safe_str((existing or {}).get("id"))
@@ -4815,6 +4854,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
                 budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 amount NUMERIC(18,2) NOT NULL DEFAULT 0,
                 income_date TIMESTAMPTZ NOT NULL,
+                budget_month SMALLINT NULL CHECK (budget_month BETWEEN 1 AND 12),
                 linked_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL,
                 source VARCHAR(80) NOT NULL DEFAULT 'admin_ui',
                 status VARCHAR(40) NOT NULL DEFAULT 'pending_approval',
@@ -4846,6 +4886,7 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
     )
     await session.execute(text("ALTER TABLE budget_concepts ADD COLUMN IF NOT EXISTS cxc_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL"))
     for column_sql in (
+        "ADD COLUMN IF NOT EXISTS budget_month SMALLINT NULL CHECK (budget_month BETWEEN 1 AND 12)",
         "ADD COLUMN IF NOT EXISTS status VARCHAR(40) NOT NULL DEFAULT 'pending_approval'",
         "ADD COLUMN IF NOT EXISTS approved_by_empleado_id UUID NULL REFERENCES empleados(id) ON UPDATE CASCADE ON DELETE SET NULL",
         "ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ NULL",
@@ -4858,6 +4899,11 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         "ADD COLUMN IF NOT EXISTS collection_poliza_id UUID NULL REFERENCES accounting_polizas(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ):
         await session.execute(text(f"ALTER TABLE budget_cfdi_income_links {column_sql}"))
+    await session.execute(text("""
+        UPDATE budget_cfdi_income_links
+        SET budget_month = EXTRACT(MONTH FROM income_date)::smallint
+        WHERE budget_month IS NULL AND income_date IS NOT NULL
+    """))
     # Links created by the prior workflow already have a CxC policy. Preserve
     # their recognized-income semantics when introducing approval states.
     await session.execute(text("""
@@ -4934,6 +4980,12 @@ async def ensure_budget_schema(session: AsyncSession) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_income_date "
             "ON budget_cfdi_income_links(income_date)"
+        )
+    )
+    await session.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_budget_cfdi_income_links_budget_month "
+            "ON budget_cfdi_income_links(budget_version_id, budget_month)"
         )
     )
     await session.execute(
@@ -8005,7 +8057,7 @@ async def build_budget_actuals_snapshot(
         "l.budget_version_id = CAST(:version_id AS uuid)",
         "b.budget_version_id = CAST(:version_id AS uuid)",
         "b.unlinked_at IS NULL",
-        "EXTRACT(YEAR FROM b.income_date)::int = :edition_year",
+        "b.budget_month IS NOT NULL",
         "NOT EXISTS (SELECT 1 FROM accounting_polizas ap "
         "WHERE ap.origen = 'cxc_cfdi_income' "
         "AND ap.cfdi_report_id = b.cfdi_report_id)",
@@ -8039,12 +8091,13 @@ async def build_budget_actuals_snapshot(
                                :unassigned_key
                            ) AS concept_key,
                            b.income_date AS recognized_at,
+                           b.budget_month AS budget_month,
                            SUM(b.amount) AS income_total
                     FROM budget_cfdi_income_links b
                     JOIN budget_lines l ON l.id = b.budget_line_id
                     WHERE {' AND '.join(cfdi_filters)}
                       AND b.status = 'approved'
-                    GROUP BY 1, b.income_date
+                    GROUP BY 1, b.income_date, b.budget_month
                     """
                 ),
                 params,
@@ -8054,7 +8107,7 @@ async def build_budget_actuals_snapshot(
         .all()
     )
     for row in cfdi_rows:
-        week = _budget_week_number(row["recognized_at"], edition_year)
+        week = int(row.get("budget_month") or _budget_week_number(row["recognized_at"], edition_year))
         _merge_monthly_actual(
             store,
             concept_key=_safe_str(row["concept_key"])
