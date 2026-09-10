@@ -975,6 +975,24 @@ def test_budget_control_releases_draft_reimbursement_after_assignment() -> None:
     assert "preparada para programación de pagos" in helper_block
 
 
+def test_reimbursement_promotion_requires_inherited_budget_concept() -> None:
+    workflow_source = Path(
+        "src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+    helper_start = workflow_source.index(
+        "async def approve_reimbursement_solicitud_for_approved_informe"
+    )
+    helper_end = workflow_source.index(
+        "async def _document_has_recorded_approval", helper_start
+    )
+    helper_block = workflow_source[helper_start:helper_end]
+
+    assert 'or not getattr(informe, "budget_concept_id", None)' in helper_block
+    assert helper_block.index('or not getattr(informe, "budget_concept_id", None)') < (
+        helper_block.index("_auto_approve_solicitud_with_approved_informe")
+    )
+
+
 def test_payment_run_sweep_recovers_reimbursements_stuck_in_budget_control() -> None:
     workflow_source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"

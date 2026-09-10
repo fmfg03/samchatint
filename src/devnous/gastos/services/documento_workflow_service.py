@@ -191,7 +191,11 @@ async def approve_reimbursement_solicitud_for_approved_informe(
 ) -> Optional[Aprobacion]:
     """Approve a reimbursement solicitud using the linked informe approval."""
     informe = await _sync_reimbursement_budget_from_informe(session, documento)
-    if informe is None or informe.estado != "aprobado":
+    if (
+        informe is None
+        or informe.estado != "aprobado"
+        or not getattr(informe, "budget_concept_id", None)
+    ):
         return None
     aprobador_id = await _linked_informe_approval_actor_id(session, documento)
     if aprobador_id is None:
