@@ -14,18 +14,18 @@ invoices and customer acceptance records as primary evidence.
 
 ## Closure matrix
 
-| Area | Current evidence level | Closing evidence still required | Owner |
-| --- | --- | --- | --- |
-| Gastos, approvals, Payment Run | deployed verified | Finance UAT by role and real evidence | Finance |
-| Budgets and reconciliation | deployed verified in selected flows | reconciliation ledger closure and Finance acceptance | Finance + Accounting |
-| CxC, CFDI and collections | repo/live surfaces and recent deployment | issued-CFDI and collection UAT | Finance |
-| Cashflow and banks | deployed read model | bank-source completeness and forecast acceptance | Treasury + Finance |
-| Payroll and AMEX | connected components | operational/accounting UAT | Finance + Payroll |
-| Governed assistant | repo live, mostly read/preview | accepted controlled end-to-end outcome; no broad write authority | Direction + Product |
-| Owner Pack and SOUL | connected read models | source coverage and durable publication evidence | Operations |
-| FMF, scheduling, logistics | partial/proposal | explicit integration or scoped exclusion | Direction |
-| Sponsor/media | partial/projection | persistent approvals, external publication and proof cycle, or exclusion | Commercial + Marketing |
-| Training, support, handoff | partial documentation | attendance, access inventory, support terms and acceptance act | Direction + Commercial |
+| Area | Current evidence level | Qualification or caveat | Closing evidence still required | Owner |
+| --- | --- | --- | --- | --- |
+| Gastos, approvals, Payment Run | `deployed_verified` | Runtime release evidence exists; Finance role UAT remains pending. | Finance UAT by role and real evidence | Finance |
+| Budgets and reconciliation | `deployed_verified` | Verified only in selected flows; ledger closure remains pending. | reconciliation ledger closure and Finance acceptance | Finance + Accounting |
+| CxC, CFDI and collections | `repo_live` | Repo/live surfaces and recent deployment exist; issued-CFDI and collection treatment remains unaccepted. | issued-CFDI and collection UAT | Finance |
+| Cashflow and banks | `deployed_verified` | Deployed read model; bank-source completeness and forecast acceptance remain unverified. | bank-source completeness and forecast acceptance | Treasury + Finance |
+| Payroll and AMEX | `repo_live` | Components are connected; operational/accounting treatment remains unaccepted. | operational/accounting UAT | Finance + Payroll |
+| Governed assistant | `repo_live` | Mostly read/preview; controlled end-to-end acceptance and write limits remain pending. | accepted controlled end-to-end outcome; no broad write authority | Direction + Product |
+| Owner Pack and SOUL | `repo_live` | Read models are connected; source coverage and durable publication evidence remain pending. | source coverage and durable publication evidence | Operations |
+| FMF, scheduling, logistics | `proposal` | Only partial/proposal evidence is known. | explicit integration or scoped exclusion | Direction |
+| Sponsor/media | `proposal` | Current state is partial/projection rather than demonstrated delivery. | persistent approvals, external publication and proof cycle, or exclusion | Commercial + Marketing |
+| Training, support, handoff | `proposal` | Documentation is partial; no attendance or acceptance evidence is known. | attendance, access inventory, support terms and acceptance act | Direction + Commercial |
 
 ## Required closeout package
 
