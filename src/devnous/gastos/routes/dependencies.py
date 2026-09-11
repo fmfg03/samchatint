@@ -17,6 +17,7 @@ from ..services.access_control_service import can_access_path, visible_tools_for
 from ..services.payment_run_service import can_access_payment_run
 
 logger = logging.getLogger(__name__)
+ROUTE_OWNED_AUTHORIZATION_PREFIXES = ("/direccion/",)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -34,6 +35,16 @@ def _login_redirect_for_request(request: Request) -> str:
 def _normalize_role(value: Any) -> str:
     """Normalize role strings for consistent comparisons."""
     return (str(value or "")).strip().lower()
+
+
+def _uses_route_owned_authorization(path: str) -> bool:
+    """Return whether a route owns scoped authorization after authentication.
+
+    These routes still require a session and active employee here. Their
+    position, portfolio, tournament, and action decisions are enforced by the
+    owning route guard rather than role-default middleware policy.
+    """
+    return (path or "").startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
 
 
 def set_db_session_maker(session_maker):
@@ -226,11 +237,15 @@ async def get_current_empleado(
     try:
         empleado.visible_tool_keys = await visible_tools_for(session, empleado)
         request_path = str(getattr(request.url, "path", "") or "")
-        empleado.can_access_path = await can_access_path(
-            session,
-            empleado,
-            request_path,
-            str(getattr(request, "method", "GET") or "GET"),
+        empleado.can_access_path = (
+            True
+            if _uses_route_owned_authorization(request_path)
+            else await can_access_path(
+                session,
+                empleado,
+                request_path,
+                str(getattr(request, "method", "GET") or "GET"),
+            )
         )
         if (
             not empleado.can_access_path
