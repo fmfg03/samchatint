@@ -27106,7 +27106,7 @@ async def editar_gasto_form(
                 <div style="margin-top:10px;">
                     <input type="hidden" name="return_to" value="{escape(safe_return_to)}">
                     <label for="motivo_eliminar_no_deducible">Motivo para retirar el comprobante</label>
-                    <input type="text" name="motivo" id="motivo_eliminar_no_deducible" {disabled_attr}>
+                    <input type="text" name="motivo_eliminacion" id="motivo_eliminar_no_deducible" {disabled_attr}>
                     <button type="submit" formaction="/gastos/{expense.id}/comprobante-no-deducible/eliminar" formmethod="post" class="button secondary" {disabled_attr}>Eliminar comprobante</button>
                 </div>
             </div>
@@ -28274,7 +28274,7 @@ async def eliminar_comprobante_no_deducible(
     gasto_id: UUIDType,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    motivo: str = Form(...),
+    motivo_eliminacion: str = Form(...),
     return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Logically remove the current proof; its binary and audit history remain."""
@@ -28300,7 +28300,7 @@ async def eliminar_comprobante_no_deducible(
             session,
             gasto_id=gasto_id,
             actor_id=current_empleado.id,
-            motivo=motivo,
+            motivo=motivo_eliminacion,
         )
         if (expense.numero_factura or "").strip().lower() == "no facturable":
             expense.numero_factura = None

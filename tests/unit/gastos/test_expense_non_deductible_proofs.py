@@ -16,14 +16,15 @@ from devnous.gastos.services.expense_non_deductible_service import (
 )
 
 
-ROUTES = Path("src/devnous/gastos/routes/user_routes.py").read_text(encoding="utf-8")
-SERVICE = Path(
-    "src/devnous/gastos/services/expense_non_deductible_service.py"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+ROUTES = (REPO_ROOT / "src/devnous/gastos/routes/user_routes.py").read_text(encoding="utf-8")
+SERVICE = (
+    REPO_ROOT / "src/devnous/gastos/services/expense_non_deductible_service.py"
 ).read_text(encoding="utf-8")
-CFDI_SERVICE = Path(
-    "src/devnous/gastos/services/cfdi_expense_link_service.py"
+CFDI_SERVICE = (
+    REPO_ROOT / "src/devnous/gastos/services/cfdi_expense_link_service.py"
 ).read_text(encoding="utf-8")
-SCHEMA_GUARD = Path("src/devnous/gastos/schema_guard.py").read_text(encoding="utf-8")
+SCHEMA_GUARD = (REPO_ROOT / "src/devnous/gastos/schema_guard.py").read_text(encoding="utf-8")
 
 
 def test_non_deductible_proof_is_dedicated_and_auditable() -> None:
