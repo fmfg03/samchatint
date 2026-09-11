@@ -8,17 +8,28 @@ from __future__ import annotations
 
 import logging
 import re
-from uuid import UUID
 from typing import Optional
+from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import CFDIReport, Documento, ExpenseReport
+from ..models import Aprobacion, CFDIReport, Documento, ExpenseReport
 
 logger = logging.getLogger(__name__)
 
 _CFDI_UUID_PREFIX_RE = re.compile(r"^[0-9a-fA-F]{8}$")
+
+
+class ExpenseCFDIDuplicateError(ValueError):
+    """A fiscal UUID is already linked to another active expense."""
+
+    def __init__(self, fiscal_uuid: str):
+        self.fiscal_uuid = fiscal_uuid
+        super().__init__(
+            "La factura ya está vinculada a otra partida activa. "
+            "Confirma factura compartida e indica el motivo para continuar."
+        )
 
 # PostgreSQL: link any pending expense that has a manual fiscal UUID to a CFDI
 # row by UUID string.
@@ -109,11 +120,74 @@ async def find_cfdi_report_by_fiscal_uuid_or_prefix(
     return None
 
 
+async def _enforce_expense_cfdi_uniqueness(
+    session: AsyncSession,
+    *,
+    expense: ExpenseReport,
+    report: Optional[CFDIReport],
+    allow_shared: bool,
+    shared_reason: Optional[str],
+    actor_id: Optional[UUID],
+) -> None:
+    # Serialize competing captures of the same fiscal UUID.  A database unique
+    # constraint cannot express the approved shared-invoice exception, so the
+    # transaction-scoped PostgreSQL advisory lock protects check-then-link.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": expense.cfdi_uuid_manual},
+    )
+    conditions = [
+        func.upper(func.trim(ExpenseReport.cfdi_uuid_manual))
+        == expense.cfdi_uuid_manual
+    ]
+    if report is not None:
+        conditions.append(ExpenseReport.cfdi_report_id == report.id)
+    duplicate_result = await session.execute(
+        select(ExpenseReport.id)
+        .where(
+            ExpenseReport.id != expense.id,
+            ExpenseReport.estado_gasto != "cancelado",
+            or_(*conditions),
+        )
+        .limit(1)
+    )
+    duplicate_id = duplicate_result.scalar_one_or_none()
+    if not duplicate_id:
+        expense.cfdi_compartido_confirmado = False
+        expense.cfdi_compartido_motivo = None
+        return
+    reason = (shared_reason or "").strip()
+    if not allow_shared:
+        raise ExpenseCFDIDuplicateError(expense.cfdi_uuid_manual)
+    if not reason:
+        raise ValueError("Indique el motivo de la factura compartida.")
+    if actor_id is None:
+        raise ValueError("No se pudo identificar al usuario que confirmó la factura compartida.")
+    expense.cfdi_compartido_confirmado = True
+    expense.cfdi_compartido_motivo = reason
+    session.add(
+        Aprobacion(
+            tipo_entidad="gasto",
+            entidad_id=expense.id,
+            aprobador_id=actor_id,
+            accion="confirmar_cfdi_compartido",
+            comentario=(
+                f"CFDI {expense.cfdi_uuid_manual} compartido con partida "
+                f"{duplicate_id}: {reason}"
+            ),
+        )
+    )
+
+
 async def link_expense_to_cfdi_if_manual_uuid_set(
     session: AsyncSession,
     expense: ExpenseReport,
     *,
     clear_report_if_no_match: bool = False,
+    require_unique: bool = False,
+    allow_shared: bool = False,
+    shared_reason: Optional[str] = None,
+    actor_id: Optional[UUID] = None,
 ) -> bool:
     """
     Normalize expense.cfdi_uuid_manual and set cfdi_report_id if a CFDI exists.
@@ -142,6 +216,16 @@ async def link_expense_to_cfdi_if_manual_uuid_set(
     if report:
         expense.cfdi_uuid_manual = normalize_cfdi_uuid_to_canonical(report.cfdi_uuid)
         expense.cfdi_report_id = report.id
+    if require_unique:
+        await _enforce_expense_cfdi_uniqueness(
+            session,
+            expense=expense,
+            report=report,
+            allow_shared=allow_shared,
+            shared_reason=shared_reason,
+            actor_id=actor_id,
+        )
+    if report:
         return True
     if clear_report_if_no_match:
         expense.cfdi_report_id = None

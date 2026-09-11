@@ -63,9 +63,16 @@ from ..services.diot_exporter import (
     generate_diot_txt,
 )
 from ..services.cfdi_expense_link_service import (
+    ExpenseCFDIDuplicateError,
     is_cfdi_uuid_prefix_candidate,
     link_expense_to_cfdi_if_manual_uuid_set,
     normalize_cfdi_uuid_to_canonical,
+)
+from ..services.expense_non_deductible_service import (
+    NonDeductibleProofError,
+    get_active_non_deductible_proof,
+    logically_delete_non_deductible_proof,
+    replace_non_deductible_proof,
 )
 from ..services.cfdi_batch1_status_service import (
     evaluate_ar_status,
@@ -513,6 +520,20 @@ def _parse_optional_money_form(value: Optional[str]) -> Optional[float]:
 
 def _form_checkbox_checked(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "on", "yes", "si", "sí"}
+
+
+def _cfdi_link_transition_audit(
+    old_values: Dict[str, Any], new_values: Dict[str, Any]
+) -> str:
+    """Serialize the exact CFDI/Tocino unlink transition for the audit record."""
+    transition = {
+        field: {
+            "antes": old_values.get(field),
+            "despues": new_values.get(field),
+        }
+        for field in ("cfdi_uuid_manual", "cfdi_report_id", "nova_request_id")
+    }
+    return json.dumps(transition, ensure_ascii=False, sort_keys=True, default=str)
 
 
 def _repo_root() -> Path:
@@ -27078,6 +27099,34 @@ async def editar_gasto_form(
                 </small>
             </div>
         """
+    active_no_deducible = await get_active_non_deductible_proof(session, expense.id)
+    if active_no_deducible:
+        proof_url = f"/gastos/{expense.id}/adjuntos/{active_no_deducible.id}"
+        if (active_no_deducible.mime_type or "").lower().startswith("image/"):
+            proof_preview_html = (
+                f'<img src="{proof_url}" alt="Vista previa del comprobante no deducible" '
+                'style="display:block;max-width:100%;max-height:280px;margin-top:10px;border:1px solid #dbe2ea;border-radius:8px;">'
+            )
+        else:
+            proof_preview_html = (
+                f'<iframe src="{proof_url}" title="Vista previa del comprobante no deducible" '
+                'style="display:block;width:100%;height:280px;margin-top:10px;border:1px solid #dbe2ea;border-radius:8px;"></iframe>'
+            )
+        current_no_deducible_html = f"""
+            <div style="margin:10px 0;padding:10px 12px;border:1px solid #dbe2ea;border-radius:8px;background:#f8fafc;">
+                <strong>Comprobante vigente:</strong> {escape(active_no_deducible.nombre_archivo or 'archivo')}
+                · <a href="{proof_url}" target="_blank" rel="noopener">Abrir</a>
+                {proof_preview_html}
+                <div style="margin-top:10px;">
+                    <input type="hidden" name="return_to" value="{escape(safe_return_to)}">
+                    <label for="motivo_eliminar_no_deducible">Motivo para retirar el comprobante</label>
+                    <input type="text" name="motivo_eliminacion" id="motivo_eliminar_no_deducible" {disabled_attr}>
+                    <button type="submit" formaction="/gastos/{expense.id}/comprobante-no-deducible/eliminar" formmethod="post" class="button secondary" {disabled_attr}>Eliminar comprobante</button>
+                </div>
+            </div>
+        """
+    else:
+        current_no_deducible_html = "<small>No hay comprobante no deducible vigente.</small>"
     can_manage_budget_classification = False
     budget_classification_style = ' style="display:none;" aria-hidden="true"'
     return_to_input_html = (
@@ -27281,6 +27330,20 @@ async def editar_gasto_form(
                     <small>El sistema extraerá automáticamente el UUID del enlace o QR</small>
                 </div>
 
+                <div class="form-group" style="border:1px solid #fecaca;border-radius:10px;padding:14px;background:#fff7ed;">
+                    <label for="comprobante_no_deducible">Comprobante no deducible</label>
+                    <input type="file" name="comprobante_no_deducible" id="comprobante_no_deducible" accept=".pdf,image/*,application/pdf" {disabled_attr}>
+                    <small>Adjuntar aquí confirma que la partida es no deducible, reemplaza el comprobante vigente y limpia el CFDI asociado.</small>
+                    <div id="comprobante_no_deducible_preview" hidden style="margin-top:10px;"></div>
+                    {current_no_deducible_html}
+                </div>
+
+                <div class="form-group" style="border:1px solid #fde68a;border-radius:10px;padding:14px;background:#fffbeb;">
+                    <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" name="cfdi_compartido_confirmado" value="1" {disabled_attr}> Confirmo que esta es una Factura compartida</label>
+                    <input type="text" name="cfdi_compartido_motivo" placeholder="Motivo de la factura compartida" {disabled_attr}>
+                    <small>Solo se permite reutilizar un CFDI de otra partida activa con esta confirmación y motivo auditado.</small>
+                </div>
+
                 <div class="form-group">
                     <label for="archivos_generales">Materialidad / soporte</label>
                     <input type="file" name="archivos_generales" id="archivos_generales" multiple accept=".pdf,image/*,application/pdf" {disabled_attr}>
@@ -27425,6 +27488,25 @@ async def editar_gasto_form(
                 conceptoForTip.addEventListener('input', syncExpenseTipVisibility);
             }}
             syncExpenseTipVisibility();
+            (function() {{
+                const input = document.getElementById('comprobante_no_deducible');
+                const preview = document.getElementById('comprobante_no_deducible_preview');
+                if (!input || !preview) return;
+                input.addEventListener('change', function() {{
+                    const file = input.files && input.files[0];
+                    preview.innerHTML = '';
+                    preview.hidden = !file;
+                    if (!file) return;
+                    const url = URL.createObjectURL(file);
+                    const element = file.type.indexOf('image/') === 0
+                        ? document.createElement('img') : document.createElement('iframe');
+                    element.src = url;
+                    element.style.cssText = file.type.indexOf('image/') === 0
+                        ? 'max-width:100%;max-height:280px;border:1px solid #dbe2ea;border-radius:8px;'
+                        : 'width:100%;height:280px;border:1px solid #dbe2ea;border-radius:8px;';
+                    preview.appendChild(element);
+                }});
+            }})();
         </script>
     </body>
     </html>
@@ -27452,6 +27534,9 @@ async def editar_gasto(
     cuenta_contable_id: Optional[str] = Form(None),
     cfdi_uuid_manual: Optional[str] = Form(None),
     cfdi_qr_or_url: Optional[str] = Form(None),
+    cfdi_compartido_confirmado: Optional[str] = Form(None),
+    cfdi_compartido_motivo: Optional[str] = Form(None),
+    comprobante_no_deducible: Optional[UploadFile] = File(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
     motivo: Optional[str] = Form(None),
     return_to: Optional[str] = Form(None),
@@ -27628,6 +27713,34 @@ async def editar_gasto(
     old_values = {}
     new_values = {}
     materialidades: List[tuple[bytes, str, str, str]] = []
+    no_deducible_material: Optional[tuple[bytes, str, str, str]] = None
+    if comprobante_no_deducible and comprobante_no_deducible.filename:
+        raw = await comprobante_no_deducible.read()
+        try:
+            no_deducible_material = validate_solicitud_terceros_attachment(
+                SolicitudTercerosAttachment(
+                    raw_bytes=raw,
+                    filename=comprobante_no_deducible.filename,
+                    mime_type=getattr(comprobante_no_deducible, "content_type", None),
+                    categoria="supporting",
+                )
+            )
+            if not (
+                no_deducible_material[1] == "application/pdf"
+                or no_deducible_material[1].startswith("image/")
+            ):
+                return RedirectResponse(
+                    url=_append_error_params(
+                        edit_form_url,
+                        error_msg="El comprobante no deducible debe ser PDF o imagen.",
+                    ),
+                    status_code=303,
+                )
+        except SolicitudValidationError as exc:
+            return RedirectResponse(
+                url=_append_error_params(edit_form_url, error=exc.code, error_msg=str(exc)),
+                status_code=303,
+            )
     for upload in archivos_generales or []:
         if not upload or not upload.filename:
             continue
@@ -28043,7 +28156,35 @@ async def editar_gasto(
             )
         raw_cfdi = extracted_uuid
 
-    if raw_cfdi:
+    if no_deducible_material:
+        raw_cfdi = None
+        if (
+            expense.cfdi_uuid_manual
+            or expense.cfdi_report_id
+            or expense.nova_request_id
+        ):
+            old_values["cfdi_uuid_manual"] = expense.cfdi_uuid_manual
+            old_values["cfdi_report_id"] = expense.cfdi_report_id
+            old_values["nova_request_id"] = expense.nova_request_id
+            expense.cfdi_uuid_manual = None
+            expense.cfdi_report_id = None
+            expense.nova_request_id = None
+            new_values["cfdi_uuid_manual"] = None
+            new_values["cfdi_report_id"] = None
+            new_values["nova_request_id"] = None
+            expense.cfdi_compartido_confirmado = False
+            expense.cfdi_compartido_motivo = None
+            changes.append(
+                "CFDI desvinculado por comprobante no deducible "
+                "(incluido enlace Tocino)"
+            )
+        if (expense.numero_factura or "").strip().lower() != "no facturable":
+            old_values["numero_factura"] = expense.numero_factura
+            expense.numero_factura = "no facturable"
+            new_values["numero_factura"] = expense.numero_factura
+            changes.append("partida marcada como no deducible")
+
+    if raw_cfdi and not no_deducible_material:
         try:
             canon = normalize_cfdi_uuid_to_canonical(raw_cfdi)
         except ValueError:
@@ -28062,9 +28203,20 @@ async def editar_gasto(
         stored_manual_before = expense.cfdi_uuid_manual
         prev_report = expense.cfdi_report_id
         expense.cfdi_uuid_manual = canon
-        await link_expense_to_cfdi_if_manual_uuid_set(
-            session, expense, clear_report_if_no_match=True
-        )
+        try:
+            await link_expense_to_cfdi_if_manual_uuid_set(
+                session,
+                expense,
+                clear_report_if_no_match=True,
+                require_unique=stored_manual_before != canon,
+                allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
+                shared_reason=cfdi_compartido_motivo,
+                actor_id=current_empleado.id,
+            )
+        except (ExpenseCFDIDuplicateError, ValueError) as exc:
+            return RedirectResponse(
+                url=_append_error_params(edit_form_url, error_msg=str(exc)), status_code=303
+            )
         if stored_manual_before != expense.cfdi_uuid_manual:
             old_values["cfdi_uuid_manual"] = stored_manual_before
             new_values["cfdi_uuid_manual"] = expense.cfdi_uuid_manual
@@ -28093,6 +28245,18 @@ async def editar_gasto(
     if materialidades:
         changes.append(f"adjuntos_materialidad {len(materialidades)} archivo(s)")
 
+    if no_deducible_material:
+        raw_bytes, mime_type, filename, _categoria = no_deducible_material
+        await replace_non_deductible_proof(
+            session,
+            gasto_id=expense.id,
+            actor_id=current_empleado.id,
+            ruta_archivo=base64.b64encode(raw_bytes).decode("ascii"),
+            mime_type=mime_type,
+            nombre_archivo=filename,
+        )
+        changes.append("comprobante no deducible adjuntado/reemplazado")
+
     # If no changes, don't save or create audit record
     if not changes:
         return RedirectResponse(
@@ -28105,6 +28269,11 @@ async def editar_gasto(
 
     # Create audit trail - Aprobacion record
     comentario_parts = [f"Editar gasto: {', '.join(changes)}"]
+    if "nova_request_id" in old_values:
+        comentario_parts.append(
+            "Enlaces CFDI/Tocino antes/después: "
+            + _cfdi_link_transition_audit(old_values, new_values)
+        )
     if motivo and motivo.strip():
         comentario_parts.append(f"Motivo: {motivo.strip()}")
 
@@ -28128,6 +28297,56 @@ async def editar_gasto(
             success_msg="Gasto actualizado exitosamente.",
         ),
         status_code=303
+    )
+
+
+@router.post("/gastos/{gasto_id}/comprobante-no-deducible/eliminar")
+async def eliminar_comprobante_no_deducible(
+    gasto_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    motivo_eliminacion: str = Form(...),
+    return_to: Optional[str] = Form(None),
+) -> RedirectResponse:
+    """Logically remove the current proof; its binary and audit history remain."""
+    expense = await session.get(ExpenseReport, gasto_id)
+    if not expense:
+        raise HTTPException(status_code=404, detail="Gasto no encontrado")
+    is_owner = expense.empleado_id == current_empleado.id
+    is_finance_admin = current_empleado.rol in (
+        "finanzas", "admin", "superadmin", "super_admin"
+    )
+    if not is_owner and not is_finance_admin:
+        raise HTTPException(status_code=403, detail="Acceso denegado")
+    documento = await session.get(Documento, expense.documento_id) if expense.documento_id else None
+    is_locked = bool(
+        (documento and documento.estado != "borrador")
+        or expense.estado_factura in ("en_proceso", "completada")
+    )
+    if is_locked and not is_finance_admin:
+        raise HTTPException(status_code=403, detail="El gasto está bloqueado para edición")
+    safe_return_to = _safe_internal_next(return_to, f"/gastos/{gasto_id}/editar")
+    try:
+        await logically_delete_non_deductible_proof(
+            session,
+            gasto_id=gasto_id,
+            actor_id=current_empleado.id,
+            motivo=motivo_eliminacion,
+        )
+        if (expense.numero_factura or "").strip().lower() == "no facturable":
+            expense.numero_factura = None
+        await session.commit()
+    except NonDeductibleProofError as exc:
+        await session.rollback()
+        return RedirectResponse(
+            url=_append_error_params(safe_return_to, error_msg=str(exc)), status_code=303
+        )
+    return RedirectResponse(
+        url=_append_success_params(
+            safe_return_to,
+            success_msg="Comprobante no deducible retirado; el historial se conservó.",
+        ),
+        status_code=303,
     )
 
 
@@ -39946,6 +40165,10 @@ async def crear_gasto_rapido_en_informe(
     pagado_con_amex_empresa: Optional[str] = Form(None),
     cfdi_xml: Optional[UploadFile] = File(None),
     cfdi_pdf: Optional[UploadFile] = File(None),
+    comprobante_no_deducible: Optional[UploadFile] = File(None),
+    es_no_deducible: Optional[str] = Form(None),
+    cfdi_compartido_confirmado: Optional[str] = Form(None),
+    cfdi_compartido_motivo: Optional[str] = Form(None),
     archivos_generales: Optional[List[UploadFile]] = File(None),
     asiento_preferencial_cfdi_xml: Optional[UploadFile] = File(None),
     asiento_preferencial_cfdi_pdf: Optional[UploadFile] = File(None),
@@ -40010,7 +40233,34 @@ async def crear_gasto_rapido_en_informe(
             if not is_pdf_content(pdf_bytes):
                 raise ValueError("El archivo CFDI PDF debe ser un PDF válido")
 
-        resolved_cfdi, resolve_error = resolve_cfdi_upload(
+        no_deducible_material: Optional[tuple[bytes, str, str, str]] = None
+        if comprobante_no_deducible and comprobante_no_deducible.filename:
+            raw = await comprobante_no_deducible.read()
+            no_deducible_material = validate_solicitud_terceros_attachment(
+                SolicitudTercerosAttachment(
+                    raw_bytes=raw,
+                    filename=comprobante_no_deducible.filename,
+                    mime_type=getattr(comprobante_no_deducible, "content_type", None),
+                    categoria="supporting",
+                )
+            )
+            if not (
+                no_deducible_material[1] == "application/pdf"
+                or no_deducible_material[1].startswith("image/")
+            ):
+                raise ValueError("El comprobante no deducible debe ser PDF o imagen.")
+        manual_no_deducible = (
+            (numero_factura or "").strip().casefold() == "no facturable"
+        )
+        no_deducible_requested = (
+            _form_checkbox_checked(es_no_deducible) or manual_no_deducible
+        )
+        if no_deducible_requested and not no_deducible_material:
+            raise ValueError("Adjunte el comprobante no deducible para confirmar la partida.")
+        if no_deducible_material and (xml_bytes is not None or pdf_bytes is not None):
+            raise ValueError("Un comprobante no deducible no puede cargarse junto con CFDI PDF o XML.")
+
+        resolved_cfdi, resolve_error = (None, None) if no_deducible_material else resolve_cfdi_upload(
             xml_bytes=xml_bytes,
             pdf_bytes=pdf_bytes,
         )
@@ -40047,6 +40297,8 @@ async def crear_gasto_rapido_en_informe(
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
         )
+        if no_deducible_material:
+            values["numero_factura"] = "no facturable"
         await _ensure_expense_tip_schema(session)
         owner = cuenta.empleado
         budget_concept = None
@@ -40110,10 +40362,35 @@ async def crear_gasto_rapido_en_informe(
             )
             if ingestion is not None:
                 expense.numero_factura = ingestion.cfdi_uuid
-        elif values["numero_factura"]:
+                await link_expense_to_cfdi_if_manual_uuid_set(
+                    session,
+                    expense,
+                    require_unique=True,
+                    allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
+                    shared_reason=cfdi_compartido_motivo,
+                    actor_id=current_empleado.id,
+                )
+        elif values["numero_factura"] and not no_deducible_material:
             expense.cfdi_uuid_manual = values["numero_factura"]
             await link_expense_to_cfdi_if_manual_uuid_set(
-                session, expense, clear_report_if_no_match=False
+                session,
+                expense,
+                clear_report_if_no_match=False,
+                require_unique=True,
+                allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
+                shared_reason=cfdi_compartido_motivo,
+                actor_id=current_empleado.id,
+            )
+
+        if no_deducible_material:
+            raw_bytes, mime_type, filename, _categoria = no_deducible_material
+            await replace_non_deductible_proof(
+                session,
+                gasto_id=expense.id,
+                actor_id=current_empleado.id,
+                ruta_archivo=base64.b64encode(raw_bytes).decode("ascii"),
+                mime_type=mime_type,
+                nombre_archivo=filename,
             )
 
         if pdf_bytes is not None:
@@ -40238,10 +40515,24 @@ async def crear_gasto_rapido_en_informe(
                 )
                 if ingestion is not None:
                     supplement_expense.numero_factura = ingestion.cfdi_uuid
+                    await link_expense_to_cfdi_if_manual_uuid_set(
+                        session,
+                        supplement_expense,
+                        require_unique=True,
+                        allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
+                        shared_reason=cfdi_compartido_motivo,
+                        actor_id=current_empleado.id,
+                    )
             elif supplement_values["numero_factura"]:
                 supplement_expense.cfdi_uuid_manual = supplement_values["numero_factura"]
                 await link_expense_to_cfdi_if_manual_uuid_set(
-                    session, supplement_expense, clear_report_if_no_match=False
+                    session,
+                    supplement_expense,
+                    clear_report_if_no_match=False,
+                    require_unique=True,
+                    allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
+                    shared_reason=cfdi_compartido_motivo,
+                    actor_id=current_empleado.id,
                 )
 
             if supplement_pdf is not None:
@@ -41053,6 +41344,7 @@ async def cuenta_de_gastos_detail(
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
                     <form id="quick-expense-form" method="POST" action="/informes-de-gastos/{cuenta.id}/gastos/quick" enctype="multipart/form-data">
                         <input type="hidden" name="descuento" id="quick-descuento" value="0">
+                        <input type="hidden" name="es_no_deducible" id="quick-es-no-deducible" value="0">
                         <div class="table-shell quick-expense-shell">
                             <table class="quick-expense-table">
                                 <thead>
@@ -41078,7 +41370,12 @@ async def cuenta_de_gastos_detail(
                                     <tr>
                                         <td><input type="file" name="cfdi_xml" id="quick-cfdi-xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input type="file" name="cfdi_pdf" id="quick-cfdi-pdf" accept=".pdf,application/pdf"></td>
-                                        <td><button type="button" id="quick-no-deducible" class="button secondary quick-no-deducible-btn" aria-pressed="false">No deducible</button></td>
+                                        <td>
+                                            <button type="button" id="quick-no-deducible" class="button secondary quick-no-deducible-btn" aria-pressed="false">No deducible: comprobante</button>
+                                            <input type="file" name="comprobante_no_deducible" id="quick-comprobante-no-deducible" accept=".pdf,image/*,application/pdf" style="display:block;margin-top:8px;max-width:190px;">
+                                            <label style="display:block;margin-top:8px;font-size:12px;"><input type="checkbox" name="cfdi_compartido_confirmado" value="1"> Factura compartida</label>
+                                            <input type="text" name="cfdi_compartido_motivo" placeholder="Motivo compartida" style="display:block;margin-top:4px;max-width:190px;">
+                                        </td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
                                         <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>
                                         <td><input type="date" name="fecha" id="quick-fecha" required></td>
@@ -41113,6 +41410,7 @@ async def cuenta_de_gastos_detail(
                         <iframe id="quick_cfdi_pdf_preview_frame" class="st-file-preview-frame" title="Vista preliminar CFDI PDF" style="width:100%;height:420px;border:0;"></iframe>
                     </div>
                     {render_pdf_file_preview_script(input_id="quick-cfdi-pdf", container_id="quick_cfdi_pdf_preview", filename_id="quick_cfdi_pdf_preview_name", frame_id="quick_cfdi_pdf_preview_frame")}
+                    <div id="quick_no_deducible_preview" class="st-file-preview" hidden style="margin-top:12px;border:1px solid #fed7aa;border-radius:12px;overflow:hidden;background:#fff7ed;"></div>
                     <div id="quick-air-supplements" class="notice info" hidden style="margin-top:12px;background:#f8fafc;color:#334155;border:1px solid #dbe2ea;border-radius:12px;padding:12px 14px;">
                         <strong>Partidas aéreas adicionales</strong>
                         <div class="section-note" style="margin:6px 0 10px;">Registra cada concepto con su propia factura cuando el cargo AMEX incluye vuelo, asiento o equipaje.</div>
@@ -41372,6 +41670,9 @@ async def cuenta_de_gastos_detail(
                 const impuestos = document.getElementById('quick-impuestos-y-retenciones');
                 const total = document.getElementById('quick-total');
                 const noDeducibleButton = document.getElementById('quick-no-deducible');
+                const noDeducibleInput = document.getElementById('quick-comprobante-no-deducible');
+                const noDeducibleFlag = document.getElementById('quick-es-no-deducible');
+                const noDeduciblePreview = document.getElementById('quick_no_deducible_preview');
                 const numeroFactura = document.getElementById('quick-numero-factura');
                 const cfdiXml = document.getElementById('quick-cfdi-xml');
                 const cfdiPdf = document.getElementById('quick-cfdi-pdf');
@@ -41415,18 +41716,36 @@ async def cuenta_de_gastos_detail(
                     if (numeroFactura) numeroFactura.value = 'no facturable';
                     if (cfdiXml) cfdiXml.value = '';
                     if (cfdiPdf) cfdiPdf.value = '';
+                    if (noDeducibleFlag) noDeducibleFlag.value = '1';
                     setNoDeducibleActive(true);
                 }}
                 function clearNoDeducibleIfCfdiSelected() {{
                     const hasCfdi = (cfdiXml && cfdiXml.files && cfdiXml.files.length > 0) || (cfdiPdf && cfdiPdf.files && cfdiPdf.files.length > 0);
                     if (!hasCfdi) return;
                     if (numeroFactura && normalize(numeroFactura.value) === 'no facturable') numeroFactura.value = '';
+                    if (noDeducibleFlag) noDeducibleFlag.value = '0';
                     setNoDeducibleActive(false);
                 }}
                 function syncNoDeducibleFromInvoice() {{
                     setNoDeducibleActive(Boolean(numeroFactura && normalize(numeroFactura.value) === 'no facturable'));
                 }}
                 if (noDeducibleButton) noDeducibleButton.addEventListener('click', markNoDeducible);
+                if (noDeducibleInput) noDeducibleInput.addEventListener('change', function() {{
+                    const file = noDeducibleInput.files && noDeducibleInput.files[0];
+                    if (!file) return;
+                    markNoDeducible();
+                    if (!noDeduciblePreview) return;
+                    noDeduciblePreview.innerHTML = '';
+                    const url = URL.createObjectURL(file);
+                    const preview = file.type.indexOf('image/') === 0
+                        ? document.createElement('img') : document.createElement('iframe');
+                    preview.src = url;
+                    preview.style.cssText = file.type.indexOf('image/') === 0
+                        ? 'display:block;max-width:100%;max-height:420px;margin:12px auto;border-radius:8px;'
+                        : 'display:block;width:100%;height:420px;border:0;';
+                    noDeduciblePreview.appendChild(preview);
+                    noDeduciblePreview.hidden = false;
+                }});
                 [cfdiXml, cfdiPdf].forEach(function(el) {{
                     if (el) el.addEventListener('change', clearNoDeducibleIfCfdiSelected);
                 }});

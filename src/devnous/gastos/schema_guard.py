@@ -46,6 +46,8 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("expense_reports", "contra_cuenta_contable_id"),
     RequiredColumn("expense_reports", "cfdi_uuid_manual"),
     RequiredColumn("expense_reports", "cfdi_report_id"),
+    RequiredColumn("expense_reports", "cfdi_compartido_confirmado"),
+    RequiredColumn("expense_reports", "cfdi_compartido_motivo"),
     RequiredColumn("expense_reports", "referencia_base"),
     RequiredColumn("expense_reports", "cuenta_gastos_id"),
     RequiredColumn("expense_reports", "pagado_con_amex_empresa"),
@@ -160,6 +162,13 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("solicitudes_prestamo", "rechazado_en"),
     RequiredColumn("prestamo_abonos", "id"),
     RequiredColumn("prestamo_abonos", "prestamo_id"),
+    RequiredColumn("adjuntos", "activo"),
+    RequiredColumn("adjuntos", "sustituido_en"),
+    RequiredColumn("adjuntos", "sustituido_por_adjunto_id"),
+    RequiredColumn("adjuntos", "sustituido_por_empleado_id"),
+    RequiredColumn("adjuntos", "eliminado_en"),
+    RequiredColumn("adjuntos", "eliminado_por_id"),
+    RequiredColumn("adjuntos", "motivo_eliminacion"),
 )
 
 
@@ -171,6 +180,7 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("expense_reports", "idx_expense_reports_contra_cuenta_contable_id"),
     RequiredIndex("expense_reports", "idx_expense_reports_cfdi_uuid_manual"),
     RequiredIndex("expense_reports", "idx_expense_reports_cfdi_report_id"),
+    RequiredIndex("adjuntos", "ux_adjuntos_active_no_deducible_per_expense"),
     RequiredIndex("expense_reports", "idx_expense_reports_referencia_base"),
     RequiredIndex("expense_reports", "idx_expense_reports_cuenta_gastos_id"),
     RequiredIndex("documentos", "idx_documentos_proveedor_cliente_id"),
@@ -1914,7 +1924,11 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                    OR position('rechazar_area' in current_def) = 0
                    OR position('aprobar_final' in current_def) = 0
                    OR position('rechazar_final' in current_def) = 0
-                   OR position('retirar' in current_def) = 0 THEN
+                   OR position('retirar' in current_def) = 0
+                   OR position('adjuntar_comprobante_no_deducible' in current_def) = 0
+                   OR position('reemplazar_comprobante_no_deducible' in current_def) = 0
+                   OR position('eliminar_comprobante_no_deducible' in current_def) = 0
+                   OR position('confirmar_cfdi_compartido' in current_def) = 0 THEN
                     ALTER TABLE aprobaciones DROP CONSTRAINT aprobaciones_accion_check;
                     ALTER TABLE aprobaciones
                         ADD CONSTRAINT aprobaciones_accion_check
@@ -1937,7 +1951,11 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
                                     'rechazar_area'::text,
                                     'aprobar_final'::text,
                                     'rechazar_final'::text,
-                                    'retirar'::text
+                                    'retirar'::text,
+                                    'adjuntar_comprobante_no_deducible'::text,
+                                    'reemplazar_comprobante_no_deducible'::text,
+                                    'eliminar_comprobante_no_deducible'::text,
+                                    'confirmar_cfdi_compartido'::text
                                 ]
                             )
                         );
@@ -3224,6 +3242,46 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "ix_sat_sync_runs_trigger_source",
         "CREATE INDEX IF NOT EXISTS ix_sat_sync_runs_trigger_source ON sat_sync_runs(trigger_source)",
+    ),
+    (
+        "expense_reports_cfdi_compartido_confirmado_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS cfdi_compartido_confirmado BOOLEAN NOT NULL DEFAULT FALSE",
+    ),
+    (
+        "expense_reports_cfdi_compartido_motivo_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS cfdi_compartido_motivo TEXT NULL",
+    ),
+    (
+        "adjuntos_activo_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS activo BOOLEAN NOT NULL DEFAULT TRUE",
+    ),
+    (
+        "adjuntos_sustituido_en_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS sustituido_en TIMESTAMPTZ NULL",
+    ),
+    (
+        "adjuntos_sustituido_por_adjunto_id_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS sustituido_por_adjunto_id UUID NULL",
+    ),
+    (
+        "adjuntos_sustituido_por_empleado_id_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS sustituido_por_empleado_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL",
+    ),
+    (
+        "adjuntos_eliminado_en_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS eliminado_en TIMESTAMPTZ NULL",
+    ),
+    (
+        "adjuntos_eliminado_por_id_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS eliminado_por_id UUID NULL REFERENCES empleados(id) ON DELETE SET NULL",
+    ),
+    (
+        "adjuntos_motivo_eliminacion_column",
+        "ALTER TABLE IF EXISTS adjuntos ADD COLUMN IF NOT EXISTS motivo_eliminacion TEXT NULL",
+    ),
+    (
+        "ux_adjuntos_active_no_deducible_per_expense",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_adjuntos_active_no_deducible_per_expense ON adjuntos(gasto_id) WHERE categoria = 'comprobante_no_deducible' AND activo = TRUE",
     ),
 )
 
