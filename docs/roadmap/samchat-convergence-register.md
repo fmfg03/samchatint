@@ -22,9 +22,13 @@ canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `d6bbcd0b58d187e16e29ff32fdb5d94b7c3babcb44722957d0b2ae1123f951f8` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `beeac21b5e390070550d63335c892c5407abec1eae49136a61d3598a6048a51a` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `01ad4e3985c61e459d230918f1d4efbc2f9d2c1d5945d5d7c41cb5d605212235` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `04bf69b5e3cb1d37a727fb688b838fa4f95501af4e2638ab78ed2d1fcff22e0c` |
+
+| Canon amendment date | Affected sources | Reason and evidence | Evidence state |
+| --- | --- | --- | --- |
+| 2026-09-11 | Product and Engineering canons | This amendment governs the pending correction to #314/#315 from an external-client interpretation to internal Direction, position-scoped boards and reports. Production remains at `81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based interpretation; the correction is only an uncommitted isolated-worktree diff with focused authorization/reporting tests and route-contract validation. | `repo_live` only after merge; `deployed_verified` only after a new release plus authenticated smoke. UAT and real scope configuration remain pending; not `business_accepted`. |
 
 ## Work lanes and gates
 

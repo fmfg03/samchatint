@@ -1,8 +1,8 @@
-"""Client-safe executive read model.
+"""Internal direction executive read model.
 
 This module is deliberately limited to tournament-scoped budget aggregates.
 It must not call global cash-flow, CxC, or payment read models because those
-surfaces currently have no equivalent client/tournament scope.
+surfaces currently have no equivalent direction/tournament scope.
 """
 
 from __future__ import annotations
@@ -16,7 +16,17 @@ from samchat.budgets.service import build_budget_snapshot
 
 
 class ClientExecutiveAccessError(PermissionError):
-    """Raised when a client asks for a tournament outside its portfolio."""
+    """Raised when Direction asks for a tournament outside its assigned scope."""
+
+
+DIRECTION_POSITION_KEYS = frozenset(
+    {
+        "direccion_general",
+        "direccion_administracion_finanzas",
+        "direccion_goat",
+        "director_operaciones",
+    }
+)
 
 
 async def ensure_client_executive_schema(session: Any) -> None:
@@ -91,7 +101,15 @@ async def _authorized_tournaments(
     """
     if is_superadmin:
         result = await session.execute(
-            text("SELECT id::text AS id, name, slug FROM tournaments ORDER BY name ASC")
+            text(
+                """SELECT DISTINCT t.id::text AS id, t.name, t.slug
+                FROM client_executive_portfolio_tournaments assignment
+                JOIN client_executive_portfolios portfolio
+                  ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
+                JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
+                WHERE assignment.active = TRUE
+                ORDER BY t.name ASC"""
+            )
         )
         return [
             {"id": str(row.id), "name": str(row.name), "slug": str(row.slug or "")}
@@ -108,12 +126,17 @@ async def _authorized_tournaments(
               ON portfolio.id = position.portfolio_id AND portfolio.active = TRUE
             JOIN client_executive_portfolio_tournaments assignment
               ON assignment.portfolio_id = portfolio.id AND assignment.active = TRUE
-            JOIN tournaments t ON t.id = assignment.tournament_id
-            WHERE holder.empleado_id = :empleado_id AND holder.active = TRUE
+            JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
+            WHERE holder.empleado_id = :empleado_id
+              AND holder.active = TRUE
+              AND holder.position_key = ANY(:position_keys)
             ORDER BY t.name ASC
             """
         ),
-        {"empleado_id": str(empleado_id)},
+        {
+            "empleado_id": str(empleado_id),
+            "position_keys": sorted(DIRECTION_POSITION_KEYS),
+        },
     )
     return [
         {"id": str(row.id), "name": str(row.name), "slug": str(row.slug or "")}
@@ -121,20 +144,73 @@ async def _authorized_tournaments(
     ]
 
 
-def _executive_card(tournament: dict[str, str], snapshot: dict[str, Any]) -> dict[str, Any]:
-    summary = snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
-    comparison = snapshot.get("comparison") if isinstance(snapshot.get("comparison"), dict) else {}
-    forecast = snapshot.get("forecast") if isinstance(snapshot.get("forecast"), dict) else {}
-    alerts = snapshot.get("executive_alerts") if isinstance(snapshot.get("executive_alerts"), list) else []
+async def authorized_direction_portfolio_ids(
+    session: Any, empleado_id: str, *, is_superadmin: bool = False
+) -> list[str]:
+    """Return active Direction portfolios visible to an internal identity."""
+    if is_superadmin:
+        result = await session.execute(
+            text(
+                "SELECT id::text AS id FROM client_executive_portfolios WHERE active = TRUE"
+            )
+        )
+    else:
+        result = await session.execute(
+            text(
+                """
+                SELECT DISTINCT portfolio.id::text AS id
+                FROM authorization_position_assignments holder
+                JOIN client_executive_portfolio_positions position
+                  ON position.position_key = holder.position_key AND position.active = TRUE
+                JOIN client_executive_portfolios portfolio
+                  ON portfolio.id = position.portfolio_id AND portfolio.active = TRUE
+                WHERE holder.empleado_id = :empleado_id
+                  AND holder.active = TRUE
+                  AND holder.position_key = ANY(:position_keys)
+                ORDER BY portfolio.id
+                """
+            ),
+            {
+                "empleado_id": str(empleado_id),
+                "position_keys": sorted(DIRECTION_POSITION_KEYS),
+            },
+        )
+    return [str(row.id) for row in result]
+
+
+def _executive_card(
+    tournament: dict[str, str], snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    summary = (
+        snapshot.get("summary") if isinstance(snapshot.get("summary"), dict) else {}
+    )
+    comparison = (
+        snapshot.get("comparison")
+        if isinstance(snapshot.get("comparison"), dict)
+        else {}
+    )
+    forecast = (
+        snapshot.get("forecast") if isinstance(snapshot.get("forecast"), dict) else {}
+    )
+    alerts = (
+        snapshot.get("executive_alerts")
+        if isinstance(snapshot.get("executive_alerts"), list)
+        else []
+    )
     return {
         "tournament_id": tournament["id"],
         "tournament_name": tournament["name"],
         "budget": float(summary.get("budget_total") or 0),
-        "actual": float(comparison.get("actual_total") or comparison.get("paid_total") or 0),
+        "actual": float(
+            comparison.get("actual_total") or comparison.get("paid_total") or 0
+        ),
         "committed": float(comparison.get("committed_total") or 0),
         "projected": float(forecast.get("projected_total") or 0),
         "alerts": [
-            {"severity": str(item.get("severity") or "info"), "title": str(item.get("title") or "Alerta")}
+            {
+                "severity": str(item.get("severity") or "info"),
+                "title": str(item.get("title") or "Alerta"),
+            }
             for item in alerts[:3]
             if isinstance(item, dict)
         ],
@@ -155,13 +231,14 @@ def build_client_executive_summary(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "scope": payload.get("scope"),
         "message": (
-            "No hay proyectos o torneos asignados a esta cartera."
+            "No hay proyectos o torneos en tu alcance asignado."
             if not cards
-            else "Cartera con {} proyecto(s)/torneo(s) y {} alerta(s) alta(s)."
-            .format(len(cards), high_alerts)
+            else "Alcance con {} proyecto(s)/torneo(s) y {} alerta(s) alta(s).".format(
+                len(cards), high_alerts
+            )
         ),
         "high_alert_count": high_alerts,
-        "source": "client_executive.read_model",
+        "source": "direction_executive.read_model",
         "read_only": True,
     }
 
@@ -174,7 +251,7 @@ async def build_client_dashboard(
     tournament_id: Optional[str] = None,
     is_superadmin: bool = False,
 ) -> dict[str, Any]:
-    """Build a client portfolio or one authorized tournament CEO view."""
+    """Build a Direction portfolio or one authorized tournament executive view."""
     tournaments = await _authorized_tournaments(
         session, empleado_id, is_superadmin=is_superadmin
     )
@@ -183,7 +260,9 @@ async def build_client_dashboard(
     if tournament_id:
         tournaments = [item for item in tournaments if item["id"] == str(tournament_id)]
         if not tournaments:
-            raise ClientExecutiveAccessError("Tournament is not assigned to this client.")
+            raise ClientExecutiveAccessError(
+                "Tournament is not in the assigned Direction scope."
+            )
 
     cards = []
     for tournament in tournaments:
@@ -207,7 +286,10 @@ async def build_client_dashboard(
         "scope": "tournament" if tournament_id else "portfolio",
         "cards": cards,
         "unavailable_metrics": [
-            "cashflow", "accounts_receivable", "payments", "operational_detail"
+            "cashflow",
+            "accounts_receivable",
+            "payments",
+            "operational_detail",
         ],
     }
 
@@ -235,7 +317,9 @@ async def build_portfolio_dashboard(
         for row in result
     ]
     if not tournaments:
-        raise ClientExecutiveAccessError("No active tournaments are assigned to this portfolio.")
+        raise ClientExecutiveAccessError(
+            "No active tournaments are assigned to this portfolio."
+        )
     cards = []
     for tournament in tournaments:
         snapshot = await build_budget_snapshot(
@@ -254,6 +338,9 @@ async def build_portfolio_dashboard(
         "portfolio_id": str(portfolio_id),
         "cards": cards,
         "unavailable_metrics": [
-            "cashflow", "accounts_receivable", "payments", "operational_detail"
+            "cashflow",
+            "accounts_receivable",
+            "payments",
+            "operational_detail",
         ],
     }
