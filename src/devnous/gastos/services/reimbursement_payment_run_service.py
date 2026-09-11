@@ -9,11 +9,12 @@ from difflib import SequenceMatcher
 from typing import Any, Optional
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import undefer
 
 from ..models import (
+    Aprobacion,
     CuentaDeGastos,
     Documento,
     Empleado,
@@ -55,6 +56,142 @@ class InformeReimbursementRoutingResult:
     @property
     def changed(self) -> bool:
         return self.created or self.promoted
+
+
+@dataclass(frozen=True, slots=True)
+class InformeReimbursementPaymentReadiness:
+    """Read-only explanation of an informe reimbursement's Payment Run state."""
+
+    status: str
+    detail: str
+    solicitud_id: Optional[UUID] = None
+    can_reconcile: bool = False
+
+
+def should_apply_informe_reimbursement_reconciliation(
+    *,
+    apply: bool,
+    readiness: InformeReimbursementPaymentReadiness,
+) -> bool:
+    """Keep dry-runs from entering the reimbursement mutation branch."""
+    return apply and readiness.can_reconcile
+
+
+def classify_informe_reimbursement_payment_readiness(
+    *,
+    informe: Documento,
+    solicitud: Optional[Documento],
+    has_approval_record: bool,
+) -> InformeReimbursementPaymentReadiness:
+    """Classify a reimbursement without changing documents or approval history."""
+    if not getattr(informe, "budget_concept_id", None):
+        return InformeReimbursementPaymentReadiness(
+            status="blocked_missing_budget_concept",
+            detail="Bloqueado: el informe no tiene concepto presupuestal.",
+            solicitud_id=getattr(solicitud, "id", None),
+        )
+    if not has_approval_record:
+        return InformeReimbursementPaymentReadiness(
+            status="blocked_missing_approval_audit",
+            detail="Bloqueado: falta el registro de aprobación del informe.",
+            solicitud_id=getattr(solicitud, "id", None),
+        )
+    if solicitud is None:
+        return InformeReimbursementPaymentReadiness(
+            status="missing_solicitud",
+            detail="Falta generar la solicitud de reembolso para Programación de Pagos.",
+            can_reconcile=True,
+        )
+    if solicitud.estado == "aprobado" and not getattr(solicitud, "pagado_en", None):
+        return InformeReimbursementPaymentReadiness(
+            status="ready_for_payment_run",
+            detail="Lista para Programación de Pagos.",
+            solicitud_id=solicitud.id,
+        )
+    if solicitud.estado in {"borrador", "control_presupuestal", "enviado"}:
+        return InformeReimbursementPaymentReadiness(
+            status="awaiting_promotion",
+            detail=(
+                "Solicitud de reembolso pendiente de promoción "
+                f"(estado: {solicitud.estado})."
+            ),
+            solicitud_id=solicitud.id,
+            can_reconcile=True,
+        )
+    return InformeReimbursementPaymentReadiness(
+        status="not_payment_run_eligible",
+        detail=(
+            "La solicitud de reembolso no es elegible para Programación de Pagos "
+            f"(estado: {solicitud.estado})."
+        ),
+        solicitud_id=solicitud.id,
+    )
+
+
+async def get_informe_reimbursement_payment_readiness(
+    session: AsyncSession,
+    *,
+    informe_doc: Documento,
+) -> InformeReimbursementPaymentReadiness:
+    """Return the Payment Run readiness for an approved informe, read-only."""
+    solicitud = None
+    if getattr(informe_doc, "cuenta_gastos_id", None):
+        result = await session.execute(
+            select(Documento)
+            .where(
+                Documento.cuenta_gastos_id == informe_doc.cuenta_gastos_id,
+                Documento.tipo == "SOLICITUD",
+                Documento.concepto_pago.like("Reembolso de saldo a favor%"),
+                Documento.estado.notin_(["rechazado", "cancelado"]),
+            )
+            .order_by(Documento.creado_en.asc())
+            .limit(1)
+        )
+        solicitud = result.scalar_one_or_none()
+    approval_result = await session.execute(
+        select(Aprobacion.id)
+        .where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == informe_doc.id,
+            Aprobacion.accion == "aprobar",
+        )
+        .limit(1)
+    )
+    readiness = classify_informe_reimbursement_payment_readiness(
+        informe=informe_doc,
+        solicitud=solicitud,
+        has_approval_record=approval_result.scalar_one_or_none() is not None,
+    )
+    if readiness.status == "missing_solicitud":
+        cuenta = await session.get(CuentaDeGastos, informe_doc.cuenta_gastos_id)
+        if cuenta is None:
+            return InformeReimbursementPaymentReadiness(
+                status="blocked_missing_cuenta",
+                detail="Bloqueado: el informe no tiene una cuenta de gastos disponible.",
+            )
+        _, warning = await _resolve_reimbursement_provider_id(session, cuenta=cuenta)
+        if warning:
+            return InformeReimbursementPaymentReadiness(
+                status="blocked_missing_bank_account",
+                detail=warning,
+            )
+    if readiness.status == "ready_for_payment_run":
+        closure_result = await session.execute(
+            text(
+                "SELECT EXISTS ("
+                "SELECT 1 FROM payment_run_closure_items "
+                "WHERE documento_id = :documento_id"
+                ")"
+            ),
+            {"documento_id": solicitud.id},
+        )
+        if closure_result.scalar_one():
+            return InformeReimbursementPaymentReadiness(
+                status="not_payment_run_eligible",
+                detail="La solicitud ya pertenece a un corte de Programación de Pagos.",
+                solicitud_id=solicitud.id,
+            )
+    return readiness
 
 
 def _schedule_pending_payment_notification(documento_id: UUID) -> None:

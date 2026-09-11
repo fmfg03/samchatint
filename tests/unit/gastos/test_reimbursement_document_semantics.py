@@ -1,8 +1,9 @@
+import asyncio
 from io import BytesIO
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 from openpyxl import load_workbook
@@ -23,6 +24,12 @@ from devnous.gastos.services.amex_expense_service import compute_informe_saldo
 from devnous.gastos.services.document_amount_service import (
     resolve_payable_document_amount,
 )
+from devnous.gastos.services.reimbursement_payment_run_service import (
+    classify_informe_reimbursement_payment_readiness,
+    get_informe_reimbursement_payment_readiness,
+    should_apply_informe_reimbursement_reconciliation,
+)
+from devnous.gastos.services import reimbursement_payment_run_service
 from devnous.gastos.utils.excel_exports import (
     INFORME_AUTORIZADO_ROW,
     INFORME_SALDO_ROW,
@@ -40,6 +47,144 @@ def test_effective_account_beneficiary_prefers_selected_employee():
     )
 
     assert effective_account_beneficiary_id(cuenta) == beneficiary_id
+
+
+def test_reimbursement_readiness_distinguishes_missing_request_from_missing_audit():
+    informe = SimpleNamespace(id=uuid4(), budget_concept_id=uuid4())
+
+    missing_request = classify_informe_reimbursement_payment_readiness(
+        informe=informe,
+        solicitud=None,
+        has_approval_record=True,
+    )
+    missing_audit = classify_informe_reimbursement_payment_readiness(
+        informe=informe,
+        solicitud=SimpleNamespace(id=uuid4(), estado="control_presupuestal"),
+        has_approval_record=False,
+    )
+
+    assert missing_request.status == "missing_solicitud"
+    assert missing_request.can_reconcile is True
+    assert missing_audit.status == "blocked_missing_approval_audit"
+    assert missing_audit.can_reconcile is False
+
+
+def test_reimbursement_readiness_reports_approved_solicitud_as_payment_run_ready():
+    solicitud_id = uuid4()
+    readiness = classify_informe_reimbursement_payment_readiness(
+        informe=SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+        solicitud=SimpleNamespace(
+            id=solicitud_id,
+            estado="aprobado",
+            pagado_en=None,
+        ),
+        has_approval_record=True,
+    )
+
+    assert readiness.status == "ready_for_payment_run"
+    assert readiness.solicitud_id == solicitud_id
+
+
+def test_reimbursement_readiness_does_not_mark_paid_solicitud_as_payment_run_ready():
+    readiness = classify_informe_reimbursement_payment_readiness(
+        informe=SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+        solicitud=SimpleNamespace(id=uuid4(), estado="aprobado", pagado_en="2026-09-11"),
+        has_approval_record=True,
+    )
+
+    assert readiness.status == "not_payment_run_eligible"
+    assert readiness.can_reconcile is False
+
+
+def test_readiness_checks_payment_run_closure_with_read_only_session():
+    solicitud = SimpleNamespace(id=uuid4(), estado="aprobado", pagado_en=None)
+    solicitud_result = MagicMock()
+    solicitud_result.scalar_one_or_none.return_value = solicitud
+    approval_result = MagicMock()
+    approval_result.scalar_one_or_none.return_value = uuid4()
+    closure_result = MagicMock()
+    closure_result.scalar_one.return_value = True
+    session = SimpleNamespace(
+        execute=AsyncMock(
+            side_effect=[solicitud_result, approval_result, closure_result]
+        ),
+        get=AsyncMock(),
+    )
+
+    async def get_readiness():
+        return await get_informe_reimbursement_payment_readiness(
+            session,
+            informe_doc=SimpleNamespace(
+                id=uuid4(),
+                cuenta_gastos_id=uuid4(),
+                budget_concept_id=uuid4(),
+            ),
+        )
+
+    readiness = asyncio.run(get_readiness())
+
+    assert readiness.status == "not_payment_run_eligible"
+    assert "corte" in readiness.detail
+    session.get.assert_not_awaited()
+
+
+def test_readiness_blocks_missing_solicitud_without_bank_account(monkeypatch):
+    solicitud_result = MagicMock()
+    solicitud_result.scalar_one_or_none.return_value = None
+    approval_result = MagicMock()
+    approval_result.scalar_one_or_none.return_value = uuid4()
+    session = SimpleNamespace(
+        execute=AsyncMock(side_effect=[solicitud_result, approval_result]),
+        get=AsyncMock(return_value=SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        reimbursement_payment_run_service,
+        "_resolve_reimbursement_provider_id",
+        AsyncMock(return_value=(None, "Bloqueado: falta cuenta bancaria.")),
+    )
+
+    async def get_readiness():
+        return await get_informe_reimbursement_payment_readiness(
+            session,
+            informe_doc=SimpleNamespace(
+                id=uuid4(),
+                cuenta_gastos_id=uuid4(),
+                budget_concept_id=uuid4(),
+            ),
+        )
+
+    readiness = asyncio.run(get_readiness())
+
+    assert readiness.status == "blocked_missing_bank_account"
+    assert readiness.can_reconcile is False
+
+
+def test_dry_run_never_enters_reconciliation_branch():
+    readiness = classify_informe_reimbursement_payment_readiness(
+        informe=SimpleNamespace(id=uuid4(), budget_concept_id=uuid4()),
+        solicitud=None,
+        has_approval_record=True,
+    )
+
+    assert should_apply_informe_reimbursement_reconciliation(
+        apply=False,
+        readiness=readiness,
+    ) is False
+    assert should_apply_informe_reimbursement_reconciliation(
+        apply=True,
+        readiness=readiness,
+    ) is True
+
+
+def test_pending_payment_board_and_reconciliation_command_explain_payment_run_blockers():
+    route_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    script_source = Path("scripts/reconcile_informe_reimbursements.py").read_text()
+
+    assert "get_informe_reimbursement_payment_readiness" in route_source
+    assert "Programación de pagos</th>" in route_source
+    assert "--apply" in script_source
+    assert "never creates an approval record" in script_source
+    assert "blocked_informe_not_found" in script_source
 
 
 def test_reimbursement_payable_amount_uses_total_and_individual_export_uses_resolver():
