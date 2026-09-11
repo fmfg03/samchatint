@@ -38,6 +38,9 @@ class RequiredConstraint:
 REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("client_executive_portfolios", "label"),
     RequiredColumn("client_executive_portfolio_positions", "position_key"),
+    RequiredColumn("client_report_schedules", "portfolio_id"),
+    RequiredColumn("client_report_drafts", "snapshot"),
+    RequiredColumn("client_report_audit_logs", "action"),
     RequiredColumn("expense_reports", "origen"),
     RequiredColumn("expense_reports", "numero_factura"),
     RequiredColumn("expense_reports", "solicitud_documento_id"),

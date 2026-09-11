@@ -9,6 +9,7 @@ from .auth_routes import router as auth_router
 from .support_routes import router as support_router
 from .operations_analytics_routes import router as operations_analytics_router
 from .client_executive_routes import router as client_executive_router
+from .client_reporting_routes import router as client_reporting_router
 
 __all__ = [
     'webhook_router',
@@ -18,4 +19,5 @@ __all__ = [
     'support_router',
     'operations_analytics_router',
     'client_executive_router',
+    'client_reporting_router',
 ]

@@ -142,6 +142,27 @@ async def test_superadmin_reads_all_tournaments_without_a_portfolio_position():
 
 
 @pytest.mark.asyncio
+async def test_portfolio_dashboard_excludes_inactive_tournaments():
+    class Result:
+        def __iter__(self):
+            return iter([])
+
+    class Session:
+        statement = ""
+
+        async def execute(self, statement, _params=None):
+            self.statement = str(statement)
+            return Result()
+
+    session = Session()
+    with pytest.raises(service.ClientExecutiveAccessError):
+        await service.build_portfolio_dashboard(
+            session, portfolio_id="portfolio", edition_year=2026
+        )
+    assert "t.active = TRUE" in session.statement
+
+
+@pytest.mark.asyncio
 async def test_budget_version_selection_can_skip_schema_setup(monkeypatch):
     async def versions(_session, *, edition_year, ensure_schema):
         assert edition_year == 2026

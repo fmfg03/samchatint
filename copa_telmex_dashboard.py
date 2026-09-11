@@ -146,6 +146,7 @@ from devnous.gastos.routes import (
     user_router,
     webhook_router,
     client_executive_router,
+    client_reporting_router,
 )
 try:
     from devnous.gastos.routes import operations_analytics_router
@@ -1927,6 +1928,7 @@ if operations_analytics_router is not None:
 app.include_router(webhook_router, prefix="/ingress")
 app.include_router(user_router)
 app.include_router(client_executive_router)
+app.include_router(client_reporting_router)
 app.include_router(support_router)
 app.include_router(assistant_router)
 # Some deployments/proxies only expose the app under `/copa-america/*`.
