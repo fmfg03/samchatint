@@ -8,7 +8,7 @@ from datetime import date
 from html import escape
 import json
 
-from fastapi import APIRouter, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,10 +29,20 @@ router = APIRouter(tags=["direction-reporting"])
 
 
 async def _require_direction_reporting_scope(
-    session: AsyncSession, current_empleado: object, portfolio_id: str | None = None
+    session: AsyncSession,
+    current_empleado: object,
+    portfolio_id: str | None = None,
+    *,
+    action_key: str = "ver",
+    require_explicit_action: bool = False,
 ) -> list[str]:
     """Require the same active, position-derived scope as the executive board."""
-    portfolio_ids = await _assigned_direction_portfolios(session, current_empleado)
+    portfolio_ids = await _assigned_direction_portfolios(
+        session,
+        current_empleado,
+        action_key=action_key,
+        require_explicit_action=require_explicit_action,
+    )
     if portfolio_id is not None and portfolio_id not in portfolio_ids:
         raise HTTPException(
             status_code=403, detail="Portfolio is outside assigned scope."
@@ -154,7 +164,14 @@ async def direction_report_schedule_create(
     session: AsyncSession = Depends(get_db_session),
     current_empleado=Depends(get_current_empleado),
 ):
-    await _require_direction_reporting_scope(session, current_empleado, portfolio_id)
+    """Create a schedule only with explicit Direction write authority."""
+    await _require_direction_reporting_scope(
+        session,
+        current_empleado,
+        portfolio_id,
+        action_key="editar",
+        require_explicit_action=True,
+    )
     await create_schedule(
         session,
         portfolio_id=portfolio_id,
@@ -172,7 +189,13 @@ async def direction_report_draft_create(
     session: AsyncSession = Depends(get_db_session),
     current_empleado=Depends(get_current_empleado),
 ):
-    portfolio_ids = await _require_direction_reporting_scope(session, current_empleado)
+    """Create an audited draft only with explicit Direction write authority."""
+    portfolio_ids = await _require_direction_reporting_scope(
+        session,
+        current_empleado,
+        action_key="editar",
+        require_explicit_action=True,
+    )
     schedule = (
         await session.execute(
             text(
@@ -210,7 +233,13 @@ async def direction_report_draft_transition(
     session: AsyncSession = Depends(get_db_session),
     current_empleado=Depends(get_current_empleado),
 ):
-    portfolio_ids = await _require_direction_reporting_scope(session, current_empleado)
+    """Transition an in-scope draft only with explicit Direction write authority."""
+    portfolio_ids = await _require_direction_reporting_scope(
+        session,
+        current_empleado,
+        action_key="editar",
+        require_explicit_action=True,
+    )
     draft = (
         await session.execute(
             text(
@@ -237,5 +266,7 @@ async def direction_report_draft_transition(
 
 # Compatibility only. Legacy write endpoints are intentionally not retained.
 @router.get("/admin/reportes-cliente", include_in_schema=False)
-async def legacy_client_report_management_redirect():
-    return RedirectResponse("/direccion/reportes/gestion", status_code=307)
+async def legacy_client_report_management_redirect(request: Request):
+    query = request.url.query
+    target = "/direccion/reportes/gestion"
+    return RedirectResponse(f"{target}?{query}" if query else target, status_code=307)

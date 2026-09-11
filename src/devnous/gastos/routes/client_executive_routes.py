@@ -10,12 +10,13 @@ from html import escape
 import json
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from devnous.gastos.services.access_control_service import (
+    AccessControlLookupError,
     explicit_tool_decision,
     is_superadmin_role,
 )
@@ -38,21 +39,39 @@ def _is_superadmin(current_empleado: object) -> bool:
 
 
 async def _assigned_direction_portfolios(
-    session: AsyncSession, current_empleado: object
+    session: AsyncSession,
+    current_empleado: object,
+    *,
+    action_key: str = "ver",
+    require_explicit_action: bool = False,
 ) -> list[str]:
-    """Authorize an active internal identity without role-based fallback."""
+    """Authorize an active internal identity without role-based fallback.
+
+    Reads require position and scope. Governed writes additionally require an
+    explicit positive action rule, which never substitutes the position.
+    """
     if current_empleado is None or getattr(current_empleado, "activo", True) is False:
         raise HTTPException(
             status_code=403, detail="Active internal identity required."
         )
 
     is_superadmin = _is_superadmin(current_empleado)
-    decision = await explicit_tool_decision(
-        session, current_empleado, DIRECTION_EXECUTIVE_TOOL
-    )
-    if decision is False and not is_superadmin:
+    try:
+        decision = await explicit_tool_decision(
+            session, current_empleado, DIRECTION_EXECUTIVE_TOOL, action_key
+        )
+    except AccessControlLookupError:
+        raise HTTPException(
+            status_code=403, detail="Direction access cannot be verified."
+        )
+    if decision is False:
         raise HTTPException(
             status_code=403, detail="Direction access is explicitly denied."
+        )
+    if require_explicit_action and decision is not True:
+        raise HTTPException(
+            status_code=403,
+            detail="Explicit Direction write authority is required.",
         )
 
     portfolio_ids = await authorized_direction_portfolio_ids(
@@ -199,23 +218,28 @@ async def direction_executive_tournament_dashboard(
 
 # Compatibility only: existing bookmarks reach the internal surface without
 # retaining a client-facing semantic or a legacy write API.
+def _legacy_redirect(request: Request, destination: str) -> RedirectResponse:
+    """Redirect a legacy GET while preserving every query parameter."""
+    query = request.url.query
+    target = f"{destination}?{query}" if query else destination
+    return RedirectResponse(target, status_code=307)
+
+
 @router.get("/cliente/tableros", include_in_schema=False)
-async def legacy_client_dashboards_redirect():
-    return RedirectResponse("/direccion/tableros", status_code=307)
+async def legacy_client_dashboards_redirect(request: Request):
+    return _legacy_redirect(request, "/direccion/tableros")
 
 
 @router.get("/cliente/tableros/asistente/resumen", include_in_schema=False)
-async def legacy_client_dashboard_summary_redirect():
-    return RedirectResponse("/direccion/tableros/asistente/resumen", status_code=307)
+async def legacy_client_dashboard_summary_redirect(request: Request):
+    return _legacy_redirect(request, "/direccion/tableros/asistente/resumen")
 
 
 @router.get("/cliente/reportes", include_in_schema=False)
-async def legacy_client_reports_redirect():
-    return RedirectResponse("/direccion/reportes", status_code=307)
+async def legacy_client_reports_redirect(request: Request):
+    return _legacy_redirect(request, "/direccion/reportes")
 
 
 @router.get("/cliente/tableros/torneos/{tournament_id}", include_in_schema=False)
-async def legacy_client_tournament_redirect(tournament_id: str):
-    return RedirectResponse(
-        f"/direccion/tableros/torneos/{tournament_id}", status_code=307
-    )
+async def legacy_client_tournament_redirect(tournament_id: str, request: Request):
+    return _legacy_redirect(request, f"/direccion/tableros/torneos/{tournament_id}")

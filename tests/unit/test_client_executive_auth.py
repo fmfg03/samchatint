@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from devnous.gastos.routes import client_executive_routes, client_reporting_routes
 from devnous.gastos.routes.client_executive_routes import (
@@ -9,7 +10,11 @@ from devnous.gastos.routes.client_executive_routes import (
     _render_dashboard,
 )
 from devnous.gastos.schema_guard import REQUIRED_COLUMNS, SCHEMA_PATCHES
-from devnous.gastos.services.access_control_service import default_allows
+from devnous.gastos.services.access_control_service import (
+    AccessControlLookupError,
+    default_allows,
+    explicit_tool_decision,
+)
 from samchat.client_executive.service import DIRECTION_POSITION_KEYS
 
 
@@ -27,9 +32,13 @@ async def test_authorized_internal_position_holder_enters(monkeypatch):
     async def portfolios(*_args, **_kwargs):
         return ["portfolio-a"]
 
+    async def no_rule(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         client_executive_routes, "authorized_direction_portfolio_ids", portfolios
     )
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", no_rule)
     result = await _assigned_direction_portfolios(
         object(), SimpleNamespace(id="goat-holder", rol="coordinador", activo=True)
     )
@@ -41,9 +50,13 @@ async def test_employee_without_position_receives_403(monkeypatch):
     async def portfolios(*_args, **_kwargs):
         return []
 
+    async def no_rule(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         client_executive_routes, "authorized_direction_portfolio_ids", portfolios
     )
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", no_rule)
     with pytest.raises(HTTPException) as excinfo:
         await _assigned_direction_portfolios(
             object(), SimpleNamespace(id="employee", rol="empleado", activo=True)
@@ -56,9 +69,13 @@ async def test_admin_without_position_receives_403(monkeypatch):
     async def portfolios(*_args, **_kwargs):
         return []
 
+    async def no_rule(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         client_executive_routes, "authorized_direction_portfolio_ids", portfolios
     )
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", no_rule)
     with pytest.raises(HTTPException) as excinfo:
         await _assigned_direction_portfolios(
             object(), SimpleNamespace(id="admin", rol="admin", activo=True)
@@ -74,9 +91,13 @@ async def test_superadmin_supervises_active_portfolios(monkeypatch):
         captured["is_superadmin"] = is_superadmin
         return ["portfolio-a", "portfolio-b"]
 
+    async def no_rule(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         client_executive_routes, "authorized_direction_portfolio_ids", portfolios
     )
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", no_rule)
     assert await _assigned_direction_portfolios(
         object(), SimpleNamespace(id="super", rol="superadmin", activo=True)
     ) == ["portfolio-a", "portfolio-b"]
@@ -88,9 +109,13 @@ async def test_cliente_role_is_not_an_authorization_dependency(monkeypatch):
     async def portfolios(*_args, **_kwargs):
         return []
 
+    async def no_rule(*_args, **_kwargs):
+        return None
+
     monkeypatch.setattr(
         client_executive_routes, "authorized_direction_portfolio_ids", portfolios
     )
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", no_rule)
     with pytest.raises(HTTPException) as excinfo:
         await _assigned_direction_portfolios(
             object(), SimpleNamespace(id="legacy-role", rol="cliente", activo=True)
@@ -98,6 +123,56 @@ async def test_cliente_role_is_not_an_authorization_dependency(monkeypatch):
     assert excinfo.value.status_code == 403
     assert default_allows("direccion.tableros_ejecutivos", "cliente") is False
     assert default_allows("direccion.tableros_ejecutivos", "admin") is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_denial_blocks_superadmin(monkeypatch):
+    async def denied(*_args, **_kwargs):
+        return False
+
+    async def unexpected_portfolios(*_args, **_kwargs):
+        raise AssertionError("Denied superadmin must not resolve scope.")
+
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", denied)
+    monkeypatch.setattr(
+        client_executive_routes,
+        "authorized_direction_portfolio_ids",
+        unexpected_portfolios,
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await _assigned_direction_portfolios(
+            object(), SimpleNamespace(id="super", rol="superadmin", activo=True)
+        )
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_permission_lookup_error_fails_closed_with_403(monkeypatch):
+    async def failed_lookup(*_args, **_kwargs):
+        raise AccessControlLookupError("database unavailable")
+
+    monkeypatch.setattr(
+        client_executive_routes, "explicit_tool_decision", failed_lookup
+    )
+    with pytest.raises(HTTPException) as excinfo:
+        await _assigned_direction_portfolios(
+            object(), SimpleNamespace(id="holder", rol="coordinador", activo=True)
+        )
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_explicit_permission_query_failure_is_not_treated_as_no_rule():
+    class BrokenSession:
+        async def execute(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    with pytest.raises(AccessControlLookupError):
+        await explicit_tool_decision(
+            BrokenSession(),
+            SimpleNamespace(id="holder", rol="coordinador", activo=True),
+            "direccion.tableros_ejecutivos",
+        )
 
 
 def test_direction_dashboard_link_keeps_selected_edition_year():
@@ -212,6 +287,39 @@ async def test_report_draft_uses_in_scope_schedule_portfolio_not_form_value(
 
 
 @pytest.mark.asyncio
+async def test_read_permission_does_not_authorize_report_writes(monkeypatch):
+    captured = []
+
+    async def decision(_session, _employee, _tool, action_key):
+        captured.append(action_key)
+        return True if action_key == "ver" else None
+
+    async def portfolios(*_args, **_kwargs):
+        return ["portfolio-a"]
+
+    async def unexpected_schedule(*_args, **_kwargs):
+        raise AssertionError("Read authority must not invoke a write.")
+
+    monkeypatch.setattr(client_executive_routes, "explicit_tool_decision", decision)
+    monkeypatch.setattr(
+        client_executive_routes, "authorized_direction_portfolio_ids", portfolios
+    )
+    monkeypatch.setattr(client_reporting_routes, "create_schedule", unexpected_schedule)
+
+    with pytest.raises(HTTPException) as excinfo:
+        await client_reporting_routes.direction_report_schedule_create(
+            portfolio_id="portfolio-a",
+            frequency="weekly",
+            session=object(),
+            current_empleado=SimpleNamespace(
+                id="holder", rol="coordinador", activo=True
+            ),
+        )
+    assert excinfo.value.status_code == 403
+    assert captured == ["editar"]
+
+
+@pytest.mark.asyncio
 async def test_report_transition_is_internal_and_uses_audited_actor(monkeypatch):
     captured = {}
 
@@ -252,13 +360,43 @@ async def test_report_transition_is_internal_and_uses_audited_actor(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_legacy_reads_redirect_without_preserving_legacy_writes():
-    dashboard = await client_executive_routes.legacy_client_dashboards_redirect()
-    reports = await client_executive_routes.legacy_client_reports_redirect()
-    management = (
-        await client_reporting_routes.legacy_client_report_management_redirect()
+async def test_legacy_reads_preserve_multiple_query_parameters():
+    def request(path: str) -> Request:
+        return Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": path,
+                "query_string": b"edition_year=2028&view=compact",
+                "headers": [],
+            }
+        )
+
+    dashboard = await client_executive_routes.legacy_client_dashboards_redirect(
+        request("/cliente/tableros")
     )
-    assert dashboard.status_code == reports.status_code == management.status_code == 307
-    assert dashboard.headers["location"] == "/direccion/tableros"
-    assert reports.headers["location"] == "/direccion/reportes"
-    assert management.headers["location"] == "/direccion/reportes/gestion"
+    summary = await client_executive_routes.legacy_client_dashboard_summary_redirect(
+        request("/cliente/tableros/asistente/resumen")
+    )
+    reports = await client_executive_routes.legacy_client_reports_redirect(
+        request("/cliente/reportes")
+    )
+    tournament = await client_executive_routes.legacy_client_tournament_redirect(
+        "t-1", request("/cliente/tableros/torneos/t-1")
+    )
+    management = await client_reporting_routes.legacy_client_report_management_redirect(
+        request("/admin/reportes-cliente")
+    )
+    responses = [dashboard, summary, reports, tournament, management]
+    assert all(response.status_code == 307 for response in responses)
+    assert (
+        dashboard.headers["location"]
+        == "/direccion/tableros?edition_year=2028&view=compact"
+    )
+    assert summary.headers["location"].endswith("edition_year=2028&view=compact")
+    assert (
+        reports.headers["location"]
+        == "/direccion/reportes?edition_year=2028&view=compact"
+    )
+    assert tournament.headers["location"].startswith("/direccion/tableros/torneos/t-1?")
+    assert management.headers["location"].endswith("edition_year=2028&view=compact")

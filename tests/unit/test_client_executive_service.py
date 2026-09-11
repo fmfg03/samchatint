@@ -139,7 +139,11 @@ async def test_superadmin_reads_all_tournaments_without_a_portfolio_position():
 
     class Session:
         async def execute(self, statement, _params=None):
-            assert "FROM tournaments" in str(statement)
+            rendered = str(statement)
+            assert "client_executive_portfolio_tournaments assignment" in rendered
+            assert "portfolio.active = TRUE" in rendered
+            assert "assignment.active = TRUE" in rendered
+            assert "t.active = TRUE" in rendered
             return Result()
 
     assert (

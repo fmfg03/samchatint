@@ -30,6 +30,10 @@ ACTION_KEYS = (
 NON_CONFIGURABLE_GATEWAY_TOOL_KEYS = frozenset({"panel.home"})
 
 
+class AccessControlLookupError(RuntimeError):
+    """Raised when a security-sensitive access-rule lookup cannot complete."""
+
+
 @dataclass(frozen=True)
 class AccessTool:
     key: str
@@ -479,6 +483,7 @@ async def _load_rule(
     action_key: str,
     role_key: str,
     area_key: str,
+    fail_closed: bool = False,
 ) -> Optional[bool]:
     try:
         result = await session.execute(
@@ -503,7 +508,9 @@ async def _load_rule(
             },
         )
         row = result.fetchone()
-    except Exception:
+    except Exception as exc:
+        if fail_closed:
+            raise AccessControlLookupError("Access-rule lookup failed.") from exc
         return None
     if row is None:
         return None
@@ -518,8 +525,8 @@ async def explicit_tool_decision(
 ) -> Optional[bool]:
     """Return only a persisted access decision, never a role default.
 
-    Direction surfaces use position-scoped data.  An explicit rule can deny or
-    admit their surface, but cannot manufacture a portfolio/tournament scope.
+    Direction surfaces use position-scoped data. A rule can restrict an action,
+    but cannot manufacture a portfolio/tournament scope or replace a position.
     """
     if empleado is None or getattr(empleado, "activo", True) is False:
         return False
@@ -529,6 +536,7 @@ async def explicit_tool_decision(
         action_key=(action_key or "ver").strip().lower(),
         role_key=empleado_role(empleado),
         area_key=empleado_area(empleado),
+        fail_closed=True,
     )
 
 
