@@ -5984,8 +5984,11 @@ async def _select_budget_version(
     *,
     edition_year: int,
     version_id: Optional[str] = None,
+    ensure_schema: bool = True,
 ) -> Optional[dict[str, Any]]:
-    versions = await list_budget_versions(session, edition_year=edition_year)
+    versions = await list_budget_versions(
+        session, edition_year=edition_year, ensure_schema=ensure_schema
+    )
     if version_id:
         for version in versions:
             if version["id"] == version_id:
@@ -6108,6 +6111,52 @@ async def _build_budget_finance_comparison(
     }
 
 
+def _empty_budget_snapshot(
+    *,
+    edition_year: int,
+    source: str,
+    version: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """Return zero metrics when a client scope cannot be verified."""
+    comparison = {
+        "requested_total": 0.0,
+        "committed_total": 0.0,
+        "paid_total": 0.0,
+        "actual_total": 0.0,
+        "pending_to_pay_total": 0.0,
+    }
+    summary = {
+        "edition_year": edition_year,
+        "tournaments_count": 0,
+        "line_count": 0,
+        "budget_total": 0.0,
+        "reference_total": 0.0,
+        **comparison,
+    }
+    forecast = _build_budget_forecast(
+        edition_year=edition_year, budget_total=0.0, comparison=comparison
+    )
+    scenarios = _build_budget_scenarios(
+        edition_year=edition_year,
+        budget_total=0.0,
+        comparison=comparison,
+        forecast=forecast,
+    )
+    return {
+        "ok": True,
+        "source": source,
+        "version": version,
+        "summary": summary,
+        "comparison": comparison,
+        "forecast": forecast,
+        "scenarios": scenarios,
+        "executive_alerts": [],
+        "executive_comparison": {},
+        "tournaments": [],
+        "breakdowns": {},
+    }
+
+
 async def build_budget_snapshot(
     session: AsyncSession,
     *,
@@ -6117,6 +6166,7 @@ async def build_budget_snapshot(
     edition_year: int = 2026,
     version_id: Optional[str] = None,
     ensure_schema: bool = True,
+    strict_tournament_scope: bool = False,
 ) -> dict[str, Any]:
     if ensure_schema:
         await ensure_budget_schema(session)
@@ -6124,8 +6174,18 @@ async def build_budget_snapshot(
         session,
         edition_year=edition_year,
         version_id=version_id,
+        ensure_schema=ensure_schema,
     )
     aliases = budget_alias_candidates(tournament_name or "", tournament_slug or "")
+
+    if strict_tournament_scope and not tournament_id:
+        raise ValueError("strict_tournament_scope requires tournament_id")
+
+    if not selected_version and strict_tournament_scope:
+        return _empty_budget_snapshot(
+            edition_year=edition_year,
+            source="budget_scope_unavailable",
+        )
 
     if not selected_version:
         artifact_rows = load_budget_artifact_rows()
@@ -6171,11 +6231,15 @@ async def build_budget_snapshot(
     filters = ["l.budget_version_id = :version_id"]
     params: dict[str, Any] = {"version_id": selected_version["id"]}
     if tournament_id:
-        filters.append(
-            "(CAST(l.tournament_id AS text) = :tournament_id OR UPPER(COALESCE(l.tournament_code, '')) = ANY(:aliases))"
-        )
+        if strict_tournament_scope:
+            filters.append("CAST(l.tournament_id AS text) = :tournament_id")
+        else:
+            filters.append(
+                "(CAST(l.tournament_id AS text) = :tournament_id OR UPPER(COALESCE(l.tournament_code, '')) = ANY(:aliases))"
+            )
         params["tournament_id"] = tournament_id
-        params["aliases"] = list(sorted(aliases)) or [""]
+        if not strict_tournament_scope:
+            params["aliases"] = list(sorted(aliases)) or [""]
     elif aliases:
         filters.append("UPPER(COALESCE(l.tournament_code, '')) = ANY(:aliases)")
         params["aliases"] = list(sorted(aliases))
@@ -6209,6 +6273,13 @@ async def build_budget_snapshot(
         .mappings()
         .all()
     )
+
+    if not rows and strict_tournament_scope:
+        return _empty_budget_snapshot(
+            edition_year=edition_year,
+            source="budget_scope_unavailable",
+            version=selected_version,
+        )
 
     if not rows:
         artifact_rows = load_budget_artifact_rows()

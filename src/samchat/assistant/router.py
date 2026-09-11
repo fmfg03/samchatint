@@ -11146,7 +11146,7 @@ async def assistant_auth_bridge_supabase(
         elif has_admin_role and not _is_superadmin(derived_role):
             derived_role = "admin"
         elif has_customer_role and not _is_admin(derived_role):
-            derived_role = "finanzas"
+            derived_role = "cliente"
 
         existing_row = (
             await session.execute(

@@ -21,16 +21,17 @@ router = APIRouter(tags=["client-executive"])
 
 
 def _require_client(current_empleado: object) -> None:
-    if str(getattr(current_empleado, "rol", "")).strip().lower() != "cliente":
+    role = str(getattr(current_empleado, "rol", "")).strip().lower()
+    if role not in {"cliente", "superadmin", "super_admin"}:
         raise HTTPException(status_code=403, detail="Client executive access required.")
 
 
 def _render_dashboard(payload: dict) -> str:
     cards = "".join(
         "<article><h2>{}</h2><p>Presupuesto: {:,.2f} · Real: {:,.2f} · Comprometido: {:,.2f} · Proyección: {:,.2f}</p>"
-        "<p>Fuente: {} · Corte: {}</p><a href=\"/cliente/tableros/torneos/{}\">Ver ficha ejecutiva</a></article>".format(
+        "<p>Fuente: {} · Corte: {}</p><a href=\"/cliente/tableros/torneos/{}?edition_year={}\">Ver ficha ejecutiva</a></article>".format(
             escape(str(card["tournament_name"])), card["budget"], card["actual"], card["committed"], card["projected"],
-            escape(card["source"]), escape(card["as_of"]), escape(card["tournament_id"]),
+            escape(card["source"]), escape(card["as_of"]), escape(card["tournament_id"]), int(payload["edition_year"]),
         )
         for card in payload["cards"]
     ) or "<p>No hay proyectos o torneos asignados a esta cartera.</p>"
@@ -53,6 +54,8 @@ async def client_executive_dashboard(
         session,
         empleado_id=str(current_empleado.id),
         edition_year=edition_year or date.today().year,
+        is_superadmin=str(getattr(current_empleado, "rol", "")).strip().lower()
+        in {"superadmin", "super_admin"},
     )
     return HTMLResponse(_render_dashboard(payload))
 
@@ -69,6 +72,8 @@ async def client_executive_assistant_summary(
         session,
         empleado_id=str(current_empleado.id),
         edition_year=edition_year or date.today().year,
+        is_superadmin=str(getattr(current_empleado, "rol", "")).strip().lower()
+        in {"superadmin", "super_admin"},
     )
     return JSONResponse(build_client_executive_summary(payload))
 
@@ -87,6 +92,8 @@ async def client_executive_tournament_dashboard(
             empleado_id=str(current_empleado.id),
             edition_year=edition_year or date.today().year,
             tournament_id=tournament_id,
+            is_superadmin=str(getattr(current_empleado, "rol", "")).strip().lower()
+            in {"superadmin", "super_admin"},
         )
     except ClientExecutiveAccessError:
         raise HTTPException(status_code=403, detail="Client portfolio access denied.")

@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 SUPERADMIN_ROLES = frozenset({"superadmin", "super_admin"})
 FINANCE_ADMIN_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 ADMIN_ROLES = frozenset({"admin", "superadmin", "super_admin"})
-ALL_ROLES = ("empleado", "coordinador", "finanzas", "admin", "superadmin", "cliente")
+ALL_ROLES = ("empleado", "coordinador", "finanzas", "admin", "superadmin")
+CONFIGURABLE_ROLES = ALL_ROLES + ("cliente",)
 ACTION_KEYS = (
     "ver",
     "crear",
@@ -466,7 +467,7 @@ def path_to_tool(path: str) -> Optional[AccessTool]:
 
 def default_allows(tool_key: str, role: str) -> bool:
     if tool_key in NON_CONFIGURABLE_GATEWAY_TOOL_KEYS:
-        return True
+        return normalize_role(role) != "cliente"
     tool = TOOLS_BY_KEY.get(tool_key)
     return bool(tool and normalize_role(role) in tool.default_roles)
 
@@ -622,7 +623,7 @@ async def upsert_rule(
     if action not in ACTION_KEYS:
         raise ValueError("action_key inválido")
     role = normalize_role(role_key)
-    if role not in ALL_ROLES and role not in SUPERADMIN_ROLES:
+    if role not in CONFIGURABLE_ROLES and role not in SUPERADMIN_ROLES:
         raise ValueError("role_key inválido")
     area = normalize_area(area_key)
     if not area:

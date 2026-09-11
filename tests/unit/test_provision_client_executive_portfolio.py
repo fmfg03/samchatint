@@ -9,3 +9,6 @@ def test_provisioning_script_requires_explicit_apply_flag():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     assert module.main is not None
+    source = path.read_text(encoding="utf-8")
+    assert "--position-key" in source
+    assert "--empleado-id" not in source
