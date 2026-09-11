@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 import asyncio
+import json
 
 import pytest
 
@@ -14,6 +15,7 @@ from devnous.gastos.services.expense_non_deductible_service import (
     logically_delete_non_deductible_proof,
     replace_non_deductible_proof,
 )
+from devnous.gastos.routes.user_routes import _cfdi_link_transition_audit
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -68,6 +70,43 @@ def test_quick_capture_requires_proof_and_clears_cfdi_for_no_deductible() -> Non
     assert "Un comprobante no deducible no puede cargarse junto con CFDI PDF o XML" in handler
     assert 'values["numero_factura"] = "no facturable"' in handler
     assert "replace_non_deductible_proof" in handler
+    assert "manual_no_deducible" in handler
+    assert "_form_checkbox_checked(es_no_deducible) or manual_no_deducible" in handler
+
+
+def test_non_deductible_transition_clears_legacy_tocino_cfdi_link() -> None:
+    start = ROUTES.index("async def editar_gasto")
+    end = ROUTES.index("async def eliminar_comprobante_no_deducible", start)
+    handler = ROUTES[start:end]
+    assert "or expense.nova_request_id" in handler
+    assert 'old_values["nova_request_id"] = expense.nova_request_id' in handler
+    assert "expense.nova_request_id = None" in handler
+    assert 'new_values["nova_request_id"] = None' in handler
+    assert 'if "nova_request_id" in old_values:' in handler
+    assert '"Enlaces CFDI/Tocino antes/después: "' in handler
+    assert "_cfdi_link_transition_audit(old_values, new_values)" in handler
+
+
+def test_tocino_unlink_audit_preserves_before_and_after_values() -> None:
+    payload = json.loads(
+        _cfdi_link_transition_audit(
+            {
+                "cfdi_uuid_manual": "UUID-1",
+                "cfdi_report_id": uuid4(),
+                "nova_request_id": "tocino-legacy",
+            },
+            {
+                "cfdi_uuid_manual": None,
+                "cfdi_report_id": None,
+                "nova_request_id": None,
+            },
+        )
+    )
+    assert payload["nova_request_id"] == {
+        "antes": "tocino-legacy",
+        "despues": None,
+    }
+    assert payload["cfdi_uuid_manual"] == {"antes": "UUID-1", "despues": None}
 
 
 def test_duplicate_cfdi_requires_explicit_shared_confirmation_and_audit() -> None:

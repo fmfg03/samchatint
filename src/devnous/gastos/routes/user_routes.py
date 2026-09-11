@@ -522,6 +522,20 @@ def _form_checkbox_checked(value: Optional[str]) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "on", "yes", "si", "sí"}
 
 
+def _cfdi_link_transition_audit(
+    old_values: Dict[str, Any], new_values: Dict[str, Any]
+) -> str:
+    """Serialize the exact CFDI/Tocino unlink transition for the audit record."""
+    transition = {
+        field: {
+            "antes": old_values.get(field),
+            "despues": new_values.get(field),
+        }
+        for field in ("cfdi_uuid_manual", "cfdi_report_id", "nova_request_id")
+    }
+    return json.dumps(transition, ensure_ascii=False, sort_keys=True, default=str)
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[4]
 
@@ -28144,14 +28158,26 @@ async def editar_gasto(
 
     if no_deducible_material:
         raw_cfdi = None
-        if expense.cfdi_uuid_manual or expense.cfdi_report_id:
+        if (
+            expense.cfdi_uuid_manual
+            or expense.cfdi_report_id
+            or expense.nova_request_id
+        ):
             old_values["cfdi_uuid_manual"] = expense.cfdi_uuid_manual
             old_values["cfdi_report_id"] = expense.cfdi_report_id
+            old_values["nova_request_id"] = expense.nova_request_id
             expense.cfdi_uuid_manual = None
             expense.cfdi_report_id = None
+            expense.nova_request_id = None
+            new_values["cfdi_uuid_manual"] = None
+            new_values["cfdi_report_id"] = None
+            new_values["nova_request_id"] = None
             expense.cfdi_compartido_confirmado = False
             expense.cfdi_compartido_motivo = None
-            changes.append("CFDI desvinculado por comprobante no deducible")
+            changes.append(
+                "CFDI desvinculado por comprobante no deducible "
+                "(incluido enlace Tocino)"
+            )
         if (expense.numero_factura or "").strip().lower() != "no facturable":
             old_values["numero_factura"] = expense.numero_factura
             expense.numero_factura = "no facturable"
@@ -28243,6 +28269,11 @@ async def editar_gasto(
 
     # Create audit trail - Aprobacion record
     comentario_parts = [f"Editar gasto: {', '.join(changes)}"]
+    if "nova_request_id" in old_values:
+        comentario_parts.append(
+            "Enlaces CFDI/Tocino antes/después: "
+            + _cfdi_link_transition_audit(old_values, new_values)
+        )
     if motivo and motivo.strip():
         comentario_parts.append(f"Motivo: {motivo.strip()}")
 
@@ -40218,7 +40249,12 @@ async def crear_gasto_rapido_en_informe(
                 or no_deducible_material[1].startswith("image/")
             ):
                 raise ValueError("El comprobante no deducible debe ser PDF o imagen.")
-        no_deducible_requested = _form_checkbox_checked(es_no_deducible)
+        manual_no_deducible = (
+            (numero_factura or "").strip().casefold() == "no facturable"
+        )
+        no_deducible_requested = (
+            _form_checkbox_checked(es_no_deducible) or manual_no_deducible
+        )
         if no_deducible_requested and not no_deducible_material:
             raise ValueError("Adjunte el comprobante no deducible para confirmar la partida.")
         if no_deducible_material and (xml_bytes is not None or pdf_bytes is not None):
