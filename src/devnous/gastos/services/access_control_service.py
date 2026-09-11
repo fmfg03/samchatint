@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 SUPERADMIN_ROLES = frozenset({"superadmin", "super_admin"})
 FINANCE_ADMIN_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 ADMIN_ROLES = frozenset({"admin", "superadmin", "super_admin"})
-ALL_ROLES = ("empleado", "coordinador", "finanzas", "admin", "superadmin")
+ALL_ROLES = ("empleado", "coordinador", "finanzas", "admin", "superadmin", "cliente")
 ACTION_KEYS = (
     "ver",
     "crear",
@@ -41,6 +41,14 @@ class AccessTool:
 
 
 ACCESS_TOOLS: tuple[AccessTool, ...] = (
+    AccessTool(
+        "cliente.tableros_ejecutivos",
+        "Tableros ejecutivos",
+        "Cliente",
+        "Vista CEO de cartera y torneos asignados.",
+        ("/cliente/tableros",),
+        frozenset({"cliente"}),
+    ),
     AccessTool(
         "panel.home",
         "Panel principal",
