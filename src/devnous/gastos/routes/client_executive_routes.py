@@ -88,7 +88,7 @@ async def client_published_reports(
     rows = await session.execute(
         text("""SELECT d.generated_at, p.label, d.summary
         FROM client_report_drafts d
-        JOIN client_executive_portfolios p ON p.id = d.portfolio_id
+        JOIN client_executive_portfolios p ON p.id = d.portfolio_id AND p.active = TRUE
         JOIN client_executive_portfolio_positions position ON position.portfolio_id = p.id AND position.active = TRUE
         JOIN authorization_position_assignments holder ON holder.position_key = position.position_key AND holder.active = TRUE
         WHERE d.state = 'published' AND holder.empleado_id = :empleado_id

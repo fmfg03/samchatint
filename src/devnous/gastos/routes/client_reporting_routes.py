@@ -95,6 +95,19 @@ async def client_report_draft_create(
     session: AsyncSession = Depends(get_db_session), current_empleado=Depends(get_current_empleado)
 ):
     _require_internal(current_empleado)
+    schedule = (
+        await session.execute(
+            text(
+                "SELECT portfolio_id::text AS portfolio_id FROM client_report_schedules "
+                "WHERE id = :schedule_id AND active = TRUE"
+            ),
+            {"schedule_id": schedule_id},
+        )
+    ).first()
+    if schedule is None:
+        raise HTTPException(status_code=404, detail="Active client report schedule not found.")
+    # The form value is untrusted. The schedule is the canonical portfolio owner.
+    portfolio_id = str(schedule.portfolio_id)
     draft = await build_report_draft(session, portfolio_id=portfolio_id, edition_year=date.today().year)
     await save_draft(session, schedule_id=schedule_id, portfolio_id=portfolio_id, draft=draft, actor_id=str(current_empleado.id))
     await session.commit()

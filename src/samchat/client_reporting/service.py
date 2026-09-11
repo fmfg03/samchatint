@@ -76,15 +76,22 @@ async def save_draft(
     session: Any, *, schedule_id: str, portfolio_id: str, draft: dict[str, Any], actor_id: str
 ) -> str:
     draft_id = str(uuid4())
-    await session.execute(
-        text("""INSERT INTO client_report_drafts
+    inserted_id = (
+        await session.execute(
+            text("""INSERT INTO client_report_drafts
         (id, schedule_id, portfolio_id, edition_year, state, snapshot, summary, generated_by_empleado_id)
-        VALUES (:id, :schedule_id, :portfolio_id, :edition_year, 'draft',
-        CAST(:snapshot AS JSONB), CAST(:summary AS JSONB), :actor_id)"""),
-        {"id": draft_id, "schedule_id": schedule_id, "portfolio_id": portfolio_id,
-         "edition_year": draft["edition_year"], "snapshot": json.dumps(draft["snapshot"]),
-         "summary": json.dumps(draft["summary"]), "actor_id": actor_id},
-    )
+        SELECT :id, schedule.id, schedule.portfolio_id, :edition_year, 'draft',
+        CAST(:snapshot AS JSONB), CAST(:summary AS JSONB), :actor_id
+        FROM client_report_schedules schedule
+        WHERE schedule.id = :schedule_id AND schedule.portfolio_id = :portfolio_id
+        RETURNING id"""),
+            {"id": draft_id, "schedule_id": schedule_id, "portfolio_id": portfolio_id,
+             "edition_year": draft["edition_year"], "snapshot": json.dumps(draft["snapshot"]),
+             "summary": json.dumps(draft["summary"]), "actor_id": actor_id},
+        )
+    ).scalar_one_or_none()
+    if inserted_id is None:
+        raise ValueError("Client report schedule does not match the portfolio.")
     await session.execute(
         text("""INSERT INTO client_report_audit_logs (id, draft_id, actor_empleado_id, action)
         VALUES (:id, :draft_id, :actor_id, 'draft_generated')"""),
@@ -106,13 +113,18 @@ async def transition_draft(
         raise ReportTransitionError("Client report draft not found.")
     advance_report_state(str(row.state), target)
     timestamp_column = "reviewed_at" if target == "reviewed" else "published_at"
-    await session.execute(
+    updated_id = (
+        await session.execute(
         text(
             "UPDATE client_report_drafts SET state = :target, "
-            + timestamp_column + " = NOW() WHERE id = :id"
+            + timestamp_column + " = NOW() WHERE id = :id AND state = :current "
+            "RETURNING id"
         ),
-        {"id": draft_id, "target": target},
-    )
+        {"id": draft_id, "target": target, "current": str(row.state)},
+        )
+    ).scalar_one_or_none()
+    if updated_id is None:
+        raise ReportTransitionError("Client report draft changed concurrently.")
     await session.execute(
         text("""INSERT INTO client_report_audit_logs (id, draft_id, actor_empleado_id, action)
         VALUES (:id, :draft_id, :actor_id, :action)"""),
