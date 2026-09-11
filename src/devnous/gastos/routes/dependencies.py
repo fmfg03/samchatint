@@ -9,7 +9,7 @@ from typing import Optional, Any, Set, Iterable
 from urllib.parse import quote
 from uuid import UUID
 from fastapi import Depends, HTTPException, Request, Header
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Empleado
