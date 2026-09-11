@@ -2,6 +2,7 @@
 
 from datetime import date
 from html import escape
+import json
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -25,6 +26,13 @@ def _require_client(current_empleado: object) -> None:
     role = str(getattr(current_empleado, "rol", "")).strip().lower()
     if role not in {"cliente", "superadmin", "super_admin"}:
         raise HTTPException(status_code=403, detail="Client executive access required.")
+
+
+def _is_superadmin(current_empleado: object) -> bool:
+    return str(getattr(current_empleado, "rol", "")).strip().lower() in {
+        "superadmin",
+        "super_admin",
+    }
 
 
 def _render_dashboard(payload: dict) -> str:
@@ -85,8 +93,14 @@ async def client_published_reports(
 ):
     """Expose only published, portfolio-authorized report snapshots to clients."""
     _require_client(current_empleado)
-    rows = await session.execute(
-        text("""SELECT d.generated_at, p.label, d.summary
+    if _is_superadmin(current_empleado):
+        rows = await session.execute(text("""SELECT d.generated_at, p.label, d.summary, d.snapshot
+        FROM client_report_drafts d
+        JOIN client_executive_portfolios p ON p.id = d.portfolio_id AND p.active = TRUE
+        WHERE d.state = 'published' ORDER BY d.published_at DESC"""))
+    else:
+        rows = await session.execute(
+        text("""SELECT DISTINCT d.generated_at, p.label, d.summary, d.snapshot
         FROM client_report_drafts d
         JOIN client_executive_portfolios p ON p.id = d.portfolio_id AND p.active = TRUE
         JOIN client_executive_portfolio_positions position ON position.portfolio_id = p.id AND position.active = TRUE
@@ -94,11 +108,12 @@ async def client_published_reports(
         WHERE d.state = 'published' AND holder.empleado_id = :empleado_id
         ORDER BY d.published_at DESC"""),
         {"empleado_id": str(current_empleado.id)},
-    )
+        )
     reports = "".join(
-        "<article><h2>{}</h2><p>{}</p><small>Corte: {}</small></article>".format(
+        "<article><h2>{}</h2><p>{}</p><pre>{}</pre><small>Corte: {}</small></article>".format(
             escape(str(row.label)), escape(str((row.summary or {}).get("message") or "Reporte ejecutivo")),
-            escape(str(row.generated_at))
+            escape(json.dumps(row.snapshot or {}, ensure_ascii=False, sort_keys=True, indent=2)),
+            escape(str(row.generated_at)),
         ) for row in rows
     ) or "<p>No hay reportes publicados para tu cartera.</p>"
     return HTMLResponse("<html><body><h1>Reportes ejecutivos</h1>{}</body></html>".format(reports))

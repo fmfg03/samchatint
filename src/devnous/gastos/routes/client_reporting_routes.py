@@ -1,5 +1,6 @@
 """Internal UI for client-report schedules and immutable drafts."""
 from html import escape
+import json
 
 from datetime import date
 
@@ -28,7 +29,7 @@ async def client_report_admin(
 ):
     _require_internal(current_empleado)
     rows = await session.execute(
-        text("""SELECT d.id::text, d.state, d.generated_at, p.label
+        text("""SELECT d.id::text, d.state, d.generated_at, d.snapshot, d.summary, p.label
         FROM client_report_drafts d JOIN client_executive_portfolios p ON p.id = d.portfolio_id
         ORDER BY d.generated_at DESC LIMIT 50""")
     )
@@ -38,8 +39,9 @@ async def client_report_admin(
             "<form method='post' action='/admin/reportes-cliente/borradores/{}/{}'><button>{}</button></form>"
             .format(escape(str(row.id)), target, "Revisar" if target == "reviewed" else "Publicar")
         )
-        return "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>".format(
+        return "<tr><td>{}</td><td>{}</td><td>{}</td><td><pre>{}</pre></td><td>{}</td><td>{}</td></tr>".format(
             escape(str(row.id)), escape(str(row.label)), escape(str(row.state)),
+            escape(json.dumps({"summary": row.summary, "snapshot": row.snapshot}, ensure_ascii=False, sort_keys=True, indent=2)),
             escape(str(row.generated_at)), action
         )
     items = "".join(draft_row(row) for row in rows) or "<tr><td colspan='5'>Sin borradores.</td></tr>"
@@ -73,7 +75,7 @@ async def client_report_admin(
     <h2>Configuraciones</h2><table><thead><tr><th>ID</th><th>Cartera</th><th>Frecuencia</th><th></th></tr></thead>
     <tbody>{schedule_rows}</tbody></table>
     <h2>Borradores</h2>
-    <table><thead><tr><th>ID</th><th>Cartera</th><th>Estado</th><th>Generado</th><th></th></tr></thead>
+    <table><thead><tr><th>ID</th><th>Cartera</th><th>Estado</th><th>Contenido</th><th>Generado</th><th></th></tr></thead>
     <tbody>{items}</tbody></table></body></html>""".format(options=options, schedule_rows=schedule_rows, items=items)
     return HTMLResponse(page)
 

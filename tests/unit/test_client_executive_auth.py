@@ -9,7 +9,7 @@ from devnous.gastos.routes.client_executive_routes import (
     _require_client,
     client_published_reports,
 )
-from devnous.gastos.schema_guard import SCHEMA_PATCHES
+from devnous.gastos.schema_guard import REQUIRED_COLUMNS, SCHEMA_PATCHES
 from devnous.gastos.services.access_control_service import default_allows
 from samchat.assistant.router import _derive_empleado_role
 
@@ -61,6 +61,11 @@ def test_schema_guard_creates_position_dependencies_before_client_portfolios():
     assert patch_names.index("create_authorization_positions_table") < patch_names.index(
         "create_client_executive_portfolio_positions_table"
     )
+
+
+def test_schema_guard_requires_client_reporting_tables():
+    required = {(item.table, item.column) for item in REQUIRED_COLUMNS}
+    assert ("client_report_drafts", "snapshot") in required
 
 
 @pytest.mark.asyncio
