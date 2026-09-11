@@ -12,15 +12,19 @@ Status: active planning baseline, 2026-09-10.
 | Release gates | passing | registration operational surface and accepted regressions |
 | Route snapshot migration | applied and verified | `eligible_empleado_ids` exists; two routes have holders |
 
-The three top-level `SAMCHAT_*_2026-09-10.md` files are protected source inputs.
-They are not tracked or edited by this register. Their SHA-256 values are held in
-the Line 0 baseline receipt before any future editorial decision.
+The three top-level `SAMCHAT_*_2026-09-10.md` files are versioned canonical
+sources. Their SHA-256 values are an integrity receipt, not permission to alter
+them. Any change requires an explicit, human-reviewed PR that records the
+evidence, date, and reason for the update and refreshes this table in the same
+change. A PR that does not change the canon must declare `Canon unchanged` and
+state why. Automation may verify integrity, but it must never author or approve
+canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
-| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `62a7fbed03e4328792dce7f8ca38a2b1b764dda63ca85cf22a58887630fcb68f` |
-| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `145358bca4d42bec6eaeef09c76628b6eab36d6e0d018c05fc6fe6556200d8fa` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `e2239a8276e9c87652f95cd7d8eeb3ad9c43e02c9d9fa5d59df76fe0ee46ec19` |
+| `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `d6bbcd0b58d187e16e29ff32fdb5d94b7c3babcb44722957d0b2ae1123f951f8` |
+| `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `01ad4e3985c61e459d230918f1d4efbc2f9d2c1d5945d5d7c41cb5d605212235` |
 
 ## Work lanes and gates
 
@@ -38,7 +42,7 @@ the Line 0 baseline receipt before any future editorial decision.
 | Prior local main ref | `09b2c6b137ecf04d13726bd670e565f00fd7a797` |
 | Durable preservation ref | `origin/rescue/main-pre-convergence-20260910` |
 | Aligned main ref | `dcbeea8423030e0123101a35378d765ea3c96f32` |
-| Source file policy | preserve, do not stage, move, delete, or edit without separate authority |
+| Source file policy | versioned canon; edit only through an explicit human-reviewed PR with evidence and refreshed hash receipt |
 
 ## Operating rules
 

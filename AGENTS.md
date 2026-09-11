@@ -1,5 +1,25 @@
 # Repository Guidelines
 
+## Mandatory SamChat Canon Bootstrap
+
+Before investigating, planning, editing, testing, making a production claim, or
+proposing a release, read these versioned canon files in this exact order:
+
+1. `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md`
+2. `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md`
+3. `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md`
+
+Verify their SHA-256 values against
+`docs/roadmap/samchat-convergence-register.md`. If any canon is missing, its
+hash differs, or integrity cannot be checked, stop and report the discrepancy.
+Do not substitute memory, summaries, or assumptions for the canon.
+
+For every relevant product, architecture, data, security, release, or backlog
+change, evaluate whether the canon must change. The same PR must either update
+the affected canon with evidence, date, and reason and refresh its register
+hash, or state `Canon unchanged` with a concrete reason. Canon edits require
+explicit human review; automation must never author or approve them silently.
+
 ## Project Structure & Module Organization
 - Source: `src/samchat/`, `src/devnous/`, `src/ccpm/`
 - Tests: `tests/` (unit, integration, e2e, performance)
