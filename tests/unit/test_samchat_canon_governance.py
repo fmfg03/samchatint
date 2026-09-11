@@ -11,6 +11,7 @@ CANON_PATHS = (
     "SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md",
 )
 REGISTER_PATH = "docs/roadmap/samchat-convergence-register.md"
+ASSISTANT_GATE_PATH = ".github/workflows/assistant-scoped-gate.yml"
 
 
 def _read(relative_path: str) -> str:
@@ -73,3 +74,9 @@ def test_canon_governance_requires_evidence_and_human_review() -> None:
 
     assert "Exactly one option must be selected" in template
     assert "Canon edits require explicit human review" in template
+
+
+def test_canon_integrity_contract_runs_in_the_required_assistant_gate() -> None:
+    gate = _read(ASSISTANT_GATE_PATH)
+
+    assert gate.count("tests/unit/test_samchat_canon_governance.py") == 2

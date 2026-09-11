@@ -154,9 +154,12 @@ Repository state on 2026-09-10:
 
 - #303 merged: recover eligible reimbursements stuck in Control Presupuestal;
 - #306 merged: exclude ineligible requests from false scheduled-payment history;
-- #304 open: require budget concept on the approved linked `INFORME` before promotion.
+- #304 merged and deployed as `dcbeea8423030e0123101a35378d765ea3c96f32`:
+  require a budget concept on the approved linked `INFORME` before promotion.
 
-The business incident is not closed in production until the relevant commit is deployed, the historical reconciliation runs, and affected references are verified.
+The deployed guard does not by itself close the business incident: historical
+reconciliation and affected-reference verification remain required, and Finance
+UAT is separate evidence.
 
 ## 10. Current closure gates
 
@@ -176,7 +179,8 @@ The repository UAT document remains `PENDING_FINANCE_UAT` across its listed case
 
 ## 11. Product priorities
 
-1. Close the reimbursement invariant by merging, deploying, and validating #304 after updating it against current `main`.
+1. Preserve and verify the deployed #304 reimbursement guard while completing
+   historical reconciliation and reference-by-reference evidence.
 2. Run focused production reconciliation for Referencia Operaciones 96 and every equivalent historical record.
 3. Execute the integral Finance UAT and convert failures into bounded defects, not uncontrolled scope growth.
 4. Keep stabilizing the assistant's read/evidence loop before opening broad write authority.

@@ -153,9 +153,12 @@ Repository status at this baseline:
 
 - PR #303 is merged and recovers eligible reimbursements stuck in `control_presupuestal`;
 - PR #306 is merged and prevents ineligible requests from appearing as falsely `programada` in payment history;
-- PR #304 remains open and adds the explicit guard that the approved linked `INFORME` must itself have `budget_concept_id` before auto-promotion.
+- PR #304 merged and deployed as `dcbeea8423030e0123101a35378d765ea3c96f32`;
+  it adds the explicit guard that the approved linked `INFORME` must itself have
+  `budget_concept_id` before auto-promotion.
 
-Until #304 is merged and deployed, do not describe the safety invariant as fully closed.
+Do not describe the safety invariant as business-closed until the historical
+reconciliation, affected-reference verification, and Finance UAT are evidenced.
 
 ### 8.3 Payment Run
 
