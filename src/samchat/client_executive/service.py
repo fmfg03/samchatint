@@ -210,3 +210,50 @@ async def build_client_dashboard(
             "cashflow", "accounts_receivable", "payments", "operational_detail"
         ],
     }
+
+
+async def build_portfolio_dashboard(
+    session: Any, *, portfolio_id: str, edition_year: int
+) -> dict[str, Any]:
+    """Build a CEO view for one configured portfolio, never a global fallback."""
+    result = await session.execute(
+        text(
+            """
+            SELECT t.id::text AS id, t.name, t.slug
+            FROM client_executive_portfolio_tournaments assignment
+            JOIN client_executive_portfolios portfolio
+              ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
+            JOIN tournaments t ON t.id = assignment.tournament_id
+            WHERE assignment.portfolio_id = :portfolio_id AND assignment.active = TRUE
+            ORDER BY t.name ASC
+            """
+        ),
+        {"portfolio_id": str(portfolio_id)},
+    )
+    tournaments = [
+        {"id": str(row.id), "name": str(row.name), "slug": str(row.slug or "")}
+        for row in result
+    ]
+    if not tournaments:
+        raise ClientExecutiveAccessError("No active tournaments are assigned to this portfolio.")
+    cards = []
+    for tournament in tournaments:
+        snapshot = await build_budget_snapshot(
+            session,
+            tournament_id=tournament["id"],
+            tournament_name=tournament["name"],
+            tournament_slug=tournament["slug"],
+            edition_year=edition_year,
+            ensure_schema=False,
+            strict_tournament_scope=True,
+        )
+        cards.append(_executive_card(tournament, snapshot))
+    return {
+        "edition_year": edition_year,
+        "scope": "portfolio",
+        "portfolio_id": str(portfolio_id),
+        "cards": cards,
+        "unavailable_metrics": [
+            "cashflow", "accounts_receivable", "payments", "operational_detail"
+        ],
+    }
