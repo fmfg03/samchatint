@@ -43,12 +43,12 @@ class AccessTool:
 
 ACCESS_TOOLS: tuple[AccessTool, ...] = (
     AccessTool(
-        "cliente.tableros_ejecutivos",
+        "direccion.tableros_ejecutivos",
         "Tableros ejecutivos",
-        "Cliente",
-        "Vista CEO de cartera y torneos asignados.",
-        ("/cliente/tableros",),
-        frozenset({"cliente"}),
+        "Dirección",
+        "Vista ejecutiva interna de cartera y torneos asignados.",
+        ("/direccion/tableros", "/direccion/reportes"),
+        frozenset(),
     ),
     AccessTool(
         "panel.home",
@@ -508,6 +508,28 @@ async def _load_rule(
     if row is None:
         return None
     return bool(row[0])
+
+
+async def explicit_tool_decision(
+    session: AsyncSession,
+    empleado: Any,
+    tool_key: str,
+    action_key: str = "ver",
+) -> Optional[bool]:
+    """Return only a persisted access decision, never a role default.
+
+    Direction surfaces use position-scoped data.  An explicit rule can deny or
+    admit their surface, but cannot manufacture a portfolio/tournament scope.
+    """
+    if empleado is None or getattr(empleado, "activo", True) is False:
+        return False
+    return await _load_rule(
+        session,
+        tool_key=tool_key,
+        action_key=(action_key or "ver").strip().lower(),
+        role_key=empleado_role(empleado),
+        area_key=empleado_area(empleado),
+    )
 
 
 async def can_access_tool(
