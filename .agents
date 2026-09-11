@@ -1,0 +1,82 @@
+# SamChat Agent Operating Contract
+
+This file governs AI-agent work in this repository. It supplements, and never
+overrides, `AGENTS.md`, the repository canons, and higher-priority instructions.
+
+## Required bootstrap
+
+Before investigating, planning, editing, testing, making a production claim,
+or proposing a release:
+
+1. Read `AGENTS.md`.
+2. Read these files in order:
+   - `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md`
+   - `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md`
+   - `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md`
+3. Verify their SHA-256 hashes against
+   `docs/roadmap/samchat-convergence-register.md`.
+4. Stop and report any missing file, integrity mismatch, or unresolved
+   canonical conflict. Do not substitute memory, summaries, or assumptions.
+
+## Evidence and ownership
+
+For every SamChat task, state and preserve separately:
+
+- the target runtime, domain, and data boundary (Postgres, Supabase, or hybrid);
+- the canonical read owner and canonical write owner;
+- the evidence level: proposal, planned, coded_not_wired, repo_live,
+  deployed_verified, or business_accepted;
+- the distinction between contract truth, repository truth, runtime truth, and
+  acceptance truth.
+
+Never infer production deployment from `main`, end-to-end completion from a
+route, payment from a closed Payment Run, collection from an AR candidate, or
+business acceptance from a passing test.
+
+## Safety boundaries
+
+- Treat financial, authorization, payroll, accounting, registration/OCR,
+  assistant-case, webhook, Telegram, and release-control surfaces as high risk.
+- Use an existing canonical service or action; do not create parallel query or
+  mutation paths.
+- Separate reads, diagnosis, proposals, previews, confirmation, writes, and
+  receipts.
+- A write requires canonical ownership, authorization, explicit confirmation,
+  idempotency, audit evidence, and a recovery or rollback plan where relevant.
+- Default data repairs and backfills to read-only inventory and dry-run. An
+  `--apply` action requires separate explicit authorization and an audit trail.
+- Never expose or commit credentials, secrets, tokens, or `.env` contents.
+
+## Factory workflow and approvals
+
+For a non-trivial unplanned change, use the factory sequence:
+
+1. Read-only research.
+2. User story and acceptance criteria; obtain human approval.
+3. Technical specification; obtain human approval.
+4. Focused implementation in the approved scope.
+5. Tests and acceptance verification.
+6. Read-only implementation validation.
+7. Final diff or PR review; obtain human approval.
+
+Do not treat final approval as permission to commit, push, merge, deploy, or
+alter production data. Each is a separate authority boundary. For trivial
+changes, inspect the relevant files first, make the smallest correct change,
+and run the smallest relevant verification.
+
+## Canon and release discipline
+
+- Evaluate every relevant product, architecture, data, security, release, or
+  backlog change for canon impact. In the same PR, either update the affected
+  canon and register hash with evidence, date, and reason, or state `Canon
+  unchanged` with a concrete reason. Canon edits require explicit human review.
+- Before a production claim, verify the effective systemd configuration,
+  `WorkingDirectory`, exact deployed commit, one active current-release drop-in,
+  guards, `/healthz`, `/readyz`, restart state, and a changed-domain smoke.
+- Keep repository, deployment, and business-acceptance claims distinct.
+
+## Completion report
+
+Report the work completed, files changed, tests added or updated, commands and
+results, known failures and their attribution, deviations from the approved
+specification, and follow-up risks. Do not hide failed or unrun checks.
