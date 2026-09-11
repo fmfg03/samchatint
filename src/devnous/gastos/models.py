@@ -187,6 +187,8 @@ class ExpenseReport(Base):
         nullable=True,
         index=True,
     )
+    cfdi_compartido_confirmado = Column(Boolean, nullable=False, default=False)
+    cfdi_compartido_motivo = Column(Text, nullable=True)
 
     # Cuenta de Gastos fields (LEAP_SPEC_REFERENCIAS_CLEANUP_V2)
     referencia_base = Column(
@@ -2502,6 +2504,19 @@ class Adjunto(Base):
         String(50), nullable=True
     )  # user_upload, tocino_webhook, legacy_backfill, document_upload
     subido_en = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+    # Dedicated non-deductible proof lifecycle.  Historical files remain stored
+    # and inspectable; only one proof can be current for each expense.
+    activo = Column(Boolean, nullable=False, default=True)
+    sustituido_en = Column(DateTime(timezone=True), nullable=True)
+    sustituido_por_adjunto_id = Column(UUID(as_uuid=True), nullable=True)
+    sustituido_por_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True
+    )
+    eliminado_en = Column(DateTime(timezone=True), nullable=True)
+    eliminado_por_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=True
+    )
+    motivo_eliminacion = Column(Text, nullable=True)
 
     # Relationships
     gasto = relationship(
@@ -2529,6 +2544,13 @@ class Adjunto(Base):
             "categoria": self.categoria,
             "origen": self.origen,
             "subido_en": self.subido_en.isoformat() if self.subido_en else None,
+            "activo": bool(self.activo),
+            "sustituido_en": self.sustituido_en.isoformat() if self.sustituido_en else None,
+            "sustituido_por_adjunto_id": str(self.sustituido_por_adjunto_id) if self.sustituido_por_adjunto_id else None,
+            "sustituido_por_empleado_id": str(self.sustituido_por_empleado_id) if self.sustituido_por_empleado_id else None,
+            "eliminado_en": self.eliminado_en.isoformat() if self.eliminado_en else None,
+            "eliminado_por_id": str(self.eliminado_por_id) if self.eliminado_por_id else None,
+            "motivo_eliminacion": self.motivo_eliminacion,
         }
 
 
