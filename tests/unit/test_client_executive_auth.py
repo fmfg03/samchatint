@@ -1,0 +1,58 @@
+from types import SimpleNamespace
+
+import pytest
+from fastapi import HTTPException
+
+from devnous.gastos.routes.client_executive_routes import _render_dashboard, _require_client
+from devnous.gastos.schema_guard import SCHEMA_PATCHES
+from devnous.gastos.services.access_control_service import default_allows
+from samchat.assistant.router import _derive_empleado_role
+
+
+def test_supabase_customer_maps_to_client_not_finance():
+    assert _derive_empleado_role(user_payload={}, supabase_roles=["customer"]) == "cliente"
+
+
+def test_supabase_finance_role_remains_finance():
+    assert _derive_empleado_role(user_payload={}, supabase_roles=["finanzas"]) == "finanzas"
+
+
+def test_client_dashboard_authorization_allows_client_and_superadmin_only():
+    _require_client(SimpleNamespace(rol="cliente"))
+    _require_client(SimpleNamespace(rol="superadmin"))
+    with pytest.raises(HTTPException, match="Client executive access required"):
+        _require_client(SimpleNamespace(rol="finanzas"))
+
+
+def test_client_role_has_only_the_client_dashboard_default_tool():
+    assert default_allows("cliente.tableros_ejecutivos", "cliente") is True
+    assert default_allows("panel.home", "cliente") is False
+    assert default_allows("gastos.informes", "cliente") is False
+
+
+def test_client_dashboard_link_keeps_selected_edition_year():
+    html = _render_dashboard(
+        {
+            "edition_year": 2028,
+            "cards": [
+                {
+                    "tournament_id": "t-1",
+                    "tournament_name": "Torneo",
+                    "budget": 0,
+                    "actual": 0,
+                    "committed": 0,
+                    "projected": 0,
+                    "source": "test",
+                    "as_of": "now",
+                }
+            ],
+        }
+    )
+    assert "/cliente/tableros/torneos/t-1?edition_year=2028" in html
+
+
+def test_schema_guard_creates_position_dependencies_before_client_portfolios():
+    patch_names = [name for name, _sql in SCHEMA_PATCHES]
+    assert patch_names.index("create_authorization_positions_table") < patch_names.index(
+        "create_client_executive_portfolio_positions_table"
+    )

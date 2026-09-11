@@ -36,6 +36,8 @@ class RequiredConstraint:
 
 
 REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
+    RequiredColumn("client_executive_portfolios", "label"),
+    RequiredColumn("client_executive_portfolio_positions", "position_key"),
     RequiredColumn("expense_reports", "origen"),
     RequiredColumn("expense_reports", "numero_factura"),
     RequiredColumn("expense_reports", "solicitud_documento_id"),
@@ -308,6 +310,78 @@ REQUIRED_CONSTRAINTS: Sequence[RequiredConstraint] = (
 
 
 SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
+    (
+        "create_authorization_positions_table",
+        """
+        CREATE TABLE IF NOT EXISTS authorization_positions (
+            position_key VARCHAR(100) PRIMARY KEY,
+            label VARCHAR(200) NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT TRUE
+        )
+        """,
+    ),
+    (
+        "create_authorization_position_assignments_table",
+        """
+        CREATE TABLE IF NOT EXISTS authorization_position_assignments (
+            position_key VARCHAR(100) NOT NULL
+                REFERENCES authorization_positions(position_key),
+            empleado_id UUID NOT NULL REFERENCES empleados(id),
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            PRIMARY KEY (position_key, empleado_id)
+        )
+        """,
+    ),
+    (
+        "create_client_executive_portfolios_table",
+        """
+        CREATE TABLE IF NOT EXISTS client_executive_portfolios (
+            id UUID PRIMARY KEY,
+            label VARCHAR(200) NOT NULL,
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "create_client_executive_access_audit_logs_table",
+        """
+        CREATE TABLE IF NOT EXISTS client_executive_access_audit_logs (
+            id UUID PRIMARY KEY,
+            actor_empleado_id UUID NULL REFERENCES empleados(id),
+            portfolio_id UUID NULL REFERENCES client_executive_portfolios(id),
+            event_type VARCHAR(80) NOT NULL,
+            detail JSONB NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """,
+    ),
+    (
+        "create_client_executive_portfolio_positions_table",
+        """
+        CREATE TABLE IF NOT EXISTS client_executive_portfolio_positions (
+            portfolio_id UUID NOT NULL REFERENCES client_executive_portfolios(id),
+            position_key VARCHAR(100) NOT NULL REFERENCES authorization_positions(position_key),
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            PRIMARY KEY (portfolio_id, position_key)
+        )
+        """,
+    ),
+    (
+        "create_client_executive_portfolio_tournaments_table",
+        """
+        CREATE TABLE IF NOT EXISTS client_executive_portfolio_tournaments (
+            portfolio_id UUID NOT NULL REFERENCES client_executive_portfolios(id),
+            tournament_id UUID NOT NULL REFERENCES tournaments(id),
+            active BOOLEAN NOT NULL DEFAULT TRUE,
+            PRIMARY KEY (portfolio_id, tournament_id)
+        )
+        """,
+    ),
+    (
+        "ix_client_executive_portfolio_positions_key",
+        "CREATE INDEX IF NOT EXISTS ix_client_executive_portfolio_positions_key ON client_executive_portfolio_positions(position_key)",
+    ),
     (
         "create_access_control_rules_table",
         """

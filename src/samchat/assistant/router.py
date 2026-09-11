@@ -8932,7 +8932,9 @@ def _derive_empleado_role(
         return "superadmin"
     if "admin" in role_candidates:
         return "admin"
-    if "customer" in role_candidates or "finanzas" in role_candidates:
+    if "customer" in role_candidates:
+        return "cliente"
+    if "finanzas" in role_candidates:
         return "finanzas"
     return "empleado"
 
@@ -11144,7 +11146,7 @@ async def assistant_auth_bridge_supabase(
         elif has_admin_role and not _is_superadmin(derived_role):
             derived_role = "admin"
         elif has_customer_role and not _is_admin(derived_role):
-            derived_role = "finanzas"
+            derived_role = "cliente"
 
         existing_row = (
             await session.execute(
@@ -11159,6 +11161,9 @@ async def assistant_auth_bridge_supabase(
                 existing_row.rol = "superadmin"
             elif _is_admin(derived_role) and not _is_admin(existing_row.rol):
                 existing_row.rol = derived_role
+            elif derived_role == "cliente" and not _is_superadmin(existing_row.rol):
+                # A Supabase customer must never retain a historical finance role.
+                existing_row.rol = "cliente"
             await session.commit()
             empleado = existing_row
         else:
