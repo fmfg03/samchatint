@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from samchat.budgets import service as budget_service
@@ -129,6 +131,24 @@ async def test_authorized_tournaments_performs_only_the_position_scope_query():
     assert "authorization_position_assignments" in session.statements[0]
     assert "holder.position_key = ANY(:position_keys)" in session.statements[0]
     assert "CREATE" not in session.statements[0].upper()
+
+
+@pytest.mark.asyncio
+async def test_authorized_tournaments_does_not_require_a_tournament_slug_column():
+    class Result:
+        def __iter__(self):
+            return iter([SimpleNamespace(id="t-1", name="Copa Telmex Telcel", slug=None)])
+
+    class Session:
+        async def execute(self, statement, _params=None):
+            rendered = str(statement)
+            assert "t.slug" not in rendered
+            assert "NULL::text AS slug" in rendered
+            return Result()
+
+    assert await service._authorized_tournaments(Session(), "direction-holder") == [
+        {"id": "t-1", "name": "Copa Telmex Telcel", "slug": ""}
+    ]
 
 
 @pytest.mark.asyncio
