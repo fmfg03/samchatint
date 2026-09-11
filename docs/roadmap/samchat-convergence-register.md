@@ -12,9 +12,13 @@ Status: active planning baseline, 2026-09-10.
 | Release gates | passing | registration operational surface and accepted regressions |
 | Route snapshot migration | applied and verified | `eligible_empleado_ids` exists; two routes have holders |
 
-The three top-level `SAMCHAT_*_2026-09-10.md` files are protected source inputs.
-They are not tracked or edited by this register. Their SHA-256 values are held in
-the Line 0 baseline receipt before any future editorial decision.
+The three top-level `SAMCHAT_*_2026-09-10.md` files are versioned canonical
+sources. Their SHA-256 values are an integrity receipt, not permission to alter
+them. Any change requires an explicit, human-reviewed PR that records the
+evidence, date, and reason for the update and refreshes this table in the same
+change. A PR that does not change the canon must declare `Canon unchanged` and
+state why. Automation may verify integrity, but it must never author or approve
+canon edits silently.
 
 | Protected source path | SHA-256 at Line 0 baseline |
 | --- | --- |
@@ -38,7 +42,7 @@ the Line 0 baseline receipt before any future editorial decision.
 | Prior local main ref | `09b2c6b137ecf04d13726bd670e565f00fd7a797` |
 | Durable preservation ref | `origin/rescue/main-pre-convergence-20260910` |
 | Aligned main ref | `dcbeea8423030e0123101a35378d765ea3c96f32` |
-| Source file policy | preserve, do not stage, move, delete, or edit without separate authority |
+| Source file policy | versioned canon; edit only through an explicit human-reviewed PR with evidence and refreshed hash receipt |
 
 ## Operating rules
 
