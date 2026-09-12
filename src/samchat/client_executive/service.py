@@ -476,6 +476,78 @@ async def _budget_alias_bridge_is_safe(
     )
 
 
+class _DirectionBudgetScopeViolation(RuntimeError):
+    """Raised when consumed legacy budget rows escape the authorized tournament."""
+
+
+class _BufferedMappingResult:
+    """Minimal buffered mapping result used after validating consumed rows."""
+
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = list(rows)
+
+    def mappings(self) -> "_BufferedMappingResult":
+        return self
+
+    def all(self) -> list[Any]:
+        return list(self._rows)
+
+    def first(self) -> Any:
+        return self._rows[0] if self._rows else None
+
+
+class _DirectionBudgetReadSession:
+    """Validate the exact budget rows consumed by the legacy alias snapshot."""
+
+    def __init__(
+        self,
+        session: Any,
+        *,
+        tournament: dict[str, str],
+        aliases: list[str],
+    ) -> None:
+        self._session = session
+        self._tournament = tournament
+        self._aliases = aliases
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._session, name)
+
+    @staticmethod
+    def _is_budget_line_consuming_query(statement: Any, params: Any) -> bool:
+        sql = str(statement)
+        return (
+            isinstance(params, dict)
+            and bool(params.get("version_id"))
+            and "FROM budget_lines l" in sql
+            and "l.budget_version_id = :version_id" in sql
+            and "l.tournament_name" in sql
+            and "l.budget_amount" in sql
+        )
+
+    async def execute(
+        self, statement: Any, params: Any = None, *args: Any, **kwargs: Any
+    ) -> Any:
+        if params is None:
+            result = await self._session.execute(statement, *args, **kwargs)
+        else:
+            result = await self._session.execute(statement, params, *args, **kwargs)
+        if not self._is_budget_line_consuming_query(statement, params):
+            return result
+
+        rows = list(result.mappings().all())
+        authorized_name = _identity_text(self._tournament.get("name"))
+        authorized_id = str(self._tournament.get("id") or "")
+        for row in rows:
+            row_name = _identity_text(row.get("tournament_name"))
+            row_id = str(row.get("tournament_id") or "").strip()
+            if row_name != authorized_name or (row_id and row_id != authorized_id):
+                raise _DirectionBudgetScopeViolation(
+                    "Legacy budget row escaped authorized Direction scope."
+                )
+        return _BufferedMappingResult(rows)
+
+
 async def _build_direction_budget_snapshot(
     session: Any,
     *,
@@ -507,16 +579,24 @@ async def _build_direction_budget_snapshot(
     ):
         return strict
 
-    bridged = await build_budget_snapshot(
+    guarded_session = _DirectionBudgetReadSession(
         session,
-        tournament_id=tournament["id"],
-        tournament_name=tournament.get("name"),
-        tournament_slug=tournament.get("slug"),
-        edition_year=edition_year,
-        version_id=version_id,
-        ensure_schema=False,
-        strict_tournament_scope=False,
+        tournament=tournament,
+        aliases=aliases,
     )
+    try:
+        bridged = await build_budget_snapshot(
+            guarded_session,
+            tournament_id=tournament["id"],
+            tournament_name=tournament.get("name"),
+            tournament_slug=tournament.get("slug"),
+            edition_year=edition_year,
+            version_id=version_id,
+            ensure_schema=False,
+            strict_tournament_scope=False,
+        )
+    except _DirectionBudgetScopeViolation:
+        return strict
     if bridged.get("source") != "budget_db":
         return strict
     bridged["direction_scope_bridge"] = {
