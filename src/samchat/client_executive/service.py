@@ -102,7 +102,7 @@ async def _authorized_tournaments(
     if is_superadmin:
         result = await session.execute(
             text(
-                """SELECT DISTINCT t.id::text AS id, t.name, t.slug
+                """SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
                 FROM client_executive_portfolio_tournaments assignment
                 JOIN client_executive_portfolios portfolio
                   ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
@@ -118,7 +118,7 @@ async def _authorized_tournaments(
     result = await session.execute(
         text(
             """
-            SELECT DISTINCT t.id::text AS id, t.name, t.slug
+            SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
             FROM authorization_position_assignments holder
             JOIN client_executive_portfolio_positions position
               ON position.position_key = holder.position_key AND position.active = TRUE
@@ -301,7 +301,7 @@ async def build_portfolio_dashboard(
     result = await session.execute(
         text(
             """
-            SELECT t.id::text AS id, t.name, t.slug
+            SELECT t.id::text AS id, t.name, NULL::text AS slug
             FROM client_executive_portfolio_tournaments assignment
             JOIN client_executive_portfolios portfolio
               ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
