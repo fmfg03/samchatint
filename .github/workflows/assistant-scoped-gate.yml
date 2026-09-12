@@ -95,6 +95,7 @@ jobs:
             "tests/unit/test_budget_service.py"
             "tests/unit/test_direction_dashboard_source_reconciliation.py"
             "tests/unit/test_direction_dashboard_scope_identity.py"
+            "tests/unit/test_direction_dashboard_account_truth.py"
           )
           missing=0
           for path in "${required[@]}"; do
@@ -206,7 +207,8 @@ jobs:
             tests/unit/test_tournament_write_boundary_gate.py \
             tests/unit/test_budget_service.py \
             tests/unit/test_direction_dashboard_source_reconciliation.py \
-            tests/unit/test_direction_dashboard_scope_identity.py
+            tests/unit/test_direction_dashboard_scope_identity.py \
+            tests/unit/test_direction_dashboard_account_truth.py
 
       - name: Enforce local gastos-project writer boundary
         if: steps.detect.outputs.available == 'true'
