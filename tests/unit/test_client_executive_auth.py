@@ -237,6 +237,53 @@ def test_direction_dashboard_renders_requested_executive_sections_and_contrast()
     assert "no están disponibles en esta superficie" not in html
 
 
+def test_direction_dashboard_dark_palette_meets_aa_and_uses_semantic_tokens():
+    html = _render_dashboard({"edition_year": 2026, "cards": []})
+
+    assert "--link:#0369a1" in html
+    assert "--focus:#0369a1" in html
+    assert "--focus-on-dark:#7dd3fc" in html
+    assert "--ink:#f1f5f9" in html
+    assert "--muted:#b8c7d9" in html
+    assert "--link:#7dd3fc" in html
+    assert "a { color:var(--link)" in html
+    assert ".kpi span,.subheading span" in html
+    assert "color:var(--muted)" in html
+    assert "outline:3px solid var(--focus)" in html
+    assert ".hero button:focus-visible,.hero select:focus-visible" in html
+    assert "outline-color:var(--focus-on-dark)" in html
+
+    def relative_luminance(value: str) -> float:
+        raw = value.lstrip("#")
+        channels = [int(raw[index : index + 2], 16) / 255 for index in (0, 2, 4)]
+
+        def linear(channel: float) -> float:
+            return (
+                channel / 12.92
+                if channel <= 0.04045
+                else ((channel + 0.055) / 1.055) ** 2.4
+            )
+
+        red, green, blue = (linear(channel) for channel in channels)
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+    def contrast(foreground: str, background: str) -> float:
+        first = relative_luminance(foreground)
+        second = relative_luminance(background)
+        lighter, darker = max(first, second), min(first, second)
+        return (lighter + 0.05) / (darker + 0.05)
+
+    assert contrast("#f1f5f9", "#07111c") >= 4.5
+    assert contrast("#b8c7d9", "#101c2a") >= 4.5
+    assert contrast("#7dd3fc", "#07111c") >= 4.5
+    assert contrast("#67e8f9", "#101c2a") >= 4.5
+    assert contrast("#0369a1", "#ffffff") >= 4.5
+    assert contrast("#0369a1", "#f5f7fa") >= 4.5
+    assert contrast("#7dd3fc", "#101c2a") >= 4.5
+    assert contrast("#7dd3fc", "#183153") >= 3
+    assert contrast("#7dd3fc", "#0f172a") >= 3
+
+
 def test_schema_guard_creates_position_dependencies_before_legacy_portfolios():
     patch_names = [name for name, _sql in SCHEMA_PATCHES]
     assert patch_names.index(

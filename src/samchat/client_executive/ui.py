@@ -528,13 +528,13 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
       <style>
         :root {{
           --ink:#132238; --muted:#64748b; --paper:#ffffff; --canvas:#f5f7fa;
-          --line:#e2e8f0; --soft:#f8fafc; --accent:#0f766e; --accent-soft:#ecfdf5;
+          --line:#e2e8f0; --soft:#f8fafc; --accent:#0f766e; --accent-soft:#ecfdf5; --link:#0369a1; --focus:#0369a1; --focus-on-dark:#7dd3fc;
           --navy:#0f172a; --blue:#2563eb; --warn:#92400e; --danger:#991b1b;
           --shadow:0 10px 30px rgba(15,23,42,.07);
         }}
         * {{ box-sizing:border-box; }}
         body {{ margin:0; background:var(--canvas); color:var(--ink); font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
-        a {{ color:#0369a1; text-underline-offset:3px; }}
+        a {{ color:var(--link); text-underline-offset:3px; }}
         .shell {{ width:min(1480px,calc(100% - 40px)); margin:0 auto; padding:32px 0 64px; }}
         .hero {{ background:linear-gradient(135deg,#0f172a,#183153); color:#fff; border-radius:24px; padding:28px 30px; display:flex; justify-content:space-between; gap:28px; align-items:end; box-shadow:var(--shadow); }}
         .hero h1 {{ margin:4px 0 6px; font-size:clamp(26px,3vw,40px); letter-spacing:-.03em; line-height:1.05; color:#fff; }}
@@ -544,6 +544,8 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         label {{ display:grid; gap:5px; color:#cbd5e1; font-size:12px; font-weight:700; }}
         select,button {{ min-height:42px; border:1px solid rgba(255,255,255,.35); border-radius:10px; padding:8px 12px; background:#fff; color:#0f172a; }}
         button {{ cursor:pointer; font-weight:800; }}
+        a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible {{ outline:3px solid var(--focus); outline-offset:2px; }}
+        .hero button:focus-visible,.hero select:focus-visible {{ outline-color:var(--focus-on-dark); }}
         nav {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 26px; }}
         nav a {{ text-decoration:none; color:#334155; background:#fff; border:1px solid var(--line); border-radius:999px; padding:7px 12px; font-size:13px; box-shadow:0 2px 8px rgba(15,23,42,.03); }}
         .tournament {{ display:grid; gap:18px; margin:0 0 36px; }}
@@ -612,11 +614,14 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
           .attention,.entity-grid {{ grid-template-columns:1fr; }} .summary-meta {{ margin-top:8px; }} .marketing-kpis {{ grid-template-columns:1fr 1fr; }}
         }}
         @media (prefers-color-scheme:dark) {{
-          :root {{ --ink:#e5edf5; --muted:#9fb0c3; --paper:#101c2a; --canvas:#07111c; --line:#2d4257; --soft:#162638; --navy:#f8fafc; --shadow:0 12px 30px rgba(0,0,0,.22); }}
+          :root {{ --ink:#f1f5f9; --muted:#b8c7d9; --paper:#101c2a; --canvas:#07111c; --line:#41566d; --soft:#162638; --navy:#ffffff; --link:#7dd3fc; --focus:#7dd3fc; --focus-on-dark:#7dd3fc; --shadow:0 12px 30px rgba(0,0,0,.22); }}
           body {{ background:var(--canvas); color:var(--ink); }}
           .hero {{ background:linear-gradient(135deg,#0a1522,#0f2940); }}
           nav a,.panel,.kpi-section,.attention,details.entity,.table-wrap {{ background:var(--paper); }}
-          nav a,td,.attention li,.summary-meta {{ color:#d5e0ea; }}
+          nav a,td,.attention li,.summary-meta {{ color:var(--ink); }}
+          .tournament-header h2,.section-heading h2,.kpi strong,.mini-kpis strong,.mini-kpis p,.entity-body h3,.subheading h3,details.entity>summary strong {{ color:var(--navy); }}
+          .tournament-header p,.section-note,.source-note,.section-heading p,.empty-copy,.kpi small,.kpi span,.subheading span,details.entity>summary div span,.mini-kpis span,.mini-kpis h4,.pending-details summary {{ color:var(--muted); }}
+          .eyebrow {{ color:#67e8f9; }}
           .kpi,.mini-kpis>div,details.entity>summary {{ background:var(--soft); }}
           .kpi-primary {{ background:#11333a; border-color:#226f72; }}
           th {{ background:#1a3044; color:#cbd5e1; }} td {{ border-color:#24384c; }}
