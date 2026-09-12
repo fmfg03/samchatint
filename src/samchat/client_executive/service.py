@@ -222,7 +222,7 @@ def _executive_card(
         card["budget_snapshot_source"] = source_state
         card["budget_version"] = snapshot.get("version")
         card["paid"] = (
-            _optional_money(comparison, "paid_total") if scope_available else None
+            _optional_money(summary, "paid_total") if scope_available else None
         )
         card["requested"] = (
             _optional_money(comparison, "requested_total") if scope_available else None

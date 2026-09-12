@@ -374,3 +374,23 @@ def test_marketing_requires_explicit_available_source_before_showing_counts():
     assert 'class="status status-unavailable"' in rendered
     assert "<h4>Fotografías</h4><p>Fuente no disponible</p>" in rendered
     assert "<h4>Videos</h4><p>Fuente no disponible</p>" in rendered
+
+
+def test_budget_db_paid_total_is_read_from_summary():
+    card = service._executive_card(
+        {"id": "tor-1", "name": "Copa Telmex", "slug": ""},
+        {
+            "source": "budget_db",
+            "summary": {"budget_total": 1000.0, "paid_total": 375.0},
+            "comparison": {
+                "actual_total": 400.0,
+                "committed_total": 600.0,
+                "paid_total": 999.0,
+            },
+            "forecast": {"projected_close_total": 900.0},
+            "version": {"id": "version-1"},
+        },
+    )
+
+    assert card["paid"] == 375.0
+    assert ui._money(card["paid"]) == "$375.00"
