@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from samchat.budgets import service as budget_service
@@ -8,9 +10,7 @@ from samchat.client_executive import service
 async def test_portfolio_dashboard_only_aggregates_assigned_tournaments(monkeypatch):
     async def authorized(_session, _empleado_id, *, is_superadmin=False):
         assert is_superadmin is False
-        return [
-            {"id": "allowed", "name": "Proyecto autorizado", "slug": "allowed"}
-        ]
+        return [{"id": "allowed", "name": "Proyecto autorizado", "slug": "allowed"}]
 
     async def snapshot(
         _session,
@@ -39,7 +39,7 @@ async def test_portfolio_dashboard_only_aggregates_assigned_tournaments(monkeypa
     monkeypatch.setattr(service, "build_budget_snapshot", snapshot)
 
     payload = await service.build_client_dashboard(
-        object(), empleado_id="client", edition_year=2026
+        object(), empleado_id="direction-holder", edition_year=2026
     )
 
     assert payload["scope"] == "portfolio"
@@ -62,22 +62,25 @@ async def test_portfolio_dashboard_only_aggregates_assigned_tournaments(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_tournament_outside_client_portfolio_is_denied(monkeypatch):
+async def test_tournament_outside_assigned_portfolio_is_denied(monkeypatch):
     async def authorized(_session, _empleado_id, *, is_superadmin=False):
-        return [
-            {"id": "allowed", "name": "Proyecto autorizado", "slug": "allowed"}
-        ]
+        return [{"id": "allowed", "name": "Proyecto autorizado", "slug": "allowed"}]
 
     monkeypatch.setattr(service, "_authorized_tournaments", authorized)
 
     with pytest.raises(service.ClientExecutiveAccessError):
         await service.build_client_dashboard(
-            object(), empleado_id="client", edition_year=2026, tournament_id="other"
+            object(),
+            empleado_id="direction-holder",
+            edition_year=2026,
+            tournament_id="other",
         )
 
 
 @pytest.mark.asyncio
-async def test_client_without_active_portfolio_position_is_denied(monkeypatch):
+async def test_internal_identity_without_active_portfolio_position_is_denied(
+    monkeypatch,
+):
     async def authorized(_session, _empleado_id, *, is_superadmin=False):
         assert is_superadmin is False
         return []
@@ -85,7 +88,9 @@ async def test_client_without_active_portfolio_position_is_denied(monkeypatch):
     monkeypatch.setattr(service, "_authorized_tournaments", authorized)
 
     with pytest.raises(service.ClientExecutiveAccessError):
-        await service.build_client_dashboard(object(), empleado_id="client", edition_year=2026)
+        await service.build_client_dashboard(
+            object(), empleado_id="employee", edition_year=2026
+        )
 
 
 @pytest.mark.asyncio
@@ -100,7 +105,7 @@ async def test_unscoped_tournament_never_requests_budget_snapshot(monkeypatch):
     monkeypatch.setattr(service, "build_budget_snapshot", unexpected_snapshot)
 
     payload = await service.build_client_dashboard(
-        object(), empleado_id="client", edition_year=2026
+        object(), empleado_id="direction-holder", edition_year=2026
     )
 
     assert payload["cards"] == []
@@ -121,10 +126,29 @@ async def test_authorized_tournaments_performs_only_the_position_scope_query():
             return Result()
 
     session = Session()
-    assert await service._authorized_tournaments(session, "client") == []
+    assert await service._authorized_tournaments(session, "direction-holder") == []
     assert len(session.statements) == 1
     assert "authorization_position_assignments" in session.statements[0]
+    assert "holder.position_key = ANY(:position_keys)" in session.statements[0]
     assert "CREATE" not in session.statements[0].upper()
+
+
+@pytest.mark.asyncio
+async def test_authorized_tournaments_does_not_require_a_tournament_slug_column():
+    class Result:
+        def __iter__(self):
+            return iter([SimpleNamespace(id="t-1", name="Copa Telmex Telcel", slug=None)])
+
+    class Session:
+        async def execute(self, statement, _params=None):
+            rendered = str(statement)
+            assert "t.slug" not in rendered
+            assert "NULL::text AS slug" in rendered
+            return Result()
+
+    assert await service._authorized_tournaments(Session(), "direction-holder") == [
+        {"id": "t-1", "name": "Copa Telmex Telcel", "slug": ""}
+    ]
 
 
 @pytest.mark.asyncio
@@ -135,10 +159,17 @@ async def test_superadmin_reads_all_tournaments_without_a_portfolio_position():
 
     class Session:
         async def execute(self, statement, _params=None):
-            assert "FROM tournaments" in str(statement)
+            rendered = str(statement)
+            assert "client_executive_portfolio_tournaments assignment" in rendered
+            assert "portfolio.active = TRUE" in rendered
+            assert "assignment.active = TRUE" in rendered
+            assert "t.active = TRUE" in rendered
             return Result()
 
-    assert await service._authorized_tournaments(Session(), "super", is_superadmin=True) == []
+    assert (
+        await service._authorized_tournaments(Session(), "super", is_superadmin=True)
+        == []
+    )
 
 
 @pytest.mark.asyncio
@@ -210,7 +241,9 @@ async def test_strict_tournament_scope_uses_only_uuid_and_never_falls_back(monke
         raise AssertionError("Strict client scope must not read the CSV fallback.")
 
     monkeypatch.setattr(budget_service, "_select_budget_version", selected_version)
-    monkeypatch.setattr(budget_service, "load_budget_artifact_rows", unexpected_artifact)
+    monkeypatch.setattr(
+        budget_service, "load_budget_artifact_rows", unexpected_artifact
+    )
     session = Session()
 
     snapshot = await budget_service.build_budget_snapshot(

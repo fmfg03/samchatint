@@ -132,6 +132,51 @@ High-risk actions require more than a visible button or tool definition. Verify:
 - explicit confirmation when the assistant is involved;
 - idempotency and an audit receipt.
 
+### 7.1 Direction executive boards and reports
+
+Date: 2026-09-11
+
+Reason: this amendment governs the pending correction to #314 and #315 from a
+customer-role interpretation to an internal Direction authority surface. The primary routes are
+`/direccion/tableros` and `/direccion/reportes`; temporary legacy GET
+redirects do not retain a customer-facing authorization or write API.
+
+The non-superadmin authorization contract is position-scoped, not role-scoped:
+
+1. the session resolves to an active internal `empleado`;
+2. the employee has an active assignment to one of
+   `direccion_general`, `direccion_administracion_finanzas`,
+   `direccion_goat`, or `director_operaciones`;
+3. that position is actively mapped to a portfolio, and the requested
+   tournament/report belongs to that active assigned scope.
+
+`superadmin` has supervision over active portfolios. `admin` does not receive
+global access merely by role. The `cliente` role is neither a prerequisite nor
+an authorization concept for these surfaces. Specific permissions may restrict
+actions within the surface, but never create portfolio or tournament scope or
+substitute the eligible position. There is no global fallback for
+position-scoped employees.
+
+Executive board and published-report consumption are read-only within assigned
+scope. Report schedule configuration, draft creation and state transitions are
+internal governed writes requiring their specific authority and audited actor.
+Financial, CxC, payment, cashflow, and operational-detail domains remain
+unavailable unless a separate canonical permission authorizes them.
+
+The physical `client_*` tables, package names, and route-module filenames are
+temporary compatibility debt. Do not rename them in this correction; a
+separate migration, compatibility inventory, rollback plan, and approval are
+required.
+
+Evidence and temporary discrepancy: production remains at
+`81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based
+interpretation. Route/service changes and focused tests exist only as an
+uncommitted diff in an isolated clean worktree, with 26 focused tests and
+route-contract validation passing. The change becomes `repo_live` only after
+merge, and `deployed_verified` only after a new release plus authenticated
+smoke validation. It remains not `business_accepted` until UAT and real scope
+configuration are complete.
+
 ## 8. Canonical financial workflow invariants
 
 ### 8.1 Document states are business state

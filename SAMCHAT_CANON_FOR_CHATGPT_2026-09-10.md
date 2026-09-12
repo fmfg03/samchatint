@@ -203,3 +203,44 @@ The repository UAT document remains `PENDING_FINANCE_UAT` across its listed case
 ## 13. Safe short description
 
 SamChat is Plataforma Sports' governed operational system for tournament, gastos, finance, evidence, and assistant workflows. Its current repository contains substantial live-web functionality across gastos, Payment Run, budgets, AR, cashflow, OCR, Sam Inbox, and a read-mostly governed assistant. The remaining work is not a rebuild; it is production verification, Finance UAT, contractual closure of specific operations/marketing integrations, and proof that the assistant can complete controlled end-to-end business outcomes.
+
+## 14. Direction executive boards and reports amendment
+
+Date: 2026-09-11
+
+Reason: this amendment governs the pending correction to #314 and #315.
+Executive boards and reports are an internal Plataforma Sports
+surface for Direction and internal owners who hold an eligible organizational
+position; they are not an external customer portal.
+
+For a non-superadmin, authorization requires all of the following:
+
+- an active internal employee identity;
+- one of the initial eligible positions: `direccion_general`,
+  `direccion_administracion_finanzas`, `direccion_goat`, or
+  `director_operaciones`;
+- active assigned portfolio and tournament scope.
+
+`superadmin` may supervise active portfolios. An `admin` does not receive
+global executive access merely from its role. No `cliente` role exists or is
+required for this surface. Specific permissions may restrict actions within
+this surface, but never create scope or substitute the eligible position.
+
+Executive board and published-report consumption are read-only within assigned
+scope. Report schedule configuration, draft creation and state transitions are
+internal governed writes requiring their specific authority and audited actor.
+They must not expose Finanzas, CxC, payments, cashflow, or operational detail
+without the separate canonical permission for those domains.
+
+Physical `client_*` package, table, and route-module names are temporary
+internal compatibility debt, not a product or authorization concept. Their
+future rename requires a separately approved migration and rollback plan.
+
+Evidence and temporary discrepancy: production remains at
+`81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect
+client-based interpretation. The pending correction exists only as an
+uncommitted diff in an isolated clean worktree; focused authorization/reporting
+tests and route-contract validation pass. It becomes `repo_live` only after
+merge, and becomes `deployed_verified` only after a new release plus
+authenticated smoke validation. It remains not `business_accepted` until UAT
+and real portfolio/tournament-scope configuration are complete.
