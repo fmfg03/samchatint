@@ -462,3 +462,47 @@ def test_budget_kpis_can_derive_available_only_from_explicit_usage_values():
     )
 
     assert "<span>Disponible</span><strong>$350.00</strong>" in rendered
+
+
+def test_executive_summary_counts_canonical_critical_alerts_as_high_priority():
+    result = service.build_client_executive_summary(
+        {
+            "scope": "portfolio",
+            "cards": [
+                {
+                    "alerts": [
+                        {"severity": "critical", "title": "Sobre presupuesto"},
+                        {"severity": "warning", "title": "Riesgo"},
+                        {"severity": "info", "title": "Caja"},
+                    ]
+                }
+            ],
+        }
+    )
+
+    assert result["high_alert_count"] == 1
+
+
+def test_executive_summary_keeps_legacy_high_alert_compatibility():
+    result = service.build_client_executive_summary(
+        {"cards": [{"alerts": [{"severity": "high", "title": "Legacy"}]}]}
+    )
+
+    assert result["high_alert_count"] == 1
+
+
+def test_budget_kpis_do_not_claim_payment_evidence_when_paid_is_missing():
+    rendered = ui._budget_kpis(
+        {
+            "budget": 1000.0,
+            "actual": 420.0,
+            "committed": 650.0,
+            "paid": None,
+            "projected": 900.0,
+            "available": 350.0,
+            "budget_source_status": "available",
+        }
+    )
+
+    assert "Sin total pagado acreditado" in rendered
+    assert "Evidencia de pago disponible" not in rendered

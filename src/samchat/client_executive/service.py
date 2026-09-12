@@ -206,9 +206,6 @@ def _executive_card(
             if scope_available
             else None
         ),
-        "available": (
-            _optional_money(forecast, "remaining_budget") if scope_available else None
-        ),
         "projected": (
             _optional_money(forecast, "projected_close_total", "projected_total")
             if scope_available
@@ -234,6 +231,9 @@ def _executive_card(
         )
         card["budget_snapshot_source"] = source_state
         card["budget_version"] = snapshot.get("version")
+        card["available"] = (
+            _optional_money(forecast, "remaining_budget") if scope_available else None
+        )
         card["paid"] = (
             _budget_metric(summary, comparison, "paid_total")
             if scope_available
@@ -611,7 +611,8 @@ def build_client_executive_summary(payload: dict[str, Any]) -> dict[str, Any]:
         1
         for card in cards
         for alert in (card.get("alerts") or [])
-        if isinstance(alert, dict) and alert.get("severity") == "high"
+        if isinstance(alert, dict)
+        and str(alert.get("severity") or "").strip().lower() in {"critical", "high"}
     )
     return {
         "scope": payload.get("scope"),
@@ -676,7 +677,7 @@ async def build_client_dashboard(
         "data_boundary": {
             "operations": "tournament_soul_snapshot",
             "budget": "samchat.budgets.service.build_budget_snapshot",
-            "entity_finance": "budget_breakdowns + canonical accounting actuals",
+            "entity_finance": "pending_finance_entity_bridge",
             "writes": False,
         },
         "unavailable_metrics": ["cashflow", "accounts_receivable", "payments"],

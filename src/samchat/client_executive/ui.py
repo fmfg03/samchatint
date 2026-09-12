@@ -80,6 +80,9 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     committed = card.get("committed")
     paid = card.get("paid")
     projected = card.get("projected")
+    paid_note = (
+        "Total pagado al corte" if paid is not None else "Sin total pagado acreditado"
+    )
     available = card.get("available")
     if (
         available is None
@@ -104,7 +107,7 @@ def _budget_kpis(card: dict[str, Any]) -> str:
         {_kpi('Presupuesto', budget, note='Base autorizada', emphasis=True)}
         {_kpi('Ejercido', actual, note=f'{_pct(actual, budget)} del presupuesto')}
         {_kpi('Comprometido', committed, note=f'{_pct(committed, budget)} del presupuesto')}
-        {_kpi('Pagado', paid, note='Evidencia de pago disponible')}
+        {_kpi('Pagado', paid, note=paid_note)}
         {_kpi('Disponible', available, note='Presupuesto menos mayor uso reconocido')}
         {_kpi('Proyección', projected, note='Cierre estimado')}
       </div>
