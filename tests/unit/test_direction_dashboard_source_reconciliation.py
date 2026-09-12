@@ -63,6 +63,7 @@ async def test_direction_budget_uses_guarded_legacy_alias_bridge(monkeypatch):
         async def execute(self, statement, params=None):
             sql = str(statement)
             assert "FROM budget_lines l" in sql
+            assert "line_direction" not in sql
             assert params["aliases"] == ["CTT"]
             assert params["tournament_id"] == "tor-ctt"
             return _MappingResult(
@@ -102,7 +103,8 @@ async def test_direction_budget_alias_bridge_fails_closed_on_foreign_tournament(
     monkeypatch.setattr(service, "budget_alias_candidates", lambda *_args: {"CTT"})
 
     class Session:
-        async def execute(self, *_args, **_kwargs):
+        async def execute(self, statement, _params=None):
+            assert "line_direction" not in str(statement)
             return _MappingResult(
                 {
                     "line_count": 5,
@@ -265,3 +267,11 @@ def test_ui_v2_keeps_unavailable_sections_compact_and_explicit():
     assert "$0.00" not in rendered
     assert "No se muestran ceros" in rendered
     assert "La identidad operativa del torneo aún no pudo reconciliarse" in rendered
+
+
+def test_marketing_requires_explicit_available_source_before_showing_counts():
+    rendered = ui._marketing({"marketing": {"media": {"photos_count": 0}}}, 0)
+
+    assert 'class="status status-unavailable"' in rendered
+    assert "<h4>Fotografías</h4><p>Fuente no disponible</p>" in rendered
+    assert "<h4>Videos</h4><p>Fuente no disponible</p>" in rendered
