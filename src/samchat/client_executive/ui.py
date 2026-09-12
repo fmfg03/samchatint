@@ -1,9 +1,9 @@
-"""Accessible HTML renderer for the internal Direction executive dossier."""
+"""Executive-grade HTML renderer for the internal Direction dossier."""
 
 from __future__ import annotations
 
 from html import escape
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 from urllib.parse import quote
 
 
@@ -13,10 +13,13 @@ def _text(value: object, fallback: str = "Sin información registrada") -> str:
 
 
 def _money(value: object) -> str:
+    """Format a real monetary value without manufacturing zero from absence."""
+    if value is None or value == "":
+        return "No disponible"
     try:
-        return "${:,.2f}".format(float(value or 0))
+        return "${:,.2f}".format(float(value))
     except (TypeError, ValueError):
-        return "Sin información registrada"
+        return "No disponible"
 
 
 def _rows(items: Iterable[str]) -> str:
@@ -41,6 +44,168 @@ def _status(value: object) -> str:
     return f'<span class="status status-{escape(key)}">{escape(label)}</span>'
 
 
+def _number(value: object) -> str:
+    if value is None or value == "":
+        return "—"
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return _text(value, "—")
+
+
+def _pct(numerator: Optional[float], denominator: Optional[float]) -> str:
+    if numerator is None or denominator in {None, 0}:
+        return "—"
+    return f"{(float(numerator) / float(denominator)) * 100:.0f}%"
+
+
+def _kpi(
+    label: str,
+    value: object,
+    *,
+    note: str = "",
+    emphasis: bool = False,
+) -> str:
+    klass = "kpi kpi-primary" if emphasis else "kpi"
+    return (
+        f'<article class="{klass}"><span>{escape(label)}</span>'
+        f'<strong>{_money(value)}</strong>'
+        f'<small>{escape(note)}</small></article>'
+    )
+
+
+def _budget_kpis(card: dict[str, Any]) -> str:
+    budget = card.get("budget")
+    actual = card.get("actual")
+    committed = card.get("committed")
+    paid = card.get("paid")
+    projected = card.get("projected")
+    available = None
+    if budget is not None:
+        used = max(float(actual or 0), float(committed or 0))
+        available = float(budget) - used
+
+    if card.get("budget_source_status") == "unavailable":
+        note = "La fuente presupuestal no está reconciliada con este torneo."
+    elif card.get("budget_scope_bridge"):
+        note = "Partidas históricas reconciliadas por identidad canónica y alias validado."
+    else:
+        note = "Presupuesto y actuals desde las fuentes canónicas de SamChat."
+
+    return f"""
+    <section class="kpi-section" aria-label="Resumen financiero">
+      <div class="kpi-grid">
+        {_kpi('Presupuesto', budget, note='Base autorizada', emphasis=True)}
+        {_kpi('Ejercido', actual, note=f'{_pct(actual, budget)} del presupuesto')}
+        {_kpi('Comprometido', committed, note=f'{_pct(committed, budget)} del presupuesto')}
+        {_kpi('Pagado', paid, note='Evidencia de pago disponible')}
+        {_kpi('Disponible', available, note='Presupuesto menos mayor uso reconocido')}
+        {_kpi('Proyección', projected, note='Cierre estimado')}
+      </div>
+      <p class="source-note">{escape(note)}</p>
+    </section>
+    """
+
+
+def _alerts(card: dict[str, Any]) -> str:
+    alerts = [item for item in list(card.get("alerts") or []) if isinstance(item, dict)]
+    if not alerts:
+        return ""
+    items = "".join(
+        f'<li><span class="alert-dot alert-{escape(str(item.get("severity") or "info"))}"></span>'
+        f'<strong>{_text(item.get("title"), "Alerta")}</strong></li>'
+        for item in alerts
+    )
+    return f"""
+    <section class="attention" aria-label="Asuntos que requieren atención">
+      <div><span class="eyebrow">Atención ejecutiva</span><h3>Asuntos que requieren seguimiento</h3></div>
+      <ul>{items}</ul>
+    </section>
+    """
+
+
+def _breakdown_rows(items: list[dict[str, Any]], limit: int = 8) -> str:
+    rows = []
+    for item in items[:limit]:
+        budget = item.get("budget_total")
+        actual = item.get("actual_total")
+        committed = item.get("committed_total")
+        rows.append(
+            "<tr>"
+            f"<td>{_text(item.get('label'), 'Sin partida')}</td>"
+            f"<td class='money'>{_money(budget)}</td>"
+            f"<td class='money'>{_money(actual)}</td>"
+            f"<td class='money'>{_money(committed)}</td>"
+            f"<td>{_pct(actual, budget)}</td>"
+            "</tr>"
+        )
+    return "".join(rows)
+
+
+def _budget_detail(card: dict[str, Any]) -> str:
+    if card.get("budget_source_status") == "unavailable":
+        return """
+        <section class="panel compact-panel">
+          <div class="section-heading">
+            <div><span class="eyebrow">Presupuesto y contabilidad</span><h2>Partidas presupuestales</h2></div>
+            <span class="status status-unavailable">Fuente no disponible</span>
+          </div>
+          <p class="empty-copy">No se muestran ceros: la versión presupuestal existe, pero todavía no pudo acreditarse el alcance de este torneo.</p>
+        </section>
+        """
+
+    breakdowns = card.get("budget_breakdowns")
+    breakdowns = breakdowns if isinstance(breakdowns, dict) else {}
+    concepts = [item for item in list(breakdowns.get("by_concept") or []) if isinstance(item, dict)]
+    accounts = [item for item in list(breakdowns.get("by_account") or []) if isinstance(item, dict)]
+    concept_rows = _breakdown_rows(concepts)
+    account_rows = _breakdown_rows(accounts, limit=6)
+    if not concept_rows and not account_rows:
+        return ""
+
+    bridge = card.get("budget_scope_bridge") if isinstance(card.get("budget_scope_bridge"), dict) else {}
+    bridge_badge = (
+        '<span class="status status-partial">Identidad reconciliada</span>'
+        if bridge
+        else '<span class="status status-available">Fuente disponible</span>'
+    )
+    concepts_html = (
+        f"""
+        <div>
+          <div class="subheading"><h3>Partidas presupuestales</h3><span>{len(concepts)} partidas</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Partida</th><th>Presupuesto</th><th>Ejercido</th><th>Comprometido</th><th>Uso</th></tr></thead>
+            <tbody>{concept_rows}</tbody>
+          </table></div>
+        </div>
+        """
+        if concept_rows
+        else ""
+    )
+    accounts_html = (
+        f"""
+        <div>
+          <div class="subheading"><h3>Cuentas contables</h3><span>{len(accounts)} cuentas</span></div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Cuenta</th><th>Presupuesto</th><th>Ejercido</th><th>Comprometido</th><th>Uso</th></tr></thead>
+            <tbody>{account_rows}</tbody>
+          </table></div>
+        </div>
+        """
+        if account_rows
+        else ""
+    )
+    return f"""
+    <section class="panel finance-panel">
+      <div class="section-heading">
+        <div><span class="eyebrow">Presupuesto y contabilidad</span><h2>Presupuesto vs. real</h2></div>
+        {bridge_badge}
+      </div>
+      <div class="finance-split">{concepts_html}{accounts_html}</div>
+    </section>
+    """
+
+
 def _entity_detail(entity: dict[str, Any], index: int) -> str:
     operations = dict(entity.get("operations") or {})
     finance = dict(entity.get("finance") or {})
@@ -50,21 +215,21 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
     player_groups = list(operations.get("players_by_category_age_gender") or [])
 
     contacts_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(contact.get('name'), 'Sin nombre')}</td>
           <td>{_text(contact.get('phone'))}</td>
           <td>{_text(contact.get('email'))}</td>
-          <td>Sin información registrada</td>
-          <td>Sin información registrada</td>
-          <td>Sin información registrada</td>
         </tr>
-        """ for contact in contacts)
-        or '<tr><td colspan="6">Sin responsable de la entidad registrado.</td></tr>'
+        """
+            for contact in contacts
+        )
+        or '<tr><td colspan="3">Sin responsable de la entidad registrado.</td></tr>'
     )
-
     teams_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
@@ -72,86 +237,57 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
           <td>{int(row.get('players_count') or 0)}</td>
           <td>{_text(', '.join(row.get('team_names') or []))}</td>
         </tr>
-        """ for row in team_groups)
+        """
+            for row in team_groups
+        )
         or '<tr><td colspan="5">Sin equipos participantes registrados.</td></tr>'
     )
-
     players_html = (
-        "".join(f"""
+        "".join(
+            f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
           <td>{_text(row.get('age'), 'Edad no disponible')}</td>
           <td>{int(row.get('players_count') or 0)}</td>
         </tr>
-        """ for row in player_groups)
+        """
+            for row in player_groups
+        )
         or '<tr><td colspan="4">Sin jugadores registrados.</td></tr>'
     )
-
-    finance_cards = [
-        ("Ayudas y transferencias", finance.get("first_and_successive_aid_transfers")),
-        ("Uniformes, balones y utilería", finance.get("equipment_costs")),
-        ("Informes de visitas", finance.get("visit_reports")),
-        ("Gastos de visitas", finance.get("visit_expenses")),
-    ]
-    finance_html = "".join(f"""
-        <article class="fact">
-          <h4>{escape(label)}</h4>
-          <p>{len(list(values or [])) if values else 'Sin información registrada'}</p>
-        </article>
-        """ for label, values in finance_cards)
 
     return f"""
     <details class="entity" {'open' if index == 0 else ''}>
       <summary>
-        <span>{_text(entity.get('entity_name'), 'Entidad sin nombre')}</span>
+        <div><strong>{_text(entity.get('entity_name'), 'Entidad sin nombre')}</strong><span>Detalle operativo</span></div>
         <span class="summary-meta">{int(summary.get('teams_count') or 0)} equipos · {int(summary.get('players_count') or 0)} jugadores · {_status((entity.get('readiness') or {}).get('status'))}</span>
       </summary>
       <div class="entity-body">
-        <section aria-labelledby="entity-contact-{index}">
-          <h3 id="entity-contact-{index}">Responsables</h3>
-          <div class="facts">
-            <article class="fact"><h4>Entidad</h4><p>{_text(entity.get('entity_name'))}</p></article>
-            <article class="fact"><h4>Responsable Plataforma Sports</h4><p>{_text(operations.get('ps_owner'))}</p></article>
-          </div>
-          <div class="table-wrap"><table>
-            <thead><tr><th>Responsable entidad</th><th>Teléfono</th><th>Correo</th><th>Nacimiento</th><th>Pareja</th><th>Nacimiento pareja</th></tr></thead>
-            <tbody>{contacts_html}</tbody>
-          </table></div>
-        </section>
-
+        <div class="entity-grid">
+          <section aria-labelledby="entity-contact-{index}">
+            <h3 id="entity-contact-{index}">Responsables</h3>
+            <p><strong>Plataforma Sports:</strong> {_text(operations.get('ps_owner'))}</p>
+            <div class="table-wrap"><table><thead><tr><th>Responsable entidad</th><th>Teléfono</th><th>Correo</th></tr></thead><tbody>{contacts_html}</tbody></table></div>
+          </section>
+          <section aria-labelledby="entity-state-{index}">
+            <h3 id="entity-state-{index}">Estado operativo</h3>
+            <div class="mini-kpis">
+              <div><span>Equipos reales</span><strong>{_number(summary.get('teams_count'))}</strong></div>
+              <div><span>Jugadores</span><strong>{_number(summary.get('players_count'))}</strong></div>
+              <div><span>Equipos esperados</span><strong>—</strong></div>
+            </div>
+            <ul class="pending">{_rows(operations.get('pending_fields') or [])}</ul>
+          </section>
+        </div>
         <section aria-labelledby="entity-teams-{index}">
           <h3 id="entity-teams-{index}">Equipos y jugadores</h3>
-          <div class="facts">
-            <article class="fact"><h4>Equipos esperados</h4><p>{_text(None)}</p><small>Requiere fuente de planeación por categoría y género.</small></article>
-            <article class="fact"><h4>Equipos reales</h4><p>{int(summary.get('teams_count') or 0)}</p><small>Actualización conforme al registro operativo.</small></article>
-            <article class="fact"><h4>Jugadores</h4><p>{int(summary.get('players_count') or 0)}</p><small>Desglose disponible debajo.</small></article>
-          </div>
-          <h4>Equipos reales por categoría y género</h4>
           <div class="table-wrap"><table><thead><tr><th>Categoría</th><th>Género/rama</th><th>Equipos</th><th>Jugadores</th><th>Nombres</th></tr></thead><tbody>{teams_html}</tbody></table></div>
-          <h4>Jugadores por categoría, edad y género</h4>
-          <div class="table-wrap"><table><thead><tr><th>Categoría</th><th>Género/rama</th><th>Edad</th><th>Jugadores</th></tr></thead><tbody>{players_html}</tbody></table></div>
+          <div class="table-wrap secondary-table"><table><thead><tr><th>Categoría</th><th>Género/rama</th><th>Edad</th><th>Jugadores</th></tr></thead><tbody>{players_html}</tbody></table></div>
         </section>
-
-        <section aria-labelledby="entity-state-{index}">
-          <h3 id="entity-state-{index}">Fase estatal y clasificación</h3>
-          <div class="facts">
-            <article class="fact"><h4>Equipos por ronda</h4><p>{_text(None)}</p></article>
-            <article class="fact"><h4>Organización, arbitraje y transportes</h4><p>{_text(operations.get('state_phase_description'))}</p></article>
-            <article class="fact"><h4>Clasificados al nacional</h4><p>{_text(None)}</p></article>
-            <article class="fact"><h4>Entrega de uniformes</h4><p>{_text(operations.get('state_uniform_delivery'))}</p></article>
-            <article class="fact"><h4>Viaje al nacional</h4><p>{_text(operations.get('national_travel_dates'))}</p></article>
-            <article class="fact"><h4>Clasificación final</h4><p>{_text(None)}</p></article>
-          </div>
-          <h4>Información operativa pendiente</h4>
-          <ul class="pending">{_rows(operations.get('pending_fields') or [])}</ul>
-        </section>
-
         <section aria-labelledby="entity-finance-{index}">
           <h3 id="entity-finance-{index}">Finanzas por entidad</h3>
-          <p class="section-note">La vista no interpreta presupuesto agregado como transferencia o pago realizado.</p>
-          <div class="facts">{finance_html}</div>
-          <h4>Información financiera pendiente</h4>
+          <p class="section-note">La vista sólo presenta hechos respaldados; presupuesto agregado no equivale a transferencia o pago realizado.</p>
           <ul class="pending">{_rows(finance.get('pending_fields') or [])}</ul>
         </section>
       </div>
@@ -159,8 +295,44 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
     """
 
 
+def _operations(dossier: dict[str, Any], index: int) -> str:
+    entities = list(dossier.get("entities") or [])
+    status = dossier.get("source_status") or "unavailable"
+    if status != "available":
+        return f"""
+        <section id="entidades-{index}" class="panel compact-panel">
+          <div class="section-heading"><div><span class="eyebrow">Operaciones por entidad</span><h2>Responsables, equipos, jugadores y avance</h2></div>{_status(status)}</div>
+          <p class="empty-copy">La identidad operativa del torneo aún no pudo reconciliarse con la fuente SOUL. No se muestran entidades ni conteos inventados.</p>
+        </section>
+        """
+    entity_html = (
+        "".join(_entity_detail(entity, item_index) for item_index, entity in enumerate(entities))
+        or '<p class="empty-copy">La fuente está disponible, pero no contiene entidades para este alcance.</p>'
+    )
+    bridge = dossier.get("source_bridge")
+    bridge_note = (
+        " · identidad reconciliada por nombre exacto y edición"
+        if bridge == "exact_name_edition_bridge"
+        else ""
+    )
+    return f"""
+    <section id="entidades-{index}" class="panel">
+      <div class="section-heading"><div><span class="eyebrow">Operaciones por entidad</span><h2>Responsables, equipos, jugadores y avance</h2><p>{len(entities)} entidades{bridge_note}</p></div>{_status('available')}</div>
+      <div class="entity-stack">{entity_html}</div>
+    </section>
+    """
+
+
 def _national_phase(dossier: dict[str, Any], index: int) -> str:
+    source_status = dossier.get("source_status") or "unavailable"
     national = dict(dossier.get("national_phase") or {})
+    if source_status != "available" or national.get("status") == "unavailable":
+        return f"""
+        <section id="fase-nacional-{index}" class="panel compact-panel">
+          <div class="section-heading"><div><span class="eyebrow">Fase nacional</span><h2>Operación y finanzas de finales</h2></div>{_status(source_status)}</div>
+          <p class="empty-copy">Sin fuente operativa acreditada para esta edición.</p>
+        </section>
+        """
     matches = list(national.get("matches") or [])
     match_rows = (
         "".join(
@@ -183,8 +355,7 @@ def _national_phase(dossier: dict[str, Any], index: int) -> str:
     <section id="fase-nacional-{index}" class="panel">
       <div class="section-heading"><div><span class="eyebrow">Fase nacional</span><h2>Operación y finanzas de finales</h2></div>{_status(national.get('status'))}</div>
       <div class="table-wrap"><table><thead><tr><th>Fase</th><th>Fecha</th><th>Sede/cancha</th><th>Estado</th></tr></thead><tbody>{match_rows}</tbody></table></div>
-      <h3>Información pendiente de integración o captura</h3>
-      <ul class="pending">{_rows(missing)}</ul>
+      <details class="pending-details"><summary>Información pendiente de integración o captura</summary><ul class="pending">{_rows(missing)}</ul></details>
     </section>
     """
 
@@ -192,7 +363,7 @@ def _national_phase(dossier: dict[str, Any], index: int) -> str:
 def _marketing(dossier: dict[str, Any], index: int) -> str:
     marketing = dict(dossier.get("marketing") or {})
     media = dict(marketing.get("media") or {})
-    source_unavailable = marketing.get("status") == "unavailable"
+    source_unavailable = marketing.get("status") == "unavailable" or dossier.get("source_status") not in {None, "available"}
     evidence_count = sum(
         int(media.get(key) or 0)
         for key in ("photos_count", "videos_count", "streams_count")
@@ -202,72 +373,62 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
         if source_unavailable
         else ("with_data" if evidence_count else "pending_data")
     )
-    photos = (
-        "Fuente no disponible"
-        if source_unavailable
-        else str(int(media.get("photos_count") or 0))
-    )
-    videos = (
-        "Fuente no disponible"
-        if source_unavailable
-        else str(int(media.get("videos_count") or 0))
-    )
+    photos = "Fuente no disponible" if source_unavailable else str(int(media.get("photos_count") or 0))
+    videos = "Fuente no disponible" if source_unavailable else str(int(media.get("videos_count") or 0))
     return f"""
-    <section id="mercadotecnia-{index}" class="panel">
+    <section id="mercadotecnia-{index}" class="panel {'compact-panel' if source_unavailable else ''}">
       <div class="section-heading"><div><span class="eyebrow">Mercadotecnia</span><h2>Activaciones y evidencia</h2></div>{_status(evidence_status)}</div>
-      <div class="facts">
-        <article class="fact"><h4>Proveedores presentes</h4><p>Sin información registrada</p></article>
-        <article class="fact"><h4>Visitantes de patrocinadores</h4><p>Sin información registrada</p></article>
-        <article class="fact"><h4>Fotografías</h4><p>{photos}</p></article>
-        <article class="fact"><h4>Videos</h4><p>{videos}</p></article>
+      <div class="mini-kpis marketing-kpis">
+        <div><span>Proveedores presentes</span><strong>—</strong></div>
+        <div><span>Visitantes patrocinadores</span><strong>—</strong></div>
+        <div><h4>Fotografías</h4><p>{photos}</p></div>
+        <div><h4>Videos</h4><p>{videos}</p></div>
       </div>
-      <p class="section-note">La existencia de fotografías no prueba por sí sola una activación ni su resultado. Falta relacionar proveedor, patrocinador, actividad y evidencia.</p>
+      {'<p class="section-note">La existencia de fotografías no prueba por sí sola una activación ni su resultado.</p>' if not source_unavailable else ''}
     </section>
     """
 
 
 def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     dossier = dict(card.get("dossier") or {})
-    entities = list(dossier.get("entities") or [])
     source_status = dossier.get("source_status") or "unavailable"
-    entity_html = (
-        "".join(
-            _entity_detail(entity, item_index)
-            for item_index, entity in enumerate(entities)
-        )
-        or '<div class="empty">No fue posible obtener entidades del alcance operativo de este torneo.</div>'
-    )
+    budget_bridge = card.get("budget_scope_bridge") if isinstance(card.get("budget_scope_bridge"), dict) else {}
+    operational_bridge = dossier.get("source_bridge")
+    provenance = []
+    if budget_bridge:
+        provenance.append("presupuesto reconciliado")
+    if operational_bridge == "exact_name_edition_bridge":
+        provenance.append("operación reconciliada")
+    provenance_text = " · ".join(provenance)
     return f"""
     <article class="tournament" id="torneo-{index}">
       <header class="tournament-header">
-        <div><span class="eyebrow">Torneo · edición {edition_year}</span><h2>{_text(card.get('tournament_name'), 'Torneo sin nombre')}</h2><p>Corte: {_text(card.get('as_of'))} · <a href="/direccion/tableros/torneos/{quote(str(card.get('tournament_id') or ''))}?edition_year={edition_year}">Abrir sólo este torneo</a></p></div>
+        <div>
+          <span class="eyebrow">Torneo · edición {edition_year}</span>
+          <h2>{_text(card.get('tournament_name'), 'Torneo sin nombre')}</h2>
+          <p>Corte: {_text(card.get('as_of'))} · <a href="/direccion/tableros/torneos/{quote(str(card.get('tournament_id') or ''))}?edition_year={edition_year}">Abrir sólo este torneo</a>{' · ' + escape(provenance_text) if provenance_text else ''}</p>
+        </div>
         {_status(source_status)}
       </header>
-      <div class="facts budget">
-        <article class="fact"><h4>Presupuesto</h4><p>{_money(card.get('budget'))}</p></article>
-        <article class="fact"><h4>Ejercido</h4><p>{_money(card.get('actual'))}</p></article>
-        <article class="fact"><h4>Comprometido</h4><p>{_money(card.get('committed'))}</p></article>
-        <article class="fact"><h4>Proyección</h4><p>{_money(card.get('projected'))}</p></article>
+      {_budget_kpis(card)}
+      {_alerts(card)}
+      {_budget_detail(card)}
+      {_operations(dossier, index)}
+      <div class="two-column">
+        {_national_phase(dossier, index)}
+        {_marketing(dossier, index)}
       </div>
-      <section id="entidades-{index}" class="panel nested">
-        <div class="section-heading"><div><span class="eyebrow">Operaciones por entidad</span><h2>Responsables, equipos, jugadores y avance</h2></div><span>{len(entities)} entidades</span></div>
-        {entity_html}
-      </section>
-      {_national_phase(dossier, index)}
-      {_marketing(dossier, index)}
     </article>
     """
 
 
 def render_direction_dashboard(payload: dict[str, Any]) -> str:
-    """Render the assigned Direction scope as a usable executive dossier."""
+    """Render the assigned Direction scope as an executive decision surface."""
     edition_year = int(payload.get("edition_year") or 0)
     cards = list(payload.get("cards") or [])
     tournaments = (
-        "".join(
-            _tournament(card, edition_year, index) for index, card in enumerate(cards)
-        )
-        or '<section class="panel empty">No hay torneos activos en el alcance asignado.</section>'
+        "".join(_tournament(card, edition_year, index) for index, card in enumerate(cards))
+        or '<section class="panel empty-copy">No hay torneos activos en el alcance asignado.</section>'
     )
     section_links = "".join(
         f'<a href="#torneo-{index}">Torneo {index + 1}</a>'
@@ -288,55 +449,113 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
       <meta name="viewport" content="width=device-width,initial-scale=1">
       <title>Tableros de Dirección · SamChat</title>
       <style>
-        :root {{ --ink:#102a43; --muted:#486581; --line:#bcccdc; --paper:#fff; --soft:#f0f4f8; --accent:#0b5f73; --accent-dark:#073b4c; --warn:#8a4b08; --danger:#9b1c1c; }}
+        :root {{
+          --ink:#132238; --muted:#64748b; --paper:#ffffff; --canvas:#f5f7fa;
+          --line:#e2e8f0; --soft:#f8fafc; --accent:#0f766e; --accent-soft:#ecfdf5;
+          --navy:#0f172a; --blue:#2563eb; --warn:#92400e; --danger:#991b1b;
+          --shadow:0 10px 30px rgba(15,23,42,.07);
+        }}
         * {{ box-sizing:border-box; }}
-        body {{ margin:0; background:#eaf0f5; color:var(--ink); font:15px/1.5 Inter,system-ui,sans-serif; }}
-        a {{ color:#075985; }}
-        .shell {{ width:min(1480px,calc(100% - 32px)); margin:0 auto; padding:28px 0 56px; }}
-        .hero,.panel,.tournament {{ background:var(--paper); border:1px solid var(--line); border-radius:18px; box-shadow:0 8px 24px rgba(16,42,67,.08); }}
-        .hero {{ padding:26px; display:flex; justify-content:space-between; gap:24px; align-items:end; }}
-        .hero h1,.tournament h2,.panel h2 {{ margin:.25rem 0; line-height:1.15; }}
-        .hero p,.tournament-header p,.section-note {{ color:var(--muted); margin:.35rem 0 0; }}
-        .eyebrow {{ color:var(--accent); text-transform:uppercase; letter-spacing:.11em; font-size:12px; font-weight:800; }}
+        body {{ margin:0; background:var(--canvas); color:var(--ink); font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
+        a {{ color:#0369a1; text-underline-offset:3px; }}
+        .shell {{ width:min(1480px,calc(100% - 40px)); margin:0 auto; padding:32px 0 64px; }}
+        .hero {{ background:linear-gradient(135deg,#0f172a,#183153); color:#fff; border-radius:24px; padding:28px 30px; display:flex; justify-content:space-between; gap:28px; align-items:end; box-shadow:var(--shadow); }}
+        .hero h1 {{ margin:4px 0 6px; font-size:clamp(26px,3vw,40px); letter-spacing:-.03em; line-height:1.05; color:#fff; }}
+        .hero p {{ margin:0; color:#cbd5e1; max-width:800px; }}
+        .hero .eyebrow {{ color:#67e8f9; }}
         .filters {{ display:flex; gap:10px; align-items:end; }}
-        label {{ display:grid; gap:5px; color:var(--muted); font-size:12px; font-weight:700; }}
-        select,button {{ min-height:42px; border:1px solid #829ab1; border-radius:10px; padding:8px 12px; background:white; color:var(--ink); }}
-        button {{ background:var(--accent-dark); color:white; font-weight:800; cursor:pointer; }}
-        nav {{ margin:16px 0; display:flex; flex-wrap:wrap; gap:8px; }}
-        nav a {{ background:var(--accent-dark); color:#fff; padding:9px 12px; border-radius:999px; text-decoration:none; font-weight:700; }}
-        .tournament {{ padding:22px; margin-top:18px; }}
-        .tournament-header,.section-heading {{ display:flex; justify-content:space-between; gap:16px; align-items:start; }}
-        .facts {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(205px,1fr)); gap:12px; margin:16px 0; }}
-        .fact {{ background:var(--soft); border:1px solid var(--line); border-radius:14px; padding:14px; }}
-        .fact h4 {{ margin:0; color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }}
-        .fact p {{ margin:6px 0 0; font-size:18px; font-weight:800; overflow-wrap:anywhere; }}
-        .fact small {{ display:block; color:var(--muted); margin-top:5px; }}
-        .panel {{ padding:20px; margin-top:18px; }}
-        .panel.nested {{ box-shadow:none; }}
-        details.entity {{ border:1px solid var(--line); border-radius:14px; margin-top:12px; overflow:hidden; }}
-        details.entity > summary {{ cursor:pointer; padding:15px; background:#dde8f0; display:flex; justify-content:space-between; gap:12px; font-weight:850; }}
-        .summary-meta {{ font-weight:600; color:var(--muted); text-align:right; }}
-        .entity-body {{ padding:4px 18px 20px; }}
-        .entity-body section {{ padding-top:16px; }}
-        .table-wrap {{ width:100%; overflow:auto; border:1px solid var(--line); border-radius:12px; }}
-        table {{ width:100%; border-collapse:collapse; min-width:680px; }}
-        th {{ background:var(--accent-dark); color:#fff; text-align:left; font-size:12px; letter-spacing:.04em; }}
-        th,td {{ padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:top; }}
-        tbody tr:nth-child(even) td {{ background:#f7fafc; }}
-        .pending {{ background:#fff8e6; border-left:5px solid #c56a08; padding:13px 18px 13px 34px; color:#603808; }}
-        .status {{ display:inline-flex; align-items:center; padding:5px 9px; border-radius:999px; background:#d9e2ec; color:#243b53; font-size:12px; font-weight:800; white-space:nowrap; }}
-        .status-available,.status-with_data,.status-usable {{ background:#c6f6d5; color:#185c37; }}
-        .status-partial,.status-pending_data,.status-needs_data {{ background:#ffecb5; color:#6b3d00; }}
-        .status-unavailable {{ background:#fed7d7; color:#742a2a; }}
-        .empty {{ padding:22px; color:var(--muted); }}
-        @media (max-width:760px) {{ .shell {{ width:min(100% - 18px,1480px); }} .hero,.tournament-header,.section-heading,details.entity>summary {{ display:block; }} .filters {{ margin-top:16px; }} .summary-meta {{ display:block; margin-top:6px; text-align:left; }} }}
-        @media (prefers-color-scheme:dark) {{ :root {{ --ink:#e6edf3; --muted:#b8c7d9; --line:#4d6478; --paper:#142738; --soft:#20394d; --accent:#6dd5ed; --accent-dark:#07566b; }} body {{ background:#0b1722; }} tbody tr:nth-child(even) td {{ background:#1a3144; }} select {{ background:#142738; color:#fff; }} .pending {{ background:#422e12; color:#ffe3a3; border-color:#ffb547; }} details.entity>summary {{ background:#20394d; }} }}
+        label {{ display:grid; gap:5px; color:#cbd5e1; font-size:12px; font-weight:700; }}
+        select,button {{ min-height:42px; border:1px solid rgba(255,255,255,.35); border-radius:10px; padding:8px 12px; background:#fff; color:#0f172a; }}
+        button {{ cursor:pointer; font-weight:800; }}
+        nav {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 26px; }}
+        nav a {{ text-decoration:none; color:#334155; background:#fff; border:1px solid var(--line); border-radius:999px; padding:7px 12px; font-size:13px; box-shadow:0 2px 8px rgba(15,23,42,.03); }}
+        .tournament {{ display:grid; gap:18px; margin:0 0 36px; }}
+        .tournament-header {{ display:flex; justify-content:space-between; gap:22px; align-items:start; padding:4px 2px; }}
+        .tournament-header h2 {{ margin:3px 0; font-size:clamp(24px,2.6vw,34px); letter-spacing:-.025em; color:var(--navy); }}
+        .tournament-header p,.section-note,.source-note,.section-heading p {{ color:var(--muted); margin:.35rem 0 0; }}
+        .eyebrow {{ color:var(--accent); text-transform:uppercase; letter-spacing:.12em; font-size:11px; font-weight:900; }}
+        .status {{ display:inline-flex; align-items:center; white-space:nowrap; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:800; }}
+        .status-available,.status-with_data,.status-usable {{ background:#dcfce7; color:#166534; }}
+        .status-partial,.status-pending_data,.status-needs_data {{ background:#fef3c7; color:#854d0e; }}
+        .status-unavailable,.status-edition_unavailable {{ background:#fee2e2; color:#991b1b; }}
+        .kpi-section,.panel,.attention {{ background:var(--paper); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow); }}
+        .kpi-section {{ padding:18px; }}
+        .kpi-grid {{ display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:10px; }}
+        .kpi {{ min-height:118px; padding:16px; border-radius:16px; background:var(--soft); border:1px solid var(--line); display:flex; flex-direction:column; justify-content:space-between; }}
+        .kpi-primary {{ background:linear-gradient(145deg,#ecfeff,#f0fdfa); border-color:#99f6e4; }}
+        .kpi span {{ color:#475569; font-size:11px; letter-spacing:.08em; text-transform:uppercase; font-weight:900; }}
+        .kpi strong {{ display:block; margin:6px 0; color:var(--navy); font-size:clamp(20px,2vw,28px); letter-spacing:-.025em; }}
+        .kpi small {{ color:var(--muted); min-height:20px; }}
+        .source-note {{ font-size:12px; margin:10px 2px 0; }}
+        .attention {{ display:grid; grid-template-columns:240px 1fr; gap:22px; padding:18px 20px; border-left:4px solid #f59e0b; }}
+        .attention h3 {{ margin:2px 0; font-size:18px; }}
+        .attention ul {{ margin:0; padding:0; list-style:none; display:grid; gap:7px; }}
+        .attention li {{ display:flex; align-items:center; gap:9px; color:#334155; }}
+        .alert-dot {{ width:8px; height:8px; border-radius:50%; background:#64748b; }}
+        .alert-critical,.alert-high {{ background:#dc2626; }} .alert-warning {{ background:#f59e0b; }} .alert-info {{ background:#2563eb; }}
+        .panel {{ padding:22px; }}
+        .compact-panel {{ min-height:0; padding:18px 22px; }}
+        .section-heading {{ display:flex; justify-content:space-between; gap:20px; align-items:start; margin-bottom:16px; }}
+        .section-heading h2 {{ margin:3px 0; color:var(--navy); font-size:22px; letter-spacing:-.015em; }}
+        .section-heading p {{ font-size:13px; }}
+        .empty-copy {{ color:var(--muted); margin:8px 0; }}
+        .finance-split {{ display:grid; grid-template-columns:1.25fr .75fr; gap:22px; }}
+        .subheading {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin:2px 0 10px; }}
+        .subheading h3 {{ margin:0; font-size:16px; }} .subheading span {{ color:var(--muted); font-size:12px; }}
+        .table-wrap {{ overflow:auto; border:1px solid var(--line); border-radius:14px; background:#fff; }}
+        table {{ width:100%; border-collapse:collapse; min-width:620px; }}
+        th {{ text-align:left; background:#f1f5f9; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.06em; padding:11px 12px; border-bottom:1px solid var(--line); }}
+        td {{ padding:11px 12px; border-bottom:1px solid #eef2f7; color:#334155; }}
+        tbody tr:last-child td {{ border-bottom:0; }}
+        .money {{ text-align:right; font-variant-numeric:tabular-nums; }}
+        .entity-stack {{ display:grid; gap:10px; }}
+        details.entity {{ border:1px solid var(--line); border-radius:15px; background:#fff; overflow:hidden; }}
+        details.entity>summary {{ cursor:pointer; list-style:none; padding:15px 17px; display:flex; justify-content:space-between; gap:16px; align-items:center; background:#f8fafc; }}
+        details.entity>summary::-webkit-details-marker {{ display:none; }}
+        details.entity>summary div {{ display:grid; gap:2px; }}
+        details.entity>summary div span {{ color:var(--muted); font-size:12px; }}
+        .summary-meta {{ display:flex; align-items:center; gap:8px; color:#475569; font-size:13px; }}
+        .entity-body {{ padding:18px; display:grid; gap:20px; }}
+        .entity-body h3 {{ margin:0 0 10px; font-size:16px; }}
+        .entity-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:20px; }}
+        .mini-kpis {{ display:grid; grid-template-columns:repeat(3,1fr); gap:9px; }}
+        .mini-kpis>div {{ border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--soft); }}
+        .mini-kpis span,.mini-kpis h4 {{ display:block; margin:0 0 6px; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }}
+        .mini-kpis strong,.mini-kpis p {{ margin:0; color:var(--navy); font-size:18px; font-weight:800; }}
+        .secondary-table {{ margin-top:12px; }}
+        .pending {{ margin:10px 0 0; padding:12px 12px 12px 30px; border-radius:12px; background:#fff7ed; color:#9a3412; border:1px solid #fed7aa; }}
+        .pending-details summary {{ cursor:pointer; color:#475569; font-weight:700; margin-top:14px; }}
+        .two-column {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
+        .marketing-kpis {{ grid-template-columns:repeat(4,1fr); }}
+        @media (max-width:1180px) {{ .kpi-grid {{ grid-template-columns:repeat(3,1fr); }} .finance-split,.two-column {{ grid-template-columns:1fr; }} }}
+        @media (max-width:760px) {{
+          .shell {{ width:min(100% - 18px,1480px); padding-top:12px; }}
+          .hero,.tournament-header,.section-heading,details.entity>summary {{ display:block; }}
+          .hero {{ padding:22px; }} .filters {{ margin-top:18px; }} .kpi-grid {{ grid-template-columns:1fr 1fr; }}
+          .attention,.entity-grid {{ grid-template-columns:1fr; }} .summary-meta {{ margin-top:8px; }} .marketing-kpis {{ grid-template-columns:1fr 1fr; }}
+        }}
+        @media (prefers-color-scheme:dark) {{
+          :root {{ --ink:#e5edf5; --muted:#9fb0c3; --paper:#101c2a; --canvas:#07111c; --line:#2d4257; --soft:#162638; --navy:#f8fafc; --shadow:0 12px 30px rgba(0,0,0,.22); }}
+          body {{ background:var(--canvas); color:var(--ink); }}
+          .hero {{ background:linear-gradient(135deg,#0a1522,#0f2940); }}
+          nav a,.panel,.kpi-section,.attention,details.entity,.table-wrap {{ background:var(--paper); }}
+          nav a,td,.attention li,.summary-meta {{ color:#d5e0ea; }}
+          .kpi,.mini-kpis>div,details.entity>summary {{ background:var(--soft); }}
+          .kpi-primary {{ background:#11333a; border-color:#226f72; }}
+          th {{ background:#1a3044; color:#cbd5e1; }} td {{ border-color:#24384c; }}
+          .table-wrap {{ border-color:var(--line); }}
+          select,button {{ background:#fff; color:#0f172a; }}
+          .pending {{ background:#3a2810; color:#fed7aa; border-color:#7c4a12; }}
+          .status-available,.status-with_data,.status-usable {{ background:#123a2a; color:#86efac; }}
+          .status-partial,.status-pending_data,.status-needs_data {{ background:#422f10; color:#fde68a; }}
+          .status-unavailable,.status-edition_unavailable {{ background:#431919; color:#fecaca; }}
+        }}
       </style>
     </head>
     <body>
       <main class="shell">
         <header class="hero">
-          <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p>Expediente de Operaciones, Finanzas y Mercadotecnia dentro de la cartera y torneos asignados. Vista de sólo lectura.</p></div>
+          <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p>Una vista de decisión: presupuesto, operación y evidencia dentro de la cartera y torneos asignados. Sólo lectura.</p></div>
           <form class="filters" method="get" action="/direccion/tableros"><label>Edición<select name="edition_year">{year_options}</select></label><button type="submit">Actualizar</button></form>
         </header>
         <nav aria-label="Secciones">{section_links}<a href="/direccion/reportes">Reportes publicados</a></nav>
