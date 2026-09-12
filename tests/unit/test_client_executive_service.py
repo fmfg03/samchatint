@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from samchat.budgets import service as budget_service
-from samchat.client_executive import service
+from samchat.client_executive import service, ui
 
 
 @pytest.mark.asyncio
@@ -69,9 +69,10 @@ async def test_dashboard_can_attach_tournament_scoped_operational_dossier(monkey
     async def budget(*_args, **_kwargs):
         return {"summary": {}, "comparison": {}, "forecast": {}}
 
-    async def dossier(tournament):
+    async def dossier(tournament, *, edition_year):
         assert tournament["id"] == "allowed"
         assert tournament["slug"] == "torneo-2026"
+        assert edition_year == 2026
         return {"source_status": "available", "entities": [{"entity_name": "CDMX"}]}
 
     monkeypatch.setattr(service, "_authorized_tournaments", authorized)
@@ -99,12 +100,90 @@ async def test_operational_source_failure_is_explicit_and_does_not_expand_scope(
     monkeypatch.setattr(service, "build_tournament_soul_snapshot", unavailable)
 
     dossier = await service._build_operational_dossier(
-        {"id": "allowed", "name": "Torneo", "slug": "torneo-2026"}
+        {"id": "allowed", "name": "Torneo", "slug": "torneo-2026"},
+        edition_year=2026,
     )
 
     assert dossier["source_status"] == "unavailable"
     assert dossier["entities"] == []
     assert "secret connection detail" not in str(dossier)
+
+
+@pytest.mark.asyncio
+async def test_operational_dossier_uses_authorized_uuid_not_display_name(monkeypatch):
+    async def snapshot(**kwargs):
+        assert kwargs["tournament_slug"] == "authorized-uuid"
+        return {
+            "tournaments": [{"id": "authorized-uuid", "start_date": "2026-01-01"}],
+            "soul": {"national_phase": {}, "marketing": {}},
+        }
+
+    monkeypatch.setattr(service, "build_tournament_soul_snapshot", snapshot)
+    monkeypatch.setattr(
+        service,
+        "build_director_general_entity_dossier",
+        lambda _snapshot: {"entities": []},
+    )
+
+    dossier = await service._build_operational_dossier(
+        {
+            "id": "authorized-uuid",
+            "name": "Liga Telmex Telcel de Béisbol",
+            "slug": "",
+        },
+        edition_year=2026,
+    )
+
+    assert dossier["source_status"] == "available"
+
+
+@pytest.mark.asyncio
+async def test_operational_dossier_fails_closed_for_another_or_unknown_edition(
+    monkeypatch,
+):
+    async def snapshot(**_kwargs):
+        return {
+            "tournaments": [{"id": "authorized-uuid", "start_date": "2026-01-01"}],
+            "soul": {"national_phase": {"matches": [{"secret": "2026"}]}},
+        }
+
+    def unexpected_dossier(_snapshot):
+        raise AssertionError("Another edition must not reach the dossier renderer.")
+
+    monkeypatch.setattr(service, "build_tournament_soul_snapshot", snapshot)
+    monkeypatch.setattr(
+        service, "build_director_general_entity_dossier", unexpected_dossier
+    )
+
+    dossier = await service._build_operational_dossier(
+        {"id": "authorized-uuid", "name": "Torneo", "slug": ""},
+        edition_year=2024,
+    )
+
+    assert dossier["source_status"] == "edition_unavailable"
+    assert dossier["entities"] == []
+    assert "2026" not in str(dossier)
+
+
+def test_unavailable_marketing_never_renders_missing_counts_as_zero():
+    rendered = ui._marketing(
+        {"marketing": {"status": "unavailable", "media": {}}},
+        0,
+    )
+
+    assert 'class="status status-unavailable"' in rendered
+    assert "<h4>Fotografías</h4><p>Fuente no disponible</p>" in rendered
+    assert "<h4>Videos</h4><p>Fuente no disponible</p>" in rendered
+
+
+def test_tournament_section_ids_are_unique():
+    first = ui._tournament({"dossier": {}}, 2026, 0)
+    second = ui._tournament({"dossier": {}}, 2026, 1)
+
+    assert 'id="fase-nacional-0"' in first
+    assert 'id="mercadotecnia-0"' in first
+    assert 'id="fase-nacional-1"' in second
+    assert 'id="mercadotecnia-1"' in second
 
 
 @pytest.mark.asyncio

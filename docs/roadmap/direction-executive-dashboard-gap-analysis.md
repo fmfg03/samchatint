@@ -82,9 +82,8 @@ facts remain visibly missing. The page performs no business write.
 
 ## Canon impact
 
-Canon update required. The current Direction amendment says the surface must
-not expose Finance or operational detail without a separate canonical
-permission. The requested product decision grants eligible Direction positions
-cross-domain, read-only visibility inside their assigned portfolio and
-tournament scope. The exact canon diff requires explicit human review before
-commit.
+The explicitly approved Direction amendment grants eligible Direction positions
+cross-domain, read-only visibility into Finance and operational facts inside
+their assigned active portfolio and tournament scope. It does not grant create,
+modify, approve, pay, publish or delete authority; specific denials prevail.
+The approved canon changes and their verified hashes are committed in this PR.

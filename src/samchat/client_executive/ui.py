@@ -36,6 +36,7 @@ def _status(value: object) -> str:
         "needs_data": "Captura pendiente",
         "pending_data": "Captura pendiente",
         "unavailable": "Fuente no disponible",
+        "edition_unavailable": "Edición no disponible",
     }.get(key, key.replace("_", " ").title())
     return f'<span class="status status-{escape(key)}">{escape(label)}</span>'
 
@@ -158,7 +159,7 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
     """
 
 
-def _national_phase(dossier: dict[str, Any]) -> str:
+def _national_phase(dossier: dict[str, Any], index: int) -> str:
     national = dict(dossier.get("national_phase") or {})
     matches = list(national.get("matches") or [])
     match_rows = (
@@ -179,7 +180,7 @@ def _national_phase(dossier: dict[str, Any]) -> str:
         "Pagos a proveedores, servicios médicos y seguros.",
     ]
     return f"""
-    <section id="fase-nacional" class="panel">
+    <section id="fase-nacional-{index}" class="panel">
       <div class="section-heading"><div><span class="eyebrow">Fase nacional</span><h2>Operación y finanzas de finales</h2></div>{_status(national.get('status'))}</div>
       <div class="table-wrap"><table><thead><tr><th>Fase</th><th>Fecha</th><th>Sede/cancha</th><th>Estado</th></tr></thead><tbody>{match_rows}</tbody></table></div>
       <h3>Información pendiente de integración o captura</h3>
@@ -188,21 +189,37 @@ def _national_phase(dossier: dict[str, Any]) -> str:
     """
 
 
-def _marketing(dossier: dict[str, Any]) -> str:
+def _marketing(dossier: dict[str, Any], index: int) -> str:
     marketing = dict(dossier.get("marketing") or {})
     media = dict(marketing.get("media") or {})
+    source_unavailable = marketing.get("status") == "unavailable"
     evidence_count = sum(
         int(media.get(key) or 0)
         for key in ("photos_count", "videos_count", "streams_count")
     )
+    evidence_status = (
+        "unavailable"
+        if source_unavailable
+        else ("with_data" if evidence_count else "pending_data")
+    )
+    photos = (
+        "Fuente no disponible"
+        if source_unavailable
+        else str(int(media.get("photos_count") or 0))
+    )
+    videos = (
+        "Fuente no disponible"
+        if source_unavailable
+        else str(int(media.get("videos_count") or 0))
+    )
     return f"""
-    <section id="mercadotecnia" class="panel">
-      <div class="section-heading"><div><span class="eyebrow">Mercadotecnia</span><h2>Activaciones y evidencia</h2></div>{_status('with_data' if evidence_count else 'pending_data')}</div>
+    <section id="mercadotecnia-{index}" class="panel">
+      <div class="section-heading"><div><span class="eyebrow">Mercadotecnia</span><h2>Activaciones y evidencia</h2></div>{_status(evidence_status)}</div>
       <div class="facts">
         <article class="fact"><h4>Proveedores presentes</h4><p>Sin información registrada</p></article>
         <article class="fact"><h4>Visitantes de patrocinadores</h4><p>Sin información registrada</p></article>
-        <article class="fact"><h4>Fotografías</h4><p>{int(media.get('photos_count') or 0)}</p></article>
-        <article class="fact"><h4>Videos</h4><p>{int(media.get('videos_count') or 0)}</p></article>
+        <article class="fact"><h4>Fotografías</h4><p>{photos}</p></article>
+        <article class="fact"><h4>Videos</h4><p>{videos}</p></article>
       </div>
       <p class="section-note">La existencia de fotografías no prueba por sí sola una activación ni su resultado. Falta relacionar proveedor, patrocinador, actividad y evidencia.</p>
     </section>
@@ -236,8 +253,8 @@ def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
         <div class="section-heading"><div><span class="eyebrow">Operaciones por entidad</span><h2>Responsables, equipos, jugadores y avance</h2></div><span>{len(entities)} entidades</span></div>
         {entity_html}
       </section>
-      {_national_phase(dossier)}
-      {_marketing(dossier)}
+      {_national_phase(dossier, index)}
+      {_marketing(dossier, index)}
     </article>
     """
 
@@ -251,6 +268,13 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
             _tournament(card, edition_year, index) for index, card in enumerate(cards)
         )
         or '<section class="panel empty">No hay torneos activos en el alcance asignado.</section>'
+    )
+    section_links = "".join(
+        f'<a href="#torneo-{index}">Torneo {index + 1}</a>'
+        f'<a href="#entidades-{index}">Entidades {index + 1}</a>'
+        f'<a href="#fase-nacional-{index}">Fase nacional {index + 1}</a>'
+        f'<a href="#mercadotecnia-{index}">Mercadotecnia {index + 1}</a>'
+        for index, _card in enumerate(cards)
     )
     year_options = "".join(
         f'<option value="{year}" {"selected" if year == edition_year else ""}>{year}</option>'
@@ -315,7 +339,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
           <div><span class="eyebrow">Plataforma Sports</span><h1>Tablero ejecutivo de Dirección</h1><p>Expediente de Operaciones, Finanzas y Mercadotecnia dentro de la cartera y torneos asignados. Vista de sólo lectura.</p></div>
           <form class="filters" method="get" action="/direccion/tableros"><label>Edición<select name="edition_year">{year_options}</select></label><button type="submit">Actualizar</button></form>
         </header>
-        <nav aria-label="Secciones"><a href="#torneo-0">Resumen</a><a href="#entidades-0">Entidades</a><a href="#fase-nacional">Fase nacional</a><a href="#mercadotecnia">Mercadotecnia</a><a href="/direccion/reportes">Reportes publicados</a></nav>
+        <nav aria-label="Secciones">{section_links}<a href="/direccion/reportes">Reportes publicados</a></nav>
         {tournaments}
       </main>
     </body>

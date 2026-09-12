@@ -246,18 +246,37 @@ def _unavailable_dossier(tournament: dict[str, str]) -> dict[str, Any]:
 
 async def _build_operational_dossier(
     tournament: dict[str, str],
+    *,
+    edition_year: int,
 ) -> dict[str, Any]:
     """Build one strictly tournament-scoped dossier without operational writes."""
     try:
         snapshot = await build_tournament_soul_snapshot(
             tournament_key="all",
-            tournament_slug=tournament.get("slug") or tournament.get("name"),
+            # The configured UUID is the authorization boundary shared with the
+            # SOUL source. Names are display data and must never broaden scope.
+            tournament_slug=tournament["id"],
             include_communications=False,
             include_media=True,
             limit=1000,
         )
     except TournamentsV2Error:
         return _unavailable_dossier(tournament)
+
+    source_tournaments = list(snapshot.get("tournaments") or [])
+    source_years = {
+        int(str(item.get("start_date") or "")[:4])
+        for item in source_tournaments
+        if str(item.get("start_date") or "")[:4].isdigit()
+    }
+    if source_years != {int(edition_year)}:
+        unavailable = _unavailable_dossier(tournament)
+        unavailable["source_status"] = "edition_unavailable"
+        unavailable["non_claims"] = [
+            "La fuente operativa no acredita datos para la edición solicitada; "
+            "no se mostraron datos de otra edición.",
+        ]
+        return unavailable
 
     dossier = build_director_general_entity_dossier(snapshot)
     soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
@@ -330,7 +349,10 @@ async def build_client_dashboard(
         )
         card = _executive_card(tournament, snapshot)
         if include_operational_detail:
-            card["dossier"] = await _build_operational_dossier(tournament)
+            card["dossier"] = await _build_operational_dossier(
+                tournament,
+                edition_year=edition_year,
+            )
         cards.append(card)
 
     return {
