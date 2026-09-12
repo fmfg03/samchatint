@@ -536,12 +536,14 @@ class _DirectionBudgetReadSession:
             return result
 
         rows = list(result.mappings().all())
-        authorized_name = _identity_text(self._tournament.get("name"))
+        authorized_name = str(self._tournament.get("name") or "").strip().casefold()
         authorized_id = str(self._tournament.get("id") or "")
         for row in rows:
-            row_name = _identity_text(row.get("tournament_name"))
-            row_id = str(row.get("tournament_id") or "").strip()
-            if row_name != authorized_name or (row_id and row_id != authorized_id):
+            row_name = str(row.get("tournament_name") or "").strip().casefold()
+            row_id = row.get("tournament_id")
+            if row_name != authorized_name or (
+                row_id is not None and str(row_id) != authorized_id
+            ):
                 raise _DirectionBudgetScopeViolation(
                     "Legacy budget row escaped authorized Direction scope."
                 )
