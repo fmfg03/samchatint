@@ -1,9 +1,9 @@
 # Direction executive dashboard: source and gap analysis
 
-Date: 2026-09-12  
+Date: 2026-09-12
 Base: `090188c5e35e9b0733cdb4fa325db46331f4cdfc`
-Target runtime: `copa_telmex_dashboard.py` / `samchat-gastos.service`  
-Target surface: `/direccion/tableros`  
+Target runtime: `copa_telmex_dashboard.py` / `samchat-gastos.service`
+Target surface: `/direccion/tableros`
 Evidence state: repository worktree only; not deployed or business accepted
 
 ## Source boundary
