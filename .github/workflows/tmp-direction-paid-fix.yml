@@ -1,0 +1,74 @@
+name: Temporary Direction Paid Fix
+
+on:
+  push:
+    branches: ["fix/direction-dashboard-truth-ui-v2"]
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/direction-dashboard-truth-ui-v2
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Apply paid-total source fix and regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service_path = Path("src/samchat/client_executive/service.py")
+          service = service_path.read_text()
+          old = '''        card["paid"] = (\n            _optional_money(comparison, "paid_total") if scope_available else None\n        )'''
+          new = '''        card["paid"] = (\n            _optional_money(summary, "paid_total") if scope_available else None\n        )'''
+          if old not in service:
+              raise SystemExit("expected paid_total comparison block not found")
+          service_path.write_text(service.replace(old, new, 1))
+
+          test_path = Path("tests/unit/test_direction_dashboard_source_reconciliation.py")
+          tests = test_path.read_text()
+          marker = "def test_budget_db_paid_total_is_read_from_summary():"
+          if marker not in tests:
+              tests += '''\n\n\ndef test_budget_db_paid_total_is_read_from_summary():\n    card = service._executive_card(\n        {"id": "tor-1", "name": "Copa Telmex", "slug": ""},\n        {\n            "source": "budget_db",\n            "summary": {"budget_total": 1000.0, "paid_total": 375.0},\n            "comparison": {\n                "actual_total": 400.0,\n                "committed_total": 600.0,\n                "paid_total": 999.0,\n            },\n            "forecast": {"projected_close_total": 900.0},\n            "version": {"id": "version-1"},\n        },\n    )\n\n    assert card["paid"] == 375.0\n    assert ui._money(card["paid"]) == "$375.00"\n'''
+              test_path.write_text(tests)
+          PY
+
+      - name: Format changed Python files
+        run: |
+          python -m pip install "black==26.5.1" "isort==9.0.1"
+          python -m isort \
+            src/samchat/client_executive/service.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m black \
+            src/samchat/client_executive/service.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m isort --check-only \
+            src/samchat/client_executive/service.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m black --check \
+            src/samchat/client_executive/service.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+
+      - name: Commit remediation
+        run: |
+          if git diff --quiet; then
+            echo "No remediation changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/samchat/client_executive/service.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          git commit -m "fix(direction): read paid total from budget summary"
+          git push origin HEAD:fix/direction-dashboard-truth-ui-v2
