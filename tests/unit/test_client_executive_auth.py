@@ -241,13 +241,17 @@ def test_direction_dashboard_dark_palette_meets_aa_and_uses_semantic_tokens():
     html = _render_dashboard({"edition_year": 2026, "cards": []})
 
     assert "--link:#0369a1" in html
+    assert "--focus:#0369a1" in html
+    assert "--focus-on-dark:#7dd3fc" in html
     assert "--ink:#f1f5f9" in html
     assert "--muted:#b8c7d9" in html
     assert "--link:#7dd3fc" in html
     assert "a { color:var(--link)" in html
     assert ".kpi span,.subheading span" in html
     assert "color:var(--muted)" in html
-    assert "outline:3px solid var(--link)" in html
+    assert "outline:3px solid var(--focus)" in html
+    assert ".hero button:focus-visible,.hero select:focus-visible" in html
+    assert "outline-color:var(--focus-on-dark)" in html
 
     def relative_luminance(value: str) -> float:
         raw = value.lstrip("#")
@@ -273,10 +277,11 @@ def test_direction_dashboard_dark_palette_meets_aa_and_uses_semantic_tokens():
     assert contrast("#b8c7d9", "#101c2a") >= 4.5
     assert contrast("#7dd3fc", "#07111c") >= 4.5
     assert contrast("#67e8f9", "#101c2a") >= 4.5
-    assert contrast("#0369a1", "#ffffff") >= 3
-    assert contrast("#0369a1", "#f5f7fa") >= 3
-    assert contrast("#7dd3fc", "#07111c") >= 3
-    assert contrast("#7dd3fc", "#101c2a") >= 3
+    assert contrast("#0369a1", "#ffffff") >= 4.5
+    assert contrast("#0369a1", "#f5f7fa") >= 4.5
+    assert contrast("#7dd3fc", "#101c2a") >= 4.5
+    assert contrast("#7dd3fc", "#183153") >= 3
+    assert contrast("#7dd3fc", "#0f172a") >= 3
 
 
 def test_schema_guard_creates_position_dependencies_before_legacy_portfolios():

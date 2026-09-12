@@ -528,7 +528,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
       <style>
         :root {{
           --ink:#132238; --muted:#64748b; --paper:#ffffff; --canvas:#f5f7fa;
-          --line:#e2e8f0; --soft:#f8fafc; --accent:#0f766e; --accent-soft:#ecfdf5; --link:#0369a1;
+          --line:#e2e8f0; --soft:#f8fafc; --accent:#0f766e; --accent-soft:#ecfdf5; --link:#0369a1; --focus:#0369a1; --focus-on-dark:#7dd3fc;
           --navy:#0f172a; --blue:#2563eb; --warn:#92400e; --danger:#991b1b;
           --shadow:0 10px 30px rgba(15,23,42,.07);
         }}
@@ -544,7 +544,8 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         label {{ display:grid; gap:5px; color:#cbd5e1; font-size:12px; font-weight:700; }}
         select,button {{ min-height:42px; border:1px solid rgba(255,255,255,.35); border-radius:10px; padding:8px 12px; background:#fff; color:#0f172a; }}
         button {{ cursor:pointer; font-weight:800; }}
-        a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible {{ outline:3px solid var(--link); outline-offset:2px; }}
+        a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible {{ outline:3px solid var(--focus); outline-offset:2px; }}
+        .hero button:focus-visible,.hero select:focus-visible {{ outline-color:var(--focus-on-dark); }}
         nav {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 26px; }}
         nav a {{ text-decoration:none; color:#334155; background:#fff; border:1px solid var(--line); border-radius:999px; padding:7px 12px; font-size:13px; box-shadow:0 2px 8px rgba(15,23,42,.03); }}
         .tournament {{ display:grid; gap:18px; margin:0 0 36px; }}
@@ -613,7 +614,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
           .attention,.entity-grid {{ grid-template-columns:1fr; }} .summary-meta {{ margin-top:8px; }} .marketing-kpis {{ grid-template-columns:1fr 1fr; }}
         }}
         @media (prefers-color-scheme:dark) {{
-          :root {{ --ink:#f1f5f9; --muted:#b8c7d9; --paper:#101c2a; --canvas:#07111c; --line:#41566d; --soft:#162638; --navy:#ffffff; --link:#7dd3fc; --shadow:0 12px 30px rgba(0,0,0,.22); }}
+          :root {{ --ink:#f1f5f9; --muted:#b8c7d9; --paper:#101c2a; --canvas:#07111c; --line:#41566d; --soft:#162638; --navy:#ffffff; --link:#7dd3fc; --focus:#7dd3fc; --focus-on-dark:#7dd3fc; --shadow:0 12px 30px rgba(0,0,0,.22); }}
           body {{ background:var(--canvas); color:var(--ink); }}
           .hero {{ background:linear-gradient(135deg,#0a1522,#0f2940); }}
           nav a,.panel,.kpi-section,.attention,details.entity,.table-wrap {{ background:var(--paper); }}
