@@ -325,7 +325,9 @@ def _exact_name_snapshot_matches(
     if len(source_tournaments) != 1:
         return False
     item = source_tournaments[0]
-    if _identity_text(item.get("name")) != _identity_text(tournament.get("name")):
+    source_name = str(item.get("name") or "").strip().casefold()
+    authorized_name = str(tournament.get("name") or "").strip().casefold()
+    if source_name != authorized_name:
         return False
     if _source_year(item) != int(edition_year):
         return False

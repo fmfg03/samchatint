@@ -233,7 +233,7 @@ async def test_operational_bridge_accepts_only_unique_exact_name_and_edition(
             "tournaments": [
                 {
                     "id": "supabase-id",
-                    "name": "Copa Telmex Telcel de Futbol",
+                    "name": "Copa Telmex Telcel de Fútbol",
                     "start_date": "2026-01-15",
                 }
             ],
@@ -506,3 +506,43 @@ def test_budget_kpis_do_not_claim_payment_evidence_when_paid_is_missing():
 
     assert "Sin total pagado acreditado" in rendered
     assert "Evidencia de pago disponible" not in rendered
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_name",
+    [
+        "Copa Telmex Telcel de Futbol",
+        "Copa  Telmex Telcel de Fútbol",
+    ],
+)
+async def test_operational_name_bridge_rejects_accent_or_internal_whitespace_variants(
+    monkeypatch, source_name: str
+):
+    async def snapshot(*, tournament_slug, **_kwargs):
+        if tournament_slug == "local-id":
+            raise TournamentsV2Error("different UUID namespace")
+        return {
+            "tournaments": [
+                {
+                    "id": "supabase-id",
+                    "name": source_name,
+                    "start_date": "2026-01-15",
+                }
+            ],
+            "soul": {"tournament": {"id": "supabase-id"}},
+        }
+
+    monkeypatch.setattr(service, "build_tournament_soul_snapshot", snapshot)
+
+    dossier = await service._build_operational_dossier(
+        {
+            "id": "local-id",
+            "name": "Copa Telmex Telcel de Fútbol",
+            "slug": "",
+        },
+        edition_year=2026,
+    )
+
+    assert dossier["source_status"] == "unavailable"
+    assert dossier["entities"] == []
