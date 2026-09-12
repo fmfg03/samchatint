@@ -81,7 +81,10 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     paid = card.get("paid")
     projected = card.get("projected")
     paid_note = (
-        "Total pagado al corte" if paid is not None else "Sin total pagado acreditado"
+        "Estado documental pagado/cerrado o fecha de pago registrada; "
+        "no equivale por sí solo a salida de caja"
+        if paid is not None
+        else "Sin total pagado acreditado"
     )
     available = card.get("available")
     if (
@@ -107,7 +110,7 @@ def _budget_kpis(card: dict[str, Any]) -> str:
         {_kpi('Presupuesto', budget, note='Base autorizada', emphasis=True)}
         {_kpi('Ejercido', actual, note=f'{_pct(actual, budget)} del presupuesto')}
         {_kpi('Comprometido', committed, note=f'{_pct(committed, budget)} del presupuesto')}
-        {_kpi('Pagado', paid, note=paid_note)}
+        {_kpi('Cerrado / pagado', paid, note=paid_note)}
         {_kpi('Disponible', available, note='Presupuesto menos mayor uso reconocido')}
         {_kpi('Proyección', projected, note='Cierre estimado')}
       </div>
@@ -365,6 +368,13 @@ def _national_phase(dossier: dict[str, Any], index: int) -> str:
           <p class="empty-copy">Sin fuente operativa acreditada para esta edición.</p>
         </section>
         """
+    if national.get("matches_source_status") == "unavailable":
+        return f"""
+        <section id="fase-nacional-{index}" class="panel compact-panel">
+          <div class="section-heading"><div><span class="eyebrow">Fase nacional</span><h2>Operación y finanzas de finales</h2></div>{_status('unavailable')}</div>
+          <p class="empty-copy">La fuente de partidos no está disponible; no se presenta una lista vacía como si acreditara ausencia de partidos.</p>
+        </section>
+        """
     matches = list(national.get("matches") or [])
     match_rows = (
         "".join(
@@ -399,23 +409,41 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
         marketing.get("status") == "unavailable"
         or (dossier.get("source_status") or "unavailable") != "available"
     )
+    photos_unavailable = (
+        source_unavailable or media.get("photos_source_status") == "unavailable"
+    )
+    videos_unavailable = (
+        source_unavailable or media.get("videos_source_status") == "unavailable"
+    )
+    streams_unavailable = (
+        source_unavailable or media.get("streams_source_status") == "unavailable"
+    )
+    component_unavailable = (
+        photos_unavailable or videos_unavailable or streams_unavailable
+    )
     evidence_count = sum(
         int(media.get(key) or 0)
-        for key in ("photos_count", "videos_count", "streams_count")
+        for key, unavailable in (
+            ("photos_count", photos_unavailable),
+            ("videos_count", videos_unavailable),
+            ("streams_count", streams_unavailable),
+        )
+        if not unavailable
     )
-    evidence_status = (
-        "unavailable"
-        if source_unavailable
-        else ("with_data" if evidence_count else "pending_data")
-    )
+    if source_unavailable:
+        evidence_status = "unavailable"
+    elif component_unavailable:
+        evidence_status = "partial"
+    else:
+        evidence_status = "with_data" if evidence_count else "pending_data"
     photos = (
         "Fuente no disponible"
-        if source_unavailable
+        if photos_unavailable
         else str(int(media.get("photos_count") or 0))
     )
     videos = (
         "Fuente no disponible"
-        if source_unavailable
+        if videos_unavailable
         else str(int(media.get("videos_count") or 0))
     )
     return f"""

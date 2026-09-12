@@ -416,10 +416,33 @@ async def _build_operational_dossier(
 
     dossier = build_director_general_entity_dossier(snapshot)
     soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
+    optional_sources = snapshot.get("optional_sources")
+    optional_sources = optional_sources if isinstance(optional_sources, dict) else {}
+
+    def optional_source_unavailable(name: str) -> bool:
+        state = optional_sources.get(name)
+        return isinstance(state, dict) and state.get("available") is False
+
+    national_phase = dict((soul or {}).get("national_phase") or {})
+    if optional_source_unavailable("matches"):
+        national_phase["matches_source_status"] = "unavailable"
+    if optional_source_unavailable("team_standings"):
+        national_phase["standings_source_status"] = "unavailable"
+
+    marketing = dict((soul or {}).get("marketing") or {})
+    media = dict(marketing.get("media") or {})
+    if optional_source_unavailable("gallery_photos"):
+        media["photos_source_status"] = "unavailable"
+    if optional_source_unavailable("featured_videos"):
+        media["videos_source_status"] = "unavailable"
+    if optional_source_unavailable("live_streams"):
+        media["streams_source_status"] = "unavailable"
+    marketing["media"] = media
+
     dossier["source_status"] = "available"
     dossier["source_bridge"] = bridge
-    dossier["national_phase"] = dict((soul or {}).get("national_phase") or {})
-    dossier["marketing"] = dict((soul or {}).get("marketing") or {})
+    dossier["national_phase"] = national_phase
+    dossier["marketing"] = marketing
     return dossier
 
 

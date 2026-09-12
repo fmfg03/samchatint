@@ -546,3 +546,75 @@ async def test_operational_name_bridge_rejects_accent_or_internal_whitespace_var
 
     assert dossier["source_status"] == "unavailable"
     assert dossier["entities"] == []
+
+
+@pytest.mark.asyncio
+async def test_optional_soul_source_failures_remain_component_unavailable(monkeypatch):
+    async def load_snapshot(_tournament, *, edition_year):
+        assert edition_year == 2026
+        return (
+            {
+                "soul": {
+                    "national_phase": {"status": "pending_data", "matches": []},
+                    "marketing": {
+                        "status": "pending_data",
+                        "media": {
+                            "photos_count": 0,
+                            "videos_count": 0,
+                            "streams_count": 0,
+                        },
+                    },
+                },
+                "optional_sources": {
+                    "matches": {"available": False, "rows": 0, "error": "hidden"},
+                    "gallery_photos": {
+                        "available": False,
+                        "rows": 0,
+                        "error": "hidden",
+                    },
+                    "featured_videos": {"available": True, "rows": 0, "error": None},
+                    "live_streams": {"available": False, "rows": 0, "error": "hidden"},
+                },
+            },
+            "authorized_uuid",
+        )
+
+    monkeypatch.setattr(service, "_load_soul_snapshot", load_snapshot)
+    monkeypatch.setattr(
+        service,
+        "build_director_general_entity_dossier",
+        lambda _snapshot: {"entities": []},
+    )
+
+    dossier = await service._build_operational_dossier(
+        {"id": "local-id", "name": "Copa Telmex", "slug": ""},
+        edition_year=2026,
+    )
+
+    assert dossier["source_status"] == "available"
+    assert dossier["national_phase"]["matches_source_status"] == "unavailable"
+    assert dossier["marketing"]["media"]["photos_source_status"] == "unavailable"
+    assert dossier["marketing"]["media"]["streams_source_status"] == "unavailable"
+    assert "La fuente de partidos no está disponible" in ui._national_phase(dossier, 0)
+    marketing_html = ui._marketing(dossier, 0)
+    assert '<span class="status status-partial">Parcial</span>' in marketing_html
+    assert "<h4>Fotografías</h4><p>Fuente no disponible</p>" in marketing_html
+    assert "<h4>Videos</h4><p>0</p>" in marketing_html
+
+
+def test_paid_kpi_reflects_broader_document_semantics_without_claiming_cash_exit():
+    rendered = ui._budget_kpis(
+        {
+            "budget": 1000.0,
+            "actual": 420.0,
+            "committed": 650.0,
+            "paid": 375.0,
+            "projected": 900.0,
+            "available": 350.0,
+            "budget_source_status": "available",
+        }
+    )
+
+    assert "<span>Cerrado / pagado</span><strong>$375.00</strong>" in rendered
+    assert "no equivale por sí solo a salida de caja" in rendered
+    assert "Total pagado al corte" not in rendered
