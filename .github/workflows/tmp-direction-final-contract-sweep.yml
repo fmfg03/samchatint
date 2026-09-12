@@ -1,0 +1,114 @@
+name: Temporary Direction Final Contract Sweep
+
+on:
+  push:
+    branches: ["fix/direction-dashboard-truth-ui-v2"]
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/direction-dashboard-truth-ui-v2
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Close remaining executive contract gaps
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          service_path = Path("src/samchat/client_executive/service.py")
+          service = service_path.read_text()
+
+          old_alert = '''        if isinstance(alert, dict) and alert.get("severity") == "high"'''
+          new_alert = '''        if isinstance(alert, dict)\n        and str(alert.get("severity") or "").strip().lower() in {"critical", "high"}'''
+          if old_alert in service:
+              service = service.replace(old_alert, new_alert, 1)
+          elif new_alert not in service:
+              raise SystemExit("executive alert severity block not found")
+
+          old_boundary = '''            "entity_finance": "budget_breakdowns + canonical accounting actuals",'''
+          new_boundary = '''            "entity_finance": "pending_finance_entity_bridge",'''
+          if old_boundary in service:
+              service = service.replace(old_boundary, new_boundary, 1)
+          elif new_boundary not in service:
+              raise SystemExit("entity_finance boundary block not found")
+          service_path.write_text(service)
+
+          ui_path = Path("src/samchat/client_executive/ui.py")
+          ui = ui_path.read_text()
+          marker = '''    projected = card.get("projected")\n    available = card.get("available")'''
+          replacement = '''    projected = card.get("projected")\n    paid_note = "Total pagado al corte" if paid is not None else "Sin total pagado acreditado"\n    available = card.get("available")'''
+          if marker in ui:
+              ui = ui.replace(marker, replacement, 1)
+          elif replacement not in ui:
+              raise SystemExit("paid note insertion point not found")
+
+          old_paid_kpi = '''        {_kpi('Pagado', paid, note='Evidencia de pago disponible')}'''
+          new_paid_kpi = '''        {_kpi('Pagado', paid, note=paid_note)}'''
+          if old_paid_kpi in ui:
+              ui = ui.replace(old_paid_kpi, new_paid_kpi, 1)
+          elif new_paid_kpi not in ui:
+              raise SystemExit("paid KPI block not found")
+          ui_path.write_text(ui)
+
+          test_path = Path("tests/unit/test_direction_dashboard_source_reconciliation.py")
+          tests = test_path.read_text()
+          if "def test_executive_summary_counts_canonical_critical_alerts_as_high_priority():" not in tests:
+              tests += '''\n\n\ndef test_executive_summary_counts_canonical_critical_alerts_as_high_priority():\n    result = service.build_client_executive_summary(\n        {\n            "scope": "portfolio",\n            "cards": [\n                {\n                    "alerts": [\n                        {"severity": "critical", "title": "Sobre presupuesto"},\n                        {"severity": "warning", "title": "Riesgo"},\n                        {"severity": "info", "title": "Caja"},\n                    ]\n                }\n            ],\n        }\n    )\n\n    assert result["high_alert_count"] == 1\n\n\ndef test_executive_summary_keeps_legacy_high_alert_compatibility():\n    result = service.build_client_executive_summary(\n        {"cards": [{"alerts": [{"severity": "high", "title": "Legacy"}]}]}\n    )\n\n    assert result["high_alert_count"] == 1\n\n\ndef test_budget_kpis_do_not_claim_payment_evidence_when_paid_is_missing():\n    rendered = ui._budget_kpis(\n        {\n            "budget": 1000.0,\n            "actual": 420.0,\n            "committed": 650.0,\n            "paid": None,\n            "projected": 900.0,\n            "available": 350.0,\n            "budget_source_status": "available",\n        }\n    )\n\n    assert "Sin total pagado acreditado" in rendered\n    assert "Evidencia de pago disponible" not in rendered\n'''
+          test_path.write_text(tests)
+          PY
+
+      - name: Format and validate changed Python files
+        run: |
+          python -m pip install "black==26.5.1" "isort==9.0.1"
+          python -m isort \
+            src/samchat/client_executive/service.py \
+            src/samchat/client_executive/ui.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m black \
+            src/samchat/client_executive/service.py \
+            src/samchat/client_executive/ui.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m isort --check-only \
+            src/samchat/client_executive/service.py \
+            src/samchat/client_executive/ui.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          python -m black --check \
+            src/samchat/client_executive/service.py \
+            src/samchat/client_executive/ui.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+
+      - name: Run focused Direction regressions
+        run: |
+          python -m pip install -e . pytest pytest-asyncio
+          python -m pytest -q \
+            tests/unit/test_direction_dashboard_source_reconciliation.py \
+            tests/unit/test_direction_dashboard_scope_identity.py \
+            tests/unit/test_direction_dashboard_account_truth.py \
+            tests/unit/test_client_executive_service.py
+
+      - name: Commit remediation
+        run: |
+          if git diff --quiet; then
+            echo "No remediation changes required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            src/samchat/client_executive/service.py \
+            src/samchat/client_executive/ui.py \
+            tests/unit/test_direction_dashboard_source_reconciliation.py
+          git commit -m "fix(direction): close executive contract gaps"
+          git push origin HEAD:fix/direction-dashboard-truth-ui-v2
