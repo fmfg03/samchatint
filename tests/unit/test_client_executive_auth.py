@@ -198,6 +198,45 @@ def test_direction_dashboard_link_keeps_selected_edition_year():
     assert "/cliente/" not in html
 
 
+def test_direction_dashboard_renders_requested_executive_sections_and_contrast():
+    html = _render_dashboard(
+        {
+            "edition_year": 2026,
+            "cards": [
+                {
+                    "tournament_id": "t-1",
+                    "tournament_name": "Copa Telmex",
+                    "budget": 100,
+                    "actual": 25,
+                    "committed": 40,
+                    "projected": 90,
+                    "source": "test",
+                    "as_of": "2026-09-12",
+                    "dossier": {
+                        "source_status": "available",
+                        "entities": [],
+                        "national_phase": {"status": "pending_data"},
+                        "marketing": {"media": {}},
+                    },
+                }
+            ],
+        }
+    )
+
+    for label in (
+        "Responsables, equipos, jugadores y avance",
+        "Operación y finanzas de finales",
+        "Activaciones y evidencia",
+        "Reportes publicados",
+        "Presupuesto",
+        "Ejercido",
+    ):
+        assert label in html
+    assert "color:#fff" in html
+    assert "prefers-color-scheme:dark" in html
+    assert "no están disponibles en esta superficie" not in html
+
+
 def test_schema_guard_creates_position_dependencies_before_legacy_portfolios():
     patch_names = [name for name, _sql in SCHEMA_PATCHES]
     assert patch_names.index(

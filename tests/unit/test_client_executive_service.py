@@ -62,6 +62,52 @@ async def test_portfolio_dashboard_only_aggregates_assigned_tournaments(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_dashboard_can_attach_tournament_scoped_operational_dossier(monkeypatch):
+    async def authorized(_session, _empleado_id, *, is_superadmin=False):
+        return [{"id": "allowed", "name": "Torneo", "slug": "torneo-2026"}]
+
+    async def budget(*_args, **_kwargs):
+        return {"summary": {}, "comparison": {}, "forecast": {}}
+
+    async def dossier(tournament):
+        assert tournament["id"] == "allowed"
+        assert tournament["slug"] == "torneo-2026"
+        return {"source_status": "available", "entities": [{"entity_name": "CDMX"}]}
+
+    monkeypatch.setattr(service, "_authorized_tournaments", authorized)
+    monkeypatch.setattr(service, "build_budget_snapshot", budget)
+    monkeypatch.setattr(service, "_build_operational_dossier", dossier)
+
+    payload = await service.build_client_dashboard(
+        object(),
+        empleado_id="direction-holder",
+        edition_year=2026,
+        include_operational_detail=True,
+    )
+
+    assert payload["cards"][0]["dossier"]["entities"][0]["entity_name"] == "CDMX"
+    assert payload["data_boundary"]["writes"] is False
+
+
+@pytest.mark.asyncio
+async def test_operational_source_failure_is_explicit_and_does_not_expand_scope(
+    monkeypatch,
+):
+    async def unavailable(**_kwargs):
+        raise service.TournamentsV2Error("secret connection detail")
+
+    monkeypatch.setattr(service, "build_tournament_soul_snapshot", unavailable)
+
+    dossier = await service._build_operational_dossier(
+        {"id": "allowed", "name": "Torneo", "slug": "torneo-2026"}
+    )
+
+    assert dossier["source_status"] == "unavailable"
+    assert dossier["entities"] == []
+    assert "secret connection detail" not in str(dossier)
+
+
+@pytest.mark.asyncio
 async def test_tournament_outside_assigned_portfolio_is_denied(monkeypatch):
     async def authorized(_session, _empleado_id, *, is_superadmin=False):
         return [{"id": "allowed", "name": "Proyecto autorizado", "slug": "allowed"}]
@@ -137,7 +183,9 @@ async def test_authorized_tournaments_performs_only_the_position_scope_query():
 async def test_authorized_tournaments_does_not_require_a_tournament_slug_column():
     class Result:
         def __iter__(self):
-            return iter([SimpleNamespace(id="t-1", name="Copa Telmex Telcel", slug=None)])
+            return iter(
+                [SimpleNamespace(id="t-1", name="Copa Telmex Telcel", slug=None)]
+            )
 
     class Session:
         async def execute(self, statement, _params=None):
