@@ -363,7 +363,10 @@ def _national_phase(dossier: dict[str, Any], index: int) -> str:
 def _marketing(dossier: dict[str, Any], index: int) -> str:
     marketing = dict(dossier.get("marketing") or {})
     media = dict(marketing.get("media") or {})
-    source_unavailable = marketing.get("status") == "unavailable" or dossier.get("source_status") not in {None, "available"}
+    source_unavailable = (
+        marketing.get("status") == "unavailable"
+        or (dossier.get("source_status") or "unavailable") != "available"
+    )
     evidence_count = sum(
         int(media.get(key) or 0)
         for key in ("photos_count", "videos_count", "streams_count")
