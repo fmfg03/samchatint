@@ -247,7 +247,7 @@ def test_direction_dashboard_dark_palette_meets_aa_and_uses_semantic_tokens():
     assert "a { color:var(--link)" in html
     assert ".kpi span,.subheading span" in html
     assert "color:var(--muted)" in html
-    assert "outline:3px solid #38bdf8" in html
+    assert "outline:3px solid var(--link)" in html
 
     def relative_luminance(value: str) -> float:
         raw = value.lstrip("#")
@@ -273,6 +273,10 @@ def test_direction_dashboard_dark_palette_meets_aa_and_uses_semantic_tokens():
     assert contrast("#b8c7d9", "#101c2a") >= 4.5
     assert contrast("#7dd3fc", "#07111c") >= 4.5
     assert contrast("#67e8f9", "#101c2a") >= 4.5
+    assert contrast("#0369a1", "#ffffff") >= 3
+    assert contrast("#0369a1", "#f5f7fa") >= 3
+    assert contrast("#7dd3fc", "#07111c") >= 3
+    assert contrast("#7dd3fc", "#101c2a") >= 3
 
 
 def test_schema_guard_creates_position_dependencies_before_legacy_portfolios():

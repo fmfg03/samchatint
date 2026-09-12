@@ -544,7 +544,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         label {{ display:grid; gap:5px; color:#cbd5e1; font-size:12px; font-weight:700; }}
         select,button {{ min-height:42px; border:1px solid rgba(255,255,255,.35); border-radius:10px; padding:8px 12px; background:#fff; color:#0f172a; }}
         button {{ cursor:pointer; font-weight:800; }}
-        a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible {{ outline:3px solid #38bdf8; outline-offset:2px; }}
+        a:focus-visible,button:focus-visible,select:focus-visible,summary:focus-visible {{ outline:3px solid var(--link); outline-offset:2px; }}
         nav {{ display:flex; flex-wrap:wrap; gap:8px; margin:16px 0 26px; }}
         nav a {{ text-decoration:none; color:#334155; background:#fff; border:1px solid var(--line); border-radius:999px; padding:7px 12px; font-size:13px; box-shadow:0 2px 8px rgba(15,23,42,.03); }}
         .tournament {{ display:grid; gap:18px; margin:0 0 36px; }}
