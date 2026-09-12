@@ -1,9 +1,8 @@
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from samchat.client_executive import service
+from samchat.client_executive import service, ui
 from samchat.tournaments_v2.supabase_client import TournamentsV2Error
 
 
@@ -18,8 +17,7 @@ class _MappingResult:
         return self._row
 
 
-@pytest.mark.asyncio
-async def test_budget_scope_unavailable_is_not_rendered_as_real_zero():
+def test_budget_scope_unavailable_is_not_rendered_as_real_zero():
     card = service._executive_card(
         {"id": "tor-1", "name": "Copa Telmex", "slug": ""},
         {
@@ -36,6 +34,8 @@ async def test_budget_scope_unavailable_is_not_rendered_as_real_zero():
     assert card["committed"] is None
     assert card["projected"] is None
     assert card["budget_source_status"] == "unavailable"
+    assert ui._money(card["budget"]) == "No disponible"
+    assert ui._money(0) == "$0.00"
 
 
 @pytest.mark.asyncio
@@ -57,11 +57,7 @@ async def test_direction_budget_uses_guarded_legacy_alias_bridge(monkeypatch):
     }
     source = AsyncMock(side_effect=[strict, bridged])
     monkeypatch.setattr(service, "build_budget_snapshot", source)
-    monkeypatch.setattr(
-        service,
-        "budget_alias_candidates",
-        lambda *_args: {"CTT"},
-    )
+    monkeypatch.setattr(service, "budget_alias_candidates", lambda *_args: {"CTT"})
 
     class Session:
         async def execute(self, statement, params=None):
@@ -205,3 +201,67 @@ async def test_operational_name_bridge_rejects_ambiguous_matches(monkeypatch):
 
     assert dossier["source_status"] == "unavailable"
     assert dossier["entities"] == []
+
+
+def test_ui_v2_surfaces_partidas_and_accounts_without_fake_zeroes():
+    card = {
+        "tournament_id": "tor-1",
+        "tournament_name": "Copa Telmex Telcel de Fútbol",
+        "budget": 1_000_000,
+        "actual": 420_000,
+        "committed": 600_000,
+        "paid": 350_000,
+        "projected": 920_000,
+        "budget_source_status": "available",
+        "budget_scope_bridge": {"status": "exact_name_alias_bridge"},
+        "budget_breakdowns": {
+            "by_concept": [
+                {
+                    "label": "Uniformes",
+                    "budget_total": 300_000,
+                    "actual_total": 120_000,
+                    "committed_total": 150_000,
+                }
+            ],
+            "by_account": [
+                {
+                    "label": "5300-012-018 · ALIMENTOS",
+                    "budget_total": 100_000,
+                    "actual_total": 50_000,
+                    "committed_total": 60_000,
+                }
+            ],
+        },
+        "dossier": {"source_status": "unavailable"},
+        "as_of": "2026-09-12T00:00:00+00:00",
+    }
+
+    rendered = ui._tournament(card, 2026, 0)
+
+    assert "Presupuesto vs. real" in rendered
+    assert "Uniformes" in rendered
+    assert "5300-012-018" in rendered
+    assert "$1,000,000.00" in rendered
+    assert "Identidad reconciliada" in rendered
+    assert "No se muestran ceros" not in rendered
+
+
+def test_ui_v2_keeps_unavailable_sections_compact_and_explicit():
+    card = {
+        "tournament_id": "tor-1",
+        "tournament_name": "Copa Telmex Telcel de Fútbol",
+        "budget": None,
+        "actual": None,
+        "committed": None,
+        "projected": None,
+        "budget_source_status": "unavailable",
+        "dossier": {"source_status": "unavailable", "marketing": {"status": "unavailable"}},
+        "as_of": "2026-09-12T00:00:00+00:00",
+    }
+
+    rendered = ui._tournament(card, 2026, 0)
+
+    assert "No disponible" in rendered
+    assert "$0.00" not in rendered
+    assert "No se muestran ceros" in rendered
+    assert "La identidad operativa del torneo aún no pudo reconciliarse" in rendered
