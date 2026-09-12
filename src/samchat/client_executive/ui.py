@@ -80,10 +80,14 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     committed = card.get("committed")
     paid = card.get("paid")
     projected = card.get("projected")
-    available = None
-    if budget is not None:
-        used = max(float(actual or 0), float(committed or 0))
-        available = float(budget) - used
+    available = card.get("available")
+    if (
+        available is None
+        and budget is not None
+        and actual is not None
+        and committed is not None
+    ):
+        available = float(budget) - max(float(actual), float(committed))
 
     if card.get("budget_source_status") == "unavailable":
         note = "La fuente presupuestal no está reconciliada con este torneo."

@@ -394,3 +394,71 @@ def test_budget_db_paid_total_is_read_from_summary():
 
     assert card["paid"] == 375.0
     assert ui._money(card["paid"]) == "$375.00"
+
+
+def test_budget_db_aggregate_contract_reads_summary_before_legacy_comparison():
+    card = service._executive_card(
+        {"id": "tor-1", "name": "Copa Telmex", "slug": ""},
+        {
+            "source": "budget_db",
+            "summary": {
+                "budget_total": 1000.0,
+                "requested_total": 700.0,
+                "committed_total": 650.0,
+                "paid_total": 375.0,
+                "actual_total": 420.0,
+                "pending_to_pay_total": 275.0,
+            },
+            "comparison": {
+                "requested_total": 9901.0,
+                "committed_total": 9902.0,
+                "paid_total": 9903.0,
+                "actual_total": 9904.0,
+                "pending_to_pay_total": 9905.0,
+            },
+            "forecast": {
+                "projected_close_total": 900.0,
+                "remaining_budget": 350.0,
+            },
+            "version": {"id": "version-1"},
+        },
+    )
+
+    assert card["budget"] == 1000.0
+    assert card["actual"] == 420.0
+    assert card["committed"] == 650.0
+    assert card["paid"] == 375.0
+    assert card["requested"] == 700.0
+    assert card["pending_to_pay"] == 275.0
+    assert card["available"] == 350.0
+    assert card["projected"] == 900.0
+
+
+def test_budget_kpis_do_not_invent_available_when_usage_is_missing():
+    rendered = ui._budget_kpis(
+        {
+            "budget": 1000.0,
+            "actual": None,
+            "committed": None,
+            "paid": None,
+            "projected": None,
+            "budget_source_status": "available",
+        }
+    )
+
+    assert "<span>Disponible</span><strong>No disponible</strong>" in rendered
+
+
+def test_budget_kpis_can_derive_available_only_from_explicit_usage_values():
+    rendered = ui._budget_kpis(
+        {
+            "budget": 1000.0,
+            "actual": 420.0,
+            "committed": 650.0,
+            "paid": 375.0,
+            "projected": 900.0,
+            "budget_source_status": "available",
+        }
+    )
+
+    assert "<span>Disponible</span><strong>$350.00</strong>" in rendered

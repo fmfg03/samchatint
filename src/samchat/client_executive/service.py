@@ -162,6 +162,14 @@ def _optional_money(mapping: dict[str, Any], *keys: str) -> Optional[float]:
     return None
 
 
+def _budget_metric(
+    summary: dict[str, Any], comparison: dict[str, Any], key: str
+) -> Optional[float]:
+    """Read canonical aggregates from summary with legacy comparison fallback."""
+    value = _optional_money(summary, key)
+    return value if value is not None else _optional_money(comparison, key)
+
+
 def _executive_card(
     tournament: dict[str, str], snapshot: dict[str, Any]
 ) -> dict[str, Any]:
@@ -189,12 +197,17 @@ def _executive_card(
         "tournament_name": tournament["name"],
         "budget": _optional_money(summary, "budget_total") if scope_available else None,
         "actual": (
-            _optional_money(comparison, "actual_total", "paid_total")
+            _budget_metric(summary, comparison, "actual_total")
             if scope_available
             else None
         ),
         "committed": (
-            _optional_money(comparison, "committed_total") if scope_available else None
+            _budget_metric(summary, comparison, "committed_total")
+            if scope_available
+            else None
+        ),
+        "available": (
+            _optional_money(forecast, "remaining_budget") if scope_available else None
         ),
         "projected": (
             _optional_money(forecast, "projected_close_total", "projected_total")
@@ -222,13 +235,17 @@ def _executive_card(
         card["budget_snapshot_source"] = source_state
         card["budget_version"] = snapshot.get("version")
         card["paid"] = (
-            _optional_money(summary, "paid_total") if scope_available else None
+            _budget_metric(summary, comparison, "paid_total")
+            if scope_available
+            else None
         )
         card["requested"] = (
-            _optional_money(comparison, "requested_total") if scope_available else None
+            _budget_metric(summary, comparison, "requested_total")
+            if scope_available
+            else None
         )
         card["pending_to_pay"] = (
-            _optional_money(comparison, "pending_to_pay_total")
+            _budget_metric(summary, comparison, "pending_to_pay_total")
             if scope_available
             else None
         )
