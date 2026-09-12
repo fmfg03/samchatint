@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Optional
+import unicodedata
 
 from sqlalchemy import text
 
-from samchat.budgets.service import build_budget_snapshot
+from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
 from samchat.sports_platform import build_director_general_entity_dossier
 from samchat.tournaments_v2.supabase_client import TournamentsV2Error
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
@@ -176,6 +177,17 @@ async def authorized_direction_portfolio_ids(
     return [str(row.id) for row in result]
 
 
+def _optional_money(mapping: dict[str, Any], *keys: str) -> Optional[float]:
+    """Return the first present numeric value without turning absence into zero."""
+    for key in keys:
+        if key in mapping and mapping.get(key) is not None:
+            try:
+                return float(mapping[key])
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def _executive_card(
     tournament: dict[str, str], snapshot: dict[str, Any]
 ) -> dict[str, Any]:
@@ -195,15 +207,26 @@ def _executive_card(
         if isinstance(snapshot.get("executive_alerts"), list)
         else []
     )
-    return {
+    source_state = str(snapshot.get("source") or "").strip()
+    scope_available = source_state != "budget_scope_unavailable"
+
+    card: dict[str, Any] = {
         "tournament_id": tournament["id"],
         "tournament_name": tournament["name"],
-        "budget": float(summary.get("budget_total") or 0),
-        "actual": float(
-            comparison.get("actual_total") or comparison.get("paid_total") or 0
+        "budget": _optional_money(summary, "budget_total") if scope_available else None,
+        "actual": (
+            _optional_money(comparison, "actual_total", "paid_total")
+            if scope_available
+            else None
         ),
-        "committed": float(comparison.get("committed_total") or 0),
-        "projected": float(forecast.get("projected_total") or 0),
+        "committed": (
+            _optional_money(comparison, "committed_total") if scope_available else None
+        ),
+        "projected": (
+            _optional_money(forecast, "projected_close_total", "projected_total")
+            if scope_available
+            else None
+        ),
         "alerts": [
             {
                 "severity": str(item.get("severity") or "info"),
@@ -215,6 +238,35 @@ def _executive_card(
         "source": "samchat.budgets.service.build_budget_snapshot",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Production snapshots carry source metadata. Test fixtures historically did
+    # not, so these fields stay conditional for backwards-compatible contracts.
+    if source_state:
+        card["budget_source_status"] = (
+            "unavailable" if source_state == "budget_scope_unavailable" else "available"
+        )
+        card["budget_snapshot_source"] = source_state
+        card["budget_version"] = snapshot.get("version")
+        card["paid"] = (
+            _optional_money(comparison, "paid_total") if scope_available else None
+        )
+        card["requested"] = (
+            _optional_money(comparison, "requested_total") if scope_available else None
+        )
+        card["pending_to_pay"] = (
+            _optional_money(comparison, "pending_to_pay_total")
+            if scope_available
+            else None
+        )
+        card["budget_breakdowns"] = (
+            snapshot.get("breakdowns")
+            if isinstance(snapshot.get("breakdowns"), dict)
+            else {}
+        )
+        bridge = snapshot.get("direction_scope_bridge")
+        if isinstance(bridge, dict):
+            card["budget_scope_bridge"] = dict(bridge)
+    return card
 
 
 def _unavailable_dossier(tournament: dict[str, str]) -> dict[str, Any]:
@@ -244,46 +296,238 @@ def _unavailable_dossier(tournament: dict[str, str]) -> dict[str, Any]:
     }
 
 
-async def _build_operational_dossier(
-    tournament: dict[str, str],
-    *,
-    edition_year: int,
-) -> dict[str, Any]:
-    """Build one strictly tournament-scoped dossier without operational writes."""
+def _identity_text(value: object) -> str:
+    raw = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    ascii_text = "".join(ch for ch in raw if not unicodedata.combining(ch))
+    return " ".join(ascii_text.split())
+
+
+def _source_year(item: dict[str, Any]) -> Optional[int]:
+    raw = str(item.get("start_date") or "")[:4]
+    return int(raw) if raw.isdigit() else None
+
+
+def _uuid_snapshot_matches(
+    snapshot: dict[str, Any], tournament: dict[str, str], edition_year: int
+) -> bool:
+    source_tournaments = [
+        item for item in list(snapshot.get("tournaments") or []) if isinstance(item, dict)
+    ]
+    if len(source_tournaments) != 1:
+        return False
+    item = source_tournaments[0]
+    return str(item.get("id") or "") == str(tournament["id"]) and _source_year(
+        item
+    ) == int(edition_year)
+
+
+def _exact_name_snapshot_matches(
+    snapshot: dict[str, Any], tournament: dict[str, str], edition_year: int
+) -> bool:
+    source_tournaments = [
+        item for item in list(snapshot.get("tournaments") or []) if isinstance(item, dict)
+    ]
+    if len(source_tournaments) != 1:
+        return False
+    item = source_tournaments[0]
+    if _identity_text(item.get("name")) != _identity_text(tournament.get("name")):
+        return False
+    if _source_year(item) != int(edition_year):
+        return False
+    soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
+    soul_tournament = (
+        soul.get("tournament") if isinstance(soul.get("tournament"), dict) else {}
+    )
+    if soul_tournament.get("id") and str(soul_tournament.get("id")) != str(
+        item.get("id")
+    ):
+        return False
+    return True
+
+
+async def _load_soul_snapshot(
+    tournament: dict[str, str], *, edition_year: int
+) -> tuple[Optional[dict[str, Any]], str]:
+    """Resolve SOUL without allowing display names to broaden Direction scope."""
+    observed_wrong_edition = False
     try:
-        snapshot = await build_tournament_soul_snapshot(
+        uuid_snapshot = await build_tournament_soul_snapshot(
             tournament_key="all",
-            # The configured UUID is the authorization boundary shared with the
-            # SOUL source. Names are display data and must never broaden scope.
             tournament_slug=tournament["id"],
             include_communications=False,
             include_media=True,
             limit=1000,
         )
     except TournamentsV2Error:
-        return _unavailable_dossier(tournament)
+        uuid_snapshot = None
 
-    source_tournaments = list(snapshot.get("tournaments") or [])
-    source_years = {
-        int(str(item.get("start_date") or "")[:4])
-        for item in source_tournaments
-        if str(item.get("start_date") or "")[:4].isdigit()
-    }
-    if source_years != {int(edition_year)}:
+    if isinstance(uuid_snapshot, dict):
+        if _uuid_snapshot_matches(uuid_snapshot, tournament, edition_year):
+            return uuid_snapshot, "authorized_uuid"
+        years = {
+            _source_year(item)
+            for item in list(uuid_snapshot.get("tournaments") or [])
+            if isinstance(item, dict)
+        }
+        observed_wrong_edition = bool(years - {None, int(edition_year)})
+
+    # The operational store can have a different UUID namespace. The only safe
+    # bridge is one unique exact normalized name in the requested edition. Any
+    # ambiguous/sub-string result fails closed.
+    if tournament.get("name"):
+        try:
+            name_snapshot = await build_tournament_soul_snapshot(
+                tournament_key="all",
+                tournament_slug=tournament["name"],
+                include_communications=False,
+                include_media=True,
+                limit=1000,
+            )
+        except TournamentsV2Error:
+            name_snapshot = None
+        if isinstance(name_snapshot, dict):
+            if _exact_name_snapshot_matches(name_snapshot, tournament, edition_year):
+                return name_snapshot, "exact_name_edition_bridge"
+            years = {
+                _source_year(item)
+                for item in list(name_snapshot.get("tournaments") or [])
+                if isinstance(item, dict)
+            }
+            observed_wrong_edition = observed_wrong_edition or bool(
+                years - {None, int(edition_year)}
+            )
+
+    return None, "edition_unavailable" if observed_wrong_edition else "unavailable"
+
+
+async def _build_operational_dossier(
+    tournament: dict[str, str],
+    *,
+    edition_year: int,
+) -> dict[str, Any]:
+    """Build one strictly tournament-scoped dossier without operational writes."""
+    snapshot, bridge = await _load_soul_snapshot(tournament, edition_year=edition_year)
+    if snapshot is None:
         unavailable = _unavailable_dossier(tournament)
-        unavailable["source_status"] = "edition_unavailable"
-        unavailable["non_claims"] = [
-            "La fuente operativa no acredita datos para la edición solicitada; "
-            "no se mostraron datos de otra edición.",
-        ]
+        if bridge == "edition_unavailable":
+            unavailable["source_status"] = "edition_unavailable"
+            unavailable["non_claims"] = [
+                "La fuente operativa no acredita datos para la edición solicitada; "
+                "no se mostraron datos de otra edición.",
+            ]
         return unavailable
 
     dossier = build_director_general_entity_dossier(snapshot)
     soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
     dossier["source_status"] = "available"
+    dossier["source_bridge"] = bridge
     dossier["national_phase"] = dict((soul or {}).get("national_phase") or {})
     dossier["marketing"] = dict((soul or {}).get("marketing") or {})
     return dossier
+
+
+async def _budget_alias_bridge_is_safe(
+    session: Any,
+    *,
+    tournament: dict[str, str],
+    edition_year: int,
+    version_id: str,
+    aliases: list[str],
+) -> bool:
+    """Verify that a legacy alias resolves only rows for the authorized tournament."""
+    if not version_id or not aliases or not tournament.get("name"):
+        return False
+    result = await session.execute(
+        text(
+            """
+            SELECT
+                COUNT(*) AS line_count,
+                COUNT(*) FILTER (
+                    WHERE UPPER(TRIM(COALESCE(l.tournament_name, '')))
+                          <> UPPER(TRIM(:tournament_name))
+                ) AS foreign_name_count,
+                COUNT(*) FILTER (
+                    WHERE l.tournament_id IS NOT NULL
+                      AND CAST(l.tournament_id AS text) <> :tournament_id
+                ) AS foreign_id_count
+            FROM budget_lines l
+            WHERE CAST(l.budget_version_id AS text) = :version_id
+              AND COALESCE(l.line_direction, 'expense') = 'expense'
+              AND (
+                    UPPER(COALESCE(l.tournament_code, '')) = ANY(:aliases)
+                    OR UPPER(TRIM(COALESCE(l.tournament_name, '')))
+                       = UPPER(TRIM(:tournament_name))
+              )
+            """
+        ),
+        {
+            "version_id": str(version_id),
+            "tournament_id": str(tournament["id"]),
+            "tournament_name": str(tournament["name"]),
+            "aliases": aliases,
+        },
+    )
+    row = result.mappings().first()
+    if not row:
+        return False
+    return (
+        int(row.get("line_count") or 0) > 0
+        and int(row.get("foreign_name_count") or 0) == 0
+        and int(row.get("foreign_id_count") or 0) == 0
+    )
+
+
+async def _build_direction_budget_snapshot(
+    session: Any,
+    *,
+    tournament: dict[str, str],
+    edition_year: int,
+) -> dict[str, Any]:
+    """Read budget truth with a guarded bridge for legacy name/code rows."""
+    strict = await build_budget_snapshot(
+        session,
+        tournament_id=tournament["id"],
+        tournament_name=tournament.get("name"),
+        tournament_slug=tournament.get("slug"),
+        edition_year=edition_year,
+        ensure_schema=False,
+        strict_tournament_scope=True,
+    )
+    if strict.get("source") != "budget_scope_unavailable":
+        return strict
+
+    version = strict.get("version") if isinstance(strict.get("version"), dict) else {}
+    version_id = str(version.get("id") or "")
+    aliases = sorted(budget_alias_candidates(tournament.get("name") or ""))
+    if not await _budget_alias_bridge_is_safe(
+        session,
+        tournament=tournament,
+        edition_year=edition_year,
+        version_id=version_id,
+        aliases=aliases,
+    ):
+        return strict
+
+    bridged = await build_budget_snapshot(
+        session,
+        tournament_id=tournament["id"],
+        tournament_name=tournament.get("name"),
+        tournament_slug=tournament.get("slug"),
+        edition_year=edition_year,
+        version_id=version_id,
+        ensure_schema=False,
+        strict_tournament_scope=False,
+    )
+    if bridged.get("source") != "budget_db":
+        return strict
+    bridged["direction_scope_bridge"] = {
+        "status": "exact_name_alias_bridge",
+        "authorized_tournament_id": tournament["id"],
+        "budget_version_id": version_id,
+        "aliases": aliases,
+        "read_only": True,
+    }
+    return bridged
 
 
 def build_client_executive_summary(payload: dict[str, Any]) -> dict[str, Any]:
@@ -338,14 +582,10 @@ async def build_client_dashboard(
             # A blank selector would make the legacy artifact fallback global.
             # Do not request a snapshot unless its tournament scope is verifiable.
             continue
-        snapshot = await build_budget_snapshot(
+        snapshot = await _build_direction_budget_snapshot(
             session,
-            tournament_id=tournament["id"],
-            tournament_name=tournament.get("name"),
-            tournament_slug=tournament.get("slug"),
+            tournament=tournament,
             edition_year=edition_year,
-            ensure_schema=False,
-            strict_tournament_scope=True,
         )
         card = _executive_card(tournament, snapshot)
         if include_operational_detail:
@@ -362,7 +602,7 @@ async def build_client_dashboard(
         "data_boundary": {
             "operations": "tournament_soul_snapshot",
             "budget": "samchat.budgets.service.build_budget_snapshot",
-            "entity_finance": "pending_finance_entity_bridge",
+            "entity_finance": "budget_breakdowns + canonical accounting actuals",
             "writes": False,
         },
         "unavailable_metrics": ["cashflow", "accounts_receivable", "payments"],
@@ -397,14 +637,10 @@ async def build_portfolio_dashboard(
         )
     cards = []
     for tournament in tournaments:
-        snapshot = await build_budget_snapshot(
+        snapshot = await _build_direction_budget_snapshot(
             session,
-            tournament_id=tournament["id"],
-            tournament_name=tournament["name"],
-            tournament_slug=tournament["slug"],
+            tournament=tournament,
             edition_year=edition_year,
-            ensure_schema=False,
-            strict_tournament_scope=True,
         )
         cards.append(_executive_card(tournament, snapshot))
     return {
