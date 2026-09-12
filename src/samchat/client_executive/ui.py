@@ -69,8 +69,8 @@ def _kpi(
     klass = "kpi kpi-primary" if emphasis else "kpi"
     return (
         f'<article class="{klass}"><span>{escape(label)}</span>'
-        f'<strong>{_money(value)}</strong>'
-        f'<small>{escape(note)}</small></article>'
+        f"<strong>{_money(value)}</strong>"
+        f"<small>{escape(note)}</small></article>"
     )
 
 
@@ -88,7 +88,9 @@ def _budget_kpis(card: dict[str, Any]) -> str:
     if card.get("budget_source_status") == "unavailable":
         note = "La fuente presupuestal no está reconciliada con este torneo."
     elif card.get("budget_scope_bridge"):
-        note = "Partidas históricas reconciliadas por identidad canónica y alias validado."
+        note = (
+            "Partidas históricas reconciliadas por identidad canónica y alias validado."
+        )
     else:
         note = "Presupuesto y actuals desde las fuentes canónicas de SamChat."
 
@@ -172,14 +174,26 @@ def _budget_detail(card: dict[str, Any]) -> str:
 
     breakdowns = card.get("budget_breakdowns")
     breakdowns = breakdowns if isinstance(breakdowns, dict) else {}
-    concepts = [item for item in list(breakdowns.get("by_concept") or []) if isinstance(item, dict)]
-    accounts = [item for item in list(breakdowns.get("by_account") or []) if isinstance(item, dict)]
+    concepts = [
+        item
+        for item in list(breakdowns.get("by_concept") or [])
+        if isinstance(item, dict)
+    ]
+    accounts = [
+        item
+        for item in list(breakdowns.get("by_account") or [])
+        if isinstance(item, dict)
+    ]
     concept_rows = _breakdown_rows(concepts)
     account_rows = _account_breakdown_rows(accounts)
     if not concept_rows and not account_rows:
         return ""
 
-    bridge = card.get("budget_scope_bridge") if isinstance(card.get("budget_scope_bridge"), dict) else {}
+    bridge = (
+        card.get("budget_scope_bridge")
+        if isinstance(card.get("budget_scope_bridge"), dict)
+        else {}
+    )
     bridge_badge = (
         '<span class="status status-partial">Identidad reconciliada</span>'
         if bridge
@@ -232,21 +246,17 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
     player_groups = list(operations.get("players_by_category_age_gender") or [])
 
     contacts_html = (
-        "".join(
-            f"""
+        "".join(f"""
         <tr>
           <td>{_text(contact.get('name'), 'Sin nombre')}</td>
           <td>{_text(contact.get('phone'))}</td>
           <td>{_text(contact.get('email'))}</td>
         </tr>
-        """
-            for contact in contacts
-        )
+        """ for contact in contacts)
         or '<tr><td colspan="3">Sin responsable de la entidad registrado.</td></tr>'
     )
     teams_html = (
-        "".join(
-            f"""
+        "".join(f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
@@ -254,23 +264,18 @@ def _entity_detail(entity: dict[str, Any], index: int) -> str:
           <td>{int(row.get('players_count') or 0)}</td>
           <td>{_text(', '.join(row.get('team_names') or []))}</td>
         </tr>
-        """
-            for row in team_groups
-        )
+        """ for row in team_groups)
         or '<tr><td colspan="5">Sin equipos participantes registrados.</td></tr>'
     )
     players_html = (
-        "".join(
-            f"""
+        "".join(f"""
         <tr>
           <td>{_text(row.get('category'), 'Sin categoría')}</td>
           <td>{_text(row.get('gender_or_branch'), 'Sin género/rama')}</td>
           <td>{_text(row.get('age'), 'Edad no disponible')}</td>
           <td>{int(row.get('players_count') or 0)}</td>
         </tr>
-        """
-            for row in player_groups
-        )
+        """ for row in player_groups)
         or '<tr><td colspan="4">Sin jugadores registrados.</td></tr>'
     )
 
@@ -323,7 +328,10 @@ def _operations(dossier: dict[str, Any], index: int) -> str:
         </section>
         """
     entity_html = (
-        "".join(_entity_detail(entity, item_index) for item_index, entity in enumerate(entities))
+        "".join(
+            _entity_detail(entity, item_index)
+            for item_index, entity in enumerate(entities)
+        )
         or '<p class="empty-copy">La fuente está disponible, pero no contiene entidades para este alcance.</p>'
     )
     bridge = dossier.get("source_bridge")
@@ -393,8 +401,16 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
         if source_unavailable
         else ("with_data" if evidence_count else "pending_data")
     )
-    photos = "Fuente no disponible" if source_unavailable else str(int(media.get("photos_count") or 0))
-    videos = "Fuente no disponible" if source_unavailable else str(int(media.get("videos_count") or 0))
+    photos = (
+        "Fuente no disponible"
+        if source_unavailable
+        else str(int(media.get("photos_count") or 0))
+    )
+    videos = (
+        "Fuente no disponible"
+        if source_unavailable
+        else str(int(media.get("videos_count") or 0))
+    )
     return f"""
     <section id="mercadotecnia-{index}" class="panel {'compact-panel' if source_unavailable else ''}">
       <div class="section-heading"><div><span class="eyebrow">Mercadotecnia</span><h2>Activaciones y evidencia</h2></div>{_status(evidence_status)}</div>
@@ -412,7 +428,11 @@ def _marketing(dossier: dict[str, Any], index: int) -> str:
 def _tournament(card: dict[str, Any], edition_year: int, index: int) -> str:
     dossier = dict(card.get("dossier") or {})
     source_status = dossier.get("source_status") or "unavailable"
-    budget_bridge = card.get("budget_scope_bridge") if isinstance(card.get("budget_scope_bridge"), dict) else {}
+    budget_bridge = (
+        card.get("budget_scope_bridge")
+        if isinstance(card.get("budget_scope_bridge"), dict)
+        else {}
+    )
     operational_bridge = dossier.get("source_bridge")
     provenance = []
     if budget_bridge:
@@ -447,7 +467,9 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
     edition_year = int(payload.get("edition_year") or 0)
     cards = list(payload.get("cards") or [])
     tournaments = (
-        "".join(_tournament(card, edition_year, index) for index, card in enumerate(cards))
+        "".join(
+            _tournament(card, edition_year, index) for index, card in enumerate(cards)
+        )
         or '<section class="panel empty-copy">No hay torneos activos en el alcance asignado.</section>'
     )
     section_links = "".join(

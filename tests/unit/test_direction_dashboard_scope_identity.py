@@ -28,13 +28,11 @@ class _Session:
 
 
 def _statement():
-    return text(
-        """
+    return text("""
         SELECT l.tournament_id, l.tournament_name, l.budget_amount
         FROM budget_lines l
         WHERE l.budget_version_id = :version_id
-        """
-    )
+        """)
 
 
 def _guard(rows: list[dict[str, Any]]) -> service._DirectionBudgetReadSession:
@@ -84,7 +82,9 @@ async def test_consuming_guard_rejects_identity_variants_outside_preflight_scope
 
 
 @pytest.mark.asyncio
-async def test_consuming_guard_allows_trimmed_case_variant_with_null_legacy_id() -> None:
+async def test_consuming_guard_allows_trimmed_case_variant_with_null_legacy_id() -> (
+    None
+):
     """Case and edge whitespace may differ because SQL uses UPPER(TRIM())."""
     guarded = _guard(
         [

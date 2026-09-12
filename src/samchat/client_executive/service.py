@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any, Optional
-import unicodedata
 
 from sqlalchemy import text
 
 from samchat.budgets.service import budget_alias_candidates, build_budget_snapshot
 from samchat.sports_platform import build_director_general_entity_dossier
-from samchat.tournaments_v2.supabase_client import TournamentsV2Error
 from samchat.tournaments_v2.services import build_tournament_soul_snapshot
+from samchat.tournaments_v2.supabase_client import TournamentsV2Error
 
 
 class ClientExecutiveAccessError(PermissionError):
@@ -30,21 +30,15 @@ DIRECTION_POSITION_KEYS = frozenset(
 
 async def ensure_client_executive_schema(session: Any) -> None:
     """Provision portfolio configuration outside client read requests."""
-    await session.execute(
-        text(
-            """
+    await session.execute(text("""
             CREATE TABLE IF NOT EXISTS client_executive_portfolios (
                 id UUID PRIMARY KEY,
                 label VARCHAR(200) NOT NULL,
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
+            """))
+    await session.execute(text("""
             CREATE TABLE IF NOT EXISTS client_executive_access_audit_logs (
                 id UUID PRIMARY KEY,
                 actor_empleado_id UUID NULL REFERENCES empleados(id),
@@ -53,41 +47,27 @@ async def ensure_client_executive_schema(session: Any) -> None:
                 detail JSONB NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
+            """))
+    await session.execute(text("""
             CREATE TABLE IF NOT EXISTS client_executive_portfolio_positions (
                 portfolio_id UUID NOT NULL REFERENCES client_executive_portfolios(id),
                 position_key VARCHAR(100) NOT NULL REFERENCES authorization_positions(position_key),
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 PRIMARY KEY (portfolio_id, position_key)
             )
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
+            """))
+    await session.execute(text("""
             CREATE TABLE IF NOT EXISTS client_executive_portfolio_tournaments (
                 portfolio_id UUID NOT NULL REFERENCES client_executive_portfolios(id),
                 tournament_id UUID NOT NULL REFERENCES tournaments(id),
                 active BOOLEAN NOT NULL DEFAULT TRUE,
                 PRIMARY KEY (portfolio_id, tournament_id)
             )
-            """
-        )
-    )
-    await session.execute(
-        text(
-            """
+            """))
+    await session.execute(text("""
             CREATE INDEX IF NOT EXISTS ix_client_executive_portfolio_positions_key
             ON client_executive_portfolio_positions(position_key)
-            """
-        )
-    )
+            """))
 
 
 async def _authorized_tournaments(
@@ -100,23 +80,20 @@ async def _authorized_tournaments(
     """
     if is_superadmin:
         result = await session.execute(
-            text(
-                """SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
+            text("""SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
                 FROM client_executive_portfolio_tournaments assignment
                 JOIN client_executive_portfolios portfolio
                   ON portfolio.id = assignment.portfolio_id AND portfolio.active = TRUE
                 JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
                 WHERE assignment.active = TRUE
-                ORDER BY t.name ASC"""
-            )
+                ORDER BY t.name ASC""")
         )
         return [
             {"id": str(row.id), "name": str(row.name), "slug": str(row.slug or "")}
             for row in result
         ]
     result = await session.execute(
-        text(
-            """
+        text("""
             SELECT DISTINCT t.id::text AS id, t.name, NULL::text AS slug
             FROM authorization_position_assignments holder
             JOIN client_executive_portfolio_positions position
@@ -130,8 +107,7 @@ async def _authorized_tournaments(
               AND holder.active = TRUE
               AND holder.position_key = ANY(:position_keys)
             ORDER BY t.name ASC
-            """
-        ),
+            """),
         {
             "empleado_id": str(empleado_id),
             "position_keys": sorted(DIRECTION_POSITION_KEYS),
@@ -155,8 +131,7 @@ async def authorized_direction_portfolio_ids(
         )
     else:
         result = await session.execute(
-            text(
-                """
+            text("""
                 SELECT DISTINCT portfolio.id::text AS id
                 FROM authorization_position_assignments holder
                 JOIN client_executive_portfolio_positions position
@@ -167,8 +142,7 @@ async def authorized_direction_portfolio_ids(
                   AND holder.active = TRUE
                   AND holder.position_key = ANY(:position_keys)
                 ORDER BY portfolio.id
-                """
-            ),
+                """),
             {
                 "empleado_id": str(empleado_id),
                 "position_keys": sorted(DIRECTION_POSITION_KEYS),
@@ -311,7 +285,9 @@ def _uuid_snapshot_matches(
     snapshot: dict[str, Any], tournament: dict[str, str], edition_year: int
 ) -> bool:
     source_tournaments = [
-        item for item in list(snapshot.get("tournaments") or []) if isinstance(item, dict)
+        item
+        for item in list(snapshot.get("tournaments") or [])
+        if isinstance(item, dict)
     ]
     if len(source_tournaments) != 1:
         return False
@@ -325,7 +301,9 @@ def _exact_name_snapshot_matches(
     snapshot: dict[str, Any], tournament: dict[str, str], edition_year: int
 ) -> bool:
     source_tournaments = [
-        item for item in list(snapshot.get("tournaments") or []) if isinstance(item, dict)
+        item
+        for item in list(snapshot.get("tournaments") or [])
+        if isinstance(item, dict)
     ]
     if len(source_tournaments) != 1:
         return False
@@ -438,8 +416,7 @@ async def _budget_alias_bridge_is_safe(
     if not version_id or not aliases or not tournament.get("name"):
         return False
     result = await session.execute(
-        text(
-            """
+        text("""
             SELECT
                 COUNT(*) AS line_count,
                 COUNT(*) FILTER (
@@ -457,8 +434,7 @@ async def _budget_alias_bridge_is_safe(
                     OR UPPER(TRIM(COALESCE(l.tournament_name, '')))
                        = UPPER(TRIM(:tournament_name))
               )
-            """
-        ),
+            """),
         {
             "version_id": str(version_id),
             "tournament_id": str(tournament["id"]),
@@ -695,8 +671,7 @@ async def build_portfolio_dashboard(
 ) -> dict[str, Any]:
     """Build a CEO view for one configured portfolio, never a global fallback."""
     result = await session.execute(
-        text(
-            """
+        text("""
             SELECT t.id::text AS id, t.name, NULL::text AS slug
             FROM client_executive_portfolio_tournaments assignment
             JOIN client_executive_portfolios portfolio
@@ -704,8 +679,7 @@ async def build_portfolio_dashboard(
             JOIN tournaments t ON t.id = assignment.tournament_id AND t.active = TRUE
             WHERE assignment.portfolio_id = :portfolio_id AND assignment.active = TRUE
             ORDER BY t.name ASC
-            """
-        ),
+            """),
         {"portfolio_id": str(portfolio_id)},
     )
     tournaments = [

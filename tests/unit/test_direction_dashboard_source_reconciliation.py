@@ -101,11 +101,15 @@ async def test_direction_budget_uses_guarded_legacy_alias_bridge(monkeypatch):
     assert source.await_count == 2
     assert source.await_args_list[0].kwargs["strict_tournament_scope"] is True
     assert source.await_args_list[1].kwargs["strict_tournament_scope"] is False
-    assert isinstance(source.await_args_list[1].args[0], service._DirectionBudgetReadSession)
+    assert isinstance(
+        source.await_args_list[1].args[0], service._DirectionBudgetReadSession
+    )
 
 
 @pytest.mark.asyncio
-async def test_direction_budget_alias_bridge_fails_closed_on_foreign_tournament(monkeypatch):
+async def test_direction_budget_alias_bridge_fails_closed_on_foreign_tournament(
+    monkeypatch,
+):
     strict = {
         "source": "budget_scope_unavailable",
         "version": {"id": "11111111-1111-1111-1111-111111111111"},
@@ -140,7 +144,9 @@ async def test_direction_budget_alias_bridge_fails_closed_on_foreign_tournament(
 
 
 @pytest.mark.asyncio
-async def test_direction_budget_consumer_rejects_concurrent_foreign_alias_row(monkeypatch):
+async def test_direction_budget_consumer_rejects_concurrent_foreign_alias_row(
+    monkeypatch,
+):
     strict = {
         "source": "budget_scope_unavailable",
         "version": {"id": "11111111-1111-1111-1111-111111111111"},
@@ -156,13 +162,11 @@ async def test_direction_budget_consumer_rejects_concurrent_foreign_alias_row(mo
         if strict_tournament_scope:
             return strict
         result = await snapshot_session.execute(
-            service.text(
-                """
+            service.text("""
                 SELECT l.tournament_id, l.tournament_name, l.budget_amount
                 FROM budget_lines l
                 WHERE l.budget_version_id = :version_id
-                """
-            ),
+                """),
             {
                 "version_id": "11111111-1111-1111-1111-111111111111",
                 "aliases": ["CTT"],
@@ -172,7 +176,9 @@ async def test_direction_budget_consumer_rejects_concurrent_foreign_alias_row(mo
         rows = result.mappings().all()
         return {
             "source": "budget_db",
-            "summary": {"budget_total": sum(float(row["budget_amount"]) for row in rows)},
+            "summary": {
+                "budget_total": sum(float(row["budget_amount"]) for row in rows)
+            },
         }
 
     monkeypatch.setattr(service, "build_budget_snapshot", snapshot)
@@ -216,7 +222,9 @@ async def test_direction_budget_consumer_rejects_concurrent_foreign_alias_row(mo
 
 
 @pytest.mark.asyncio
-async def test_operational_bridge_accepts_only_unique_exact_name_and_edition(monkeypatch):
+async def test_operational_bridge_accepts_only_unique_exact_name_and_edition(
+    monkeypatch,
+):
     async def snapshot(*, tournament_slug, **_kwargs):
         if tournament_slug == "local-id":
             raise TournamentsV2Error("different UUID namespace")
@@ -345,7 +353,10 @@ def test_ui_v2_keeps_unavailable_sections_compact_and_explicit():
         "committed": None,
         "projected": None,
         "budget_source_status": "unavailable",
-        "dossier": {"source_status": "unavailable", "marketing": {"status": "unavailable"}},
+        "dossier": {
+            "source_status": "unavailable",
+            "marketing": {"status": "unavailable"},
+        },
         "as_of": "2026-09-12T00:00:00+00:00",
     }
 
