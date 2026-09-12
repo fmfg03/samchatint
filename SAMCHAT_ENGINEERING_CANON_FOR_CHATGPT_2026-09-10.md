@@ -160,22 +160,28 @@ position-scoped employees.
 Executive board and published-report consumption are read-only within assigned
 scope. Report schedule configuration, draft creation and state transitions are
 internal governed writes requiring their specific authority and audited actor.
-Financial, CxC, payment, cashflow, and operational-detail domains remain
-unavailable unless a separate canonical permission authorizes them.
+Eligible Direction positions may consume cross-domain executive reads from
+Operations, Finance, and Marketing, but every read must remain constrained to
+the active portfolios and tournaments already resolved by the Direction guard.
+This cross-domain visibility never delegates the owning domain's create,
+modify, approve, pay, publish, or delete authority. A specific denial prevails.
+Read models must use canonical domain sources, distinguish unavailable from
+zero, and must not manufacture missing people, events, amounts, dates, or
+relationships. Personal contact fields must not be emitted in URLs, logs,
+metrics, exception details, or general-purpose exports.
 
 The physical `client_*` tables, package names, and route-module filenames are
 temporary compatibility debt. Do not rename them in this correction; a
 separate migration, compatibility inventory, rollback plan, and approval are
 required.
 
-Evidence and temporary discrepancy: production remains at
-`81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based
-interpretation. Route/service changes and focused tests exist only as an
-uncommitted diff in an isolated clean worktree, with 26 focused tests and
-route-contract validation passing. The change becomes `repo_live` only after
-merge, and `deployed_verified` only after a new release plus authenticated
-smoke validation. It remains not `business_accepted` until UAT and real scope
-configuration are complete.
+Evidence: the Direction authorization correction is deployed at
+`06ff7d9f5bb5af85b9ae3360e66d527aec62e1a0`, and active portfolio/tournament
+scope is configured for the eligible positions. The expanded dashboard slice
+reuses the strict budget snapshot and tournament SOUL/entity dossier, exposes
+explicit gaps, and adds aggregate age without exposing individual player birth
+dates. It remains repository work under review until merge, and is neither
+`deployed_verified` nor `business_accepted` for this expanded scope.
 
 ## 8. Canonical financial workflow invariants
 

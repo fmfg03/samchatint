@@ -27,6 +27,25 @@ def _parse_date(value: Optional[str]) -> Optional[date]:
     raise ValueError("Invalid date format; use YYYY-MM-DD or DD/MM/YYYY")
 
 
+def _age_from_birth_date(
+    value: object, *, as_of: Optional[date] = None
+) -> Optional[int]:
+    """Return current age for executive aggregates without exposing birth dates."""
+    try:
+        birth_date = _parse_date(str(value or ""))
+    except ValueError:
+        return None
+    if birth_date is None:
+        return None
+    reference = as_of or date.today()
+    age = (
+        reference.year
+        - birth_date.year
+        - ((reference.month, reference.day) < (birth_date.month, birth_date.day))
+    )
+    return age if 0 <= age <= 120 else None
+
+
 def _safe_str(value: Any) -> str:
     return str(value or "").strip()
 
@@ -600,9 +619,9 @@ async def tournament_ops_query_v2(
 
         for player in ctx["players"]:
             players_rows.append(
-            {
-                "player_id": _safe_str(player.get("id")),
-                "nombre": " ".join(
+                {
+                    "player_id": _safe_str(player.get("id")),
+                    "nombre": " ".join(
                         part
                         for part in [
                             _safe_str(player.get("first_name")),
@@ -610,12 +629,12 @@ async def tournament_ops_query_v2(
                         ]
                         if part
                     ).strip(),
-                "birth_date": player.get("birth_date"),
-                "curp": player.get("curp"),
-                "email": player.get("email"),
-                "jersey_number": player.get("jersey_number"),
-                "equipo": team.get("team_name"),
-                "categoria": category_label,
+                    "birth_date": player.get("birth_date"),
+                    "curp": player.get("curp"),
+                    "email": player.get("email"),
+                    "jersey_number": player.get("jersey_number"),
+                    "equipo": team.get("team_name"),
+                    "categoria": category_label,
                     "rama": gender_label if gender_label != "(sin rama)" else None,
                     "estado": team.get("state"),
                     "municipio": municipality_label,
@@ -1379,6 +1398,10 @@ async def tournament_soul_snapshot_v2(
         entity["branches"].add(branch)
         team_managers = managers_by_team.get(_safe_str(team.get("id")), [])
         primary_manager = next((row for row in team_managers if bool(row.get("is_primary"))), None)
+        players_by_age: Dict[str, int] = defaultdict(int)
+        for player in players_for_reg:
+            age = _age_from_birth_date(player.get("birth_date"))
+            players_by_age[str(age) if age is not None else "unknown"] += 1
         entity["teams"].append(
             {
                 "team_id": _safe_str(team.get("id")),
@@ -1387,6 +1410,7 @@ async def tournament_soul_snapshot_v2(
                 "category": category_name,
                 "branch": branch if branch != "(sin rama)" else None,
                 "players_count": player_count,
+                "players_by_age": dict(players_by_age),
                 "documents_complete_players": complete_docs,
                 "documents_verified_players": verified_docs,
                 "instagram_url": team.get("instagram_url"),

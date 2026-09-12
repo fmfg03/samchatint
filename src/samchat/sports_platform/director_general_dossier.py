@@ -102,21 +102,36 @@ def _real_teams_by_category(entity: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _players_by_category_age_gender(entity: dict[str, Any]) -> list[dict[str, Any]]:
-    # Age is not present in the current aggregate snapshot. Keep an explicit
-    # unknown bucket instead of inventing demographic splits.
-    rows = []
-    for item in _real_teams_by_category(entity):
-        rows.append(
-            {
-                "category": item["category"],
-                "age": None,
-                "gender_or_branch": item["gender_or_branch"],
-                "players_count": item["players_count"],
-                "source": "entity.teams.players_count",
-                "age_status": "pending_player_birthdate_rollup",
-            }
+    buckets: dict[tuple[str, str, str], int] = defaultdict(int)
+    for team in entity.get("teams") or []:
+        category, branch = _category_gender_key(team)
+        age_counts = dict(team.get("players_by_age") or {})
+        if not age_counts:
+            buckets[(category, branch, "unknown")] += _safe_int(
+                team.get("players_count")
+            )
+            continue
+        for age, count in age_counts.items():
+            label = str(age) if str(age).isdigit() else "unknown"
+            buckets[(category, branch, label)] += _safe_int(count)
+    return [
+        {
+            "category": category,
+            "age": int(age) if age.isdigit() else None,
+            "gender_or_branch": branch,
+            "players_count": count,
+            "source": "entity.teams.players_by_age",
+            "age_status": "available" if age.isdigit() else "birthdate_missing",
+        }
+        for (category, branch, age), count in sorted(
+            buckets.items(),
+            key=lambda item: (
+                item[0][0].casefold(),
+                item[0][1].casefold(),
+                int(item[0][2]) if item[0][2].isdigit() else 999,
+            ),
         )
-    return rows
+    ]
 
 
 def _missing_ops_fields(entity: dict[str, Any]) -> list[str]:

@@ -1,9 +1,4 @@
-"""Internal direction executive read model.
-
-This module is deliberately limited to tournament-scoped budget aggregates.
-It must not call global cash-flow, CxC, or payment read models because those
-surfaces currently have no equivalent direction/tournament scope.
-"""
+"""Portfolio-scoped budget and operational read models for internal Direction."""
 
 from __future__ import annotations
 
@@ -13,6 +8,9 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from samchat.budgets.service import build_budget_snapshot
+from samchat.sports_platform import build_director_general_entity_dossier
+from samchat.tournaments_v2.supabase_client import TournamentsV2Error
+from samchat.tournaments_v2.services import build_tournament_soul_snapshot
 
 
 class ClientExecutiveAccessError(PermissionError):
@@ -219,6 +217,75 @@ def _executive_card(
     }
 
 
+def _unavailable_dossier(tournament: dict[str, str]) -> dict[str, Any]:
+    """Return a safe contract when the scoped operations source is unavailable."""
+    return {
+        "ok": False,
+        "read_only": True,
+        "schema_version": "samchat.dg_entity_dossier.v1",
+        "source": "tournament_soul_snapshot",
+        "source_status": "unavailable",
+        "tournament": {
+            "id": tournament["id"],
+            "name": tournament["name"],
+            "slug": tournament["slug"],
+        },
+        "summary": {},
+        "entities": [],
+        "national_phase": {
+            "status": "unavailable",
+            "matches": [],
+            "standings": [],
+        },
+        "marketing": {"status": "unavailable", "media": {}},
+        "non_claims": [
+            "La fuente operativa no estuvo disponible; no se sustituyeron datos con ceros.",
+        ],
+    }
+
+
+async def _build_operational_dossier(
+    tournament: dict[str, str],
+    *,
+    edition_year: int,
+) -> dict[str, Any]:
+    """Build one strictly tournament-scoped dossier without operational writes."""
+    try:
+        snapshot = await build_tournament_soul_snapshot(
+            tournament_key="all",
+            # The configured UUID is the authorization boundary shared with the
+            # SOUL source. Names are display data and must never broaden scope.
+            tournament_slug=tournament["id"],
+            include_communications=False,
+            include_media=True,
+            limit=1000,
+        )
+    except TournamentsV2Error:
+        return _unavailable_dossier(tournament)
+
+    source_tournaments = list(snapshot.get("tournaments") or [])
+    source_years = {
+        int(str(item.get("start_date") or "")[:4])
+        for item in source_tournaments
+        if str(item.get("start_date") or "")[:4].isdigit()
+    }
+    if source_years != {int(edition_year)}:
+        unavailable = _unavailable_dossier(tournament)
+        unavailable["source_status"] = "edition_unavailable"
+        unavailable["non_claims"] = [
+            "La fuente operativa no acredita datos para la edición solicitada; "
+            "no se mostraron datos de otra edición.",
+        ]
+        return unavailable
+
+    dossier = build_director_general_entity_dossier(snapshot)
+    soul = snapshot.get("soul") if isinstance(snapshot.get("soul"), dict) else {}
+    dossier["source_status"] = "available"
+    dossier["national_phase"] = dict((soul or {}).get("national_phase") or {})
+    dossier["marketing"] = dict((soul or {}).get("marketing") or {})
+    return dossier
+
+
 def build_client_executive_summary(payload: dict[str, Any]) -> dict[str, Any]:
     """Create a deterministic, read-only Sam summary from safe dashboard data."""
     cards = payload.get("cards") if isinstance(payload.get("cards"), list) else []
@@ -250,6 +317,7 @@ async def build_client_dashboard(
     edition_year: int,
     tournament_id: Optional[str] = None,
     is_superadmin: bool = False,
+    include_operational_detail: bool = False,
 ) -> dict[str, Any]:
     """Build a Direction portfolio or one authorized tournament executive view."""
     tournaments = await _authorized_tournaments(
@@ -279,18 +347,25 @@ async def build_client_dashboard(
             ensure_schema=False,
             strict_tournament_scope=True,
         )
-        cards.append(_executive_card(tournament, snapshot))
+        card = _executive_card(tournament, snapshot)
+        if include_operational_detail:
+            card["dossier"] = await _build_operational_dossier(
+                tournament,
+                edition_year=edition_year,
+            )
+        cards.append(card)
 
     return {
         "edition_year": edition_year,
         "scope": "tournament" if tournament_id else "portfolio",
         "cards": cards,
-        "unavailable_metrics": [
-            "cashflow",
-            "accounts_receivable",
-            "payments",
-            "operational_detail",
-        ],
+        "data_boundary": {
+            "operations": "tournament_soul_snapshot",
+            "budget": "samchat.budgets.service.build_budget_snapshot",
+            "entity_finance": "pending_finance_entity_bridge",
+            "writes": False,
+        },
+        "unavailable_metrics": ["cashflow", "accounts_receivable", "payments"],
     }
 
 

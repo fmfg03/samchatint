@@ -87,6 +87,7 @@ def _snapshot():
                                     "email": "mario@example.com",
                                     "phone": "7771234567",
                                 },
+                                "players_by_age": {"14": 1, "15": 1},
                                 "instagram_url": "https://instagram.com/halcones",
                             },
                             {
@@ -100,6 +101,7 @@ def _snapshot():
                                     "email": "leones@example.com",
                                     "phone": "7770000000",
                                 },
+                                "players_by_age": {"14": 2},
                             },
                         ],
                     }
@@ -329,10 +331,24 @@ def test_director_general_entity_dossier_groups_real_teams_and_contacts():
         "mario@example.com",
         "leones@example.com",
     }
-    assert (
-        operations["players_by_category_age_gender"][0]["age_status"]
-        == "pending_player_birthdate_rollup"
-    )
+    assert operations["players_by_category_age_gender"] == [
+        {
+            "category": "Sub 15",
+            "age": 14,
+            "gender_or_branch": "Sin género/rama",
+            "players_count": 3,
+            "source": "entity.teams.players_by_age",
+            "age_status": "available",
+        },
+        {
+            "category": "Sub 15",
+            "age": 15,
+            "gender_or_branch": "Sin género/rama",
+            "players_count": 1,
+            "source": "entity.teams.players_by_age",
+            "age_status": "available",
+        },
+    ]
 
 
 def test_director_general_entity_dossier_route_is_exposed():

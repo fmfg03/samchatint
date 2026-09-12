@@ -26,6 +26,7 @@ from samchat.client_executive.service import (
     build_client_dashboard,
     build_client_executive_summary,
 )
+from samchat.client_executive.ui import render_direction_dashboard
 
 from .dependencies import get_current_empleado, get_db_session
 
@@ -88,30 +89,8 @@ async def _assigned_direction_portfolios(
 
 
 def _render_dashboard(payload: dict) -> str:
-    cards = (
-        "".join(
-            "<article><h2>{}</h2><p>Presupuesto: {:,.2f} · Real: {:,.2f} · Comprometido: {:,.2f} · Proyección: {:,.2f}</p>"
-            '<p>Fuente: {} · Corte: {}</p><a href="/direccion/tableros/torneos/{}?edition_year={}">Ver ficha ejecutiva</a></article>'.format(
-                escape(str(card["tournament_name"])),
-                card["budget"],
-                card["actual"],
-                card["committed"],
-                card["projected"],
-                escape(card["source"]),
-                escape(card["as_of"]),
-                escape(card["tournament_id"]),
-                int(payload["edition_year"]),
-            )
-            for card in payload["cards"]
-        )
-        or "<p>No hay proyectos o torneos en tu alcance asignado.</p>"
-    )
-    return (
-        "<html><head><title>Tablero ejecutivo de Dirección</title></head><body>"
-        "<h1>Tablero ejecutivo</h1><p>Vista interna de sólo lectura para el alcance asignado. "
-        "Finanzas, CxC, pagos, cashflow y detalle operativo no están disponibles en esta superficie.</p>"
-        f"{cards}</body></html>"
-    )
+    """Compatibility wrapper for route and focused rendering tests."""
+    return render_direction_dashboard(payload)
 
 
 async def _dashboard_payload(
@@ -119,6 +98,7 @@ async def _dashboard_payload(
     current_empleado: object,
     edition_year: Optional[int],
     tournament_id: Optional[str] = None,
+    include_operational_detail: bool = False,
 ) -> dict:
     await _assigned_direction_portfolios(session, current_empleado)
     try:
@@ -128,6 +108,7 @@ async def _dashboard_payload(
             edition_year=edition_year or date.today().year,
             tournament_id=tournament_id,
             is_superadmin=_is_superadmin(current_empleado),
+            include_operational_detail=include_operational_detail,
         )
     except ClientExecutiveAccessError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
@@ -141,7 +122,12 @@ async def direction_executive_dashboard(
 ):
     return HTMLResponse(
         _render_dashboard(
-            await _dashboard_payload(session, current_empleado, edition_year)
+            await _dashboard_payload(
+                session,
+                current_empleado,
+                edition_year,
+                include_operational_detail=True,
+            )
         )
     )
 
@@ -168,13 +154,11 @@ async def direction_published_reports(
     """Expose only published reports whose portfolio is in Direction scope."""
     portfolio_ids = await _assigned_direction_portfolios(session, current_empleado)
     rows = await session.execute(
-        text(
-            """SELECT d.generated_at, p.label, d.summary, d.snapshot
+        text("""SELECT d.generated_at, p.label, d.summary, d.snapshot
             FROM client_report_drafts d
             JOIN client_executive_portfolios p ON p.id = d.portfolio_id AND p.active = TRUE
             WHERE d.state = 'published' AND d.portfolio_id = ANY(:portfolio_ids)
-            ORDER BY d.published_at DESC"""
-        ),
+            ORDER BY d.published_at DESC"""),
         {"portfolio_ids": portfolio_ids},
     )
     reports = (
@@ -210,7 +194,11 @@ async def direction_executive_tournament_dashboard(
     return HTMLResponse(
         _render_dashboard(
             await _dashboard_payload(
-                session, current_empleado, edition_year, tournament_id
+                session,
+                current_empleado,
+                edition_year,
+                tournament_id,
+                include_operational_detail=True,
             )
         )
     )

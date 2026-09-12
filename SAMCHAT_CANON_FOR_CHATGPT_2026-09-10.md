@@ -229,18 +229,23 @@ this surface, but never create scope or substitute the eligible position.
 Executive board and published-report consumption are read-only within assigned
 scope. Report schedule configuration, draft creation and state transitions are
 internal governed writes requiring their specific authority and audited actor.
-They must not expose Finanzas, CxC, payments, cashflow, or operational detail
-without the separate canonical permission for those domains.
+Eligible Direction positions have cross-domain executive visibility over
+Operations, Finance, and Marketing facts within their assigned active portfolio
+and tournament scope. This visibility is read-only: it does not authorize the
+viewer to create, modify, approve, pay, publish, or delete a business record.
+Specific denials still prevail. Missing facts must remain visibly missing and
+must never be replaced with inferred people, events, amounts, dates, or zeroes.
+Personal contact data is visible only when needed for the executive purpose and
+must not leak through URLs, logs, metrics, errors, or general exports.
 
 Physical `client_*` package, table, and route-module names are temporary
 internal compatibility debt, not a product or authorization concept. Their
 future rename requires a separately approved migration and rollback plan.
 
-Evidence and temporary discrepancy: production remains at
-`81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect
-client-based interpretation. The pending correction exists only as an
-uncommitted diff in an isolated clean worktree; focused authorization/reporting
-tests and route-contract validation pass. It becomes `repo_live` only after
-merge, and becomes `deployed_verified` only after a new release plus
-authenticated smoke validation. It remains not `business_accepted` until UAT
-and real portfolio/tournament-scope configuration are complete.
+Evidence: the internal Direction authorization correction was merged and
+deployed as `06ff7d9f5bb5af85b9ae3360e66d527aec62e1a0`; health, readiness,
+release guards, legacy redirects, and anonymous denial were verified. The
+portfolio and tournament scope was configured for the eligible Direction
+positions. The expanded executive dossier remains an approved repository
+change under review until its own merge and deployment. Authenticated UAT and
+business acceptance remain pending.
