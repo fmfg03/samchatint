@@ -434,7 +434,7 @@ async def _budget_alias_bridge_is_safe(
     version_id: str,
     aliases: list[str],
 ) -> bool:
-    """Verify that a legacy alias resolves only rows for the authorized tournament."""
+    """Verify that every downstream alias candidate stays in authorized scope."""
     if not version_id or not aliases or not tournament.get("name"):
         return False
     result = await session.execute(
@@ -452,7 +452,6 @@ async def _budget_alias_bridge_is_safe(
                 ) AS foreign_id_count
             FROM budget_lines l
             WHERE CAST(l.budget_version_id AS text) = :version_id
-              AND COALESCE(l.line_direction, 'expense') = 'expense'
               AND (
                     UPPER(COALESCE(l.tournament_code, '')) = ANY(:aliases)
                     OR UPPER(TRIM(COALESCE(l.tournament_name, '')))
