@@ -142,6 +142,22 @@ def _breakdown_rows(items: list[dict[str, Any]], limit: int = 8) -> str:
     return "".join(rows)
 
 
+def _account_breakdown_rows(items: list[dict[str, Any]], limit: int = 6) -> str:
+    """Render account budgets without inventing account-level actuals."""
+    rows = []
+    for item in items[:limit]:
+        rows.append(
+            "<tr>"
+            f"<td>{_text(item.get('label'), 'Sin cuenta')}</td>"
+            f"<td class='money'>{_money(item.get('budget_total'))}</td>"
+            "<td class='money'>No disponible</td>"
+            "<td class='money'>No disponible</td>"
+            "<td>—</td>"
+            "</tr>"
+        )
+    return "".join(rows)
+
+
 def _budget_detail(card: dict[str, Any]) -> str:
     if card.get("budget_source_status") == "unavailable":
         return """
@@ -159,7 +175,7 @@ def _budget_detail(card: dict[str, Any]) -> str:
     concepts = [item for item in list(breakdowns.get("by_concept") or []) if isinstance(item, dict)]
     accounts = [item for item in list(breakdowns.get("by_account") or []) if isinstance(item, dict)]
     concept_rows = _breakdown_rows(concepts)
-    account_rows = _breakdown_rows(accounts, limit=6)
+    account_rows = _account_breakdown_rows(accounts)
     if not concept_rows and not account_rows:
         return ""
 
@@ -190,6 +206,7 @@ def _budget_detail(card: dict[str, Any]) -> str:
             <thead><tr><th>Cuenta</th><th>Presupuesto</th><th>Ejercido</th><th>Comprometido</th><th>Uso</th></tr></thead>
             <tbody>{account_rows}</tbody>
           </table></div>
+          <p class="section-note">Ejercido y comprometido por cuenta contable aún no están acreditados por la fuente canónica; se muestran como no disponibles, no como cero.</p>
         </div>
         """
         if account_rows
