@@ -29462,6 +29462,9 @@ async def documentos_pendientes(
     if not await _can_review_pending_approvals(session, current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
+    success_msg = request.query_params.get("success_msg", "").strip()
+    error_msg = request.query_params.get("error_msg", "").strip()
+
     q_value = (q or "").strip()
     tipo_value = (tipo or "").strip()
     empleado_value = (empleado_nombre or "").strip()
@@ -29805,6 +29808,8 @@ async def documentos_pendientes(
                 ),
                 side_html=pendientes_side_html,
             )}
+            {f'<div class="notice success" role="status"><strong>Acción completada:</strong> {escape(success_msg)}</div>' if success_msg else ''}
+            {f'<div class="notice warn" role="alert"><strong>No se pudo completar la acción:</strong> {escape(error_msg)}</div>' if error_msg else ''}
             <div class="stack">
                 {filter_form_html}
                 <section class="surface">
