@@ -28749,6 +28749,9 @@ async def documentos_control_presupuestal(
     if not _is_budget_control_user(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
+    success_msg = request.query_params.get("success_msg", "").strip()
+    error_msg = request.query_params.get("error_msg", "").strip()
+
     q_value = (q or "").strip()
     solicitante_alias = aliased(Empleado)
     beneficiario_alias = aliased(Empleado)
@@ -28917,6 +28920,8 @@ async def documentos_control_presupuestal(
             actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
             side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{item_count}</strong><small>Las solicitudes ligadas a informes no duplican presupuesto.</small></div></div>',
         )}
+        {f'<div class="notice success" role="status"><strong>Asignación registrada:</strong> {escape(success_msg)}</div>' if success_msg else ''}
+        {f'<div class="notice warn" role="alert"><strong>No se pudo completar la asignación:</strong> {escape(error_msg)}</div>' if error_msg else ''}
         <section class="surface">
             <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
                 <div class="form-group"><label for="q">Buscar</label><input id="q" name="q" value="{escape(q_value)}" placeholder="Referencia, torneo, solicitante, beneficiario..."></div>
