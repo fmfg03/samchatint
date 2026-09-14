@@ -1,0 +1,112 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[3]
+USER_ROUTES = ROOT / "src/devnous/gastos/routes/user_routes.py"
+ADMIN_ROUTES = ROOT / "src/devnous/gastos/routes/admin_routes.py"
+ARTIFACT_UI = ROOT / "src/samchat/artifacts/admin_ui.py"
+CASHFLOW_UI = ROOT / "src/samchat/cashflow/admin_ui.py"
+EXECUTIVE_UI = ROOT / "src/samchat/client_executive/ui.py"
+
+
+def _source(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _function_source(path: Path, start_marker: str, end_marker: str) -> str:
+    source = _source(path)
+    start = source.index(start_marker)
+    end = source.index(end_marker, start)
+    return source[start:end]
+
+
+def test_shared_workspace_contract_keeps_headers_and_scrollbar_visible():
+    for path, start_marker, end_marker in (
+        (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
+        (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
+    ):
+        styles = _function_source(path, start_marker, end_marker)
+        assert "max-block-size:min(68vh, 46rem)" in styles
+        assert "scrollbar-gutter:stable both-edges" in styles
+        assert ".table-shell thead th" in styles
+        assert "position:sticky" in styles
+        assert "top:0" in styles
+
+
+def test_shared_action_contract_keeps_labels_complete_and_separated():
+    for path, start_marker, end_marker in (
+        (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
+        (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
+    ):
+        styles = _function_source(path, start_marker, end_marker)
+        assert "white-space:nowrap" in styles
+        assert "min-inline-size:max-content" in styles
+        assert ".table-actions" in styles
+        assert "gap:8px" in styles
+        assert "min-block-size:44px" in styles
+        assert ".table-status" in styles
+        assert ".table-actions-cell" in styles
+        assert ".table-value-nowrap" in styles
+
+
+def test_mobile_buttons_can_shrink_but_table_actions_keep_complete_labels():
+    for path, start_marker, end_marker in (
+        (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
+        (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
+    ):
+        styles = _function_source(path, start_marker, end_marker)
+        mobile = styles[styles.index("@media (max-width:") :]
+        assert "min-inline-size:0" in mobile
+        assert ".table-actions-cell .button" in mobile
+        assert "min-inline-size:max-content" in mobile
+
+
+def test_pending_approval_witness_uses_semantic_action_group_and_existing_posts():
+    page = _function_source(
+        USER_ROUTES,
+        '@router.get("/documentos/pendientes"',
+        '@router.post("/documentos/pendientes/accion-lote")',
+    )
+    assert 'class="table-actions"' in page
+    assert 'formaction="/documentos/{documento.id}/aprobar"' in page
+    assert 'formaction="/documentos/{documento.id}/rechazar"' in page
+    assert 'action="/documentos/pendientes/accion-lote"' in page
+    assert 'value="approve"' in page
+    assert 'value="reject"' in page
+
+
+def test_admin_fragments_adopt_shared_table_shell():
+    artifact = _source(ARTIFACT_UI)
+    cashflow = _source(CASHFLOW_UI)
+    assert artifact.count('<div class="table-shell"><table class="artifact-table">') == 4
+    assert '<div class="table-shell"><table class="cashflow-table">' in cashflow
+
+
+def test_finance_command_center_tables_adopt_shared_table_shell():
+    finance = _function_source(
+        ADMIN_ROUTES,
+        '@router.get("/admin/finanzas", response_class=HTMLResponse)',
+        '@router.get("/admin/finanzas/export.xlsx", response_class=Response)',
+    )
+    assert finance.count('<div class="table-shell"') == 6
+    assert finance.count('<table class="finance-table"') == 6
+
+
+def test_informe_and_solicitud_summaries_mark_non_wrapping_columns():
+    source = _source(USER_ROUTES)
+    solicitudes = source[source.index("<h2>Resumen de solicitudes</h2>") :]
+    solicitudes = solicitudes[: solicitudes.index("</html>")]
+    informes = source[source.index("<h2>Resumen por informe</h2>") :]
+    informes = informes[: informes.index("</html>")]
+    for page in (solicitudes, informes):
+        assert 'class="table-status"' in page
+        assert 'class="table-actions-cell"' in page
+    assert informes.count('class="table-value-nowrap"') >= 5
+
+
+def test_direction_domain_shell_has_same_scroll_contract():
+    executive = _source(EXECUTIVE_UI)
+    assert ".table-wrap thead th" in executive
+    assert "position:sticky" in executive
+    assert "max-block-size:min(68vh, 46rem)" in executive
+    assert "scrollbar-gutter:stable both-edges" in executive

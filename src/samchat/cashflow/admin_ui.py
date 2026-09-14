@@ -120,7 +120,7 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Vista mensual</div>
-            <table class="cashflow-table">
+            <div class="table-shell"><table class="cashflow-table">
                 <thead>
                     <tr>
                         <th>Mes</th>
@@ -137,7 +137,7 @@ def render_cashflow_planning_html(payload: dict[str, Any]) -> str:
                     </tr>
                 </thead>
                 <tbody>{_monthly_rows(rows)}</tbody>
-            </table>
+            </table></div>
         </section>
         <section class="workspace-card">
             <div class="workspace-section-title">Notas de lectura</div>

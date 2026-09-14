@@ -1429,6 +1429,8 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             background:var(--shell-accent);
             color:#f8fafc;
             box-shadow:0 12px 26px rgba(15,118,110,.18);
+            white-space:nowrap;
+            min-inline-size:max-content;
         }}
         .button.secondary {{
             background:#fff;
@@ -1438,8 +1440,10 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         }}
         .table-shell {{
             max-width:100%;
-            overflow-x:auto;
+            overflow:auto;
+            max-block-size:min(68vh, 46rem);
             -webkit-overflow-scrolling:touch;
+            scrollbar-gutter:stable both-edges;
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
@@ -1447,6 +1451,33 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .table-shell table {{
             min-width:max-content;
         }}
+        .table-shell thead th {{
+            position:sticky;
+            top:0;
+            z-index:2;
+            background:#0f172a;
+            color:#f8fafc;
+        }}
+        .table-actions {{
+            display:flex;
+            flex-wrap:wrap;
+            align-items:center;
+            gap:8px;
+            min-inline-size:max-content;
+        }}
+        .table-actions > form {{ margin:0; }}
+        .table-actions .button {{ min-block-size:44px; }}
+        .table-status,
+        .table-actions-cell,
+        .table-value-nowrap {{
+            white-space:nowrap;
+            overflow-wrap:normal;
+            min-inline-size:max-content;
+        }}
+        .table-actions-cell a,
+        .table-actions-cell button,
+        .table-status .badge,
+        .table-status .status-chip {{ white-space:nowrap; }}
         table {{
             max-width:100%;
             border-collapse:collapse;
@@ -1481,9 +1512,15 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             .lead {{ font-size:13px; line-height:1.55; }}
             .button {{
                 width:100%;
+                min-inline-size:0;
                 min-height:42px;
                 white-space:normal;
                 text-align:center;
+            }}
+            .table-actions-cell .button {{
+                width:auto;
+                min-inline-size:max-content;
+                white-space:nowrap;
             }}
             .form-grid,
             .filter-grid,
@@ -7016,10 +7053,10 @@ async def admin_finance_platform(
                     {_sports_card("Media", action_queue.get("medium_count", 0), "Fiscal o trazabilidad")}
                     {_sports_card("Baja", action_queue.get("low_count", 0), "Seguimiento")}
                 </div>
-                <table class="finance-table" style="margin-top:16px;">
+                <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
                     <thead><tr><th>Sev</th><th>Acción</th><th>Módulo</th><th>Responsable</th><th>Vence</th><th>Detalle</th></tr></thead>
                     <tbody>{action_rows or '<tr><td colspan="6">Sin acciones abiertas.</td></tr>'}</tbody>
-                </table>
+                </table></div>
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">One-click Finance Brief</div>
@@ -7065,10 +7102,10 @@ async def admin_finance_platform(
                         <a class="button secondary" href="/admin/finanzas/payment-run">Abrir Payment Run</a>
                         <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
                     </div>
-                    <table class="finance-table" style="margin-top:16px;">
+                    <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
                         <thead><tr><th>Referencia</th><th>Tipo</th><th>Beneficiario</th><th>Monto</th><th>Fecha</th></tr></thead>
                         <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
-                    </table>
+                    </table></div>
                 </div>
                 <div class="workspace-card">
                     <div class="workspace-section-title">COI pendientes</div>
@@ -7076,10 +7113,10 @@ async def admin_finance_platform(
                     <form method="POST" action="/admin/finanzas/coi-pendientes/clasificar" style="margin-top:16px;">
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
-                        <table class="finance-table">
+                        <div class="table-shell"><table class="finance-table">
                             <thead><tr><th></th><th>Gasto</th><th>Concepto</th><th>Monto</th><th>Cuenta</th><th>Contracuenta</th><th>Cuenta IVA</th><th>Fiscal</th></tr></thead>
                             <tbody>{pending_coi_rows or '<tr><td colspan="8">Sin gastos pendientes de clasificación COI.</td></tr>'}</tbody>
-                        </table>
+                        </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not pending_coi_expenses or not account_rows else ''}>Guardar clasificación COI</button>
                     </form>
                 </div>
@@ -7098,18 +7135,18 @@ async def admin_finance_platform(
                     <form method="POST" action="/admin/finanzas/diot-blockers/link-cfdi" style="margin-top:16px;">
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
-                        <table class="finance-table">
+                        <div class="table-shell"><table class="finance-table">
                             <thead><tr><th></th><th>Referencia</th><th>Tipo</th><th>Estado</th><th>Monto</th><th>Persona/proveedor</th><th>UUID CFDI</th></tr></thead>
                             <tbody>{blocker_rows or '<tr><td colspan="7">Sin bloqueos fiscales visibles.</td></tr>'}</tbody>
-                        </table>
+                        </table></div>
                         <button class="button" type="submit" style="margin-top:12px;" {'disabled' if not tax_blockers else ''}>Amarrar CFDI para DIOT</button>
                     </form>
                     <div style="margin-top:18px;">
                         <div class="workspace-section-subtitle">Warnings cuando el comprobante pertenece a otro mes que el gasto.</div>
-                        <table class="finance-table" style="margin-top:12px;">
+                        <div class="table-shell" style="margin-top:12px;"><table class="finance-table">
                             <thead><tr><th>Gasto</th><th>Concepto</th><th>Fecha gasto</th><th>Fecha CFDI</th><th>Warning</th></tr></thead>
                             <tbody>{cross_month_rows or '<tr><td colspan="5">Sin comprobantes cruzados entre meses.</td></tr>'}</tbody>
-                        </table>
+                        </table></div>
                     </div>
                 </div>
             </section>
@@ -7117,10 +7154,10 @@ async def admin_finance_platform(
                 <div class="workspace-card">
                     <div class="workspace-section-title">Pólizas descuadradas</div>
                     <div class="workspace-section-subtitle">Debe/haber que impide cierre limpio para COI.</div>
-                    <table class="finance-table" style="margin-top:16px;">
+                    <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
                         <thead><tr><th>Póliza</th><th>Beneficiario</th><th>Debe</th><th>Haber</th><th>Diferencia</th></tr></thead>
                         <tbody>{poliza_rows or '<tr><td colspan="5">Sin pólizas descuadradas.</td></tr>'}</tbody>
-                    </table>
+                    </table></div>
                 </div>
                 <div class="workspace-card">
                     <div class="workspace-section-title">Finance Copilot</div>

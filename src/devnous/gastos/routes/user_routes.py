@@ -12164,6 +12164,8 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             justify-content:center;
             gap:8px;
             transition:transform .15s ease, box-shadow .15s ease, background .15s ease;
+            white-space:nowrap;
+            min-inline-size:max-content;
         }}
         .button:hover {{ transform:translateY(-1px); }}
         .button:active {{ transform:translateY(0); }}
@@ -12282,7 +12284,9 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         .table-shell {{
             overflow:auto;
             max-width:100%;
+            max-block-size:min(68vh, 46rem);
             -webkit-overflow-scrolling:touch;
+            scrollbar-gutter:stable both-edges;
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
@@ -12290,6 +12294,32 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         .table-shell table {{
             min-width:max-content;
         }}
+        .table-shell thead th {{
+            position:sticky;
+            top:0;
+            z-index:2;
+            background:#0f172a;
+        }}
+        .table-actions {{
+            display:flex;
+            flex-wrap:wrap;
+            align-items:center;
+            gap:8px;
+            min-inline-size:max-content;
+        }}
+        .table-actions > form {{ margin:0; }}
+        .table-actions .button {{ min-block-size:44px; }}
+        .table-status,
+        .table-actions-cell,
+        .table-value-nowrap {{
+            white-space:nowrap;
+            overflow-wrap:normal;
+            min-inline-size:max-content;
+        }}
+        .table-actions-cell a,
+        .table-actions-cell button,
+        .table-status .badge,
+        .table-status .status-chip {{ white-space:nowrap; }}
         table {{
             width:100%;
             border-collapse:collapse;
@@ -12379,9 +12409,15 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             .lead {{ font-size:13px; line-height:1.55; }}
             .button {{
                 width:100%;
+                min-inline-size:0;
                 min-height:42px;
                 white-space:normal;
                 text-align:center;
+            }}
+            .table-actions-cell .button {{
+                width:auto;
+                min-inline-size:max-content;
+                white-space:nowrap;
             }}
             .form-grid,
             .informes-filter-bar {{
@@ -16934,8 +16970,8 @@ async def gastos_terceros(
             <td>{fecha_pago_display}</td>
             <td>{concepto_display}</td>
             <td>{archivos_terc}</td>
-            <td>{estado_display}</td>
-            <td>{registrar_pago_link}</td>
+            <td class="table-status">{estado_display}</td>
+            <td class="table-actions-cell"><div class="table-actions">{registrar_pago_link}</div></td>
         </tr>
         """
 
@@ -17066,8 +17102,8 @@ async def gastos_terceros(
                                     <th>Fecha de pago</th>
                                     <th>Descripción de pago</th>
                                     <th>Archivos</th>
-                                    <th>Estado</th>
-                                    <th>Acciones</th>
+                                    <th class="table-status">Estado</th>
+                                    <th class="table-actions-cell">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -29601,9 +29637,9 @@ async def documentos_pendientes(
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
         actions_html = (
-            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">'
-            f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary" style="padding:6px 9px;font-size:12px;">Aprobar</button>'
-            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button secondary" style="padding:6px 9px;font-size:12px;">Rechazar</button>'
+            '<div class="table-actions">'
+            f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary">Aprobar</button>'
+            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button danger">Rechazar</button>'
             '</div>'
         )
         rows_html += f"""
@@ -29706,10 +29742,10 @@ async def documentos_pendientes(
         table_html = f"""
             <form method="POST" action="/documentos/pendientes/accion-lote">
                 <input type="hidden" name="next" value="{escape(next_path)}">
-                <div style="display:flex;gap:10px;justify-content:flex-end;align-items:center;margin-bottom:12px;">
+                <div class="table-actions" style="justify-content:flex-end;margin-bottom:12px;">
                     <button type="button" class="button secondary" data-select-all-approval>Seleccionar todo</button>
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
-                    <button type="submit" name="action" value="reject" class="button secondary">Rechazar seleccionados</button>
+                    <button type="submit" name="action" value="reject" class="button danger">Rechazar seleccionados</button>
                 </div>
                 <div class="table-shell"><table data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
@@ -39618,17 +39654,17 @@ async def cuentas_de_gastos_list(
             <td>{aprobador_nombre}</td>
             <td data-sort-value="{escape(fecha_aprobacion_sort)}">{fecha_aprobacion_informe}</td>
             <td data-sort-value="{escape(ro_sort)}" style="white-space: nowrap;">{ro_cell}</td>
-            <td>{estado_badge}</td>
-            <td data-sort-value="{escape(_sort_value_attr(data['num_expenses'], kind='number'))}">{data['num_expenses']} gastos</td>
-            <td data-sort-value="{escape(_sort_value_attr(data['total_gastos'], kind='money'))}">{format_currency(data['total_gastos'], cuenta_currency)}</td>
-            <td data-sort-value="{escape(_sort_value_attr(data['monto_solicitado'], kind='money'))}">{format_currency(data['monto_solicitado'], cuenta_currency)}</td>
-            <td>{escape(cuenta_currency)}</td>
-            <td data-sort-value="{escape(_sort_value_attr(data['saldo'], kind='money'))}" style="color: {saldo_color}; font-weight: bold;">
+            <td class="table-status">{estado_badge}</td>
+            <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['num_expenses'], kind='number'))}">{data['num_expenses']} gastos</td>
+            <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['total_gastos'], kind='money'))}">{format_currency(data['total_gastos'], cuenta_currency)}</td>
+            <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['monto_solicitado'], kind='money'))}">{format_currency(data['monto_solicitado'], cuenta_currency)}</td>
+            <td class="table-value-nowrap">{escape(cuenta_currency)}</td>
+            <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['saldo'], kind='money'))}" style="color: {saldo_color}; font-weight: bold;">
                 {format_currency(abs(data['saldo']), cuenta_currency)} <small>({saldo_label})</small>
             </td>
             <td data-sort-value="{escape(_sort_value_attr(cuenta.created_at, kind='date'))}">{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
-            <td>
-                <div class="inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
+            <td class="table-actions-cell">
+                <div class="table-actions inline-actions">
                 <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Abrir informe</a>
                 {cerrar_cell}
                 {cancelar_borrador_cell}
@@ -39776,14 +39812,14 @@ async def cuentas_de_gastos_list(
                         <th data-sort-key="aprobador" data-sort-type="text">Aprobador</th>
                         <th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobacion</th>
                         <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th>
-                        <th data-sort-key="estado" data-sort-type="text">Estado</th>
-                        <th data-sort-key="gastos" data-sort-type="number"># Gastos</th>
-                        <th data-sort-key="total_gastos" data-sort-type="money">Total Gastos</th>
-                        <th data-sort-key="solicitado" data-sort-type="money">Solicitado</th>
-                        <th data-sort-key="moneda" data-sort-type="text">Moneda</th>
-                        <th data-sort-key="saldo" data-sort-type="money">Saldo</th>
+                        <th class="table-status" data-sort-key="estado" data-sort-type="text">Estado</th>
+                        <th class="table-value-nowrap" data-sort-key="gastos" data-sort-type="number"># Gastos</th>
+                        <th class="table-value-nowrap" data-sort-key="total_gastos" data-sort-type="money">Total Gastos</th>
+                        <th class="table-value-nowrap" data-sort-key="solicitado" data-sort-type="money">Solicitado</th>
+                        <th class="table-value-nowrap" data-sort-key="moneda" data-sort-type="text">Moneda</th>
+                        <th class="table-value-nowrap" data-sort-key="saldo" data-sort-type="money">Saldo</th>
                         <th data-sort-key="creada" data-sort-type="date">Creada</th>
-                        <th>Acciones</th>
+                        <th class="table-actions-cell">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
