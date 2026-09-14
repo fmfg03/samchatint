@@ -708,15 +708,17 @@ def test_systemd_timer_runs_workflow_monitor_every_five_minutes() -> None:
 
 
 
-def test_document_detail_approval_actions_use_beneficiary_subject() -> None:
+def test_document_detail_approval_actions_prioritize_persisted_project_route() -> None:
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
     start = source.index("async def ver_documento")
     end = source.index("    # Determine permission for payment registration", start)
     block = source[start:end]
 
+    assert "documento_authorization_routes" in block
+    assert "await actor_is_route_approver(" in block
+    assert "if route_exists:" in block
     assert "approval_subject = approval_subject_empleado(documento) or empleado" in block
     assert "approval_subject.aprobador_id == current_empleado.id" in block
-    assert "empleado.aprobador_id == current_empleado.id" not in block
 
 
 def test_document_detail_inherits_project_context_from_expense_account() -> None:
