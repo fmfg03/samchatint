@@ -1,0 +1,1698 @@
+[
+  {
+    "path": ".codex/README.md",
+    "title": "SamChat Codex Workspace Metadata",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": ".github/pull_request_template.md",
+    "title": "",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "AGENTS.md",
+    "title": "Repository Guidelines",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "CRITICAL_ISSUES_FIXED.md",
+    "title": "Critical Issues Fixed - Production Readiness",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "CRITICAL_WORK_COMPLETION_SUMMARY.md",
+    "title": "Critical Work Completion Summary",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "ENHANCED_PRODUCTION_READINESS_AGENTS.md",
+    "title": "Enhanced Production Readiness Agents - Integration Plan",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "INTEGRATION_PLANS_SUMMARY.md",
+    "title": "Integration Plans Summary",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "PHASE_2_TEST_RESULTS.md",
+    "title": "Phase 2: Test Execution Results",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "PRODUCTION_READINESS_PROGRESS.md",
+    "title": "Production Readiness Progress - Path to >95%",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "PRODUCTION_READINESS_SCORECARD.md",
+    "title": "Production Readiness Scorecard - Path to >95%",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "README.md",
+    "title": "SamChat",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md",
+    "title": "SamChat Canon for ChatGPT",
+    "owner": "Canon governance",
+    "classification": "CURRENT_CANONICAL",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md",
+    "title": "SamChat Codebase Sweep Report",
+    "owner": "Canon governance",
+    "classification": "CURRENT_CANONICAL",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md",
+    "title": "SamChat Engineering Canon for ChatGPT",
+    "owner": "Canon governance",
+    "classification": "CURRENT_CANONICAL",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "TEST_INFRASTRUCTURE_REQUIREMENTS.md",
+    "title": "Test Infrastructure Requirements",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "UPDATE_REPORT_20251110.md",
+    "title": "🔄 Technology Updates Report - November 10, 2025",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "ZAUBERN_MEMORY_AGENT_INTEGRATION_PLAN.md",
+    "title": "ZAUBERN Memory Agent Integration Plan",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-052l-assistant-preview-ui-card/README.md",
+    "title": "RQF-052L ? Assistant preview UI card",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-053a-assistant-workspace-cards-ui/README.md",
+    "title": "RQF-053A ? Assistant workspace cards UI",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-053b-assistant-step-trace-sources/README.md",
+    "title": "RQF-053B ? Assistant step trace + sources panel",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-053h-assistant-credential-hardening/README.md",
+    "title": "RQF-053H Assistant Credential Surface Hardening",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-053h-assistant-ui-revamp/README.md",
+    "title": "RQF-053H — Assistant UI revamp, primera pasada",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-053h-assistant-ui-runtime-deploy/README.md",
+    "title": "RQF-053H Assistant UI Runtime Deploy",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-054h-executive-canary-gate/README.md",
+    "title": "RQF-054H Executive Canary Gate",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-executive-demo-screens-corte1/README.md",
+    "title": "RQF Executive Demo Screens - Corte 1",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-007d-health-stable-readonly-runtime-soak.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-007D — Health-Stable Read-Only Runtime Soak After Provider Isolation",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-008-readonly-canary.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-008 — Multi-Employee Read-Only Canary",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009b-curated-rag-ingestion.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009B ? Curated RAG Ingestion",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009c-case-memory.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009C ? Case Memory Summaries",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009d-tool-routing-quality.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009D ? Tool Routing Quality",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009e-owner-ai-needs-eval.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009E - Owner AI Needs Evaluation Baseline",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009f-business-diff-preview.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009F - Business Diff Preview Pattern",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009f-owner-ai-routing.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009F - Owner AI Needs Routing Fix",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009g-owner-ai-deterministic-bypass.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009G - Owner AI Deterministic Router Bypass",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009h-owner-ai-canon-retrieval.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009H - Owner AI Canon-Only Retrieval",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009i-owner-ai-readonly-routing.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009I - Owner AI Read-Only Routing Expansion",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009j-owner-ai-canon-no-facts.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009J - Owner Canon Is Not Live Evidence",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009j-owner-canary-live.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009J - Live Owner-Needs Canary",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009k-owner-evidence-gap-full-eval.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009K - Owner Evidence-Gap Full Eval Closure",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009l-owner-folder-builder.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009L Owner Folder Builder",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009m-owner-folder-revision.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009M Owner Folder Revision Loop",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009n-owner-response-pack.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009N Owner Operator Response Pack",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-009o-owner-operator-workflow.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009O Owner Operator Workflow",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052a-specialist-contract.md",
+    "title": "RQF-ASSISTANT-052A ? Specialist Agent Contract + Case/Task Schema",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052b-specialist-handoff.md",
+    "title": "RQF-ASSISTANT-052B ? Knowledge ? Verifier ? Finance Handoff",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052c-seed-benchmarks.md",
+    "title": "RQF-ASSISTANT-052C ? Plataforma Seed Benchmarks",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052d-ten-seed-benchmarks.md",
+    "title": "RQF-ASSISTANT-052D ? Ten Plataforma Specialist Seed Benchmarks",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052e-benchmark-report-runner.md",
+    "title": "RQF-ASSISTANT-052E ? Specialist Benchmark Report Runner",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052f-orchestrator-routing.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052F - Specialist Orchestrator Routing",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052g-finance-capabilities.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052G - Domain-Specific Finance Capabilities",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052h-domain-action-previews.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052H - Domain Action Previews",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052i-specialist-business-diff-preview.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052I - Specialist Business Diff Preview",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052j-preview-renderer-contract.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052J - Specialist Preview Renderer Contract",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052j-specialist-preview-surface-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052J - Specialist Preview Surface Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052j-specialist-preview-surface-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052J - Specialist Preview Surface Story",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052k-assistant-preview-surface.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052K - Assistant Preview Surface",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052n-understood-context.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052N - Specialist Preview Understood Context",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052o-live-readonly-context.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052O ? Specialist Preview Live Read-only Context",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052p-preview-diagnostics.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052P ? Specialist Preview Operational Diagnostics",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052q-workspace-cards.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052Q ? Specialist Preview Workspace Cards",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052r-specialist-case-memory-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052R - Specialist Case Memory Grounding Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052r-specialist-case-memory-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052R - Specialist Case Memory Grounding Story",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052s-active-case-continuity-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052S - Active Case Continuity Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052s-active-case-continuity-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052S - Active Case Continuity Story",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052t-specialist-resume-guidance-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052T - Specialist Resume Guidance Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052t-specialist-resume-guidance-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052T - Specialist Resume Guidance Story",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052u-preview-evidence-quality-gate-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052U ? Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052u-preview-evidence-quality-gate-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052U ? Preview evidence quality gate",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052v-specialist-preview-eval-pack-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052V ? Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052v-specialist-preview-eval-pack-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052V ? Specialist preview eval pack",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052w-specialist-task-registry-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052W ? Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052w-specialist-task-registry-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052W ? Specialist task registry hardening",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052x-operator-workspace-persistence-spec.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052X ? Spec",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052x-operator-workspace-persistence-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052X ? Assistant operator workspace persistence",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052y-resume-from-workspace-snapshot-spec.md",
+    "title": "Spec ? Resume from workspace snapshot",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052y-resume-from-workspace-snapshot-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052Y ? Resume from workspace snapshot",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052z-operator-continuity-surface-spec.md",
+    "title": "Spec ? Operator continuity surface",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-assistant-052z-operator-continuity-surface-story.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-052Z ? Operator continuity surface",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/rqf-samchat-service-stability-002-healthcheck-hardening.md",
+    "title": "RQF-SAMCHAT-SERVICE-STABILITY-002 - Healthcheck Restart Policy Hardening",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/sports_platform_marketing_pack_closeout_v0.md",
+    "title": "Sports Platform Marketing Pack Closeout v0",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "artifacts/sports_platform_marketing_sponsor_workflow_v1_closeout.md",
+    "title": "SP-MKT-03 Sponsor Proof + Approval Workflow v1 Closeout",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/CTT_OCR_PIPELINE.md",
+    "title": "CTT Template-Aligned OCR Pipeline",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 720,
+        "target": "../src/devnous/vision/__init__.py",
+        "status": "missing"
+      },
+      {
+        "line": 721,
+        "target": "TELEGRAM_QUICKSTART.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/CTT_OCR_QUICKSTART.md",
+    "title": "CTT OCR Pipeline - Quick Start Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/README.md",
+    "title": "SamChat documentation map",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/api/API_QUICK_REFERENCE.md",
+    "title": "API Quick Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 994,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 995,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 996,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/api/CLI_COMMANDS_REFERENCE.md",
+    "title": "CLI Commands Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 1047,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1048,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1049,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/api/CONFIGURATION_REFERENCE.md",
+    "title": "SamChat/DevNous Configuration Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 1149,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1150,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1151,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/api/DATABASE_SCHEMA_REFERENCE.md",
+    "title": "Database Schema Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 1541,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1542,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1543,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/api/ERROR_CODES_REFERENCE.md",
+    "title": "Error Codes Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 1249,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1250,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1251,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/architecture/tournament-authority-boundaries.md",
+    "title": "Tournament authority boundaries",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/context-corpus.md",
+    "title": "Assistant Context Corpus",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/current-roadmap-handoff.md",
+    "title": "SamChat current roadmap handoff",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/owner-ai-needs.md",
+    "title": "Owner AI Needs - Tournament Knowledge Folders",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/product-canon.md",
+    "title": "SamChat Assistant Product Canon",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053b-auth-smoke.md",
+    "title": "RQF-ASSISTANT-053B ? Authenticated assistant runtime smoke",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053b-ui-followups.md",
+    "title": "RQF-053B ? Assistant UI follow-ups",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053d-owner-pack-readiness-dashboard.md",
+    "title": "RQF-053D - Owner Pack Readiness Dashboard / respuesta navegable",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053e-owner-variable-qa.md",
+    "title": "RQF-053E - Owner Variable Q&A",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053f-entity-folder-workspace.md",
+    "title": "RQF-053F - Entity Folder Workspace",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053g-artifact-connection-review.md",
+    "title": "RQF-053G - Artifact connection review",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-053h-assistant-ui-revamp.md",
+    "title": "RQF-053H — Assistant UI revamp, primera pasada",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-054-claude-code-runtime-gap.md",
+    "title": "RQF-054 — SamChat Claude-Code Runtime Gap",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-assistant-009-quality-roadmap.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009 ? Assistant Quality and Context Roadmap",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-assistant-009e-evaluation-set.md",
+    "title": "RQF-SAMCHAT-ASSISTANT-009E - Evaluation Set",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-assistant-artifact-audit-001.md",
+    "title": "RQF-ASSISTANT-ARTIFACT-AUDIT-001 ? Intelligent artifact audit",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/rqf-samchat-buzz-001-phase-0.md",
+    "title": "RQF-SAMCHAT-BUZZ-001 ? Phase 0 decisions",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/assistant/soul-wizard-roadmap.md",
+    "title": "SOUL Wizard roadmap",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/ctt-registration-shadow-rollout.md",
+    "title": "CTT registration shadow rollout",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/deployment/DEPLOYMENT_README.md",
+    "title": "DevNous Debate System - Production Deployment Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 383,
+        "target": "./API_DOCUMENTATION.md",
+        "status": "missing"
+      },
+      {
+        "line": 384,
+        "target": "./SMART_DEBATE_ARCHITECTURE.md",
+        "status": "missing"
+      },
+      {
+        "line": 385,
+        "target": "./PERFORMANCE_ENGINEERING_CRITIQUE.md",
+        "status": "missing"
+      },
+      {
+        "line": 386,
+        "target": "./DEBATE_DATABASE_README.md",
+        "status": "missing"
+      },
+      {
+        "line": 387,
+        "target": "./infrastructure/monitoring/README.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/deployment/DevNous_Implementation_Roadmap.md",
+    "title": "DevNous Implementation Roadmap",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/deployment/HYBRID_MIGRATION_GUIDE.md",
+    "title": "SamChat + DevNous Hybrid Migration Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/deployment/devnous_deployment_guide.md",
+    "title": "DevNous Database Deployment and Operations Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/deployment/implementation-guide.md",
+    "title": "DevNous Enterprise Messaging Implementation Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/install_matrix.md",
+    "title": "Install Matrix",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/oferta_plataforma_auditoria_marketing_2026-06-23.md",
+    "title": "Auditoría de Alcance Marketing",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/oferta_plataforma_resumen_ejecutivo_cliente_2026-06-23.md",
+    "title": "Resumen Ejecutivo de Alcance",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/oferta_plataforma_revision_cliente_2026-06-23.md",
+    "title": "Revisión Ejecutiva de Alcance y Valorización",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/operations/OPERATIONS_REFERENCE.md",
+    "title": "SamChat/DevNous - Production Deployment and Operations Reference Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/operations/ORCHESTRATION_INTEGRATION_GUIDE.md",
+    "title": "DevNous Messaging Platform - Final Integration Guide",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 541,
+        "target": "./api-documentation/",
+        "status": "missing"
+      },
+      {
+        "line": 542,
+        "target": "./api-documentation/integration-guides/",
+        "status": "missing"
+      },
+      {
+        "line": 543,
+        "target": "./api-documentation/security/",
+        "status": "missing"
+      },
+      {
+        "line": 546,
+        "target": "./examples/",
+        "status": "missing"
+      },
+      {
+        "line": 547,
+        "target": "./api-documentation/sdk/",
+        "status": "missing"
+      },
+      {
+        "line": 548,
+        "target": "./templates/",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/operations/PERFORMANCE_BENCHMARKS_REFERENCE.md",
+    "title": "Performance Benchmarks Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 1133,
+        "target": "CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1134,
+        "target": "DATABASE_SCHEMA_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1135,
+        "target": "API_QUICK_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1136,
+        "target": "CLI_COMMANDS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1137,
+        "target": "ERROR_CODES_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1138,
+        "target": "SECURITY_CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 1139,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/operations/REG003_REGISTRATION_GOVERNANCE.md",
+    "title": "REG-003 SamChat fail-closed registration gate",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/operations/REGS13_PERSISTENCE_AUTHORITY.md",
+    "title": "REG-S13 transaction-scoped persistence authority",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/ar-cfdi-income-model.md",
+    "title": "AR / CFDI Income Model",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/artifact-taxonomy.md",
+    "title": "Artifact Taxonomy",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/assistant-artifact-boundary.md",
+    "title": "Assistant Artifact Boundary",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/assistant-finance-source-contract.md",
+    "title": "Assistant Finance Source Contract",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/finance-spine-map.md",
+    "title": "Canonical Finance Map",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/presupuestos-route-policy.md",
+    "title": "Presupuestos Route Policy",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/runtime-artifact-index.md",
+    "title": "Runtime Artifact Index",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/product/samchat-product-spine.md",
+    "title": "SamChat Product Spine",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/release/accepted-regressions.md",
+    "title": "SamChat accepted regression gate",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/release/branch-audit-20260824T040932Z.md",
+    "title": "Branch audit 20260824T040932Z",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/release/branch-prune-closeout-20260824T150838Z.md",
+    "title": "Branch prune closeout 20260824T150838Z",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/release/branch-risk-audit-closeout-20260824.md",
+    "title": "",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/release/current-release-dropin.md",
+    "title": "SamChat production release drop-in",
+    "owner": "Juan Pablo Lopez",
+    "classification": "HISTORICAL_EVIDENCE",
+    "disposition": "add historical/staleness banner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/roadmap/direction-executive-compatibility-debt.md",
+    "title": "Direction executive compatibility debt",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/roadmap/direction-executive-dashboard-gap-analysis.md",
+    "title": "Direction executive dashboard: source and gap analysis",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/roadmap/samchat-closeout-evidence-matrix.md",
+    "title": "SamChat closeout evidence matrix",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/roadmap/samchat-convergence-register.md",
+    "title": "SamChat convergence register",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/roadmap/samchat-finance-reconciliation-ledger.md",
+    "title": "SamChat finance reconciliation ledger",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/runtime_map.md",
+    "title": "Runtime Map",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/security/RISK_ASSESSMENT_MITIGATION_STRATEGIES.md",
+    "title": "SamChat/DevNous: Risk Assessment & Mitigation Strategies",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/security/SECURITY_CONFIGURATION_REFERENCE.md",
+    "title": "Security Configuration Reference",
+    "owner": "Juan Pablo Lopez",
+    "classification": "MISLEADING_OR_UNSAFE",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [
+      {
+        "line": 2350,
+        "target": "CONFIGURATION_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2351,
+        "target": "DATABASE_SCHEMA_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2352,
+        "target": "API_QUICK_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2353,
+        "target": "CLI_COMMANDS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2354,
+        "target": "ERROR_CODES_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2355,
+        "target": "PERFORMANCE_BENCHMARKS_REFERENCE.md",
+        "status": "missing"
+      },
+      {
+        "line": 2356,
+        "target": "DEPLOYMENT_REFERENCE.md",
+        "status": "missing"
+      }
+    ],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-056-beneficiary-ops-ledger.md",
+    "title": "RQF-056 / RQF-057A Client Excel Sprint Ledger",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057b-telegram-notifications-audit.md",
+    "title": "RQF-057B - Telegram notification recipients audit",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057c-regional-operator-beneficiaries.md",
+    "title": "RQF-057C — Regional operator beneficiaries",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057d-provider-search.md",
+    "title": "RQF-057D - Solicitudes search by proveedor",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057e-no-deducibles-rule.md",
+    "title": "RQF-057E - No deducibles accounting rule",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057f-sat-massive-download.md",
+    "title": "RQF-057F — Descarga masiva SAT y conciliación",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g-authorization-strategy-matrix.md",
+    "title": "RQF-057G1 - Authorization strategy matrix foundation",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g2-authorization-profile-board.md",
+    "title": "RQF-057G2 - Authorization profile board",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g3-authorization-evidence.md",
+    "title": "RQF-057G3 - Authorization strategy evidence on send",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g4-authorization-evidence-detail.md",
+    "title": "RQF-057G4 - Authorization strategy evidence in document detail",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g5-authorization-route-preview.md",
+    "title": "RQF-057G5 - Authorization route preview",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g6-authorization-pre-send-preview.md",
+    "title": "RQF-057G6 - Authorization pre-send preview",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g7-authorization-soft-warning.md",
+    "title": "RQF-057G7 - Authorization soft warning",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g8-authorization-warnings-dashboard.md",
+    "title": "RQF-057G8 - Authorization warnings dashboard",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-057g9-authorization-enforcement-readiness.md",
+    "title": "RQF-057G9 — Authorization enforcement readiness",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-058-sprint-close-candidate.md",
+    "title": "RQF-058 — Sprint Close Candidate",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-accounting-laminar-001-spec.md",
+    "title": "RQF-ACCOUNTING-LAMINAR-001 — Especificación técnica",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-accounting-laminar-001-story.md",
+    "title": "RQF-ACCOUNTING-LAMINAR-001 — Flujo contable laminar",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-accounting-laminar-amex-hooks.md",
+    "title": "RQF Accounting Laminar — AMEX event hooks",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "docs/sprints/rqf-fin-uat-001-finance-integral-uat.md",
+    "title": "RQF-FIN-UAT-001 — Recorrido financiero integral",
+    "owner": "Juan Pablo Lopez",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
+    "path": "src/devnous/tournaments/README.md",
+    "title": "Multi-Tenant Tournament Management System",
+    "owner": "Juan Pablo Lopez",
+    "classification": "UNKNOWN_REQUIRES_OWNER",
+    "disposition": "escalate to a named human owner",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  }
+]
