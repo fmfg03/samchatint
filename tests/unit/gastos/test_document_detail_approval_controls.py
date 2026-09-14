@@ -62,3 +62,19 @@ def test_pending_queue_renders_redirect_feedback() -> None:
     assert 'role="alert"' in block
     assert "No se pudo completar la acción:" in block
     assert "escape(error_msg)" in block
+
+def test_budget_control_queue_renders_assignment_feedback() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def documentos_control_presupuestal(")
+    end = source.index("async def _apply_control_presupuestal_assignment(", start)
+    block = source[start:end]
+
+    assert 'request.query_params.get("success_msg", "").strip()' in block
+    assert 'request.query_params.get("error_msg", "").strip()' in block
+    assert 'role="status"' in block
+    assert 'role="alert"' in block
+    assert "Acción completada:" in block
+    assert "No se pudo completar la asignación:" in block
+    assert "escape(success_msg)" in block
+    assert "escape(error_msg)" in block
+    assert "_render_transient_message_query_cleanup_script()" in block
