@@ -35,3 +35,16 @@ def test_risky_claims_require_pending_human_assignment(tmp_path):
     assert (classification, disposition, owner) == (
         "MISLEADING_OR_UNSAFE", "escalate to a named human owner", "PENDING_HUMAN_ASSIGNMENT"
     )
+
+
+def test_mcp_space_and_hyphen_variants_are_risky(tmp_path):
+    source = tmp_path / "README.md"
+    for claim in ("SamChat MCP platform", "samchat-mcp platform"):
+        assert MODULE.classify(source, claim, tmp_path)[0] == "MISLEADING_OR_UNSAFE"
+
+
+def test_root_artifacts_are_historical_evidence(tmp_path):
+    path = tmp_path / "artifacts" / "record.md"
+    path.parent.mkdir()
+    path.write_text("# Record\n", encoding="utf-8")
+    assert MODULE.classify(path, path.read_text(), tmp_path)[0] == "HISTORICAL_EVIDENCE"

@@ -16,7 +16,7 @@ CANON = {
     "SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md",
 }
 RISK_PATTERNS = (
-    r"\bsamchat-mcp\b", r"\bmcp_platform_launcher\.py\b", r"\b99\+",
+    r"\bsamchat(?:\s+|-)+mcp\b", r"\bmcp_platform_launcher\.py\b", r"\b99\+",
     r"\b(?:GDPR|SOC ?2|ISO ?27001|HIPAA|PCI-DSS)\s+(?:compliant|certified)",
     r"\b(?:ROI|adoption|cost reduction).{0,20}\b\d+%", r"\b(?:your-org|example\.com)\b",
 )
@@ -68,7 +68,9 @@ def classify(path: Path, text: str, root: Path = ROOT) -> tuple[str, str, str]:
         return "CURRENT_CANONICAL", "keep", "Canon governance"
     if any(re.search(pattern, text, re.I) for pattern in RISK_PATTERNS):
         return "MISLEADING_OR_UNSAFE", "escalate to a named human owner", "PENDING_HUMAN_ASSIGNMENT"
-    if "/release/" in relative or "/artifacts/" in relative or "2025" in path.name:
+    if (relative.startswith("artifacts/") or "/artifacts/" in relative
+            or relative.startswith("docs/release/") or "/release/" in relative
+            or "2025" in path.name):
         return "HISTORICAL_EVIDENCE", "add historical/staleness banner", "PENDING_HUMAN_ASSIGNMENT"
     if "/sprints/" in relative or "roadmap" in relative:
         return "PLANNING_ONLY", "keep", "PENDING_HUMAN_ASSIGNMENT"
