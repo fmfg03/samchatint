@@ -28,7 +28,7 @@ def test_missing_entrypoint_command_path_is_reported(tmp_path):
     assert MODULE.command_findings(source, source.read_text(), tmp_path)[0]["target"] == "missing.py"
 
 
-def test_risky_claims_have_named_owner_and_safe_disposition(tmp_path):
+def test_risky_claims_require_pending_human_assignment(tmp_path):
     source = tmp_path / "README.md"
     source.write_text("# Old\n99+ agents and GDPR compliant\n", encoding="utf-8")
     classification, disposition, owner = MODULE.classify(source, source.read_text(), tmp_path)
