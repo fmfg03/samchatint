@@ -723,3 +723,21 @@ def test_budget_control_does_not_pull_lines_linked_to_another_report_by_account(
     assert "ExpenseReport.informe_documento_id == documento.id" in block
     assert "ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id" in block
     assert "ExpenseReport.informe_documento_id.is_(None)" in block
+
+
+def test_budget_control_treats_document_link_as_fallback_when_report_link_exists() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def _active_informe_expenses_for_document")
+    end = source.index("async def _informe_documento_for_expense", start)
+    block = source[start:end]
+
+    document_filter = block.index("ExpenseReport.documento_id == documento.id")
+    explicit_report_filter = block.index(
+        "ExpenseReport.informe_documento_id == documento.id", document_filter
+    )
+    account_fallback = block.index(
+        "ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id"
+    )
+
+    assert document_filter < explicit_report_filter < account_fallback
+    assert "or_(\n                ExpenseReport.informe_documento_id.is_(None)," in block

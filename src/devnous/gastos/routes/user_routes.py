@@ -28597,7 +28597,13 @@ async def _active_informe_expenses_for_document(
     documento: Documento,
 ) -> list[ExpenseReport]:
     direct_filters = [
-        ExpenseReport.documento_id == documento.id,
+        and_(
+            ExpenseReport.documento_id == documento.id,
+            or_(
+                ExpenseReport.informe_documento_id.is_(None),
+                ExpenseReport.informe_documento_id == documento.id,
+            ),
+        ),
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if getattr(documento, "cuenta_gastos_id", None):
