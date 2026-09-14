@@ -48,3 +48,17 @@ def test_document_detail_preserves_post_approval_transfer_actions() -> None:
 
     assert "Ver gasto generado" in block
     assert "documento.estado == 'pagado'" in block
+
+
+def test_pending_queue_renders_redirect_feedback() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def documentos_pendientes(")
+    end = source.index("async def documentos_pendientes_accion_lote(", start)
+    block = source[start:end]
+
+    assert 'request.query_params.get("success_msg", "").strip()' in block
+    assert 'request.query_params.get("error_msg", "").strip()' in block
+    assert 'role="status"' in block
+    assert 'role="alert"' in block
+    assert "No se pudo completar la acción:" in block
+    assert "escape(error_msg)" in block
