@@ -36696,28 +36696,7 @@ async def ver_documento(
     )
     estado_display_detail = workflow_badge
 
-    detail_approval_actions_html = ""
-    if can_approve_or_reject:
-        next_input = f'<input type="hidden" name="next" value="{escape(return_url)}">' if return_url else ""
-        approve_form = (
-            f'<form method="POST" action="/documentos/{documento_id}/aprobar" class="inline-form">'
-            f'{next_input}'
-            '<button type="submit" class="button primary">Aprobar</button>'
-            '</form>'
-        )
-        reject_form = (
-            f'<form method="POST" action="/documentos/{documento_id}/rechazar" class="inline-form" '
-            'onsubmit="var c=prompt(\'Motivo de rechazo\'); if(!c) return false; this.querySelector(\'[name=comentario]\').value=c; return true;">'
-            f'{next_input}'
-            '<input type="hidden" name="comentario" value="">'
-            '<button type="submit" class="button danger">Rechazar</button>'
-            '</form>'
-        )
-        detail_approval_actions_html = approve_form + reject_form
-
     return_links = []
-    if detail_approval_actions_html:
-        return_links.append(detail_approval_actions_html)
     if can_edit_solicitud_terceros:
         return_links.append(
             f'<a href="/documentos/{documento_id}/editar" class="button secondary">Editar solicitud</a>'
@@ -37344,34 +37323,28 @@ async def ver_documento(
                 <!-- Aprobar / Rechazar (only if estado = enviado AND user has permission) -->
                 {f'''
                 <div class="inline-actions">
-                    <form method="POST" action="/documentos/{documento_id}/aprobar" class="inline-form">
-                        {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
-                        <div class="form-section" style="display: none;" id="aprobar-form">
+                    <details>
+                        <summary class="button primary">Aprobar</summary>
+                        <form method="POST" action="/documentos/{documento_id}/aprobar" class="form-section" style="margin-top: 10px;">
+                            {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
                             <div class="form-group">
                                 <label for="comentario_aprobar">Comentario (opcional)</label>
                                 <textarea name="comentario" id="comentario_aprobar"></textarea>
                             </div>
-                            <div class="inline-actions">
-                                <button type="submit" class="button primary">Confirmar aprobación</button>
-                                <button type="button" onclick="document.getElementById(\'aprobar-form\').style.display=\'none\'" class="button secondary">Cancelar</button>
-                            </div>
-                        </div>
-                        <button type="button" onclick="document.getElementById(\'aprobar-form\').style.display=\'block\'" class="button primary">Aprobar</button>
-                    </form>
-                    <form method="POST" action="/documentos/{documento_id}/rechazar" class="inline-form">
-                        {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
-                        <div class="form-section" style="display: none;" id="rechazar-form">
+                            <button type="submit" class="button primary">Confirmar aprobación</button>
+                        </form>
+                    </details>
+                    <details>
+                        <summary class="button danger">Rechazar</summary>
+                        <form method="POST" action="/documentos/{documento_id}/rechazar" class="form-section" style="margin-top: 10px;">
+                            {f'<input type="hidden" name="next" value="{return_url}">' if return_url else ''}
                             <div class="form-group">
                                 <label for="comentario_rechazar">Comentario (requerido para rechazo)</label>
                                 <textarea name="comentario" id="comentario_rechazar" required></textarea>
                             </div>
-                            <div class="inline-actions">
-                                <button type="submit" class="button danger">Confirmar rechazo</button>
-                                <button type="button" onclick="document.getElementById(\'rechazar-form\').style.display=\'none\'" class="button secondary">Cancelar</button>
-                            </div>
-                        </div>
-                        <button type="button" onclick="document.getElementById(\'rechazar-form\').style.display=\'block\'" class="button danger">Rechazar</button>
-                    </form>
+                            <button type="submit" class="button danger">Confirmar rechazo</button>
+                        </form>
+                    </details>
                 </div>
                 ''' if can_approve_or_reject else ''}
 
