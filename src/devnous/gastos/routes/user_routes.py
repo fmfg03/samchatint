@@ -190,6 +190,7 @@ from ..services.documento_workflow_service import (
 )
 from ..services.reimbursement_payment_run_service import (
     ensure_approved_informe_reimbursement_for_payment_run,
+    get_informe_reimbursement_payment_readiness,
 )
 from ..services.document_amount_service import resolve_payable_document_amount
 from ..services.payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
@@ -33935,6 +33936,7 @@ async def documentos_pendientes_pago(
         cfdi_cell = html_documento_cfdi_cell(
             documento.id, adj_by_doc.get(documento.id, [])
         )
+        payment_readiness = "Solicitud aprobada; revisar en Programación de Pagos."
 
         rows_html += f"""
         <tr>
@@ -33949,6 +33951,7 @@ async def documentos_pendientes_pago(
             <td>{escape(doc_currency)}</td>
             <td>{fecha_pago_display}</td>
             <td>{aprobado_str}</td>
+            <td>{payment_readiness}</td>
             <td>{cfdi_cell}</td>
             <td>{pay_review_link}</td>
         </tr>
@@ -33971,6 +33974,11 @@ async def documentos_pendientes_pago(
         cfdi_cell = html_documento_cfdi_cell(
             documento.id, adj_by_doc.get(documento.id, [])
         )
+        readiness = await get_informe_reimbursement_payment_readiness(
+            session,
+            informe_doc=documento,
+        )
+        payment_readiness = escape(readiness.detail)
         rows_html += f"""
         <tr>
             <td>{doc_link}</td>
@@ -33984,6 +33992,7 @@ async def documentos_pendientes_pago(
             <td>{escape(doc_currency)}</td>
             <td>—</td>
             <td>{aprobado_str}</td>
+            <td>{payment_readiness}</td>
             <td>{cfdi_cell}</td>
             <td>{pay_review_link}</td>
         </tr>
@@ -34086,6 +34095,7 @@ async def documentos_pendientes_pago(
                                     <th>Moneda</th>
                                     <th>Fecha de pago</th>
                                     <th>Fecha de aprobación</th>
+                                    <th>Programación de pagos</th>
                                     <th>CFDI</th>
                                     <th>Acción</th>
                                 </tr>
