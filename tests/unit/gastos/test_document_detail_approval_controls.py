@@ -73,6 +73,8 @@ def test_budget_control_queue_renders_assignment_feedback() -> None:
     assert 'request.query_params.get("error_msg", "").strip()' in block
     assert 'role="status"' in block
     assert 'role="alert"' in block
+    assert "Acción completada:" in block
     assert "No se pudo completar la asignación:" in block
     assert "escape(success_msg)" in block
     assert "escape(error_msg)" in block
+    assert "_render_transient_message_query_cleanup_script()" in block

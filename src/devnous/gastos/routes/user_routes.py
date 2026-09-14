@@ -28920,7 +28920,7 @@ async def documentos_control_presupuestal(
             actions_html='<a href="/panel" class="button secondary">Volver al panel</a>',
             side_html=f'<div class="meta-grid"><div class="meta-card"><span>Pendientes</span><strong>{item_count}</strong><small>Las solicitudes ligadas a informes no duplican presupuesto.</small></div></div>',
         )}
-        {f'<div class="notice success" role="status"><strong>Asignación registrada:</strong> {escape(success_msg)}</div>' if success_msg else ''}
+        {f'<div class="notice success" role="status"><strong>Acción completada:</strong> {escape(success_msg)}</div>' if success_msg else ''}
         {f'<div class="notice warn" role="alert"><strong>No se pudo completar la asignación:</strong> {escape(error_msg)}</div>' if error_msg else ''}
         <section class="surface">
             <form method="GET" action="/documentos/control-presupuestal" class="form-grid" style="grid-template-columns:1fr auto auto;align-items:end;">
@@ -29007,6 +29007,7 @@ async def documentos_control_presupuestal(
       }});
     }})();
     </script>
+    {_render_transient_message_query_cleanup_script()}
     </body></html>
     """
     return html
