@@ -12409,9 +12409,15 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             .lead {{ font-size:13px; line-height:1.55; }}
             .button {{
                 width:100%;
+                min-inline-size:0;
                 min-height:42px;
                 white-space:normal;
                 text-align:center;
+            }}
+            .table-actions-cell .button {{
+                width:auto;
+                min-inline-size:max-content;
+                white-space:nowrap;
             }}
             .form-grid,
             .informes-filter-bar {{

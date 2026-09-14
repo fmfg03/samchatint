@@ -49,6 +49,18 @@ def test_shared_action_contract_keeps_labels_complete_and_separated():
         assert ".table-value-nowrap" in styles
 
 
+def test_mobile_buttons_can_shrink_but_table_actions_keep_complete_labels():
+    for path, start_marker, end_marker in (
+        (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
+        (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
+    ):
+        styles = _function_source(path, start_marker, end_marker)
+        mobile = styles[styles.index("@media (max-width:") :]
+        assert "min-inline-size:0" in mobile
+        assert ".table-actions-cell .button" in mobile
+        assert "min-inline-size:max-content" in mobile
+
+
 def test_pending_approval_witness_uses_semantic_action_group_and_existing_posts():
     page = _function_source(
         USER_ROUTES,
@@ -68,6 +80,16 @@ def test_admin_fragments_adopt_shared_table_shell():
     cashflow = _source(CASHFLOW_UI)
     assert artifact.count('<div class="table-shell"><table class="artifact-table">') == 4
     assert '<div class="table-shell"><table class="cashflow-table">' in cashflow
+
+
+def test_finance_command_center_tables_adopt_shared_table_shell():
+    finance = _function_source(
+        ADMIN_ROUTES,
+        '@router.get("/admin/finanzas", response_class=HTMLResponse)',
+        '@router.get("/admin/finanzas/export.xlsx", response_class=Response)',
+    )
+    assert finance.count('<div class="table-shell"') == 6
+    assert finance.count('<table class="finance-table"') == 6
 
 
 def test_informe_and_solicitud_summaries_mark_non_wrapping_columns():

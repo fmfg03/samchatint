@@ -9,7 +9,8 @@ authenticated UAT or production acceptance.
 | Surface / route family | Code owner | Classification | Action in this change | Evidence |
 | --- | --- | --- | --- | --- |
 | `/documentos/pendientes`, `/informes-de-gastos`, transfer-request summary and user Gastos workspaces | `src/devnous/gastos/routes/user_routes.py` | `SHARED_TABLE_SHELL` | Shared bounded viewport, sticky headers, persistent horizontal scrollbar; semantic status/value/action columns keep complete content | Contract tests plus existing document workflow regressions |
-| Admin, Finance and canonical Presupuestos routes | `src/devnous/gastos/routes/admin_routes.py`, `admin_budget_routes.py` | `SHARED_TABLE_SHELL` | Shared bounded viewport, sticky headers and complete action labels | Contract tests plus existing domain regressions |
+| Admin and canonical Presupuestos routes | `src/devnous/gastos/routes/admin_routes.py`, `admin_budget_routes.py` | `SHARED_TABLE_SHELL` | Shared bounded viewport, sticky headers and complete action labels | Contract tests plus existing domain regressions |
+| Finance command center `/admin/finanzas` | `src/devnous/gastos/routes/admin_routes.py` | `SHARED_TABLE_SHELL` | Six operational `finance-table` elements migrated into `.table-shell` | Contract test plus authenticated visual UAT pending |
 | Support routes using `_workspace_shell_styles` | `src/devnous/gastos/routes/support_routes.py` | `SHARED_TABLE_SHELL` and `LEGACY_INLINE_TABLE` | Shared shells inherit the contract; inline tables remain listed below | Source inventory; authenticated visual UAT pending |
 | Runtime artifact index | `src/samchat/artifacts/admin_ui.py` | `DOMAIN_TABLE_SHELL` | Four tables migrated to `.table-shell` | Contract test |
 | Cashflow monthly view | `src/samchat/cashflow/admin_ui.py` | `DOMAIN_TABLE_SHELL` | Monthly table migrated to `.table-shell` | Contract test |
