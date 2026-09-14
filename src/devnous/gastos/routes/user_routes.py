@@ -36696,28 +36696,7 @@ async def ver_documento(
     )
     estado_display_detail = workflow_badge
 
-    detail_approval_actions_html = ""
-    if can_approve_or_reject:
-        next_input = f'<input type="hidden" name="next" value="{escape(return_url)}">' if return_url else ""
-        approve_form = (
-            f'<form method="POST" action="/documentos/{documento_id}/aprobar" class="inline-form">'
-            f'{next_input}'
-            '<button type="submit" class="button primary">Aprobar</button>'
-            '</form>'
-        )
-        reject_form = (
-            f'<form method="POST" action="/documentos/{documento_id}/rechazar" class="inline-form" '
-            'onsubmit="var c=prompt(\'Motivo de rechazo\'); if(!c) return false; this.querySelector(\'[name=comentario]\').value=c; return true;">'
-            f'{next_input}'
-            '<input type="hidden" name="comentario" value="">'
-            '<button type="submit" class="button danger">Rechazar</button>'
-            '</form>'
-        )
-        detail_approval_actions_html = approve_form + reject_form
-
     return_links = []
-    if detail_approval_actions_html:
-        return_links.append(detail_approval_actions_html)
     if can_edit_solicitud_terceros:
         return_links.append(
             f'<a href="/documentos/{documento_id}/editar" class="button secondary">Editar solicitud</a>'
@@ -37368,6 +37347,9 @@ async def ver_documento(
                     </details>
                 </div>
                 ''' if can_approve_or_reject else ''}
+
+                {f'<div><a href="/gastos/{documento.gasto_generado_id}" class="button secondary">Ver gasto generado</a></div>' if documento.tipo == 'SOLICITUD' and documento.gasto_generado_id else ''}
+                {f'<div class="status-chip ok">Pagado</div>' if documento.tipo == 'SOLICITUD' and documento.estado == 'pagado' else ''}
 
                 <!-- Saldar cuenta (for approved INFORME linked to a cuenta de gastos) -->
                 {f'''
