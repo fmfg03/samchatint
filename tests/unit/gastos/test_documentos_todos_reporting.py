@@ -1413,3 +1413,42 @@ async def test_fetch_documento_aprobador_display_batch_does_not_lazy_load_subjec
 
     assert display[documento.id] == "Odilon Aprobador"
     assert session.calls == 2
+
+
+def test_panel_exposes_accounting_operations_outside_configuration_gate():
+    source = open(
+        "src/devnous/gastos/routes/user_routes.py", encoding="utf-8"
+    ).read()
+    panel_start = source.index("async def panel(")
+    panel_end = source.index("async def mis_gastos(", panel_start)
+    panel = source[panel_start:panel_end]
+    accounting_start = panel.index("operacion_contable_cards =")
+    configuration_start = panel.index("configuracion_cards =")
+    accounting = panel[accounting_start:configuration_start]
+
+    assert "_is_configuration_panel_user" not in accounting
+    assert "<h2>Operación contable</h2>" in accounting
+    assert "Vista contable" in accounting
+    assert "Emparejar CFDIs y gastos" in accounting
+    assert "Carga masiva CFDI" in accounting
+    assert "Carga AMEX" in accounting
+    assert "Pólizas COI" in accounting
+    assert '"configuracion.control_accesos"' not in accounting
+    assert "{operacion_contable_section}" in panel
+
+
+def test_accounting_operations_keep_finance_role_access_without_configuration_access():
+    from devnous.gastos.services.access_control_service import ACCESS_TOOLS
+
+    tools = {tool.key: tool for tool in ACCESS_TOOLS}
+    for key in (
+        "admin.gastos.dashboard",
+        "admin.gastos.cfdi_matching",
+        "admin.gastos.cfdi_carga",
+        "admin.gastos.amex",
+        "admin.gastos.limpieza",
+    ):
+        assert "finanzas" in tools[key].default_roles
+
+    assert "finanzas" not in tools["configuracion.control_accesos"].default_roles
+    assert "finanzas" not in tools["configuracion.estrategias_autorizacion"].default_roles
