@@ -2,7 +2,7 @@
 
 SamChat is Plataforma Sports' governed operational system for tournament, gastos, finance, evidence, and assistant workflows. Its primary interface is a controlled business assistant and operational web application; it is not a general MCP platform or a promise of autonomous financial execution.
 
-## Runtime and evidence
+## Runtime Status
 
 The primary live-web runtime is `samchat-gastos.service`, launching `copa_telmex_dashboard:app`. Repository code, deployed runtime behavior, and customer acceptance are distinct evidence levels. A feature in this repository is not automatically deployed or accepted.
 
