@@ -202,6 +202,7 @@ from ..services.cfdi_income_bridge_service import (
     list_psp_cfdi_income_candidates,
 )
 from ..services.documento_telegram import ensure_finance_pending_payment_notifications
+from ..services.project_authorization_service import actor_is_route_approver
 from ..services.beneficiary_onboarding_service import (
     BENEFICIARY_ATTACHMENT_LABELS,
     BENEFICIARY_TARGET_TYPE_LABELS,
@@ -36190,18 +36191,45 @@ async def ver_documento(
     )
     empleado = empleado_result.scalar_one_or_none()
 
-    # Determine permission for approval actions. Mirror the canonical workflow
-    # subject: beneficiary approver first, requester approver only as fallback.
+    # Mirror the canonical workflow authorization.  A persisted project route
+    # takes precedence; only documents without one use the legacy beneficiary
+    # or requester approver fallback.
     can_approve_or_reject = False
     if documento.estado == 'enviado':
-        approval_subject = approval_subject_empleado(documento) or empleado
-        if approval_subject and getattr(approval_subject, "aprobador_id", None):
-            es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
-            es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
-            es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
-            can_approve_or_reject = es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
+        route_exists = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM documento_authorization_routes "
+                        "WHERE documento_id = :documento_id"
+                    ),
+                    {"documento_id": str(documento.id)},
+                )
+            ).scalar_one_or_none()
+            is not None
+        )
+        if route_exists:
+            can_approve_or_reject = (
+                await actor_is_route_approver(
+                    session,
+                    actor_id=current_empleado.id,
+                    documento_id=documento.id,
+                )
+                or current_empleado.rol in ("superadmin", "super_admin")
+            )
         else:
-            can_approve_or_reject = current_empleado.rol in ("finanzas", "admin", "superadmin", "super_admin")
+            approval_subject = approval_subject_empleado(documento) or empleado
+            if approval_subject and getattr(approval_subject, "aprobador_id", None):
+                es_aprobador_asignado = approval_subject.aprobador_id == current_empleado.id
+                es_finanzas_o_admin = current_empleado.rol in ("finanzas", "admin")
+                es_superadmin = current_empleado.rol in ("superadmin", "super_admin")
+                can_approve_or_reject = (
+                    es_aprobador_asignado or es_finanzas_o_admin or es_superadmin
+                )
+            else:
+                can_approve_or_reject = current_empleado.rol in (
+                    "finanzas", "admin", "superadmin", "super_admin"
+                )
 
     # Determine permission for payment registration
     can_register_payment = (
