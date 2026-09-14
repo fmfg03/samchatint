@@ -93,6 +93,25 @@ def inventory(root: Path = ROOT) -> list[dict[str, Any]]:
     return records
 
 
+def finding_identity(record: dict[str, Any], finding: dict[str, Any]) -> str:
+    """Return a stable baseline key independent of the finding's current line."""
+    return ":".join((
+        record["path"],
+        finding.get("target", ""),
+        finding.get("command", ""),
+    ))
+
+
+def finding_report(record: dict[str, Any], finding: dict[str, Any]) -> str:
+    """Render a finding with its current line for actionable diagnostics."""
+    return ":".join((
+        record["path"],
+        str(finding.get("line", "?")),
+        finding.get("target", ""),
+        finding.get("command", ""),
+    ))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
@@ -103,11 +122,17 @@ def main() -> int:
     records = inventory()
     if args.output:
         args.output.write_text(json.dumps(records, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    findings = sorted(f"{r['path']}:{item.get('line', '?')}:{item.get('target', '')}:{item.get('command', '')}" for r in records for item in r['local_link_findings'] + r['entrypoint_command_findings'])
+    finding_pairs = [
+        (finding_identity(record, finding), finding_report(record, finding))
+        for record in records
+        for finding in record["local_link_findings"] + record["entrypoint_command_findings"]
+    ]
+    findings = sorted(identity for identity, _ in finding_pairs)
     if args.write_baseline:
         args.baseline.write_text(json.dumps(findings, indent=2) + "\n", encoding="utf-8")
     baseline = json.loads(args.baseline.read_text(encoding="utf-8")) if args.baseline.exists() else []
-    new = sorted(set(findings) - set(baseline))
+    new_identities = set(findings) - set(baseline)
+    new = sorted(report for identity, report in finding_pairs if identity in new_identities)
     if args.check and new:
         print("\n".join(new)); return 1
     print(json.dumps({"markdown_files": len(records), "findings": len(findings), "new_findings": len(new)}))

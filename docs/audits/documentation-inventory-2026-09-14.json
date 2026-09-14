@@ -1705,6 +1705,15 @@
     "entrypoint_command_findings": []
   },
   {
+    "path": "docs/sprints/rqf-ui-001-table-action-usability.md",
+    "title": "RQF-UI-001 — Controles de acción y navegación de tablas extensas",
+    "owner": "PENDING_HUMAN_ASSIGNMENT",
+    "classification": "PLANNING_ONLY",
+    "disposition": "keep",
+    "local_link_findings": [],
+    "entrypoint_command_findings": []
+  },
+  {
     "path": "src/devnous/tournaments/README.md",
     "title": "Multi-Tenant Tournament Management System",
     "owner": "PENDING_HUMAN_ASSIGNMENT",

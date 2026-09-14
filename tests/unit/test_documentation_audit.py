@@ -48,3 +48,14 @@ def test_root_artifacts_are_historical_evidence(tmp_path):
     path.parent.mkdir()
     path.write_text("# Record\n", encoding="utf-8")
     assert MODULE.classify(path, path.read_text(), tmp_path)[0] == "HISTORICAL_EVIDENCE"
+
+
+def test_finding_identity_is_stable_when_link_moves_to_another_line(tmp_path):
+    source = tmp_path / "README.md"
+    record = {"path": "README.md"}
+    before = MODULE.link_findings(source, "[broken](missing.md)\n", tmp_path)[0]
+    after = MODULE.link_findings(source, "# Heading\n[broken](missing.md)\n", tmp_path)[0]
+
+    assert before["line"] != after["line"]
+    assert MODULE.finding_identity(record, before) == MODULE.finding_identity(record, after)
+    assert MODULE.finding_report(record, before) != MODULE.finding_report(record, after)
