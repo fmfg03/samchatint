@@ -175,6 +175,12 @@ async def get_informe_reimbursement_payment_readiness(
                 status="blocked_missing_bank_account",
                 detail=warning,
             )
+        saldo_ctx = await _compute_cuenta_saldo_context(session, cuenta.id)
+        if float(saldo_ctx.get("saldo_raw") or 0) >= -0.005:
+            return InformeReimbursementPaymentReadiness(
+                status="not_reimbursable",
+                detail="No hay saldo a favor del empleado que requiera reembolso.",
+            )
     if readiness.status == "ready_for_payment_run":
         closure_result = await session.execute(
             text(

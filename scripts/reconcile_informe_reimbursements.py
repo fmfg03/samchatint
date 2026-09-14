@@ -3,7 +3,8 @@
 
 Dry-run is the default. ``--apply`` only creates or promotes a reimbursement
 when the approved informe has both a budget concept and an approval audit row.
-It never creates an approval record.
+It never creates an approval record for the INFORME; it records the derived
+SOLICITUD approval using that existing informe approval.
 """
 
 from __future__ import annotations
@@ -98,6 +99,11 @@ async def _run(args: argparse.Namespace) -> int:
                     item["solicitud_id"] = (
                         str(routing.solicitud_id) if routing.solicitud_id else None
                     )
+                    refreshed = await get_informe_reimbursement_payment_readiness(
+                        session, informe_doc=informe
+                    )
+                    item["status"] = refreshed.status
+                    item["detail"] = refreshed.detail
                 rows.append(item)
             if args.apply:
                 await session.commit()
