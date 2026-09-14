@@ -96,31 +96,31 @@ def render_runtime_artifact_index_html(payload: dict[str, Any]) -> str:
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Runtime saved artifacts</div>
-            <table class="artifact-table">
+            <div class="table-shell"><table class="artifact-table">
                 <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
                 <tbody>{_rows(list(payload.get("runtime_saved_artifacts") or []))}</tbody>
-            </table>
+            </table></div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Report exports</div>
-            <table class="artifact-table">
+            <div class="table-shell"><table class="artifact-table">
                 <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
                 <tbody>{_rows(list(payload.get("report_exports") or []))}</tbody>
-            </table>
+            </table></div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Assistant proposal previews</div>
-            <table class="artifact-table">
+            <div class="table-shell"><table class="artifact-table">
                 <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
                 <tbody>{_rows(list(payload.get("assistant_proposal_previews") or []))}</tbody>
-            </table>
+            </table></div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
             <div class="workspace-section-title">Evidencia y planeados</div>
-            <table class="artifact-table">
+            <div class="table-shell"><table class="artifact-table">
                 <thead><tr><th>Superficie</th><th>Clase</th><th>Owner</th><th>Ruta/tool</th><th>Status</th><th>Authority</th><th>Notas</th></tr></thead>
                 <tbody>{_rows(list(payload.get("evidence_closeouts") or []) + list(payload.get("planned_artifacts") or []))}</tbody>
-            </table>
+            </table></div>
         </section>
         <section class="workspace-card">
             <div class="workspace-section-title">Reglas de boundary</div>

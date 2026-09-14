@@ -1429,6 +1429,8 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             background:var(--shell-accent);
             color:#f8fafc;
             box-shadow:0 12px 26px rgba(15,118,110,.18);
+            white-space:nowrap;
+            min-inline-size:max-content;
         }}
         .button.secondary {{
             background:#fff;
@@ -1438,8 +1440,10 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         }}
         .table-shell {{
             max-width:100%;
-            overflow-x:auto;
+            overflow:auto;
+            max-block-size:min(68vh, 46rem);
             -webkit-overflow-scrolling:touch;
+            scrollbar-gutter:stable both-edges;
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
@@ -1447,6 +1451,33 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         .table-shell table {{
             min-width:max-content;
         }}
+        .table-shell thead th {{
+            position:sticky;
+            top:0;
+            z-index:2;
+            background:#0f172a;
+            color:#f8fafc;
+        }}
+        .table-actions {{
+            display:flex;
+            flex-wrap:wrap;
+            align-items:center;
+            gap:8px;
+            min-inline-size:max-content;
+        }}
+        .table-actions > form {{ margin:0; }}
+        .table-actions .button {{ min-block-size:44px; }}
+        .table-status,
+        .table-actions-cell,
+        .table-value-nowrap {{
+            white-space:nowrap;
+            overflow-wrap:normal;
+            min-inline-size:max-content;
+        }}
+        .table-actions-cell a,
+        .table-actions-cell button,
+        .table-status .badge,
+        .table-status .status-chip {{ white-space:nowrap; }}
         table {{
             max-width:100%;
             border-collapse:collapse;

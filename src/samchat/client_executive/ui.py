@@ -581,9 +581,18 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         .finance-split {{ display:grid; grid-template-columns:1.25fr .75fr; gap:22px; }}
         .subheading {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin:2px 0 10px; }}
         .subheading h3 {{ margin:0; font-size:16px; }} .subheading span {{ color:var(--muted); font-size:12px; }}
-        .table-wrap {{ overflow:auto; border:1px solid var(--line); border-radius:14px; background:#fff; }}
+        .table-wrap {{
+          overflow:auto;
+          max-block-size:min(68vh, 46rem);
+          scrollbar-gutter:stable both-edges;
+          -webkit-overflow-scrolling:touch;
+          border:1px solid var(--line);
+          border-radius:14px;
+          background:#fff;
+        }}
         table {{ width:100%; border-collapse:collapse; min-width:620px; }}
         th {{ text-align:left; background:#f1f5f9; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.06em; padding:11px 12px; border-bottom:1px solid var(--line); }}
+        .table-wrap thead th {{ position:sticky; top:0; z-index:2; }}
         td {{ padding:11px 12px; border-bottom:1px solid #eef2f7; color:#334155; }}
         tbody tr:last-child td {{ border-bottom:0; }}
         .money {{ text-align:right; font-variant-numeric:tabular-nums; }}
