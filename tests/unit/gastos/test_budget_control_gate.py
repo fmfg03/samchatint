@@ -712,3 +712,14 @@ def test_budget_control_informe_expense_order_uses_capture_reference_not_expense
 
     assert "ExpenseReport.numero_referencia.asc()" in block
     assert "ExpenseReport.fecha.asc()" not in block
+
+
+def test_budget_control_does_not_pull_lines_linked_to_another_report_by_account() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def _active_informe_expenses_for_document")
+    end = source.index("async def _informe_documento_for_expense", start)
+    block = source[start:end]
+
+    assert "ExpenseReport.informe_documento_id == documento.id" in block
+    assert "ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id" in block
+    assert "ExpenseReport.informe_documento_id.is_(None)" in block

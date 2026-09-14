@@ -28596,15 +28596,23 @@ async def _active_informe_expenses_for_document(
     session: AsyncSession,
     documento: Documento,
 ) -> list[ExpenseReport]:
-    filters = [
+    direct_filters = [
         ExpenseReport.documento_id == documento.id,
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if getattr(documento, "cuenta_gastos_id", None):
-        filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        # Legacy rows may belong to the account without an explicit report link.
+        # Never pull a row explicitly linked to a different report into this one:
+        # it would remain an impossible-to-classify blocker in Budget Control.
+        direct_filters.append(
+            and_(
+                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                ExpenseReport.informe_documento_id.is_(None),
+            )
+        )
     result = await session.execute(
         select(ExpenseReport)
-        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
+        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
         .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
     )
     return _unique_expenses(list(result.scalars().unique().all()))
