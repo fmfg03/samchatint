@@ -6884,6 +6884,15 @@ async def admin_finance_platform(
             )
         return "".join(options)
 
+    def _action_link(item: dict[str, Any]) -> str:
+        href = str(item.get("href") or "")
+        if not href.startswith("/"):
+            return "-"
+        return (
+            f'<a href="{escape(href)}" '
+            'style="color:#0f766e;font-weight:800;">Abrir</a>'
+        )
+
     action_rows = "".join(
         f"""
         <tr>
@@ -6893,6 +6902,7 @@ async def admin_finance_platform(
             <td>{escape(str(item.get("owner") or "-"))}</td>
             <td>{escape(str(item.get("due") or "-"))}</td>
             <td>{escape(str(item.get("detail") or "-"))}</td>
+            <td>{_action_link(item)}</td>
         </tr>
         """
         for item in actions[:20]
@@ -7054,8 +7064,8 @@ async def admin_finance_platform(
                     {_sports_card("Baja", action_queue.get("low_count", 0), "Seguimiento")}
                 </div>
                 <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
-                    <thead><tr><th>Sev</th><th>Acción</th><th>Módulo</th><th>Responsable</th><th>Vence</th><th>Detalle</th></tr></thead>
-                    <tbody>{action_rows or '<tr><td colspan="6">Sin acciones abiertas.</td></tr>'}</tbody>
+                    <thead><tr><th>Sev</th><th>Acción</th><th>Módulo</th><th>Responsable</th><th>Vence</th><th>Detalle</th><th>Abrir</th></tr></thead>
+                    <tbody>{action_rows or '<tr><td colspan="7">Sin acciones abiertas.</td></tr>'}</tbody>
                 </table></div>
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
@@ -7107,7 +7117,7 @@ async def admin_finance_platform(
                         <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
                     </table></div>
                 </div>
-                <div class="workspace-card">
+                <div class="workspace-card" id="coi-pendiente">
                     <div class="workspace-section-title">COI pendientes</div>
                     <div class="workspace-section-subtitle">Completa cuenta y contracuenta del gasto desde Finanzas. El CFDI sigue siendo requisito fiscal separado.</div>
                     <form method="POST" action="/admin/finanzas/coi-pendientes/clasificar" style="margin-top:16px;">

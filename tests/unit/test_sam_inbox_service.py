@@ -34,6 +34,29 @@ def _patch_base_sources(monkeypatch):
     monkeypatch.setattr(service, "get_cfdi_matching_overview", _empty_cfdi_overview)
 
 
+def test_sam_inbox_preserves_accounting_readiness_action_from_finance_queue():
+    items = service._finance_items_from_platform(
+        {
+            "action_queue": {
+                "actions": [
+                    {
+                        "severity": "high",
+                        "module": "Control presupuestal / COI",
+                        "title": "Preparar I-933635: gasto O-26000136",
+                        "detail": "Falta contracuenta.",
+                        "href": "/admin/finanzas#coi-pendiente",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert len(items) == 1
+    assert items[0]["source_type"] == "finance_action"
+    assert items[0]["status"] == "needs_attention"
+    assert items[0]["href"] == "/admin/finanzas#coi-pendiente"
+
+
 @pytest.mark.asyncio
 async def test_sam_inbox_skips_unlinked_local_tournament(monkeypatch):
     _patch_base_sources(monkeypatch)
