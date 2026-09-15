@@ -1429,6 +1429,7 @@ def test_panel_exposes_accounting_operations_outside_configuration_gate():
     assert "_is_configuration_panel_user" not in accounting
     assert "<h2>Operación contable</h2>" in accounting
     assert "Vista contable" in accounting
+    assert '("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable"' in accounting
     assert '"/admin/contabilidad/coi"' in accounting
     assert "Revisa pólizas COI y el detalle de sus cuentas." in accounting
     assert "Emparejar CFDIs y gastos" in accounting
@@ -1452,6 +1453,7 @@ def test_accounting_operations_keep_finance_role_access_without_configuration_ac
         "admin.gastos.cfdi_carga",
         "admin.gastos.amex",
         "admin.gastos.limpieza",
+        "admin.contabilidad",
     ):
         assert "finanzas" in tools[key].default_roles
 
@@ -1476,6 +1478,8 @@ def test_accounting_operations_matching_and_coi_render_contracts_are_explicit():
 
     assert "<th>Proyecto / origen</th>" in matching
     assert "resolve_project_name(expense.proyecto or \"\", tournament_map)" in matching
+    assert "tournament_map = {" in matching
+    assert "for tournament in matching_tournaments" in matching
     assert "no crea pólizas ni asigna proyectos automáticamente" in matching
     assert "Importar CFDIs CSV" in matching
     assert "safe_build_cleanup_preview(session, gasto)" in cleanup

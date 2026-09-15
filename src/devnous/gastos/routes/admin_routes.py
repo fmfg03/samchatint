@@ -23940,6 +23940,10 @@ async def cfdi_matching_control_room(
             await _ensure_cfdi_project_assignment_schema(session)
             tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
             matching_tournaments = tournaments_result.scalars().all()
+            tournament_map = {
+                str(tournament.id).lower(): tournament.name
+                for tournament in matching_tournaments
+            }
             other_projects_result = await session.execute(
                 select(Documento.proyecto_otro)
                 .where(Documento.proyecto_otro.isnot(None), Documento.proyecto_otro != "")
