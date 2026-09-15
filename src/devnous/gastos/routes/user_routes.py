@@ -15290,30 +15290,6 @@ async def panel(
             </section>
         """
 
-    operacion_contable_cards = filter_cards_by_tools([
-        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
-        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
-        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
-        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
-    ], visible_tool_keys)
-    operacion_contable_section = ""
-    if operacion_contable_cards:
-        operacion_contable_section = f"""
-            <section class="surface">
-                <div class="section-head">
-                    <div>
-                        <div class="eyebrow">Finanzas</div>
-                        <h2>Operación contable</h2>
-                        <div class="section-note">Herramientas operativas para preparar, conciliar y exportar información contable sin abrir Configuración.</div>
-                    </div>
-                </div>
-                <div class="action-grid">
-                    {build_link_cards(operacion_contable_cards, "tone-amber")}
-                </div>
-            </section>
-        """
-
     configuracion_cards = []
     if _is_configuration_panel_user(current_empleado):
         configuracion_cards = filter_cards_by_tools([
@@ -15325,7 +15301,12 @@ async def panel(
         ("admin.cuentas_contables", "/admin/cuentas-contables", "Cuentas contables", "Gestionar plan de cuentas."),
         ("admin.centros_costo", "/admin/centros-costo", "Centros de costo", "Gestionar catálogo de centros."),
         ("admin.rfc", "/admin/rfc", "RFC", "Gestionar configuraciones RFC."),
+        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "Carga certificado, llave y password para el conector SAT."),
+        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
+        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
+        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
         ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
         ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
@@ -15427,7 +15408,6 @@ async def panel(
                 {aprobaciones_section}
                 {soporte_section}
                 {ejecutivo_section}
-                {operacion_contable_section}
                 {configuracion_section}
             </div>
         </div>
@@ -28616,29 +28596,15 @@ async def _active_informe_expenses_for_document(
     session: AsyncSession,
     documento: Documento,
 ) -> list[ExpenseReport]:
-    direct_filters = [
-        and_(
-            ExpenseReport.documento_id == documento.id,
-            or_(
-                ExpenseReport.informe_documento_id.is_(None),
-                ExpenseReport.informe_documento_id == documento.id,
-            ),
-        ),
+    filters = [
+        ExpenseReport.documento_id == documento.id,
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if getattr(documento, "cuenta_gastos_id", None):
-        # Legacy rows may belong to the account without an explicit report link.
-        # Never pull a row explicitly linked to a different report into this one:
-        # it would remain an impossible-to-classify blocker in Budget Control.
-        direct_filters.append(
-            and_(
-                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
-                ExpenseReport.informe_documento_id.is_(None),
-            )
-        )
+        filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
     result = await session.execute(
         select(ExpenseReport)
-        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
+        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
         .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
     )
     return _unique_expenses(list(result.scalars().unique().all()))
@@ -29172,25 +29138,21 @@ async def _apply_control_presupuestal_expense_assignment(
         )
 
     concept_uuid = UUIDType(str(budget_concept["id"]))
-    concept_changed = str(
-        getattr(expense, "budget_concept_id", "") or ""
-    ) != str(concept_uuid)
     expense.budget_concept_id = concept_uuid
     now = datetime.utcnow()
-    if concept_changed:
-        session.add(
-            Aprobacion(
-                tipo_entidad="documento",
-                entidad_id=documento.id,
-                aprobador_id=actor.id,
-                accion="asignar_partida_presupuestal_linea",
-                comentario=(
-                    f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
-                    f"{budget_concept.get('concept_name') or budget_concept_id}"
-                ),
-                fecha=now,
-            )
+    session.add(
+        Aprobacion(
+            tipo_entidad="documento",
+            entidad_id=documento.id,
+            aprobador_id=actor.id,
+            accion="asignar_partida_presupuestal_linea",
+            comentario=(
+                f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
+                f"{budget_concept.get('concept_name') or budget_concept_id}"
+            ),
+            fecha=now,
         )
+    )
 
     released = await _informe_budget_assignment_complete(session, documento)
     if released:
@@ -42315,9 +42277,42 @@ async def nueva_solicitud_desde_cuenta_form(
     if cuenta.estado == 'cerrada':
         raise HTTPException(status_code=400, detail="No se pueden crear solicitudes en un informe de gastos cerrado")
 
-    # Preload matching bank accounts for this empleado (server-rendered dropdown)
-    matches = await _get_matching_bank_accounts_for_empleado(session=session, empleado=current_empleado)
+    # The report requester and the transfer beneficiary are deliberately distinct.
+    # Select accounts from the beneficiary recorded on the report, never from the
+    # authenticated requester merely because that user opened this form.
+    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
+    beneficiary_id = effective_account_beneficiary_id(cuenta)
+    beneficiary_name = current_empleado.nombre or ""
     bank_account_options = '<option value="" disabled selected data-is-placeholder="true">— Seleccione cuenta bancaria —</option>'
+    if provider_beneficiary_id is not None:
+        provider_result = await session.execute(
+            select(ProveedorCliente).where(
+                and_(
+                    ProveedorCliente.id == provider_beneficiary_id,
+                    ProveedorCliente.activo == True,
+                )
+            )
+        )
+        provider_beneficiary = provider_result.scalar_one_or_none()
+        matches = [(provider_beneficiary, 1.0)] if provider_beneficiary else []
+        if provider_beneficiary is not None:
+            beneficiary_name = provider_beneficiary.nombre or ""
+    else:
+        beneficiary_empleado = current_empleado
+        if beneficiary_id != current_empleado.id:
+            beneficiary_result = await session.execute(
+                select(Empleado).where(Empleado.id == beneficiary_id)
+            )
+            beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+        if beneficiary_empleado is None:
+            raise HTTPException(
+                status_code=409,
+                detail="El beneficiario del informe ya no está activo.",
+            )
+        beneficiary_name = beneficiary_empleado.nombre or ""
+        matches = await _get_matching_bank_accounts_for_empleado(
+            session=session, empleado=beneficiary_empleado
+        )
     for proveedor, similarity in matches:
         nombre_escaped = escape(proveedor.nombre or "")
         banco_escaped = escape((proveedor.banco or "").strip())
@@ -42414,7 +42409,7 @@ async def nueva_solicitud_desde_cuenta_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
-                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(current_empleado.nombre or "")}</div>
+                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(beneficiary_name)}</div>
                                 <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
                                     {bank_account_options}
                                 </select>
@@ -42523,27 +42518,33 @@ async def nueva_solicitud_desde_cuenta_submit(
             status_code=303,
         )
 
-    # Optional: selected proveedor/cliente bank account for this empleado
+    # Resolve the selected account against the report beneficiary, not the
+    # requester who is authorized to create the transfer request.
     selected_proveedor = None
-    if proveedor_cliente_id_raw:
-        try:
-            proveedor_uuid = UUIDType(proveedor_cliente_id_raw)
-        except (ValueError, TypeError):
-            proveedor_uuid = None
-        if proveedor_uuid is not None:
-            # Security: recompute allowed matches for this empleado and require id to be in that set
-            matches = await _get_matching_bank_accounts_for_empleado(session=session, empleado=current_empleado)
-            allowed_ids = {prov.id for prov, _ in matches}
-            if proveedor_uuid in allowed_ids:
-                proveedor_result = await session.execute(
-                    select(ProveedorCliente).where(
-                        and_(
-                            ProveedorCliente.id == proveedor_uuid,
-                            ProveedorCliente.activo == True,
-                        )
+    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
+    beneficiary_id = effective_account_beneficiary_id(cuenta)
+    if provider_beneficiary_id is not None:
+        if proveedor_cliente_id_raw == str(provider_beneficiary_id):
+            proveedor_result = await session.execute(
+                select(ProveedorCliente).where(
+                    and_(
+                        ProveedorCliente.id == provider_beneficiary_id,
+                        ProveedorCliente.activo == True,
                     )
                 )
-                selected_proveedor = proveedor_result.scalar_one_or_none()
+            )
+            selected_proveedor = proveedor_result.scalar_one_or_none()
+    else:
+        beneficiary_result = await session.execute(
+            select(Empleado).where(Empleado.id == beneficiary_id)
+        )
+        beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+        if beneficiary_empleado is not None:
+            selected_proveedor = await _resolve_selected_beneficiary_bank_account(
+                session,
+                beneficiario=beneficiary_empleado,
+                raw_id=proveedor_cliente_id_raw,
+            )
     try:
         payload = build_solicitud_personal_payload(
             cuenta_id=cuenta_id,
