@@ -47,6 +47,8 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("expense_reports", "informe_documento_id"),
     RequiredColumn("expense_reports", "cuenta_contable_id"),
     RequiredColumn("expense_reports", "contra_cuenta_contable_id"),
+    RequiredColumn("expense_reports", "cuenta_contable_budget_concept_id"),
+    RequiredColumn("expense_reports", "contra_cuenta_contable_budget_concept_id"),
     RequiredColumn("expense_reports", "cfdi_uuid_manual"),
     RequiredColumn("expense_reports", "cfdi_report_id"),
     RequiredColumn("expense_reports", "cfdi_compartido_confirmado"),
@@ -181,6 +183,8 @@ REQUIRED_INDEXES: Sequence[RequiredIndex] = (
     RequiredIndex("expense_reports", "idx_expense_reports_informe_documento_id"),
     RequiredIndex("expense_reports", "idx_expense_reports_cuenta_contable_id"),
     RequiredIndex("expense_reports", "idx_expense_reports_contra_cuenta_contable_id"),
+    RequiredIndex("expense_reports", "idx_expense_reports_cuenta_contable_budget_concept_id"),
+    RequiredIndex("expense_reports", "idx_expense_reports_contra_cuenta_contable_budget_concept_id"),
     RequiredIndex("expense_reports", "idx_expense_reports_cfdi_uuid_manual"),
     RequiredIndex("expense_reports", "idx_expense_reports_cfdi_report_id"),
     RequiredIndex("adjuntos", "ux_adjuntos_active_no_deducible_per_expense"),
@@ -1562,6 +1566,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS contra_cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) ON UPDATE CASCADE ON DELETE SET NULL",
     ),
     (
+        "expense_reports_cuenta_contable_budget_concept_id_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS cuenta_contable_budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
+        "expense_reports_contra_cuenta_contable_budget_concept_id_column",
+        "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS contra_cuenta_contable_budget_concept_id UUID NULL REFERENCES budget_concepts(id) ON UPDATE CASCADE ON DELETE SET NULL",
+    ),
+    (
         "expense_reports_cfdi_uuid_manual_column",
         "ALTER TABLE IF EXISTS expense_reports ADD COLUMN IF NOT EXISTS cfdi_uuid_manual TEXT NULL",
     ),
@@ -2199,6 +2211,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "idx_expense_reports_contra_cuenta_contable_id",
         "CREATE INDEX IF NOT EXISTS idx_expense_reports_contra_cuenta_contable_id ON expense_reports(contra_cuenta_contable_id)",
+    ),
+    (
+        "idx_expense_reports_cuenta_contable_budget_concept_id",
+        "CREATE INDEX IF NOT EXISTS idx_expense_reports_cuenta_contable_budget_concept_id ON expense_reports(cuenta_contable_budget_concept_id)",
+    ),
+    (
+        "idx_expense_reports_contra_cuenta_contable_budget_concept_id",
+        "CREATE INDEX IF NOT EXISTS idx_expense_reports_contra_cuenta_contable_budget_concept_id ON expense_reports(contra_cuenta_contable_budget_concept_id)",
     ),
     (
         "idx_expense_reports_cfdi_uuid_manual",

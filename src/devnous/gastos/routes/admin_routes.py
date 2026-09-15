@@ -10081,6 +10081,8 @@ async def admin_finance_classify_coi_pending(
         old_iva = str(getattr(expense, "cuenta_iva_id", "") or "")
         expense.cuenta_contable_id = cuenta.id
         expense.contra_cuenta_contable_id = contra.id
+        expense.cuenta_contable_budget_concept_id = None
+        expense.contra_cuenta_contable_budget_concept_id = None
         if cuenta_iva_id:
             expense.cuenta_iva_id = cuenta_iva.id
         expense.updated_at = datetime.utcnow()
@@ -25935,6 +25937,8 @@ async def asignar_cuenta_contable(
 
         expense.cuenta_contable_id = cuenta_uuid
         expense.contra_cuenta_contable_id = contra_uuid
+        expense.cuenta_contable_budget_concept_id = None
+        expense.contra_cuenta_contable_budget_concept_id = None
         expense.cuenta_iva_id = iva_uuid
 
         await session.commit()
