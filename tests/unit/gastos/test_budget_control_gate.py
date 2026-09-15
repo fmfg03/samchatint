@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import Column, String, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_telegram, telegram_outbox_service
@@ -70,6 +72,28 @@ class _ExpenseAssignmentSession(_SequencedSession):
 
     async def get(self, _model, _item_id):
         return self.expense
+
+
+class _SyncExecuteAsyncAdapter:
+    def __init__(self, sync_session):
+        self._sync_session = sync_session
+
+    async def execute(self, query):
+        return self._sync_session.execute(query)
+
+
+_BudgetControlQueryBase = declarative_base()
+
+
+class _BudgetControlQueryExpense(_BudgetControlQueryBase):
+    __tablename__ = "expense_reports"
+
+    id = Column(String, primary_key=True)
+    numero_referencia = Column(String, nullable=False)
+    documento_id = Column(String, nullable=True)
+    informe_documento_id = Column(String, nullable=True)
+    cuenta_gastos_id = Column(String, nullable=True)
+    estado_gasto = Column(String, nullable=False, default="activo")
 
 
 def test_solicitud_without_budget_concept_requires_budget_control():
@@ -805,3 +829,50 @@ def test_budget_control_treats_document_link_as_fallback_when_report_link_exists
 
     assert document_filter < explicit_report_filter < account_fallback
     assert "or_(\n                ExpenseReport.informe_documento_id.is_(None)," in block
+
+
+@pytest.mark.asyncio
+async def test_budget_control_ignores_stale_document_link_when_explicit_report_is_other_informe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite:///:memory:")
+    Session = sessionmaker(bind=engine)
+    _BudgetControlQueryBase.metadata.create_all(engine)
+
+    current_document_id = "informe-a"
+    other_document_id = "informe-b"
+    account_id = "cuenta-1"
+    sync_session = Session()
+    try:
+        sync_session.add_all(
+            [
+                _BudgetControlQueryExpense(
+                    id="stale-doc-link",
+                    numero_referencia="O-260001",
+                    documento_id=current_document_id,
+                    informe_documento_id=other_document_id,
+                    cuenta_gastos_id=account_id,
+                    estado_gasto="activo",
+                ),
+                _BudgetControlQueryExpense(
+                    id="legacy-account-row",
+                    numero_referencia="O-260002",
+                    documento_id=None,
+                    informe_documento_id=None,
+                    cuenta_gastos_id=account_id,
+                    estado_gasto="activo",
+                ),
+            ]
+        )
+        sync_session.commit()
+
+        monkeypatch.setattr(user_routes, "ExpenseReport", _BudgetControlQueryExpense)
+        expenses = await user_routes._active_informe_expenses_for_document(
+            _SyncExecuteAsyncAdapter(sync_session),
+            SimpleNamespace(id=current_document_id, cuenta_gastos_id=account_id),
+        )
+    finally:
+        sync_session.close()
+        engine.dispose()
+
+    assert [expense.id for expense in expenses] == ["legacy-account-row"]
