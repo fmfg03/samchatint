@@ -1429,9 +1429,14 @@ def test_panel_exposes_accounting_operations_outside_configuration_gate():
     assert "_is_configuration_panel_user" not in accounting
     assert "<h2>Operación contable</h2>" in accounting
     assert "Vista contable" in accounting
+    assert '"/admin/contabilidad/coi"' in accounting
+    assert "Revisa pólizas COI y el detalle de sus cuentas." in accounting
     assert "Emparejar CFDIs y gastos" in accounting
+    assert "empleado y proyecto operativo" in accounting
     assert "Carga masiva CFDI" in accounting
+    assert "CSV por UUID para alimentar la revisión de matching" in accounting
     assert "Carga AMEX" in accounting
+    assert "requiere piloto UAT antes de operación" in accounting
     assert "Pólizas COI" in accounting
     assert '"configuracion.control_accesos"' not in accounting
     assert "{operacion_contable_section}" in panel
@@ -1452,3 +1457,26 @@ def test_accounting_operations_keep_finance_role_access_without_configuration_ac
 
     assert "finanzas" not in tools["configuracion.control_accesos"].default_roles
     assert "finanzas" not in tools["configuracion.estrategias_autorizacion"].default_roles
+
+
+def test_accounting_operations_matching_and_coi_render_contracts_are_explicit():
+    admin_source = open(
+        "src/devnous/gastos/routes/admin_routes.py", encoding="utf-8"
+    ).read()
+    matching_start = admin_source.index("async def cfdi_matching_control_room")
+    matching_end = admin_source.index(
+        "@router.get(\"/admin/gastos/sin-cuenta-contable\"", matching_start
+    )
+    matching = admin_source[matching_start:matching_end]
+    cleanup_start = admin_source.index("async def gastos_sin_cuenta_contable")
+    cleanup_end = admin_source.index(
+        "@router.post(\"/admin/gastos/{gasto_id}/cleanup-contable\")"
+    )
+    cleanup = admin_source[cleanup_start:cleanup_end]
+
+    assert "<th>Proyecto / origen</th>" in matching
+    assert "resolve_project_name(expense.proyecto or \"\", tournament_map)" in matching
+    assert "no crea pólizas ni asigna proyectos automáticamente" in matching
+    assert "Importar CFDIs CSV" in matching
+    assert "safe_build_cleanup_preview(session, gasto)" in cleanup
+    assert "cleanup_states[gasto.id] = await build_cleanup_preview(" not in cleanup
