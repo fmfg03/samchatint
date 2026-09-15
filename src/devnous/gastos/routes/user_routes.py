@@ -42315,9 +42315,42 @@ async def nueva_solicitud_desde_cuenta_form(
     if cuenta.estado == 'cerrada':
         raise HTTPException(status_code=400, detail="No se pueden crear solicitudes en un informe de gastos cerrado")
 
-    # Preload matching bank accounts for this empleado (server-rendered dropdown)
-    matches = await _get_matching_bank_accounts_for_empleado(session=session, empleado=current_empleado)
+    # The report requester and the transfer beneficiary are deliberately distinct.
+    # Select accounts from the beneficiary recorded on the report, never from the
+    # authenticated requester merely because that user opened this form.
+    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
+    beneficiary_id = effective_account_beneficiary_id(cuenta)
+    beneficiary_name = current_empleado.nombre or ""
     bank_account_options = '<option value="" disabled selected data-is-placeholder="true">— Seleccione cuenta bancaria —</option>'
+    if provider_beneficiary_id is not None:
+        provider_result = await session.execute(
+            select(ProveedorCliente).where(
+                and_(
+                    ProveedorCliente.id == provider_beneficiary_id,
+                    ProveedorCliente.activo == True,
+                )
+            )
+        )
+        provider_beneficiary = provider_result.scalar_one_or_none()
+        matches = [(provider_beneficiary, 1.0)] if provider_beneficiary else []
+        if provider_beneficiary is not None:
+            beneficiary_name = provider_beneficiary.nombre or ""
+    else:
+        beneficiary_empleado = current_empleado
+        if beneficiary_id != current_empleado.id:
+            beneficiary_result = await session.execute(
+                select(Empleado).where(Empleado.id == beneficiary_id)
+            )
+            beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+        if beneficiary_empleado is None:
+            raise HTTPException(
+                status_code=409,
+                detail="El beneficiario del informe ya no está activo.",
+            )
+        beneficiary_name = beneficiary_empleado.nombre or ""
+        matches = await _get_matching_bank_accounts_for_empleado(
+            session=session, empleado=beneficiary_empleado
+        )
     for proveedor, similarity in matches:
         nombre_escaped = escape(proveedor.nombre or "")
         banco_escaped = escape((proveedor.banco or "").strip())
@@ -42414,7 +42447,7 @@ async def nueva_solicitud_desde_cuenta_form(
                         {render_st_doc_row(
                             "BENEFICIARIO:",
                             f'''<div>
-                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(current_empleado.nombre or "")}</div>
+                                <div id="st_preview_beneficiario" style="margin-bottom:8px;">{escape(beneficiary_name)}</div>
                                 <select name="proveedor_cliente_id" id="proveedor_cliente_id" required>
                                     {bank_account_options}
                                 </select>
@@ -42523,27 +42556,33 @@ async def nueva_solicitud_desde_cuenta_submit(
             status_code=303,
         )
 
-    # Optional: selected proveedor/cliente bank account for this empleado
+    # Resolve the selected account against the report beneficiary, not the
+    # requester who is authorized to create the transfer request.
     selected_proveedor = None
-    if proveedor_cliente_id_raw:
-        try:
-            proveedor_uuid = UUIDType(proveedor_cliente_id_raw)
-        except (ValueError, TypeError):
-            proveedor_uuid = None
-        if proveedor_uuid is not None:
-            # Security: recompute allowed matches for this empleado and require id to be in that set
-            matches = await _get_matching_bank_accounts_for_empleado(session=session, empleado=current_empleado)
-            allowed_ids = {prov.id for prov, _ in matches}
-            if proveedor_uuid in allowed_ids:
-                proveedor_result = await session.execute(
-                    select(ProveedorCliente).where(
-                        and_(
-                            ProveedorCliente.id == proveedor_uuid,
-                            ProveedorCliente.activo == True,
-                        )
+    provider_beneficiary_id = effective_account_provider_beneficiary_id(cuenta)
+    beneficiary_id = effective_account_beneficiary_id(cuenta)
+    if provider_beneficiary_id is not None:
+        if proveedor_cliente_id_raw == str(provider_beneficiary_id):
+            proveedor_result = await session.execute(
+                select(ProveedorCliente).where(
+                    and_(
+                        ProveedorCliente.id == provider_beneficiary_id,
+                        ProveedorCliente.activo == True,
                     )
                 )
-                selected_proveedor = proveedor_result.scalar_one_or_none()
+            )
+            selected_proveedor = proveedor_result.scalar_one_or_none()
+    else:
+        beneficiary_result = await session.execute(
+            select(Empleado).where(Empleado.id == beneficiary_id)
+        )
+        beneficiary_empleado = beneficiary_result.scalar_one_or_none()
+        if beneficiary_empleado is not None:
+            selected_proveedor = await _resolve_selected_beneficiary_bank_account(
+                session,
+                beneficiario=beneficiary_empleado,
+                raw_id=proveedor_cliente_id_raw,
+            )
     try:
         payload = build_solicitud_personal_payload(
             cuenta_id=cuenta_id,
