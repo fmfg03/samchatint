@@ -179,7 +179,24 @@ async def _linked_informe_approval_actor_id(
         .order_by(Aprobacion.fecha.desc())
         .limit(1)
     )
-    return result.scalar_one_or_none()
+    approved_actor_id = result.scalar_one_or_none()
+    if approved_actor_id is not None:
+        return approved_actor_id
+
+    # A regularization is deliberately distinct from an historical approval:
+    # it records a current superadmin attestation when the original audit row
+    # is missing, without fabricating the original approver or timestamp.
+    regularization_result = await session.execute(
+        select(Aprobacion.aprobador_id)
+        .where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == informe.id,
+            Aprobacion.accion == "regularizar_aprobacion_reembolso",
+        )
+        .order_by(Aprobacion.fecha.desc())
+        .limit(1)
+    )
+    return regularization_result.scalar_one_or_none()
 
 
 async def approve_reimbursement_solicitud_for_approved_informe(

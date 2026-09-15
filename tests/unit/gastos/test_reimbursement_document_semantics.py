@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 from openpyxl import load_workbook
+import pytest
 
 from devnous.gastos.models import Documento
 from devnous.gastos.routes import user_routes
@@ -27,6 +28,7 @@ from devnous.gastos.services.document_amount_service import (
 from devnous.gastos.services.reimbursement_payment_run_service import (
     classify_informe_reimbursement_payment_readiness,
     get_informe_reimbursement_payment_readiness,
+    regularize_approved_informe_reimbursement,
     should_apply_informe_reimbursement_reconciliation,
 )
 from devnous.gastos.services import reimbursement_payment_run_service
@@ -67,6 +69,162 @@ def test_reimbursement_readiness_distinguishes_missing_request_from_missing_audi
     assert missing_request.can_reconcile is True
     assert missing_audit.status == "blocked_missing_approval_audit"
     assert missing_audit.can_reconcile is False
+
+
+def test_reimbursement_regularization_is_explicit_and_not_a_backdated_approval():
+    source = Path(
+        "src/devnous/gastos/services/reimbursement_payment_run_service.py"
+    ).read_text()
+    workflow_source = Path(
+        "src/devnous/gastos/services/documento_workflow_service.py"
+    ).read_text()
+
+    assert regularize_approved_informe_reimbursement.__name__ in source
+    assert 'accion="regularizar_aprobacion_reembolso"' in source
+    assert "actor must be an active superadmin" in source
+    assert "solicitud already belongs to a Payment Run closure" in source
+    assert "Auto-aprobada tras regularización explícita" in source
+    assert 'Aprobacion.accion == "aprobar"' in workflow_source
+    assert 'Aprobacion.accion == "regularizar_aprobacion_reembolso"' in workflow_source
+
+
+def test_regularization_command_defaults_to_dry_run_and_requires_narrow_selector():
+    source = Path("scripts/regularize_informe_reimbursement_approval.py").read_text()
+
+    assert 'parser.add_argument("--apply", action="store_true")' in source
+    assert 'parser.add_argument("--informe-id", required=True)' in source
+    assert 'parser.add_argument("--solicitud-id", required=True)' in source
+    assert 'parser.add_argument("--actor-id", required=True)' in source
+    assert 'parser.add_argument("--expected-ref", required=True)' in source
+    assert 'parser.add_argument("--motivo", required=True)' in source
+    assert 'if args.apply:' in source
+
+
+def test_regularization_rejects_a_non_superadmin_before_loading_documents():
+    session = SimpleNamespace(
+        get=AsyncMock(
+            return_value=SimpleNamespace(activo=True, rol="finanzas")
+        )
+    )
+
+    async def regularize():
+        await regularize_approved_informe_reimbursement(
+            session,
+            informe_id=uuid4(),
+            solicitud_id=uuid4(),
+            actor_id=uuid4(),
+            motivo="Confirmación operativa.",
+        )
+
+    with pytest.raises(PermissionError, match="active superadmin"):
+        asyncio.run(regularize())
+    assert session.get.await_count == 1
+
+
+def test_regularization_is_idempotent_when_its_audit_already_exists():
+    cuenta_id = uuid4()
+    informe = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="aprobado",
+        budget_concept_id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+    )
+    solicitud = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        cuenta_gastos_id=cuenta_id,
+        concepto_pago="Reembolso de saldo a favor — I-511391",
+        estado="aprobado",
+        pagado_en=None,
+    )
+    closure_result = MagicMock()
+    closure_result.scalar_one.return_value = False
+    audit_result = MagicMock()
+    audit_result.scalar_one_or_none.return_value = "regularizar_aprobacion_reembolso"
+    session = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=[
+                SimpleNamespace(activo=True, rol="superadmin", id=uuid4()),
+                informe,
+                solicitud,
+            ]
+        ),
+        execute=AsyncMock(side_effect=[closure_result, audit_result]),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
+
+    result = asyncio.run(
+        regularize_approved_informe_reimbursement(
+            session,
+            informe_id=informe.id,
+            solicitud_id=solicitud.id,
+            actor_id=uuid4(),
+            motivo="Confirmación operativa.",
+        )
+    )
+
+    assert result.changed is False
+    assert result.status == "already_regularized"
+    session.add.assert_not_called()
+    session.flush.assert_not_awaited()
+
+
+def test_regularization_records_current_superadmin_and_promotes_linked_draft(
+    monkeypatch,
+):
+    cuenta_id = uuid4()
+    actor = SimpleNamespace(activo=True, rol="superadmin", id=uuid4())
+    informe = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="aprobado",
+        budget_concept_id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+    )
+    solicitud = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        cuenta_gastos_id=cuenta_id,
+        concepto_pago="Reembolso de saldo a favor — I-511391",
+        estado="borrador",
+        pagado_en=None,
+    )
+    closure_result = MagicMock()
+    closure_result.scalar_one.return_value = False
+    audit_result = MagicMock()
+    audit_result.scalar_one_or_none.return_value = None
+    session = SimpleNamespace(
+        get=AsyncMock(side_effect=[actor, informe, solicitud]),
+        execute=AsyncMock(side_effect=[closure_result, audit_result]),
+        add=MagicMock(),
+        flush=AsyncMock(),
+    )
+    approve = AsyncMock(return_value=SimpleNamespace())
+    monkeypatch.setattr(
+        reimbursement_payment_run_service,
+        "approve_reimbursement_solicitud_for_approved_informe",
+        approve,
+    )
+
+    result = asyncio.run(
+        regularize_approved_informe_reimbursement(
+            session,
+            informe_id=informe.id,
+            solicitud_id=solicitud.id,
+            actor_id=actor.id,
+            motivo="Confirmación operativa de la aprobación vigente.",
+        )
+    )
+
+    assert result.changed is True
+    assert result.status == "regularized_and_ready_for_payment_run"
+    regularization = session.add.call_args.args[0]
+    assert regularization.accion == "regularizar_aprobacion_reembolso"
+    assert regularization.aprobador_id == actor.id
+    session.flush.assert_awaited_once()
+    approve.assert_awaited_once()
 
 
 def test_reimbursement_readiness_reports_approved_solicitud_as_payment_run_ready():
