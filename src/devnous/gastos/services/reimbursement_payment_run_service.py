@@ -40,6 +40,7 @@ from .documento_workflow_service import (
     approve_reimbursement_solicitud_for_approved_informe,
 )
 from .payment_schedule_service import ensure_fecha_pago_for_approved_solicitud
+from ..utils.mexico_city_dates import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,17 @@ class InformeReimbursementPaymentReadiness:
     detail: str
     solicitud_id: Optional[UUID] = None
     can_reconcile: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class InformeReimbursementRegularizationResult:
+    """Receipt for a narrowly-scoped superadmin reimbursement regularization."""
+
+    changed: bool
+    informe_id: UUID
+    solicitud_id: UUID
+    status: str
+    detail: str
 
 
 def should_apply_informe_reimbursement_reconciliation(
@@ -153,7 +165,9 @@ async def get_informe_reimbursement_payment_readiness(
         .where(
             Aprobacion.tipo_entidad == "documento",
             Aprobacion.entidad_id == informe_doc.id,
-            Aprobacion.accion == "aprobar",
+            Aprobacion.accion.in_(
+                ["aprobar", "regularizar_aprobacion_reembolso"]
+            ),
         )
         .limit(1)
     )
@@ -198,6 +212,147 @@ async def get_informe_reimbursement_payment_readiness(
                 solicitud_id=solicitud.id,
             )
     return readiness
+
+
+async def regularize_approved_informe_reimbursement(
+    session: AsyncSession,
+    *,
+    informe_id: UUID,
+    solicitud_id: UUID,
+    actor_id: UUID,
+    motivo: str,
+) -> InformeReimbursementRegularizationResult:
+    """Attest and promote one blocked reimbursement without forging history.
+
+    This recovery path is intentionally narrower than a normal approval.  It
+    only accepts an already-approved, budgeted INFORME whose linked employee
+    reimbursement is still a draft and whose original approval audit is absent.
+    The newly written audit row records the current superadmin actor and time.
+    """
+    reason = (motivo or "").strip()
+    if not reason:
+        raise ValueError("motivo is required")
+
+    actor = await session.get(Empleado, actor_id)
+    if (
+        actor is None
+        or not getattr(actor, "activo", False)
+        or (getattr(actor, "rol", "") or "").strip().lower()
+        not in {"superadmin", "super_admin"}
+    ):
+        raise PermissionError("actor must be an active superadmin")
+
+    informe = await session.get(Documento, informe_id)
+    solicitud = await session.get(Documento, solicitud_id)
+    if informe is None or solicitud is None:
+        raise ValueError("informe and solicitud must exist")
+    if (
+        informe.tipo != "INFORME"
+        or informe.estado != "aprobado"
+        or not informe.budget_concept_id
+    ):
+        raise ValueError("informe must be approved and have a budget concept")
+    if (
+        solicitud.tipo != "SOLICITUD"
+        or solicitud.cuenta_gastos_id != informe.cuenta_gastos_id
+        or not (solicitud.concepto_pago or "").startswith(
+            "Reembolso de saldo a favor"
+        )
+    ):
+        raise ValueError("solicitud is not the linked reimbursement")
+    if solicitud.pagado_en is not None:
+        raise ValueError("solicitud must be unpaid")
+
+    closure_result = await session.execute(
+        text(
+            "SELECT EXISTS ("
+            "SELECT 1 FROM payment_run_closure_items "
+            "WHERE documento_id = :documento_id"
+            ")"
+        ),
+        {"documento_id": solicitud.id},
+    )
+    if closure_result.scalar_one():
+        raise ValueError("solicitud already belongs to a Payment Run closure")
+
+    approval_result = await session.execute(
+        select(Aprobacion.accion)
+        .where(
+            Aprobacion.tipo_entidad == "documento",
+            Aprobacion.entidad_id == informe.id,
+            Aprobacion.accion.in_(
+                ["aprobar", "regularizar_aprobacion_reembolso"]
+            ),
+        )
+        .order_by(Aprobacion.fecha.desc())
+        .limit(1)
+    )
+    existing_action = approval_result.scalar_one_or_none()
+    if existing_action == "regularizar_aprobacion_reembolso":
+        if solicitud.estado != "aprobado":
+            raise ValueError(
+                "regularization exists but linked solicitud is not approved"
+            )
+        return InformeReimbursementRegularizationResult(
+            changed=False,
+            informe_id=informe.id,
+            solicitud_id=solicitud.id,
+            status="already_regularized",
+            detail="La regularización ya fue registrada; no se modificó nada.",
+        )
+    if existing_action == "aprobar":
+        raise ValueError("informe already has a recorded approval")
+    if solicitud.estado != "borrador":
+        raise ValueError("solicitud must be a draft before regularization")
+
+    saldo_ctx = await _compute_cuenta_saldo_context(
+        session, informe.cuenta_gastos_id
+    )
+    saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
+    if saldo_raw >= -0.005:
+        raise ValueError("no live employee-favorable balance remains")
+    monto_solicitado = float(
+        solicitud.monto_solicitado
+        if solicitud.monto_solicitado is not None
+        else solicitud.monto_total
+        or 0
+    )
+    if abs(monto_solicitado - abs(saldo_raw)) > 0.01:
+        raise ValueError("solicitud amount does not match live reimbursement balance")
+
+    regularization = Aprobacion(
+        tipo_entidad="documento",
+        entidad_id=informe.id,
+        aprobador_id=actor.id,
+        accion="regularizar_aprobacion_reembolso",
+        comentario=(
+            "Regularización autorizada por superadmin para el reembolso "
+            "vinculado; la auditoría original de aprobación no existe. Motivo: "
+            f"{reason}"
+        ),
+        fecha=utc_now(),
+    )
+    session.add(regularization)
+    await session.flush()
+
+    derived_approval = await approve_reimbursement_solicitud_for_approved_informe(
+        session,
+        solicitud,
+        comentario=(
+            "Auto-aprobada tras regularización explícita de la aprobación "
+            "del informe vinculado."
+        ),
+    )
+    if derived_approval is None:
+        raise ValueError("could not promote linked reimbursement")
+
+    return InformeReimbursementRegularizationResult(
+        changed=True,
+        informe_id=informe.id,
+        solicitud_id=solicitud.id,
+        status="regularized_and_ready_for_payment_run",
+        detail="Regularización registrada y solicitud promovida a Programación de Pagos.",
+    )
 
 
 def _schedule_pending_payment_notification(documento_id: UUID) -> None:
