@@ -19064,6 +19064,7 @@ async def crear_gasto(
         # Set cuenta contable if provided manually, otherwise derive from partida mapping
         if cuenta_contable_uuid:
             expense.cuenta_contable_id = cuenta_contable_uuid
+            expense.cuenta_contable_budget_concept_id = None
         elif budget_concept:
             mapped_cuenta_id = (budget_concept.get("cuenta_contable_id") or "").strip()
             if mapped_cuenta_id:
@@ -19072,6 +19073,9 @@ async def crear_gasto(
                         session, mapped_cuenta_id
                     )
                     expense.cuenta_contable_id = UUIDType(validated_id)
+                    expense.cuenta_contable_budget_concept_id = UUIDType(
+                        str(budget_concept["id"])
+                    )
                 except ValueError:
                     pass
 
@@ -28194,6 +28198,14 @@ async def editar_gasto(
 
             changes.append(f"cuenta_contable '{old_desc}'→'{new_desc}'")
             expense.cuenta_contable_id = cuenta_contable_uuid
+            expense.cuenta_contable_budget_concept_id = (
+                None
+                if manual_cuenta_raw
+                else budget_concept_uuid
+            )
+        elif manual_cuenta_raw:
+            # Selecting the existing account is still an explicit Finance override.
+            expense.cuenta_contable_budget_concept_id = None
 
     # CFDI fiscal UUID: canonical uppercase + auto-link (shared helper)
     raw_cfdi: Optional[str] = None
@@ -29172,12 +29184,65 @@ async def _apply_control_presupuestal_expense_assignment(
         )
 
     concept_uuid = UUIDType(str(budget_concept["id"]))
+    previous_budget_concept_id = getattr(expense, "budget_concept_id", None)
     concept_changed = str(
-        getattr(expense, "budget_concept_id", "") or ""
+        previous_budget_concept_id or ""
     ) != str(concept_uuid)
     expense.budget_concept_id = concept_uuid
+    inherited_accounting_fields: list[str] = []
+    accounting_mappings = (
+        (
+            "cuenta contable",
+            "cuenta_contable_id",
+            "cuenta_contable_budget_concept_id",
+            "cuenta_contable_id",
+        ),
+        (
+            "contracuenta",
+            "contra_cuenta_contable_id",
+            "contra_cuenta_contable_budget_concept_id",
+            "pasivo_cuenta_contable_id",
+        ),
+    )
+    for label, expense_field, provenance_field, budget_field in accounting_mappings:
+        current_account_id = getattr(expense, expense_field, None)
+        previous_provenance_id = getattr(expense, provenance_field, None)
+        inherited_from_previous_concept = bool(
+            concept_changed
+            and previous_budget_concept_id
+            and str(previous_provenance_id or "") == str(previous_budget_concept_id)
+        )
+        if current_account_id and not inherited_from_previous_concept:
+            continue
+
+        mapped_account_id = (budget_concept.get(budget_field) or "").strip()
+        if not mapped_account_id:
+            if inherited_from_previous_concept:
+                setattr(expense, expense_field, None)
+                setattr(expense, provenance_field, None)
+                inherited_accounting_fields.append(f"{label} limpiada")
+            continue
+        try:
+            validated_account_id = await validate_active_cuenta_contable_id(
+                session, mapped_account_id
+            )
+        except ValueError as exc:
+            raise DocumentoWorkflowValidationError(
+                "invalid_budget_account_mapping",
+                f"El concepto presupuestal tiene {label} inválida o inactiva: {exc}",
+            ) from exc
+        setattr(expense, expense_field, UUIDType(validated_account_id))
+        setattr(expense, provenance_field, concept_uuid)
+        inherited_accounting_fields.append(label)
     now = datetime.utcnow()
-    if concept_changed:
+    if concept_changed or inherited_accounting_fields:
+        expense_reference = expense.numero_referencia or expense.id
+        accounting_comment = ""
+        if inherited_accounting_fields:
+            accounting_comment = (
+                "; configuración contable heredada: "
+                + ", ".join(inherited_accounting_fields)
+            )
         session.add(
             Aprobacion(
                 tipo_entidad="documento",
@@ -29185,8 +29250,9 @@ async def _apply_control_presupuestal_expense_assignment(
                 aprobador_id=actor.id,
                 accion="asignar_partida_presupuestal_linea",
                 comentario=(
-                    f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
+                    f"Concepto presupuestal asignado a partida {expense_reference}: "
                     f"{budget_concept.get('concept_name') or budget_concept_id}"
+                    f"{accounting_comment}"
                 ),
                 fecha=now,
             )
@@ -36368,6 +36434,7 @@ async def ver_documento(
     if documento.tipo == 'INFORME':
         expenses_result = await session.execute(
             select(ExpenseReport)
+            .options(selectinload(ExpenseReport.budget_concept))
             .where(
                 and_(
                     or_(
@@ -36382,6 +36449,7 @@ async def ver_documento(
     else:
         expenses_result = await session.execute(
             select(ExpenseReport)
+            .options(selectinload(ExpenseReport.budget_concept))
             .where(
                 and_(
                     ExpenseReport.documento_id == documento_id,
@@ -36605,11 +36673,15 @@ async def ver_documento(
             expense_actions += (
                 ' <span class="muted" title="Gasto bloqueado por documento enviado/aprobado o CFDI en proceso/completado">Bloqueado</span>'
             )
+        budget_concept_name = getattr(
+            expense.budget_concept, "concept_name", None
+        )
 
         expenses_rows += f"""
         <tr>
             <td>{format_value(expense.fecha)}</td>
             <td>{format_value(expense.concepto)}</td>
+            <td>{format_value(budget_concept_name or 'Sin asignar')}</td>
             <td>{format_currency(expense.gasto_cantidad)}</td>
             <td>{format_value(expense.estado_reembolso or 'pendiente')}</td>
             <td{cfdi_uuid_title}>{cfdi_uuid_display}</td>
@@ -37301,7 +37373,8 @@ async def ver_documento(
                             <thead>
                                 <tr>
                                     <th>Fecha</th>
-                                    <th>Concepto</th>
+                                    <th>Concepto capturado</th>
+                                    <th>Concepto presupuestal</th>
                                     <th>Monto</th>
                                     <th>Estado</th>
                                     <th>CFDI UUID</th>
@@ -37312,7 +37385,7 @@ async def ver_documento(
                                 </tr>
                             </thead>
                             <tbody>
-                                {expenses_rows if expenses_rows else '<tr><td colspan="9" style="text-align: center; padding: 20px;">No hay gastos asociados</td></tr>'}
+                                {expenses_rows if expenses_rows else '<tr><td colspan="10" style="text-align: center; padding: 20px;">No hay gastos asociados</td></tr>'}
                             </tbody>
                         </table>
                     </div>

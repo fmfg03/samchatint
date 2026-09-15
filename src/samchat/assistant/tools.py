@@ -7365,6 +7365,7 @@ async def finance_expense_create(
             }
             if float(suggestion.confidence_score) >= min_confidence:
                 exp.cuenta_contable_id = suggestion.cuenta_contable_id
+                exp.cuenta_contable_budget_concept_id = None
                 session.add(exp)
                 await session.commit()
                 await session.refresh(exp)
@@ -7665,6 +7666,7 @@ async def finance_expense_assign_accounting(
         raise ValueError("No active cuenta contable found or suggested")
 
     exp.cuenta_contable_id = selected_account.id
+    exp.cuenta_contable_budget_concept_id = None
     exp.updated_at = datetime.utcnow()
     session.add(exp)
     await session.commit()

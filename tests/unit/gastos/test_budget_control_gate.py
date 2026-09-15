@@ -66,12 +66,15 @@ class _CommitOnlySession:
 
 
 class _ExpenseAssignmentSession(_SequencedSession):
-    def __init__(self, expense, results):
+    def __init__(self, expense, results, previous_budget_concept=None):
         super().__init__(results)
         self.expense = expense
+        self.previous_budget_concept = previous_budget_concept
 
-    async def get(self, _model, _item_id):
-        return self.expense
+    async def get(self, model, _item_id):
+        if model is user_routes.ExpenseReport:
+            return self.expense
+        return self.previous_budget_concept
 
 
 class _SyncExecuteAsyncAdapter:
@@ -130,7 +133,9 @@ async def test_reassigning_same_budget_concept_does_not_duplicate_line_audit(
         torneo_id=None,
         fase=None,
     )
-    session = _ExpenseAssignmentSession(expense, [_ExecuteResult(scalar=documento)])
+    session = _ExpenseAssignmentSession(
+        expense, [_ExecuteResult(scalar=documento)]
+    )
     monkeypatch.setattr(
         user_routes,
         "_informe_documento_for_expense",
@@ -148,6 +153,11 @@ async def test_reassigning_same_budget_concept_does_not_duplicate_line_audit(
         "_informe_budget_assignment_complete",
         lambda *_args, **_kwargs: _async_value(False),
     )
+    monkeypatch.setattr(
+        user_routes,
+        "validate_active_cuenta_contable_id",
+        lambda _session, account_id: _async_value(account_id),
+    )
 
     _documento, _concept, released = (
         await user_routes._apply_control_presupuestal_expense_assignment(
@@ -160,6 +170,356 @@ async def test_reassigning_same_budget_concept_does_not_duplicate_line_audit(
 
     assert released is False
     assert session.added == []
+
+
+@pytest.mark.asyncio
+async def test_budget_control_assignment_inherits_missing_accounting_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concept_id = uuid4()
+    cuenta_id = uuid4()
+    contra_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000457",
+        budget_concept_id=None,
+        cuenta_contable_id=None,
+        contra_cuenta_contable_id=None,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(
+        expense, [_ExecuteResult(scalar=documento)]
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {
+                "id": concept_id,
+                "concept_name": "Transporte",
+                "cuenta_contable_id": str(cuenta_id),
+                "pasivo_cuenta_contable_id": str(contra_id),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_budget_assignment_complete",
+        lambda *_args, **_kwargs: _async_value(False),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "validate_active_cuenta_contable_id",
+        lambda _session, account_id: _async_value(account_id),
+    )
+
+    await user_routes._apply_control_presupuestal_expense_assignment(
+        session,
+        expense_id=expense.id,
+        budget_concept_id=str(concept_id),
+        actor=SimpleNamespace(id=uuid4()),
+    )
+
+    assert expense.cuenta_contable_id == cuenta_id
+    assert expense.contra_cuenta_contable_id == contra_id
+    assert expense.cuenta_contable_budget_concept_id == concept_id
+    assert expense.contra_cuenta_contable_budget_concept_id == concept_id
+    assert len(session.added) == 1
+    assert "configuración contable heredada" in session.added[0].comentario
+
+
+@pytest.mark.asyncio
+async def test_budget_control_reassignment_replaces_prior_inherited_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_concept_id = uuid4()
+    new_concept_id = uuid4()
+    old_cuenta_id = uuid4()
+    old_contra_id = uuid4()
+    new_cuenta_id = uuid4()
+    new_contra_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000457",
+        budget_concept_id=old_concept_id,
+        cuenta_contable_id=old_cuenta_id,
+        contra_cuenta_contable_id=old_contra_id,
+        cuenta_contable_budget_concept_id=old_concept_id,
+        contra_cuenta_contable_budget_concept_id=old_concept_id,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(
+        expense,
+        [_ExecuteResult(scalar=documento)],
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {
+                "id": new_concept_id,
+                "concept_name": "Alimentos",
+                "cuenta_contable_id": str(new_cuenta_id),
+                "pasivo_cuenta_contable_id": str(new_contra_id),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_budget_assignment_complete",
+        lambda *_args, **_kwargs: _async_value(False),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "validate_active_cuenta_contable_id",
+        lambda _session, account_id: _async_value(account_id),
+    )
+
+    await user_routes._apply_control_presupuestal_expense_assignment(
+        session,
+        expense_id=expense.id,
+        budget_concept_id=str(new_concept_id),
+        actor=SimpleNamespace(id=uuid4()),
+    )
+
+    assert expense.cuenta_contable_id == new_cuenta_id
+    assert expense.contra_cuenta_contable_id == new_contra_id
+
+
+@pytest.mark.asyncio
+async def test_budget_control_reassignment_uses_persisted_origin_after_catalog_edit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    old_concept_id = uuid4()
+    new_concept_id = uuid4()
+    inherited_before_catalog_edit = uuid4()
+    new_cuenta_id = uuid4()
+    new_contra_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000457",
+        budget_concept_id=old_concept_id,
+        cuenta_contable_id=inherited_before_catalog_edit,
+        contra_cuenta_contable_id=inherited_before_catalog_edit,
+        cuenta_contable_budget_concept_id=old_concept_id,
+        contra_cuenta_contable_budget_concept_id=old_concept_id,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(
+        expense, [_ExecuteResult(scalar=documento)]
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {
+                "id": new_concept_id,
+                "concept_name": "Alimentos",
+                "cuenta_contable_id": str(new_cuenta_id),
+                "pasivo_cuenta_contable_id": str(new_contra_id),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_budget_assignment_complete",
+        lambda *_args, **_kwargs: _async_value(False),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "validate_active_cuenta_contable_id",
+        lambda _session, account_id: _async_value(account_id),
+    )
+
+    await user_routes._apply_control_presupuestal_expense_assignment(
+        session,
+        expense_id=expense.id,
+        budget_concept_id=str(new_concept_id),
+        actor=SimpleNamespace(id=uuid4()),
+    )
+
+    assert expense.cuenta_contable_id == new_cuenta_id
+    assert expense.contra_cuenta_contable_id == new_contra_id
+    assert expense.cuenta_contable_budget_concept_id == new_concept_id
+    assert expense.contra_cuenta_contable_budget_concept_id == new_concept_id
+
+
+@pytest.mark.asyncio
+async def test_budget_control_assignment_rejects_inactive_account_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concept_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000457",
+        budget_concept_id=None,
+        cuenta_contable_id=None,
+        contra_cuenta_contable_id=None,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(
+        expense, [_ExecuteResult(scalar=documento)]
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {
+                "id": concept_id,
+                "concept_name": "Transporte",
+                "cuenta_contable_id": str(uuid4()),
+                "pasivo_cuenta_contable_id": str(uuid4()),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "validate_active_cuenta_contable_id",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("La cuenta contable seleccionada no existe o está inactiva.")
+        ),
+    )
+
+    with pytest.raises(user_routes.DocumentoWorkflowValidationError) as exc_info:
+        await user_routes._apply_control_presupuestal_expense_assignment(
+            session,
+            expense_id=expense.id,
+            budget_concept_id=str(concept_id),
+            actor=SimpleNamespace(id=uuid4()),
+        )
+
+    assert exc_info.value.code == "invalid_budget_account_mapping"
+
+
+@pytest.mark.asyncio
+async def test_budget_control_assignment_preserves_manual_accounting_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concept_id = uuid4()
+    manual_cuenta_id = uuid4()
+    manual_contra_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000457",
+        budget_concept_id=None,
+        cuenta_contable_id=manual_cuenta_id,
+        contra_cuenta_contable_id=manual_contra_id,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(expense, [_ExecuteResult(scalar=documento)])
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {
+                "id": concept_id,
+                "concept_name": "Transporte",
+                "cuenta_contable_id": str(uuid4()),
+                "pasivo_cuenta_contable_id": str(uuid4()),
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_budget_assignment_complete",
+        lambda *_args, **_kwargs: _async_value(False),
+    )
+
+    await user_routes._apply_control_presupuestal_expense_assignment(
+        session,
+        expense_id=expense.id,
+        budget_concept_id=str(concept_id),
+        actor=SimpleNamespace(id=uuid4()),
+    )
+
+    assert expense.cuenta_contable_id == manual_cuenta_id
+    assert expense.contra_cuenta_contable_id == manual_contra_id
+
+
+def test_document_detail_distinguishes_captured_and_budget_concepts() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    detail_start = source.index("# Build expenses table rows")
+    detail_end = source.index("    return html", detail_start)
+    block = source[detail_start:detail_end]
+
+    assert "Concepto capturado" in block
+    assert "Concepto presupuestal" in block
+    assert "expense.concepto" in block
+    assert "expense.budget_concept" in block
+
+
+def test_manual_accounting_writes_clear_budget_provenance() -> None:
+    admin_source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    user_source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+
+    assert admin_source.count("cuenta_contable_budget_concept_id = None") >= 2
+    assert admin_source.count("contra_cuenta_contable_budget_concept_id = None") >= 2
+    assert "if manual_cuenta_raw\n                else budget_concept_uuid" in user_source
 
 
 @pytest.mark.asyncio

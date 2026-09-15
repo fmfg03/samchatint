@@ -169,6 +169,20 @@ class ExpenseReport(Base):
         nullable=True,
         index=True,
     )
+    # The budget concept that supplied each accounting value. Keeping this
+    # provenance separate from the account value survives later catalog edits.
+    cuenta_contable_budget_concept_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_concepts.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    contra_cuenta_contable_budget_concept_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("budget_concepts.id", onupdate="CASCADE", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     retencion_cuentas_json = Column(JSONB, nullable=True)
     cuenta_iva_id = Column(
         UUID(as_uuid=True),
