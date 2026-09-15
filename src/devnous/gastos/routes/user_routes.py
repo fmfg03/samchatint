@@ -15290,6 +15290,30 @@ async def panel(
             </section>
         """
 
+    operacion_contable_cards = filter_cards_by_tools([
+        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
+        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
+        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
+        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+    ], visible_tool_keys)
+    operacion_contable_section = ""
+    if operacion_contable_cards:
+        operacion_contable_section = f"""
+            <section class="surface">
+                <div class="section-head">
+                    <div>
+                        <div class="eyebrow">Finanzas</div>
+                        <h2>Operación contable</h2>
+                        <div class="section-note">Herramientas operativas para preparar, conciliar y exportar información contable sin abrir Configuración.</div>
+                    </div>
+                </div>
+                <div class="action-grid">
+                    {build_link_cards(operacion_contable_cards, "tone-amber")}
+                </div>
+            </section>
+        """
+
     configuracion_cards = []
     if _is_configuration_panel_user(current_empleado):
         configuracion_cards = filter_cards_by_tools([
@@ -15301,12 +15325,7 @@ async def panel(
         ("admin.cuentas_contables", "/admin/cuentas-contables", "Cuentas contables", "Gestionar plan de cuentas."),
         ("admin.centros_costo", "/admin/centros-costo", "Centros de costo", "Gestionar catálogo de centros."),
         ("admin.rfc", "/admin/rfc", "RFC", "Gestionar configuraciones RFC."),
-        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "Carga certificado, llave y password para el conector SAT."),
-        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
-        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
-        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
         ("configuracion.control_accesos", "/admin/control-accesos", "Control de accesos", "Configura visibilidad y autorización por rol y área."),
         ("configuracion.estrategias_autorizacion", "/admin/estrategias-autorizacion", "Estrategias de autorizacion", "Perfiles copiables de autorizadores, montos y excepciones."),
         ("configuracion.authorization_warnings", "/admin/estrategias-autorizacion/warnings", "Warnings de autorizacion", "Revisa discrepancias entre matriz y aprobaciones reales."),
@@ -15408,6 +15427,7 @@ async def panel(
                 {aprobaciones_section}
                 {soporte_section}
                 {ejecutivo_section}
+                {operacion_contable_section}
                 {configuracion_section}
             </div>
         </div>
@@ -28596,15 +28616,29 @@ async def _active_informe_expenses_for_document(
     session: AsyncSession,
     documento: Documento,
 ) -> list[ExpenseReport]:
-    filters = [
-        ExpenseReport.documento_id == documento.id,
+    direct_filters = [
+        and_(
+            ExpenseReport.documento_id == documento.id,
+            or_(
+                ExpenseReport.informe_documento_id.is_(None),
+                ExpenseReport.informe_documento_id == documento.id,
+            ),
+        ),
         ExpenseReport.informe_documento_id == documento.id,
     ]
     if getattr(documento, "cuenta_gastos_id", None):
-        filters.append(ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id)
+        # Legacy rows may belong to the account without an explicit report link.
+        # Never pull a row explicitly linked to a different report into this one:
+        # it would remain an impossible-to-classify blocker in Budget Control.
+        direct_filters.append(
+            and_(
+                ExpenseReport.cuenta_gastos_id == documento.cuenta_gastos_id,
+                ExpenseReport.informe_documento_id.is_(None),
+            )
+        )
     result = await session.execute(
         select(ExpenseReport)
-        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
+        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
         .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
     )
     return _unique_expenses(list(result.scalars().unique().all()))
@@ -29138,21 +29172,25 @@ async def _apply_control_presupuestal_expense_assignment(
         )
 
     concept_uuid = UUIDType(str(budget_concept["id"]))
+    concept_changed = str(
+        getattr(expense, "budget_concept_id", "") or ""
+    ) != str(concept_uuid)
     expense.budget_concept_id = concept_uuid
     now = datetime.utcnow()
-    session.add(
-        Aprobacion(
-            tipo_entidad="documento",
-            entidad_id=documento.id,
-            aprobador_id=actor.id,
-            accion="asignar_partida_presupuestal_linea",
-            comentario=(
-                f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
-                f"{budget_concept.get('concept_name') or budget_concept_id}"
-            ),
-            fecha=now,
+    if concept_changed:
+        session.add(
+            Aprobacion(
+                tipo_entidad="documento",
+                entidad_id=documento.id,
+                aprobador_id=actor.id,
+                accion="asignar_partida_presupuestal_linea",
+                comentario=(
+                    f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
+                    f"{budget_concept.get('concept_name') or budget_concept_id}"
+                ),
+                fecha=now,
+            )
         )
-    )
 
     released = await _informe_budget_assignment_complete(session, documento)
     if released:
