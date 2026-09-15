@@ -78,6 +78,10 @@ def test_reimbursement_regularization_is_explicit_and_not_a_backdated_approval()
     workflow_source = Path(
         "src/devnous/gastos/services/documento_workflow_service.py"
     ).read_text()
+    schema_guard_source = Path("src/devnous/gastos/schema_guard.py").read_text()
+    migration_source = Path(
+        "database/migrations/20260915_reimbursement_regularization_approval_action.sql"
+    ).read_text()
 
     assert regularize_approved_informe_reimbursement.__name__ in source
     assert 'accion="regularizar_aprobacion_reembolso"' in source
@@ -86,6 +90,9 @@ def test_reimbursement_regularization_is_explicit_and_not_a_backdated_approval()
     assert "Auto-aprobada tras regularización explícita" in source
     assert 'Aprobacion.accion == "aprobar"' in workflow_source
     assert 'Aprobacion.accion == "regularizar_aprobacion_reembolso"' in workflow_source
+    assert "regularizar_aprobacion_reembolso" in schema_guard_source
+    assert "regularizar_aprobacion_reembolso" in migration_source
+    assert "DROP CONSTRAINT aprobaciones_accion_check" in migration_source
 
 
 def test_regularization_command_defaults_to_dry_run_and_requires_narrow_selector():
@@ -137,6 +144,8 @@ def test_regularization_is_idempotent_when_its_audit_already_exists():
         concepto_pago="Reembolso de saldo a favor — I-511391",
         estado="aprobado",
         pagado_en=None,
+        monto_solicitado=2870.26,
+        monto_total=None,
     )
     closure_result = MagicMock()
     closure_result.scalar_one.return_value = False
@@ -190,6 +199,8 @@ def test_regularization_records_current_superadmin_and_promotes_linked_draft(
         concepto_pago="Reembolso de saldo a favor — I-511391",
         estado="borrador",
         pagado_en=None,
+        monto_solicitado=2870.26,
+        monto_total=None,
     )
     closure_result = MagicMock()
     closure_result.scalar_one.return_value = False
@@ -206,6 +217,11 @@ def test_regularization_records_current_superadmin_and_promotes_linked_draft(
         reimbursement_payment_run_service,
         "approve_reimbursement_solicitud_for_approved_informe",
         approve,
+    )
+    monkeypatch.setattr(
+        reimbursement_payment_run_service,
+        "_compute_cuenta_saldo_context",
+        AsyncMock(return_value={"saldo_raw": -2870.26}),
     )
 
     result = asyncio.run(
@@ -225,6 +241,54 @@ def test_regularization_records_current_superadmin_and_promotes_linked_draft(
     assert regularization.aprobador_id == actor.id
     session.flush.assert_awaited_once()
     approve.assert_awaited_once()
+
+
+def test_regularization_rejects_stale_reimbursement_amount(monkeypatch):
+    cuenta_id = uuid4()
+    actor = SimpleNamespace(activo=True, rol="superadmin", id=uuid4())
+    informe = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="aprobado",
+        budget_concept_id=uuid4(),
+        cuenta_gastos_id=cuenta_id,
+    )
+    solicitud = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        cuenta_gastos_id=cuenta_id,
+        concepto_pago="Reembolso de saldo a favor — I-511391",
+        estado="borrador",
+        pagado_en=None,
+        monto_solicitado=2870.26,
+        monto_total=None,
+    )
+    closure_result = MagicMock()
+    closure_result.scalar_one.return_value = False
+    audit_result = MagicMock()
+    audit_result.scalar_one_or_none.return_value = None
+    session = SimpleNamespace(
+        get=AsyncMock(side_effect=[actor, informe, solicitud]),
+        execute=AsyncMock(side_effect=[closure_result, audit_result]),
+        add=MagicMock(),
+    )
+    monkeypatch.setattr(
+        reimbursement_payment_run_service,
+        "_compute_cuenta_saldo_context",
+        AsyncMock(return_value={"saldo_raw": -1000.00}),
+    )
+
+    with pytest.raises(ValueError, match="does not match live reimbursement balance"):
+        asyncio.run(
+            regularize_approved_informe_reimbursement(
+                session,
+                informe_id=informe.id,
+                solicitud_id=solicitud.id,
+                actor_id=actor.id,
+                motivo="Confirmación operativa.",
+            )
+        )
+    session.add.assert_not_called()
 
 
 def test_reimbursement_readiness_reports_approved_solicitud_as_payment_run_ready():

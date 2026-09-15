@@ -305,6 +305,21 @@ async def regularize_approved_informe_reimbursement(
     if solicitud.estado != "borrador":
         raise ValueError("solicitud must be a draft before regularization")
 
+    saldo_ctx = await _compute_cuenta_saldo_context(
+        session, informe.cuenta_gastos_id
+    )
+    saldo_raw = float(saldo_ctx.get("saldo_raw") or 0)
+    if saldo_raw >= -0.005:
+        raise ValueError("no live employee-favorable balance remains")
+    monto_solicitado = float(
+        solicitud.monto_solicitado
+        if solicitud.monto_solicitado is not None
+        else solicitud.monto_total
+        or 0
+    )
+    if abs(monto_solicitado - abs(saldo_raw)) > 0.01:
+        raise ValueError("solicitud amount does not match live reimbursement balance")
+
     regularization = Aprobacion(
         tipo_entidad="documento",
         entidad_id=informe.id,
