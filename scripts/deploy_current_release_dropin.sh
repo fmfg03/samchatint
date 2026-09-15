@@ -124,7 +124,9 @@ ExecStart=
 ExecStart=$venv/bin/python -m uvicorn copa_telmex_dashboard:app --host 127.0.0.1 --port 8000
 EOF
 
-ln -sfn "$release" /srv/samchat/current
+# -T replaces the current symlink itself instead of following it when its
+# existing target is a directory.
+ln -sfnT "$release" /srv/samchat/current
 systemctl daemon-reload
 systemctl restart samchat-gastos.service
 sleep 6

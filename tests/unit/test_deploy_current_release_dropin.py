@@ -23,4 +23,5 @@ def test_deploy_current_release_keeps_health_and_ready_smoke() -> None:
 
     assert "http://127.0.0.1:8000/healthz" in script
     assert "http://127.0.0.1:8000/readyz" in script
-    assert "ln -sfn \"$release\" /srv/samchat/current" in script
+    assert "ln -sfnT \"$release\" /srv/samchat/current" in script
+    assert "replaces the current symlink itself" in script
