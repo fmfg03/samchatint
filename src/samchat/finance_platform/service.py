@@ -333,21 +333,24 @@ def _serialize_poliza(poliza: Any) -> dict[str, Any]:
 def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     source_status = snapshot.get("source_status") or {}
+    coverage_notice: dict[str, Any] | None = None
     if source_status.get("expense_scan_truncated"):
         limit = int(source_status.get("expense_scan_limit") or 0)
-        actions.append(
-            _action_item(
-                severity="low",
-                module="Cobertura de alertas",
-                title="Verificación contable parcial",
-                detail=(
-                    "El snapshot alcanzó el límite de "
-                    f"{limit} gastos; ajusta el periodo antes de concluir que no hay "
-                    "más pendientes."
-                ),
-                href="/admin/finanzas",
-            )
+        coverage_notice = _action_item(
+            severity="medium",
+            module="Cobertura de alertas",
+            title="Verificación contable parcial",
+            detail=(
+                "El snapshot alcanzó el límite de "
+                f"{limit} gastos; ajusta el periodo antes de concluir que no hay "
+                "más pendientes."
+            ),
+            href="/admin/finanzas",
         )
+    period = snapshot.get("period") or {}
+    period_query = ""
+    if period.get("year") and period.get("month"):
+        period_query = f"year={period['year']}&month={period['month']}&"
     for document in snapshot.get("documents") or []:
         estado = _safe_str(document.get("estado")).lower()
         tipo = _safe_str(document.get("tipo")).upper()
@@ -426,7 +429,11 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
                         f"Falta {missing_label}. "
                         f"{_accounting_readiness_reason(expense)}"
                     ),
-                    href="/admin/finanzas#coi-pendiente",
+                    href=(
+                        "/admin/finanzas?"
+                        f"{period_query}expense_id={expense.get('id')}"
+                        "#coi-pendiente"
+                    ),
                 )
             )
         elif estado in {"pendiente", "aprobado"} and missing_account_fields:
@@ -495,6 +502,7 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
         "high_count": sum(1 for action in actions if action["severity"] == "high"),
         "medium_count": sum(1 for action in actions if action["severity"] == "medium"),
         "low_count": sum(1 for action in actions if action["severity"] == "low"),
+        "coverage_notice": coverage_notice,
         "read_only": True,
     }
 

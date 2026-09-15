@@ -57,6 +57,27 @@ def test_sam_inbox_preserves_accounting_readiness_action_from_finance_queue():
     assert items[0]["href"] == "/admin/finanzas#coi-pendiente"
 
 
+def test_sam_inbox_surfaces_coverage_notice_outside_capped_actions():
+    items = service._finance_items_from_platform(
+        {
+            "action_queue": {
+                "actions": [],
+                "coverage_notice": {
+                    "module": "Cobertura de alertas",
+                    "title": "Verificación contable parcial",
+                    "detail": "El snapshot alcanzó el límite de 300 gastos.",
+                    "href": "/admin/finanzas",
+                },
+            }
+        }
+    )
+
+    assert len(items) == 1
+    assert items[0]["source_type"] == "finance_coverage"
+    assert items[0]["severity"] == "medium"
+    assert items[0]["status"] == "needs_attention"
+
+
 @pytest.mark.asyncio
 async def test_sam_inbox_skips_unlinked_local_tournament(monkeypatch):
     _patch_base_sources(monkeypatch)

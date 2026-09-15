@@ -6802,6 +6802,7 @@ async def admin_finance_platform(
     session: AsyncSession = Depends(get_db_session),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    expense_id: Optional[str] = Query(None),
 ):
     """Finance command center over gastos, pagos, COI, DIOT and polizas."""
     from samchat.finance_platform import (
@@ -6854,6 +6855,7 @@ async def admin_finance_platform(
     payment_run = platform.get("payment_run") or {}
     finance_copilot = platform.get("finance_copilot") or {}
     actions = list(action_queue.get("actions") or [])
+    coverage_notice = action_queue.get("coverage_notice") or {}
     payable_items = list(payment_run.get("items") or [])
     pending_coi_expenses = list(accounting_close.get("pending_coi_expenses") or [])
     unbalanced_polizas = list(accounting_close.get("unbalanced_polizas") or [])
@@ -6989,6 +6991,31 @@ async def admin_finance_platform(
     )
     current_year = int(period.get("year") or year or datetime.utcnow().year)
     current_month = int(period.get("month") or month or datetime.utcnow().month)
+    selected_expense_id = (expense_id or "").strip()
+    coi_filter_html = ""
+    if selected_expense_id:
+        matching_expenses = [
+            row
+            for row in snapshot.get("expenses") or []
+            if str(row.get("id") or "") == selected_expense_id
+        ]
+        pending_coi_expenses = matching_expenses
+        if matching_expenses:
+            coi_filter_html = (
+                '<div style="margin-top:10px;color:#0f766e;font-weight:800;">'
+                "Mostrando el gasto señalado por la alerta. "
+                f'<a href="/admin/finanzas?year={current_year}&amp;month={current_month}">'
+                "Ver todos los pendientes</a>."
+                "</div>"
+            )
+        else:
+            coi_filter_html = (
+                '<div style="margin-top:10px;color:#991b1b;font-weight:800;">'
+                "El gasto señalado no está disponible en este snapshot. "
+                f'<a href="/admin/finanzas?year={current_year}&amp;month={current_month}">'
+                "Ver todos los pendientes</a>."
+                "</div>"
+            )
     quick_period_links = []
     for offset in range(0, 4):
         month_cursor = current_month - offset
@@ -7054,6 +7081,7 @@ async def admin_finance_platform(
             )}
             {error_html}
             {feedback_html}
+            {f'<section class="workspace-card" style="margin-bottom:18px;border-color:#f59e0b;background:#fffbeb;"><strong>{escape(str(coverage_notice.get("title") or ""))}</strong><div style="margin-top:6px;">{escape(str(coverage_notice.get("detail") or ""))}</div></section>' if coverage_notice else ''}
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Finance Action Queue</div>
                 <div class="workspace-section-subtitle">Una sola cola para pagos autorizados, clasificación COI, CFDI/DIOT y pólizas descuadradas.</div>
@@ -7120,6 +7148,7 @@ async def admin_finance_platform(
                 <div class="workspace-card" id="coi-pendiente">
                     <div class="workspace-section-title">COI pendientes</div>
                     <div class="workspace-section-subtitle">Completa cuenta y contracuenta del gasto desde Finanzas. El CFDI sigue siendo requisito fiscal separado.</div>
+                    {coi_filter_html}
                     <form method="POST" action="/admin/finanzas/coi-pendientes/clasificar" style="margin-top:16px;">
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">

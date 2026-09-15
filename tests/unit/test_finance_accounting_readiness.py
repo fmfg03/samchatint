@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from samchat.finance_platform.service import build_finance_platform_snapshot
 
 
@@ -36,7 +38,10 @@ def test_sent_informe_missing_debit_account_is_an_early_warning() -> None:
     assert len(actions) == 1
     assert actions[0]["title"] == "Preparar I-933635: gasto O-26000136"
     assert "Falta cuenta contable." in actions[0]["detail"]
-    assert actions[0]["href"] == "/admin/finanzas#coi-pendiente"
+    assert (
+        actions[0]["href"]
+        == "/admin/finanzas?expense_id=expense-id#coi-pendiente"
+    )
 
 
 def test_sent_informe_missing_credit_account_reports_the_exact_field() -> None:
@@ -90,7 +95,7 @@ def test_readiness_projection_does_not_mutate_expense_snapshot() -> None:
 
 
 def test_truncated_expense_scan_is_disclosed_without_blocking_workflow() -> None:
-    actions = _actions_for_snapshot(
+    result = build_finance_platform_snapshot(
         {
             "documents": [],
             "expenses": [],
@@ -102,6 +107,18 @@ def test_truncated_expense_scan_is_disclosed_without_blocking_workflow() -> None
         }
     )
 
-    assert len(actions) == 1
-    assert actions[0]["severity"] == "low"
-    assert actions[0]["title"] == "Verificación contable parcial"
+    assert result["action_queue"]["actions"] == []
+    notice = result["action_queue"]["coverage_notice"]
+    assert notice["severity"] == "medium"
+    assert notice["title"] == "Verificación contable parcial"
+
+
+def test_finance_route_filters_coi_pending_rows_by_alert_expense_id() -> None:
+    source = Path("src/devnous/gastos/routes/admin_routes.py").read_text()
+    start = source.index("async def admin_finance_platform(")
+    end = source.index('@router.get("/admin/finanzas/export.xlsx"', start)
+    block = source[start:end]
+
+    assert "expense_id: Optional[str] = Query(None)" in block
+    assert "matching_expenses" in block
+    assert "pending_coi_expenses = matching_expenses" in block

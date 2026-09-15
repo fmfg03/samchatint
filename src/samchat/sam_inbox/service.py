@@ -158,9 +158,35 @@ async def _load_direction_sources(
 
 def _finance_items_from_platform(platform: dict[str, Any]) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for index, action in enumerate(
-        list((platform.get("action_queue") or {}).get("actions") or [])
-    ):
+    action_queue = platform.get("action_queue") or {}
+    coverage_notice = action_queue.get("coverage_notice")
+    if isinstance(coverage_notice, dict):
+        href = _safe_href(coverage_notice.get("href")) or "/admin/finanzas"
+        items.append(
+            _make_item(
+                item_id="finance-coverage-notice",
+                source_type="finance_coverage",
+                domain="finanzas",
+                module=_safe_str(coverage_notice.get("module"))
+                or "Cobertura de alertas",
+                status="needs_attention",
+                severity="medium",
+                title=_safe_str(coverage_notice.get("title"))
+                or "Verificación financiera parcial",
+                detail=_safe_str(coverage_notice.get("detail")),
+                href=href,
+                owner_hint="Finanzas",
+                tags=["finanzas", "cobertura"],
+                prepared_action={
+                    "canonical_action": None,
+                    "mode": "read_only",
+                    "label": "Abrir módulo",
+                },
+                secondary_label="Preguntar a Sam",
+                secondary_href="/assistant",
+            )
+        )
+    for index, action in enumerate(list(action_queue.get("actions") or [])):
         severity = _safe_str(action.get("severity")).lower() or "low"
         title = _safe_str(action.get("title")) or f"Acción financiera {index + 1}"
         raw_href = action.get("href")
