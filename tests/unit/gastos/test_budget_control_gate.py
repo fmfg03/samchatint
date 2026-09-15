@@ -10,6 +10,10 @@ from devnous.gastos.services import documento_telegram, telegram_outbox_service
 from devnous.gastos.services.documento_workflow_service import documento_requires_budget_control
 
 
+async def _async_value(value):
+    return value
+
+
 class _ScalarResult:
     def __init__(self, values):
         self._values = values
@@ -59,6 +63,15 @@ class _CommitOnlySession:
         self.flushes += 1
 
 
+class _ExpenseAssignmentSession(_SequencedSession):
+    def __init__(self, expense, results):
+        super().__init__(results)
+        self.expense = expense
+
+    async def get(self, _model, _item_id):
+        return self.expense
+
+
 def test_solicitud_without_budget_concept_requires_budget_control():
     documento = SimpleNamespace(tipo="SOLICITUD", budget_concept_id=None)
     assert documento_requires_budget_control(documento) is True
@@ -72,6 +85,57 @@ def test_informe_without_budget_concept_requires_budget_control():
 def test_document_with_budget_concept_goes_to_regular_approval():
     documento = SimpleNamespace(tipo="SOLICITUD", budget_concept_id=uuid4())
     assert documento_requires_budget_control(documento) is False
+
+
+@pytest.mark.asyncio
+async def test_reassigning_same_budget_concept_does_not_duplicate_line_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    concept_id = uuid4()
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="O-26000428",
+        budget_concept_id=concept_id,
+    )
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="INFORME",
+        estado="control_presupuestal",
+        cuenta_gastos=None,
+        cuenta_gastos_id=None,
+        torneo_id=None,
+        fase=None,
+    )
+    session = _ExpenseAssignmentSession(expense, [_ExecuteResult(scalar=documento)])
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_expense",
+        lambda *_args, **_kwargs: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_budget_concept",
+        lambda *_args, **_kwargs: _async_value(
+            {"id": concept_id, "concept_name": "Transporte"}
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_budget_assignment_complete",
+        lambda *_args, **_kwargs: _async_value(False),
+    )
+
+    _documento, _concept, released = (
+        await user_routes._apply_control_presupuestal_expense_assignment(
+            session,
+            expense_id=expense.id,
+            budget_concept_id=str(concept_id),
+            actor=SimpleNamespace(id=uuid4()),
+        )
+    )
+
+    assert released is False
+    assert session.added == []
 
 
 @pytest.mark.asyncio

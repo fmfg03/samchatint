@@ -29172,21 +29172,25 @@ async def _apply_control_presupuestal_expense_assignment(
         )
 
     concept_uuid = UUIDType(str(budget_concept["id"]))
+    concept_changed = str(
+        getattr(expense, "budget_concept_id", "") or ""
+    ) != str(concept_uuid)
     expense.budget_concept_id = concept_uuid
     now = datetime.utcnow()
-    session.add(
-        Aprobacion(
-            tipo_entidad="documento",
-            entidad_id=documento.id,
-            aprobador_id=actor.id,
-            accion="asignar_partida_presupuestal_linea",
-            comentario=(
-                f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
-                f"{budget_concept.get('concept_name') or budget_concept_id}"
-            ),
-            fecha=now,
+    if concept_changed:
+        session.add(
+            Aprobacion(
+                tipo_entidad="documento",
+                entidad_id=documento.id,
+                aprobador_id=actor.id,
+                accion="asignar_partida_presupuestal_linea",
+                comentario=(
+                    f"Concepto presupuestal asignado a partida {expense.numero_referencia or expense.id}: "
+                    f"{budget_concept.get('concept_name') or budget_concept_id}"
+                ),
+                fecha=now,
+            )
         )
-    )
 
     released = await _informe_budget_assignment_complete(session, documento)
     if released:
