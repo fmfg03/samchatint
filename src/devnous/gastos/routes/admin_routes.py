@@ -62,6 +62,7 @@ from ..models import (
     ProveedorCliente,
     SolicitudPrestamo,
 )
+from ..status_semantics import payment_run_status_visual
 from ..services.import_balanza_service import parse_cuentas_contables_upload
 from ..services.import_aux_service import import_aux_workbook
 from ..services.import_bank_movements_service import import_bank_movements_csv
@@ -9233,18 +9234,12 @@ def _admin_sortable_table_assets() -> str:
 
 
 def _payment_run_badge(status: str) -> str:
-    normalized = (status or "").strip().lower()
-    color = {
-        "programada": ("#dcfce7", "#166534"),
-        "vencida": ("#fee2e2", "#991b1b"),
-        "cerrada": ("#e0e7ff", "#3730a3"),
-        "pagada": ("#e2e8f0", "#334155"),
-        "en proceso de pago": ("#fef3c7", "#92400e"),
-    }.get(normalized, ("#f1f5f9", "#334155"))
+    visual = payment_run_status_visual(status)
     return (
         f'<span style="display:inline-flex;padding:5px 9px;border-radius:999px;'
         f'font-size:11px;font-weight:900;text-transform:uppercase;'
-        f'background:{color[0]};color:{color[1]};">{escape(status or "-")}</span>'
+        f'background:{visual.background};color:{visual.foreground};">'
+        f'{escape(visual.label)}</span>'
     )
 
 

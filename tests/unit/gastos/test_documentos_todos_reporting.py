@@ -711,6 +711,16 @@ def test_document_status_helper_uses_human_operational_labels():
         "Requiere corrección",
         "error",
     )
+    assert user_routes._documento_human_status("aprobado") == (
+        "Aprobado",
+        "Listo para pago o siguiente paso",
+        "warn",
+    )
+    assert user_routes._documento_human_status("pagado") == (
+        "Pagado",
+        "Pago registrado",
+        "success",
+    )
 
 
 def test_action_labels_are_specific_for_reports_and_requests():
