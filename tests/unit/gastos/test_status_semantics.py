@@ -34,3 +34,11 @@ def test_document_badge_exposes_text_and_semantic_not_color_alone():
     assert "Aprobado" in html
     assert 'data-status-semantic="attention"' in html
     assert "background:#fef3c7" in html
+
+
+def test_document_detail_chip_uses_the_shared_visual_colors():
+    html = user_routes._documento_status_chip_html("en_proceso_pago")
+
+    assert "En proceso de pago" in html
+    assert 'data-status-semantic="progress"' in html
+    assert "background:#ede9fe" in html

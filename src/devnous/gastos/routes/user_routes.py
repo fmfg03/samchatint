@@ -15502,6 +15502,17 @@ def _documento_human_status_badge(value: Optional[str]) -> str:
     )
 
 
+def _documento_status_chip_html(value: Optional[str]) -> str:
+    """Render the detail chip from the shared visual, not its legacy class."""
+    visual = document_status_visual(value)
+    return (
+        f'<div class="status-chip {visual.badge_class}" '
+        f'data-status-semantic="{visual.semantic}" '
+        f'style="background:{visual.background};color:{visual.foreground};">'
+        f'{escape(visual.label)}</div>'
+    )
+
+
 def _solicitud_transferencia_list_actions_html(
     documento: Documento, current_empleado: Empleado
 ) -> str:
@@ -36828,8 +36839,16 @@ async def ver_documento(
             </div>
         """
 
+    workflow_value = "cancelado" if solicitud_cancelada else documento.estado
+    workflow_visual = document_status_visual(workflow_value)
     workflow_badge, workflow_note, workflow_class = _documento_human_status(
-        "cancelado" if solicitud_cancelada else documento.estado
+        workflow_value
+    )
+    workflow_badge_html = (
+        f'<span class="badge {workflow_class}" '
+        f'data-status-semantic="{workflow_visual.semantic}" '
+        f'style="background:{workflow_visual.background};'
+        f'color:{workflow_visual.foreground};">{escape(workflow_badge)}</span>'
     )
     estado_display_detail = workflow_badge
 
@@ -36899,7 +36918,7 @@ async def ver_documento(
                     <h2>Contexto general</h2>
                     <div class="section-note">Datos operativos del documento, empleado y proyecto asociado.</div>
                 </div>
-                <div class="status-chip {workflow_class}">{workflow_badge}</div>
+                {_documento_status_chip_html(workflow_value)}
             </div>
             <div class="meta-grid">
                 <div class="meta-card"><span>Empleado</span><strong>{empleado.nombre if empleado else 'N/A'}</strong><small>Solicitante del documento.</small></div>
@@ -37310,7 +37329,7 @@ async def ver_documento(
                         </div>
                         <div class="doc-hero-flujo-below">
                             <div class="eyebrow">Estado del flujo</div>
-                            <div style="margin-top:6px;"><span class="badge {workflow_class}">{workflow_badge}</span></div>
+                            <div style="margin-top:6px;">{workflow_badge_html}</div>
                             <div class="section-note" style="margin-top:6px;">{escape(workflow_note)}</div>
                             <div class="meta-grid">
                                 <div class="meta-card">
