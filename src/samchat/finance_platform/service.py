@@ -143,6 +143,10 @@ async def build_finance_source_snapshot(
         select(ExpenseReport)
         .options(
             selectinload(ExpenseReport.empleado),
+            selectinload(ExpenseReport.informe_documento).selectinload(
+                Documento.budget_concept
+            ),
+            selectinload(ExpenseReport.budget_concept),
             selectinload(ExpenseReport.cuenta_contable),
             selectinload(ExpenseReport.contra_cuenta_contable),
             selectinload(ExpenseReport.cuenta_iva),
@@ -158,11 +162,12 @@ async def build_finance_source_snapshot(
                     ),
                     and_(ExpenseReport.fecha >= start, ExpenseReport.fecha < end),
                     ExpenseReport.estado_reembolso.in_(["pendiente", "aprobado"]),
+                    ExpenseReport.informe_documento.has(Documento.estado == "enviado"),
                 ),
             )
         )
         .order_by(ExpenseReport.created_at.desc())
-        .limit(limit)
+        .limit(limit + 1)
     )
     poliza_stmt = (
         select(AccountingPoliza)
@@ -189,12 +194,17 @@ async def build_finance_source_snapshot(
     documents = (await session.execute(document_stmt)).scalars().all()
     expenses = (await session.execute(expense_stmt)).scalars().all()
     polizas = (await session.execute(poliza_stmt)).scalars().all()
+    expenses_truncated = len(expenses) > limit
 
     return {
         "period": {"year": period_year, "month": period_month},
         "documents": [_serialize_document(document) for document in documents],
-        "expenses": [_serialize_expense(expense) for expense in expenses],
+        "expenses": [_serialize_expense(expense) for expense in expenses[:limit]],
         "polizas": [_serialize_poliza(poliza) for poliza in polizas],
+        "source_status": {
+            "expense_scan_truncated": expenses_truncated,
+            "expense_scan_limit": limit,
+        },
     }
 
 
@@ -236,6 +246,10 @@ def _serialize_expense(expense: Any) -> dict[str, Any]:
     empleado = getattr(expense, "empleado", None)
     cfdi = getattr(expense, "cfdi_report", None)
     cuenta_contable = getattr(expense, "cuenta_contable", None)
+    informe = getattr(expense, "informe_documento", None)
+    budget_concept = getattr(expense, "budget_concept", None) or getattr(
+        informe, "budget_concept", None
+    )
     row = {
         "entity_type": "expense",
         "id": str(getattr(expense, "id", "")),
@@ -260,9 +274,40 @@ def _serialize_expense(expense: Any) -> dict[str, Any]:
         "created_at": _iso(getattr(expense, "created_at", None)),
         "fecha": _iso(getattr(expense, "fecha", None)),
         "empleado_nombre": getattr(empleado, "nombre", None),
+        "informe_documento_id": str(
+            getattr(expense, "informe_documento_id", "") or ""
+        ),
+        "informe_numero_referencia": getattr(informe, "numero_referencia", None),
+        "informe_estado": getattr(informe, "estado", None),
+        "budget_concept_id": str(getattr(budget_concept, "id", "") or ""),
+        "budget_concept_name": getattr(budget_concept, "concept_name", None),
+        "budget_concept_active": getattr(budget_concept, "active", None),
     }
     row["cfdi_period_warning"] = _expense_cfdi_period_warning(row)
     return row
+
+
+def _missing_expense_account_fields(expense: dict[str, Any]) -> list[str]:
+    """Return the accounting fields still required for a complete expense."""
+
+    missing: list[str] = []
+    if _is_missing(expense.get("cuenta_contable_id")):
+        missing.append("cuenta contable")
+    if _is_missing(expense.get("contra_cuenta_contable_id")):
+        missing.append("contracuenta")
+    return missing
+
+
+def _accounting_readiness_reason(expense: dict[str, Any]) -> str:
+    """Explain the catalog condition without changing any record."""
+
+    concept_name = _safe_str(expense.get("budget_concept_name"))
+    if not _safe_str(expense.get("budget_concept_id")):
+        return "Sin concepto presupuestal efectivo para proponer la configuración."
+    if expense.get("budget_concept_active") is False:
+        label = f": {concept_name}" if concept_name else ""
+        return f"Concepto presupuestal inactivo{label}."
+    return "Revisar la configuración contable del concepto presupuestal."
 
 
 def _serialize_poliza(poliza: Any) -> dict[str, Any]:
@@ -287,6 +332,25 @@ def _serialize_poliza(poliza: Any) -> dict[str, Any]:
 
 def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
+    source_status = snapshot.get("source_status") or {}
+    coverage_notice: dict[str, Any] | None = None
+    if source_status.get("expense_scan_truncated"):
+        limit = int(source_status.get("expense_scan_limit") or 0)
+        coverage_notice = _action_item(
+            severity="medium",
+            module="Cobertura de alertas",
+            title="Verificación contable parcial",
+            detail=(
+                "El snapshot alcanzó el límite de "
+                f"{limit} gastos; ajusta el periodo antes de concluir que no hay "
+                "más pendientes."
+            ),
+            href="/admin/finanzas",
+        )
+    period = snapshot.get("period") or {}
+    period_query = ""
+    if period.get("year") and period.get("month"):
+        period_query = f"year={period['year']}&month={period['month']}&"
     for document in snapshot.get("documents") or []:
         estado = _safe_str(document.get("estado")).lower()
         tipo = _safe_str(document.get("tipo")).upper()
@@ -349,10 +413,30 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
         ref = _safe_str(expense.get("numero_referencia")) or _safe_str(
             expense.get("id")
         )
-        if estado in {"pendiente", "aprobado"} and (
-            _is_missing(expense.get("cuenta_contable_id"))
-            or _is_missing(expense.get("contra_cuenta_contable_id"))
-        ):
+        missing_account_fields = _missing_expense_account_fields(expense)
+        informe_estado = _safe_str(expense.get("informe_estado")).lower()
+        if informe_estado == "enviado" and missing_account_fields:
+            informe_ref = (
+                _safe_str(expense.get("informe_numero_referencia")) or "Informe"
+            )
+            missing_label = " y ".join(missing_account_fields)
+            actions.append(
+                _action_item(
+                    severity="high",
+                    module="Control presupuestal / COI",
+                    title=f"Preparar {informe_ref}: gasto {ref}",
+                    detail=(
+                        f"Falta {missing_label}. "
+                        f"{_accounting_readiness_reason(expense)}"
+                    ),
+                    href=(
+                        "/admin/finanzas?"
+                        f"{period_query}expense_id={expense.get('id')}"
+                        "#coi-pendiente"
+                    ),
+                )
+            )
+        elif estado in {"pendiente", "aprobado"} and missing_account_fields:
             actions.append(
                 _action_item(
                     severity="high",
@@ -418,6 +502,7 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
         "high_count": sum(1 for action in actions if action["severity"] == "high"),
         "medium_count": sum(1 for action in actions if action["severity"] == "medium"),
         "low_count": sum(1 for action in actions if action["severity"] == "low"),
+        "coverage_notice": coverage_notice,
         "read_only": True,
     }
 

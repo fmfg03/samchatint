@@ -6803,6 +6803,7 @@ async def admin_finance_platform(
     session: AsyncSession = Depends(get_db_session),
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    expense_id: Optional[str] = Query(None),
 ):
     """Finance command center over gastos, pagos, COI, DIOT and polizas."""
     from samchat.finance_platform import (
@@ -6855,6 +6856,7 @@ async def admin_finance_platform(
     payment_run = platform.get("payment_run") or {}
     finance_copilot = platform.get("finance_copilot") or {}
     actions = list(action_queue.get("actions") or [])
+    coverage_notice = action_queue.get("coverage_notice") or {}
     payable_items = list(payment_run.get("items") or [])
     pending_coi_expenses = list(accounting_close.get("pending_coi_expenses") or [])
     unbalanced_polizas = list(accounting_close.get("unbalanced_polizas") or [])
@@ -6885,6 +6887,15 @@ async def admin_finance_platform(
             )
         return "".join(options)
 
+    def _action_link(item: dict[str, Any]) -> str:
+        href = str(item.get("href") or "")
+        if not href.startswith("/"):
+            return "-"
+        return (
+            f'<a href="{escape(href)}" '
+            'style="color:#0f766e;font-weight:800;">Abrir</a>'
+        )
+
     action_rows = "".join(
         f"""
         <tr>
@@ -6894,6 +6905,7 @@ async def admin_finance_platform(
             <td>{escape(str(item.get("owner") or "-"))}</td>
             <td>{escape(str(item.get("due") or "-"))}</td>
             <td>{escape(str(item.get("detail") or "-"))}</td>
+            <td>{_action_link(item)}</td>
         </tr>
         """
         for item in actions[:20]
@@ -6980,6 +6992,31 @@ async def admin_finance_platform(
     )
     current_year = int(period.get("year") or year or datetime.utcnow().year)
     current_month = int(period.get("month") or month or datetime.utcnow().month)
+    selected_expense_id = (expense_id or "").strip()
+    coi_filter_html = ""
+    if selected_expense_id:
+        matching_expenses = [
+            row
+            for row in snapshot.get("expenses") or []
+            if str(row.get("id") or "") == selected_expense_id
+        ]
+        pending_coi_expenses = matching_expenses
+        if matching_expenses:
+            coi_filter_html = (
+                '<div style="margin-top:10px;color:#0f766e;font-weight:800;">'
+                "Mostrando el gasto señalado por la alerta. "
+                f'<a href="/admin/finanzas?year={current_year}&amp;month={current_month}">'
+                "Ver todos los pendientes</a>."
+                "</div>"
+            )
+        else:
+            coi_filter_html = (
+                '<div style="margin-top:10px;color:#991b1b;font-weight:800;">'
+                "El gasto señalado no está disponible en este snapshot. "
+                f'<a href="/admin/finanzas?year={current_year}&amp;month={current_month}">'
+                "Ver todos los pendientes</a>."
+                "</div>"
+            )
     quick_period_links = []
     for offset in range(0, 4):
         month_cursor = current_month - offset
@@ -7045,6 +7082,7 @@ async def admin_finance_platform(
             )}
             {error_html}
             {feedback_html}
+            {f'<section class="workspace-card" style="margin-bottom:18px;border-color:#f59e0b;background:#fffbeb;"><strong>{escape(str(coverage_notice.get("title") or ""))}</strong><div style="margin-top:6px;">{escape(str(coverage_notice.get("detail") or ""))}</div></section>' if coverage_notice else ''}
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Finance Action Queue</div>
                 <div class="workspace-section-subtitle">Una sola cola para pagos autorizados, clasificación COI, CFDI/DIOT y pólizas descuadradas.</div>
@@ -7055,8 +7093,8 @@ async def admin_finance_platform(
                     {_sports_card("Baja", action_queue.get("low_count", 0), "Seguimiento")}
                 </div>
                 <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
-                    <thead><tr><th>Sev</th><th>Acción</th><th>Módulo</th><th>Responsable</th><th>Vence</th><th>Detalle</th></tr></thead>
-                    <tbody>{action_rows or '<tr><td colspan="6">Sin acciones abiertas.</td></tr>'}</tbody>
+                    <thead><tr><th>Sev</th><th>Acción</th><th>Módulo</th><th>Responsable</th><th>Vence</th><th>Detalle</th><th>Abrir</th></tr></thead>
+                    <tbody>{action_rows or '<tr><td colspan="7">Sin acciones abiertas.</td></tr>'}</tbody>
                 </table></div>
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
@@ -7108,9 +7146,10 @@ async def admin_finance_platform(
                         <tbody>{payable_rows or '<tr><td colspan="5">Sin pagos pendientes.</td></tr>'}</tbody>
                     </table></div>
                 </div>
-                <div class="workspace-card">
+                <div class="workspace-card" id="coi-pendiente">
                     <div class="workspace-section-title">COI pendientes</div>
                     <div class="workspace-section-subtitle">Completa cuenta y contracuenta del gasto desde Finanzas. El CFDI sigue siendo requisito fiscal separado.</div>
+                    {coi_filter_html}
                     <form method="POST" action="/admin/finanzas/coi-pendientes/clasificar" style="margin-top:16px;">
                         <input type="hidden" name="year" value="{current_year}">
                         <input type="hidden" name="month" value="{current_month}">
@@ -10076,6 +10115,8 @@ async def admin_finance_classify_coi_pending(
         old_iva = str(getattr(expense, "cuenta_iva_id", "") or "")
         expense.cuenta_contable_id = cuenta.id
         expense.contra_cuenta_contable_id = contra.id
+        expense.cuenta_contable_budget_concept_id = None
+        expense.contra_cuenta_contable_budget_concept_id = None
         if cuenta_iva_id:
             expense.cuenta_iva_id = cuenta_iva.id
         expense.updated_at = datetime.utcnow()
@@ -23894,6 +23935,10 @@ async def cfdi_matching_control_room(
             await _ensure_cfdi_project_assignment_schema(session)
             tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
             matching_tournaments = tournaments_result.scalars().all()
+            tournament_map = {
+                str(tournament.id).lower(): tournament.name
+                for tournament in matching_tournaments
+            }
             other_projects_result = await session.execute(
                 select(Documento.proyecto_otro)
                 .where(Documento.proyecto_otro.isnot(None), Documento.proyecto_otro != "")
@@ -24002,6 +24047,10 @@ async def cfdi_matching_control_room(
         for expense in pending_expenses:
             empleado_name = expense.empleado.nombre if expense.empleado else "N/A"
             fecha_str = expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "-"
+            project_name = resolve_project_name(expense.proyecto or "", tournament_map)
+            expense_origin = format_value(
+                getattr(expense, "origen", None) or "Captura directa"
+            )
             ar_status = evaluate_ar_status(expense)
             match_status = evaluate_three_way_match(expense)
             pending_rows += f"""
@@ -24009,6 +24058,7 @@ async def cfdi_matching_control_room(
                 <td>{format_value(expense.numero_referencia)}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
+                <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
                 <td>{format_value(expense.concepto)}</td>
                 <td>${expense.gasto_cantidad:,.2f}</td>
                 <td><code style="font-size: 11px; background: #fff3cd; padding: 2px 4px; border-radius: 3px;">{expense.cfdi_uuid_manual}</code></td>
@@ -24025,6 +24075,10 @@ async def cfdi_matching_control_room(
         for expense in linked_expenses:
             empleado_name = expense.empleado.nombre if expense.empleado else "N/A"
             fecha_str = expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "-"
+            project_name = resolve_project_name(expense.proyecto or "", tournament_map)
+            expense_origin = format_value(
+                getattr(expense, "origen", None) or "Captura directa"
+            )
             cfdi = expense.cfdi_report
             cfdi_uuid = cfdi.cfdi_uuid if cfdi else "-"
             cfdi_tipo = cfdi_type_labels.get(cfdi.tipo_de_comprobante, cfdi.tipo_de_comprobante or "-") if cfdi else "-"
@@ -24041,6 +24095,7 @@ async def cfdi_matching_control_room(
                 <td>{format_value(expense.numero_referencia)}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
+                <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
                 <td>{format_value(expense.concepto)}</td>
                 <td>${expense.gasto_cantidad:,.2f}</td>
                 <td><code style="font-size: 11px; background: #d4edda; padding: 2px 4px; border-radius: 3px;">{cfdi_uuid}</code></td>
@@ -24120,7 +24175,7 @@ async def cfdi_matching_control_room(
             """
 
         hero_actions_html = """
-            <a href="/admin/gastos/cfdis/carga-masiva" class="button">Carga CFDIs</a>
+            <a href="/admin/gastos/cfdis/carga-masiva" class="button">Importar CFDIs CSV</a>
             <a href="/admin/gastos/sat" class="button secondary">Operación SAT</a>
             <a href="/admin/gastos/expenses" class="button secondary">Ver gastos</a>
             <a href="/admin/gastos/invoices" class="button secondary">Ver facturas</a>
@@ -24219,7 +24274,7 @@ async def cfdi_matching_control_room(
                         <div>
                             <div class="eyebrow">Pendientes</div>
                             <h2>Gastos con CFDI pendiente ({pending_count})</h2>
-                            <div class="section-note">Gastos activos con UUID manual capturado, pero todavía sin CFDI enlazado al gasto.</div>
+                            <div class="section-note">Gastos activos con UUID manual capturado, pero todavía sin CFDI enlazado. Revisa empleado, proyecto y origen antes de corregir una excepción.</div>
                         </div>
                     </div>
                     <div class="table-shell">
@@ -24230,6 +24285,7 @@ async def cfdi_matching_control_room(
                                     <th>Referencia</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
+                                    <th>Proyecto / origen</th>
                                     <th>Concepto</th>
                                     <th>Total</th>
                                     <th>UUID CFDI</th>
@@ -24263,6 +24319,7 @@ async def cfdi_matching_control_room(
                                     <th>Referencia</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
+                                    <th>Proyecto / origen</th>
                                     <th>Concepto</th>
                                     <th>Total Gasto</th>
                                     <th>UUID CFDI</th>
@@ -24320,14 +24377,14 @@ async def cfdi_matching_control_room(
                         <div>
                             <div class="eyebrow">Flujo</div>
                             <h2>Secuencia operativa</h2>
-                            <div class="section-note">Esta bandeja existe para resolver la unión entre evidencia fiscal y gasto antes del cierre financiero.</div>
+                            <div class="section-note">Esta bandeja resuelve la unión entre evidencia fiscal y gasto antes de preparar COI; no crea pólizas ni asigna proyectos automáticamente.</div>
                         </div>
                     </div>
                     <ol class="flow-list">
                         <li><strong>Empleado registra gasto</strong> y proporciona UUID de CFDI (directo o desde QR/link)</li>
-                        <li><strong>Finanzas carga CFDIs</strong> desde CSV con columna UUID</li>
+                        <li><strong>Finanzas importa CFDIs</strong> desde CSV con columna UUID; la carga alimenta esta bandeja, no descarga comprobantes</li>
                         <li><strong>Sistema vincula automáticamente</strong> gastos con CFDIs por UUID</li>
-                        <li><strong>Operador verifica</strong> usando esta página para resolver discrepancias</li>
+                        <li><strong>Operador verifica</strong> empleado, proyecto, origen y discrepancias; después prepara la salida COI</li>
                     </ol>
                 </section>
                 </div>
@@ -24496,7 +24553,7 @@ async def gastos_sin_cuenta_contable(
     )
     cleanup_states = {}
     for gasto in gastos:
-        cleanup_states[gasto.id] = await build_cleanup_preview(session, gasto)
+        cleanup_states[gasto.id] = await safe_build_cleanup_preview(session, gasto)
     missing_main_count = sum(
         1
         for state in cleanup_states.values()
@@ -25930,6 +25987,8 @@ async def asignar_cuenta_contable(
 
         expense.cuenta_contable_id = cuenta_uuid
         expense.contra_cuenta_contable_id = contra_uuid
+        expense.cuenta_contable_budget_concept_id = None
+        expense.contra_cuenta_contable_budget_concept_id = None
         expense.cuenta_iva_id = iva_uuid
 
         await session.commit()

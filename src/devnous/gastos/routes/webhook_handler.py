@@ -514,6 +514,7 @@ async def apply_tocino_payload_to_db(session: AsyncSession, payload: Dict[str, A
                 )
                 if suggestion and float(suggestion.confidence_score) >= min_confidence:
                     gasto.cuenta_contable_id = suggestion.cuenta_contable_id
+                    gasto.cuenta_contable_budget_concept_id = None
                     gasto.updated_at = datetime.utcnow()
                     session.add(gasto)
                     await session.commit()
