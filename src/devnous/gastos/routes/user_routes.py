@@ -42,6 +42,7 @@ from samchat.budgets.service import (
 )
 
 from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono
+from ..status_semantics import document_status_visual
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -15486,39 +15487,18 @@ async def gastos_personales(
 
 
 def _documento_human_status(value: Optional[str]) -> Tuple[str, str, str]:
-    estado = (value or "").strip().lower()
-    if estado == "borrador":
-        return "Borrador", "Te falta enviarlo", "muted"
-    if estado == "control_presupuestal":
-        return (
-            "Control presupuestal",
-            "Pendiente de asignación presupuestal",
-            "warn",
-        )
-    if estado in {"enviado", "en_revision", "en revisión"}:
-        return "En revisión", "Esperando aprobación", "warn"
-    if estado in {"aprobado", "autorizado"}:
-        return "Aprobado", "Listo para pago o siguiente paso", "success"
-    if estado == "pagado":
-        return "Pagado", "Pago registrado", "success"
-    if estado == "rechazado":
-        return "Rechazado", "Requiere corrección", "error"
-    if estado == "cancelado":
-        return "Cancelado", "Sin acción pendiente", "error"
-    if estado in {"cerrado", "liquidado", "reembolsado"}:
-        return estado.replace("_", " ").capitalize(), "Ciclo cerrado", "success"
-    return (
-        (value or "Sin estado").replace("_", " ").capitalize(),
-        "Revisar estado",
-        "muted",
-    )
+    visual = document_status_visual(value)
+    return visual.label, visual.note, visual.badge_class
 
 
 def _documento_human_status_badge(value: Optional[str]) -> str:
-    label, note, badge_class = _documento_human_status(value)
+    visual = document_status_visual(value)
     return (
-        f'<span class="badge {badge_class}">{escape(label)}</span>'
-        f'<div class="section-note" style="margin-top:4px;">{escape(note)}</div>'
+        f'<span class="badge {visual.badge_class}" '
+        f'data-status-semantic="{visual.semantic}" '
+        f'style="background:{visual.background};color:{visual.foreground};">'
+        f'{escape(visual.label)}</span>'
+        f'<div class="section-note" style="margin-top:4px;">{escape(visual.note)}</div>'
     )
 
 
