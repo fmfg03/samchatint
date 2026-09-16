@@ -23940,6 +23940,10 @@ async def cfdi_matching_control_room(
             await _ensure_cfdi_project_assignment_schema(session)
             tournaments_result = await session.execute(select(Tournament).order_by(Tournament.name.asc()))
             matching_tournaments = tournaments_result.scalars().all()
+            tournament_map = {
+                str(tournament.id).lower(): tournament.name
+                for tournament in matching_tournaments
+            }
             other_projects_result = await session.execute(
                 select(Documento.proyecto_otro)
                 .where(Documento.proyecto_otro.isnot(None), Documento.proyecto_otro != "")
@@ -24048,6 +24052,10 @@ async def cfdi_matching_control_room(
         for expense in pending_expenses:
             empleado_name = expense.empleado.nombre if expense.empleado else "N/A"
             fecha_str = expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "-"
+            project_name = resolve_project_name(expense.proyecto or "", tournament_map)
+            expense_origin = format_value(
+                getattr(expense, "origen", None) or "Captura directa"
+            )
             ar_status = evaluate_ar_status(expense)
             match_status = evaluate_three_way_match(expense)
             pending_rows += f"""
@@ -24055,6 +24063,7 @@ async def cfdi_matching_control_room(
                 <td>{format_value(expense.numero_referencia)}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
+                <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
                 <td>{format_value(expense.concepto)}</td>
                 <td>${expense.gasto_cantidad:,.2f}</td>
                 <td><code style="font-size: 11px; background: #fff3cd; padding: 2px 4px; border-radius: 3px;">{expense.cfdi_uuid_manual}</code></td>
@@ -24071,6 +24080,10 @@ async def cfdi_matching_control_room(
         for expense in linked_expenses:
             empleado_name = expense.empleado.nombre if expense.empleado else "N/A"
             fecha_str = expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "-"
+            project_name = resolve_project_name(expense.proyecto or "", tournament_map)
+            expense_origin = format_value(
+                getattr(expense, "origen", None) or "Captura directa"
+            )
             cfdi = expense.cfdi_report
             cfdi_uuid = cfdi.cfdi_uuid if cfdi else "-"
             cfdi_tipo = cfdi_type_labels.get(cfdi.tipo_de_comprobante, cfdi.tipo_de_comprobante or "-") if cfdi else "-"
@@ -24087,6 +24100,7 @@ async def cfdi_matching_control_room(
                 <td>{format_value(expense.numero_referencia)}</td>
                 <td>{fecha_str}</td>
                 <td>{format_value(empleado_name)}</td>
+                <td>{format_value(project_name)}<br><small>{expense_origin}</small></td>
                 <td>{format_value(expense.concepto)}</td>
                 <td>${expense.gasto_cantidad:,.2f}</td>
                 <td><code style="font-size: 11px; background: #d4edda; padding: 2px 4px; border-radius: 3px;">{cfdi_uuid}</code></td>
@@ -24166,7 +24180,7 @@ async def cfdi_matching_control_room(
             """
 
         hero_actions_html = """
-            <a href="/admin/gastos/cfdis/carga-masiva" class="button">Carga CFDIs</a>
+            <a href="/admin/gastos/cfdis/carga-masiva" class="button">Importar CFDIs CSV</a>
             <a href="/admin/gastos/sat" class="button secondary">Operación SAT</a>
             <a href="/admin/gastos/expenses" class="button secondary">Ver gastos</a>
             <a href="/admin/gastos/invoices" class="button secondary">Ver facturas</a>
@@ -24265,7 +24279,7 @@ async def cfdi_matching_control_room(
                         <div>
                             <div class="eyebrow">Pendientes</div>
                             <h2>Gastos con CFDI pendiente ({pending_count})</h2>
-                            <div class="section-note">Gastos activos con UUID manual capturado, pero todavía sin CFDI enlazado al gasto.</div>
+                            <div class="section-note">Gastos activos con UUID manual capturado, pero todavía sin CFDI enlazado. Revisa empleado, proyecto y origen antes de corregir una excepción.</div>
                         </div>
                     </div>
                     <div class="table-shell">
@@ -24276,6 +24290,7 @@ async def cfdi_matching_control_room(
                                     <th>Referencia</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
+                                    <th>Proyecto / origen</th>
                                     <th>Concepto</th>
                                     <th>Total</th>
                                     <th>UUID CFDI</th>
@@ -24309,6 +24324,7 @@ async def cfdi_matching_control_room(
                                     <th>Referencia</th>
                                     <th>Fecha</th>
                                     <th>Empleado</th>
+                                    <th>Proyecto / origen</th>
                                     <th>Concepto</th>
                                     <th>Total Gasto</th>
                                     <th>UUID CFDI</th>
@@ -24366,14 +24382,14 @@ async def cfdi_matching_control_room(
                         <div>
                             <div class="eyebrow">Flujo</div>
                             <h2>Secuencia operativa</h2>
-                            <div class="section-note">Esta bandeja existe para resolver la unión entre evidencia fiscal y gasto antes del cierre financiero.</div>
+                            <div class="section-note">Esta bandeja resuelve la unión entre evidencia fiscal y gasto antes de preparar COI; no crea pólizas ni asigna proyectos automáticamente.</div>
                         </div>
                     </div>
                     <ol class="flow-list">
                         <li><strong>Empleado registra gasto</strong> y proporciona UUID de CFDI (directo o desde QR/link)</li>
-                        <li><strong>Finanzas carga CFDIs</strong> desde CSV con columna UUID</li>
+                        <li><strong>Finanzas importa CFDIs</strong> desde CSV con columna UUID; la carga alimenta esta bandeja, no descarga comprobantes</li>
                         <li><strong>Sistema vincula automáticamente</strong> gastos con CFDIs por UUID</li>
-                        <li><strong>Operador verifica</strong> usando esta página para resolver discrepancias</li>
+                        <li><strong>Operador verifica</strong> empleado, proyecto, origen y discrepancias; después prepara la salida COI</li>
                     </ol>
                 </section>
                 </div>
@@ -24542,7 +24558,7 @@ async def gastos_sin_cuenta_contable(
     )
     cleanup_states = {}
     for gasto in gastos:
-        cleanup_states[gasto.id] = await build_cleanup_preview(session, gasto)
+        cleanup_states[gasto.id] = await safe_build_cleanup_preview(session, gasto)
     missing_main_count = sum(
         1
         for state in cleanup_states.values()

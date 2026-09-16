@@ -15291,10 +15291,10 @@ async def panel(
         """
 
     operacion_contable_cards = filter_cards_by_tools([
-        ("admin.gastos.dashboard", "/admin/gastos", "Vista contable", "Análisis integral de gastos y facturas."),
-        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Verificar vinculaciones CFDI y gasto."),
-        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CFDIs emitidos desde CSV al sistema."),
-        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta y pasa al flujo de conciliación mensual."),
+        ("admin.contabilidad", "/admin/contabilidad/coi", "Vista contable", "Revisa pólizas COI y el detalle de sus cuentas."),
+        ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
+        ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
+        ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta para conciliación mensual; requiere piloto UAT antes de operación."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     operacion_contable_section = ""
