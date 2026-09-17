@@ -38,6 +38,16 @@ def test_cleanup_period_defaults_safely_when_period_is_invalid() -> None:
     assert end == datetime(2026, 10, 1)
 
 
+def test_cleanup_period_keeps_an_inherited_bi_year_without_a_month() -> None:
+    period, start, end = _cleanup_period_bounds(
+        None, default_year=2025, now=datetime(2026, 9, 17, 8, 30)
+    )
+
+    assert period == "2025-09"
+    assert start == datetime(2025, 9, 1)
+    assert end == datetime(2025, 10, 1)
+
+
 def test_cleanup_document_origin_uses_explicit_informe_link() -> None:
     label, reference = _cleanup_document_origin(
         _expense(informe=_documento("INFORME", "I-26000012"))
@@ -61,6 +71,19 @@ def test_cleanup_document_origin_does_not_guess_when_links_conflict() -> None:
         _expense(
             informe=_documento("INFORME", "I-26000012"),
             solicitud=_documento("SOLICITUD", "S-26000012"),
+        )
+    )
+
+    assert label == "Vínculo documental por revisar"
+    assert reference == "I-26000012"
+
+
+def test_cleanup_document_origin_marks_distinct_same_type_links_for_review(
+) -> None:
+    label, reference = _cleanup_document_origin(
+        _expense(
+            documento=_documento("INFORME", "I-26000011"),
+            informe=_documento("INFORME", "I-26000012"),
         )
     )
 

@@ -3299,7 +3299,10 @@ def _append_bi_expense_filters(
 
 
 def _cleanup_period_bounds(
-    period: Optional[str], *, now: Optional[datetime] = None
+    period: Optional[str],
+    *,
+    default_year: Optional[int] = None,
+    now: Optional[datetime] = None,
 ) -> Tuple[str, datetime, datetime]:
     """Return a safe calendar-month window for the COI cleanup queue."""
     current = now or datetime.utcnow()
@@ -3307,7 +3310,7 @@ def _cleanup_period_bounds(
     try:
         selected = datetime.strptime(candidate, "%Y-%m")
     except ValueError:
-        selected = datetime(current.year, current.month, 1)
+        selected = datetime(default_year or current.year, current.month, 1)
 
     start = datetime(selected.year, selected.month, 1)
     if selected.month == 12:
@@ -3332,6 +3335,9 @@ def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
         str(getattr(document, "tipo", "") or "").strip().upper()
         for document in documents
     }
+    document_ids = {
+        str(getattr(document, "id", None) or id(document)) for document in documents
+    }
     references = [
         str(getattr(document, "numero_referencia", "") or "").strip()
         for document in documents
@@ -3341,7 +3347,7 @@ def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
 
     if not documents:
         return "Sin documento vinculado", reference
-    if len(document_types) != 1:
+    if len(document_ids) != 1 or len(document_types) != 1:
         return "Vínculo documental por revisar", reference
     if document_types == {"INFORME"}:
         return "Informe de gastos", reference
@@ -24479,8 +24485,6 @@ async def gastos_sin_cuenta_contable(
         CuentaContableSuggester,
     )
 
-    # Get active expenses with incomplete accounting setup for one clear month.
-    selected_period, period_start, period_end = _cleanup_period_bounds(period)
     bi_year_safe = (bi_year or "").strip()
     bi_year_safe = (
         bi_year_safe if (bi_year_safe.isdigit() and len(bi_year_safe) == 4) else ""
@@ -24488,6 +24492,11 @@ async def gastos_sin_cuenta_contable(
     bi_scope_safe = (bi_scope or "").strip().lower()
     if bi_scope_safe not in {"all", ACTIVE_TOURNAMENT_SCOPE}:
         bi_scope_safe = ""
+    # Keep an inherited BI year when the caller has not chosen a month yet.
+    selected_period, period_start, period_end = _cleanup_period_bounds(
+        period,
+        default_year=int(bi_year_safe) if bi_year_safe else None,
+    )
     bi_query_suffix = ""
     if bi_year_safe or bi_scope_safe:
         parts = []
