@@ -105,6 +105,7 @@ def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> No
     )
 
     assert 'if (phaseSelect && !fase)' in html
+    assert 'if (item.scope_mode === "global") return true;' in html
     assert 'label += " (" + item.cuenta_contable_codigo + ")"' not in html
 
 

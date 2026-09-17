@@ -2887,6 +2887,7 @@ def budget_concept_scope_summary(metadata: Optional[dict[str, Any]]) -> str:
 
 
 _BUDGET_SCOPE_METADATA_KEYS = (
+    "scope_mode",
     "applicable_phase_labels",
     "applicable_phase_keys",
     "applicable_subproject_labels",

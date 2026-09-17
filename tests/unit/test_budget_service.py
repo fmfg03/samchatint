@@ -13,6 +13,7 @@ from samchat.budgets.service import (
     _match_budget_concept_for_account_mapping,
     _map_catalog_phase_label_to_etapa,
     _merge_budget_concept_metadata,
+    _merge_budget_concept_scope_metadata,
     build_budget_artifact_snapshot,
     build_budget_executive_comparison,
     build_budget_scenario_player,
@@ -22,6 +23,7 @@ from samchat.budgets.service import (
     build_budget_concept_scope_metadata,
     bulk_save_budget_concepts,
     create_budget_concept,
+    cleared_budget_concept_scope_metadata,
     ensure_missing_cuentas_contables_from_workbook,
     import_budget_lines_upload,
     list_budget_concepts,
@@ -563,6 +565,16 @@ def test_build_budget_concept_scope_metadata_empty_is_global() -> None:
     assert metadata["applicable_phase_labels"] == []
     assert metadata["applicable_phase_keys"] == []
     assert metadata["scope_mode"] == "global"
+
+
+def test_cleared_budget_concept_scope_is_explicitly_global() -> None:
+    cleared = cleared_budget_concept_scope_metadata({"scope_mode": "phase_scoped"})
+    merged = _merge_budget_concept_scope_metadata(
+        {"scope_mode": "phase_scoped"}, [], tournament_etapas=[]
+    )
+
+    assert cleared["scope_mode"] == "global"
+    assert merged["scope_mode"] == "global"
 
 
 def test_build_budget_concept_scope_metadata_collects_phase_aliases() -> None:

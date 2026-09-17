@@ -37613,7 +37613,10 @@ async def _tournament_budget_concepts_map_for_js(
                 "cuenta_contable_nombre": str(
                     item.get("cuenta_contable_nombre") or ""
                 ),
-                "global": budget_concept_matches_fase(item, None)
+                "global": str(
+                    (item.get("metadata") or {}).get("scope_mode") or ""
+                ).lower()
+                == "global"
                 and not (
                     (item.get("metadata") or {}).get("applicable_phase_keys")
                     or (item.get("metadata") or {}).get("applicable_subproject_keys")
@@ -37833,7 +37836,7 @@ def _render_budget_concept_sync_script(
                 if (!phaseSelect) return true;
                 var selectedKey = normalizeScopeKey(phaseSelect.value || "");
                 if (!selectedKey) return false;
-                if (item.global) return true;
+                if (item.scope_mode === "global") return true;
                 var keys = Array.isArray(item.applicable_keys) ? item.applicable_keys : [];
                 return keys.indexOf(selectedKey) >= 0 || keys.indexOf("fase_" + selectedKey) >= 0;
             }}
