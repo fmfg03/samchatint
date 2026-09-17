@@ -71,6 +71,30 @@ ensure_frontend_bundle() {
 
 ensure_frontend_bundle
 
+ensure_copa_telmex_bundle() {
+  local target="$release/copatelmex/dist"
+  if [[ -f "$target/index.html" ]]; then
+    return 0
+  fi
+
+  local source="${COPA_TELMEX_DIST_SOURCE:-}"
+  if [[ -z "$source" && -L /srv/samchat/current && -f /srv/samchat/current/copatelmex/dist/index.html ]]; then
+    source="$(readlink -f /srv/samchat/current)/copatelmex/dist"
+  fi
+
+  if [[ -z "$source" || ! -f "$source/index.html" ]]; then
+    echo "Release is missing copatelmex/dist; set COPA_TELMEX_DIST_SOURCE to a verified bundle" >&2
+    exit 69
+  fi
+
+  echo "Release missing copatelmex/dist; copying verified bundle from $source" >&2
+  mkdir -p "$release/copatelmex"
+  rm -rf "$target"
+  cp -a "$source" "$target"
+}
+
+ensure_copa_telmex_bundle
+
 "$venv/bin/python" "$release/scripts/ci/check-registration-operational-surface.py" --root "$release"
 "$venv/bin/python" "$release/scripts/ci/check-accepted-regressions.py" --root "$release"
 
