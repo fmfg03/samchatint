@@ -28860,9 +28860,8 @@ async def documentos_control_presupuestal(
                     concepts,
                     str(getattr(expense, "budget_concept_id", None) or ""),
                     required=False,
+                    empty_message=_budget_concept_empty_state(documento),
                 )
-                if not options:
-                    options = '<option value="">— Sin conceptos disponibles para este torneo/fase —</option>'
                 select_id = f"budget_concept_{item_key}".replace(":", "_")
                 description = (getattr(expense, "concepto", None) or row_values["concepto"] or "?").strip()
                 rows_html += f"""
@@ -28897,9 +28896,8 @@ async def documentos_control_presupuestal(
             concepts,
             str(documento.budget_concept_id or ""),
             required=True,
+            empty_message=_budget_concept_empty_state(documento),
         )
-        if not options:
-            options = '<option value="">— Sin conceptos disponibles para este torneo/fase —</option>'
         select_id = f"budget_concept_{item_key}".replace(":", "_")
         rows_html += f"""
         <tr>
@@ -37705,7 +37703,10 @@ def _html_budget_concept_options(
     selected_id: Optional[str],
     *,
     required: bool,
+    empty_message: Optional[str] = None,
 ) -> str:
+    if not concepts and empty_message:
+        return f'<option value="" selected>{escape(empty_message)}</option>'
     placeholder = (
         '<option value="" disabled selected>— Seleccione concepto —</option>'
         if not selected_id
@@ -37750,6 +37751,20 @@ def _filter_budget_concepts_for_fase(
             fase,
         )
     ]
+
+
+def _budget_concept_empty_state(documento: Documento) -> str:
+    """Explain why budget-control cannot offer a concept without widening scope."""
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    tournament_id = getattr(documento, "torneo_id", None) or getattr(
+        cuenta, "torneo_id", None
+    )
+    if tournament_id is None:
+        return "— Falta proyecto/torneo asignado —"
+    fase = getattr(documento, "fase", None) or getattr(cuenta, "fase", None)
+    if not (fase or "").strip():
+        return "— Falta Fase asignada —"
+    return "— Sin partidas configuradas para esta Fase —"
 
 
 async def _budget_concepts_for_cuenta(

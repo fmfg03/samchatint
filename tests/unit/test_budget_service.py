@@ -51,6 +51,16 @@ def test_normalize_budget_line_direction_accepts_spanish_aliases():
     assert normalize_budget_line_direction("") == "expense"
 
 
+def test_schema_guard_covers_budget_concept_account_mapping_column() -> None:
+    from devnous.gastos.schema_guard import REQUIRED_COLUMNS, SCHEMA_PATCHES
+
+    required_columns = {(item.table, item.column) for item in REQUIRED_COLUMNS}
+    patches = dict(SCHEMA_PATCHES)
+
+    assert ("budget_concepts", "cuenta_contable_id") in required_columns
+    assert "budget_concepts_cuenta_contable_id_column" in patches
+
+
 @pytest.mark.asyncio
 async def test_list_budget_concepts_filters_by_budget_direction(monkeypatch):
     class _Result:
@@ -68,9 +78,10 @@ async def test_list_budget_concepts_filters_by_budget_direction(monkeypatch):
             self.executed.append((str(statement), params or {}))
             return _Result()
 
+    ensure_schema = AsyncMock()
     monkeypatch.setattr(
         "samchat.budgets.service.ensure_budget_schema",
-        AsyncMock(),
+        ensure_schema,
     )
     session = _Session()
 
@@ -86,6 +97,7 @@ async def test_list_budget_concepts_filters_by_budget_direction(monkeypatch):
     statement, params = session.executed[0]
     assert "COALESCE(bc.budget_direction, 'expense') = :budget_direction" in statement
     assert params["budget_direction"] == "income"
+    ensure_schema.assert_not_awaited()
 
 
 @pytest.mark.asyncio

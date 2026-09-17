@@ -141,6 +141,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("support_ticket_comments", "ticket_id"),
     RequiredColumn("support_ticket_comments", "body"),
     RequiredColumn("budget_concepts", "budget_direction"),
+    RequiredColumn("budget_concepts", "cuenta_contable_id"),
     RequiredColumn("budget_concepts", "pasivo_cuenta_contable_id"),
     RequiredColumn("budget_concepts", "cxc_cuenta_contable_id"),
     RequiredColumn("budget_cfdi_income_links", "status"),
@@ -506,6 +507,12 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "budget_concepts_budget_direction_column",
         "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS budget_direction VARCHAR(20) NOT NULL DEFAULT 'expense'",
+    ),
+    (
+        "budget_concepts_cuenta_contable_id_column",
+        "ALTER TABLE IF EXISTS budget_concepts ADD COLUMN IF NOT EXISTS "
+        "cuenta_contable_id UUID NULL REFERENCES cuentas_contables(id) "
+        "ON UPDATE CASCADE ON DELETE SET NULL",
     ),
     (
         "budget_concepts_pasivo_cuenta_contable_id_column",

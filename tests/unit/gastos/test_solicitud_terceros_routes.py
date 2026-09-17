@@ -84,6 +84,41 @@ def test_budget_concept_filter_excludes_unconfigured_scope() -> None:
     assert [item["id"] for item in filtered] == ["national"]
 
 
+def test_budget_concept_empty_state_explains_missing_context() -> None:
+    assert (
+        user_routes._budget_concept_empty_state(
+            SimpleNamespace(torneo_id=None, fase=None, cuenta_gastos=None)
+        )
+        == "— Falta proyecto/torneo asignado —"
+    )
+    assert (
+        user_routes._budget_concept_empty_state(
+            SimpleNamespace(torneo_id=uuid4(), fase=None, cuenta_gastos=None)
+        )
+        == "— Falta Fase asignada —"
+    )
+    assert (
+        user_routes._budget_concept_empty_state(
+            SimpleNamespace(
+                torneo_id=uuid4(), fase="Fase Nacional", cuenta_gastos=None
+            )
+        )
+        == "— Sin partidas configuradas para esta Fase —"
+    )
+
+
+def test_budget_concept_options_render_empty_context_message() -> None:
+    assert (
+        user_routes._html_budget_concept_options(
+            [],
+            None,
+            required=True,
+            empty_message="— Falta Fase asignada —",
+        )
+        == '<option value="" selected>— Falta Fase asignada —</option>'
+    )
+
+
 def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> None:
     html = user_routes._render_budget_concept_sync_script(
         concept_map={
