@@ -13,6 +13,7 @@ from samchat.budgets.service import (
     _match_budget_concept_for_account_mapping,
     _map_catalog_phase_label_to_etapa,
     _merge_budget_concept_metadata,
+    _merge_budget_concept_scope_metadata,
     build_budget_artifact_snapshot,
     build_budget_executive_comparison,
     build_budget_scenario_player,
@@ -22,6 +23,7 @@ from samchat.budgets.service import (
     build_budget_concept_scope_metadata,
     bulk_save_budget_concepts,
     create_budget_concept,
+    cleared_budget_concept_scope_metadata,
     ensure_missing_cuentas_contables_from_workbook,
     import_budget_lines_upload,
     list_budget_concepts,
@@ -547,11 +549,32 @@ def test_budget_concept_matches_fase_uses_catalog_scope_keys() -> None:
     assert budget_concept_matches_fase(concept, "Nacional") is False
 
 
+def test_budget_concept_matches_fase_requires_explicit_global_scope() -> None:
+    assert budget_concept_matches_fase({"metadata": {}}, "Nacional") is False
+    assert (
+        budget_concept_matches_fase(
+            {"metadata": {"scope_mode": "global"}}, "Nacional"
+        )
+        is True
+    )
+
+
 def test_build_budget_concept_scope_metadata_empty_is_global() -> None:
     metadata = build_budget_concept_scope_metadata([])
 
     assert metadata["applicable_phase_labels"] == []
     assert metadata["applicable_phase_keys"] == []
+    assert metadata["scope_mode"] == "global"
+
+
+def test_cleared_budget_concept_scope_is_explicitly_global() -> None:
+    cleared = cleared_budget_concept_scope_metadata({"scope_mode": "phase_scoped"})
+    merged = _merge_budget_concept_scope_metadata(
+        {"scope_mode": "phase_scoped"}, [], tournament_etapas=[]
+    )
+
+    assert cleared["scope_mode"] == "global"
+    assert merged["scope_mode"] == "global"
 
 
 def test_build_budget_concept_scope_metadata_collects_phase_aliases() -> None:
@@ -560,6 +583,7 @@ def test_build_budget_concept_scope_metadata_collects_phase_aliases() -> None:
     assert metadata["applicable_phase_labels"] == ["Estatal"]
     assert "estatal" in metadata["applicable_phase_keys"]
     assert "fase_estatal" in metadata["applicable_phase_keys"]
+    assert metadata["scope_mode"] == "phase_scoped"
 
 
 def test_budget_concept_scope_summary_renders_labels() -> None:
@@ -570,9 +594,10 @@ def test_budget_concept_scope_summary_renders_labels() -> None:
         == "Estatal, Nacional"
     )
     assert (
-        budget_concept_scope_summary({})
+        budget_concept_scope_summary({"scope_mode": "global"})
         == "Todas las fases / subproyectos"
     )
+    assert budget_concept_scope_summary({}) == "Sin alcance configurado"
 
 
 @pytest.mark.asyncio

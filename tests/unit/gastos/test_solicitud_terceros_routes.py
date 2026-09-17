@@ -43,7 +43,13 @@ def _documento_stub(documento_id):
 
 def test_budget_concept_filter_requires_selected_fase() -> None:
     concepts = [
-        {"id": "global", "label": "Hospedaje", "applicable_keys": [], "global": True},
+        {
+            "id": "global",
+            "label": "Hospedaje",
+            "applicable_keys": [],
+            "global": True,
+            "scope_mode": "global",
+        },
         {
             "id": "fase-estatal",
             "label": "Renta de sede",
@@ -55,6 +61,27 @@ def test_budget_concept_filter_requires_selected_fase() -> None:
     assert user_routes._filter_budget_concepts_for_fase(concepts, "") == []
     filtered = user_routes._filter_budget_concepts_for_fase(concepts, "Estatal")
     assert [item["id"] for item in filtered] == ["global", "fase-estatal"]
+
+
+def test_budget_concept_filter_excludes_unconfigured_scope() -> None:
+    concepts = [
+        {
+            "id": "unconfigured",
+            "label": "Hospedaje",
+            "applicable_keys": [],
+            "scope_mode": "",
+        },
+        {
+            "id": "national",
+            "label": "Traslado",
+            "applicable_keys": ["nacional", "fase_nacional"],
+            "scope_mode": "phase_scoped",
+        },
+    ]
+
+    filtered = user_routes._filter_budget_concepts_for_fase(concepts, "Fase Nacional")
+
+    assert [item["id"] for item in filtered] == ["national"]
 
 
 def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> None:
@@ -78,6 +105,7 @@ def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> No
     )
 
     assert 'if (phaseSelect && !fase)' in html
+    assert 'if (item.scope_mode === "global") return true;' in html
     assert 'label += " (" + item.cuenta_contable_codigo + ")"' not in html
 
 

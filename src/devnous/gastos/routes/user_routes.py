@@ -28581,6 +28581,7 @@ async def _budget_concepts_for_document(
                     (item.get("metadata") or {}).get("applicable_phase_keys")
                     or (item.get("metadata") or {}).get("applicable_subproject_keys")
                 ),
+                "scope_mode": str((item.get("metadata") or {}).get("scope_mode") or ""),
             }
             for item in rows
         ],
@@ -37612,7 +37613,10 @@ async def _tournament_budget_concepts_map_for_js(
                 "cuenta_contable_nombre": str(
                     item.get("cuenta_contable_nombre") or ""
                 ),
-                "global": budget_concept_matches_fase(item, None)
+                "global": str(
+                    (item.get("metadata") or {}).get("scope_mode") or ""
+                ).lower()
+                == "global"
                 and not (
                     (item.get("metadata") or {}).get("applicable_phase_keys")
                     or (item.get("metadata") or {}).get("applicable_subproject_keys")
@@ -37627,6 +37631,7 @@ async def _tournament_budget_concepts_map_for_js(
                         if str(key).strip()
                     }
                 ),
+                "scope_mode": str((item.get("metadata") or {}).get("scope_mode") or ""),
             }
             for item in concept_rows
             if str(item.get("tournament_id") or "") == str(torneo.id)
@@ -37737,6 +37742,7 @@ def _filter_budget_concepts_for_fase(
         if budget_concept_matches_fase(
             {
                 "metadata": {
+                    "scope_mode": concept.get("scope_mode") or "",
                     "applicable_phase_keys": concept.get("applicable_keys") or [],
                     "applicable_subproject_keys": concept.get("applicable_keys") or [],
                 }
@@ -37780,6 +37786,7 @@ async def _budget_concepts_for_cuenta(
                     (item.get("metadata") or {}).get("applicable_phase_keys")
                     or (item.get("metadata") or {}).get("applicable_subproject_keys")
                 ),
+                "scope_mode": str((item.get("metadata") or {}).get("scope_mode") or ""),
             }
             for item in rows
         ],
@@ -37829,7 +37836,7 @@ def _render_budget_concept_sync_script(
                 if (!phaseSelect) return true;
                 var selectedKey = normalizeScopeKey(phaseSelect.value || "");
                 if (!selectedKey) return false;
-                if (item.global) return true;
+                if (item.scope_mode === "global") return true;
                 var keys = Array.isArray(item.applicable_keys) ? item.applicable_keys : [];
                 return keys.indexOf(selectedKey) >= 0 || keys.indexOf("fase_" + selectedKey) >= 0;
             }}

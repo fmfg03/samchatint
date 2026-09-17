@@ -523,7 +523,7 @@ def test_manual_accounting_writes_clear_budget_provenance() -> None:
 
 
 @pytest.mark.asyncio
-async def test_budget_control_document_loads_full_tournament_catalog(
+async def test_budget_control_document_excludes_unconfigured_catalog_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     tournament_id = uuid4()
@@ -536,6 +536,16 @@ async def test_budget_control_document_loads_full_tournament_catalog(
         }
         for index in range(555)
     ]
+    rows.append(
+        {
+            "id": uuid4(),
+            "concept_name": "Partida Nacional",
+            "metadata": {
+                "scope_mode": "phase_scoped",
+                "applicable_phase_keys": ["nacional", "fase_nacional"],
+            },
+        }
+    )
 
     async def fake_list_budget_concepts(
         _session: Any,
@@ -566,8 +576,7 @@ async def test_budget_control_document_loads_full_tournament_catalog(
         "active_only": True,
         "limit": 5000,
     }
-    assert len(concepts) == 555
-    assert concepts[-1]["label"] == "Partida 554"
+    assert [concept["label"] for concept in concepts] == ["Partida Nacional"]
 
 
 def test_nomina_employee_route_imports_payment_profile_model():
