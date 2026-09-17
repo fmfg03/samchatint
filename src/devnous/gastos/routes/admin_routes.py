@@ -20,7 +20,7 @@ from decimal import Decimal
 from html import escape
 from pathlib import Path
 from threading import Lock
-from typing import Optional, List, Any, Union, Dict, Mapping
+from typing import Optional, List, Any, Union, Dict, Mapping, Tuple
 from urllib.parse import quote, urlencode
 from uuid import UUID as UUIDType, uuid4
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -3296,6 +3296,64 @@ def _append_bi_expense_filters(
                 ]
             )
         conditions.append(or_(*scope_expr))
+
+
+def _cleanup_period_bounds(
+    period: Optional[str],
+    *,
+    default_year: Optional[int] = None,
+    now: Optional[datetime] = None,
+) -> Tuple[str, datetime, datetime]:
+    """Return a safe calendar-month window for the COI cleanup queue."""
+    current = now or datetime.utcnow()
+    candidate = (period or "").strip()
+    try:
+        selected = datetime.strptime(candidate, "%Y-%m")
+    except ValueError:
+        selected = datetime(default_year or current.year, current.month, 1)
+
+    start = datetime(selected.year, selected.month, 1)
+    if selected.month == 12:
+        end = datetime(selected.year + 1, 1, 1)
+    else:
+        end = datetime(selected.year, selected.month + 1, 1)
+    return start.strftime("%Y-%m"), start, end
+
+
+def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
+    """Describe the linked document without inferring an accounting origin."""
+    documents = [
+        document
+        for document in (
+            getattr(expense, "informe_documento", None),
+            getattr(expense, "solicitud_documento", None),
+            getattr(expense, "documento", None),
+        )
+        if document is not None
+    ]
+    document_types = {
+        str(getattr(document, "tipo", "") or "").strip().upper()
+        for document in documents
+    }
+    document_ids = {
+        str(getattr(document, "id", None) or id(document)) for document in documents
+    }
+    references = [
+        str(getattr(document, "numero_referencia", "") or "").strip()
+        for document in documents
+        if str(getattr(document, "numero_referencia", "") or "").strip()
+    ]
+    reference = references[0] if references else "Sin referencia documental"
+
+    if not documents:
+        return "Sin documento vinculado", reference
+    if len(document_ids) != 1 or len(document_types) != 1:
+        return "Vínculo documental por revisar", reference
+    if document_types == {"INFORME"}:
+        return "Informe de gastos", reference
+    if document_types == {"SOLICITUD"}:
+        return "Solicitud de transferencia", reference
+    return "Documento vinculado sin tipo", reference
 
 
 @router.get("/admin/gastos", response_class=HTMLResponse)
@@ -24410,6 +24468,7 @@ async def cfdi_matching_control_room(
 async def gastos_sin_cuenta_contable(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
+    period: Optional[str] = Query(None),
     bi_year: Optional[str] = Query(None),
     bi_scope: Optional[str] = Query(None),
     current_empleado: Empleado = require_admin_finanzas(),
@@ -24426,7 +24485,6 @@ async def gastos_sin_cuenta_contable(
         CuentaContableSuggester,
     )
 
-    # Get all active expenses with incomplete accounting setup
     bi_year_safe = (bi_year or "").strip()
     bi_year_safe = (
         bi_year_safe if (bi_year_safe.isdigit() and len(bi_year_safe) == 4) else ""
@@ -24434,6 +24492,11 @@ async def gastos_sin_cuenta_contable(
     bi_scope_safe = (bi_scope or "").strip().lower()
     if bi_scope_safe not in {"all", ACTIVE_TOURNAMENT_SCOPE}:
         bi_scope_safe = ""
+    # Keep an inherited BI year when the caller has not chosen a month yet.
+    selected_period, period_start, period_end = _cleanup_period_bounds(
+        period,
+        default_year=int(bi_year_safe) if bi_year_safe else None,
+    )
     bi_query_suffix = ""
     if bi_year_safe or bi_scope_safe:
         parts = []
@@ -24454,6 +24517,12 @@ async def gastos_sin_cuenta_contable(
         conditions=bi_conditions,
         bi_year=bi_year_safe or None,
         bi_scope=bi_scope_safe or None,
+    )
+    bi_conditions.extend(
+        [
+            ExpenseReport.fecha >= period_start,
+            ExpenseReport.fecha < period_end,
+        ]
     )
     gastos = await load_cleanup_expenses(session, extra_conditions=bi_conditions)
     cfdi_options = await list_unassigned_cfdi_options(session)
@@ -24585,9 +24654,7 @@ async def gastos_sin_cuenta_contable(
     for gasto in gastos:
         empleado_nombre = gasto.empleado.nombre if gasto.empleado else "N/A"
         fecha_str = gasto.fecha.strftime("%Y-%m-%d") if gasto.fecha else "N/A"
-        documento_ref = (
-            gasto.documento.numero_referencia if gasto.documento else "Sin asignar"
-        )
+        document_origin_label, documento_ref = _cleanup_document_origin(gasto)
 
         # Escape user data (proyecto: show name when UUID, else as-is)
         referencia_safe = escape(gasto.numero_referencia or "N/A")
@@ -24623,6 +24690,7 @@ async def gastos_sin_cuenta_contable(
             cuenta_asignada_safe = "—"
         metodo_pago_safe = escape(gasto.metodo_pago or "N/A")
         documento_ref_safe = escape(documento_ref)
+        document_origin_safe = escape(document_origin_label)
 
         # Get suggestion for this expense
         suggestion = suggestions.get(gasto.id)
@@ -24932,6 +25000,7 @@ async def gastos_sin_cuenta_contable(
         <tr id="row-{gasto.id}" class="cleanup-summary-row">
             <td>
                 <strong>{referencia_safe}</strong><br>
+                <span class="cleanup-origin">{document_origin_safe}</span><br>
                 <span class="muted-mini">{documento_ref_safe}</span>
             </td>
             <td>{fecha_str}</td>
@@ -24953,6 +25022,9 @@ async def gastos_sin_cuenta_contable(
                         <div>
                             <strong>{referencia_safe}</strong>
                             <span class="muted-mini"> - {concepto_safe} - ${gasto.gasto_cantidad:,.2f}</span>
+                            <div class="cleanup-origin-detail">
+                                Origen: {document_origin_safe} · {documento_ref_safe}
+                            </div>
                         </div>
                         <button class="cleanup-toggle secondary" type="button" data-target="{detail_id}">Cerrar</button>
                     </div>
@@ -25044,6 +25116,16 @@ async def gastos_sin_cuenta_contable(
             </div>
         </div>
     """
+    bi_year_input = (
+        f'<input type="hidden" name="bi_year" value="{escape(bi_year_safe)}">'
+        if bi_year_safe
+        else ""
+    )
+    bi_scope_input = (
+        f'<input type="hidden" name="bi_scope" value="{escape(bi_scope_safe)}">'
+        if bi_scope_safe
+        else ""
+    )
 
     html = f"""
     <!DOCTYPE html>
@@ -25232,6 +25314,48 @@ async def gastos_sin_cuenta_contable(
                 background:#e2e8f0;
                 color:#0f172a;
             }}
+            .cleanup-origin {{
+                display:inline-flex;
+                margin-bottom:3px;
+                border-radius:999px;
+                padding:3px 7px;
+                background:#e0f2fe;
+                color:#075985;
+                font-size:11px;
+                font-weight:800;
+                line-height:1.25;
+            }}
+            .cleanup-origin-detail {{
+                margin-top:6px;
+                color:#475569;
+                font-size:12px;
+                font-weight:700;
+            }}
+            .cleanup-period-form {{
+                display:flex;
+                align-items:end;
+                gap:10px;
+                flex-wrap:wrap;
+                margin:0 0 16px;
+            }}
+            .cleanup-period-form label {{
+                display:grid;
+                gap:5px;
+                color:#334155;
+                font-size:12px;
+                font-weight:800;
+            }}
+            .cleanup-period-form input {{
+                min-height:40px;
+                padding:8px 10px;
+                border:1px solid #cbd5e1;
+                border-radius:10px;
+                color:#0f172a;
+                font:inherit;
+            }}
+            .button, .cleanup-toggle, .btn-asignar, .btn-accept-suggestion {{
+                white-space:nowrap;
+            }}
             .cleanup-detail-row > td {{
                 padding:0 12px 18px;
                 background:#f8fafc;
@@ -25300,6 +25424,21 @@ async def gastos_sin_cuenta_contable(
                 }}
                 .cleanup-detail-row > td {{
                     padding:0 8px 12px;
+                }}
+            }}
+            @media (max-width: 640px) {{
+                .cleanup-period-form {{
+                    align-items:stretch;
+                }}
+                .cleanup-period-form label,
+                .cleanup-period-form input,
+                .cleanup-period-form .button,
+                .toolbar-actions .button,
+                .toolbar-actions .cleanup-toggle {{
+                    width:100%;
+                }}
+                .cleanup-origin {{
+                    white-space:normal;
                 }}
             }}
         </style>
@@ -25373,6 +25512,16 @@ async def gastos_sin_cuenta_contable(
                 </section>
 
                 <section class="surface" id="feedback-anchor">
+                    <form method="GET" action="/admin/gastos/sin-cuenta-contable"
+                          class="cleanup-period-form">
+                        <label>Mes de trabajo
+                            <input type="month" name="period"
+                                   value="{selected_period}">
+                        </label>
+                        {bi_year_input}
+                        {bi_scope_input}
+                        <button class="button" type="submit">Ver período</button>
+                    </form>
                     <div class="review-toolbar">
                         <div>
                             <div class="eyebrow">Acciones</div>
