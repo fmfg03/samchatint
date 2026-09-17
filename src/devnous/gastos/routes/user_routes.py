@@ -28860,11 +28860,8 @@ async def documentos_control_presupuestal(
                     concepts,
                     str(getattr(expense, "budget_concept_id", None) or ""),
                     required=False,
+                    empty_message=_budget_concept_empty_state(documento),
                 )
-                if not options:
-                    options = (
-                        f'<option value="">{_budget_concept_empty_state(documento)}</option>'
-                    )
                 select_id = f"budget_concept_{item_key}".replace(":", "_")
                 description = (getattr(expense, "concepto", None) or row_values["concepto"] or "?").strip()
                 rows_html += f"""
@@ -28899,11 +28896,8 @@ async def documentos_control_presupuestal(
             concepts,
             str(documento.budget_concept_id or ""),
             required=True,
+            empty_message=_budget_concept_empty_state(documento),
         )
-        if not options:
-            options = (
-                f'<option value="">{_budget_concept_empty_state(documento)}</option>'
-            )
         select_id = f"budget_concept_{item_key}".replace(":", "_")
         rows_html += f"""
         <tr>
@@ -37709,7 +37703,10 @@ def _html_budget_concept_options(
     selected_id: Optional[str],
     *,
     required: bool,
+    empty_message: Optional[str] = None,
 ) -> str:
+    if not concepts and empty_message:
+        return f'<option value="" selected>{escape(empty_message)}</option>'
     placeholder = (
         '<option value="" disabled selected>— Seleccione concepto —</option>'
         if not selected_id

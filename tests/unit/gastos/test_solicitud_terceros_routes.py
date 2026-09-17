@@ -107,6 +107,18 @@ def test_budget_concept_empty_state_explains_missing_context() -> None:
     )
 
 
+def test_budget_concept_options_render_empty_context_message() -> None:
+    assert (
+        user_routes._html_budget_concept_options(
+            [],
+            None,
+            required=True,
+            empty_message="— Falta Fase asignada —",
+        )
+        == '<option value="" selected>— Falta Fase asignada —</option>'
+    )
+
+
 def test_budget_concept_sync_script_requires_fase_and_hides_account_code() -> None:
     html = user_routes._render_budget_concept_sync_script(
         concept_map={
