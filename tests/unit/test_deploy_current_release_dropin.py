@@ -18,6 +18,15 @@ def test_deploy_current_release_preserves_or_fails_frontend_bundle() -> None:
     assert "no reusable frontend bundle was found" in script
 
 
+def test_deploy_current_release_reuses_runtime_recognized_telmex_bundle_sources() -> None:
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+
+    assert "ensure_copa_telmex_bundle" in script
+    assert "COPA_TELMEX_DIST_SOURCE" in script
+    assert "COPA_TELMEX_DIST_DIR" in script
+    assert '"$current_release"/copatelmex.backup-*/dist' in script
+
+
 def test_deploy_current_release_keeps_health_and_ready_smoke() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
 

@@ -9,6 +9,7 @@ from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_service
 from devnous.gastos.services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
+    effective_document_beneficiary_name,
 )
 
 
@@ -21,8 +22,11 @@ def _doc(**overrides):
         "empleado": SimpleNamespace(nombre="Odilon Reportero"),
         "beneficiario_empleado": None,
         "beneficiario_empleado_id": None,
+        "beneficiario_proveedor_cliente": None,
+        "beneficiario_proveedor_cliente_id": None,
         "proveedor_cliente": None,
         "proveedor_cliente_id": None,
+        "cuenta_gastos": None,
         "concepto_pago": "Hospedaje regional",
         "referencia_pago": "RP-001",
         "referencia_operaciones": "456",
@@ -77,6 +81,63 @@ def test_documentos_todos_reporting_values_for_employee_beneficiary():
     assert row["tipo_solicitud"] == "Personal / empleado"
     assert row["beneficiario"] == "Alicia Beneficiaria"
     assert row["proveedor"] == "Cuenta bancaria Alicia"
+
+
+def test_effective_document_beneficiary_prefers_third_party_over_requester():
+    documento = _doc(
+        tipo="INFORME",
+        beneficiario_proveedor_cliente_id=uuid4(),
+        beneficiario_proveedor_cliente=SimpleNamespace(
+            nombre="Mauricio Figueroa Moreno"
+        ),
+    )
+
+    assert effective_document_beneficiary_name(documento) == "Mauricio Figueroa Moreno"
+    assert user_routes._documentos_todos_reporting_row_values(documento)[
+        "beneficiario"
+    ] == "Mauricio Figueroa Moreno"
+
+
+def test_effective_document_beneficiary_uses_account_third_party_before_requester():
+    documento = _doc(
+        tipo="INFORME",
+        cuenta_gastos=SimpleNamespace(
+            beneficiario_empleado=None,
+            beneficiario_proveedor_cliente=SimpleNamespace(
+                nombre="Mauricio Figueroa Moreno"
+            ),
+            empleado=SimpleNamespace(nombre="Alicia Edith Zuniga Salazar"),
+        ),
+    )
+
+    assert effective_document_beneficiary_name(documento) == "Mauricio Figueroa Moreno"
+
+
+def test_effective_document_beneficiary_prefers_account_party_over_legacy_bank_provider():
+    documento = _doc(
+        tipo="INFORME",
+        proveedor_cliente=SimpleNamespace(nombre="Cuenta bancaria Alicia"),
+        cuenta_gastos=SimpleNamespace(
+            beneficiario_empleado=SimpleNamespace(nombre="Carlos Lozano"),
+            beneficiario_proveedor_cliente=None,
+            empleado=SimpleNamespace(nombre="Alicia Edith Zuniga Salazar"),
+        ),
+    )
+
+    assert effective_document_beneficiary_name(documento) == "Carlos Lozano"
+
+
+def test_approval_history_uses_effective_third_party_beneficiary():
+    documento = _doc(
+        tipo="INFORME",
+        beneficiario_proveedor_cliente=SimpleNamespace(
+            nombre="Mauricio Figueroa Moreno"
+        ),
+    )
+
+    assert user_routes._approval_history_beneficiario(documento) == (
+        "Mauricio Figueroa Moreno"
+    )
 
 
 def test_documentos_todos_reporting_values_for_employee_reimbursement():

@@ -1972,6 +1972,12 @@ class Documento(Base):
         foreign_keys=[proveedor_cliente_id],
         lazy="selectin",
     )
+    beneficiario_proveedor_cliente = relationship(
+        "ProveedorCliente",
+        foreign_keys=[beneficiario_proveedor_cliente_id],
+        lazy="selectin",
+        overlaps="proveedor_cliente,documentos",
+    )
     budget_concept = relationship(
         "BudgetConcept", foreign_keys=[budget_concept_id], lazy="selectin"
     )
