@@ -18,6 +18,7 @@ from devnous.gastos.services.documento_semantics import (
     approval_subject_empleado_id,
     effective_account_beneficiary_id,
     effective_account_provider_beneficiary_id,
+    effective_document_beneficiary_name,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
@@ -49,6 +50,17 @@ def test_effective_account_beneficiary_prefers_selected_employee():
     )
 
     assert effective_account_beneficiary_id(cuenta) == beneficiary_id
+
+
+def test_effective_document_beneficiary_preserves_employee_priority():
+    documento = SimpleNamespace(
+        beneficiario_empleado=SimpleNamespace(nombre="Carlos Lozano"),
+        beneficiario_proveedor_cliente=SimpleNamespace(nombre="Proveedor alterno"),
+        cuenta_gastos=None,
+        empleado=SimpleNamespace(nombre="Alicia Edith Zuniga Salazar"),
+    )
+
+    assert effective_document_beneficiary_name(documento) == "Carlos Lozano"
 
 
 def test_reimbursement_readiness_distinguishes_missing_request_from_missing_audit():
@@ -1182,6 +1194,16 @@ def test_informe_excel_uses_real_authorizer_not_requester() -> None:
     assert workbook.active.cell(row=INFORME_AUTORIZADO_ROW, column=4).value == (
         "Odilon Rodriguez"
     )
+
+
+def test_informe_export_uses_effective_third_party_beneficiary() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def exportar_informe_gastos")
+    end = source.index("    # Load torneo if linked", start)
+    export_block = source[start:end]
+
+    assert "selectinload(Documento.beneficiario_proveedor_cliente)" in export_block
+    assert "effective_document_beneficiary_name(" in export_block
 
 
 def test_informe_excel_leaves_authorizer_blank_before_approval() -> None:

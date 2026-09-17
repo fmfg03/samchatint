@@ -231,8 +231,10 @@ from ..services.documento_payment_service import (
 from ..services.documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
     approval_subject_empleado,
+    effective_account_beneficiary,
     effective_account_beneficiary_id,
     effective_account_provider_beneficiary_id,
+    effective_document_beneficiary_name,
     is_employee_reimbursement,
     reimbursement_concept_from_cuenta,
 )
@@ -29581,6 +29583,7 @@ async def documentos_pendientes(
         .options(
             selectinload(Documento.empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -30217,22 +30220,8 @@ def _approval_history_budget_concept(documento: Documento) -> str:
 
 
 def _approval_history_beneficiario(documento: Documento) -> str:
-    cuenta = getattr(documento, "cuenta_gastos", None)
-    beneficiario_empleado = (
-        getattr(documento, "beneficiario_empleado", None)
-        or (getattr(cuenta, "beneficiario_empleado", None) if cuenta is not None else None)
-    )
-    beneficiario_proveedor = (
-        getattr(documento, "proveedor_cliente", None)
-        or (
-            getattr(cuenta, "beneficiario_proveedor_cliente", None)
-            if cuenta is not None
-            else None
-        )
-    )
     return _approval_history_display_value(
-        getattr(beneficiario_empleado, "nombre", None)
-        or getattr(beneficiario_proveedor, "nombre", None)
+        effective_document_beneficiary_name(documento)
     )
 
 
@@ -30312,6 +30301,7 @@ async def historial_aprobador(
             select(Documento).options(
                 selectinload(Documento.empleado),
                 selectinload(Documento.beneficiario_empleado),
+                selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.budget_concept),
                 selectinload(Documento.torneo),
@@ -30613,13 +30603,8 @@ def _documentos_todos_reporting_type(documento: Documento) -> str:
 
 def _documentos_todos_party_values(documento: Documento) -> dict[str, str]:
     solicitante = getattr(documento, "empleado", None)
-    beneficiario_empleado = getattr(documento, "beneficiario_empleado", None)
     proveedor = getattr(documento, "proveedor_cliente", None)
-    beneficiario_nombre = (
-        getattr(beneficiario_empleado, "nombre", None)
-        or getattr(proveedor, "nombre", None)
-        or "—"
-    )
+    beneficiario_nombre = effective_document_beneficiary_name(documento)
     proveedor_nombre = getattr(proveedor, "nombre", None) or "—"
     return {
         "solicitante": getattr(solicitante, "nombre", None) or "N/A",
@@ -30739,6 +30724,7 @@ async def documentos_todos(
     query = select(Documento).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.cuenta_gastos),
     )
@@ -31079,6 +31065,7 @@ async def _query_documentos_todos_for_export(
     query_stmt = select(Documento).options(
         selectinload(Documento.empleado),
         selectinload(Documento.beneficiario_empleado),
+        selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.cuenta_gastos),
     )
@@ -33398,6 +33385,7 @@ async def exportar_informe_gastos(
         .options(
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
+            selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos)
                 .undefer(CuentaDeGastos.torneo_id)
@@ -33422,10 +33410,8 @@ async def exportar_informe_gastos(
     )
     empleado = empleado_result.scalar_one_or_none()
     empleado_nombre = empleado.nombre if empleado else "N/A"
-    beneficiario_nombre = (
-        documento.beneficiario_empleado.nombre
-        if documento.beneficiario_empleado is not None
-        else empleado_nombre
+    beneficiario_nombre = effective_document_beneficiary_name(
+        documento, fallback=empleado_nombre
     )
 
     # Load torneo if linked
@@ -39712,7 +39698,7 @@ async def cuentas_de_gastos_list(
             if cuenta.empleado and cuenta.empleado.nombre
             else "-"
         )
-        beneficiario_obj = cuenta.beneficiario_empleado or cuenta.empleado
+        beneficiario_obj = effective_account_beneficiary(cuenta)
         beneficiario_nombre = (
             escape(beneficiario_obj.nombre)
             if beneficiario_obj and beneficiario_obj.nombre

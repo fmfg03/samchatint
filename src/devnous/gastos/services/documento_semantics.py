@@ -26,6 +26,45 @@ def account_uses_provider_beneficiary(cuenta: Any) -> bool:
     return effective_account_provider_beneficiary_id(cuenta) is not None
 
 
+def effective_account_beneficiary(cuenta: Any) -> Any:
+    """Resolve the beneficiary party shown for a Cuenta de Gastos."""
+    if cuenta is None:
+        return None
+    return (
+        getattr(cuenta, "beneficiario_empleado", None)
+        or getattr(cuenta, "beneficiario_proveedor_cliente", None)
+        or getattr(cuenta, "empleado", None)
+    )
+
+
+def effective_document_beneficiary(documento: Any) -> Any:
+    """Resolve the beneficiary consistently across reports and document views.
+
+    A report may name an employee or a registered provider/operator directly on
+    the document.  Older or linked records retain that party only on their
+    Cuenta de Gastos, so fall back to the account before the requester.
+    """
+    if documento is None:
+        return None
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    return (
+        getattr(documento, "beneficiario_empleado", None)
+        or getattr(documento, "beneficiario_proveedor_cliente", None)
+        or getattr(documento, "proveedor_cliente", None)
+        or effective_account_beneficiary(cuenta)
+        or getattr(documento, "empleado", None)
+    )
+
+
+def effective_document_beneficiary_name(
+    documento: Any, *, fallback: str = "—"
+) -> str:
+    """Return the effective beneficiary name without inventing a party."""
+    beneficiary = effective_document_beneficiary(documento)
+    name = str(getattr(beneficiary, "nombre", "") or "").strip()
+    return name or fallback
+
+
 def reimbursement_concept_from_cuenta(cuenta: Any) -> str:
     """Build the SOLICITUD concept for an employee reimbursement from an expense report.
 
