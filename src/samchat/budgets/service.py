@@ -2661,7 +2661,8 @@ async def list_budget_concepts(
     active_only: bool = True,
     limit: int = 2000,
 ) -> list[dict[str, Any]]:
-    await ensure_budget_schema(session)
+    # Schema compatibility is established by the application startup guard.
+    # Listing the catalog is a request-path read and must not acquire DDL locks.
     filters = []
     params: dict[str, Any] = {"limit": max(1, min(limit, 5000))}
     clean_direction = _safe_str(budget_direction)

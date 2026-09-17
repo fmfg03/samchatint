@@ -68,9 +68,10 @@ async def test_list_budget_concepts_filters_by_budget_direction(monkeypatch):
             self.executed.append((str(statement), params or {}))
             return _Result()
 
+    ensure_schema = AsyncMock()
     monkeypatch.setattr(
         "samchat.budgets.service.ensure_budget_schema",
-        AsyncMock(),
+        ensure_schema,
     )
     session = _Session()
 
@@ -86,6 +87,7 @@ async def test_list_budget_concepts_filters_by_budget_direction(monkeypatch):
     statement, params = session.executed[0]
     assert "COALESCE(bc.budget_direction, 'expense') = :budget_direction" in statement
     assert params["budget_direction"] == "income"
+    ensure_schema.assert_not_awaited()
 
 
 @pytest.mark.asyncio
