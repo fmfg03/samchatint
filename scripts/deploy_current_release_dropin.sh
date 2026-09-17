@@ -77,13 +77,30 @@ ensure_copa_telmex_bundle() {
     return 0
   fi
 
-  local source="${COPA_TELMEX_DIST_SOURCE:-}"
-  if [[ -z "$source" && -L /srv/samchat/current && -f /srv/samchat/current/copatelmex/dist/index.html ]]; then
-    source="$(readlink -f /srv/samchat/current)/copatelmex/dist"
+  local current_release=""
+  if [[ -L /srv/samchat/current ]]; then
+    current_release="$(readlink -f /srv/samchat/current)"
+  fi
+  local -a candidates=()
+  [[ -n "${COPA_TELMEX_DIST_SOURCE:-}" ]] && candidates+=("$COPA_TELMEX_DIST_SOURCE")
+  [[ -n "${COPA_TELMEX_DIST_DIR:-}" ]] && candidates+=("$COPA_TELMEX_DIST_DIR")
+  if [[ -n "$current_release" ]]; then
+    candidates+=("$current_release/copatelmex/dist")
+    local backup_dist
+    for backup_dist in "$current_release"/copatelmex.backup-*/dist; do
+      [[ -f "$backup_dist/index.html" ]] && candidates+=("$backup_dist")
+    done
   fi
 
-  if [[ -z "$source" || ! -f "$source/index.html" ]]; then
-    echo "Release is missing copatelmex/dist; set COPA_TELMEX_DIST_SOURCE to a verified bundle" >&2
+  local source=""
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "$candidate/index.html" ]]; then
+      source="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$source" ]]; then
+    echo "Release is missing copatelmex/dist and no runtime-recognized bundle was found" >&2
     exit 69
   fi
 

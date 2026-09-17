@@ -50,8 +50,8 @@ def effective_document_beneficiary(documento: Any) -> Any:
     return (
         getattr(documento, "beneficiario_empleado", None)
         or getattr(documento, "beneficiario_proveedor_cliente", None)
-        or getattr(documento, "proveedor_cliente", None)
         or effective_account_beneficiary(cuenta)
+        or getattr(documento, "proveedor_cliente", None)
         or getattr(documento, "empleado", None)
     )
 

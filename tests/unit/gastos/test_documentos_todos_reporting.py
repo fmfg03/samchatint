@@ -113,6 +113,20 @@ def test_effective_document_beneficiary_uses_account_third_party_before_requeste
     assert effective_document_beneficiary_name(documento) == "Mauricio Figueroa Moreno"
 
 
+def test_effective_document_beneficiary_prefers_account_party_over_legacy_bank_provider():
+    documento = _doc(
+        tipo="INFORME",
+        proveedor_cliente=SimpleNamespace(nombre="Cuenta bancaria Alicia"),
+        cuenta_gastos=SimpleNamespace(
+            beneficiario_empleado=SimpleNamespace(nombre="Carlos Lozano"),
+            beneficiario_proveedor_cliente=None,
+            empleado=SimpleNamespace(nombre="Alicia Edith Zuniga Salazar"),
+        ),
+    )
+
+    assert effective_document_beneficiary_name(documento) == "Carlos Lozano"
+
+
 def test_approval_history_uses_effective_third_party_beneficiary():
     documento = _doc(
         tipo="INFORME",
