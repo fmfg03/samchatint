@@ -2576,6 +2576,13 @@ def _iter_budget_concept_catalog_rows(
                             subproject_keys.append(key)
             if any(trailing_values):
                 metadata["sheet_dimension_values"] = trailing_values
+        for entry in aggregated_rows.values():
+            metadata = entry["metadata"]
+            has_scope = bool(
+                metadata["applicable_phase_keys"]
+                or metadata["applicable_subproject_keys"]
+            )
+            metadata["scope_mode"] = "phase_scoped" if has_scope else "global"
         rows.extend(aggregated_rows.values())
     return rows
 
@@ -2639,7 +2646,9 @@ def budget_concept_matches_fase(
         if _safe_str(key)
     }
     if not applicable_keys:
-        return True
+        # Empty legacy metadata is not evidence that a concept applies to every
+        # phase. Only records explicitly saved as global may bypass the filter.
+        return _safe_str(metadata.get("scope_mode")).lower() == "global"
     return bool(applicable_keys & selected_aliases)
 
 
@@ -2808,6 +2817,7 @@ def build_budget_concept_scope_metadata(
     labels = [_safe_str(label) for label in (scope_labels or []) if _safe_str(label)]
     if not labels:
         return {
+            "scope_mode": "global",
             "applicable_phase_labels": [],
             "applicable_phase_keys": [],
             "applicable_subproject_labels": [],
@@ -2849,6 +2859,7 @@ def build_budget_concept_scope_metadata(
             if key not in subproject_keys:
                 subproject_keys.append(key)
     return {
+        "scope_mode": "phase_scoped",
         "applicable_phase_labels": phase_labels,
         "applicable_phase_keys": phase_keys,
         "applicable_subproject_labels": subproject_labels,
@@ -2867,7 +2878,11 @@ def budget_concept_scope_summary(metadata: Optional[dict[str, Any]]) -> str:
         if _safe_str(label)
     ]
     if not labels:
-        return "Todas las fases / subproyectos"
+        return (
+            "Todas las fases / subproyectos"
+            if _safe_str(payload.get("scope_mode")).lower() == "global"
+            else "Sin alcance configurado"
+        )
     return ", ".join(labels)
 
 

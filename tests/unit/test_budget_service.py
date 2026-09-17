@@ -547,11 +547,22 @@ def test_budget_concept_matches_fase_uses_catalog_scope_keys() -> None:
     assert budget_concept_matches_fase(concept, "Nacional") is False
 
 
+def test_budget_concept_matches_fase_requires_explicit_global_scope() -> None:
+    assert budget_concept_matches_fase({"metadata": {}}, "Nacional") is False
+    assert (
+        budget_concept_matches_fase(
+            {"metadata": {"scope_mode": "global"}}, "Nacional"
+        )
+        is True
+    )
+
+
 def test_build_budget_concept_scope_metadata_empty_is_global() -> None:
     metadata = build_budget_concept_scope_metadata([])
 
     assert metadata["applicable_phase_labels"] == []
     assert metadata["applicable_phase_keys"] == []
+    assert metadata["scope_mode"] == "global"
 
 
 def test_build_budget_concept_scope_metadata_collects_phase_aliases() -> None:
@@ -560,6 +571,7 @@ def test_build_budget_concept_scope_metadata_collects_phase_aliases() -> None:
     assert metadata["applicable_phase_labels"] == ["Estatal"]
     assert "estatal" in metadata["applicable_phase_keys"]
     assert "fase_estatal" in metadata["applicable_phase_keys"]
+    assert metadata["scope_mode"] == "phase_scoped"
 
 
 def test_budget_concept_scope_summary_renders_labels() -> None:
@@ -570,9 +582,10 @@ def test_budget_concept_scope_summary_renders_labels() -> None:
         == "Estatal, Nacional"
     )
     assert (
-        budget_concept_scope_summary({})
+        budget_concept_scope_summary({"scope_mode": "global"})
         == "Todas las fases / subproyectos"
     )
+    assert budget_concept_scope_summary({}) == "Sin alcance configurado"
 
 
 @pytest.mark.asyncio
