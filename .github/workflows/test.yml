@@ -208,7 +208,9 @@ jobs:
 
       - name: Combine coverage data
         run: |
-          coverage combine coverage-data/coverage-data-unit coverage-data/coverage-data-integration
+          mv coverage-data/coverage-data-unit/.coverage coverage-data/.coverage.unit
+          mv coverage-data/coverage-data-integration/.coverage coverage-data/.coverage.integration
+          coverage combine coverage-data
           coverage xml -o coverage.xml
 
       - name: Enforce coverage on changed lines
