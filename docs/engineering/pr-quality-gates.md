@@ -25,6 +25,12 @@ Pytest is invoked directly. A missing test runner, an empty required suite, a
 failed test, a missing report, or a skipped mandatory job cannot produce a
 green aggregate gate.
 
+The repository currently has 13 documented unit failures in
+`.github/pytest-unit-failures.txt`. The full suite still runs. A validator
+requires the observed failure set to match that file exactly: any new failure
+blocks, and any resolved failure also blocks until its obsolete exception is
+removed. This is a bounded migration baseline, not a permanent skip list.
+
 ## Scope boundaries
 
 Performance, load, destructive migration, production-data reconciliation, and
