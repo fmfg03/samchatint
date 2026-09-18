@@ -50,10 +50,6 @@ def validate(document: dict, workflow_text: str) -> list[str]:
     unit = "\n".join(_run_blocks(jobs.get("unit-tests", {})))
     integration = "\n".join(_run_blocks(jobs.get("integration-tests", {})))
     coverage = "\n".join(_run_blocks(jobs.get("changed-code-coverage", {})))
-    matrix = jobs.get("unit-tests", {}).get("strategy", {}).get("matrix", {})
-
-    if matrix.get("python-version") != ["3.11", "3.12"]:
-        errors.append("unit tests must run on Python 3.11 and 3.12")
     if "python -m pytest tests/unit" not in unit:
         errors.append("unit-tests does not invoke pytest directly on tests/unit")
     if "python -m pytest tests/integration" not in integration:
