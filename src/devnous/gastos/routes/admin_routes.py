@@ -1099,7 +1099,7 @@ def render_admin_navigation(
         ("admin.finanzas", "/admin/artifacts", "Artifacts", "artifacts"),
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Matching CFDI", "matching"),
         ("admin.gastos.sat", "/admin/gastos/sat", "e.firma SAT", "sat"),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "limpieza"),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "limpieza"),
     ]
     payment_run_item = None
     if can_access_payment_run(current_empleado):
@@ -3465,7 +3465,7 @@ async def admin_dashboard(
                             for href, title, description in filter_cards_by_tools(
                                 [
                                     ("admin.finanzas", "/admin/finanzas", "Cierre del mes", "Prioriza pagos, COI, DIOT y pólizas del periodo activo."),
-                                    ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+                                    ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Corrige CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
                                     ("admin.contabilidad", "/admin/contabilidad/estado", "Estado contable", "Resumen mensual de COI, auxiliar, banco y conciliación."),
                                     ("admin.gastos.expenses", "/admin/gastos/expenses", "Gastos", "Tabla global de gastos, filtros operativos y exportaciones."),
                                     ("presupuestos.ingresos", "/admin/presupuestos", "Ingresos", "Vincula CFDI PSP a torneo, fase y partida para alimentar Ingreso real."),
@@ -25131,7 +25131,7 @@ async def gastos_sin_cuenta_contable(
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Pólizas COI - Admin</title>
+        <title>Limpieza contable - Admin</title>
         <style>
             {_admin_workspace_styles("1760px")}
             .status-banner {{
@@ -25448,7 +25448,7 @@ async def gastos_sin_cuenta_contable(
             {render_admin_navigation(current_empleado, "limpieza", subtitle="Prepara pólizas COI desde la misma consola financiera: CFDI, cuentas contables y desglose fiscal.")}
             {_render_admin_workspace_hero(
                 eyebrow="Contabilidad",
-                title="Pólizas COI",
+                title="Limpieza contable",
                 description="Bandeja de preparación para completar CFDI, cuenta de cargo, contrapartida y campos fiscales existentes antes de exportar a COI.",
                 actions_html=hero_actions_html,
                 side_html=hero_side_html,
@@ -25525,7 +25525,7 @@ async def gastos_sin_cuenta_contable(
                     <div class="review-toolbar">
                         <div>
                             <div class="eyebrow">Acciones</div>
-                            <h2 style="margin:0;">Preparar pólizas COI</h2>
+                            <h2 style="margin:0;">Pendientes de clasificación contable</h2>
                             <div class="section-note">Puedes aceptar sugerencias de alta confianza y guardar por fila la cuenta de cargo, contrapartida, CFDI y campos fiscales editables.</div>
                         </div>
                         <div class="toolbar-actions">

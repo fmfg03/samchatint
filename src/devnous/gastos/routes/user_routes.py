@@ -4364,28 +4364,31 @@ async def _load_coi_lote_informe_documentos(
     start_dt: datetime,
     end_dt: datetime,
 ) -> List[Documento]:
-    """Approved INFORME documents whose approval (or creation) falls in the period."""
+    """Approved INFORME documents with an active expense on the accounting period."""
+    expense_in_period = exists(
+        select(ExpenseReport.id).where(
+            ExpenseReport.estado_gasto != "cancelado",
+            ExpenseReport.fecha >= start_dt,
+            ExpenseReport.fecha < end_dt,
+            or_(
+                ExpenseReport.documento_id == Documento.id,
+                ExpenseReport.informe_documento_id == Documento.id,
+                and_(
+                    Documento.cuenta_gastos_id.isnot(None),
+                    ExpenseReport.cuenta_gastos_id == Documento.cuenta_gastos_id,
+                ),
+            ),
+        )
+    )
     return (
         await session.execute(
             select(Documento)
             .where(
                 Documento.tipo == "INFORME",
                 Documento.estado == "aprobado",
-                or_(
-                    and_(
-                        Documento.aprobado_en.isnot(None),
-                        Documento.aprobado_en >= start_dt,
-                        Documento.aprobado_en < end_dt,
-                    ),
-                    and_(
-                        Documento.aprobado_en.is_(None),
-                        Documento.creado_en >= start_dt,
-                        Documento.creado_en < end_dt,
-                    ),
-                ),
+                expense_in_period,
             )
             .order_by(
-                Documento.aprobado_en.asc().nullslast(),
                 Documento.numero_referencia.asc(),
             )
         )
@@ -4417,6 +4420,14 @@ async def _load_coi_lote_terceros_documentos(
         )
         .distinct()
     )
+    expense_in_period = exists(
+        select(ExpenseReport.id).where(
+            ExpenseReport.documento_id == Documento.id,
+            ExpenseReport.estado_gasto != "cancelado",
+            ExpenseReport.fecha >= start_dt,
+            ExpenseReport.fecha < end_dt,
+        )
+    )
     return (
         await session.execute(
             select(Documento)
@@ -4426,29 +4437,10 @@ async def _load_coi_lote_terceros_documentos(
                 Documento.cuenta_gastos_id.is_(None),
                 Documento.gasto_generado_id.isnot(None),
                 ~Documento.id.in_(folded_into_informe),
-                or_(
-                    and_(
-                        Documento.pagado_en.isnot(None),
-                        Documento.pagado_en >= start_dt,
-                        Documento.pagado_en < end_dt,
-                    ),
-                    and_(
-                        Documento.pagado_en.is_(None),
-                        Documento.fecha_pago.isnot(None),
-                        Documento.fecha_pago >= start_date,
-                        Documento.fecha_pago < end_date,
-                    ),
-                    and_(
-                        Documento.pagado_en.is_(None),
-                        Documento.fecha_pago.is_(None),
-                        Documento.creado_en >= start_dt,
-                        Documento.creado_en < end_dt,
-                    ),
-                ),
+                or_(Documento.pagado_en.isnot(None), Documento.fecha_pago.isnot(None)),
+                expense_in_period,
             )
             .order_by(
-                Documento.pagado_en.asc().nullslast(),
-                Documento.fecha_pago.asc().nullslast(),
                 Documento.numero_referencia.asc(),
             )
         )
@@ -4458,8 +4450,10 @@ async def _load_coi_lote_terceros_documentos(
 async def _load_documento_active_coi_expenses(
     session: AsyncSession,
     documento: Documento,
+    start_dt: datetime,
+    end_dt: datetime,
 ) -> List[ExpenseReport]:
-    """Load active expenses for COI export using the same scope as _build_documento_coi_bundle."""
+    """Load active expenses for the document in the selected accounting month."""
     if documento.tipo == "INFORME":
         expense_conditions = [
             ExpenseReport.documento_id == documento.id,
@@ -4479,6 +4473,8 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     or_(*expense_conditions),
                     ExpenseReport.estado_gasto != "cancelado",
+                    ExpenseReport.fecha >= start_dt,
+                    ExpenseReport.fecha < end_dt,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4494,6 +4490,8 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     ExpenseReport.documento_id == documento.id,
                     ExpenseReport.estado_gasto != "cancelado",
+                    ExpenseReport.fecha >= start_dt,
+                    ExpenseReport.fecha < end_dt,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4572,7 +4570,9 @@ async def _build_coi_exportable_lote_rows(
     rows: List[dict[str, Any]] = []
     for tipo_lote, documentos in documento_batches:
         for documento in documentos:
-            expenses = await _load_documento_active_coi_expenses(session, documento)
+            expenses = await _load_documento_active_coi_expenses(
+                session, documento, start_dt, end_dt
+            )
             ready_expenses: List[ExpenseReport] = []
             for expense in expenses:
                 ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
@@ -4598,6 +4598,46 @@ async def _build_coi_exportable_lote_rows(
                         "block_reason": "",
                     }
                 )
+    actor_ids = {
+        actor_id
+        for row in rows
+        for actor_id in (
+            getattr(row["expense"], "coi_status_updated_by_id", None),
+            getattr(row["expense"], "coi_exported_by_id", None),
+        )
+        if actor_id is not None
+    }
+    actors_by_id: dict[Any, str] = {}
+    if actor_ids:
+        actor_rows = await session.execute(
+            select(Empleado.id, Empleado.nombre).where(Empleado.id.in_(actor_ids))
+        )
+        actors_by_id = {
+            actor_id: (actor_name or "No registrado")
+            for actor_id, actor_name in actor_rows.all()
+        }
+    for row in rows:
+        expense = row["expense"]
+        status_updated_at = getattr(expense, "coi_status_updated_at", None)
+        exported_at = getattr(expense, "coi_exported_at", None)
+        row["audit"] = {
+            "status_changed_at": (
+                status_updated_at.isoformat(sep=" ", timespec="seconds")
+                if status_updated_at
+                else "No registrado"
+            ),
+            "status_changed_by": actors_by_id.get(
+                getattr(expense, "coi_status_updated_by_id", None), "No registrado"
+            ),
+            "exported_at": (
+                exported_at.isoformat(sep=" ", timespec="seconds")
+                if exported_at
+                else "No registrado"
+            ),
+            "exported_by": actors_by_id.get(
+                getattr(expense, "coi_exported_by_id", None), "No registrado"
+            ),
+        }
     return rows
 
 
@@ -4668,11 +4708,16 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             else "-"
         )
         coi_estado = getattr(expense, "coi_estado", None) or "pendiente"
+        audit = row.get("audit") or {}
+        status_changed_at = audit.get("status_changed_at") or "No registrado"
+        status_changed_by = audit.get("status_changed_by") or "No registrado"
+        exported_at = audit.get("exported_at") or "No registrado"
+        exported_by = audit.get("exported_by") or "No registrado"
         gasto_link = f'<a href="/gastos/{expense_id}">{gasto_ref}</a>'
         coi_action = (
             f'<a href="/gastos/{expense_id}/exportar-coi.xlsx" '
             f'class="button" style="padding:8px 12px;font-size:12px;">'
-            "Generar poliza COI</a>"
+            "Generar descarga COI</a>"
         )
         status_form = (
             f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense_id}/estado" '
@@ -4687,8 +4732,8 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
         rendered.append(
             f"""
         <tr>
-            <td style="text-align:center;"><input type="checkbox" form="coi-export-form" name="selected_gasto_id" value="{expense_id}" checked></td>
-            <td>{_coi_estado_badge(coi_estado)}<div style="margin-top:6px;">{status_form}</div></td>
+            <td style="text-align:center;"><input class="coi-selection-checkbox" type="checkbox" form="coi-export-form" name="selected_gasto_id" value="{expense_id}"></td>
+            <td>{_coi_estado_badge(coi_estado)}<div style="margin-top:6px;">{status_form}</div><div class="muted" style="margin-top:6px;">Clasificación: {escape(status_changed_at)} · {escape(status_changed_by)}<br>Exportación: {escape(exported_at)} · {escape(exported_by)}</div></td>
             <td>{escape(tipo_label)}</td>
             <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
             <td>{escape(row["period_label"])}</td>
@@ -4783,13 +4828,33 @@ async def _collect_coi_lote_expense_cfdis(
 
 
 @router.get("/admin/contabilidad/coi/exportar-gastos-lote.xlsx", response_model=None)
+async def exportar_coi_gastos_lote_xlsx_legacy(
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+) -> RedirectResponse:
+    """Keep legacy GET links read-only; batch export must use explicit selection."""
+    now = datetime.utcnow()
+    selected_year = year or now.year
+    selected_month = month or now.month
+    return RedirectResponse(
+        url=(
+            f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+            "&error_msg="
+            + quote("Selecciona las pólizas visibles que deseas exportar.")
+        ),
+        status_code=303,
+    )
+
+
+@router.post("/admin/contabilidad/coi/exportar-gastos-lote.xlsx", response_model=None)
 async def exportar_coi_gastos_lote_xlsx(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = require_admin_finanzas(),
-    year: Optional[int] = Query(None),
-    month: Optional[int] = Query(None),
-    selection_mode: Optional[str] = Query(None),
-    selected_gasto_id: Optional[List[UUIDType]] = Query(None),
+    year: Optional[int] = Form(None),
+    month: Optional[int] = Form(None),
+    q: str = Form(""),
+    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
+    confirmed_selection_count: Optional[int] = Form(None),
 ) -> Union[Response, RedirectResponse]:
     now = datetime.utcnow()
     selected_year = year or now.year
@@ -4805,28 +4870,46 @@ async def exportar_coi_gastos_lote_xlsx(
         end_dt=end_dt,
         start_date=start_date,
         end_date=end_date,
+        search_q=(q or "").strip(),
     )
 
-    if selection_mode:
-        selected_ids = {str(item) for item in (selected_gasto_id or [])}
-        exportable_rows = [
-            row for row in exportable_rows
-            if str(row.get("expense").id) in selected_ids
-        ]
-        if not exportable_rows:
-            return RedirectResponse(
-                url=(
-                    f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
-                    "&error_msg="
-                    + quote("Selecciona al menos una poliza/gasto para exportar a COI.")
-                ),
-                status_code=303,
-            )
-
+    redirect_params = f"year={selected_year}&month={selected_month}"
+    if (q or "").strip():
+        redirect_params += "&q=" + quote((q or "").strip())
+    selected_ids_list = [str(item) for item in (selected_gasto_id or [])]
+    selected_ids = set(selected_ids_list)
+    visible_ids = {str(row["expense"].id) for row in exportable_rows}
+    if not selected_ids:
+        return RedirectResponse(
+            url=(
+                f"/admin/contabilidad/coi?{redirect_params}&error_msg="
+                + quote("Selecciona al menos una póliza visible para exportar a COI.")
+            ),
+            status_code=303,
+        )
+    if len(selected_ids) != len(selected_ids_list) or not selected_ids.issubset(visible_ids):
+        return RedirectResponse(
+            url=(
+                f"/admin/contabilidad/coi?{redirect_params}&error_msg="
+                + quote("La selección ya no coincide con las pólizas visibles del filtro.")
+            ),
+            status_code=303,
+        )
+    exportable_rows = [
+        row for row in exportable_rows if str(row["expense"].id) in selected_ids
+    ]
+    if confirmed_selection_count != len(exportable_rows):
+        return RedirectResponse(
+            url=(
+                f"/admin/contabilidad/coi?{redirect_params}&error_msg="
+                + quote("Confirma nuevamente el número exacto de pólizas a exportar.")
+            ),
+            status_code=303,
+        )
     if not exportable_rows:
         return RedirectResponse(
             url=(
-                f"/admin/contabilidad/coi?year={selected_year}&month={selected_month}"
+                f"/admin/contabilidad/coi?{redirect_params}"
                 "&error_msg="
                 + quote(
                     "No hay gastos con preparación COI guardada (Listo COI) "
@@ -5037,7 +5120,7 @@ async def contabilidad_coi_view(
 
     html = f"""
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Contabilidad COI</title>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Historial COI</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; }}
     .container {{ max-width: 1520px; margin:0 auto; }}
@@ -5058,8 +5141,8 @@ async def contabilidad_coi_view(
     </style></head>
     <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("coi")}
     <div class="card">
-        <h1 style="margin:0 0 8px 0;">Espejo COI</h1>
-        <p class="muted" style="margin:0 0 16px 0;">Vista operativa sobre `accounting_polizas` y `accounting_poliza_lines`. Ya no depende del Excel; refleja exactamente lo importado al sistema.</p>
+        <h1 style="margin:0 0 8px 0;">Historial COI</h1>
+        <p class="muted" style="margin:0 0 16px 0;">Consulta pólizas importadas y gastos preparados o exportados por SamChat. El mes de los gastos se determina exclusivamente por su fecha contable.</p>
         {f'<div style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>✅ Éxito:</strong> {escape(success_msg)}</div>' if success_msg else ''}
         {f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>❌ Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
         <form method="GET" action="/admin/contabilidad/coi" class="toolbar" style="margin-bottom:16px;">
@@ -5078,22 +5161,23 @@ async def contabilidad_coi_view(
     </div>
     <div class="card">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-            <h2 style="margin:0;">Gastos listos para COI en este periodo</h2>
-            <form id="coi-export-form" method="GET" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <h2 style="margin:0;">Gastos preparados para COI en este periodo</h2>
+            <form id="coi-export-form" method="POST" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
-                <input type="hidden" name="selection_mode" value="1">
-                <button type="submit" class="button">Exportar seleccionados</button>
-                <a href="/admin/contabilidad/coi/exportar-gastos-lote.xlsx?year={selected_year}&month={selected_month}" class="button secondary">Exportar todo</a>
+                <input type="hidden" name="q" value="{_html_value(selected_q)}">
+                <input type="hidden" id="coi-confirmed-selection-count" name="confirmed_selection_count" value="0">
+                <span id="coi-selected-count" class="muted" aria-live="polite">0 seleccionadas</span>
+                <button id="coi-export-selected" type="submit" class="button" disabled>Exportar seleccionadas</button>
             </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
-            Solo gastos con preparación COI guardada (<strong>Listo COI</strong> en
-            <a href="/admin/gastos/sin-cuenta-contable">Pólizas COI</a>) dentro de informes aprobados
-            o solicitudes a terceros pagadas del periodo {selected_year}-{selected_month:02d}.
+            Sólo gastos con preparación COI guardada (<strong>Listo COI</strong> en
+            <a href="/admin/gastos/sin-cuenta-contable">Limpieza contable</a>) dentro de informes aprobados
+            o solicitudes a terceros pagadas, cuya fecha contable pertenece al periodo {selected_year}-{selected_month:02d}.
             Cada fila genera una póliza individual vía <code>/gastos/{{id}}/exportar-coi.xlsx</code>
             (mismo formato que solicitudes a terceros). El documento conserva su descarga consolidada.
-            La exportación en lote descarga un Excel COI consolidado con todos los gastos listos del periodo;
+            La exportación en lote descarga un Excel COI consolidado únicamente con las filas visibles que selecciones;
             la hoja Manifest registra partidas exportadas u omitidas.
         </p>
         <div class="summary" style="margin-bottom:12px;">
@@ -5108,7 +5192,7 @@ async def contabilidad_coi_view(
         <table>
             <thead>
                 <tr>
-                    <th>Sel.</th>
+                    <th><input id="coi-select-all" type="checkbox" aria-label="Seleccionar todas las pólizas visibles"></th>
                     <th>Estatus COI</th>
                     <th>Tipo</th>
                     <th>Documento</th>
@@ -5148,7 +5232,42 @@ async def contabilidad_coi_view(
             <tbody>{run_rows if run_rows else '<tr><td colspan="5" class="muted">Sin imports COI registrados.</td></tr>'}</tbody>
         </table>
     </div>
-    </div></body></html>
+    </div>
+    <script>
+    (() => {{
+        const form = document.getElementById("coi-export-form");
+        const selectAll = document.getElementById("coi-select-all");
+        const counter = document.getElementById("coi-selected-count");
+        const confirmCount = document.getElementById("coi-confirmed-selection-count");
+        const exportButton = document.getElementById("coi-export-selected");
+        const boxes = Array.from(document.querySelectorAll(".coi-selection-checkbox"));
+        const syncSelection = () => {{
+            const selected = boxes.filter((box) => box.checked).length;
+            counter.textContent = selected + (selected === 1 ? " seleccionada" : " seleccionadas");
+            confirmCount.value = String(selected);
+            exportButton.disabled = selected === 0;
+            selectAll.checked = boxes.length > 0 && selected === boxes.length;
+            selectAll.indeterminate = selected > 0 && selected < boxes.length;
+        }};
+        selectAll.addEventListener("change", () => {{
+            boxes.forEach((box) => {{ box.checked = selectAll.checked; }});
+            syncSelection();
+        }});
+        boxes.forEach((box) => box.addEventListener("change", syncSelection));
+        form.addEventListener("submit", (event) => {{
+            const selected = boxes.filter((box) => box.checked).length;
+            if (selected === 0) {{
+                event.preventDefault();
+                window.alert("Selecciona al menos una póliza visible para exportar.");
+                return;
+            }}
+            if (!window.confirm("Vas a exportar " + selected + (selected === 1 ? " póliza visible." : " pólizas visibles."))) {{
+                event.preventDefault();
+            }}
+        }});
+        syncSelection();
+    }})();
+    </script></body></html>
     """
     return html
 
@@ -15306,7 +15425,7 @@ async def panel(
         ("admin.gastos.cfdi_matching", "/admin/gastos/cfdis/matching", "Emparejar CFDIs y gastos", "Revisa el vínculo por UUID con empleado y proyecto operativo."),
         ("admin.gastos.cfdi_carga", "/admin/gastos/cfdis/carga-masiva", "Carga masiva CFDI", "Importa CSV por UUID para alimentar la revisión de matching."),
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta para conciliación mensual; requiere piloto UAT antes de operación."),
-        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
+        ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Limpieza contable", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
     if is_superadmin_role(getattr(current_empleado, "rol", None)):
         operacion_contable_cards.append(
@@ -32882,7 +33001,7 @@ async def _build_documento_coi_bundle(
             status_code=400,
             detail=(
                 "Ningún gasto completó la preparación COI (Listo COI). "
-                "Guarde la preparación en Pólizas COI antes de exportar."
+                "Guarde la preparación en Limpieza contable antes de exportar."
             ),
         )
 
