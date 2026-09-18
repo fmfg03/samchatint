@@ -1852,6 +1852,43 @@ class BeneficiaryOnboardingAttachment(Base):
         )
 
 
+class CFDIDuplicateReleaseOperation(Base):
+    """Durable, idempotent receipt for a superadmin CFDI-link release."""
+
+    __tablename__ = "cfdi_duplicate_release_operations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    actor_empleado_id = Column(
+        UUID(as_uuid=True), ForeignKey("empleados.id"), nullable=False, index=True
+    )
+    idempotency_key = Column(UUID(as_uuid=True), nullable=False)
+    selection_hash = Column(String(64), nullable=False)
+    motivo = Column(Text, nullable=False)
+    estado = Column(String(32), nullable=False, default="aplicada")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
+class CFDIDuplicateReleaseOperationItem(Base):
+    """Per-UUID before/after receipt rows for a release operation."""
+
+    __tablename__ = "cfdi_duplicate_release_operation_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    operation_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("cfdi_duplicate_release_operations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    cfdi_report_id = Column(UUID(as_uuid=True), ForeignKey("cfdi_reports.id"), nullable=True)
+    cfdi_uuid = Column(String(64), nullable=False)
+    resultado = Column(String(32), nullable=False)
+    motivo_resultado = Column(Text, nullable=True)
+    before_json = Column(JSONB, nullable=False, default=dict)
+    after_json = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow, nullable=False)
+
+
 class Documento(Base):
     """
     Document model for grouping expenses under a single reference number.
