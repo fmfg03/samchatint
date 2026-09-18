@@ -7,7 +7,7 @@ name = "samchat-devnous"
 version = "0.1.0"
 description = "SamChat/DevNous: AI-Powered Multi-Agent Project Management System"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [{ name = "DevNous Team" }]
 dynamic = ["dependencies"]
