@@ -9,6 +9,7 @@ pytest-benchmark>=4.0.0
 pytest-html>=4.0.0
 pytest-rerunfailures>=12.0
 pytest-timeout>=2.1.0
+PyYAML>=6.0.1
 fakeredis>=2.16.0
 factory_boy>=3.3.0
 freezegun>=1.2.0
