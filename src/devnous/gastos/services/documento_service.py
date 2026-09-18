@@ -30,7 +30,7 @@ from .cfdi_expense_link_service import (
 from .cfdi_ingestion_service import (
     CFDIDuplicateLinkError,
     CFDIIngestionError,
-    has_existing_cfdi_usage,
+    find_blocking_cfdi_usage,
     ingest_cfdi_from_upload,
 )
 from .cfdi_upload_resolver import merge_cfdi_upload_bytes
@@ -111,6 +111,8 @@ class SolicitudTercerosPayload:
     budget_concept_id: Optional[UUID] = None
     pago_urgente: bool = False
     cfdi_compartido_confirmado: bool = False
+    client_submission_id: Optional[UUID] = None
+    can_disclose_cfdi_conflict: bool = False
 
 
 @dataclass(slots=True)
@@ -283,6 +285,8 @@ def build_solicitud_terceros_payload(
     budget_concept_id: Optional[str] = None,
     pago_urgente: bool = False,
     cfdi_compartido_confirmado: bool = False,
+    client_submission_id: Optional[str] = None,
+    can_disclose_cfdi_conflict: bool = False,
 ) -> SolicitudTercerosPayload:
     try:
         monto = float(monto_solicitado)
@@ -354,6 +358,15 @@ def build_solicitud_terceros_payload(
                 "UUID CFDI inválido. Debe ser un UUID válido (ej: C027C9F4-92CF-4190-BB89-3E76AB2ECA70).",
             ) from exc
 
+    submission_id: Optional[UUID] = None
+    if (client_submission_id or "").strip():
+        try:
+            submission_id = UUID(str(client_submission_id).strip())
+        except (TypeError, ValueError) as exc:
+            raise SolicitudValidationError(
+                "invalid_submission_id", "El identificador del envío no es válido."
+            ) from exc
+
     payload_attachments = list(attachments or [])
     if pdf_bytes:
         payload_attachments.insert(
@@ -396,6 +409,8 @@ def build_solicitud_terceros_payload(
         budget_concept_id=_parse_optional_budget_concept_uuid(budget_concept_id),
         pago_urgente=bool(pago_urgente),
         cfdi_compartido_confirmado=bool(cfdi_compartido_confirmado),
+        client_submission_id=submission_id,
+        can_disclose_cfdi_conflict=bool(can_disclose_cfdi_conflict),
     )
 
 
@@ -541,6 +556,27 @@ async def create_solicitud_terceros_document(
     payload: SolicitudTercerosPayload,
 ) -> Documento:
     """Create a SOLICITUD document for a third-party payment request."""
+    if payload.client_submission_id is not None:
+        # The lock plus the database unique index makes a duplicate POST from
+        # the same browser form a replay, even when both requests arrive at
+        # the same time.
+        lock_key = f"solicitud:{payload.empleado_id}:{payload.client_submission_id}"
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": lock_key},
+        )
+        existing = await session.execute(
+            select(Documento).where(
+                Documento.empleado_id == payload.empleado_id,
+                Documento.client_submission_id == payload.client_submission_id,
+            )
+        )
+        existing_documento = existing.scalar_one_or_none()
+        if existing_documento is not None:
+            # This transient marker avoids a second success-audit event in the
+            # HTTP route; it is deliberately not persisted.
+            existing_documento._idempotent_replay = True
+            return existing_documento
     proveedor_result = await session.execute(
         select(ProveedorCliente).where(
             and_(
@@ -634,15 +670,17 @@ async def create_solicitud_terceros_document(
             session, payload.cfdi_uuid_manual
         )
         if matched is not None:
-            if (
-                await has_existing_cfdi_usage(session, matched.id)
-                and not payload.cfdi_compartido_confirmado
-            ):
+            conflict = await find_blocking_cfdi_usage(session, matched.id)
+            if conflict is not None and not payload.cfdi_compartido_confirmado:
+                message = "La factura ya está reservada en otro gasto o solicitud."
+                if (
+                    payload.can_disclose_cfdi_conflict
+                    or conflict.empleado_id == payload.empleado_id
+                ):
+                    message = conflict.message()
                 raise SolicitudValidationError(
                     "duplicate_cfdi",
-                    "La factura ya está vinculada a otro gasto o solicitud. "
-                    "Confirme explícitamente que es una factura compartida para "
-                    "continuar.",
+                    message + " Confirme explícitamente que es una factura compartida para continuar.",
                 )
             cfdi_report_id = matched.id
 
@@ -673,6 +711,7 @@ async def create_solicitud_terceros_document(
         budget_concept_id=payload.budget_concept_id,
         cfdi_uuid_manual=payload.cfdi_uuid_manual,
         cfdi_compartido_confirmado=payload.cfdi_compartido_confirmado,
+        client_submission_id=payload.client_submission_id,
         cfdi_report_id=cfdi_report_id,
     )
     session.add(documento)

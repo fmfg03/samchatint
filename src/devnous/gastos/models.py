@@ -1947,6 +1947,9 @@ class Documento(Base):
     # CFDI capture at solicitud time (canonical UUID; linked to CFDIReport when available)
     cfdi_uuid_manual = Column(Text, nullable=True, index=True)
     cfdi_compartido_confirmado = Column(Boolean, default=False, nullable=False)
+    # Browser-generated key that makes a repeated form submission return the
+    # original solicitud instead of creating a second financial record.
+    client_submission_id = Column(UUID(as_uuid=True), nullable=True, index=True)
     cfdi_report_id = Column(
         UUID(as_uuid=True),
         ForeignKey("cfdi_reports.id", onupdate="CASCADE", ondelete="SET NULL"),

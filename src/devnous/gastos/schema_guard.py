@@ -92,6 +92,7 @@ REQUIRED_COLUMNS: Sequence[RequiredColumn] = (
     RequiredColumn("documentos", "referencia_operaciones"),
     RequiredColumn("documentos", "cuenta_gastos_id"),
     RequiredColumn("documentos", "cfdi_uuid_manual"),
+    RequiredColumn("documentos", "client_submission_id"),
     RequiredColumn("documentos", "cfdi_report_id"),
     RequiredColumn("documentos", "fase"),
     RequiredColumn("documentos", "categorias"),
@@ -1799,6 +1800,14 @@ SCHEMA_PATCHES: Sequence[Tuple[str, str]] = (
     (
         "documentos_cfdi_uuid_manual_column",
         "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS cfdi_uuid_manual TEXT NULL",
+    ),
+    (
+        "documentos_client_submission_id_column",
+        "ALTER TABLE IF EXISTS documentos ADD COLUMN IF NOT EXISTS client_submission_id UUID NULL",
+    ),
+    (
+        "ux_documentos_empleado_client_submission",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_documentos_empleado_client_submission ON documentos(empleado_id, client_submission_id) WHERE client_submission_id IS NOT NULL",
     ),
     (
         "documentos_cfdi_report_id_column",

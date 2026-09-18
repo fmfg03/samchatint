@@ -10,7 +10,7 @@ from uuid import uuid4
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import CFDIReport, Documento, ExpenseReport
+from ..models import CFDIReport, Documento, Empleado, ExpenseReport
 from .cfdi_expense_link_service import (
     find_cfdi_report_by_fiscal_uuid,
     normalize_cfdi_uuid_to_canonical,
@@ -193,6 +193,24 @@ class CFDIDuplicateLinkError(CFDIIngestionError):
         )
 
 
+@dataclass(frozen=True)
+class CFDIUsageConflict:
+    """Authorized, display-safe identity of the record that reserved a CFDI."""
+
+    referencia: str
+    empleado_id: Any
+    responsable: str
+    creado_en: datetime
+    estado: str
+
+    def message(self) -> str:
+        return (
+            f"La factura está reservada en la solicitud {self.referencia}, creada por "
+            f"{self.responsable} el {self.creado_en:%d-%m-%Y %H:%M}, "
+            f"estado {self.estado}."
+        )
+
+
 @dataclass
 class CFDIIngestionResult:
     status: str
@@ -250,31 +268,60 @@ async def _other_expense_links(
     return 1 if result.scalar_one_or_none() is not None else 0
 
 
-async def has_existing_cfdi_usage(
+_CFDI_RESERVING_DOCUMENT_STATES = {
+    "control_presupuestal", "enviado", "aprobado", "en_proceso_pago",
+    "pagado", "cerrado", "reembolsado", "aplicado", "liquidado",
+}
+
+
+async def find_blocking_cfdi_usage(
     session: AsyncSession,
     report_id: Any,
-    entity: Optional[CFDIEntity] = None,
-) -> bool:
-    """Return True when the CFDI is already linked to another expense/document."""
-    expense_conditions = [ExpenseReport.cfdi_report_id == report_id]
-    if isinstance(entity, ExpenseReport) and getattr(entity, "id", None):
-        expense_conditions.append(ExpenseReport.id != entity.id)
-    expense_result = await session.execute(
-        select(ExpenseReport.id).where(and_(*expense_conditions)).limit(1)
-    )
-    if expense_result.scalar_one_or_none() is not None:
-        return True
-
+    *,
+    exclude_documento_id: Optional[Any] = None,
+) -> Optional[CFDIUsageConflict]:
+    """Return the record that reserved a CFDI once it reaches budget control."""
     documento_conditions = [
         Documento.cfdi_report_id == report_id,
-        or_(Documento.estado.is_(None), Documento.estado != "cancelado"),
+        Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
+        Documento.cfdi_compartido_confirmado.is_(False),
     ]
-    if isinstance(entity, Documento) and getattr(entity, "id", None):
-        documento_conditions.append(Documento.id != entity.id)
+    if exclude_documento_id is not None:
+        documento_conditions.append(Documento.id != exclude_documento_id)
     documento_result = await session.execute(
-        select(Documento.id).where(and_(*documento_conditions)).limit(1)
+        select(Documento.numero_referencia, Documento.empleado_id, Empleado.nombre, Documento.creado_en, Documento.estado)
+        .join(Empleado, Empleado.id == Documento.empleado_id)
+        .where(and_(*documento_conditions)).limit(1)
     )
-    return documento_result.scalar_one_or_none() is not None
+    row = documento_result.first()
+    if row is not None:
+        return CFDIUsageConflict(*row)
+
+    expense_result = await session.execute(
+        select(Documento.numero_referencia, Documento.empleado_id, Empleado.nombre, Documento.creado_en, Documento.estado)
+        .join(ExpenseReport, or_(
+            ExpenseReport.informe_documento_id == Documento.id,
+            ExpenseReport.documento_id == Documento.id,
+        ))
+        .join(Empleado, Empleado.id == Documento.empleado_id)
+        .where(
+            ExpenseReport.cfdi_report_id == report_id,
+            ExpenseReport.cfdi_compartido_confirmado.is_(False),
+            Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
+            *([Documento.id != exclude_documento_id] if exclude_documento_id is not None else []),
+        ).limit(1)
+    )
+    row = expense_result.first()
+    return CFDIUsageConflict(*row) if row is not None else None
+
+
+async def has_existing_cfdi_usage(
+    session: AsyncSession, report_id: Any, entity: Optional[CFDIEntity] = None,
+) -> bool:
+    exclude_id = getattr(entity, "id", None) if isinstance(entity, Documento) else None
+    return await find_blocking_cfdi_usage(
+        session, report_id, exclude_documento_id=exclude_id
+    ) is not None
 
 
 async def _ingest_cfdi_parsed(
