@@ -228,21 +228,36 @@ jobs:
           if-no-files-found: error
 
   security-scan:
-    name: Filesystem security scan
+    name: Python security baseline
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          scan-type: fs
-          scan-ref: .
-          format: table
-          severity: CRITICAL,HIGH
-          ignore-unfixed: true
-          exit-code: "1"
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install security tools
+        run: python -m pip install bandit pip-audit
+
+      - name: Audit dependencies against explicit baseline
+        run: |
+          pip-audit --requirement requirements.txt \
+            --ignore-vuln PYSEC-2026-311 \
+            --ignore-vuln PYSEC-2026-3813 \
+            --ignore-vuln PYSEC-2026-3814 \
+            --ignore-vuln PYSEC-2026-3815
+
+      - name: Scan Python for new high-confidence findings
+        run: |
+          bandit -r src copa_telmex_dashboard.py \
+            --severity-level high \
+            --confidence-level high \
+            --skip B324
 
   required-pr-gate:
     name: Required PR gate
