@@ -30,6 +30,17 @@ def test_preview_is_read_only_and_apply_is_idempotent() -> None:
     assert "ux_cfdi_duplicate_release_operation_key" in MIGRATION
 
 
+def test_console_uses_the_admin_shell_and_explains_each_step() -> None:
+    assert "_workspace_shell_styles(\"1180px\")" in ROUTES
+    assert 'render_top_navigation(current_empleado, "admin")' in ROUTES
+    assert "Paso 1 de 2" in ROUTES
+    assert "Paso 2 de 2" in ROUTES
+    assert "Esta consulta no realiza cambios." in ROUTES
+    assert "status-badge" in ROUTES
+    assert "confirmation-panel" in ROUTES
+    assert "recibo auditable" in ROUTES
+
+
 def test_release_preserves_fiscal_evidence_and_blocks_payment_states() -> None:
     assert "PROTECTED_DOCUMENT_STATES" in SERVICE
     assert '"en_proceso_pago"' in SERVICE

@@ -32246,32 +32246,69 @@ def _require_cfdi_duplicate_release_superadmin(current_empleado: Empleado) -> No
 
 def _render_cfdi_duplicate_release_console(
     *,
+    current_empleado: Empleado,
     previews: Optional[list[Any]] = None,
     error_msg: str = "",
     success_msg: str = "",
 ) -> str:
     rows = ""
+    eligible_count = 0
     if previews:
+        eligible_count = sum(1 for row in previews if row.eligible)
         rows = "".join(
             "<tr>"
-            f"<td><input type=\"checkbox\" name=\"selected_uuids\" value=\"{escape(row.cfdi_uuid)}\" {'checked' if row.eligible else 'disabled'}></td>"
-            f"<td>{escape(row.cfdi_uuid)}</td><td>{escape(', '.join(row.references) or '—')}</td>"
-            f"<td>{'Elegible' if row.eligible else 'No elegible'}</td><td>{escape(row.reason)}</td></tr>"
+            f"<td><input type=\"checkbox\" aria-label=\"Seleccionar {escape(row.cfdi_uuid)}\" name=\"selected_uuids\" value=\"{escape(row.cfdi_uuid)}\" {'checked' if row.eligible else 'disabled'}></td>"
+            f"<td><code>{escape(row.cfdi_uuid)}</code></td><td>{escape(', '.join(row.references) or '—')}</td>"
+            f"<td><span class=\"status-badge {'status-ok' if row.eligible else 'status-blocked'}\">{'Elegible' if row.eligible else 'No elegible'}</span></td><td>{escape(row.reason)}</td></tr>"
             for row in previews
         )
-    preview_section = f"""
-    <section><h2>Vista previa sin cambios</h2><form method="POST" action="/admin/gastos/cfdis/liberar-duplicados/aplicar">
-    <table><thead><tr><th></th><th>UUID</th><th>Referencias</th><th>Estado</th><th>Razón</th></tr></thead><tbody>{rows}</tbody></table>
-    <label>Motivo obligatorio<textarea name="motivo" required></textarea></label>
-    <input type="hidden" name="idempotency_key" value="{uuid4()}">
-    <label><input type="checkbox" name="confirmar" value="si" required> Confirmo la liberación auditable.</label>
-    <button type="submit">Cancelar y liberar seleccionados</button></form></section>""" if previews else ""
-    return f"""<!doctype html><html><body><main><h1>Cancelar y liberar comprobantes</h1>
-    <p>Consola exclusiva de superadmin para UUID CFDI duplicados. Nunca borra CFDI ni auditoría.</p>
-    {f'<p role="alert">{escape(error_msg)}</p>' if error_msg else ''}{f'<p>{escape(success_msg)}</p>' if success_msg else ''}
-    <form method="POST" action="/admin/gastos/cfdis/liberar-duplicados/vista-previa">
-    <label>UUID CFDI, uno por línea o separado por comas<textarea name="cfdi_uuids" required></textarea></label>
-    <button type="submit">Vista previa</button></form>{preview_section}</main></body></html>"""
+    preview_section = ""
+    if previews:
+        preview_section = f"""
+        <section class="cfdi-card">
+            <div class="section-heading">
+                <div><div class="eyebrow">Paso 2 de 2</div><h2>Vista previa sin cambios</h2><p class="muted">Revisa cada vínculo antes de confirmar. Los registros no elegibles no se pueden seleccionar.</p></div>
+                <span class="selection-summary">{eligible_count} elegible{'s' if eligible_count != 1 else ''} de {len(previews)}</span>
+            </div>
+            <form method="POST" action="/admin/gastos/cfdis/liberar-duplicados/aplicar">
+                <div class="table-wrap"><table><thead><tr><th></th><th>UUID CFDI</th><th>Referencia</th><th>Estado</th><th>Razón</th></tr></thead><tbody>{rows}</tbody></table></div>
+                <input type="hidden" name="idempotency_key" value="{uuid4()}">
+                {f'''<div class="confirmation-panel"><div><label for="cfdi-release-reason">Motivo obligatorio</label><textarea id="cfdi-release-reason" name="motivo" required placeholder="Explica por qué procede esta liberación."></textarea></div><label class="confirmation-check"><input type="checkbox" name="confirmar" value="si" required> <span>Confirmo que deseo cancelar y liberar los comprobantes seleccionados. La operación queda auditada.</span></label><button class="button danger" type="submit">Cancelar y liberar seleccionados</button></div>''' if eligible_count else '''<div class="notice warning">No hay comprobantes elegibles para liberar en esta selección.</div>'''}
+            </form>
+        </section>"""
+    return f"""<!doctype html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cancelar y liberar comprobantes</title>
+    <style>
+        {_workspace_shell_styles("1180px")}
+        .cfdi-card {{ background:#fff; border:1px solid var(--shell-line); border-radius:18px; padding:22px; margin-top:16px; box-shadow:0 12px 30px rgba(15,23,42,.05); }}
+        .section-heading {{ display:flex; gap:16px; align-items:start; justify-content:space-between; margin-bottom:18px; }}
+        h2 {{ margin:4px 0 6px; font-size:1.25rem; letter-spacing:-.02em; }}
+        .muted {{ color:var(--shell-muted); margin:0; font-size:14px; line-height:1.55; }}
+        .selection-summary {{ border-radius:999px; background:#ecfdf5; color:#166534; padding:7px 10px; font-size:12px; font-weight:800; white-space:nowrap; }}
+        label {{ display:block; color:#334155; font-size:12px; font-weight:800; letter-spacing:.03em; margin-bottom:7px; }}
+        textarea {{ width:100%; min-height:132px; resize:vertical; border:1px solid #cbd5e1; border-radius:12px; padding:12px; color:var(--shell-ink); font:inherit; line-height:1.55; background:#fff; }}
+        textarea:focus {{ outline:3px solid rgba(15,118,110,.16); border-color:var(--shell-accent); }}
+        .input-help {{ color:#64748b; font-size:12px; line-height:1.5; margin:8px 0 14px; }}
+        .preview-form {{ max-width:760px; }}
+        .table-wrap {{ overflow-x:auto; border:1px solid var(--shell-line); border-radius:14px; }}
+        table {{ width:100%; border-collapse:collapse; min-width:760px; }}
+        th,td {{ padding:13px 12px; border-bottom:1px solid #e2e8f0; text-align:left; vertical-align:top; font-size:13px; line-height:1.45; }}
+        th {{ background:#f8fafc; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.07em; }}
+        tr:last-child td {{ border-bottom:0; }} code {{ color:#0f172a; font-size:12px; overflow-wrap:anywhere; }}
+        .status-badge {{ display:inline-block; border-radius:999px; padding:5px 9px; font-size:11px; font-weight:800; white-space:nowrap; }}
+        .status-ok {{ background:#dcfce7; color:#166534; }} .status-blocked {{ background:#fee2e2; color:#991b1b; }}
+        .confirmation-panel {{ margin-top:18px; padding:18px; border:1px solid #fdba74; border-radius:14px; background:#fff7ed; }}
+        .confirmation-check {{ display:flex; gap:9px; align-items:flex-start; margin:14px 0; font-size:13px; line-height:1.45; letter-spacing:0; }}
+        .confirmation-check input {{ margin-top:3px; }}
+        .notice {{ margin-top:16px; padding:13px 14px; border-radius:12px; font-size:13px; font-weight:700; }}
+        .notice.error {{ background:#fee2e2; color:#991b1b; }} .notice.ok {{ background:#dcfce7; color:#166534; }} .notice.warning {{ background:#ffedd5; color:#9a3412; }}
+        @media (max-width:640px) {{ .container {{ padding:16px; border-radius:18px; }} .cfdi-card {{ padding:16px; }} .section-heading {{ display:block; }} .selection-summary {{ display:inline-block; margin-top:10px; }} }}
+    </style></head><body><div class="container">
+        {render_top_navigation(current_empleado, "admin")}
+        <section class="workspace-hero-main"><div class="eyebrow">Finanzas · operación excepcional</div><h1>Cancelar y liberar comprobantes</h1><p class="lead">Corrige vínculos CFDI duplicados con vista previa, confirmación y recibo auditable. Esta consola nunca borra comprobantes ni historial.</p></section>
+        {f'<div class="notice error" role="alert">{escape(error_msg)}</div>' if error_msg else ''}{f'<div class="notice ok" role="status">{escape(success_msg)}</div>' if success_msg else ''}
+        <section class="cfdi-card"><div class="eyebrow">Paso 1 de 2</div><h2>Busca comprobantes por UUID</h2><p class="muted">Pega uno o varios UUID CFDI para revisar su estado. Esta consulta no realiza cambios.</p><form class="preview-form" method="POST" action="/admin/gastos/cfdis/liberar-duplicados/vista-previa"><label for="cfdi-uuids">UUID CFDI</label><textarea id="cfdi-uuids" name="cfdi_uuids" required placeholder="Ejemplo: 06919787-1E1A-407B-9E60-658AA0FBC00D"></textarea><p class="input-help">Puedes incluir un UUID por línea o separar varios con comas.</p><button class="button primary" type="submit">Ver vista previa</button></form></section>{preview_section}
+    </div></body></html>"""
 
 
 @router.get("/admin/gastos/cfdis/liberar-duplicados", response_class=HTMLResponse)
@@ -32281,6 +32318,7 @@ async def cfdi_duplicate_release_console(
 ) -> str:
     _require_cfdi_duplicate_release_superadmin(current_empleado)
     return _render_cfdi_duplicate_release_console(
+        current_empleado=current_empleado,
         error_msg=str(request.query_params.get("error_msg") or ""),
         success_msg=str(request.query_params.get("msg") or ""),
     )
@@ -32295,9 +32333,9 @@ async def cfdi_duplicate_release_preview(
     _require_cfdi_duplicate_release_superadmin(current_empleado)
     try:
         previews = await preview_duplicate_releases(session, [cfdi_uuids])
-        return _render_cfdi_duplicate_release_console(previews=previews)
+        return _render_cfdi_duplicate_release_console(current_empleado=current_empleado, previews=previews)
     except CFDIDuplicateReleaseError as exc:
-        return _render_cfdi_duplicate_release_console(error_msg=str(exc))
+        return _render_cfdi_duplicate_release_console(current_empleado=current_empleado, error_msg=str(exc))
 
 
 @router.post("/admin/gastos/cfdis/liberar-duplicados/aplicar")
@@ -32336,7 +32374,7 @@ async def cfdi_duplicate_release_receipt(
         f"<tr><td>{escape(item.cfdi_uuid)}</td><td>{escape(item.resultado)}</td><td>{escape(item.motivo_resultado or operation.motivo)}</td><td>{escape(json.dumps(item.before_json, default=str))}</td><td>{escape(json.dumps(item.after_json, default=str))}</td></tr>"
         for item in items
     )
-    return f"""<!doctype html><html><body><main><h1>Recibo de liberación CFDI</h1><p>Operación {operation.id} · {escape(operation.estado)} · {escape(operation.motivo)}</p><table><thead><tr><th>UUID</th><th>Resultado</th><th>Motivo</th><th>Antes</th><th>Después</th></tr></thead><tbody>{rows}</tbody></table><a href="/admin/gastos/cfdis/liberar-duplicados">Volver</a></main></body></html>"""
+    return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Recibo de liberación CFDI</title><style>{_workspace_shell_styles("1180px")}.card{{background:#fff;border:1px solid var(--shell-line);border-radius:18px;padding:22px;margin-top:16px}}.muted{{color:var(--shell-muted)}}.table-wrap{{overflow-x:auto;border:1px solid var(--shell-line);border-radius:14px}}table{{width:100%;border-collapse:collapse;min-width:760px}}th,td{{padding:13px 12px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top;font-size:13px;line-height:1.45}}th{{background:#f8fafc;color:#475569;font-size:11px;text-transform:uppercase;letter-spacing:.07em}}tr:last-child td{{border-bottom:0}}code{{font-size:12px;overflow-wrap:anywhere}}.receipt-meta{{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0 18px}}.receipt-meta span{{background:#ecfdf5;color:#166534;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800}}</style></head><body><div class="container">{render_top_navigation(current_empleado, "admin")}<section class="workspace-hero-main"><div class="eyebrow">Finanzas · recibo auditable</div><h1>Recibo de liberación CFDI</h1><p class="lead">La operación fue registrada con trazabilidad; el CFDI y su historial no se eliminan.</p></section><section class="card"><div class="receipt-meta"><span>Operación {operation.id}</span><span>{escape(operation.estado)}</span></div><p class="muted"><strong>Motivo:</strong> {escape(operation.motivo)}</p><div class="table-wrap"><table><thead><tr><th>UUID</th><th>Resultado</th><th>Motivo</th><th>Antes</th><th>Después</th></tr></thead><tbody>{rows}</tbody></table></div><div class="hero-actions"><a class="button secondary" href="/admin/gastos/cfdis/liberar-duplicados">Volver a la consola</a></div></section></div></body></html>"""
 
 
 @router.post("/documentos/{documento_id}/cancelar")
