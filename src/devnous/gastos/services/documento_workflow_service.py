@@ -76,7 +76,12 @@ async def reserve_documento_cfdis_or_raise(
             session, report_id, exclude_documento_id=documento.id
         )
         if conflict is not None:
-            message = "La factura ya está reservada en otro gasto o solicitud."
+            message = (
+                "No se puede continuar porque el UUID CFDI ya está reservado en otro "
+                "gasto o solicitud; este control evita duplicar comprobantes. Si el "
+                "vínculo es un duplicado, un superadmin puede revisarlo y liberarlo "
+                "desde la consola de comprobantes."
+            )
             if conflict.empleado_id == actor.id or actor.rol in APPROVER_ROLES:
                 message = conflict.message()
             raise DocumentoWorkflowValidationError("duplicate_cfdi", message)

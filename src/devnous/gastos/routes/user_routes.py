@@ -41,7 +41,7 @@ from samchat.budgets.service import (
     resolve_definitive_budget_version,
 )
 
-from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono
+from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono, CFDIDuplicateReleaseOperation, CFDIDuplicateReleaseOperationItem
 from ..status_semantics import document_status_visual
 from ..expense_metadata import (
     COMMON_CURRENCIES,
@@ -310,7 +310,14 @@ from ..services.customer_success_usage import (
 )
 from ..services.customer_success_audit import (
     audit_context_from_request,
+    is_superadmin_role,
     record_customer_success_audit_event,
+)
+from ..services.cfdi_duplicate_release_service import (
+    CFDIDuplicateReleaseError,
+    apply_duplicate_releases,
+    normalize_uuid_batch,
+    preview_duplicate_releases,
 )
 from ..services.payroll_cfdi_mapping_service import (
     SAT_GUIDE_URL,
@@ -15301,6 +15308,14 @@ async def panel(
         ("admin.gastos.amex", "/gastos/carga-masiva-amex", "Carga AMEX", "Importa estados de cuenta para conciliación mensual; requiere piloto UAT antes de operación."),
         ("admin.gastos.limpieza", "/admin/gastos/sin-cuenta-contable", "Pólizas COI", "Prepara CFDI, cuentas contables y desglose fiscal antes de exportar COI."),
     ], visible_tool_keys)
+    if is_superadmin_role(getattr(current_empleado, "rol", None)):
+        operacion_contable_cards.append(
+            (
+                "/admin/gastos/cfdis/liberar-duplicados",
+                "Cancelar y liberar comprobantes",
+                "Corrige vínculos CFDI duplicados con vista previa, motivo y recibo auditable.",
+            )
+        )
     operacion_contable_section = ""
     if operacion_contable_cards:
         operacion_contable_section = f"""
@@ -32219,6 +32234,109 @@ async def rechazar_documento(
         url=redirect_with_msg,
         status_code=303
     )
+
+
+def _require_cfdi_duplicate_release_superadmin(current_empleado: Empleado) -> None:
+    if not is_superadmin_role(getattr(current_empleado, "rol", None)):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo superadmin puede cancelar y liberar comprobantes duplicados.",
+        )
+
+
+def _render_cfdi_duplicate_release_console(
+    *,
+    previews: Optional[list[Any]] = None,
+    error_msg: str = "",
+    success_msg: str = "",
+) -> str:
+    rows = ""
+    if previews:
+        rows = "".join(
+            "<tr>"
+            f"<td><input type=\"checkbox\" name=\"selected_uuids\" value=\"{escape(row.cfdi_uuid)}\" {'checked' if row.eligible else 'disabled'}></td>"
+            f"<td>{escape(row.cfdi_uuid)}</td><td>{escape(', '.join(row.references) or '—')}</td>"
+            f"<td>{'Elegible' if row.eligible else 'No elegible'}</td><td>{escape(row.reason)}</td></tr>"
+            for row in previews
+        )
+    preview_section = f"""
+    <section><h2>Vista previa sin cambios</h2><form method="POST" action="/admin/gastos/cfdis/liberar-duplicados/aplicar">
+    <table><thead><tr><th></th><th>UUID</th><th>Referencias</th><th>Estado</th><th>Razón</th></tr></thead><tbody>{rows}</tbody></table>
+    <label>Motivo obligatorio<textarea name="motivo" required></textarea></label>
+    <input type="hidden" name="idempotency_key" value="{uuid4()}">
+    <label><input type="checkbox" name="confirmar" value="si" required> Confirmo la liberación auditable.</label>
+    <button type="submit">Cancelar y liberar seleccionados</button></form></section>""" if previews else ""
+    return f"""<!doctype html><html><body><main><h1>Cancelar y liberar comprobantes</h1>
+    <p>Consola exclusiva de superadmin para UUID CFDI duplicados. Nunca borra CFDI ni auditoría.</p>
+    {f'<p role="alert">{escape(error_msg)}</p>' if error_msg else ''}{f'<p>{escape(success_msg)}</p>' if success_msg else ''}
+    <form method="POST" action="/admin/gastos/cfdis/liberar-duplicados/vista-previa">
+    <label>UUID CFDI, uno por línea o separado por comas<textarea name="cfdi_uuids" required></textarea></label>
+    <button type="submit">Vista previa</button></form>{preview_section}</main></body></html>"""
+
+
+@router.get("/admin/gastos/cfdis/liberar-duplicados", response_class=HTMLResponse)
+async def cfdi_duplicate_release_console(
+    request: Request,
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_cfdi_duplicate_release_superadmin(current_empleado)
+    return _render_cfdi_duplicate_release_console(
+        error_msg=str(request.query_params.get("error_msg") or ""),
+        success_msg=str(request.query_params.get("msg") or ""),
+    )
+
+
+@router.post("/admin/gastos/cfdis/liberar-duplicados/vista-previa", response_class=HTMLResponse)
+async def cfdi_duplicate_release_preview(
+    cfdi_uuids: str = Form(...),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_cfdi_duplicate_release_superadmin(current_empleado)
+    try:
+        previews = await preview_duplicate_releases(session, [cfdi_uuids])
+        return _render_cfdi_duplicate_release_console(previews=previews)
+    except CFDIDuplicateReleaseError as exc:
+        return _render_cfdi_duplicate_release_console(error_msg=str(exc))
+
+
+@router.post("/admin/gastos/cfdis/liberar-duplicados/aplicar")
+async def cfdi_duplicate_release_apply(
+    request: Request,
+    selected_uuids: List[str] = Form(default=[]),
+    motivo: str = Form(...),
+    idempotency_key: str = Form(...),
+    confirmar: Optional[str] = Form(None),
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> RedirectResponse:
+    _require_cfdi_duplicate_release_superadmin(current_empleado)
+    if confirmar != "si":
+        return RedirectResponse("/admin/gastos/cfdis/liberar-duplicados?error_msg=" + quote("Confirma la operación antes de aplicar."), status_code=303)
+    try:
+        operation = await apply_duplicate_releases(session, actor=current_empleado, uuids=selected_uuids, motivo=motivo, idempotency_key=UUIDType(idempotency_key))
+    except (CFDIDuplicateReleaseError, ValueError) as exc:
+        await session.rollback()
+        return RedirectResponse("/admin/gastos/cfdis/liberar-duplicados?error_msg=" + quote(str(exc)), status_code=303)
+    return RedirectResponse(f"/admin/gastos/cfdis/liberar-duplicados/recibos/{operation.id}", status_code=303)
+
+
+@router.get("/admin/gastos/cfdis/liberar-duplicados/recibos/{operation_id}", response_class=HTMLResponse)
+async def cfdi_duplicate_release_receipt(
+    operation_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> str:
+    _require_cfdi_duplicate_release_superadmin(current_empleado)
+    operation = await session.get(CFDIDuplicateReleaseOperation, operation_id)
+    if operation is None:
+        raise HTTPException(status_code=404, detail="Recibo de liberación no encontrado.")
+    items = (await session.execute(select(CFDIDuplicateReleaseOperationItem).where(CFDIDuplicateReleaseOperationItem.operation_id == operation.id))).scalars().all()
+    rows = "".join(
+        f"<tr><td>{escape(item.cfdi_uuid)}</td><td>{escape(item.resultado)}</td><td>{escape(item.motivo_resultado or operation.motivo)}</td><td>{escape(json.dumps(item.before_json, default=str))}</td><td>{escape(json.dumps(item.after_json, default=str))}</td></tr>"
+        for item in items
+    )
+    return f"""<!doctype html><html><body><main><h1>Recibo de liberación CFDI</h1><p>Operación {operation.id} · {escape(operation.estado)} · {escape(operation.motivo)}</p><table><thead><tr><th>UUID</th><th>Resultado</th><th>Motivo</th><th>Antes</th><th>Después</th></tr></thead><tbody>{rows}</tbody></table><a href="/admin/gastos/cfdis/liberar-duplicados">Volver</a></main></body></html>"""
 
 
 @router.post("/documentos/{documento_id}/cancelar")

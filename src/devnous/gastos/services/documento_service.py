@@ -672,7 +672,12 @@ async def create_solicitud_terceros_document(
         if matched is not None:
             conflict = await find_blocking_cfdi_usage(session, matched.id)
             if conflict is not None and not payload.cfdi_compartido_confirmado:
-                message = "La factura ya está reservada en otro gasto o solicitud."
+                message = (
+                    "No se puede continuar porque el UUID CFDI ya está reservado "
+                    "en otro gasto o solicitud; este control evita duplicar comprobantes. "
+                    "Si el vínculo es un duplicado, un superadmin puede revisarlo y "
+                    "liberarlo desde la consola de comprobantes."
+                )
                 if (
                     payload.can_disclose_cfdi_conflict
                     or conflict.empleado_id == payload.empleado_id
