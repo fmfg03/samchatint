@@ -732,7 +732,7 @@ def test_informe_document_visible_copy_has_clean_spanish_encoding():
         assert corrected_text in scoped
 
 
-def test_accounting_cleanup_is_labeled_as_coi_policies():
+def test_accounting_cleanup_uses_clear_operational_label():
     admin_source = open(
         "src/devnous/gastos/routes/admin_routes.py", encoding="utf-8"
     ).read()
@@ -748,11 +748,10 @@ def test_accounting_cleanup_is_labeled_as_coi_policies():
     )
     admin_surface = admin_source[nav_start:nav_end] + admin_source[coi_start:coi_end]
 
-    assert "Pólizas COI" in admin_surface
-    assert "Preparar pólizas COI" in admin_surface
+    assert "Limpieza contable" in admin_surface
+    assert "Pendientes de clasificación contable" in admin_surface
     assert "Guardar preparación COI" in admin_surface
     assert "Centro de Limpieza Contable" not in admin_surface
-    assert "Limpieza contable" not in admin_surface
     assert "Pólizas COI" in user_source
 
 
@@ -1509,7 +1508,7 @@ def test_panel_exposes_accounting_operations_outside_configuration_gate():
     assert "CSV por UUID para alimentar la revisión de matching" in accounting
     assert "Carga AMEX" in accounting
     assert "requiere piloto UAT antes de operación" in accounting
-    assert "Pólizas COI" in accounting
+    assert "Limpieza contable" in accounting
     assert '"configuracion.control_accesos"' not in accounting
     assert "{operacion_contable_section}" in panel
 
