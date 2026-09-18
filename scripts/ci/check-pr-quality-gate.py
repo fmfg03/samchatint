@@ -52,6 +52,8 @@ def validate(document: dict, workflow_text: str) -> list[str]:
     coverage = "\n".join(_run_blocks(jobs.get("changed-code-coverage", {})))
     if "python -m pytest tests/unit" not in unit:
         errors.append("unit-tests does not invoke pytest directly on tests/unit")
+    if "check-pytest-baseline.py" not in unit:
+        errors.append("unit-tests does not enforce the accepted-failure baseline")
     if "python -m pytest tests/integration" not in integration:
         errors.append(
             "integration-tests does not invoke pytest directly on tests/integration"
