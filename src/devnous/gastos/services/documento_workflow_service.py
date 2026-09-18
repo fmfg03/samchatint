@@ -27,6 +27,7 @@ from .documento_semantics import (
     approval_subject_empleado,
 )
 from .documento_service import allocate_next_referencia_operaciones
+from .cfdi_ingestion_service import find_blocking_cfdi_usage
 from .project_authorization_service import (
     actor_is_route_approver,
     invalidate_document_route,
@@ -38,6 +39,40 @@ logger = logging.getLogger(__name__)
 APPROVER_ROLES = {"finanzas", "admin", "superadmin", "super_admin"}
 FINANCE_ADMIN_ROLES = {"finanzas", "admin"}
 BUDGET_CONTROL_STATE = "control_presupuestal"
+
+
+async def _reserve_documento_cfdis_or_raise(
+    session: AsyncSession, documento: Documento, actor: Empleado
+) -> None:
+    """Atomically reserve this document's CFDIs when it enters budget control."""
+    report_ids = set()
+    if documento.cfdi_report_id:
+        report_ids.add(documento.cfdi_report_id)
+    if documento.tipo == "INFORME":
+        expense_report_ids = await session.execute(
+            select(ExpenseReport.cfdi_report_id).where(
+                or_(
+                    ExpenseReport.informe_documento_id == documento.id,
+                    ExpenseReport.documento_id == documento.id,
+                ),
+                ExpenseReport.cfdi_report_id.isnot(None),
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+        )
+        report_ids.update(row[0] for row in expense_report_ids.all())
+    for report_id in sorted(report_ids, key=str):
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+            {"lock_key": f"cfdi-reservation:{report_id}"},
+        )
+        conflict = await find_blocking_cfdi_usage(
+            session, report_id, exclude_documento_id=documento.id
+        )
+        if conflict is not None:
+            message = "La factura ya está reservada en otro gasto o solicitud."
+            if conflict.empleado_id == actor.id or actor.rol in APPROVER_ROLES:
+                message = conflict.message()
+            raise DocumentoWorkflowValidationError("duplicate_cfdi", message)
 
 
 def documento_requires_budget_control(documento: Documento) -> bool:
@@ -540,6 +575,7 @@ async def transition_documento_workflow(
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
+            await _reserve_documento_cfdis_or_raise(session, documento, actor)
             aprobacion_accion = "enviar_control_presupuestal"
             comentario_normalizado = (
                 comentario_normalizado

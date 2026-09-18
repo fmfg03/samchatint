@@ -34438,6 +34438,7 @@ async def _render_solicitud_terceros_form(
         preserve_fecha_fin = ""
         extra_tournament_ids = []
         form_action = "/documentos/nueva-solicitud-terceros"
+        client_submission_id = str(uuid4())
         page_heading = "Nueva solicitud a terceros"
         submit_label = "Crear solicitud"
         cancel_href = "/documentos/mis-documentos"
@@ -34661,7 +34662,8 @@ async def _render_solicitud_terceros_form(
             </div>
             <div id="cfdi_autofill_notice" class="notice info" hidden></div>
 
-            <form method="POST" action="{form_action}" enctype="multipart/form-data">
+            <form method="POST" action="{form_action}" enctype="multipart/form-data" id="solicitud-terceros-form">
+                {f'<input type="hidden" name="client_submission_id" value="{client_submission_id}">' if not edit_documento else ''}
                 <div class="st-page-wrap">
                     <div class="st-support-section">
                         <h3>Documentación de soporte</h3>
@@ -34812,6 +34814,16 @@ async def _render_solicitud_terceros_form(
             </form>
         </div>
         <script>
+            (function() {{
+                const form = document.getElementById('solicitud-terceros-form');
+                if (!form) return;
+                form.addEventListener('submit', function() {{
+                    form.querySelectorAll('button[type="submit"]').forEach(function(button) {{
+                        button.disabled = true;
+                        button.setAttribute('aria-busy', 'true');
+                    }});
+                }}, {{ once: true }});
+            }})();
             (function() {{
                 const torneoSelect = document.getElementById('torneo_id');
                 const proyectoOtroGroup = document.getElementById('proyecto_otro_group');
@@ -35027,6 +35039,7 @@ async def crear_nueva_solicitud_terceros(
     notas: Optional[str] = Form(None),
     pago_urgente: Optional[str] = Form(None),
     cfdi_compartido_confirmado: Optional[str] = Form(None),
+    client_submission_id: Optional[str] = Form(None),
     submit_mode: str = Form("create"),
 ) -> RedirectResponse:
     """
@@ -35112,33 +35125,39 @@ async def crear_nueva_solicitud_terceros(
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
             ),
+            client_submission_id=client_submission_id,
+            can_disclose_cfdi_conflict=(
+                (getattr(current_empleado, "rol", None) or "").strip().lower()
+                in {"admin", "superadmin", "super_admin", "finanzas"}
+            ),
         )
         documento = await create_solicitud_terceros_document(session, payload)
-        await record_customer_success_audit_event(
-            session,
-            action="documento.created",
-            actor_empleado_id=current_empleado.id,
-            target_empleado_id=documento.empleado_id,
-            documento_id=documento.id,
-            documento_referencia=documento.numero_referencia,
-            entity_type="documento",
-            entity_id=documento.id,
-            request=request,
-            summary=(
-                f"{current_empleado.nombre} creó {documento.numero_referencia}"
-            ),
-            metadata={
-                "documento_tipo": documento.tipo,
-                "submit_mode": submit_mode,
-                "torneo_id": str(documento.torneo_id) if documento.torneo_id else None,
-                "proveedor_cliente_id": (
-                    str(documento.proveedor_cliente_id)
-                    if documento.proveedor_cliente_id
-                    else None
+        if not getattr(documento, "_idempotent_replay", False):
+            await record_customer_success_audit_event(
+                session,
+                action="documento.created",
+                actor_empleado_id=current_empleado.id,
+                target_empleado_id=documento.empleado_id,
+                documento_id=documento.id,
+                documento_referencia=documento.numero_referencia,
+                entity_type="documento",
+                entity_id=documento.id,
+                request=request,
+                summary=(
+                    f"{current_empleado.nombre} creó {documento.numero_referencia}"
                 ),
-            },
-            commit=True,
-        )
+                metadata={
+                    "documento_tipo": documento.tipo,
+                    "submit_mode": submit_mode,
+                    "torneo_id": str(documento.torneo_id) if documento.torneo_id else None,
+                    "proveedor_cliente_id": (
+                        str(documento.proveedor_cliente_id)
+                        if documento.proveedor_cliente_id
+                        else None
+                    ),
+                },
+                commit=True,
+            )
     except SolicitudValidationError as exc:
         await session.rollback()
         return RedirectResponse(

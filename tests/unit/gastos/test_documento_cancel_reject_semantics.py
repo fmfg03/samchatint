@@ -38,14 +38,16 @@ def test_cancelled_solicitudes_do_not_block_cfdi_reuse():
         / "services"
         / "cfdi_ingestion_service.py"
     ).read_text()
-    usage_block = source.split("async def has_existing_cfdi_usage(", 1)[1].split(
+    usage_block = source.split("async def find_blocking_cfdi_usage(", 1)[1].split(
         "async def _ingest_cfdi_parsed(",
         1,
     )[0]
 
     assert "Documento.cfdi_report_id == report_id" in usage_block
-    assert 'Documento.estado != "cancelado"' in usage_block
-    assert "Documento.estado.is_(None)" in usage_block
+    assert "Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES)" in usage_block
+    assert '"cancelado"' not in source.split("_CFDI_RESERVING_DOCUMENT_STATES", 1)[1].split(
+        "async def find_blocking_cfdi_usage", 1
+    )[0]
 
 
 def test_solicitud_list_exposes_edit_for_rejected_owner():
