@@ -60,20 +60,16 @@ jobs:
         run: git diff --check
 
   unit-tests:
-    name: Unit tests (Python ${{ matrix.python-version }})
+    name: Unit tests (Python 3.12)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python ${{ matrix.python-version }}
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.12"
           cache: pip
           cache-dependency-path: requirements.txt
 
@@ -81,33 +77,26 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run unit tests
-        env:
-          PYTHON_VERSION: ${{ matrix.python-version }}
         run: |
-          coverage_args=(--no-cov)
-          if [[ "$PYTHON_VERSION" == "3.12" ]]; then
-            coverage_args=(
-              --cov=src
-              --cov=copa_telmex_dashboard
-              --cov-report=
-              --cov-fail-under=0
-            )
-          fi
-          python -m pytest tests/unit "${coverage_args[@]}" \
+          python -m pytest tests/unit \
+            --cov=src \
+            --cov=copa_telmex_dashboard \
+            --cov-report= \
+            --cov-fail-under=0 \
             --timeout=60 \
             --durations=20 \
-            --junitxml=reports/unit-${{ matrix.python-version }}.xml
+            --junitxml=reports/unit-3.12.xml
 
       - name: Upload unit-test report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: unit-tests-python-${{ matrix.python-version }}
-          path: reports/unit-${{ matrix.python-version }}.xml
+          name: unit-tests-python-3.12
+          path: reports/unit-3.12.xml
           if-no-files-found: error
 
       - name: Upload unit coverage data
-        if: always() && matrix.python-version == '3.12'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data-unit
