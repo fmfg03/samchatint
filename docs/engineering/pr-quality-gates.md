@@ -9,7 +9,8 @@ instead of every matrix child.
 1. **Policy and repository contract** validates the CI definition itself,
    runtime/package consistency, registration boundaries, accepted regressions,
    Python compilation, and diff hygiene.
-2. **Unit tests** run the complete `tests/unit` suite on Python 3.11 and 3.12.
+2. **Unit tests** run the complete `tests/unit` suite on Python 3.12, the
+   repository's supported runtime.
 3. **Integration tests** run `tests/integration` on Python 3.12 with Postgres 15
    and Redis 7.
 4. **Changed-code coverage** requires at least 85% coverage on changed lines in
