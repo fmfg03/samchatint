@@ -284,6 +284,7 @@ async def find_blocking_cfdi_usage(
     documento_conditions = [
         Documento.cfdi_report_id == report_id,
         Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
+        Documento.cfdi_compartido_confirmado.is_(False),
     ]
     if exclude_documento_id is not None:
         documento_conditions.append(Documento.id != exclude_documento_id)
@@ -305,6 +306,7 @@ async def find_blocking_cfdi_usage(
         .join(Empleado, Empleado.id == Documento.empleado_id)
         .where(
             ExpenseReport.cfdi_report_id == report_id,
+            ExpenseReport.cfdi_compartido_confirmado.is_(False),
             Documento.estado.in_(_CFDI_RESERVING_DOCUMENT_STATES),
             *([Documento.id != exclude_documento_id] if exclude_documento_id is not None else []),
         ).limit(1)

@@ -16,17 +16,29 @@ def test_cfdi_is_reserved_at_budget_control_with_conflict_context() -> None:
     assert "class CFDIUsageConflict" in INGESTION
     assert "created by" not in INGESTION  # Spanish, user-facing copy stays localized.
     assert "creada por" in INGESTION
-    assert "async def _reserve_documento_cfdis_or_raise" in WORKFLOW
+    assert "async def reserve_documento_cfdis_or_raise" in WORKFLOW
     assert "pg_advisory_xact_lock" in WORKFLOW
-    assert "await _reserve_documento_cfdis_or_raise(session, documento, actor)" in WORKFLOW
+    assert "await reserve_documento_cfdis_or_raise(session, documento, actor)" in WORKFLOW
 
 
 def test_expense_cfdi_reservation_follows_its_informe() -> None:
-    reservation = WORKFLOW.split("async def _reserve_documento_cfdis_or_raise", 1)[1].split(
+    reservation = WORKFLOW.split("async def reserve_documento_cfdis_or_raise", 1)[1].split(
         "def documento_requires_budget_control", 1
     )[0]
     assert "ExpenseReport.informe_documento_id == documento.id" in reservation
     assert 'ExpenseReport.estado_gasto != "cancelado"' in reservation
+    assert "ExpenseReport.cfdi_compartido_confirmado" in reservation
+    assert "if not cfdi_compartido_confirmado" in reservation
+    assert "not documento.cfdi_compartido_confirmado" in reservation
+    assert "Documento.cfdi_compartido_confirmado.is_(False)" in INGESTION
+    assert "ExpenseReport.cfdi_compartido_confirmado.is_(False)" in INGESTION
+
+
+def test_cuenta_close_uses_the_same_cfdi_reservation_policy() -> None:
+    close_helper = ROUTES.split("async def _sync_informe_documento_to_enviado", 1)[1].split(
+        '@router.get("/api/informes-de-gastos/activas"', 1
+    )[0]
+    assert "await reserve_documento_cfdis_or_raise(session, informe_doc, actor)" in close_helper
 
 
 def test_solicitud_form_submission_is_idempotent_server_and_client_side() -> None:
@@ -38,3 +50,5 @@ def test_solicitud_form_submission_is_idempotent_server_and_client_side() -> Non
     assert 'name="client_submission_id"' in ROUTES
     assert "button.disabled = true" in ROUTES
     assert 'if not getattr(documento, "_idempotent_replay", False):' in ROUTES
+    assert "idempotent_replay and exc.code == \"invalid_estado\"" in ROUTES
+    assert "with_for_update()" in WORKFLOW

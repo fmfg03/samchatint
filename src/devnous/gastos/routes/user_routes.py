@@ -187,6 +187,7 @@ from ..services.documento_workflow_service import (
     DocumentoWorkflowValidationError,
     documento_workflow_locked_reason,
     promote_solicitudes_ready_for_payment,
+    reserve_documento_cfdis_or_raise,
     transition_documento_workflow,
 )
 from ..services.reimbursement_payment_run_service import (
@@ -35196,6 +35197,7 @@ async def crear_nueva_solicitud_terceros(
         )
 
     redirect_base = f"/documentos/{documento.id}"
+    idempotent_replay = bool(getattr(documento, "_idempotent_replay", False))
     if (submit_mode or "").strip() == "create_and_send":
         try:
             await transition_documento_workflow(
@@ -35210,6 +35212,14 @@ async def crear_nueva_solicitud_terceros(
                 raise HTTPException(status_code=403, detail=exc.message) from exc
             raise
         except DocumentoWorkflowValidationError as exc:
+            if idempotent_replay and exc.code == "invalid_estado":
+                return RedirectResponse(
+                    url=_append_success_params(
+                        redirect_base,
+                        success_msg="Solicitud ya creada y enviada para aprobación",
+                    ),
+                    status_code=303,
+                )
             return RedirectResponse(
                 url=_append_error_params(
                     redirect_base,
@@ -38333,6 +38343,7 @@ async def _sync_informe_documento_to_enviado(
             "El informe debe tener al menos un gasto activo antes de poder cerrarse.",
         )
 
+    await reserve_documento_cfdis_or_raise(session, informe_doc, actor)
     now = datetime.utcnow()
     if (
         not getattr(informe_doc, "budget_concept_id", None)

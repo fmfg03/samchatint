@@ -41,16 +41,19 @@ FINANCE_ADMIN_ROLES = {"finanzas", "admin"}
 BUDGET_CONTROL_STATE = "control_presupuestal"
 
 
-async def _reserve_documento_cfdis_or_raise(
+async def reserve_documento_cfdis_or_raise(
     session: AsyncSession, documento: Documento, actor: Empleado
 ) -> None:
     """Atomically reserve this document's CFDIs when it enters budget control."""
     report_ids = set()
-    if documento.cfdi_report_id:
+    if documento.cfdi_report_id and not documento.cfdi_compartido_confirmado:
         report_ids.add(documento.cfdi_report_id)
     if documento.tipo == "INFORME":
         expense_report_ids = await session.execute(
-            select(ExpenseReport.cfdi_report_id).where(
+            select(
+                ExpenseReport.cfdi_report_id,
+                ExpenseReport.cfdi_compartido_confirmado,
+            ).where(
                 or_(
                     ExpenseReport.informe_documento_id == documento.id,
                     ExpenseReport.documento_id == documento.id,
@@ -59,7 +62,11 @@ async def _reserve_documento_cfdis_or_raise(
                 ExpenseReport.estado_gasto != "cancelado",
             )
         )
-        report_ids.update(row[0] for row in expense_report_ids.all())
+        report_ids.update(
+            report_id
+            for report_id, cfdi_compartido_confirmado in expense_report_ids.all()
+            if not cfdi_compartido_confirmado
+        )
     for report_id in sorted(report_ids, key=str):
         await session.execute(
             text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
@@ -123,6 +130,7 @@ async def _load_documento(
             selectinload(Documento.beneficiario_empleado),
         )
         .where(Documento.id == documento_id)
+        .with_for_update()
     )
     return result.scalar_one_or_none()
 
@@ -575,7 +583,7 @@ async def transition_documento_workflow(
         if documento_requires_budget_control(documento):
             documento.estado = BUDGET_CONTROL_STATE
             documento.enviado_en = None
-            await _reserve_documento_cfdis_or_raise(session, documento, actor)
+            await reserve_documento_cfdis_or_raise(session, documento, actor)
             aprobacion_accion = "enviar_control_presupuestal"
             comentario_normalizado = (
                 comentario_normalizado
