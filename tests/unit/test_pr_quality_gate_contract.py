@@ -40,6 +40,18 @@ def test_pr_quality_gate_contract_is_enforced() -> None:
             ),
             "unit-tests is marked continue-on-error",
         ),
+        (
+            lambda document: document["jobs"]["security-scan"]["steps"][-1].update(
+                {"run": "bandit -r src --skip B324"}
+            ),
+            "security-scan does not enforce the Bandit finding baseline",
+        ),
+        (
+            lambda document: document["jobs"]["security-scan"]["steps"][-1].update(
+                {"run": "bandit -r src"}
+            ),
+            "security-scan does not create the Bandit report directory",
+        ),
     ],
 )
 def test_pr_quality_gate_rejects_permissive_mutations(
@@ -61,3 +73,13 @@ def test_pr_quality_gate_rejects_missing_runner_reference() -> None:
     errors = module.validate(document, workflow_text + "\nscripts/test_runner.py\n")
 
     assert "workflow references the removed scripts/test_runner.py" in errors
+
+
+def test_pr_quality_gate_rejects_a_rule_wide_bandit_skip() -> None:
+    module = _load_gate_module()
+    workflow_text = module.WORKFLOW.read_text(encoding="utf-8")
+    document = yaml.safe_load(workflow_text)
+
+    errors = module.validate(document, workflow_text + "\n--skip B324\n")
+
+    assert "workflow skips Bandit B324 instead of enforcing its baseline" in errors

@@ -36,6 +36,8 @@ def validate(document: dict, workflow_text: str) -> list[str]:
         errors.append("workflow references the removed scripts/test_runner.py")
     if "|| true" in workflow_text:
         errors.append("workflow contains a command that forces a false success")
+    if "--skip B324" in workflow_text:
+        errors.append("workflow skips Bandit B324 instead of enforcing its baseline")
 
     for name in MANDATORY_JOBS & jobs.keys():
         job = jobs[name]
@@ -54,12 +56,22 @@ def validate(document: dict, workflow_text: str) -> list[str]:
         errors.append("unit-tests does not invoke pytest directly on tests/unit")
     if "check-pytest-baseline.py" not in unit:
         errors.append("unit-tests does not enforce the accepted-failure baseline")
+    if '"$pytest_status" -ne 1' not in unit:
+        errors.append("unit-tests does not reject abnormal pytest exit statuses")
     if "python -m pytest tests/integration" not in integration:
         errors.append(
             "integration-tests does not invoke pytest directly on tests/integration"
         )
     if "--fail-under=85" not in coverage:
         errors.append("changed-code coverage threshold is not 85%")
+    policy = "\n".join(_run_blocks(jobs.get("policy", {})))
+    if 'git diff --check "$PR_BASE_SHA" "$PR_HEAD_SHA"' not in policy:
+        errors.append("policy does not check diff hygiene against the PR base and head")
+    security = "\n".join(_run_blocks(jobs.get("security-scan", {})))
+    if "check-bandit-baseline.py" not in security:
+        errors.append("security-scan does not enforce the Bandit finding baseline")
+    if "mkdir -p reports" not in security:
+        errors.append("security-scan does not create the Bandit report directory")
     if "@master" in workflow_text or "@main" in workflow_text:
         errors.append("workflow uses a mutable action reference")
 

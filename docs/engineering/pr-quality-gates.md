@@ -55,9 +55,10 @@ require exactly `Test Suite / Required PR gate` (as displayed by GitHub). Remove
 stale required-check names only after the new check has completed successfully
 on the default branch.
 
-Canon unchanged: this gate changes repository verification only. It introduces
-no product capability, authority, data model, workflow state, or deployment
-claim.
+This gate changes the engineering canon's recorded Python support and
+security-enforcement facts, so the same reviewed change must update the
+protected canon and its register hash. It introduces no product capability,
+authority, data model, workflow state, or deployment claim.
 
 ## Accepted security baseline
 
@@ -68,11 +69,11 @@ PR permanently red:
   unresolved advisories `PYSEC-2026-311`, `PYSEC-2026-3813`,
   `PYSEC-2026-3814`, and `PYSEC-2026-3815`. `pip-audit` reported no fix version
   on 2026-09-18. Only these IDs are ignored; a new advisory fails the gate.
-- Bandit rule B324 has six existing findings: three SHA-1 uses in the SAT/XML
-  signature implementation and three MD5 uses for cache keys or deterministic
-  feature bucketing. B324 is temporarily excluded until those protocol and
-  non-security hashing uses are adjudicated separately. All other new
-  high-severity, high-confidence Bandit findings fail the gate.
+- Bandit has six existing high-severity, high-confidence B324 findings: three
+  SHA-1 uses in the SAT/XML signature implementation and three MD5 uses for
+  cache keys or deterministic feature bucketing. Their exact path, line, and
+  rule identities are recorded in `.github/bandit-high-confidence-baseline.txt`.
+  A new or resolved finding blocks until the baseline is deliberately updated.
 
 These exceptions are not claims of safety. Remove each exception when the
 underlying dependency or code path is remediated.

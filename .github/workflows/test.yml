@@ -57,7 +57,16 @@ jobs:
             copa_telmex_dashboard.py src tests
 
       - name: Check diff hygiene
-        run: git diff --check
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE_SHA" "$PR_HEAD_SHA"
+          else
+            git diff --check HEAD^ HEAD
+          fi
 
   unit-tests:
     name: Unit tests (Python 3.12)
@@ -89,6 +98,10 @@ jobs:
             --junitxml=reports/unit-3.12.xml
           pytest_status=$?
           set -e
+          if [[ "$pytest_status" -ne 0 && "$pytest_status" -ne 1 ]]; then
+            echo "Pytest did not complete normally (exit $pytest_status)."
+            exit "$pytest_status"
+          fi
           python scripts/ci/check-pytest-baseline.py \
             --junit reports/unit-3.12.xml \
             --baseline .github/pytest-unit-failures.txt
@@ -254,10 +267,22 @@ jobs:
 
       - name: Scan Python for new high-confidence findings
         run: |
+          mkdir -p reports
+          set +e
           bandit -r src copa_telmex_dashboard.py \
             --severity-level high \
             --confidence-level high \
-            --skip B324
+            --format json \
+            --output reports/bandit-high-confidence.json
+          bandit_status=$?
+          set -e
+          if [[ "$bandit_status" -ne 0 && "$bandit_status" -ne 1 ]]; then
+            echo "Bandit did not complete normally (exit $bandit_status)."
+            exit "$bandit_status"
+          fi
+          python scripts/ci/check-bandit-baseline.py \
+            --report reports/bandit-high-confidence.json \
+            --baseline .github/bandit-high-confidence-baseline.txt
 
   required-pr-gate:
     name: Required PR gate
