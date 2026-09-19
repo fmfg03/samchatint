@@ -206,6 +206,92 @@ def test_required_string_schema_rejects_null_and_whitespace(value) -> None:
     assert input_schema_is_valid(schema, {"expense_id": value}) is False
 
 
+@pytest.mark.parametrize("payload", (None, []))
+def test_non_mapping_payload_is_rejected_before_dispatcher(payload) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+
+    result = service.evaluate(
+        ActionRequest("expense.get_status", "corr-non-mapping", payload),
+        principal=_principal(),
+    )
+
+    assert result.receipt.error_code == INPUT_SCHEMA_INVALID
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
+
+
+@pytest.mark.parametrize(
+    "action_request",
+    (
+        ActionRequest(
+            "expense.get_status",
+            "corr-extra-expense",
+            {"expense_id": "e1", "unexpected": "value"},
+        ),
+        ActionRequest(
+            "budget.get_availability",
+            "corr-extra-budget",
+            {
+                "tournament_id": "t1",
+                "edition_year": 2026,
+                "unexpected": "value",
+            },
+        ),
+        ActionRequest(
+            "expense.diagnose_blocker",
+            "corr-extra-diagnostic",
+            {"expense_id": "e1", "unexpected": "value"},
+        ),
+        ActionRequest(
+            "transfer.create_draft",
+            "corr-extra-draft",
+            {
+                "monto_solicitado": "1.00",
+                "proveedor_cliente_id": "supplier-1",
+                "torneo_id": "tournament-1",
+                "unexpected": "value",
+            },
+            idempotency_key="extra-draft",
+        ),
+    ),
+)
+def test_each_registered_schema_rejects_extra_input_before_dispatcher(
+    action_request: ActionRequest,
+) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+
+    result = service.evaluate(action_request, principal=_principal())
+
+    assert result.receipt.error_code == INPUT_SCHEMA_INVALID
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
+
+
+@pytest.mark.parametrize(
+    "attribute, value", (("actor_id", 1), ("tenant_id", []))
+)
+def test_malformed_principal_is_rejected_before_dispatcher(
+    attribute: str,
+    value,
+) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+    principal = replace(_principal(), **{attribute: value})
+
+    result = service.evaluate(
+        ActionRequest(
+            "expense.get_status", "corr-malformed", {"expense_id": "e1"}
+        ),
+        principal=principal,
+    )
+
+    assert result.receipt.error_code == PRECONDITION_UNSATISFIED
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
+
+
 def test_strict_schema_rejects_extra_input_before_dispatcher(
     monkeypatch,
 ) -> None:
@@ -357,6 +443,6 @@ def test_receipt_redacts_sensitive_input_and_never_claims_submission() -> None:
         "decision": "deny",
     }
     assert receipt.decision == "deny"
-    assert receipt.error_code is None
+    assert receipt.error_code == INPUT_SCHEMA_INVALID
     assert receipt.result == "not_invoked"
     assert "submitted" not in receipt.result

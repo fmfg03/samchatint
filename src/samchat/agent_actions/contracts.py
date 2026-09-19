@@ -40,6 +40,21 @@ class ResolvedPrincipal:
     effective_capabilities: Tuple[str, ...]
 
     def is_complete(self) -> bool:
+        if not isinstance(self.actor_id, str) or not isinstance(
+            self.tenant_id, str
+        ):
+            return False
+        if not isinstance(self.roles, tuple) or not isinstance(
+            self.effective_capabilities, tuple
+        ):
+            return False
+        if not all(isinstance(role, str) for role in self.roles):
+            return False
+        if not all(
+            isinstance(capability, str)
+            for capability in self.effective_capabilities
+        ):
+            return False
         return bool(self.actor_id.strip() and self.tenant_id.strip())
 
 
@@ -75,6 +90,8 @@ def input_schema_is_valid(
 ) -> bool:
     """Validate declared shape and scalar types, never domain semantics."""
 
+    if not isinstance(payload, Mapping):
+        return False
     fields_by_name = {field.name: field for field in schema.fields}
     if not schema.allow_additional_fields:
         if any(str(name) not in fields_by_name for name in payload):

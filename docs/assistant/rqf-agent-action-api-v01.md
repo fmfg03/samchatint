@@ -32,9 +32,11 @@ disabled guard returns a denial receipt before that dispatcher can be called.
 Before the disabled guard, the perimeter deterministically validates required
 inputs and declared scalar types. It reports `INPUT_SCHEMA_INVALID` for absent,
 null, blank required strings, invalid declared types, or undeclared fields when
-the schema opts out of additional fields. This is shape validation only: it does
-not infer business rules such as positive amount, existing provider, valid date,
-or authorized tournament.
+the schema rejects additional fields. All four registered schemas are strict;
+they reject arbitrary fields and non-mapping payloads. A malformed trusted
+principal is denied as a local precondition rather than raising an exception.
+This is shape validation only: it does not infer business rules such as positive
+amount, existing provider, valid date, or authorized tournament.
 
 The local preconditions are `trusted_principal`, `correlation_id`,
 `payload_identity_free`, and (for drafts) `idempotency_key`. A failed local

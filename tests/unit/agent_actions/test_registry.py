@@ -17,6 +17,9 @@ def test_v01_registers_only_the_concrete_disabled_actions() -> None:
     assert {item.disabled_reason for item in actions} == {
         CANONICAL_SCOPE_UNPROVEN
     }
+    assert all(
+        item.input_schema.allow_additional_fields is False for item in actions
+    )
 
 
 def test_registered_actions_have_typed_contract_policy_and_preconditions(

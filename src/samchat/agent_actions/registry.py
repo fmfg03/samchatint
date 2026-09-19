@@ -70,7 +70,8 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
         input_schema=ActionInputSchema(
-            fields=(InputFieldSchema("expense_id", "string"),)
+            fields=(InputFieldSchema("expense_id", "string"),),
+            allow_additional_fields=False,
         ),
         policy=ActionPolicy("samchat.expense.read", "v0.1"),
         preconditions=_preconditions(),
@@ -88,7 +89,8 @@ _ACTIONS: Dict[str, ActionDefinition] = {
             fields=(
                 InputFieldSchema("tournament_id", "string"),
                 InputFieldSchema("edition_year", "integer"),
-            )
+            ),
+            allow_additional_fields=False,
         ),
         policy=ActionPolicy("samchat.budget.read", "v0.1"),
         preconditions=_preconditions(),
@@ -103,7 +105,8 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
         input_schema=ActionInputSchema(
-            fields=(InputFieldSchema("expense_id", "string"),)
+            fields=(InputFieldSchema("expense_id", "string"),),
+            allow_additional_fields=False,
         ),
         policy=ActionPolicy("samchat.expense.diagnostic", "v0.1"),
         preconditions=_preconditions(),
@@ -122,7 +125,8 @@ _ACTIONS: Dict[str, ActionDefinition] = {
                 InputFieldSchema("monto_solicitado", "decimal"),
                 InputFieldSchema("proveedor_cliente_id", "string"),
                 InputFieldSchema("torneo_id", "string"),
-            )
+            ),
+            allow_additional_fields=False,
         ),
         policy=ActionPolicy("samchat.transfer.draft", "v0.1"),
         preconditions=_draft_preconditions(),
