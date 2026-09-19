@@ -34,6 +34,17 @@ def test_registered_actions_have_typed_contract_policy_and_preconditions(
         }
 
 
+def test_only_draft_declares_the_local_idempotency_precondition() -> None:
+    actions = {item.action_id: item for item in registered_actions()}
+
+    assert "idempotency_key" in {
+        item.code for item in actions["transfer.create_draft"].preconditions
+    }
+    assert "idempotency_key" not in {
+        item.code for item in actions["expense.get_status"].preconditions
+    }
+
+
 def test_only_mutating_action_requires_idempotency() -> None:
     actions = {item.action_id: item for item in registered_actions()}
 

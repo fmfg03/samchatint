@@ -1,16 +1,27 @@
+from dataclasses import replace
+from decimal import Decimal
+
 import pytest
 
-from samchat.agent_actions.contracts import ActionRequest, ResolvedPrincipal
+from samchat.agent_actions.contracts import (
+    ActionInputSchema,
+    ActionRequest,
+    InputFieldSchema,
+    ResolvedPrincipal,
+    input_schema_is_valid,
+)
 from samchat.agent_actions.receipts import InMemoryActionReceiptStore
 from samchat.agent_actions.registry import (
     ACTION_NOT_REGISTERED,
     CANONICAL_SCOPE_UNPROVEN,
 )
 from samchat.agent_actions.service import (
-    CORRELATION_ID_REQUIRED,
-    IDEMPOTENCY_KEY_REQUIRED,
-    IDENTITY_CONTEXT_MISSING,
-    UNTRUSTED_IDENTITY_FIELD,
+    CORRELATION_ID,
+    IDEMPOTENCY_KEY,
+    INPUT_SCHEMA_INVALID,
+    PAYLOAD_IDENTITY_FREE,
+    PRECONDITION_UNSATISFIED,
+    TRUSTED_PRINCIPAL,
     AgentActionService,
 )
 
@@ -29,6 +40,15 @@ def _service(
 ) -> tuple[AgentActionService, InMemoryActionReceiptStore]:
     store = InMemoryActionReceiptStore()
     return AgentActionService(store, dispatcher=dispatcher), store
+
+
+class RecordingDispatcher:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def dispatch(self, definition, request, principal) -> object:
+        self.calls.append((definition, request, principal))
+        raise AssertionError("disabled action reached the dispatcher")
 
 
 def test_unregistered_action_fails_closed() -> None:
@@ -74,14 +94,6 @@ def test_unregistered_action_fails_closed() -> None:
 def test_disabled_actions_return_before_the_injected_dispatcher(
     action_request: ActionRequest,
 ) -> None:
-    class RecordingDispatcher:
-        def __init__(self) -> None:
-            self.calls = []
-
-        def dispatch(self, definition, request, principal) -> object:
-            self.calls.append((definition, request, principal))
-            raise AssertionError("disabled action reached the dispatcher")
-
     dispatcher = RecordingDispatcher()
     service, _ = _service(dispatcher=dispatcher)
     result = service.evaluate(action_request, principal=_principal())
@@ -94,59 +106,191 @@ def test_disabled_actions_return_before_the_injected_dispatcher(
     assert dispatcher.calls == []
 
 
-def test_identity_correlation_and_untrusted_payload_are_denied() -> None:
-    service, _ = _service()
-    request = ActionRequest(
-        "expense.get_status", "corr-3", {"expense_id": "e1"}
-    )
-
-    missing_principal = service.evaluate(request, principal=None)
-    assert missing_principal.receipt.evaluated_preconditions == (
-        IDENTITY_CONTEXT_MISSING,
-    )
-
-    missing_correlation = service.evaluate(
-        ActionRequest("expense.get_status", "", {"expense_id": "e1"}),
-        principal=_principal(),
-    )
-    assert missing_correlation.receipt.evaluated_preconditions == (
-        CORRELATION_ID_REQUIRED,
-    )
-
-    impersonation = service.evaluate(
+@pytest.mark.parametrize(
+    "action_request",
+    (
+        ActionRequest("expense.get_status", "corr-incomplete", {}),
         ActionRequest(
-            "expense.get_status",
-            "corr-4",
-            {"expense_id": "e1", "empleado_id": "someone-else"},
+            "budget.get_availability",
+            "corr-incomplete",
+            {"tournament_id": "t1"},
         ),
-        principal=_principal(),
-    )
-    assert impersonation.receipt.evaluated_preconditions == (
-        UNTRUSTED_IDENTITY_FIELD,
-    )
+        ActionRequest("expense.diagnose_blocker", "corr-incomplete", {}),
+        ActionRequest(
+            "transfer.create_draft",
+            "corr-incomplete",
+            {"monto_solicitado": "1.00"},
+            idempotency_key="incomplete-draft",
+        ),
+    ),
+)
+def test_incomplete_payload_for_each_action_is_rejected_before_dispatcher(
+    action_request: ActionRequest,
+) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+
+    result = service.evaluate(action_request, principal=_principal())
+
+    assert result.receipt.error_code == INPUT_SCHEMA_INVALID
+    assert result.receipt.evaluated_preconditions == (INPUT_SCHEMA_INVALID,)
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
 
 
-def test_nested_identity_or_authority_fields_are_denied() -> None:
-    service, _ = _service()
+@pytest.mark.parametrize(
+    "action_request",
+    (
+        ActionRequest(
+            "expense.get_status", "corr-invalid-string", {"expense_id": 1}
+        ),
+        ActionRequest(
+            "budget.get_availability",
+            "corr-invalid-integer",
+            {"tournament_id": "t1", "edition_year": True},
+        ),
+        ActionRequest(
+            "transfer.create_draft",
+            "corr-invalid-decimal",
+            {
+                "monto_solicitado": "NaN",
+                "proveedor_cliente_id": "supplier-1",
+                "torneo_id": "tournament-1",
+            },
+            idempotency_key="invalid-decimal",
+        ),
+    ),
+)
+def test_invalid_declared_types_are_rejected_before_dispatcher(
+    action_request: ActionRequest,
+) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+
+    result = service.evaluate(action_request, principal=_principal())
+
+    assert result.receipt.error_code == INPUT_SCHEMA_INVALID
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
+
+
+@pytest.mark.parametrize("value", (Decimal("1.5"), 1, "1.5", 1.5))
+def test_decimal_schema_accepts_only_supported_finite_values(value) -> None:
+    schema = ActionInputSchema(
+        fields=(InputFieldSchema("amount", "decimal"),)
+    )
+
+    assert input_schema_is_valid(schema, {"amount": value}) is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    (True, object(), float("inf"), "not-a-number"),
+)
+def test_decimal_schema_rejects_boolean_and_non_finite_or_non_numeric_values(
+    value,
+) -> None:
+    schema = ActionInputSchema(
+        fields=(InputFieldSchema("amount", "decimal"),)
+    )
+
+    assert input_schema_is_valid(schema, {"amount": value}) is False
+
+
+@pytest.mark.parametrize("value", (None, "   "))
+def test_required_string_schema_rejects_null_and_whitespace(value) -> None:
+    schema = ActionInputSchema(
+        fields=(InputFieldSchema("expense_id", "string"),)
+    )
+
+    assert input_schema_is_valid(schema, {"expense_id": value}) is False
+
+
+def test_strict_schema_rejects_extra_input_before_dispatcher(
+    monkeypatch,
+) -> None:
+    import samchat.agent_actions.service as service_module
+    from samchat.agent_actions.registry import get_action
+
+    definition = replace(
+        get_action("expense.get_status"),
+        input_schema=ActionInputSchema(
+            fields=(InputFieldSchema("expense_id", "string"),),
+            allow_additional_fields=False,
+        ),
+    )
+    monkeypatch.setattr(
+        service_module, "get_action", lambda _action_id: definition
+    )
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
 
     result = service.evaluate(
         ActionRequest(
-            "expense.get_status",
-            "corr-nested",
-            {
-                "expense_id": "e1",
-                "context": {
-                    "empleado_id": "someone-else",
-                    "nested": [{"facultades": ["finance.execute"]}],
-                },
-            },
+            "strict.test",
+            "corr-extra",
+            {"expense_id": "e1", "unexpected": "value"},
         ),
         principal=_principal(),
     )
 
-    assert result.receipt.evaluated_preconditions == (
-        UNTRUSTED_IDENTITY_FIELD,
-    )
+    assert result.receipt.error_code == INPUT_SCHEMA_INVALID
+    assert dispatcher.calls == []
+
+
+@pytest.mark.parametrize(
+    ("action_request", "principal", "precondition"),
+    (
+        (
+            ActionRequest(
+                "expense.get_status", "corr-principal", {"expense_id": "e1"}
+            ),
+            None,
+            TRUSTED_PRINCIPAL,
+        ),
+        (
+            ActionRequest("expense.get_status", "", {"expense_id": "e1"}),
+            _principal(),
+            CORRELATION_ID,
+        ),
+        (
+            ActionRequest(
+                "expense.get_status",
+                "corr-identity",
+                {"expense_id": "e1", "context": {"roles": ["admin"]}},
+            ),
+            _principal(),
+            PAYLOAD_IDENTITY_FREE,
+        ),
+        (
+            ActionRequest(
+                "transfer.create_draft",
+                "corr-idempotency",
+                {
+                    "monto_solicitado": "1.00",
+                    "proveedor_cliente_id": "supplier-1",
+                    "torneo_id": "tournament-1",
+                },
+            ),
+            _principal(),
+            IDEMPOTENCY_KEY,
+        ),
+    ),
+)
+def test_local_preconditions_are_rejected_before_dispatcher(
+    action_request: ActionRequest,
+    principal: ResolvedPrincipal,
+    precondition: str,
+) -> None:
+    dispatcher = RecordingDispatcher()
+    service, _ = _service(dispatcher=dispatcher)
+
+    result = service.evaluate(action_request, principal=principal)
+
+    assert result.receipt.error_code == PRECONDITION_UNSATISFIED
+    assert result.receipt.evaluated_preconditions == (precondition,)
+    assert result.receipt.result == "not_invoked"
+    assert dispatcher.calls == []
 
 
 def test_disabled_draft_requires_idempotency_and_replays_receipt() -> None:
@@ -162,9 +306,8 @@ def test_disabled_draft_requires_idempotency_and_replays_receipt() -> None:
     )
 
     missing_key = service.evaluate(request, principal=_principal())
-    assert missing_key.receipt.evaluated_preconditions == (
-        IDEMPOTENCY_KEY_REQUIRED,
-    )
+    assert missing_key.receipt.error_code == PRECONDITION_UNSATISFIED
+    assert missing_key.receipt.evaluated_preconditions == (IDEMPOTENCY_KEY,)
 
     keyed = ActionRequest(
         request.action_id,
@@ -176,6 +319,7 @@ def test_disabled_draft_requires_idempotency_and_replays_receipt() -> None:
     replay = service.evaluate(keyed, principal=_principal())
 
     assert first.receipt.evaluated_preconditions == (CANONICAL_SCOPE_UNPROVEN,)
+    assert first.receipt.error_code is None
     assert replay.replayed is True
     assert replay.receipt.receipt_id == first.receipt.receipt_id
     assert len(store.receipts) == 2
@@ -213,5 +357,6 @@ def test_receipt_redacts_sensitive_input_and_never_claims_submission() -> None:
         "decision": "deny",
     }
     assert receipt.decision == "deny"
+    assert receipt.error_code is None
     assert receipt.result == "not_invoked"
     assert "submitted" not in receipt.result

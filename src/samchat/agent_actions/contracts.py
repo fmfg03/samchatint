@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional, Tuple
 from uuid import uuid4
@@ -67,6 +68,47 @@ class ActionInputSchema:
         names = [field.name for field in self.fields]
         if len(names) != len(set(names)):
             raise ValueError("action input schema contains duplicate fields")
+
+
+def input_schema_is_valid(
+    schema: ActionInputSchema, payload: Mapping[str, Any]
+) -> bool:
+    """Validate declared shape and scalar types, never domain semantics."""
+
+    fields_by_name = {field.name: field for field in schema.fields}
+    if not schema.allow_additional_fields:
+        if any(str(name) not in fields_by_name for name in payload):
+            return False
+
+    for field in schema.fields:
+        value = payload.get(field.name)
+        missing = field.name not in payload or value is None
+        if isinstance(value, str) and field.required and not value.strip():
+            missing = True
+        if missing:
+            if field.required:
+                return False
+            continue
+        if not _input_value_matches_type(value, field.value_type):
+            return False
+    return True
+
+
+def _input_value_matches_type(value: Any, value_type: str) -> bool:
+    if value_type == "string":
+        return isinstance(value, str)
+    if value_type == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if value_type == "decimal":
+        if isinstance(value, bool) or not isinstance(
+            value, (Decimal, int, str, float)
+        ):
+            return False
+        try:
+            return Decimal(str(value)).is_finite()
+        except (InvalidOperation, ValueError):
+            return False
+    raise ValueError("unsupported action input type")
 
 
 @dataclass(frozen=True)
@@ -174,6 +216,7 @@ class ActionReceipt:
     normalized_redacted_inputs: Mapping[str, Any]
     policy_version: str
     policy_envelope: Mapping[str, Any]
+    error_code: Optional[str]
     evaluated_preconditions: Tuple[str, ...]
     decision: str
     invoked_domain: Optional[str]
@@ -194,6 +237,7 @@ class ActionReceipt:
         invoked_domain: Optional[str],
         verifier: str = "not_run",
         policy: Optional[ActionPolicy] = None,
+        error_code: Optional[str] = None,
     ) -> "ActionReceipt":
         policy_envelope = PolicyEnvelope.denied(principal, policy)
         return cls(
@@ -208,6 +252,7 @@ class ActionReceipt:
             ),
             policy_version=policy_envelope.policy_version,
             policy_envelope=policy_envelope.to_dict(),
+            error_code=error_code,
             evaluated_preconditions=(reason,),
             decision="deny",
             invoked_domain=invoked_domain,

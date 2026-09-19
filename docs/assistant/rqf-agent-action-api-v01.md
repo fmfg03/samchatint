@@ -27,6 +27,26 @@ Each definition declares its input field names and value types, a stable
 perimeter receives a dispatcher only as an injected future dependency; its
 disabled guard returns a denial receipt before that dispatcher can be called.
 
+## Local validation versus domain gates
+
+Before the disabled guard, the perimeter deterministically validates required
+inputs and declared scalar types. It reports `INPUT_SCHEMA_INVALID` for absent,
+null, blank required strings, invalid declared types, or undeclared fields when
+the schema opts out of additional fields. This is shape validation only: it does
+not infer business rules such as positive amount, existing provider, valid date,
+or authorized tournament.
+
+The local preconditions are `trusted_principal`, `correlation_id`,
+`payload_identity_free`, and (for drafts) `idempotency_key`. A failed local
+precondition reports `PRECONDITION_UNSATISFIED` while retaining the concrete
+precondition code in `evaluated_preconditions`; this replaces the prior
+per-condition error label without losing its diagnostic evidence. Sensitive and
+binary input remains redacted in every receipt.
+
+`canonical_scope_bound` is deliberately not evaluated or marked satisfied here.
+It remains a domain-owner gate, and `enabled=False` plus
+`CANONICAL_SCOPE_UNPROVEN` continues to block every action after local checks.
+
 ## Domain-owner enablement inventory
 
 ### Gastos: expense status and blocker diagnosis
@@ -60,5 +80,6 @@ mutating route is not an Agent Action API migration.
 
 ## Canon impact
 
-Canon unchanged. This is an internal fail-closed perimeter with no enabled
-business capability, no handler invocation, and no admission of authority.
+Canon unchanged. This remains an internal fail-closed perimeter: no action is
+enabled, no runtime route exists, and the validation produces no business effect
+or handler invocation.

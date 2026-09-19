@@ -10,15 +10,18 @@ from .contracts import (
     ActionRequest,
     ResolvedPrincipal,
     find_untrusted_identity_paths,
+    input_schema_is_valid,
 )
 from .receipts import ActionReceiptStore
 from .registry import ACTION_NOT_REGISTERED, get_action
 
 
-IDENTITY_CONTEXT_MISSING = "IDENTITY_CONTEXT_MISSING"
-CORRELATION_ID_REQUIRED = "CORRELATION_ID_REQUIRED"
-IDEMPOTENCY_KEY_REQUIRED = "IDEMPOTENCY_KEY_REQUIRED"
-UNTRUSTED_IDENTITY_FIELD = "UNTRUSTED_IDENTITY_FIELD"
+INPUT_SCHEMA_INVALID = "INPUT_SCHEMA_INVALID"
+PRECONDITION_UNSATISFIED = "PRECONDITION_UNSATISFIED"
+TRUSTED_PRINCIPAL = "trusted_principal"
+CORRELATION_ID = "correlation_id"
+PAYLOAD_IDENTITY_FREE = "payload_identity_free"
+IDEMPOTENCY_KEY = "idempotency_key"
 
 
 @dataclass(frozen=True)
@@ -65,25 +68,34 @@ class AgentActionService:
             )
 
         if not principal or not principal.is_complete():
-            return self._record_blocked(
-                definition, request, principal, IDENTITY_CONTEXT_MISSING
+            return self._record_precondition_unsatisfied(
+                definition, request, principal, TRUSTED_PRINCIPAL
             )
 
         if not (request.correlation_id or "").strip():
-            return self._record_blocked(
-                definition, request, principal, CORRELATION_ID_REQUIRED
+            return self._record_precondition_unsatisfied(
+                definition, request, principal, CORRELATION_ID
             )
 
         if find_untrusted_identity_paths(request.payload):
-            return self._record_blocked(
-                definition, request, principal, UNTRUSTED_IDENTITY_FIELD
+            return self._record_precondition_unsatisfied(
+                definition, request, principal, PAYLOAD_IDENTITY_FREE
             )
 
         if definition.requires_idempotency and not (
             request.idempotency_key or ""
         ).strip():
+            return self._record_precondition_unsatisfied(
+                definition, request, principal, IDEMPOTENCY_KEY
+            )
+
+        if not input_schema_is_valid(definition.input_schema, request.payload):
             return self._record_blocked(
-                definition, request, principal, IDEMPOTENCY_KEY_REQUIRED
+                definition,
+                request,
+                principal,
+                INPUT_SCHEMA_INVALID,
+                error_code=INPUT_SCHEMA_INVALID,
             )
 
         if definition.requires_idempotency:
@@ -115,6 +127,7 @@ class AgentActionService:
         request: ActionRequest,
         principal: Optional[ResolvedPrincipal],
         reason: str,
+        error_code: Optional[str] = None,
     ) -> ActionGateResult:
         return self._record(
             ActionReceipt.blocked(
@@ -126,7 +139,23 @@ class AgentActionService:
                 invoked_domain=definition.domain,
                 verifier=definition.verifier,
                 policy=definition.policy,
+                error_code=error_code,
             )
+        )
+
+    def _record_precondition_unsatisfied(
+        self,
+        definition,
+        request: ActionRequest,
+        principal: Optional[ResolvedPrincipal],
+        precondition_code: str,
+    ) -> ActionGateResult:
+        return self._record_blocked(
+            definition,
+            request,
+            principal,
+            precondition_code,
+            error_code=PRECONDITION_UNSATISFIED,
         )
 
     def _record(self, receipt: ActionReceipt) -> ActionGateResult:

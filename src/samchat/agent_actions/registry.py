@@ -34,11 +34,28 @@ def _preconditions() -> tuple[ActionPrecondition, ...]:
             enforced_by="agent_action_service",
         ),
         ActionPrecondition(
+            code="payload_identity_free",
+            description=(
+                "Caller payload contains no identity or authority attributes."
+            ),
+            enforced_by="agent_action_service",
+        ),
+        ActionPrecondition(
             code="canonical_scope_bound",
             description=(
                 "Row and tenant visibility are proven by the canonical domain."
             ),
             enforced_by="domain_owner",
+        ),
+    )
+
+
+def _draft_preconditions() -> tuple[ActionPrecondition, ...]:
+    return _preconditions() + (
+        ActionPrecondition(
+            code="idempotency_key",
+            description="Draft requests include an idempotency key.",
+            enforced_by="agent_action_service",
         ),
     )
 
@@ -108,7 +125,7 @@ _ACTIONS: Dict[str, ActionDefinition] = {
             )
         ),
         policy=ActionPolicy("samchat.transfer.draft", "v0.1"),
-        preconditions=_preconditions(),
+        preconditions=_draft_preconditions(),
         verifier="draft document state verifier",
     ),
 }
