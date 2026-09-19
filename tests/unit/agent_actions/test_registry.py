@@ -19,6 +19,21 @@ def test_v01_registers_only_the_concrete_disabled_actions() -> None:
     }
 
 
+def test_registered_actions_have_typed_contract_policy_and_preconditions(
+) -> None:
+    for action in registered_actions():
+        assert action.input_schema.fields
+        assert all(field.value_type for field in action.input_schema.fields)
+        assert action.policy.policy_id.startswith("samchat.")
+        assert action.policy.policy_version == "v0.1"
+        assert all(
+            item.code and item.enforced_by for item in action.preconditions
+        )
+        assert "canonical_scope_bound" in {
+            item.code for item in action.preconditions
+        }
+
+
 def test_only_mutating_action_requires_idempotency() -> None:
     actions = {item.action_id: item for item in registered_actions()}
 

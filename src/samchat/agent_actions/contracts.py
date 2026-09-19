@@ -43,9 +43,54 @@ class ResolvedPrincipal:
 
 
 @dataclass(frozen=True)
+class InputFieldSchema:
+    """One typed field accepted by a canonical action contract."""
+
+    name: str
+    value_type: str
+    required: bool = True
+    sensitive: bool = False
+
+    def __post_init__(self) -> None:
+        if self.value_type not in {"string", "integer", "decimal"}:
+            raise ValueError("unsupported action input type")
+
+
+@dataclass(frozen=True)
+class ActionInputSchema:
+    """Typed, transport-neutral input schema for a registered action."""
+
+    fields: Tuple[InputFieldSchema, ...]
+    allow_additional_fields: bool = True
+
+    def __post_init__(self) -> None:
+        names = [field.name for field in self.fields]
+        if len(names) != len(set(names)):
+            raise ValueError("action input schema contains duplicate fields")
+
+
+@dataclass(frozen=True)
+class ActionPolicy:
+    """Identifiable policy evaluated by the action perimeter."""
+
+    policy_id: str
+    policy_version: str
+
+
+@dataclass(frozen=True)
+class ActionPrecondition:
+    """A machine-readable condition required before any dispatch."""
+
+    code: str
+    description: str
+    enforced_by: str
+
+
+@dataclass(frozen=True)
 class PolicyEnvelope:
     """The trusted identity and policy decision bound to one action attempt."""
 
+    policy_id: str
     policy_version: str
     actor_id: Optional[str]
     tenant_id: Optional[str]
@@ -55,10 +100,15 @@ class PolicyEnvelope:
 
     @classmethod
     def denied(
-        cls, principal: Optional[ResolvedPrincipal]
+        cls,
+        principal: Optional[ResolvedPrincipal],
+        policy: Optional[ActionPolicy] = None,
     ) -> "PolicyEnvelope":
         return cls(
-            policy_version="agent-action-policy-v0.1",
+            policy_id=policy.policy_id if policy else "unregistered-action",
+            policy_version=(
+                policy.policy_version if policy else "agent-action-policy-v0.1"
+            ),
             actor_id=principal.actor_id if principal else None,
             tenant_id=principal.tenant_id if principal else None,
             roles=principal.roles if principal else (),
@@ -81,8 +131,9 @@ class ActionDefinition:
     canonical_handler: str
     enabled: bool
     disabled_reason: Optional[str]
-    required_inputs: Tuple[str, ...]
-    required_scope_binding: str
+    input_schema: ActionInputSchema
+    policy: ActionPolicy
+    preconditions: Tuple[ActionPrecondition, ...]
     verifier: str
 
     @property
@@ -96,6 +147,8 @@ class ActionDefinition:
             raise ValueError("enabled actions cannot have a disabled reason")
         if not self.enabled and not self.disabled_reason:
             raise ValueError("disabled actions require an explicit reason")
+        if not self.preconditions:
+            raise ValueError("actions require structured preconditions")
 
 
 @dataclass(frozen=True)
@@ -140,8 +193,9 @@ class ActionReceipt:
         reason: str,
         invoked_domain: Optional[str],
         verifier: str = "not_run",
+        policy: Optional[ActionPolicy] = None,
     ) -> "ActionReceipt":
-        policy = PolicyEnvelope.denied(principal)
+        policy_envelope = PolicyEnvelope.denied(principal, policy)
         return cls(
             receipt_id=str(uuid4()),
             action_id=action_id,
@@ -152,8 +206,8 @@ class ActionReceipt:
             normalized_redacted_inputs=normalize_and_redact(
                 request.payload if request else {}
             ),
-            policy_version=policy.policy_version,
-            policy_envelope=policy.to_dict(),
+            policy_version=policy_envelope.policy_version,
+            policy_envelope=policy_envelope.to_dict(),
             evaluated_preconditions=(reason,),
             decision="deny",
             invoked_domain=invoked_domain,
@@ -197,3 +251,27 @@ def normalize_and_redact(value: Any, *, field_name: str = "") -> Any:
     if isinstance(value, bytes):
         return REDACTED_INPUT_MARKER
     return value
+
+
+def find_untrusted_identity_paths(
+    value: Any, *, path: Tuple[str, ...] = ()
+) -> Tuple[str, ...]:
+    """Find caller-supplied identity fields at every payload depth."""
+
+    found = []
+    if isinstance(value, Mapping):
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            normalized_key = key.lower().replace("-", "_")
+            item_path = path + (key,)
+            if normalized_key in UNTRUSTED_IDENTITY_FIELDS:
+                found.append(".".join(item_path))
+            found.extend(find_untrusted_identity_paths(item, path=item_path))
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found.extend(
+                find_untrusted_identity_paths(
+                    item, path=path + (str(index),)
+                )
+            )
+    return tuple(found)

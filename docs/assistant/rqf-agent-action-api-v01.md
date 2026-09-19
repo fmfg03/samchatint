@@ -4,10 +4,13 @@ Status: implemented internal perimeter; no registered action is enabled.
 
 ## Scope
 
-The v0.1 package provides typed contracts, a fail-closed registry, identity and
-typed policy envelopes, receipt/idempotency contracts, and negative tests. It does
-not mount an HTTP route, alter UI behavior, invoke Jev, route natural language,
-or invoke a domain handler.
+The v0.1 package provides typed input schemas, identifiable policy and structured
+precondition contracts, a fail-closed registry, identity and typed policy
+envelopes, receipt/idempotency contracts, and negative tests. Caller payloads are
+recursively rejected when they contain identity, tenant, role, or faculty fields;
+only the trusted adapter may provide a `ResolvedPrincipal`. It does not mount an
+HTTP route, alter UI behavior, invoke Jev, route natural language, or invoke a
+domain handler.
 
 All four definitions have `enabled=False` and
 `disabled_reason=CANONICAL_SCOPE_UNPROVEN`:
@@ -18,6 +21,11 @@ All four definitions have `enabled=False` and
 | `budget.get_availability` | `budgets.snapshot` | The snapshot has no principal or authorized budget/tournament scope input. |
 | `expense.diagnose_blocker` | `expense.full_workflow_snapshot` | It inherits the unscoped expense lookup. |
 | `transfer.create_draft` | `expenses.create_solicitud_terceros` | `empleado_id` may come from payload or `AssistantContext`; actor/faculty is not proven from the authenticated session. |
+
+Each definition declares its input field names and value types, a stable
+`policy_id` plus `policy_version`, and machine-readable preconditions. The
+perimeter receives a dispatcher only as an injected future dependency; its
+disabled guard returns a denial receipt before that dispatcher can be called.
 
 ## Domain-owner enablement inventory
 
