@@ -1,0 +1,8 @@
+# Existing high-severity, high-confidence Bandit B324 findings as of 2026-09-18.
+# Format: relative-path:line-number:rule-id
+src/devnous/sat/authentication_agent.py:332:B324
+src/devnous/sat/verification_agent.py:296:B324
+src/devnous/sat/verification_agent.py:560:B324
+src/samchat/base_agent.py:322:B324
+src/samchat/feature_flags.py:251:B324
+src/samchat/feature_flags.py:276:B324

@@ -304,7 +304,7 @@ Current repository evidence contains two GitHub workflow files:
 
 There is no `.github/workflows/nightly.yml` at the inspected baseline. Therefore, a three-level Fast PR / Main / Nightly architecture is not current repo truth.
 
-The assistant-scoped workflow currently runs on both pull requests and pushes to integrated branches. The Test Suite uses Python 3.11 and 3.12 matrices plus registration and accepted-regression guards. Some lint/security steps are non-blocking; do not describe them as strict gates without inspecting job conclusions and branch rules.
+The assistant-scoped workflow currently runs on both pull requests and pushes to integrated branches. At PR #350 head under review on 2026-09-19, the Test Suite is Python 3.12-only because the repository uses PEP 701 syntax; it directly runs the complete unit and integration suites, applies an exact accepted-failure baseline for the documented unit debt, enforces 85% changed-code coverage, and makes pip-audit plus the exact high-confidence Bandit baseline blocking. The aggregate `Test Suite / Required PR gate` is the intended stable protection check after it is observed successfully on `main`. This is repository work under review, not deployment or business-acceptance evidence.
 
 Production deployment is governed by one active systemd drop-in:
 

@@ -46,7 +46,7 @@ explicit human review; automation must never author or approve them silently.
 - Docker (optional): `docker-compose up -d` from `deployment/compose` configs
 
 ## Coding Style & Naming Conventions
-- Python 3.8+ with type hints.
+- Python 3.12+ with type hints.
 - Formatting via Black; import order via isort; keep lint clean (flake8).
 - Indentation: 4 spaces; line length: 88.
 - Naming: modules `snake_case.py`, classes `CamelCase`, functions/vars `snake_case`, constants `UPPER_SNAKE`.

@@ -24,12 +24,13 @@ canon edits silently.
 | --- | --- |
 | `SAMCHAT_CANON_FOR_CHATGPT_2026-09-10.md` | `10e53ea2d57ab1bf3d0c5d85097ad48afaefefc99793460698ab626c86f5ff6e` |
 | `SAMCHAT_CODEBASE_SWEEP_REPORT_2026-09-10.md` | `f930556b0c6002d8d6242e5591fdce72362d922a39a0746d4fac04538580e433` |
-| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `1d8b95b2e34b8fd14132c14caec84eac8b4ce58188f186e64f1df122d76d73b1` |
+| `SAMCHAT_ENGINEERING_CANON_FOR_CHATGPT_2026-09-10.md` | `a94e5a8a07ef037e7258e362e3e3e6cdce7f1289015169805fa65f43ef322834` |
 
 | Canon amendment date | Affected sources | Reason and evidence | Evidence state |
 | --- | --- | --- | --- |
 | 2026-09-11 | Product and Engineering canons | This amendment governs the pending correction to #314/#315 from an external-client interpretation to internal Direction, position-scoped boards and reports. Production remains at `81335f8ddd7e103839719f62235a14d11bb2bd47` with the incorrect client-based interpretation; the correction is only an uncommitted isolated-worktree diff with focused authorization/reporting tests and route-contract validation. | `repo_live` only after merge; `deployed_verified` only after a new release plus authenticated smoke. UAT and real scope configuration remain pending; not `business_accepted`. |
 | 2026-09-12 | Product and Engineering canons | Human-approved expansion of `/direccion/tableros` to cross-domain, read-only Operations, Finance, and Marketing visibility inside assigned Direction portfolio/tournament scope. Evidence: scoped budget and tournament SOUL/entity-dossier integration, explicit gap inventory, aggregate age handling, focused tests, lint and diff validation. | Worktree implementation under review; not merged, deployed, UAT-validated, or business accepted. |
+| 2026-09-19 | Engineering canon | Human-approved correction for PR #350: its required CI gate replaces the obsolete Python 3.11/3.12 and non-blocking-security description with the Python 3.12-only direct-suite, exact pytest/Bandit baselines, changed-code coverage, and aggregate-gate contract. Evidence: focused contract tests, exact Bandit baseline verification, and diff hygiene in the isolated worktree. | Worktree implementation under review; not merged, deployed, or business accepted. |
 
 ## Work lanes and gates
 
