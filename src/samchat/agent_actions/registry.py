@@ -4,11 +4,43 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from .contracts import ActionDefinition
+from .contracts import (
+    ActionDefinition,
+    ActionInputSchema,
+    ActionPolicy,
+    ActionPrecondition,
+    InputFieldSchema,
+)
 
 
 ACTION_NOT_REGISTERED = "ACTION_NOT_REGISTERED"
 CANONICAL_SCOPE_UNPROVEN = "CANONICAL_SCOPE_UNPROVEN"
+
+
+def _preconditions() -> tuple[ActionPrecondition, ...]:
+    return (
+        ActionPrecondition(
+            code="trusted_principal",
+            description=(
+                "Actor and tenant come from authenticated server state."
+            ),
+            enforced_by="agent_action_service",
+        ),
+        ActionPrecondition(
+            code="correlation_id",
+            description=(
+                "Every attempt carries a trace correlation identifier."
+            ),
+            enforced_by="agent_action_service",
+        ),
+        ActionPrecondition(
+            code="canonical_scope_bound",
+            description=(
+                "Row and tenant visibility are proven by the canonical domain."
+            ),
+            enforced_by="domain_owner",
+        ),
+    )
 
 
 _ACTIONS: Dict[str, ActionDefinition] = {
@@ -20,10 +52,11 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         canonical_handler="expense.full_workflow_snapshot",
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
-        required_inputs=("expense_id",),
-        required_scope_binding=(
-            "expense visibility resolved from trusted principal"
+        input_schema=ActionInputSchema(
+            fields=(InputFieldSchema("expense_id", "string"),)
         ),
+        policy=ActionPolicy("samchat.expense.read", "v0.1"),
+        preconditions=_preconditions(),
         verifier="expense status source verifier",
     ),
     "budget.get_availability": ActionDefinition(
@@ -34,10 +67,14 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         canonical_handler="budgets.snapshot",
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
-        required_inputs=("tournament_id", "edition_year"),
-        required_scope_binding=(
-            "budget version visibility resolved from trusted principal"
+        input_schema=ActionInputSchema(
+            fields=(
+                InputFieldSchema("tournament_id", "string"),
+                InputFieldSchema("edition_year", "integer"),
+            )
         ),
+        policy=ActionPolicy("samchat.budget.read", "v0.1"),
+        preconditions=_preconditions(),
         verifier="budget availability source verifier",
     ),
     "expense.diagnose_blocker": ActionDefinition(
@@ -48,10 +85,11 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         canonical_handler="expense.full_workflow_snapshot",
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
-        required_inputs=("expense_id",),
-        required_scope_binding=(
-            "expense visibility resolved from trusted principal"
+        input_schema=ActionInputSchema(
+            fields=(InputFieldSchema("expense_id", "string"),)
         ),
+        policy=ActionPolicy("samchat.expense.diagnostic", "v0.1"),
+        preconditions=_preconditions(),
         verifier="expense blocker source verifier",
     ),
     "transfer.create_draft": ActionDefinition(
@@ -62,14 +100,15 @@ _ACTIONS: Dict[str, ActionDefinition] = {
         canonical_handler="expenses.create_solicitud_terceros",
         enabled=False,
         disabled_reason=CANONICAL_SCOPE_UNPROVEN,
-        required_inputs=(
-            "monto_solicitado",
-            "proveedor_cliente_id",
-            "torneo_id",
+        input_schema=ActionInputSchema(
+            fields=(
+                InputFieldSchema("monto_solicitado", "decimal"),
+                InputFieldSchema("proveedor_cliente_id", "string"),
+                InputFieldSchema("torneo_id", "string"),
+            )
         ),
-        required_scope_binding=(
-            "actor sourced from session and authorized for target tournament"
-        ),
+        policy=ActionPolicy("samchat.transfer.draft", "v0.1"),
+        preconditions=_preconditions(),
         verifier="draft document state verifier",
     ),
 }

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Protocol
 
 from .contracts import (
     ActionReceipt,
     ActionRequest,
     ResolvedPrincipal,
-    UNTRUSTED_IDENTITY_FIELDS,
+    find_untrusted_identity_paths,
 )
 from .receipts import ActionReceiptStore
 from .registry import ACTION_NOT_REGISTERED, get_action
@@ -27,11 +27,23 @@ class ActionGateResult:
     replayed: bool = False
 
 
+class CanonicalActionDispatcher(Protocol):
+    """Future canonical dispatcher, unreachable while v0.1 is disabled."""
+
+    def dispatch(self, definition, request, principal) -> object:
+        """Dispatch an enabled action only after its perimeter checks pass."""
+
+
 class AgentActionService:
     """Contract/policy/receipt perimeter; v0.1 dispatches nothing."""
 
-    def __init__(self, receipt_store: ActionReceiptStore) -> None:
+    def __init__(
+        self,
+        receipt_store: ActionReceiptStore,
+        dispatcher: Optional[CanonicalActionDispatcher] = None,
+    ) -> None:
         self._receipt_store = receipt_store
+        self._dispatcher = dispatcher
 
     def evaluate(
         self,
@@ -62,7 +74,7 @@ class AgentActionService:
                 definition, request, principal, CORRELATION_ID_REQUIRED
             )
 
-        if set(request.payload).intersection(UNTRUSTED_IDENTITY_FIELDS):
+        if find_untrusted_identity_paths(request.payload):
             return self._record_blocked(
                 definition, request, principal, UNTRUSTED_IDENTITY_FIELD
             )
@@ -84,12 +96,17 @@ class AgentActionService:
             if prior is not None:
                 return ActionGateResult(receipt=prior, replayed=True)
 
-        # The enabled guard deliberately precedes every domain dispatcher.
-        return self._record_blocked(
-            definition,
-            request,
-            principal,
-            str(definition.disabled_reason),
+        # This guard deliberately precedes every domain dispatcher.
+        if not definition.enabled:
+            return self._record_blocked(
+                definition,
+                request,
+                principal,
+                str(definition.disabled_reason),
+            )
+
+        raise RuntimeError(
+            "enabled action dispatch is outside Agent Action API v0.1"
         )
 
     def _record_blocked(
@@ -108,6 +125,7 @@ class AgentActionService:
                 reason=reason,
                 invoked_domain=definition.domain,
                 verifier=definition.verifier,
+                policy=definition.policy,
             )
         )
 
