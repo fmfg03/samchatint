@@ -7,15 +7,16 @@ from samchat.agent_actions.registry import (
 from samchat.agent_actions.service import (
     CORRELATION_ID_REQUIRED,
     IDEMPOTENCY_KEY_REQUIRED,
+    IDEMPOTENCY_KEY_REUSED,
     IDENTITY_CONTEXT_MISSING,
     UNTRUSTED_IDENTITY_FIELD,
     AgentActionService,
 )
 
 
-def _principal() -> ResolvedPrincipal:
+def _principal(actor_id: str = "employee-1") -> ResolvedPrincipal:
     return ResolvedPrincipal(
-        actor_id="employee-1",
+        actor_id=actor_id,
         tenant_id="samchat-prod",
         roles=("finanzas",),
         effective_capabilities=("finance.ops.read",),
@@ -127,6 +128,44 @@ def test_disabled_draft_requires_idempotency_and_replays_receipt() -> None:
     assert len(store.receipts) == 2
 
 
+def test_idempotency_replay_is_bound_to_actor_and_redacted_payload() -> None:
+    service, store = _service()
+    request = ActionRequest(
+        "transfer.create_draft",
+        "corr-actor-1",
+        {
+            "monto_solicitado": "100.00",
+            "proveedor_cliente_id": "supplier-1",
+            "torneo_id": "tournament-1",
+        },
+        idempotency_key="shared-key",
+    )
+    first = service.evaluate(request, principal=_principal())
+
+    other_actor = service.evaluate(
+        request, principal=_principal("employee-2")
+    )
+    assert other_actor.replayed is False
+    assert other_actor.receipt.receipt_id != first.receipt.receipt_id
+    assert other_actor.receipt.actor_id == "employee-2"
+
+    altered_payload = service.evaluate(
+        ActionRequest(
+            request.action_id,
+            "corr-actor-1-altered",
+            {**request.payload, "monto_solicitado": "200.00"},
+            idempotency_key=request.idempotency_key,
+        ),
+        principal=_principal(),
+    )
+    assert altered_payload.replayed is False
+    assert altered_payload.receipt.evaluated_preconditions == (
+        IDEMPOTENCY_KEY_REUSED,
+    )
+    assert altered_payload.receipt.idempotency_key is None
+    assert len(store.receipts) == 3
+
+
 def test_receipt_redacts_sensitive_input_and_never_claims_submission() -> None:
     service, _ = _service()
 
@@ -140,6 +179,10 @@ def test_receipt_redacts_sensitive_input_and_never_claims_submission() -> None:
                 "torneo_id": "tournament-1",
                 "archivo_data": "raw document contents",
                 "api_token": "do-not-record",
+                "api_key": "do-not-record",
+                "Authorization": "Bearer do-not-record",
+                "cookie": "session=do-not-record",
+                "private-key": "do-not-record",
             },
             idempotency_key="draft-2",
         ),
@@ -149,6 +192,10 @@ def test_receipt_redacts_sensitive_input_and_never_claims_submission() -> None:
     receipt = result.receipt
     assert receipt.normalized_redacted_inputs["archivo_data"] == "[REDACTED]"
     assert receipt.normalized_redacted_inputs["api_token"] == "[REDACTED]"
+    assert receipt.normalized_redacted_inputs["api_key"] == "[REDACTED]"
+    assert receipt.normalized_redacted_inputs["Authorization"] == "[REDACTED]"
+    assert receipt.normalized_redacted_inputs["cookie"] == "[REDACTED]"
+    assert receipt.normalized_redacted_inputs["private-key"] == "[REDACTED]"
     assert receipt.policy_envelope == {
         "policy_version": "agent-action-policy-v0.1",
         "actor_id": "employee-1",

@@ -23,5 +23,5 @@ CREATE INDEX IF NOT EXISTS ix_agent_action_receipts_correlation_id
     ON agent_action_receipts(correlation_id);
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_action_receipts_mutation_idempotency
-    ON agent_action_receipts(tenant_id, action_id, action_version, idempotency_key)
+    ON agent_action_receipts(tenant_id, actor_id, action_id, action_version, idempotency_key)
     WHERE idempotency_key IS NOT NULL;

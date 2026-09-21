@@ -10,6 +10,7 @@ from .contracts import (
     ActionRequest,
     ResolvedPrincipal,
     UNTRUSTED_IDENTITY_FIELDS,
+    normalize_and_redact,
 )
 from .receipts import ActionReceiptStore
 from .registry import ACTION_NOT_REGISTERED, get_action
@@ -18,6 +19,7 @@ from .registry import ACTION_NOT_REGISTERED, get_action
 IDENTITY_CONTEXT_MISSING = "IDENTITY_CONTEXT_MISSING"
 CORRELATION_ID_REQUIRED = "CORRELATION_ID_REQUIRED"
 IDEMPOTENCY_KEY_REQUIRED = "IDEMPOTENCY_KEY_REQUIRED"
+IDEMPOTENCY_KEY_REUSED = "IDEMPOTENCY_KEY_REUSED"
 UNTRUSTED_IDENTITY_FIELD = "UNTRUSTED_IDENTITY_FIELD"
 
 
@@ -77,12 +79,29 @@ class AgentActionService:
         if definition.requires_idempotency:
             prior = self._receipt_store.find_idempotent(
                 tenant_id=principal.tenant_id,
+                actor_id=principal.actor_id,
                 action_id=definition.action_id,
                 action_version=definition.action_version,
                 idempotency_key=str(request.idempotency_key),
             )
             if prior is not None:
-                return ActionGateResult(receipt=prior, replayed=True)
+                if (
+                    prior.actor_id == principal.actor_id
+                    and prior.tenant_id == principal.tenant_id
+                    and prior.normalized_redacted_inputs
+                    == normalize_and_redact(request.payload)
+                ):
+                    return ActionGateResult(receipt=prior, replayed=True)
+                return self._record_blocked(
+                    definition,
+                    ActionRequest(
+                        action_id=request.action_id,
+                        correlation_id=request.correlation_id,
+                        payload=request.payload,
+                    ),
+                    principal,
+                    IDEMPOTENCY_KEY_REUSED,
+                )
 
         # The enabled guard deliberately precedes every domain dispatcher.
         return self._record_blocked(

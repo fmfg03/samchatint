@@ -171,8 +171,20 @@ def normalize_and_redact(value: Any, *, field_name: str = "") -> Any:
     """Normalize input without retaining secret or raw-binary values."""
 
     lowered = field_name.lower()
-    sensitive_terms = ("secret", "token", "password", "credential")
-    if any(token in lowered for token in sensitive_terms):
+    compact_name = "".join(character for character in lowered if character.isalnum())
+    sensitive_terms = (
+        "secret",
+        "token",
+        "password",
+        "credential",
+        "apikey",
+        "authorization",
+        "cookie",
+        "privatekey",
+    )
+    if any(
+        term in lowered or term in compact_name for term in sensitive_terms
+    ):
         return REDACTED_INPUT_MARKER
     binary_fields = {
         "archivo_data",

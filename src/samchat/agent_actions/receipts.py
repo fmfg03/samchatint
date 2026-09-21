@@ -15,6 +15,7 @@ class ActionReceiptStore(Protocol):
         self,
         *,
         tenant_id: str,
+        actor_id: str,
         action_id: str,
         action_version: str,
         idempotency_key: str,
@@ -27,14 +28,15 @@ class InMemoryActionReceiptStore:
 
     def __init__(self) -> None:
         self.receipts: list[ActionReceipt] = []
-        self._idempotent: Dict[tuple[str, str, str, str], ActionReceipt] = {}
+        self._idempotent: Dict[tuple[str, str, str, str, str], ActionReceipt] = {}
 
     def append(self, receipt: ActionReceipt) -> None:
         self.receipts.append(receipt)
-        if receipt.tenant_id and receipt.idempotency_key:
+        if receipt.tenant_id and receipt.actor_id and receipt.idempotency_key:
             self._idempotent[
                 (
                     receipt.tenant_id,
+                    receipt.actor_id,
                     receipt.action_id,
                     receipt.action_version,
                     receipt.idempotency_key,
@@ -45,10 +47,11 @@ class InMemoryActionReceiptStore:
         self,
         *,
         tenant_id: str,
+        actor_id: str,
         action_id: str,
         action_version: str,
         idempotency_key: str,
     ) -> Optional[ActionReceipt]:
         return self._idempotent.get(
-            (tenant_id, action_id, action_version, idempotency_key)
+            (tenant_id, actor_id, action_id, action_version, idempotency_key)
         )
