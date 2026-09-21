@@ -222,8 +222,13 @@ Target: J15.
 Prompt:
 > Encuentra esta factura emitida, identifica a qué torneo/partida pertenece y verifica su estado de cobranza.
 
-Target: J16.  
-Precondition: resolve actual registered CxC route before session.
+Target: J16.
+
+Run the task twice where authority allows:
+1. start from the Finance AR workbench (`/admin/finanzas/cuentas-por-cobrar`) for portfolio/facturación/cobranza status;
+2. start from the Accounting CxC view (`/admin/contabilidad/cuentas-por-cobrar`) for accounting-context work.
+
+Measure whether the participant understands the purpose of each view and can navigate between them without losing context.
 
 ### T17 — Budget versus actual
 
@@ -289,6 +294,6 @@ The audit has enough UAT evidence when:
 - every critical role has at least one session;
 - J01–J18 have at least one measured run where authority/data allow it;
 - high-risk queues J07/J09/J11/J13/J15 have evidence with realistic records;
-- route conflicts such as CxC are reconciled;
+- purpose and navigation between dual surfaces such as Finance CxC and Accounting CxC are validated;
 - top friction points are reproducible;
 - proposed IA changes can be tied to measured failures rather than aesthetic preference.
