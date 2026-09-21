@@ -127,10 +127,11 @@ PANEL
 │   ├── SAT / matching
 │   ├── Payment Run
 │   ├── Cashflow
+│   ├── CxC read model / workbench
 │   └── Limpieza contable
 ├── CONTABILIDAD
 │   ├── COI
-│   ├── CxC / ingresos
+│   ├── CxC vista contable / ingresos
 │   ├── Conciliación
 │   ├── Diario
 │   ├── Mayor
@@ -206,11 +207,13 @@ Current authority model includes:
 
 Presupuestos route policy explicitly contains canonical owners, bridges and legacy candidates. The UI must present one product concept, not repository history.
 
-## NAV-07 — CxC path naming requires reconciliation
+## NAV-07 — CxC exposes two route contexts
 
-Repository documents disagree on whether the AR lane is under `/admin/contabilidad` or `/admin/finanzas`.
+Current repository evidence confirms both routes. `/admin/finanzas/cuentas-por-cobrar` is the canonical Finance AR read model/workbench; it explicitly links to `/admin/contabilidad/cuentas-por-cobrar` as “Vista contable”.
 
-No navigation redesign should hard-code a choice until current registered routes and UI links are inspected.
+**Risk:** two screens named Cuentas por Cobrar can look like duplicates unless their purpose is explicit.
+
+**Validation:** ask Finance and Contabilidad users which view they expect for portfolio/collections work versus accounting classification/entry work, and verify that cross-links preserve context.
 
 ---
 
