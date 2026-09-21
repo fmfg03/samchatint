@@ -11,7 +11,7 @@ Evidence levels:
 - `CONFIRMED_REPO`
 - `OBSERVED_IN_REPO_UAT_DOC`
 - `HYPOTHESIS_TO_VALIDATE`
-- `CONFLICT_REQUIRES_RECONCILIATION`
+- `DUAL_SURFACE_REQUIRES_UAT`
 
 ## Top 20 findings
 
@@ -25,7 +25,7 @@ Evidence levels:
 | UX-006 | P1 | Payment Run has a critical semantic distinction between cutoff and paid | CONFIRMED_REPO | UI ambiguity can cause operational errors | UAT cutoff vs payment-proof tasks |
 | UX-007 | P1 | Control Presupuestal is a high-risk classification queue | CONFIRMED_REPO | Wrong selection is costly; disappearance from queue is not sufficient feedback | Error-prevention and completion UAT |
 | UX-008 | P1 | Solicitud creation is split across `/gastos-terceros` and `/documentos` route families | CONFIRMED_REPO | Taxonomy may be clear to developers but not requesters | First-click test for 3 request types |
-| UX-009 | P1 | CxC lane naming/route ownership is inconsistent across repo docs | CONFLICT_REQUIRES_RECONCILIATION | Navigation changes could reinforce the wrong owner/path | Inspect registered routes + live menu |
+| UX-009 | P1 | CxC has separate Finance and Accounting surfaces with the same business label | DUAL_SURFACE_REQUIRES_UAT | Users may treat purpose-specific views as duplicates or choose the wrong one | Test task-to-view mapping and cross-navigation |
 | UX-010 | P1 | Prior table/action usability defects were user-observed | OBSERVED_IN_REPO_UAT_DOC | Confirms that passing functional tests did not guarantee usable UI | Continue browser UAT after #351 |
 | UX-011 | P2 | Legacy/bridge/canonical budget routes coexist | CONFIRMED_REPO | Implementation history can leak into user navigation if not controlled | Reachability/link inventory |
 | UX-012 | P2 | Specialized grids and legacy inline tables remain outside shared UI contract | CONFIRMED_REPO | Inconsistent behavior is likely at viewport/keyboard boundaries | Dedicated browser UAT |
@@ -127,11 +127,15 @@ The repository has different creation paths for tercero/proveedor, personal and 
 
 No route consolidation is proposed here; this is an IA hypothesis.
 
-## UX-009 — CxC route conflict
+## UX-009 — Dual CxC surfaces
 
-Finance UAT lists `/admin/contabilidad/cuentas-por-cobrar`; engineering canon names an AR lane under `/admin/finanzas/cuentas-por-cobrar`.
+Repository evidence confirms:
+- `/admin/finanzas/cuentas-por-cobrar` with `build_ar_read_model`, billing schedule, actionable gaps, matching, detail and export routes;
+- `/admin/contabilidad/cuentas-por-cobrar` with accounting navigation/breadcrumb context.
 
-Action: inspect route registration and navigation targets before any UX refactor.
+The Finance AR UI explicitly links to the second as “Vista contable”.
+
+The issue is therefore purpose communication, not missing route ownership. UAT must determine whether Finance and Contabilidad users understand which view answers which task.
 
 ## UX-010 — Prior real usability defect class
 
