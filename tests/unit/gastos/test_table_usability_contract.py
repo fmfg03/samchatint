@@ -20,14 +20,24 @@ def _function_source(path: Path, start_marker: str, end_marker: str) -> str:
     return source[start:end]
 
 
-def test_shared_workspace_contract_keeps_headers_and_scrollbar_visible():
+def _route_source(path: Path, marker: str) -> str:
+    source = _source(path)
+    start = source.index(marker)
+    end = source.find("\n@router.", start + 1)
+    return source[start:] if end == -1 else source[start:end]
+
+
+def test_shared_workspace_contract_uses_page_scroll_and_keeps_headers_sticky():
     for path, start_marker, end_marker in (
         (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
         (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
     ):
         styles = _function_source(path, start_marker, end_marker)
-        assert "max-block-size:min(68vh, 46rem)" in styles
-        assert "scrollbar-gutter:stable both-edges" in styles
+        assert 'layout: str = "reading"' in styles
+        assert "layout must be 'reading' or 'data'" in styles
+        assert "max-width:{container_max_width}" in styles
+        assert "overflow:visible" in styles
+        assert "overflow-x:auto" in styles
         assert ".table-shell thead th" in styles
         assert "position:sticky" in styles
         assert "top:0" in styles
@@ -108,5 +118,38 @@ def test_direction_domain_shell_has_same_scroll_contract():
     executive = _source(EXECUTIVE_UI)
     assert ".table-wrap thead th" in executive
     assert "position:sticky" in executive
-    assert "max-block-size:min(68vh, 46rem)" in executive
-    assert "scrollbar-gutter:stable both-edges" in executive
+    assert "width:calc(100% - 40px)" in executive
+    assert "max-block-size:min(68vh, 46rem)" not in executive
+    assert "overflow-x:auto" in executive
+
+
+def test_operational_data_surfaces_opt_into_full_width_layout():
+    user_source = _source(USER_ROUTES)
+    admin_source = _source(ADMIN_ROUTES)
+    for marker in (
+        "async def panel_operaciones_console",
+        "async def gastos_terceros",
+        "async def documentos_control_presupuestal",
+        "async def documentos_pendientes",
+        "async def documentos_todos",
+        "async def cuentas_de_gastos_list",
+    ):
+        assert 'layout="data"' in _route_source(USER_ROUTES, marker)
+    for marker in (
+        "async def admin_expenses",
+        "async def admin_finance_platform",
+        "async def admin_finance_payment_run",
+        "async def gastos_sin_cuenta_contable",
+    ):
+        assert 'layout="data"' in _route_source(ADMIN_ROUTES, marker)
+
+
+def test_operations_navigation_remains_horizontal_without_sidebar_markup():
+    block = _function_source(
+        USER_ROUTES,
+        "async def panel_operaciones_console",
+        '@router.get("/panel", response_class=HTMLResponse)',
+    )
+    assert 'render_top_navigation(current_empleado, "operacion")' in block
+    assert 'class="ops-sidebar"' not in block
+    assert 'class="sam-layout-data"' in block

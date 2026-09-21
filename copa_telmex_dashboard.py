@@ -1511,6 +1511,12 @@ MODERN_UI_HEAD_INJECTION = """
     border: 1px solid rgba(255,255,255,0.35) !important;
     box-shadow: 0 20px 60px rgba(5, 12, 24, 0.30) !important;
   }
+  /* Operational data screens opt in from their local workspace shell. */
+  body.sam-layout-data .container {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+  }
   h1, h2, h3 {
     color: var(--sam-ink) !important;
     letter-spacing: -0.01em;
@@ -1701,26 +1707,26 @@ MODERN_UI_HEAD_INJECTION = """
     border-left-color: #d97706 !important;
   }
 
-  /* 3) Mobile-first table usability */
+  /* 3) Tables use page scroll on desktop; horizontal scroll is a narrow-screen fallback. */
   .sam-table-wrap {
     width: 100%;
-    overflow-x: auto;
     border-radius: 12px;
     border: 1px solid var(--sam-line);
     background: #fff;
   }
   .sam-table-wrap table {
-    min-width: 920px;
+    width: 100%;
     margin: 0 !important;
     border: none !important;
     border-radius: 0 !important;
   }
-  .sam-table-wrap::-webkit-scrollbar {
-    height: 10px;
-  }
-  .sam-table-wrap::-webkit-scrollbar-thumb {
-    background: #94a3b8;
-    border-radius: 999px;
+  @media (max-width: 960px) {
+    .sam-table-wrap {
+      overflow-x: auto;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+    .sam-table-wrap table { min-width: 920px; }
   }
   @media (max-width: 768px) {
     body { padding: 10px !important; }

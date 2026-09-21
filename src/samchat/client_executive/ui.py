@@ -535,7 +535,7 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         * {{ box-sizing:border-box; }}
         body {{ margin:0; background:var(--canvas); color:var(--ink); font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }}
         a {{ color:var(--link); text-underline-offset:3px; }}
-        .shell {{ width:min(1480px,calc(100% - 40px)); margin:0 auto; padding:32px 0 64px; }}
+        .shell {{ width:calc(100% - 40px); margin:0 auto; padding:32px 0 64px; }}
         .hero {{ background:linear-gradient(135deg,#0f172a,#183153); color:#fff; border-radius:24px; padding:28px 30px; display:flex; justify-content:space-between; gap:28px; align-items:end; box-shadow:var(--shadow); }}
         .hero h1 {{ margin:4px 0 6px; font-size:clamp(26px,3vw,40px); letter-spacing:-.03em; line-height:1.05; color:#fff; }}
         .hero p {{ margin:0; color:#cbd5e1; max-width:800px; }}
@@ -582,15 +582,12 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         .subheading {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin:2px 0 10px; }}
         .subheading h3 {{ margin:0; font-size:16px; }} .subheading span {{ color:var(--muted); font-size:12px; }}
         .table-wrap {{
-          overflow:auto;
-          max-block-size:min(68vh, 46rem);
-          scrollbar-gutter:stable both-edges;
-          -webkit-overflow-scrolling:touch;
+          overflow:visible;
           border:1px solid var(--line);
           border-radius:14px;
           background:#fff;
         }}
-        table {{ width:100%; border-collapse:collapse; min-width:620px; }}
+        table {{ width:100%; border-collapse:collapse; }}
         th {{ text-align:left; background:#f1f5f9; color:#475569; font-size:11px; text-transform:uppercase; letter-spacing:.06em; padding:11px 12px; border-bottom:1px solid var(--line); }}
         .table-wrap thead th {{ position:sticky; top:0; z-index:2; }}
         td {{ padding:11px 12px; border-bottom:1px solid #eef2f7; color:#334155; }}
@@ -618,6 +615,8 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         @media (max-width:1180px) {{ .kpi-grid {{ grid-template-columns:repeat(3,1fr); }} .finance-split,.two-column {{ grid-template-columns:1fr; }} }}
         @media (max-width:760px) {{
           .shell {{ width:min(100% - 18px,1480px); padding-top:12px; }}
+          .table-wrap {{ overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; }}
+          .table-wrap table {{ min-width:620px; }}
           .hero,.tournament-header,.section-heading,details.entity>summary {{ display:block; }}
           .hero {{ padding:22px; }} .filters {{ margin-top:18px; }} .kpi-grid {{ grid-template-columns:1fr 1fr; }}
           .attention,.entity-grid {{ grid-template-columns:1fr; }} .summary-meta {{ margin-top:8px; }} .marketing-kpis {{ grid-template-columns:1fr 1fr; }}
