@@ -831,7 +831,7 @@ def register_presupuestos_routes(router) -> None:
         html = f"""
         <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Presupuestos - Administración</title>
-        <style>{_admin_workspace_styles("1380px")}</style></head><body>
+        <style>{_admin_workspace_styles("1380px", layout="data")}</style></head><body>
         <div class="workspace-shell">
             {render_admin_navigation(current_empleado, "presupuestos", subtitle="Dashboard por torneo con acceso al detalle de partidas y plan mensual.")}
             {_admin_breadcrumb_html([("Centro Ejecutivo", "/admin/ejecutivo"), ("Presupuestos", None)])}
@@ -1806,7 +1806,7 @@ def register_presupuestos_routes(router) -> None:
         html = f"""
         <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
         <title>{tournament_ctx.get("tournament_name")} - Presupuestos</title>
-        <style>{_admin_workspace_styles("1400px")}</style></head><body>
+        <style>{_admin_workspace_styles("1400px", layout="data")}</style></head><body>
         <div class="workspace-shell">
             {render_admin_navigation(current_empleado, "presupuestos", subtitle="Detalle de partidas con plan mensual y actuals en caja.")}
             {_render_admin_workspace_hero(

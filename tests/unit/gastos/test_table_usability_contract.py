@@ -36,8 +36,10 @@ def test_shared_workspace_contract_uses_page_scroll_and_keeps_headers_sticky():
         assert 'layout: str = "reading"' in styles
         assert "layout must be 'reading' or 'data'" in styles
         assert "max-width:{container_max_width}" in styles
-        assert "overflow:visible" in styles
-        assert "overflow-x:auto" in styles
+        assert "table_shell_style" in styles
+        assert "table_shell_table_style" in styles
+        assert "table_shell_narrow_style" in styles
+        assert "max-block-size:min(68vh, 46rem)" in styles
         assert ".table-shell thead th" in styles
         assert "position:sticky" in styles
         assert "top:0" in styles
@@ -142,6 +144,22 @@ def test_operational_data_surfaces_opt_into_full_width_layout():
         "async def gastos_sin_cuenta_contable",
     ):
         assert 'layout="data"' in _route_source(ADMIN_ROUTES, marker)
+
+
+def test_canonical_budget_routes_opt_into_full_width_layout():
+    source = _source(ROOT / "src/devnous/gastos/routes/admin_budget_routes.py")
+    assert source.count('_admin_workspace_styles("1380px", layout="data")') == 1
+    assert source.count('_admin_workspace_styles("1400px", layout="data")') == 1
+
+
+def test_reading_layout_preserves_legacy_table_viewport_contract():
+    for path, start_marker, end_marker in (
+        (USER_ROUTES, "def _workspace_shell_styles", "def _render_workspace_hero"),
+        (ADMIN_ROUTES, "def _admin_workspace_styles", "def _render_admin_workspace_hero"),
+    ):
+        styles = _function_source(path, start_marker, end_marker)
+        assert '"overflow:auto;max-block-size:min(68vh, 46rem);' in styles
+        assert '"min-width:max-content;"' in styles
 
 
 def test_operations_navigation_remains_horizontal_without_sidebar_markup():
