@@ -142,3 +142,53 @@ def test_nav_only_baseline_records_tasks_that_require_panel_entry(
     # this is treated as a product defect.
     expect(page.locator(f'a[href="{target_href}"]')).to_have_count(0)
     _capture_profile(page, profile)
+
+
+@pytest.mark.parametrize(
+    "profile,target_href,label",
+    [
+        pytest.param(
+            "approver",
+            "/documentos/pendientes",
+            "Aprobaciones pendientes",
+            id="approver-panel-card",
+        ),
+        pytest.param(
+            "budget_control",
+            "/documentos/control-presupuestal",
+            "Control Presupuestal",
+            id="budget-control-panel-card",
+        ),
+    ],
+)
+def test_real_panel_exposes_assigned_task_card(
+    page: Page,
+    browser_server: str,
+    profile: str,
+    target_href: str,
+    label: str,
+) -> None:
+    response = page.goto(f"{browser_server}/_test/panel/{profile}")
+    assert response is not None
+    assert response.status == 200
+
+    entry = page.locator(f'a[href="{target_href}"]')
+    expect(entry).to_have_count(1)
+    expect(entry).to_be_visible()
+    expect(entry.get_by_text(label, exact=True)).to_be_visible()
+
+    assert _focus_reaches_href(page, target_href, max_tabs=120), (
+        f"{profile}: panel task entry {target_href} is not keyboard reachable"
+    )
+    _capture_profile(page, f"{profile}-panel")
+
+
+def test_direction_panel_still_has_no_direction_task_entry(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(f"{browser_server}/_test/panel/direction")
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.locator('a[href="/direccion/tableros"]')).to_have_count(0)
+    _capture_profile(page, "direction-panel")
