@@ -1,0 +1,28 @@
+from samchat.agent_actions.registry import (
+    CANONICAL_SCOPE_UNPROVEN,
+    registered_actions,
+)
+
+
+def test_v01_registers_only_the_concrete_disabled_actions() -> None:
+    actions = registered_actions()
+
+    assert [item.action_id for item in actions] == [
+        "budget.get_availability",
+        "expense.diagnose_blocker",
+        "expense.get_status",
+        "transfer.create_draft",
+    ]
+    assert all(item.enabled is False for item in actions)
+    assert {item.disabled_reason for item in actions} == {
+        CANONICAL_SCOPE_UNPROVEN
+    }
+
+
+def test_only_mutating_action_requires_idempotency() -> None:
+    actions = {item.action_id: item for item in registered_actions()}
+
+    assert actions["transfer.create_draft"].requires_idempotency is True
+    assert actions["expense.get_status"].requires_idempotency is False
+    assert actions["budget.get_availability"].requires_idempotency is False
+    assert actions["expense.diagnose_blocker"].requires_idempotency is False
