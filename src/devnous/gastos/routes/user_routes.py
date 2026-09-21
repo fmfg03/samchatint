@@ -3600,7 +3600,7 @@ async def nomina_cfdi_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CFDI SAT Nómina</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; }}
-    .container {{ max-width:none; width:100%; margin:0; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; margin-bottom:16px; }}
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
@@ -12208,17 +12208,11 @@ def _workspace_shell_styles(
     container_max_width = "none" if data_layout else max_width
     container_margin = "0" if data_layout else "0 auto"
     table_shell_style = (
-        "overflow:visible;" if data_layout else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
+        "overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;"
+        if data_layout
+        else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
     )
     table_shell_table_style = "width:100%;" if data_layout else "min-width:max-content;"
-    table_shell_narrow_style = (
-        """
-            .table-shell { overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; }
-            .table-shell table { min-width:max-content; }
-        """
-        if data_layout
-        else ""
-    )
     return f"""
         :root {{
             --shell-bg:#edf3f8;
@@ -12545,7 +12539,6 @@ def _workspace_shell_styles(
             .workspace-hero, .split {{
                 grid-template-columns:1fr;
             }}
-            {table_shell_narrow_style}
         }}
         @media (max-width: 760px) {{
             body {{ padding:12px; }}
@@ -21542,7 +21535,7 @@ async def contabilidad_cuentas_por_pagar_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cuentas por Pagar</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
-    .container {{ max-width:none; width:100%; margin:0; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
     .toolbar {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; align-items:end; }}
     input, select {{ width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; box-sizing:border-box; }}
@@ -23451,7 +23444,7 @@ async def contabilidad_tesoreria_matches_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Matches Tesorería</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
-    .container {{ max-width:none; width:100%; margin:0; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
     .toolbar {{ display:flex; gap:12px; flex-wrap:wrap; align-items:end; }}
     input, select {{ padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; }}

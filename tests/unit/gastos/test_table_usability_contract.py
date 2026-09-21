@@ -38,7 +38,7 @@ def test_shared_workspace_contract_uses_page_scroll_and_keeps_headers_sticky():
         assert "max-width:{container_max_width}" in styles
         assert "table_shell_style" in styles
         assert "table_shell_table_style" in styles
-        assert "table_shell_narrow_style" in styles
+        assert '"overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;"' in styles
         assert "max-block-size:min(68vh, 46rem)" in styles
         assert ".table-shell thead th" in styles
         assert "position:sticky" in styles
@@ -160,6 +160,15 @@ def test_reading_layout_preserves_legacy_table_viewport_contract():
         styles = _function_source(path, start_marker, end_marker)
         assert '"overflow:auto;max-block-size:min(68vh, 46rem);' in styles
         assert '"min-width:max-content;"' in styles
+
+
+def test_standalone_data_pages_override_the_injected_container_cap():
+    source = _source(USER_ROUTES)
+    override = (
+        "body .container {{ max-width:none !important; width:100% !important; "
+        "margin:0 !important; }}"
+    )
+    assert source.count(override) == 3
 
 
 def test_operations_navigation_remains_horizontal_without_sidebar_markup():

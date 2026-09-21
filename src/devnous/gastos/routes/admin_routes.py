@@ -1269,17 +1269,11 @@ def _admin_workspace_styles(
     container_max_width = "none" if data_layout else max_width
     container_margin = "0" if data_layout else "0 auto"
     table_shell_style = (
-        "overflow:visible;" if data_layout else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
+        "overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;"
+        if data_layout
+        else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
     )
     table_shell_table_style = "width:100%;" if data_layout else "min-width:max-content;"
-    table_shell_narrow_style = (
-        """
-            .table-shell { overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; }
-            .table-shell table { min-width:max-content; }
-        """
-        if data_layout
-        else ""
-    )
     return f"""
         :root {{
             --shell-bg:#edf3f8;
@@ -1514,7 +1508,6 @@ def _admin_workspace_styles(
         }}
         @media (max-width: 980px) {{
             .workspace-hero {{ grid-template-columns:1fr; }}
-            {table_shell_narrow_style}
         }}
         @media (max-width: 720px) {{
             body {{ padding:12px; }}
