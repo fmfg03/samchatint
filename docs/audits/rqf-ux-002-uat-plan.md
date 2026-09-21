@@ -3,7 +3,7 @@
 Status: READY_FOR_AUTHENTICATED_UAT
 Date: 2026-09-21
 Issue: #352
-Baseline repository: `main@361ad7a2`
+Baseline repository: `main@c53a6591`
 
 ## Purpose
 
@@ -269,7 +269,7 @@ Run a focused subset (T05, T06, T09, T11, T13) at:
 - browser zoom 200%;
 - keyboard-only.
 
-After PR #351 is merged/deployed, rerun table-heavy tasks to compare against the prior RQF-UI-001 defect class.
+After PR #351 is deployed and verified, rerun table-heavy tasks to compare against the prior RQF-UI-001 defect class.
 
 ## Observation vocabulary
 
