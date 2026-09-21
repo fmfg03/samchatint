@@ -400,7 +400,7 @@ async def profile_navigation(profile_name: str):
 
     html = f"""
     <html>
-      <head><title>Perfil UX · {profile_name}</title><style>html,body{{margin:0;max-width:100%;}}</style></head>
+      <head><title>Perfil UX · {profile_name}</title><style>html,body{{margin:0;max-width:100%;}} main{{padding:24px;box-sizing:border-box;max-width:100%;}}</style></head>
       <body>
         <main>
           <h1>Perfil simulado: {profile_name}</h1>
