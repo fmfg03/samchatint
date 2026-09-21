@@ -200,10 +200,11 @@ Primary work:
 - **Pendientes de clasificación**
 - **Pólizas COI**
 - **Conciliación**
-- **Cuentas por cobrar / Ingresos**
+- **Cuentas por cobrar — Vista contable**
+- **Ingresos**
 - **Libros y cierres**
 
-The IA must reconcile the current CxC route-owner conflict before implementation.
+Keep the Finance AR workbench and Accounting CxC view as purpose-specific surfaces if UAT confirms that both are useful. Their labels/subtitles and cross-links must explain the difference rather than presenting them as duplicate peer destinations.
 
 ---
 
@@ -280,7 +281,7 @@ No terminology change should be implemented without user validation.
 
 1. UAT confirms first-click/navigation friction.
 2. Current route reachability is reconciled.
-3. CxC owner/path conflict resolved.
+3. Purpose and cross-navigation of the two confirmed CxC surfaces validated.
 4. Effective-profile menu snapshots captured.
 5. Target IA reviewed by at least one user from each critical role.
 6. Changes split into reversible PRs by journey.
