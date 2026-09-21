@@ -2,7 +2,7 @@
 
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
-Baseline: `main@361ad7a2`
+Baseline: `main@c53a6591`
 Issue: #352
 
 This is a repository-based usability audit. It separates confirmed structure from interpretation. Priority is provisional until authenticated task UAT.
@@ -145,7 +145,7 @@ RQF-UI-001 records:
 - losing header context in long tables;
 - horizontal navigation only at end.
 
-PR #351 addresses layout/scroll behavior, but browser evidence is still necessary after merge/deploy.
+PR #351 is merged and addresses layout/scroll behavior at repository level; browser and deployed-runtime evidence are still necessary before claiming usability acceptance.
 
 ## UX-011 — Presupuestos route debt
 
