@@ -11,6 +11,12 @@ This roadmap is sequencing, not authorization. No implementation PR should start
 
 ## Phase A — Evidence foundations
 
+### Current implementation evidence
+
+- **UX-PR-A1 / Browser harness:** implemented and green in PR #356; pending merge.
+- Browser smoke currently covers Direction as the first real route/render slice.
+- Next planned evidence slice is effective-profile navigation and first-click/task-entry coverage; it should build on the merged browser harness rather than expand #356 indefinitely.
+
 ### UX-PR-A1 — Browser harness
 Scope:
 - Playwright harness;
