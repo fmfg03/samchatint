@@ -3,7 +3,7 @@
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
 Issue: #352
-Baseline: `main@361ad7a2`
+Baseline: `main@c53a6591`
 Purpose: map user-relevant live-web surfaces to tasks and identify IA/UX debt. This is not production acceptance.
 
 ## Classification
@@ -130,7 +130,7 @@ Known debt from that inventory:
 - reporting compatibility routes;
 - specialized budget grids requiring dedicated browser UAT.
 
-PR #351 changes the table/layout contract but is not part of this baseline until merged.
+PR #351 is merged in this baseline and its full-width/data-layout contract is repository current; authenticated browser acceptance remains separate evidence.
 
 ---
 
