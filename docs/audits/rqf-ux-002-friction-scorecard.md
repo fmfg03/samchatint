@@ -43,7 +43,7 @@ For every journey capture:
 - `INTERNAL_TERMINOLOGY`: task exposes system/accounting terminology.
 - `UAT_PENDING`: repository says business UAT is pending.
 - `LEGACY_OVERLAP`: canonical and legacy/bridge routes coexist.
-- `ROUTE_CONFLICT`: repository sources disagree on route/owner.
+- `DUAL_SURFACE`: two valid surfaces expose the same business concept for different tasks.
 - `NO_BROWSER_GATE`: no automated browser journey coverage.
 
 ## Journey baseline
@@ -65,7 +65,7 @@ For every journey capture:
 | J13 Accounting cleanup | MULTI_HUB, INTERNAL_TERMINOLOGY, UAT_PENDING | NOT_MEASURED | P1 |
 | J14 COI review/export | MULTI_HUB, INTERNAL_TERMINOLOGY, UAT_PENDING | NOT_MEASURED | P2 |
 | J15 Bank reconciliation | HIGH_RISK_DECISION, INTERNAL_TERMINOLOGY, UAT_PENDING | NOT_MEASURED | P1 |
-| J16 CxC | ROUTE_CONFLICT, MULTI_HUB, UAT_PENDING | NOT_MEASURED | P1 |
+| J16 CxC | DUAL_SURFACE, MULTI_HUB, UAT_PENDING | NOT_MEASURED | P1 |
 | J17 Budgets | LEGACY_OVERLAP, INTERNAL_TERMINOLOGY | NOT_MEASURED | P2 |
 | J18 Direction scan | MULTI_HUB, scope constrained | NOT_MEASURED | P2 |
 | J19 Create support ticket | none material from repo sweep | NOT_MEASURED | P3 |
