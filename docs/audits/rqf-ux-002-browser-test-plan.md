@@ -6,6 +6,21 @@ Issue: #352
 
 ## Finding
 
+## Slice 0 implementation status
+
+Repository implementation exists in PR #356 (`test(ux): add browser journey harness`) and is green on HEAD `a3b71836522845fbcdeaf792a86e9243347be626`.
+
+Verified evidence:
+- Browser UX Pilot: PASS.
+- 7 Playwright tests: 0 failures, 0 errors.
+- Session guard plus authenticated Direction navigation.
+- Keyboard focus/activation through the year selector, Update action and Reports link.
+- Horizontal body overflow checks at 1440, 1280, 1024, 768 and 390 px.
+- Screenshot/trace/server-log evidence path is active on failures.
+- Existing required PR quality gate remains separate and passed.
+
+This is repository-level test evidence only. PR #356 is not treated here as merged, deployed or business-accepted until those events occur.
+
 The initial repository search did not find Playwright, Selenium or axe usage. Current UI tests are predominantly Python/source-contract tests.
 
 This is a gap for usability regression, not a criticism of the existing CI: source-contract tests are valuable for route, policy and markup invariants.
