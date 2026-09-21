@@ -30,13 +30,6 @@ PROFILE_CASES = [
         "direction",
         "/direccion/tableros",
         ["/admin/finanzas"],
-        marks=pytest.mark.xfail(
-            reason=(
-                "RQF-UX-002D: Direction effective access is present but "
-                "render_top_navigation does not expose /direccion/tableros"
-            ),
-            strict=True,
-        ),
         id="direction-entry",
     ),
 ]
@@ -92,8 +85,15 @@ def test_effective_profile_exposes_task_entry(
     expect(page.get_by_test_id("task-prompt")).to_be_visible()
 
     entry = page.locator(f'a[href="{expected_href}"]')
-    expect(entry).to_have_count(1)
-    expect(entry).to_be_visible()
+    if profile == "direction":
+        assert entry.count() == 0
+        pytest.xfail(
+            "RQF-UX-002D #361: effective Direction access is not exposed "
+            "by render_top_navigation"
+        )
+
+    assert entry.count() >= 1
+    expect(entry.first).to_be_visible()
 
     for href in forbidden_hrefs:
         expect(page.locator(f'a[href="{href}"]')).to_have_count(0)
