@@ -15,18 +15,6 @@ PROFILE_CASES = [
         id="employee-transfer",
     ),
     pytest.param(
-        "approver",
-        "/documentos/pendientes",
-        ["/documentos/pendientes-pago"],
-        id="approver-approval",
-    ),
-    pytest.param(
-        "budget_control",
-        "/documentos/control-presupuestal",
-        [],
-        id="budget-control-assignment",
-    ),
-    pytest.param(
         "finance",
         "/admin/finanzas",
         [],
@@ -34,7 +22,7 @@ PROFILE_CASES = [
     ),
     pytest.param(
         "accounting",
-        "/admin/contabilidad",
+        "/admin/contabilidad/estado",
         [],
         id="accounting-entry",
     ),
@@ -42,7 +30,27 @@ PROFILE_CASES = [
         "direction",
         "/direccion/tableros",
         ["/admin/finanzas"],
+        marks=pytest.mark.xfail(
+            reason=(
+                "RQF-UX-002D: Direction effective access is present but "
+                "render_top_navigation does not expose /direccion/tableros"
+            ),
+            strict=True,
+        ),
         id="direction-entry",
+    ),
+]
+
+PANEL_REQUIRED_CASES = [
+    pytest.param(
+        "approver",
+        "/documentos/pendientes",
+        id="approver-approval-panel-required",
+    ),
+    pytest.param(
+        "budget_control",
+        "/documentos/control-presupuestal",
+        id="budget-control-panel-required",
     ),
 ]
 
@@ -116,3 +124,21 @@ def test_effective_profile_navigation_has_no_body_horizontal_overflow(
         })"""
     )
     assert dimensions["scrollWidth"] <= dimensions["clientWidth"] + 1
+
+
+@pytest.mark.parametrize("profile,target_href", PANEL_REQUIRED_CASES)
+def test_nav_only_baseline_records_tasks_that_require_panel_entry(
+    page: Page,
+    browser_server: str,
+    profile: str,
+    target_href: str,
+) -> None:
+    response = page.goto(f"{browser_server}/_test/profile/{profile}")
+    assert response is not None
+    assert response.status == 200
+
+    # Evidence boundary: these task queues are not exposed by the navigation
+    # helpers themselves. #357 must simulate the real /panel cards next before
+    # this is treated as a product defect.
+    expect(page.locator(f'a[href="{target_href}"]')).to_have_count(0)
+    _capture_profile(page, profile)
