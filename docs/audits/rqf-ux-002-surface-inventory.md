@@ -56,13 +56,15 @@ Purpose: map user-relevant live-web surfaces to tasks and identify IA/UX debt. T
 | `/admin/finanzas/payment-run` | TASK_QUEUE / WORKSPACE | Payment cutoff | engineering canon / tests | Critical state semantics |
 | `/admin/finanzas/payment-run/closures/{id}` | DETAIL / HISTORY | Cutoff evidence | finance UAT | Should explain cutoff vs payment |
 | `/admin/finanzas/cashflow` | DASHBOARD | Cashflow planning | engineering canon | Read-model semantics differ from actual cash |
+| `/admin/finanzas/cuentas-por-cobrar` | PRIMARY_WORKSPACE / DASHBOARD | Canonical Finance AR read model, billing schedule, gaps, matching | AR route contract + engineering canon | Links explicitly to Accounting “Vista contable” |
+| `/admin/finanzas/cuentas-por-cobrar/item/{id}` | DETAIL | AR item detail | AR route contract | Canonical Finance AR detail |
 | `/admin/contabilidad` | PRIMARY_WORKSPACE | Accounting domain | access-control | Broad umbrella |
 | `/admin/contabilidad/coi` | TASK_QUEUE / DASHBOARD | COI policies | finance UAT | Accounting power-user surface |
 | `/admin/contabilidad/coi/{id}` | DETAIL | Policy detail | finance UAT | Drill-down |
 | `/admin/contabilidad/conciliacion` | TASK_QUEUE / WORKSPACE | Bank reconciliation | finance UAT | Candidate match semantics must stay explicit |
 | `/admin/contabilidad/conciliacion/{id}` | DETAIL | Review movement | finance UAT | Evidence-heavy decision |
 | `/admin/contabilidad/conciliacion/auditoria` | HISTORY | Reconciliation audit | finance UAT | Separate audit surface |
-| `/admin/contabilidad/cuentas-por-cobrar` | WORKSPACE | AR/CxC | finance UAT | Route ownership naming conflicts with engineering canon lane |
+| `/admin/contabilidad/cuentas-por-cobrar` | WORKSPACE | Accounting-context CxC / CFDI-income operations | finance UAT + accounting route tests | Separate operational/accounting view; Finance AR UI links here as “Vista contable” |
 | `/admin/contabilidad/ingresos` | TASK_QUEUE / HISTORY | Collections/income | finance UAT | Needs relation to CxC made explicit |
 | `/admin/contabilidad/diario/*` | DASHBOARD / EXPORT | Journal | runtime artifact docs | Power-user accounting |
 | `/admin/contabilidad/mayor/*` | DASHBOARD / EXPORT | Ledger | runtime artifact docs | Power-user accounting |
@@ -170,11 +172,13 @@ A role-oriented home could reduce the need to understand this taxonomy before ac
 
 Presupuestos explicitly documents canonical, bridge, legacy and candidate-removal routes. The usability audit must verify that legacy implementation surfaces are not presented as peer destinations.
 
-## IA-05 — Route and lane naming conflict exists for CxC
+## IA-05 — CxC has two confirmed surfaces with different purposes
 
-Finance UAT uses `/admin/contabilidad/cuentas-por-cobrar`; engineering canon names the Accounts Receivable lane as `/admin/finanzas/cuentas-por-cobrar`.
+Current repository evidence confirms both:
+- `/admin/finanzas/cuentas-por-cobrar`: canonical Finance AR read model/workbench, including billing schedule, actionable gaps, accepted collection matching and exports;
+- `/admin/contabilidad/cuentas-por-cobrar`: accounting-context CxC surface, linked from the Finance AR UI as “Vista contable”.
 
-This is not resolved here. It is a required runtime reconciliation item.
+This is not a missing-route conflict. It is an information-architecture question: the product must make the relationship and intended use of both views obvious.
 
 # Next sweep
 
