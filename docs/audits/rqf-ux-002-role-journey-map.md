@@ -3,8 +3,8 @@
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
 Issue: #352
-Repository baseline: `main` at `361ad7a2f5de45a34815801b6a5a86e0b7ca9b4b`
-Pending UI delta reviewed separately: PR #351 (`8922fb1d9`), not part of this baseline.
+Repository baseline: `main` at `c53a6591d2b43d51908220908a3c652a35ddb272`
+Full-width operational layout from PR #351 is included in this baseline via merge commit `c53a6591`.
 
 ## Purpose
 
