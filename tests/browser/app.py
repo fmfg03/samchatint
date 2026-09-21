@@ -190,6 +190,23 @@ async def _dashboard(*_args, **kwargs):
     }
 
 
+
+
+async def _panel_visible_tools(_session, employee):
+    return set(getattr(employee, "visible_tool_keys", set()) or set())
+
+
+async def _panel_can_review_pending_approvals(_session, employee):
+    return str(getattr(employee, "correo", "") or "").startswith(
+        "approver-browser-ux@"
+    )
+
+
+def _panel_is_budget_control_user(employee):
+    return str(getattr(employee, "correo", "") or "").startswith(
+        "budget-control-browser-ux@"
+    )
+
 # Patch only module references used by this isolated test app.
 dependencies._load_empleado_proxy_by_id = _load_employee
 dependencies.visible_tools_for = _visible_tools
@@ -197,6 +214,9 @@ dependencies.can_access_path = _can_access_path
 client_executive_routes.explicit_tool_decision = _direction_decision
 client_executive_routes.authorized_direction_portfolio_ids = _direction_portfolios
 client_executive_routes.build_client_dashboard = _dashboard
+user_routes.visible_tools_for = _panel_visible_tools
+user_routes._can_review_pending_approvals = _panel_can_review_pending_approvals
+user_routes._is_budget_control_user = _panel_is_budget_control_user
 
 
 app = FastAPI()
@@ -393,4 +413,18 @@ async def profile_navigation(profile_name: str):
       </body>
     </html>
     """
+    return HTMLResponse(html)
+
+
+@app.get("/_test/panel/{profile_name}", response_class=HTMLResponse)
+async def profile_panel(profile_name: str, request: Request):
+    fixture = PROFILE_FIXTURES.get(profile_name)
+    if fixture is None:
+        return HTMLResponse("<h1>Perfil no encontrado</h1>", status_code=404)
+
+    html = await user_routes.panel(
+        request,
+        _EmptySession(),
+        fixture["employee"],
+    )
     return HTMLResponse(html)
