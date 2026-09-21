@@ -234,10 +234,10 @@ Important rule: candidate bank match is not payment/collection proof. UI languag
 
 **Role:** Finanzas / Contabilidad  
 **Goal:** connect expected income, issued CFDI, project/budget classification, collection and accounting.  
-**Repository routes/docs:** `/admin/contabilidad/cuentas-por-cobrar`, `/admin/contabilidad/ingresos`; engineering canon also names `/admin/finanzas/cuentas-por-cobrar` as canonical lane.  
-**Evidence status:** `REQUIRES_RUNTIME_RECONCILIATION`.
+**Repository routes/docs:** both `/admin/finanzas/cuentas-por-cobrar` and `/admin/contabilidad/cuentas-por-cobrar` are registered in current repository evidence.  
+**Evidence status:** `REPO_CONFIRMED_DUAL_SURFACE`.
 
-This naming/ownership conflict must be resolved in the audit before proposing navigation changes. Do not silently pick one path.
+The Finance route consumes the canonical AR read model and exposes portfolio, billing schedule, actionable gaps, matching and CxC exports. The Accounting route is a separate contabilidad-context surface and is linked from the Finance AR UI as “Vista contable”. The UX question is therefore not which route exists, but whether users understand the purpose of each and can move between them without treating them as duplicate competing homes.
 
 ## J17 — Administrar Presupuestos
 
