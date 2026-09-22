@@ -12005,7 +12005,7 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
 
     if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
-    if can_nav("direccion.tableros_ejecutivos", ()):
+    if bool(getattr(current_empleado, "direction_entry_visible", False)):
         links.append(("/direccion/tableros", "Dirección", "direccion"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
@@ -15282,6 +15282,11 @@ async def panel(
     """
     visible_tool_keys = await visible_tools_for(session, current_empleado)
     current_empleado.visible_tool_keys = visible_tool_keys
+    from .client_executive_routes import direction_entry_visible
+
+    current_empleado.direction_entry_visible = await direction_entry_visible(
+        session, current_empleado
+    )
     nav = render_top_navigation(current_empleado, "panel")
     rol = current_empleado.rol or "empleado"
 
@@ -15412,6 +15417,14 @@ async def panel(
         """
 
     ejecutivo_cards = []
+    if getattr(current_empleado, "direction_entry_visible", False):
+        ejecutivo_cards.append(
+            (
+                "/direccion/tableros",
+                "Dirección",
+                "Tableros ejecutivos de solo lectura dentro de tu alcance asignado.",
+            )
+        )
     if _is_budget_control_user(current_empleado):
         ejecutivo_cards.append(("/admin/presupuestos", "Tablero ejecutivo de presupuestos", "Real, comprometido y presupuesto por torneo, concepto y periodo."))
     if "admin.finanzas" in visible_tool_keys or _is_budget_control_user(current_empleado):
