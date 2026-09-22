@@ -19,13 +19,20 @@ def _capture(page: Page, name: str) -> None:
 
 
 def _assert_no_body_overflow(page: Page) -> None:
-    dimensions = page.evaluate(
-        """() => ({
+    dimensions = page.evaluate("""() => ({
             scrollWidth: document.documentElement.scrollWidth,
             clientWidth: document.documentElement.clientWidth
-        })"""
-    )
+        })""")
     assert dimensions["scrollWidth"] <= dimensions["clientWidth"] + 1
+
+
+def _mutation_home(page: Page, browser_server: str) -> None:
+    response = page.goto(f"{browser_server}/_test/mutations?reset=true")
+    assert response is not None
+    assert response.status == 200
+    expect(
+        page.get_by_role("heading", name="Simulación aislada de mutaciones UX")
+    ).to_be_visible()
 
 
 def test_employee_transfer_request_reaches_canonical_creation_form(
@@ -50,17 +57,13 @@ def test_employee_transfer_request_reaches_canonical_creation_form(
         )
     ).to_be_visible()
 
-    create_entry = page.locator(
-        'a[href="/documentos/nueva-solicitud-terceros"]'
-    ).first
+    create_entry = page.locator('a[href="/documentos/nueva-solicitud-terceros"]').first
     expect(create_entry).to_be_visible()
     expect(create_entry).to_have_text("Solicitud a terceros")
     _capture(page, "employee-transfer-list")
 
     create_entry.click()
-    expect(page).to_have_url(
-        f"{browser_server}/documentos/nueva-solicitud-terceros"
-    )
+    expect(page).to_have_url(f"{browser_server}/documentos/nueva-solicitud-terceros")
     expect(
         page.get_by_text("Nueva solicitud a terceros", exact=True).first
     ).to_be_visible()
@@ -69,9 +72,9 @@ def test_employee_transfer_request_reaches_canonical_creation_form(
     provider_select = page.locator('select[name="proveedor_cliente_id"]')
     expect(project_select).to_be_visible()
     expect(provider_select).to_be_visible()
-    expect(
-        project_select.locator("option", has_text="Copa Browser UX")
-    ).to_have_count(1)
+    expect(project_select.locator("option", has_text="Copa Browser UX")).to_have_count(
+        1
+    )
     expect(
         provider_select.locator("option", has_text="Proveedor Browser UX")
     ).to_have_count(1)
@@ -113,7 +116,9 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     expect(page.get_by_text("Solicitante Browser UX", exact=True)).to_be_visible()
     expect(page.get_by_text("Proveedor Browser UX", exact=True)).to_be_visible()
     expect(page.get_by_text("Copa Browser UX", exact=True)).to_be_visible()
-    expect(page.get_by_text("Hospedaje para torneo regional", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Hospedaje para torneo regional", exact=True)
+    ).to_be_visible()
 
     approve = page.get_by_role("button", name="Aprobar", exact=True)
     reject = page.get_by_role("button", name="Rechazar", exact=True)
@@ -138,9 +143,7 @@ def test_approver_pending_queue_contains_table_scroll_on_mobile(
 
     shell = page.locator(".table-shell").last
     expect(shell).to_be_visible()
-    has_horizontal_scroll = shell.evaluate(
-        "(el) => el.scrollWidth > el.clientWidth"
-    )
+    has_horizontal_scroll = shell.evaluate("(el) => el.scrollWidth > el.clientWidth")
     assert has_horizontal_scroll is True
 
 
@@ -157,7 +160,9 @@ def test_budget_control_reaches_classification_queue_with_context(
     entry.click()
 
     expect(page).to_have_url(f"{browser_server}/documentos/control-presupuestal")
-    expect(page.get_by_role("heading", name="Documentos por clasificar")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Documentos por clasificar")
+    ).to_be_visible()
     expect(
         page.get_by_text(
             "Asigna el concepto presupuestal antes de enviar",
@@ -169,7 +174,9 @@ def test_budget_control_reaches_classification_queue_with_context(
     expect(page.get_by_text("Copa Browser UX", exact=True)).to_be_visible()
     expect(page.get_by_text("Solicitante Browser UX", exact=True)).to_be_visible()
     expect(page.get_by_text("Proveedor Browser UX", exact=True)).to_be_visible()
-    expect(page.get_by_text("Hospedaje para torneo regional", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Hospedaje para torneo regional", exact=True)
+    ).to_be_visible()
 
     concept = page.locator('select[name^="budget_concept_id_"]').first
     expect(concept).to_be_visible()
@@ -192,7 +199,9 @@ def test_budget_control_queue_keeps_wide_actions_inside_table_scroll(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_role("heading", name="Documentos por clasificar")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Documentos por clasificar")
+    ).to_be_visible()
     _assert_no_body_overflow(page)
 
     shell = page.locator(".table-shell").last
@@ -226,7 +235,9 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         page.get_by_text("Solicitudes aprobadas para corte", exact=True)
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0001", exact=True)).to_be_visible()
-    expect(page.get_by_text("Hospedaje aprobado para corte", exact=False)).to_be_visible()
+    expect(
+        page.get_by_text("Hospedaje aprobado para corte", exact=False)
+    ).to_be_visible()
 
     expect(
         page.get_by_text("Comprobantes pendientes - En Proceso de Pago", exact=True)
@@ -274,9 +285,7 @@ def test_accounting_reaches_cleanup_and_sees_exact_blockers(
             exact=True,
         )
     ).to_be_visible()
-    summary_row = page.locator(
-        "#row-80000000-0000-0000-0000-000000000001"
-    )
+    summary_row = page.locator("#row-80000000-0000-0000-0000-000000000001")
     expect(
         summary_row.get_by_text("Falta cuenta cargo", exact=True).first
     ).to_be_visible()
@@ -317,3 +326,101 @@ def test_accounting_cleanup_stays_actionable_on_mobile(
     shell = page.locator(".table-shell").last
     expect(shell).to_be_visible()
     expect(page.get_by_role("button", name="Revisar", exact=True)).to_be_visible()
+
+
+def test_isolated_approval_and_rejection_preserve_outcome_and_reason(
+    page: Page, browser_server: str
+) -> None:
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Aprobar solicitud", exact=True).click()
+    expect(page.get_by_text("Resultado: Aprobado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Estado: aprobado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Siguiente cola: Payment Run", exact=True)).to_be_visible()
+
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Rechazar solicitud", exact=True).click()
+    expect(
+        page.get_by_text("Resultado: Rechazo no enviado", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text("Motivo requerido por el escenario UX", exact=False)
+    ).to_be_visible()
+
+    _mutation_home(page, browser_server)
+    page.get_by_label("Motivo de rechazo").fill("Falta la orden de compra")
+    page.get_by_role("button", name="Rechazar solicitud", exact=True).click()
+    expect(page.get_by_text("Estado: rechazado", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Motivo conservado: Falta la orden de compra", exact=True)
+    ).to_be_visible()
+
+
+def test_isolated_budget_assignment_rejects_invalid_concept_and_advances_valid_document(
+    page: Page, browser_server: str
+) -> None:
+    _mutation_home(page, browser_server)
+    page.get_by_label("Concepto").fill("invalid-concept")
+    page.get_by_role("button", name="Asignar concepto y enviar", exact=True).click()
+    expect(
+        page.get_by_text("Resultado: Asignación rechazada", exact=True)
+    ).to_be_visible()
+    expect(page.get_by_text("Estado: control_presupuestal", exact=True)).to_be_visible()
+
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Asignar concepto y enviar", exact=True).click()
+    expect(page.get_by_text("Resultado: Concepto asignado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Estado: enviado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Siguiente cola: Aprobación", exact=True)).to_be_visible()
+
+
+def test_isolated_payment_cutoff_proof_and_duplicate_guard(
+    page: Page, browser_server: str
+) -> None:
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
+    expect(page.get_by_text("Resultado: Pago rechazado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Se requiere corte previo", exact=False)).to_be_visible()
+
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Cerrar corte", exact=True).click()
+    expect(page.get_by_text("Resultado: Corte cerrado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Estado: en_proceso_pago", exact=True)).to_be_visible()
+    expect(page.get_by_text("no se marcó pagada", exact=False)).to_be_visible()
+
+    page.get_by_role("button", name="Cerrar corte", exact=True).click()
+    expect(page.get_by_text("Resultado: Corte rechazado", exact=True)).to_be_visible()
+
+
+def test_isolated_payment_proof_marks_paid_with_actor_and_cleanup_is_row_scoped(
+    page: Page, browser_server: str
+) -> None:
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Cerrar corte", exact=True).click()
+    page.set_input_files(
+        'input[name="proof"]',
+        {
+            "name": "comprobante.pdf",
+            "mimeType": "application/pdf",
+            "buffer": b"browser fixture proof",
+        },
+    )
+    page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
+    expect(page.get_by_text("Resultado: Pago registrado", exact=True)).to_be_visible()
+    expect(page.get_by_text("Estado: pagado", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Actor: Contabilidad Browser UX", exact=False)
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "evidencia persistida: comprobante.pdf (21 bytes)", exact=False
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("gasto generado: G-MUT-PAY", exact=False)).to_be_visible()
+
+    _mutation_home(page, browser_server)
+    page.get_by_role("button", name="Corregir cuentas de la fila", exact=True).click()
+    expect(page.get_by_text("Resultado: Fila corregida", exact=True)).to_be_visible()
+    expect(page.get_by_text("Siguiente cola: CFDI", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("solo las cuentas; CFDI sigue pendiente", exact=False)
+    ).to_be_visible()

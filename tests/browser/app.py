@@ -8,16 +8,29 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from html import escape
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from devnous.gastos.routes import admin_routes, client_executive_routes, dependencies, user_routes
+from devnous.gastos.routes import (
+    admin_routes,
+    client_executive_routes,
+    dependencies,
+    user_routes,
+)
 from devnous.gastos.services import cuenta_contable_suggester as cuenta_suggester_module
-
+from devnous.gastos.services import (
+    documento_payment_service,
+    documento_workflow_service,
+)
+from devnous.gastos.services import (
+    expense_accounting_cleanup_service,
+    payment_run_service,
+)
 
 EMPLOYEE_ID = UUID("10000000-0000-0000-0000-000000000354")
 
@@ -226,16 +239,12 @@ async def _dashboard(*_args, **kwargs):
     }
 
 
-
-
 async def _panel_visible_tools(_session, employee):
     return set(getattr(employee, "visible_tool_keys", set()) or set())
 
 
 async def _panel_can_review_pending_approvals(_session, employee):
-    return str(getattr(employee, "correo", "") or "").startswith(
-        "approver-browser-ux@"
-    )
+    return str(getattr(employee, "correo", "") or "").startswith("approver-browser-ux@")
 
 
 def _panel_is_budget_control_user(employee):
@@ -375,9 +384,7 @@ def _journey_payment_row(*, in_process: bool):
         "can_edit_fecha_pago": not in_process,
         "can_upload_payment_proof": in_process,
         "closure_id": (
-            str(UUID("70000000-0000-0000-0000-000000000001"))
-            if in_process
-            else None
+            str(UUID("70000000-0000-0000-0000-000000000001")) if in_process else None
         ),
         "amount_issue": "",
     }
@@ -481,9 +488,7 @@ async def _journey_cleanup_preview(
     del include_historical_precedent
     return {
         "preview": {
-            "notes": [
-                "Falta clasificación contable antes de exportar a COI."
-            ],
+            "notes": ["Falta clasificación contable antes de exportar a COI."],
             "contra_account": {},
             "taxes": {
                 "iva_account": {},
@@ -536,6 +541,235 @@ class _JourneyCuentaContableSuggester:
         return {}
 
 
+class _MutationResult:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def scalars(self):
+        return _FakeScalarRows(self._rows)
+
+    def fetchall(self):
+        return [(row,) for row in self._rows]
+
+    def scalar_one_or_none(self):
+        return self._rows[0] if self._rows else None
+
+
+class _MutationSession:
+    """Small transaction adapter for canonical writers in the browser fixture.
+
+    It is deliberately test-only: it has no database URL, credentials, or router
+    dependency. ``commit`` snapshots the in-memory fixture and tests reset it via
+    the page query string before each mutation journey.
+    """
+
+    def __init__(self, fixture):
+        self.fixture = fixture
+        self.added = []
+
+    def add(self, value):
+        if getattr(value, "id", None) is None:
+            value.id = uuid4()
+        self.added.append(value)
+        self.fixture.audit.append(value)
+
+    async def execute(self, statement, *_args, **_kwargs):
+        entities = [
+            item.get("entity") for item in getattr(statement, "column_descriptions", [])
+        ]
+        entity = entities[0] if entities else None
+        name = getattr(entity, "__name__", "")
+        if name == "Documento":
+            rows = (
+                [
+                    self.fixture.documentos[item]
+                    for item in self.fixture.selected_documents
+                ]
+                if self.fixture.selected_documents
+                else list(self.fixture.documentos.values())
+            )
+            return _MutationResult(rows)
+        if name == "ExpenseReport":
+            return _MutationResult([self.fixture.cleanup_expense])
+        if name == "CuentaContable":
+            return _MutationResult([self.fixture.account])
+        if name == "PaymentRunClosureItem":
+            return _MutationResult(self.fixture.closed_document_ids)
+        return _MutationResult()
+
+    async def get(self, entity, identifier):
+        if getattr(entity, "__name__", "") == "Documento":
+            return self.fixture.documentos.get(UUID(str(identifier)))
+        return None
+
+    async def commit(self):
+        self.fixture.commits += 1
+
+    async def rollback(self):
+        self.fixture.rollbacks += 1
+
+    async def refresh(self, _value):
+        return None
+
+
+class _MutationFixture:
+    approval_id = UUID("90000000-0000-0000-0000-000000000001")
+    reject_id = UUID("90000000-0000-0000-0000-000000000002")
+    budget_id = UUID("90000000-0000-0000-0000-000000000003")
+    payment_id = UUID("90000000-0000-0000-0000-000000000004")
+    cleanup_id = UUID("90000000-0000-0000-0000-000000000005")
+    concept_id = UUID("90000000-0000-0000-0000-000000000006")
+    account_id = UUID("90000000-0000-0000-0000-000000000007")
+
+    def reset(self):
+        self.audit = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.closed_document_ids = []
+        self.proofs = []
+        self.generated_expense = None
+        self.selected_documents = []
+        self.approver = SimpleNamespace(
+            id=UUID("90000000-0000-0000-0000-000000000101"),
+            nombre="Aprobador Browser UX",
+            rol="finanzas",
+            aprobador_id=None,
+        )
+        self.accounting = SimpleNamespace(
+            id=UUID("90000000-0000-0000-0000-000000000102"),
+            nombre="Contabilidad Browser UX",
+            rol="finanzas",
+            departamento="Finanzas",
+            permissions={"contabilidad.pagos.marcar_pagado"},
+        )
+        employee = SimpleNamespace(
+            id=UUID("90000000-0000-0000-0000-000000000103"),
+            aprobador_id=None,
+            nombre="Solicitante Browser UX",
+            departamento="Operaciones",
+        )
+        provider = SimpleNamespace(nombre="Proveedor Browser UX")
+
+        def document(identifier, reference, state):
+            return SimpleNamespace(
+                id=identifier,
+                numero_referencia=reference,
+                empleado_id=employee.id,
+                empleado=employee,
+                tipo="SOLICITUD",
+                estado=state,
+                monto_solicitado=Decimal("1250.00"),
+                monto_total=Decimal("1250.00"),
+                currency="MXN",
+                proveedor_cliente_id=UUID("90000000-0000-0000-0000-000000000104"),
+                proveedor_cliente=provider,
+                beneficiario_empleado_id=None,
+                beneficiario_empleado=None,
+                torneo=None,
+                torneo_id=None,
+                cuenta_gastos_id=None,
+                gasto_generado_id=None,
+                fecha_pago=None,
+                metodo_pago="TRANSFERENCIA",
+                concepto_pago="Hospedaje regional",
+                pagado_en=None,
+                aprobado_en=None,
+                enviado_en=None,
+                budget_concept_id=None,
+                fase="Regional",
+            )
+
+        self.documentos = {
+            self.approval_id: document(self.approval_id, "S-MUT-APPROVE", "enviado"),
+            self.reject_id: document(self.reject_id, "S-MUT-REJECT", "enviado"),
+            self.budget_id: document(
+                self.budget_id, "S-MUT-BUDGET", "control_presupuestal"
+            ),
+            self.payment_id: document(self.payment_id, "S-MUT-PAY", "aprobado"),
+        }
+        self.cleanup_expense = SimpleNamespace(
+            id=self.cleanup_id,
+            cuenta_contable_id=None,
+            contra_cuenta_contable_id=None,
+            cuenta_iva_id=None,
+            cfdi_report_id=None,
+            cfdi_uuid_manual=None,
+            nova_request_id=None,
+            iva=None,
+            hospedaje_entidad_fiscal=None,
+            hospedaje_tasa_impuesto=None,
+            hospedaje_impuesto_monto=None,
+            hospedaje_impuesto_confirmado=False,
+        )
+        self.account = SimpleNamespace(id=self.account_id, activo=True)
+        self.session = _MutationSession(self)
+
+
+MUTATIONS = _MutationFixture()
+MUTATIONS.reset()
+
+
+async def _mutation_load_documento(_session, documento_id):
+    return MUTATIONS.documentos.get(UUID(str(documento_id)))
+
+
+async def _mutation_load_actor(_session, actor_id):
+    for actor in (MUTATIONS.approver, MUTATIONS.accounting):
+        if actor.id == UUID(str(actor_id)):
+            return actor
+    return None
+
+
+async def _mutation_none(*_args, **_kwargs):
+    return None
+
+
+async def _mutation_false(*_args, **_kwargs):
+    return False
+
+
+async def _mutation_audit(*_args, **kwargs):
+    MUTATIONS.audit.append(SimpleNamespace(**kwargs))
+
+
+async def _mutation_budget_concept(_session, budget_concept_id, **_kwargs):
+    if budget_concept_id != str(MUTATIONS.concept_id):
+        return None
+    return {"id": str(MUTATIONS.concept_id), "concept_name": "Hospedaje y alimentación"}
+
+
+async def _mutation_payment_document(_session, documento_id):
+    return MUTATIONS.documentos.get(UUID(str(documento_id)))
+
+
+async def _mutation_payment_ready(*_args, **_kwargs):
+    return SimpleNamespace(status="ready")
+
+
+async def _mutation_create_expense(**_kwargs):
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="G-MUT-PAY",
+        cfdi_report_id=None,
+        cfdi_uuid_manual=None,
+    )
+    MUTATIONS.generated_expense = expense
+    return expense
+
+
+async def _mutation_store_proof(_session, *, attachments, **_kwargs):
+    for attachment in attachments:
+        MUTATIONS.proofs.append(
+            {
+                "bytes": attachment.raw_bytes,
+                "filename": attachment.filename,
+                "mime_type": attachment.mime_type,
+                "categoria": attachment.categoria,
+            }
+        )
+    return len(attachments)
+
+
 # Patch only module references used by this isolated test app.
 dependencies._load_empleado_proxy_by_id = _load_employee
 dependencies.visible_tools_for = _visible_tools
@@ -566,6 +800,34 @@ admin_routes.resolve_project_name = _journey_project_name
 admin_routes.resolve_effective_budget_concept = _journey_effective_budget_concept
 cuenta_suggester_module.CuentaContableSuggester = _JourneyCuentaContableSuggester
 
+# The mutation pages invoke the existing writers. Their persistence collaborators
+# are constrained to the resettable test transaction above, not replaced by a
+# production-style route or identity bypass.
+documento_workflow_service._load_documento = _mutation_load_documento
+documento_workflow_service._load_actor = _mutation_load_actor
+documento_workflow_service.documento_financial_terminal_reason = _mutation_none
+documento_workflow_service.documento_has_approval = _mutation_false
+documento_workflow_service._document_has_recorded_approval = _mutation_false
+documento_workflow_service.record_customer_success_audit_event = _mutation_audit
+documento_workflow_service._reopen_informe_de_gastos_on_reject = _mutation_none
+documento_workflow_service.assign_fecha_pago_on_solicitud_approval = lambda _doc: None
+documento_workflow_service.ensure_provider_approval_posting = _mutation_payment_ready
+documento_workflow_service.actor_is_route_approver = _mutation_false
+user_routes.resolve_budget_concept = _mutation_budget_concept
+documento_payment_service._load_documento_for_payment = _mutation_payment_document
+documento_payment_service.parse_amex_payment_card_id = lambda _doc: None
+documento_payment_service.ensure_provider_payment_posting = _mutation_payment_ready
+documento_payment_service.create_expense_from_data = _mutation_create_expense
+documento_payment_service._apply_no_deducible_account_for_unlinked_solicitud = (
+    _mutation_none
+)
+documento_payment_service._schedule_solicitud_paid_telegram_notifications = (
+    lambda **_kwargs: None
+)
+admin_routes.add_solicitud_documento_adjuntos = _mutation_store_proof
+payment_run_service.ensure_payment_run_schema = _mutation_none
+payment_run_service.record_customer_success_audit_event = _mutation_audit
+
 
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key="browser-ux-test-session")
@@ -576,6 +838,223 @@ app.include_router(client_executive_routes.router)
 @app.get("/_test/health")
 async def health():
     return {"ok": True}
+
+
+def _mutation_page(receipt: str = "") -> HTMLResponse:
+    payment = MUTATIONS.documentos[MUTATIONS.payment_id]
+    return HTMLResponse(f"""<!doctype html><html><body><main>
+        <h1>Simulación aislada de mutaciones UX</h1>
+        <p>Fixture transaccional de prueba;
+        no usa credenciales ni datos productivos.</p>
+        {receipt}
+        <section><h2>Aprobación y rechazo</h2>
+        <form method="post" action="/_test/mutations/approve">
+          <button>Aprobar solicitud</button>
+        </form>
+        <form method="post" action="/_test/mutations/reject">
+          <label>Motivo de rechazo <textarea name="reason"></textarea></label>
+          <button>Rechazar solicitud</button>
+        </form></section>
+        <section><h2>Control Presupuestal</h2>
+        <form method="post" action="/_test/mutations/budget">
+          <label>Concepto
+            <input name="concept_id" value="{MUTATIONS.concept_id}">
+          </label>
+          <button>Asignar concepto y enviar</button>
+        </form></section>
+        <section><h2>Payment Run</h2>
+        <p id="payment-state">Estado actual: {escape(payment.estado)}</p>
+        <form method="post" action="/_test/mutations/cutoff">
+          <button>Cerrar corte</button>
+        </form>
+        <form method="post" action="/_test/mutations/proof"
+              enctype="multipart/form-data">
+          <label>Comprobante <input type="file" name="proof"></label>
+          <button>Registrar comprobante y pago</button>
+        </form></section>
+        <section><h2>Limpieza contable</h2>
+        <form method="post" action="/_test/mutations/cleanup">
+          <button>Corregir cuentas de la fila</button>
+        </form>
+        </section></main></body></html>""")
+
+
+@app.get("/_test/mutations", response_class=HTMLResponse)
+async def mutation_home(reset: bool = True):
+    if reset:
+        MUTATIONS.reset()
+    return _mutation_page()
+
+
+def _mutation_receipt(
+    outcome: str, state: str, next_queue: str, detail: str
+) -> HTMLResponse:
+    return _mutation_page(
+        f'<section aria-label="Recibo de operación"><h2>Recibo de operación</h2>'
+        f"<p>Resultado: {escape(outcome)}</p><p>Estado: {escape(state)}</p>"
+        f"<p>Siguiente cola: {escape(next_queue)}</p><p>{escape(detail)}</p></section>"
+    )
+
+
+@app.post("/_test/mutations/approve", response_class=HTMLResponse)
+async def mutation_approve():
+    document = MUTATIONS.documentos[MUTATIONS.approval_id]
+    result = await documento_workflow_service.transition_documento_workflow(
+        MUTATIONS.session,
+        documento_id=document.id,
+        actor_id=MUTATIONS.approver.id,
+        action="approve",
+        comentario="Aprobación UX aislada",
+        surface="browser_fixture",
+    )
+    return _mutation_receipt(
+        "Aprobado",
+        result.documento.estado,
+        "Payment Run",
+        "Actor: Aprobador Browser UX",
+    )
+
+
+@app.post("/_test/mutations/reject", response_class=HTMLResponse)
+async def mutation_reject(reason: str = Form("")):
+    if not reason.strip():
+        return _mutation_receipt(
+            "Rechazo no enviado",
+            "enviado",
+            "Aprobación",
+            (
+                "Motivo requerido por el escenario UX; la regla productiva se "
+                "entrega en #369."
+            ),
+        )
+    document = MUTATIONS.documentos[MUTATIONS.reject_id]
+    result = await documento_workflow_service.transition_documento_workflow(
+        MUTATIONS.session,
+        documento_id=document.id,
+        actor_id=MUTATIONS.approver.id,
+        action="reject",
+        comentario=reason,
+        surface="browser_fixture",
+    )
+    return _mutation_receipt(
+        "Rechazado",
+        result.documento.estado,
+        "Solicitante",
+        f"Motivo conservado: {result.aprobacion.comentario or 'sin motivo'}",
+    )
+
+
+@app.post("/_test/mutations/budget", response_class=HTMLResponse)
+async def mutation_budget(concept_id: str = Form("")):
+    document = MUTATIONS.documentos[MUTATIONS.budget_id]
+    MUTATIONS.selected_documents = [document.id]
+    try:
+        result, concept = await user_routes._apply_control_presupuestal_assignment(
+            MUTATIONS.session,
+            documento_id=document.id,
+            budget_concept_id=concept_id,
+            actor=MUTATIONS.approver,
+        )
+    except documento_workflow_service.DocumentoWorkflowValidationError as exc:
+        return _mutation_receipt(
+            "Asignación rechazada", document.estado, "Control Presupuestal", exc.message
+        )
+    await MUTATIONS.session.commit()
+    return _mutation_receipt(
+        "Concepto asignado",
+        result.estado,
+        "Aprobación",
+        f"Concepto: {concept['concept_name']}",
+    )
+
+
+@app.post("/_test/mutations/cutoff", response_class=HTMLResponse)
+async def mutation_cutoff():
+    document = MUTATIONS.documentos[MUTATIONS.payment_id]
+    MUTATIONS.selected_documents = [document.id]
+    try:
+        result = await payment_run_service.close_payment_run(
+            MUTATIONS.session,
+            document_ids=[document.id],
+            actor_id=MUTATIONS.approver.id,
+            notes="Corte UX aislado",
+        )
+    except payment_run_service.PaymentRunValidationError as exc:
+        return _mutation_receipt(
+            "Corte rechazado", document.estado, "Payment Run", str(exc)
+        )
+    MUTATIONS.closed_document_ids.append(document.id)
+    return _mutation_receipt(
+        "Corte cerrado",
+        document.estado,
+        "Comprobante de pago",
+        f"Corte: {result.closure_id}; no se marcó pagada.",
+    )
+
+
+@app.post("/_test/mutations/proof", response_class=HTMLResponse)
+async def mutation_proof(proof: UploadFile | None = File(None)):
+    document = MUTATIONS.documentos[MUTATIONS.payment_id]
+    if document.estado != "en_proceso_pago":
+        return _mutation_receipt(
+            "Pago rechazado",
+            document.estado,
+            "Payment Run",
+            "Se requiere corte previo antes del comprobante.",
+        )
+    if proof is None or not proof.filename:
+        return _mutation_receipt(
+            "Pago rechazado",
+            document.estado,
+            "Comprobante de pago",
+            "Adjunta un comprobante de pago.",
+        )
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        document.id,
+        Request({"type": "http", "method": "POST", "path": "/_test/mutations/proof"}),
+        MUTATIONS.session,
+        MUTATIONS.accounting,
+        proof,
+    )
+    stored = MUTATIONS.proofs[-1] if MUTATIONS.proofs else None
+    if response.status_code != 303 or stored is None:
+        return _mutation_receipt(
+            "Pago rechazado",
+            document.estado,
+            "Comprobante de pago",
+            "El comprobante no se pudo persistir.",
+        )
+    return _mutation_receipt(
+        "Pago registrado",
+        document.estado,
+        "Contabilidad",
+        (
+            f"Actor: {MUTATIONS.accounting.nombre}; evidencia persistida: "
+            f"{stored['filename']} ({len(stored['bytes'])} bytes); "
+            f"gasto generado: {MUTATIONS.generated_expense.numero_referencia}"
+        ),
+    )
+
+
+@app.post("/_test/mutations/cleanup", response_class=HTMLResponse)
+async def mutation_cleanup():
+    expense = await expense_accounting_cleanup_service.save_expense_cleanup(
+        MUTATIONS.session,
+        MUTATIONS.cleanup_id,
+        cuenta_contable_id=str(MUTATIONS.account_id),
+        contra_cuenta_contable_id=str(MUTATIONS.account_id),
+    )
+    ready = bool(expense.cuenta_contable_id and expense.contra_cuenta_contable_id)
+    return _mutation_receipt(
+        "Fila corregida",
+        "cuentas asignadas",
+        "CFDI",
+        (
+            "Se corrigieron solo las cuentas; CFDI sigue pendiente."
+            if ready
+            else "La preparación no quedó lista."
+        ),
+    )
 
 
 @app.get("/_test/login")
@@ -748,7 +1227,10 @@ async def profile_navigation(profile_name: str):
 
     html = f"""
     <html>
-      <head><title>Perfil UX · {profile_name}</title><style>html,body{{margin:0;max-width:100%;}} main{{padding:24px;box-sizing:border-box;max-width:100%;}}</style></head>
+      <head><title>Perfil UX · {profile_name}</title><style>
+      html,body{{margin:0;max-width:100%;}}
+      main{{padding:24px;box-sizing:border-box;max-width:100%;}}
+      </style></head>
       <body>
         <main>
           <h1>Perfil simulado: {profile_name}</h1>
