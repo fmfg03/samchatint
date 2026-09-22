@@ -21,3 +21,11 @@ def test_edit_third_party_request_cancel_still_returns_to_document_detail() -> N
     block = _third_party_form_source()
 
     assert 'cancel_href = f"/documentos/{edit_documento.id}"' in block
+
+
+def test_third_party_request_exposes_shared_cfdi_confirmation() -> None:
+    block = _third_party_form_source()
+
+    assert 'name="cfdi_compartido_confirmado"' in block
+    assert "Factura compartida / pago parcial" in block
+    assert "samchat:solicitud-terceros:draft" in block
