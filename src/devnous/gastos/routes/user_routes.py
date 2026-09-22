@@ -34730,12 +34730,12 @@ async def _render_solicitud_terceros_form(
         client_submission_id = str(uuid4())
         page_heading = "Nueva solicitud a terceros"
         submit_label = "Crear solicitud"
-        cancel_href = "/documentos/mis-documentos"
-        form_actions_html = """
+        cancel_href = "/gastos-terceros"
+        form_actions_html = f"""
                 <div class="st-form-actions">
                     <button type="submit" class="button primary" name="submit_mode" value="create">Crear solicitud</button>
                     <button type="submit" class="button warning" name="submit_mode" value="create_and_send">Crear solicitud y enviar para aprobación</button>
-                    <a href="/documentos/mis-documentos" class="button secondary">Cancelar</a>
+                    <a href="{cancel_href}" class="button secondary">Cancelar</a>
                 </div>"""
         info_notice = (
             '<strong>Nota:</strong> Esta solicitud se creará sin gastos asociados. '
