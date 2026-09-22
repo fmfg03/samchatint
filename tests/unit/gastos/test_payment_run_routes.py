@@ -169,6 +169,10 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     assert "comprobante-pago" not in html
     assert "Subir testigo y pagar" not in html
     assert "sin registrar pago" not in html
+    assert "Finanzas ajusta la fecha de pago y cierra el corte operativo." in html
+    assert "Contabilidad o un usuario autorizado adjunta el comprobante" in html
+    assert "Benjamín ajusta fecha_pago" not in html
+    assert "Dani, Sebas, Jacquie" not in html
 
 
 @pytest.mark.asyncio
