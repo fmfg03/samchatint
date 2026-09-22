@@ -9647,7 +9647,7 @@ async def admin_finance_payment_run(
             {alerts}
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Solicitudes aprobadas para corte</div>
-                <div class="workspace-section-subtitle">Benjamín ajusta fecha_pago y cierra corte. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
+                <div class="workspace-section-subtitle">Finanzas ajusta la fecha de pago y cierra el corte operativo. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
@@ -9658,7 +9658,7 @@ async def admin_finance_payment_run(
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
-                <div class="workspace-section-subtitle">Dani, Sebas, Jacquie y usuarios de Contabilidad adjuntan el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
+                <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
