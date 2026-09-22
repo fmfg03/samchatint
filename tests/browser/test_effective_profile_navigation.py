@@ -85,13 +85,6 @@ def test_effective_profile_exposes_task_entry(
     expect(page.get_by_test_id("task-prompt")).to_be_visible()
 
     entry = page.locator(f'a[href="{expected_href}"]')
-    if profile == "direction":
-        assert entry.count() == 0
-        pytest.xfail(
-            "RQF-UX-002D #361: effective Direction access is not exposed "
-            "by render_top_navigation"
-        )
-
     assert entry.count() >= 1
     expect(entry.first).to_be_visible()
 
@@ -183,12 +176,15 @@ def test_real_panel_exposes_assigned_task_card(
     _capture_profile(page, f"{profile}-panel")
 
 
-def test_direction_panel_still_has_no_direction_task_entry(
+def test_direction_panel_exposes_direction_task_entry(
     page: Page, browser_server: str
 ) -> None:
     response = page.goto(f"{browser_server}/_test/panel/direction")
     assert response is not None
     assert response.status == 200
 
-    expect(page.locator('a[href="/direccion/tableros"]')).to_have_count(0)
+    entry = page.locator('a[href="/direccion/tableros"]')
+    assert entry.count() >= 1
+    expect(entry.first).to_be_visible()
+    assert _focus_reaches_href(page, "/direccion/tableros", max_tabs=120)
     _capture_profile(page, "direction-panel")

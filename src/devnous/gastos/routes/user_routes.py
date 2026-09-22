@@ -12005,6 +12005,8 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
 
     if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
+    if can_nav("direccion.tableros_ejecutivos", ()):
+        links.append(("/direccion/tableros", "Dirección", "direccion"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
     if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
