@@ -3,8 +3,8 @@
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
 Issue: #352
-Repository baseline: `main` at `c53a6591d2b43d51908220908a3c652a35ddb272`
-Full-width operational layout from PR #351 is included in this baseline via merge commit `c53a6591`.
+Repository baseline refreshed through `main` at `49155be05f311a1c397a9ae179acee688d029f8a`
+Full-width operational layout from #351, browser harness #356, effective-profile simulation #359, Direction responsive fix #360, Direction discoverability #362 and Payment Run role-language fix #370 are included in the refreshed repository baseline.
 
 ## Purpose
 
