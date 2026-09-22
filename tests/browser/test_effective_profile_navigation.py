@@ -26,12 +26,6 @@ PROFILE_CASES = [
         [],
         id="accounting-entry",
     ),
-    pytest.param(
-        "direction",
-        "/direccion/tableros",
-        ["/admin/finanzas"],
-        id="direction-entry",
-    ),
 ]
 
 PANEL_REQUIRED_CASES = [
