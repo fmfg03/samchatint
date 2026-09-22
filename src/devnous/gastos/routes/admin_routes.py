@@ -1259,7 +1259,21 @@ def render_admin_navigation(
     """
 
 
-def _admin_workspace_styles(max_width: str = "1240px") -> str:
+def _admin_workspace_styles(
+    max_width: str = "1240px", *, layout: str = "reading"
+) -> str:
+    """Return a readable or full-width admin workspace shell."""
+    if layout not in {"reading", "data"}:
+        raise ValueError("layout must be 'reading' or 'data'")
+    data_layout = layout == "data"
+    container_max_width = "none" if data_layout else max_width
+    container_margin = "0" if data_layout else "0 auto"
+    table_shell_style = (
+        "overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;"
+        if data_layout
+        else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
+    )
+    table_shell_table_style = "width:100%;" if data_layout else "min-width:max-content;"
     return f"""
         :root {{
             --shell-bg:#edf3f8;
@@ -1284,11 +1298,11 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
             max-width:100%;
             overflow-x:hidden;
         }}
-        .container,
-        .workspace-shell {{
-            max-width:{max_width};
+        body .container,
+        body .workspace-shell {{
+            max-width:{container_max_width}{' !important' if data_layout else ''};
             width:100%;
-            margin:0 auto;
+            margin:{container_margin}{' !important' if data_layout else ''};
         }}
         .workspace-card {{
             background:#ffffff;
@@ -1441,16 +1455,13 @@ def _admin_workspace_styles(max_width: str = "1240px") -> str:
         }}
         .table-shell {{
             max-width:100%;
-            overflow:auto;
-            max-block-size:min(68vh, 46rem);
-            -webkit-overflow-scrolling:touch;
-            scrollbar-gutter:stable both-edges;
+            {table_shell_style}
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
         }}
         .table-shell table {{
-            min-width:max-content;
+            {table_shell_table_style}
         }}
         .table-shell thead th {{
             position:sticky;
@@ -4596,7 +4607,7 @@ async def admin_expenses(
         <head>
             <title>Gastos - Admin</title>
             <style>
-                {_admin_workspace_styles("1820px")}
+                {_admin_workspace_styles("1820px", layout="data")}
                 .filter-grid {{
                     display: grid;
                     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -5051,7 +5062,7 @@ async def admin_invoices(
         <head>
             <title>Facturas/CFDIs - Admin</title>
             <style>
-                {_admin_workspace_styles("1820px")}
+                {_admin_workspace_styles("1820px", layout="data")}
                 .summary-links {{ display:flex; gap:12px; flex-wrap:wrap; }}
                 .summary-links a {{ text-decoration:none; color:#0f172a; }}
                 .summary-links a:hover {{ text-decoration:underline; }}
@@ -6788,7 +6799,7 @@ async def admin_contabilidad_deudores(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Deudores por comprobar - SamChat</title>
         <style>
-            {_admin_workspace_styles("1480px")}
+            {_admin_workspace_styles("1480px", layout="data")}
             .debtor-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; }}
             .debtor-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
             .debtor-table th, .debtor-table td {{ text-align:left; padding:11px 12px; border-bottom:1px solid #e2e8f0; vertical-align:top; font-size:13px; }}
@@ -7099,7 +7110,7 @@ async def admin_finance_platform(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Finanzas - Samchat</title>
         <style>
-            {_admin_workspace_styles("1380px")}
+            {_admin_workspace_styles("1380px", layout="data")}
             .finance-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }}
             .finance-section-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:16px; }}
             .finance-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
@@ -7518,7 +7529,7 @@ async def admin_sam_inbox(
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta charset="utf-8">
         <style>
-            {_admin_workspace_styles("1480px")}
+            {_admin_workspace_styles("1480px", layout="data")}
             .stack {{ display:flex; flex-direction:column; gap:16px; }}
             .sam-inbox-panel {{
                 background:#ffffff;
@@ -7587,7 +7598,7 @@ async def admin_runtime_artifacts(
         <title>Artifacts - Administración</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>{_admin_workspace_styles("1380px")}{artifact_admin_styles()}</style>
+        <style>{_admin_workspace_styles("1380px", layout="data")}{artifact_admin_styles()}</style>
     </head>
     <body>
         <div class="workspace-shell">
@@ -7766,7 +7777,7 @@ async def admin_finance_cashflow(
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Cashflow - Samchat</title>
-        <style>{_admin_workspace_styles("1380px")}{cashflow_admin_styles()}</style>
+        <style>{_admin_workspace_styles("1380px", layout="data")}{cashflow_admin_styles()}</style>
     </head>
     <body>
         <div class="workspace-shell">
@@ -8115,7 +8126,7 @@ async def admin_finance_accounts_receivable(
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Cuentas por cobrar - Samchat</title>
-        <style>{_admin_workspace_styles("1380px")}{ar_admin_styles()}</style>
+        <style>{_admin_workspace_styles("1380px", layout="data")}{ar_admin_styles()}</style>
     </head>
     <body>
         <div class="workspace-shell">
@@ -9599,7 +9610,7 @@ async def admin_finance_payment_run(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Payment Run - Samchat</title>
         <style>
-            {_admin_workspace_styles("1380px")}
+            {_admin_workspace_styles("1380px", layout="data")}
             .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
             .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
             .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
@@ -9636,8 +9647,8 @@ async def admin_finance_payment_run(
             {alerts}
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Solicitudes aprobadas para corte</div>
-                <div class="workspace-section-subtitle">Benjamín ajusta fecha_pago y cierra corte. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div class="workspace-section-subtitle">Finanzas ajusta la fecha de pago y cierra el corte operativo. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
                         <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False, can_edit_payment_date=can_close_run)}</tbody>
@@ -9647,8 +9658,8 @@ async def admin_finance_payment_run(
             </section>
             <section class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
-                <div class="workspace-section-subtitle">Dani, Sebas, Jacquie y usuarios de Contabilidad adjuntan el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
 	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
@@ -9657,7 +9668,7 @@ async def admin_finance_payment_run(
             </section>
             <section class="workspace-card">
                 <div class="workspace-section-title">Cortes recientes</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="payment-table">
                         <thead><tr><th>Corte</th><th>Cerrado</th><th>Fecha corte</th><th>Items</th><th>Total</th><th>Cerro</th></tr></thead>
                         <tbody>{_render_payment_run_closures(closures)}</tbody>
@@ -9750,7 +9761,7 @@ async def admin_finance_payment_history(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Historial de pagos - Samchat</title>
         <style>
-            {_admin_workspace_styles("1480px")}
+            {_admin_workspace_styles("1480px", layout="data")}
             .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
             .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
             .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
@@ -9786,7 +9797,7 @@ async def admin_finance_payment_history(
             <section class="workspace-card">
                 <div class="workspace-section-title">Solicitudes por estado de pago</div>
                 <div class="workspace-section-subtitle">Incluye fecha de aprobación, fecha programada, fecha pagada, solicitante y beneficiario.</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="1" data-default-sort-dir="desc">
 	                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_pagada" data-sort-type="date">Fecha Pagada</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
 	                        <tbody>{_render_payment_history_rows(rows)}</tbody>
@@ -10039,7 +10050,7 @@ async def admin_finance_payment_run_closure_detail(
             )}
             <section class="workspace-card">
                 <div class="workspace-section-title">Solicitudes incluidas</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="payment-table">
                         <thead><tr><th>Solicitud</th><th>Fecha pago</th><th>Monto</th><th>Estado al corte</th><th>Pago actual</th></tr></thead>
                         <tbody>{rows or '<tr><td colspan="5">Sin items.</td></tr>'}</tbody>
@@ -14043,7 +14054,7 @@ async def admin_customer_success_audit_log(
             <section class="workspace-card">
                 <div class="workspace-section-title">Eventos</div>
                 <div class="workspace-section-subtitle">Las filas nuevas guardan IP y origen cuando la acción viene por web. La bitácora empieza a registrar eventos desde esta versión.</div>
-                <div style="overflow:auto;margin-top:14px;">
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="audit-table">
                         <thead>
                             <tr>
@@ -15614,7 +15625,7 @@ async def admin_presupuestos_legacy(
         catalog_editor_html = f"""
             <form method="POST" action="/admin/presupuestos/conceptos/bulk-save" style="margin-top:16px;">
                 {catalog_hidden_context}
-                <div class="table-shell" style="overflow:auto;">
+            <div class="table-shell" style="overflow-x:auto;overflow-y:visible;">
                     <table id="catalog-partidas-table">
                         <thead>
                             <tr>
@@ -15716,7 +15727,7 @@ async def admin_presupuestos_legacy(
         """
     else:
         catalog_editor_html = f"""
-            <div class="table-shell" style="margin-top:16px;overflow:auto;">
+            <div class="table-shell" style="margin-top:16px;overflow-x:auto;overflow-y:visible;">
                 <table>
                     <thead>
                         <tr>
@@ -16344,7 +16355,7 @@ async def admin_presupuestos_legacy(
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Presupuestos - Administración</title>
-        <style>{_admin_workspace_styles("1380px")}{page_styles}</style>
+        <style>{_admin_workspace_styles("1380px", layout="data")}{page_styles}</style>
     </head>
     <body>
         <div class="workspace-shell">
@@ -24268,7 +24279,7 @@ async def cfdi_matching_control_room(
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-                {_admin_workspace_styles("1640px")}
+                {_admin_workspace_styles("1640px", layout="data")}
                 .empty-state {{ padding:40px; text-align:center; color:#64748b; }}
                 .empty-state .icon {{ font-size:42px; margin-bottom:10px; }}
                 .summary-links {{ display:flex; gap:12px; flex-wrap:wrap; }}
@@ -25133,7 +25144,7 @@ async def gastos_sin_cuenta_contable(
     <head>
         <title>Limpieza contable - Admin</title>
         <style>
-            {_admin_workspace_styles("1760px")}
+            {_admin_workspace_styles("1760px", layout="data")}
             .status-banner {{
                 border-radius:18px;
                 padding:14px 16px;

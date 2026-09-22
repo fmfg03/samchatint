@@ -3600,7 +3600,7 @@ async def nomina_cfdi_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>CFDI SAT Nómina</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; }}
-    .container {{ max-width: 1500px; margin:0 auto; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px; margin-bottom:16px; }}
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
@@ -12005,6 +12005,8 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
 
     if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
+    if can_nav("direccion.tableros_ejecutivos", ()):
+        links.append(("/direccion/tableros", "Dirección", "direccion"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
     if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
@@ -12198,7 +12200,21 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     """
 
 
-def _workspace_shell_styles(max_width: str = "1380px") -> str:
+def _workspace_shell_styles(
+    max_width: str = "1380px", *, layout: str = "reading"
+) -> str:
+    """Return a readable or full-width workspace shell for the named page type."""
+    if layout not in {"reading", "data"}:
+        raise ValueError("layout must be 'reading' or 'data'")
+    data_layout = layout == "data"
+    container_max_width = "none" if data_layout else max_width
+    container_margin = "0" if data_layout else "0 auto"
+    table_shell_style = (
+        "overflow-x:auto;overflow-y:visible;-webkit-overflow-scrolling:touch;"
+        if data_layout
+        else "overflow:auto;max-block-size:min(68vh, 46rem);-webkit-overflow-scrolling:touch;scrollbar-gutter:stable both-edges;"
+    )
+    table_shell_table_style = "width:100%;" if data_layout else "min-width:max-content;"
     return f"""
         :root {{
             --shell-bg:#edf3f8;
@@ -12227,10 +12243,10 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
             max-width:100%;
             overflow-x:hidden;
         }}
-        .container {{
-            max-width:{max_width};
+        body .container {{
+            max-width:{container_max_width}{' !important' if data_layout else ''};
             width:100%;
-            margin:0 auto;
+            margin:{container_margin}{' !important' if data_layout else ''};
             background:var(--shell-card);
             border-radius:24px;
             border:1px solid rgba(255,255,255,.55);
@@ -12412,17 +12428,14 @@ def _workspace_shell_styles(max_width: str = "1380px") -> str:
         .notice.warn {{ background:#fff7ed; color:#9a3412; border-color:#fdba74; }}
         .notice.success {{ background:#ecfdf5; color:#166534; border-color:#86efac; }}
         .table-shell {{
-            overflow:auto;
+            {table_shell_style}
             max-width:100%;
-            max-block-size:min(68vh, 46rem);
-            -webkit-overflow-scrolling:touch;
-            scrollbar-gutter:stable both-edges;
             border:1px solid var(--shell-line);
             border-radius:18px;
             background:#fff;
         }}
         .table-shell table {{
-            min-width:max-content;
+            {table_shell_table_style}
         }}
         .table-shell thead th {{
             position:sticky;
@@ -14845,7 +14858,7 @@ async def panel_operaciones_console(
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta charset="utf-8">
         <style>
-            {_workspace_shell_styles("1180px")}
+            {_workspace_shell_styles("1180px", layout="data")}
         .alert-grid {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit, minmax(240px, 1fr));
@@ -15112,7 +15125,7 @@ async def panel_operaciones_console(
             .status-chip.info {{ background:#dbeafe;color:#1d4ed8; }}
         </style>
     </head>
-    <body>
+    <body class="sam-layout-data">
         <div class="container">
             {nav}
             {_render_workspace_hero(
@@ -15780,7 +15793,7 @@ async def prestamos_list(
     <html>
     <head>
         <title>Préstamos - SamChat</title>
-        <style>{_workspace_shell_styles("1280px")}</style>
+        <style>{_workspace_shell_styles("1280px", layout="data")}</style>
     </head>
     <body>
         <div class="container">
@@ -17159,7 +17172,7 @@ async def gastos_terceros(
     <head>
         <title>Solicitudes de transferencia - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1280px")}
+            {_workspace_shell_styles("1280px", layout="data")}
         </style>
     </head>
     <body>
@@ -19999,7 +20012,7 @@ async def amex_card_accounts_view(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Catálogo AMEX - SamChat</title>
         <style>
-            {_workspace_shell_styles("1320px")}
+            {_workspace_shell_styles("1320px", layout="data")}
             label {{ display:block; margin-bottom:6px; font-size:12px; font-weight:700; color:#475569; }}
             input, select, textarea {{ width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:10px; }}
             textarea {{ min-height:72px; }}
@@ -20658,7 +20671,7 @@ async def amex_conciliacion_view(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Conciliación AMEX - Gastos</title>
         <style>
-            {_workspace_shell_styles("1320px")}
+            {_workspace_shell_styles("1320px", layout="data")}
             .toolbar label {{ display:block; margin-bottom:6px; font-size:12px; font-weight:700; color:#475569; }}
         </style>
     </head>
@@ -21275,7 +21288,7 @@ async def contabilidad_cuentas_por_cobrar_view(
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
     th {{ background:#f3f4f6; position:sticky; top:0; }}
-    .table-wrap {{ overflow:auto; max-height:70vh; }}
+    .table-wrap {{ overflow-x:auto; overflow-y:visible; }}
     code {{ font-size:12px; }}
     </style></head>
     <body><div class="container">
@@ -21524,7 +21537,7 @@ async def contabilidad_cuentas_por_pagar_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cuentas por Pagar</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
-    .container {{ max-width: 1500px; margin:0 auto; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
     .toolbar {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; align-items:end; }}
     input, select {{ width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; box-sizing:border-box; }}
@@ -21540,7 +21553,7 @@ async def contabilidad_cuentas_por_pagar_view(
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:10px 12px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:13px; vertical-align:top; }}
     th {{ background:#f3f4f6; position:sticky; top:0; }}
-    .table-wrap {{ overflow:auto; max-height:70vh; }}
+    .table-wrap {{ overflow-x:auto; overflow-y:visible; }}
     code {{ font-size:12px; }}
     </style></head>
     <body><div class="container">
@@ -23433,7 +23446,7 @@ async def contabilidad_tesoreria_matches_view(
     <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Matches Tesorería</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; color:#111827; }}
-    .container {{ max-width: 1600px; margin:0 auto; }}
+    body .container {{ max-width:none !important; width:100% !important; margin:0 !important; }}
     .card {{ background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px; margin-bottom:16px; }}
     .toolbar {{ display:flex; gap:12px; flex-wrap:wrap; align-items:end; }}
     input, select {{ padding:8px 10px; border:1px solid #d1d5db; border-radius:8px; }}
@@ -23447,7 +23460,7 @@ async def contabilidad_tesoreria_matches_view(
     table {{ width:100%; border-collapse:collapse; }}
     th, td {{ padding:9px 10px; border-bottom:1px solid #e5e7eb; text-align:left; font-size:12px; vertical-align:top; }}
     th {{ background:#f3f4f6; position:sticky; top:0; }}
-    .table-wrap {{ overflow:auto; max-height:60vh; }}
+    .table-wrap {{ overflow-x:auto; overflow-y:visible; }}
     code {{ font-size:11px; }}
     </style></head><body><div class="container">
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("treasury_matches")}
@@ -24515,7 +24528,7 @@ async def contabilidad_conciliacion_view(
                 <div class="stat"><div class="label">Unmatched</div><div class="value">{totals["unmatched"]["count"]}</div><div>{format_currency(totals["unmatched"]["amount"])}</div></div>
             </div>
 
-            <div class="card" style="overflow:auto;">
+            <div class="card" style="overflow-x:auto;overflow-y:visible;">
                 <form method="POST" action="/admin/contabilidad/conciliacion/bulk" id="bulk-conciliacion-form">
                 <div class="toolbar" style="margin-bottom:12px;">
                     <select name="bulk_action">
@@ -25284,7 +25297,7 @@ async def contabilidad_conciliacion_review(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Revisar conciliación</title>
         <style>
-            {_workspace_shell_styles("1320px")}
+            {_workspace_shell_styles("1320px", layout="data")}
             .inline-actions form {{ margin:0; }}
         </style>
     </head>
@@ -25847,7 +25860,7 @@ async def contabilidad_conciliacion_auditoria(
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <title>Auditoría de Conciliación</title>
         <style>
-            {_workspace_shell_styles("1380px")}
+            {_workspace_shell_styles("1380px", layout="data")}
             .toolbar label {{ display:block; margin-bottom:6px; font-size:12px; font-weight:700; color:#475569; }}
         </style>
     </head>
@@ -28628,7 +28641,7 @@ async def mis_documentos(
     <html>
     <head>
         <title>Mis Documentos - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1380px")}</style>
+        <style>{_workspace_shell_styles("1380px", layout="data")}</style>
     </head>
     <body>
         <div class="container">
@@ -29079,7 +29092,7 @@ async def documentos_control_presupuestal(
     """
     html = f"""
     <!DOCTYPE html>
-    <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px")}</style></head>
+    <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px", layout="data")}</style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "operacion")}
         {_gastos_workspace_nav_html(current_empleado, "documentos")}
@@ -30024,7 +30037,7 @@ async def documentos_pendientes(
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1580px")}</style>
+        <style>{_workspace_shell_styles("1580px", layout="data")}</style>
     </head>
     <body>
         <div class="container">
@@ -30622,7 +30635,7 @@ async def historial_aprobador(
     <head>
         <title>Historial de Aprobaciones - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1680px")}
+            {_workspace_shell_styles("1680px", layout="data")}
             .approval-history-filters {{
                 display:grid;
                 grid-template-columns:repeat(auto-fit, minmax(190px, 1fr));
@@ -31109,7 +31122,7 @@ async def documentos_todos(
     <html>
     <head>
         <title>Todos los Documentos - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1580px")}</style>
+        <style>{_workspace_shell_styles("1580px", layout="data")}</style>
     </head>
     <body>
         <div class="container">
@@ -34414,7 +34427,7 @@ async def documentos_pendientes_pago(
     <head>
         <title>Documentos Pendientes de Pago - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1500px")}
+            {_workspace_shell_styles("1500px", layout="data")}
         </style>
     </head>
     <body>
@@ -34717,12 +34730,12 @@ async def _render_solicitud_terceros_form(
         client_submission_id = str(uuid4())
         page_heading = "Nueva solicitud a terceros"
         submit_label = "Crear solicitud"
-        cancel_href = "/documentos/mis-documentos"
-        form_actions_html = """
+        cancel_href = "/gastos-terceros"
+        form_actions_html = f"""
                 <div class="st-form-actions">
                     <button type="submit" class="button primary" name="submit_mode" value="create">Crear solicitud</button>
                     <button type="submit" class="button warning" name="submit_mode" value="create_and_send">Crear solicitud y enviar para aprobación</button>
-                    <a href="/documentos/mis-documentos" class="button secondary">Cancelar</a>
+                    <a href="{cancel_href}" class="button secondary">Cancelar</a>
                 </div>"""
         info_notice = (
             '<strong>Nota:</strong> Esta solicitud se creará sin gastos asociados. '
@@ -40098,7 +40111,7 @@ async def cuentas_de_gastos_list(
             </td>
             <td data-sort-value="{escape(_sort_value_attr(cuenta.created_at, kind='date'))}">{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td class="table-actions-cell">
-                <div class="table-actions inline-actions">
+                <div class="table-actions inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
                 <a href="/informes-de-gastos/{cuenta.id}" style="color: #4CAF50; text-decoration: none; white-space:nowrap;">Abrir informe</a>
                 {cerrar_cell}
                 {cancelar_borrador_cell}
@@ -40178,7 +40191,7 @@ async def cuentas_de_gastos_list(
     <head>
         <title>Mis Informes de Gastos - Copa Telmex</title>
         <style>
-            {_workspace_shell_styles("1380px")}
+            {_workspace_shell_styles("1380px", layout="data")}
         </style>
     </head>
     <body>

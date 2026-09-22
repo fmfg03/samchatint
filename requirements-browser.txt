@@ -1,0 +1,9 @@
+-r requirements-test.txt
+
+# SessionMiddleware is exercised by the isolated browser test app. The
+# production monolithic requirements include this dependency, while the
+# lightweight test/runtime requirements do not.
+itsdangerous>=2.1.0
+
+# Browser-level UX regression harness.
+playwright>=1.50,<2

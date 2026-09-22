@@ -1,0 +1,54 @@
+name: Browser UX Pilot
+
+on:
+  pull_request:
+    branches: [master, main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: src
+  OPENAI_API_KEY: test-key
+  ANTHROPIC_API_KEY: test-key
+
+jobs:
+  browser-smoke:
+    name: Browser UX smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-browser.txt
+
+      - name: Install browser test dependencies
+        run: python -m pip install -r requirements-browser.txt
+
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run browser UX smoke
+        env:
+          SAMCHAT_BROWSER_ARTIFACT_DIR: artifacts/browser
+        run: |
+          mkdir -p reports artifacts/browser
+          python -m pytest -q tests/browser \
+            --timeout=90 \
+            --junitxml=reports/browser.xml
+
+      - name: Upload browser test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-ux-pilot
+          path: |
+            reports/browser.xml
+            artifacts/browser/
+          if-no-files-found: error
