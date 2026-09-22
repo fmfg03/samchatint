@@ -165,9 +165,9 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     assert 'form="payment-run-close-form"' in html
     assert "/admin/finanzas/payment-run/pay" not in html
     assert "En Proceso de Pago" in html
-    assert "Testigo de pago" in html
+    assert "Comprobante de pago" in html
     assert "comprobante-pago" not in html
-    assert "Subir testigo y pagar" not in html
+    assert "Subir comprobante y marcar pagado" not in html
     assert "sin registrar pago" not in html
     assert "Finanzas ajusta la fecha de pago y cierra el corte operativo." in html
     assert "Contabilidad o un usuario autorizado adjunta el comprobante" in html
@@ -507,7 +507,7 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
 
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "comprobante-pago" in html
-    assert "Subir testigo y pagar" in html
+    assert "Subir comprobante y marcar pagado" in html
 
 
 @pytest.mark.asyncio

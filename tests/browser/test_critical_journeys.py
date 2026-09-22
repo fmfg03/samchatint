@@ -213,7 +213,7 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
 
     expect(page).to_have_url(f"{browser_server}/admin/finanzas/payment-run")
     expect(
-        page.get_by_role("heading", name="Corte operativo de solicitudes aprobadas")
+        page.get_by_role("heading", name="Programación de pagos")
     ).to_be_visible()
     expect(
         page.get_by_text(
@@ -232,6 +232,7 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         page.get_by_text("Comprobantes pendientes - En Proceso de Pago", exact=True)
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
+    expect(page.get_by_text("Comprobante de pago", exact=True).first).to_be_visible()
     expect(
         page.get_by_text(
             "al guardarlo, la solicitud se marca Pagada automáticamente",
@@ -241,7 +242,7 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
 
     expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_visible()
     expect(
-        page.get_by_role("button", name="Subir testigo y pagar", exact=True)
+        page.get_by_role("button", name="Subir comprobante y marcar pagado", exact=True)
     ).to_be_visible()
     _capture(page, "finance-payment-run")
 
