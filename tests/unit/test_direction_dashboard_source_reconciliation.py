@@ -618,3 +618,24 @@ def test_paid_kpi_reflects_broader_document_semantics_without_claiming_cash_exit
     assert "<span>Cerrado / pagado</span><strong>$375.00</strong>" in rendered
     assert "no equivale por sí solo a salida de caja" in rendered
     assert "Total pagado al corte" not in rendered
+
+
+def test_direction_dashboard_css_allows_grid_children_to_shrink_on_mobile():
+    rendered = ui.render_direction_dashboard(
+        {
+            "edition_year": 2026,
+            "cards": [],
+            "data_boundary": {},
+            "unavailable_metrics": [],
+        }
+    )
+
+    assert ".tournament,.panel,.finance-split>*,.two-column>*,.entity-grid>*" in rendered
+    assert "details.entity { min-width:0; }" in rendered
+    assert ".table-wrap {" in rendered
+    assert "min-width:0;" in rendered
+    assert "max-width:100%;" in rendered
+    assert "@media (max-width:1320px)" in rendered
+    assert ".finance-split { grid-template-columns:1fr; }" in rendered
+    assert "@media (max-width:820px)" in rendered
+    assert ".hero { display:block; }" in rendered
