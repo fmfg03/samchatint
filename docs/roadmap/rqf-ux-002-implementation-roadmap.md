@@ -3,7 +3,7 @@
 Status: PROPOSAL_AFTER_AUDIT — NO PRODUCT CHANGES AUTHORIZED
 Date: 2026-09-21
 Issue: #352
-Baseline: `main@c53a6591`
+Baseline refreshed through `main@49155be0`
 
 ## Rule
 
@@ -13,8 +13,8 @@ This roadmap is sequencing, not authorization. No implementation PR should start
 
 ### Current implementation evidence
 
-- **UX-PR-A1 / Browser harness:** implemented and green in PR #356; pending merge.
-- Browser smoke currently covers Direction as the first real route/render slice.
+- **UX-PR-A1 / Browser harness:** merged via PR #356.
+- Browser coverage now includes Direction plus merged effective-profile navigation simulation (#359); completion-oriented Employee, Approver, Control Presupuestal, Payment Run and Accounting journeys are in progress under #363.
 - Next planned evidence slice is effective-profile navigation and first-click/task-entry coverage; it should build on the merged browser harness rather than expand #356 indefinitely.
 
 ### UX-PR-A1 — Browser harness
