@@ -21,7 +21,7 @@ Verified evidence:
 
 This is repository-level test evidence only. PR #356 is not treated here as merged, deployed or business-accepted until those events occur.
 
-The initial repository search did not find Playwright, Selenium or axe usage. Current UI tests are predominantly Python/source-contract tests.
+The initial repository search did not find Playwright, Selenium or axe usage. That browser-level gap has since been partially resolved: Playwright harness #356 is merged, effective-profile simulation #359 is merged, and completion-oriented journey coverage is being expanded under #363. Existing Python/source-contract tests remain in place.
 
 This is a gap for usability regression, not a criticism of the existing CI: source-contract tests are valuable for route, policy and markup invariants.
 
