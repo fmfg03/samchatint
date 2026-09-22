@@ -137,6 +137,7 @@ async def build_expense_cfdi_for_export(
         neto_contrapartida=float(taxes.get("neto_contrapartida") or total_amount),
         base_amount=float(taxes.get("base_gasto") or subtotal_amount),
         export_reference=expense.numero_referencia or expense.concepto or "",
+        proyecto=expense.proyecto,
         cuenta_contable_nombre=str(getattr(cuenta_contable, "nombre", "") or ""),
         allows_missing_cfdi=allows_missing_cfdi,
         missing_cfdi_warning=(
