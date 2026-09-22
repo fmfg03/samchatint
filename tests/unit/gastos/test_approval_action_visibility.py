@@ -18,3 +18,4 @@ def test_pending_approval_actions_are_sticky_inside_table_scroller():
     assert ".approval-action-col {" in block
     assert "position: sticky;" in block
     assert "right: 0;" in block
+    assert "min-width: 190px;" in block
