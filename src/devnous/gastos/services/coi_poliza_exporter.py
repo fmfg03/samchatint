@@ -52,6 +52,7 @@ class ExpenseCFDI:
     neto_contrapartida: Optional[float] = None
     base_amount: Optional[float] = None
     export_reference: Optional[str] = None
+    proyecto: Optional[str] = None
     receptor_uso_cfdi: Optional[str] = None
     cuenta_contable_nombre: Optional[str] = None
     allows_missing_cfdi: bool = False
@@ -87,16 +88,40 @@ def format_uso_factura_code(uso_cfdi: Optional[str]) -> str:
     return digits[-2:].zfill(2)
 
 
+def _clean_export_concept(concepto: Optional[str], counterpart: Optional[str]) -> str:
+    """Remove the generated provider-payment wrapper from a COI concept.
+
+    The payment flow persists a human-readable concept such as ``Pago a
+    proveedor: ACME - Hospedaje``. COI already receives ACME as its own
+    counterpart field, so retaining that wrapper duplicates the name and
+    pushes the actual expense reason beyond COI's visible description area.
+    """
+    value = " ".join((concepto or "").split())
+    if not value:
+        return "Gasto"
+
+    wrapper = re.match(r"^pago\s+a\s+proveedor\s*:\s*", value, flags=re.IGNORECASE)
+    if not wrapper:
+        return value
+
+    value = value[wrapper.end() :].strip()
+    counterpart_value = " ".join((counterpart or "").split())
+    if counterpart_value and value.casefold().startswith(counterpart_value.casefold()):
+        value = value[len(counterpart_value) :].lstrip(" -:/")
+    return value or "Pago a proveedor"
+
+
 def _expense_description(expense: ExpenseCFDI) -> str:
-    if expense.cfdi_uuid:
-        folio_str = expense.folio or expense.cfdi_uuid[:8]
-        nombre_emisor_str = expense.nombre_emisor or "N/A"
-    else:
-        folio_str = ""
-        nombre_emisor_str = ""
-    uso_code = format_uso_factura_code(expense.receptor_uso_cfdi)
-    prefix = f"{uso_code} / " if uso_code else ""
-    return f"{prefix}{folio_str} / {nombre_emisor_str} / {expense.concepto or 'Gasto'}"
+    """Build the compact accounting description expected by Plataforma Sports."""
+    counterpart = " ".join((expense.nombre_emisor or "").split())
+    concept = _clean_export_concept(expense.concepto, counterpart)
+    parts = [
+        " ".join((expense.export_reference or "").split()),
+        counterpart,
+        concept,
+        " ".join((expense.proyecto or "").split()),
+    ]
+    return " / ".join(part for part in parts if part) or "Gasto"
 
 
 def _active_amount_lines(lines: List[dict]) -> List[dict]:
