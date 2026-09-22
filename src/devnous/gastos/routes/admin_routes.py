@@ -8953,6 +8953,7 @@ async def _build_finance_coi_batch_expenses(
                 ),
                 base_amount=float(taxes.get("base_gasto") or subtotal_amount),
                 export_reference=expense.numero_referencia or expense.concepto or "",
+                proyecto=expense.proyecto,
                 cuenta_contable_nombre=str(
                     getattr(cuenta_contable, "nombre", "") or ""
                 ),
