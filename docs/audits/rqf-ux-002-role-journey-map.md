@@ -48,10 +48,10 @@ Important: access is not purely role-based. Current code includes area rules, na
 
 ## J01 — Crear solicitud de transferencia a tercero/proveedor
 
-**Role:** empleado / solicitante  
-**Goal:** pedir una transferencia y dejarla lista para autorización.  
-**Entry surfaces:** `/gastos-terceros`, `/documentos/nueva-solicitud-terceros`; related anticipo form `/gastos-terceros/solicitar-anticipo`.  
-**Downstream:** document detail → approval queue → payment flow.  
+**Role:** empleado / solicitante\
+**Goal:** pedir una transferencia y dejarla lista para autorización.\
+**Entry surfaces:** `/gastos-terceros`, `/documentos/nueva-solicitud-terceros`; related anticipo form `/gastos-terceros/solicitar-anticipo`.\
+**Downstream:** document detail → approval queue → payment flow.\
 **Evidence:** `REPO_CONFIRMED`; finance end-to-end acceptance remains `DOC_UAT_PENDING`.
 
 Current conceptual path:
@@ -67,18 +67,18 @@ Metrics: `NOT_MEASURED`.
 
 ## J02 — Crear anticipo personal / beneficiario registrado
 
-**Role:** empleado / solicitante  
-**Goal:** solicitar fondos antes de incurrir el gasto.  
-**Entry surfaces:** `/documentos/nueva-solicitud-personal`, `/gastos-terceros/solicitar-anticipo` depending on case.  
+**Role:** empleado / solicitante\
+**Goal:** solicitar fondos antes de incurrir el gasto.\
+**Entry surfaces:** `/documentos/nueva-solicitud-personal`, `/gastos-terceros/solicitar-anticipo` depending on case.\
 **Evidence:** `REPO_CONFIRMED`; finance UAT case 1.2 is `PENDING_FINANCE_UAT`.
 
 Potential cognitive load: multiple creation entry points represent business variants but are exposed through different route families.
 
 ## J03 — Crear informe de gastos
 
-**Role:** empleado / solicitante  
-**Goal:** abrir un informe para comprobar gastos y, when applicable, tie it to beneficiary/project/advance.  
-**Entry:** `/informes-de-gastos` → `/informes-de-gastos/crear`.  
+**Role:** empleado / solicitante\
+**Goal:** abrir un informe para comprobar gastos y, when applicable, tie it to beneficiary/project/advance.\
+**Entry:** `/informes-de-gastos` → `/informes-de-gastos/crear`.\
 **Evidence:** `REPO_CONFIRMED`.
 
 Key downstream routes include:
@@ -93,9 +93,9 @@ Metrics: `NOT_MEASURED`.
 
 ## J04 — Capturar comprobantes / CFDI dentro de un informe
 
-**Role:** empleado / solicitante  
-**Goal:** add expense evidence accurately without needing accounting expertise.  
-**Entry:** report detail → quick expense / expense detail.  
+**Role:** empleado / solicitante\
+**Goal:** add expense evidence accurately without needing accounting expertise.\
+**Entry:** report detail → quick expense / expense detail.\
 **Evidence:** finance UAT defines XML/PDF, tips and budget-line checks; current acceptance is pending.
 
 Usability questions:
@@ -105,27 +105,27 @@ Usability questions:
 
 ## J05 — Corregir un documento rechazado y reenviarlo
 
-**Role:** empleado / solicitante  
-**Goal:** understand the rejection, repair only what is wrong and resume the same workflow.  
-**Entry:** user workspace / document detail.  
+**Role:** empleado / solicitante\
+**Goal:** understand the rejection, repair only what is wrong and resume the same workflow.\
+**Entry:** user workspace / document detail.\
 **Evidence:** rejection states and edit/cancel behavior are tested in the repository.
 
 Usability risk hypothesis: a status label alone is insufficient; the detail needs “qué se rechazó / quién / por qué / qué debes hacer / reenviar”.
 
 ## J06 — Entender el estado de una solicitud o informe
 
-**Role:** any document owner  
-**Goal:** answer “¿dónde está y qué sigue?” without knowing `Documento.estado`.  
-**Entry:** `/gastos-terceros`, `/informes-de-gastos`, `/documentos/todos`, document detail.  
+**Role:** any document owner\
+**Goal:** answer “¿dónde está y qué sigue?” without knowing `Documento.estado`.\
+**Entry:** `/gastos-terceros`, `/informes-de-gastos`, `/documentos/todos`, document detail.\
 **Evidence:** current code exposes human status helpers and several list/detail surfaces.
 
 Structural risk: the same business object is discoverable through multiple lists, which can improve access but can also require users to understand the differences among Solicitudes, Documentos and Informes.
 
 ## J07 — Aprobar o rechazar una solicitud
 
-**Role:** aprobador  
-**Goal:** find pending items, understand enough context and decide safely.  
-**Entry:** `/documentos/pendientes` → `/documentos/{documento_id}`.  
+**Role:** aprobador\
+**Goal:** find pending items, understand enough context and decide safely.\
+**Entry:** `/documentos/pendientes` → `/documentos/{documento_id}`.\
 **Evidence:** `REPO_CONFIRMED`; RQF-UI-001 records prior button overlap and long-table navigation issues.
 
 Required user answer:
@@ -139,18 +139,18 @@ Metrics: `NOT_MEASURED`.
 
 ## J08 — Consultar historial de aprobaciones
 
-**Role:** aprobador / Finanzas / auditor  
-**Goal:** reconstruct who decided what and when.  
-**Entry:** `/documentos/historial-aprobador`; document detail.  
+**Role:** aprobador / Finanzas / auditor\
+**Goal:** reconstruct who decided what and when.\
+**Entry:** `/documentos/historial-aprobador`; document detail.\
 **Evidence:** `REPO_CONFIRMED`.
 
 UX question: is history part of the object context, or does the user have to leave the object and search another module?
 
 ## J09 — Asignar presupuesto / Control Presupuestal
 
-**Role:** Control Presupuestal  
-**Goal:** identify the correct project/phase/concept and advance the document.  
-**Entry:** `/documentos/control-presupuestal`.  
+**Role:** Control Presupuestal\
+**Goal:** identify the correct project/phase/concept and advance the document.\
+**Entry:** `/documentos/control-presupuestal`.\
 **Evidence:** `REPO_CONFIRMED`; budget-control regression tests exist.
 
 Usability questions:
@@ -162,9 +162,9 @@ This is a high-value UAT journey because wrong classification is both a usabilit
 
 ## J10 — Revisar aprobados pendientes de pago
 
-**Role:** Finanzas / Tesorería  
-**Goal:** distinguish approved-but-unpaid work from scheduled/in-process/paid work.  
-**Entry:** `/documentos/pendientes-pago`, `/admin/finanzas/payment-run`.  
+**Role:** Finanzas / Tesorería\
+**Goal:** distinguish approved-but-unpaid work from scheduled/in-process/paid work.\
+**Entry:** `/documentos/pendientes-pago`, `/admin/finanzas/payment-run`.\
 **Evidence:** canonical Payment Run states documented in engineering canon.
 
 Critical semantic boundary:
@@ -176,10 +176,10 @@ UX must make this boundary visible in human language.
 
 ## J11 — Ejecutar Payment Run
 
-**Role:** authorized Finance/Tesorería operator  
-**Goal:** schedule/close an operational payment cutoff without falsely implying money moved.  
-**Entry:** `/admin/finanzas/payment-run`.  
-**Related:** closure detail `/admin/finanzas/payment-run/closures/{closure_id}`.  
+**Role:** authorized Finance/Tesorería operator\
+**Goal:** schedule/close an operational payment cutoff without falsely implying money moved.\
+**Entry:** `/admin/finanzas/payment-run`.\
+**Related:** closure detail `/admin/finanzas/payment-run/closures/{closure_id}`.\
 **Evidence:** `REPO_CONFIRMED`, business UAT pending.
 
 Key interaction questions:
@@ -189,19 +189,19 @@ Key interaction questions:
 
 ## J12 — Cargar testigo / confirmar pago
 
-**Role:** Finanzas / Contabilidad authorized user  
-**Goal:** attach proof and transition to paid.  
-**Entry:** Payment Run in-process section and/or document payment surface.  
+**Role:** Finanzas / Contabilidad authorized user\
+**Goal:** attach proof and transition to paid.\
+**Entry:** Payment Run in-process section and/or document payment surface.\
 **Evidence:** `REPO_CONFIRMED`; finance UAT pending.
 
 Risk: the interface must not visually collapse “closed cutoff” and “paid”.
 
 ## J13 — Limpiar clasificación contable / preparar COI
 
-**Role:** Contabilidad / Finanzas  
-**Goal:** identify exactly what is missing before COI export, fix it and verify readiness.  
-**Entry:** `/admin/gastos/sin-cuenta-contable`.  
-**Follow-up:** `/admin/contabilidad/coi`, preview/export routes.  
+**Role:** Contabilidad / Finanzas\
+**Goal:** identify exactly what is missing before COI export, fix it and verify readiness.\
+**Entry:** `/admin/gastos/sin-cuenta-contable`.\
+**Follow-up:** `/admin/contabilidad/coi`, preview/export routes.\
 **Evidence:** `REPO_CONFIRMED`; finance UAT explicitly recommends this as first Finance walkthrough.
 
 Usability questions:
@@ -211,65 +211,65 @@ Usability questions:
 
 ## J14 — Revisar / exportar pólizas COI
 
-**Role:** Contabilidad  
-**Goal:** verify accounting lines and produce review/load artifact.  
-**Entry:** `/admin/contabilidad/coi`; detail `/admin/contabilidad/coi/{poliza_id}`.  
-**Related exports:** batch XLSX/ZIP and per-document/per-report previews.  
+**Role:** Contabilidad\
+**Goal:** verify accounting lines and produce review/load artifact.\
+**Entry:** `/admin/contabilidad/coi`; detail `/admin/contabilidad/coi/{poliza_id}`.\
+**Related exports:** batch XLSX/ZIP and per-document/per-report previews.
 **Evidence:** `REPO_CONFIRMED`; finance UAT pending.
 
 Potential friction: multiple entry points and export variants can be useful for power users but need task-oriented grouping.
 
 ## J15 — Conciliar banco contra SamChat
 
-**Role:** Contabilidad / Tesorería  
-**Goal:** review candidate matches, accept/reject with evidence, audit decisions.  
-**Entry:** `/admin/contabilidad/conciliacion`.  
-**Detail:** `/admin/contabilidad/conciliacion/{movement_id}`.  
-**Audit:** `/admin/contabilidad/conciliacion/auditoria`.  
+**Role:** Contabilidad / Tesorería\
+**Goal:** review candidate matches, accept/reject with evidence, audit decisions.\
+**Entry:** `/admin/contabilidad/conciliacion`.\
+**Detail:** `/admin/contabilidad/conciliacion/{movement_id}`.\
+**Audit:** `/admin/contabilidad/conciliacion/auditoria`.\
 **Evidence:** `REPO_CONFIRMED`; business UAT pending.
 
 Important rule: candidate bank match is not payment/collection proof. UI language must preserve that distinction.
 
 ## J16 — Operar Cuentas por Cobrar
 
-**Role:** Finanzas / Contabilidad  
-**Goal:** connect expected income, issued CFDI, project/budget classification, collection and accounting.  
-**Repository routes/docs:** both `/admin/finanzas/cuentas-por-cobrar` and `/admin/contabilidad/cuentas-por-cobrar` are registered in current repository evidence.  
+**Role:** Finanzas / Contabilidad\
+**Goal:** connect expected income, issued CFDI, project/budget classification, collection and accounting.\
+**Repository routes/docs:** both `/admin/finanzas/cuentas-por-cobrar` and `/admin/contabilidad/cuentas-por-cobrar` are registered in current repository evidence.\
 **Evidence status:** `REPO_CONFIRMED_DUAL_SURFACE`.
 
 The Finance route consumes the canonical AR read model and exposes portfolio, billing schedule, actionable gaps, matching and CxC exports. The Accounting route is a separate contabilidad-context surface and is linked from the Finance AR UI as “Vista contable”. The UX question is therefore not which route exists, but whether users understand the purpose of each and can move between them without treating them as duplicate competing homes.
 
 ## J17 — Administrar Presupuestos
 
-**Role:** authorized budget/Finance admin  
-**Goal:** inspect budget by tournament, manage lines/monthly plan and connect income.  
-**Canonical owner:** `src/devnous/gastos/routes/admin_budget_routes.py`.  
-**Entry:** `/admin/presupuestos` → `/admin/presupuestos/torneo/{tournament_key}`.  
+**Role:** authorized budget/Finance admin\
+**Goal:** inspect budget by tournament, manage lines/monthly plan and connect income.\
+**Canonical owner:** `src/devnous/gastos/routes/admin_budget_routes.py`.\
+**Entry:** `/admin/presupuestos` → `/admin/presupuestos/torneo/{tournament_key}`.\
 **Evidence:** route policy explicitly distinguishes canonical owner, bridges and legacy candidates.
 
 Usability risk: legacy/bridge routes create implementation complexity; navigation must surface only canonical user-facing concepts.
 
 ## J18 — Dirección: identificar atención y drill down
 
-**Role:** eligible internal Direction position  
-**Goal:** understand portfolio/tournament state and drill into evidence without write authority.  
-**Entry:** `/direccion/tableros`, `/direccion/reportes`.  
+**Role:** eligible internal Direction position\
+**Goal:** understand portfolio/tournament state and drill into evidence without write authority.\
+**Entry:** `/direccion/tableros`, `/direccion/reportes`.\
 **Evidence:** engineering canon defines position-scoped, read-only consumption.
 
 Usability requirement: executive views should lead with exceptions/attention, not expose the full operational taxonomy by default.
 
 ## J19 — Crear y seguir ticket de soporte
 
-**Role:** any active user  
-**Goal:** report a problem and see its status.  
-**Entry:** `/soporte` → `/soporte/nuevo` → `/soporte/{id}`.  
+**Role:** any active user\
+**Goal:** report a problem and see its status.\
+**Entry:** `/soporte` → `/soporte/nuevo` → `/soporte/{id}`.\
 **Evidence:** support route module explicitly documents this flow.
 
 ## J20 — Triage y resolver soporte
 
-**Role:** superadmin/support staff  
-**Goal:** review all tickets, assign priority/status/owner, respond and close.  
-**Entry:** `/admin/soporte`; system view `/admin/soporte/estado-sistema`.  
+**Role:** superadmin/support staff\
+**Goal:** review all tickets, assign priority/status/owner, respond and close.\
+**Entry:** `/admin/soporte`; system view `/admin/soporte/estado-sistema`.\
 **Evidence:** `REPO_CONFIRMED`.
 
 ---
