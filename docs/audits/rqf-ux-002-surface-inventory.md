@@ -52,13 +52,13 @@ Purpose: map user-relevant live-web surfaces to tasks and identify IA/UX debt. T
 | `/admin/gastos/cfdis/matching` | TASK_QUEUE | CFDI matching | access-control / Finance UAT | Exception-driven task |
 | `/admin/gastos/sat` | DASHBOARD / ADMIN_CONFIG | SAT credentials/jobs | access-control / Finance UAT | Technical vocabulary likely appropriate only to finance/admin |
 | `/admin/gastos/sin-cuenta-contable` | TASK_QUEUE | Accounting cleanup | finance UAT | Recommended first Finance review surface |
-| `/admin/finanzas` | PRIMARY_WORKSPACE / DASHBOARD | Finance command center | access-control | Competes with `/admin/gastos` and `/admin/contabilidad` as “home” |
+| `/admin/finanzas` | PRIMARY_WORKSPACE / DASHBOARD | Finance command center | access-control | Competes with `/admin/gastos` and `/admin/contabilidad/estado` as “home” |
 | `/admin/finanzas/payment-run` | TASK_QUEUE / WORKSPACE | Payment cutoff | engineering canon / tests | Critical state semantics |
 | `/admin/finanzas/payment-run/closures/{id}` | DETAIL / HISTORY | Cutoff evidence | finance UAT | Should explain cutoff vs payment |
 | `/admin/finanzas/cashflow` | DASHBOARD | Cashflow planning | engineering canon | Read-model semantics differ from actual cash |
 | `/admin/finanzas/cuentas-por-cobrar` | PRIMARY_WORKSPACE / DASHBOARD | Canonical Finance AR read model, billing schedule, gaps, matching | AR route contract + engineering canon | Links explicitly to Accounting “Vista contable” |
 | `/admin/finanzas/cuentas-por-cobrar/item/{id}` | DETAIL | AR item detail | AR route contract | Canonical Finance AR detail |
-| `/admin/contabilidad` | PRIMARY_WORKSPACE | Accounting domain | access-control | Broad umbrella |
+| `/admin/contabilidad/estado` | PRIMARY_WORKSPACE | Accounting domain | access-control | Registered Accounting landing; broad umbrella |
 | `/admin/contabilidad/coi` | TASK_QUEUE / DASHBOARD | COI policies | finance UAT | Accounting power-user surface |
 | `/admin/contabilidad/coi/{id}` | DETAIL | Policy detail | finance UAT | Drill-down |
 | `/admin/contabilidad/conciliacion` | TASK_QUEUE / WORKSPACE | Bank reconciliation | finance UAT | Candidate match semantics must stay explicit |

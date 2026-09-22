@@ -9,13 +9,20 @@ Baseline refreshed through `main@49155be0`
 
 This roadmap is sequencing, not authorization. No implementation PR should start solely because it appears here. Each item must be supported by UAT evidence and preserve canonical routes, authority and business state.
 
+## Canon disposition
+
+**Canon unchanged.** This audit roadmap records proposed, UAT-gated UX
+sequencing only. It does not change product behavior, routes, authority,
+financial state, data ownership, deployment behavior, or the canonical
+backlog itself.
+
 ## Phase A — Evidence foundations
 
 ### Current implementation evidence
 
 - **UX-PR-A1 / Browser harness:** merged via PR #356.
-- Browser coverage now includes Direction plus merged effective-profile navigation simulation (#359); completion-oriented Employee, Approver, Control Presupuestal, Payment Run and Accounting journeys are in progress under #363.
-- Next planned evidence slice is effective-profile navigation and first-click/task-entry coverage; it should build on the merged browser harness rather than expand #356 indefinitely.
+- Browser coverage now includes Direction plus merged effective-profile navigation simulation (#359) and merged completion-oriented Employee, Approver, Control Presupuestal, Payment Run and Accounting journeys (#364).
+- Next planned evidence slice is isolated workflow mutation and explicit feedback/next-owner receipt coverage (#365); it builds on the completed read-only journey evidence rather than expanding #356 indefinitely.
 
 ### UX-PR-A1 — Browser harness
 Scope:
