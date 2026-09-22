@@ -2,7 +2,7 @@
 
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
-Baseline: `main@c53a6591`
+Baseline refreshed through `main@49155be0`
 Issue: #352
 
 This is a repository-based usability audit. It separates confirmed structure from interpretation. Priority is provisional until authenticated task UAT.
@@ -19,7 +19,7 @@ Evidence levels:
 | --- | --- | --- | --- | --- | --- |
 | UX-001 | P1 | Finance work is split across several plausible hubs | CONFIRMED_REPO | Users may need to know whether a task belongs to Gastos, Finanzas, Contabilidad, Presupuestos or Limpieza | First-click tests by Finance task |
 | UX-002 | P1 | The product has multiple navigation layers | CONFIRMED_REPO | Global nav + workspace nav + accounting subnav + admin nav + breadcrumbs can create orientation cost | Observe task starts and backtracks |
-| UX-003 | P1 | No repository-level browser journey suite was found | CONFIRMED_REPO | Source-contract tests cannot detect many real navigation/focus/scroll failures | Add Playwright baseline |
+| UX-003 | P1 | Browser journey coverage was missing at the initial sweep | RESOLVED_FOUNDATION | Playwright harness #356 and effective-profile baseline #359 are merged; completion coverage is still expanding | Continue critical-journey coverage under #363/#365 |
 | UX-004 | P1 | Major Finance journeys remain `PENDING_FINANCE_UAT` | CONFIRMED_REPO | Repo-live does not prove the workflow is usable or accepted | Run task UAT with Finance |
 | UX-005 | P1 | Same Documento moves through several queues and lists | CONFIRMED_REPO | Users may have to infer state-machine meaning from where the item appears | Test “where is this and what happens next?” |
 | UX-006 | P1 | Payment Run has a critical semantic distinction between cutoff and paid | CONFIRMED_REPO | UI ambiguity can cause operational errors | UAT cutoff vs payment-proof tasks |
