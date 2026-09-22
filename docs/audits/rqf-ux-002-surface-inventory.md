@@ -3,7 +3,7 @@
 Status: INITIAL_REPOSITORY_SWEEP
 Date: 2026-09-21
 Issue: #352
-Baseline: `main@c53a6591`
+Baseline refreshed through `main@49155be0`
 Purpose: map user-relevant live-web surfaces to tasks and identify IA/UX debt. This is not production acceptance.
 
 ## Classification
