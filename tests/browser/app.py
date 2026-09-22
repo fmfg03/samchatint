@@ -597,6 +597,11 @@ class _MutationSession:
             return _MutationResult(self.fixture.closed_document_ids)
         return _MutationResult()
 
+    async def get(self, entity, identifier):
+        if getattr(entity, "__name__", "") == "Documento":
+            return self.fixture.documentos.get(UUID(str(identifier)))
+        return None
+
     async def commit(self):
         self.fixture.commits += 1
 
@@ -621,6 +626,8 @@ class _MutationFixture:
         self.commits = 0
         self.rollbacks = 0
         self.closed_document_ids = []
+        self.proofs = []
+        self.generated_expense = None
         self.selected_documents = []
         self.approver = SimpleNamespace(
             id=UUID("90000000-0000-0000-0000-000000000101"),
@@ -638,6 +645,8 @@ class _MutationFixture:
         employee = SimpleNamespace(
             id=UUID("90000000-0000-0000-0000-000000000103"),
             aprobador_id=None,
+            nombre="Solicitante Browser UX",
+            departamento="Operaciones",
         )
         provider = SimpleNamespace(nombre="Proveedor Browser UX")
 
@@ -737,6 +746,30 @@ async def _mutation_payment_ready(*_args, **_kwargs):
     return SimpleNamespace(status="ready")
 
 
+async def _mutation_create_expense(**_kwargs):
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="G-MUT-PAY",
+        cfdi_report_id=None,
+        cfdi_uuid_manual=None,
+    )
+    MUTATIONS.generated_expense = expense
+    return expense
+
+
+async def _mutation_store_proof(_session, *, attachments, **_kwargs):
+    for attachment in attachments:
+        MUTATIONS.proofs.append(
+            {
+                "bytes": attachment.raw_bytes,
+                "filename": attachment.filename,
+                "mime_type": attachment.mime_type,
+                "categoria": attachment.categoria,
+            }
+        )
+    return len(attachments)
+
+
 # Patch only module references used by this isolated test app.
 dependencies._load_empleado_proxy_by_id = _load_employee
 dependencies.visible_tools_for = _visible_tools
@@ -782,11 +815,16 @@ documento_workflow_service.ensure_provider_approval_posting = _mutation_payment_
 documento_workflow_service.actor_is_route_approver = _mutation_false
 user_routes.resolve_budget_concept = _mutation_budget_concept
 documento_payment_service._load_documento_for_payment = _mutation_payment_document
-documento_payment_service.parse_amex_payment_card_id = lambda _doc: uuid4()
-documento_payment_service.ensure_amex_payment_posting = _mutation_payment_ready
+documento_payment_service.parse_amex_payment_card_id = lambda _doc: None
+documento_payment_service.ensure_provider_payment_posting = _mutation_payment_ready
+documento_payment_service.create_expense_from_data = _mutation_create_expense
+documento_payment_service._apply_no_deducible_account_for_unlinked_solicitud = (
+    _mutation_none
+)
 documento_payment_service._schedule_solicitud_paid_telegram_notifications = (
     lambda **_kwargs: None
 )
+admin_routes.add_solicitud_documento_adjuntos = _mutation_store_proof
 payment_run_service.ensure_payment_run_schema = _mutation_none
 payment_run_service.record_customer_success_audit_event = _mutation_audit
 
@@ -902,7 +940,7 @@ async def mutation_reject(reason: str = Form("")):
         "Rechazado",
         result.documento.estado,
         "Solicitante",
-        f"Motivo conservado: {reason}",
+        f"Motivo conservado: {result.aprobacion.comentario or 'sin motivo'}",
     )
 
 
@@ -971,18 +1009,30 @@ async def mutation_proof(proof: UploadFile | None = File(None)):
             "Comprobante de pago",
             "Adjunta un comprobante de pago.",
         )
-    result = await documento_payment_service.register_document_payment(
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        document.id,
+        Request({"type": "http", "method": "POST", "path": "/_test/mutations/proof"}),
         MUTATIONS.session,
-        documento_id=document.id,
-        actor_id=MUTATIONS.accounting.id,
-        actor=MUTATIONS.accounting,
-        notify=False,
+        MUTATIONS.accounting,
+        proof,
     )
+    stored = MUTATIONS.proofs[-1] if MUTATIONS.proofs else None
+    if response.status_code != 303 or stored is None:
+        return _mutation_receipt(
+            "Pago rechazado",
+            document.estado,
+            "Comprobante de pago",
+            "El comprobante no se pudo persistir.",
+        )
     return _mutation_receipt(
         "Pago registrado",
-        result.documento.estado,
+        document.estado,
         "Contabilidad",
-        f"Actor: {MUTATIONS.accounting.nombre}; evidencia: {proof.filename}",
+        (
+            f"Actor: {MUTATIONS.accounting.nombre}; evidencia persistida: "
+            f"{stored['filename']} ({len(stored['bytes'])} bytes); "
+            f"gasto generado: {MUTATIONS.generated_expense.numero_referencia}"
+        ),
     )
 
 
