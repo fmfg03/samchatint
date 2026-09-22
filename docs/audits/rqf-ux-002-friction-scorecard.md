@@ -3,7 +3,7 @@
 Status: STRUCTURAL_BASELINE_ONLY
 Date: 2026-09-21
 Issue: #352
-Baseline: `main@c53a6591`
+Baseline refreshed through `main@49155be0`
 
 ## Important limitation
 
