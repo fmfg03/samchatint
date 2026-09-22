@@ -13897,7 +13897,7 @@ def _beneficiary_onboarding_page(
                             <th>Cuenta</th>
                             <th>Archivos</th>
                             <th>Estado</th>
-                            <th>Acciones</th>
+                            <th class="approval-action-col">Acciones</th>
                         </tr>
                     </thead>
                     <tbody>{_beneficiary_onboarding_rows(requests, actions=actions)}</tbody>
@@ -29923,7 +29923,7 @@ async def documentos_pendientes(
             <td data-sort-value="{escape(monto_total_sort)}">{escape(row_values["monto_total"])}</td>
             <td>{escape(descripcion)}</td>
             <td data-sort-value="{escape(enviado_sort)}">{escape(str(enviado_str))}</td>
-            <td>{actions_html}</td>
+            <td class="approval-action-col">{actions_html}</td>
         </tr>
         """
 
@@ -30050,7 +30050,22 @@ async def documentos_pendientes(
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1580px", layout="data")}</style>
+        <style>
+            {_workspace_shell_styles("1580px", layout="data")}
+            .approval-action-col {{
+                position: sticky;
+                right: 0;
+                min-width: 190px;
+                background: #fff;
+                box-shadow: -10px 0 16px -16px rgba(15, 23, 42, .65);
+                z-index: 2;
+            }}
+            thead .approval-action-col {{
+                background: #0f172a;
+                color: #fff;
+                z-index: 6;
+            }}
+        </style>
     </head>
     <body>
         <div class="container">
