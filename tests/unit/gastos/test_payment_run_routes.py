@@ -609,6 +609,28 @@ async def test_payment_run_legacy_pay_endpoint_is_blocked() -> None:
     assert "comprobante" in response.headers["location"]
 
 
+@pytest.mark.asyncio
+async def test_payment_run_upload_requires_payment_proof() -> None:
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(estado="en_proceso_pago")
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        documento_id=uuid4(),
+        request=SimpleNamespace(query_params={}),
+        session=session,
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="superadmin",
+            departamento="Contabilidad",
+            nombre="Superadmin",
+        ),
+        comprobante_pago=None,
+    )
+
+    assert response.status_code == 303
+    assert "Selecciona%20el%20comprobante%20de%20pago" in response.headers["location"]
+
+
 def test_payment_run_upload_payment_proof_is_atomic() -> None:
     source = open("src/devnous/gastos/routes/admin_routes.py", encoding="utf-8").read()
     start = source.index("async def admin_finance_payment_run_upload_payment_proof")
