@@ -23,13 +23,6 @@ VIEWPORTS = [
     ),
     pytest.param(
         {"name": "mobile-390", "width": 390, "height": 844},
-        marks=pytest.mark.xfail(
-            reason=(
-                "RQF-UX-002C #358: populated Direction currently causes "
-                "page-level horizontal overflow at 390px"
-            ),
-            strict=True,
-        ),
         id="mobile-390",
     ),
 ]
@@ -110,7 +103,23 @@ def test_direction_dashboard_has_no_body_horizontal_overflow(
             clientWidth: document.documentElement.clientWidth
         })"""
     )
-    assert dimensions["scrollWidth"] <= dimensions["clientWidth"] + 1
+    overflowing = page.evaluate(
+        """() => Array.from(document.querySelectorAll("*"))
+            .map((el) => {
+                const rect = el.getBoundingClientRect();
+                return {
+                    tag: el.tagName,
+                    cls: el.className || "",
+                    text: (el.textContent || "").trim().slice(0, 80),
+                    left: Math.round(rect.left),
+                    right: Math.round(rect.right),
+                    width: Math.round(rect.width)
+                };
+            })
+            .filter((item) => item.right > document.documentElement.clientWidth + 1)
+            .slice(0, 20)"""
+    )
+    assert dimensions["scrollWidth"] <= dimensions["clientWidth"] + 1, overflowing
     expect(
         page.get_by_role("heading", name="Tablero ejecutivo de Dirección")
     ).to_be_visible()

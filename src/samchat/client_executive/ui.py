@@ -581,7 +581,10 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         .finance-split {{ display:grid; grid-template-columns:1.25fr .75fr; gap:22px; }}
         .subheading {{ display:flex; justify-content:space-between; gap:10px; align-items:center; margin:2px 0 10px; }}
         .subheading h3 {{ margin:0; font-size:16px; }} .subheading span {{ color:var(--muted); font-size:12px; }}
+        .tournament,.panel,.finance-split>*,.two-column>*,.entity-grid>*,.entity-body>*,.kpi-grid>*,.mini-kpis>*,.hero>*,details.entity {{ min-width:0; }}
         .table-wrap {{
+          min-width:0;
+          max-width:100%;
           overflow:visible;
           border:1px solid var(--line);
           border-radius:14px;
@@ -612,13 +615,15 @@ def render_direction_dashboard(payload: dict[str, Any]) -> str:
         .pending-details summary {{ cursor:pointer; color:#475569; font-weight:700; margin-top:14px; }}
         .two-column {{ display:grid; grid-template-columns:1fr 1fr; gap:18px; }}
         .marketing-kpis {{ grid-template-columns:repeat(4,1fr); }}
-        @media (max-width:1180px) {{ .kpi-grid {{ grid-template-columns:repeat(3,1fr); }} .finance-split,.two-column {{ grid-template-columns:1fr; }} }}
+        @media (max-width:1320px) {{ .finance-split {{ grid-template-columns:1fr; }} }}
+        @media (max-width:1180px) {{ .kpi-grid {{ grid-template-columns:repeat(3,1fr); }} .two-column {{ grid-template-columns:1fr; }} }}
+        @media (max-width:820px) {{ .hero {{ display:block; }} .filters {{ margin-top:18px; }} }}
         @media (max-width:760px) {{
           .shell {{ width:min(100% - 18px,1480px); padding-top:12px; }}
           .table-wrap {{ overflow-x:auto; overflow-y:visible; -webkit-overflow-scrolling:touch; }}
           .table-wrap table {{ min-width:620px; }}
-          .hero,.tournament-header,.section-heading,details.entity>summary {{ display:block; }}
-          .hero {{ padding:22px; }} .filters {{ margin-top:18px; }} .kpi-grid {{ grid-template-columns:1fr 1fr; }}
+          .tournament-header,.section-heading,details.entity>summary {{ display:block; }}
+          .hero {{ padding:22px; }} .kpi-grid {{ grid-template-columns:1fr 1fr; }}
           .attention,.entity-grid {{ grid-template-columns:1fr; }} .summary-meta {{ margin-top:8px; }} .marketing-kpis {{ grid-template-columns:1fr 1fr; }}
         }}
         @media (prefers-color-scheme:dark) {{
