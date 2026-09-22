@@ -155,6 +155,7 @@ async def register_document_payment(
     actor_id: UUID | str,
     actor: Any | None = None,
     notify: bool = True,
+    commit: bool = True,
 ) -> DocumentoPagoResult:
     documento_uuid = _to_uuid(documento_id)
     actor_uuid = _to_uuid(actor_id)
@@ -234,10 +235,13 @@ async def register_document_payment(
             fecha=datetime.utcnow(),
         )
         session.add(aprobacion)
-        await session.commit()
-        await session.refresh(documento)
-        await session.refresh(aprobacion)
-        if notify:
+        if commit:
+            await session.commit()
+            await session.refresh(documento)
+            await session.refresh(aprobacion)
+        else:
+            await session.flush()
+        if notify and commit:
             _schedule_solicitud_paid_telegram_notifications(
                 documento_id=documento.id,
                 actor_id=payment_actor.id,
@@ -282,10 +286,13 @@ async def register_document_payment(
                 fecha=datetime.utcnow(),
             )
             session.add(aprobacion)
-            await session.commit()
-            await session.refresh(documento)
-            await session.refresh(aprobacion)
-            if notify:
+            if commit:
+                await session.commit()
+                await session.refresh(documento)
+                await session.refresh(aprobacion)
+            else:
+                await session.flush()
+            if notify and commit:
                 _schedule_solicitud_paid_telegram_notifications(
                     documento_id=documento.id,
                     actor_id=payment_actor.id,
@@ -460,10 +467,13 @@ async def register_document_payment(
         fecha=datetime.utcnow(),
     )
     session.add(aprobacion)
-    await session.commit()
-    await session.refresh(documento)
-    await session.refresh(aprobacion)
-    if notify:
+    if commit:
+        await session.commit()
+        await session.refresh(documento)
+        await session.refresh(aprobacion)
+    else:
+        await session.flush()
+    if notify and commit:
         _schedule_solicitud_paid_telegram_notifications(
             documento_id=documento.id,
             actor_id=payment_actor.id,

@@ -169,6 +169,7 @@ from ..services.documento_service import (
     SolicitudTercerosAttachment,
     SolicitudValidationError,
     add_solicitud_documento_adjuntos,
+    validate_solicitud_terceros_attachment,
 )
 from ..utils.receipt_bytes import resolve_media_type
 from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
@@ -9163,6 +9164,7 @@ def _payment_run_redirect(
     *,
     success_msg: Optional[str] = None,
     error_msg: Optional[str] = None,
+    anchor: Optional[str] = None,
 ) -> RedirectResponse:
     params = []
     if success_msg:
@@ -9170,7 +9172,63 @@ def _payment_run_redirect(
     if error_msg:
         params.append(f"error_msg={quote(error_msg)}")
     suffix = ("?" + "&".join(params)) if params else ""
-    return RedirectResponse(url=f"/admin/finanzas/payment-run{suffix}", status_code=303)
+    fragment = f"#{anchor}" if anchor else ""
+    return RedirectResponse(
+        url=f"/admin/finanzas/payment-run{suffix}{fragment}", status_code=303
+    )
+
+
+def _build_payment_proof_upload_plan(
+    *,
+    selected_document_ids: list[UUIDType],
+    proof_document_ids: list[UUIDType],
+    uploads: list[UploadFile],
+    apply_one_to_all: bool,
+) -> list[tuple[UUIDType, UploadFile]]:
+    """Validate the explicit file-to-solicitud mapping for a bulk proof upload."""
+    if not selected_document_ids:
+        raise SolicitudValidationError(
+            "payment_proof_selection_required",
+            "Selecciona al menos una solicitud para cargar testigos.",
+        )
+    if len({str(document_id) for document_id in selected_document_ids}) != len(
+        selected_document_ids
+    ):
+        raise SolicitudValidationError(
+            "duplicate_payment_proof_selection",
+            "Una solicitud sólo puede seleccionarse una vez.",
+        )
+    if not uploads or any(not upload or not upload.filename for upload in uploads):
+        raise SolicitudValidationError(
+            "payment_proof_files_required",
+            "Selecciona los testigos de pago.",
+        )
+    if apply_one_to_all:
+        if len(uploads) != 1:
+            raise SolicitudValidationError(
+                "single_proof_required",
+                "Para aplicar un testigo a varias solicitudes selecciona un solo archivo.",
+            )
+        return [(document_id, uploads[0]) for document_id in selected_document_ids]
+
+    if len(proof_document_ids) != len(uploads):
+        raise SolicitudValidationError(
+            "payment_proof_mapping_required",
+            "Asigna una solicitud a cada testigo seleccionado.",
+        )
+    selected_ids = {str(document_id) for document_id in selected_document_ids}
+    mapped_ids = [str(document_id) for document_id in proof_document_ids]
+    if any(document_id not in selected_ids for document_id in mapped_ids):
+        raise SolicitudValidationError(
+            "payment_proof_mapping_invalid",
+            "Cada testigo debe asignarse a una solicitud seleccionada.",
+        )
+    if len(set(mapped_ids)) != len(mapped_ids):
+        raise SolicitudValidationError(
+            "duplicate_payment_proof_mapping",
+            "No puedes asignar dos testigos a la misma solicitud en este lote.",
+        )
+    return list(zip(proof_document_ids, uploads))
 
 
 def _payment_run_money(value: Any, currency: str = "MXN") -> str:
@@ -9410,6 +9468,7 @@ def _render_payment_run_items(
     can_close_run: bool = True,
     can_confirm_payment: bool = False,
     can_edit_payment_date: bool = False,
+    payment_proof_selection: bool = False,
 ) -> str:
     rendered_rows = []
     for row in sorted(rows, key=_payment_run_sort_key):
@@ -9456,6 +9515,17 @@ def _render_payment_run_items(
             else "-"
         )
         proof_html = "-"
+        if (
+            payment_proof_selection
+            and entity_type == "documento"
+            and row.get("can_upload_payment_proof")
+            and can_confirm_payment
+        ):
+            checkbox = (
+                f'<input type="checkbox" form="payment-run-bulk-proof-form" '
+                f'name="selected_document_ids" data-payment-proof-selection '
+                f'data-reference="{referencia}" value="{documento_id}">'
+            )
         if row.get("can_upload_payment_proof") and can_confirm_payment:
             proof_action = (
                 f"/prestamos/{documento_id}/comprobante-pago"
@@ -9648,9 +9718,9 @@ async def admin_finance_payment_run(
                 ),
             )}
             {alerts}
-            <section class="workspace-card" style="margin-bottom:18px;">
-                <div class="workspace-section-title">Solicitudes aprobadas para corte</div>
-                <div class="workspace-section-subtitle">Finanzas ajusta la fecha de pago y cierra el corte operativo. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
+            <section id="programa-de-pagos" class="workspace-card" style="margin-bottom:18px;">
+                <div class="workspace-section-title">Programa de pagos</div>
+                <div class="workspace-section-subtitle">Solicitudes programadas para el corte. Finanzas ajusta la fecha de pago y cierra el corte operativo; el programa no acredita que el dinero se haya movido.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
 	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
@@ -9659,13 +9729,53 @@ async def admin_finance_payment_run(
                 </div>
                 {close_form_html}
             </section>
-            <section class="workspace-card" style="margin-bottom:18px;">
+            <section id="comprobantes-pendientes" class="workspace-card" style="margin-bottom:18px;">
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
-                <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
+                <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante y confirma el pago. Para varias solicitudes, selecciona las filas, carga varios archivos y revisa la asignación antes de confirmar.</div>
+                {"""
+                <form id="payment-run-bulk-proof-form" method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/comprobantes-pago/lote" style="margin-top:16px;padding:14px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;display:grid;gap:10px;">
+                    <div style="font-weight:800;color:#0f172a;">Carga por lote de comprobantes</div>
+                    <div style="font-size:13px;color:#475569;">Selecciona las solicitudes abajo. Después elige los archivos y asigna cada uno a su solicitud. Esta operación marca como pagadas únicamente las solicitudes confirmadas.</div>
+                    <input id="payment-proof-files" type="file" name="comprobantes_pago" multiple required>
+                    <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#334155;"><input id="payment-proof-apply-one" type="checkbox" name="apply_one_to_all" value="true"> Aplicar un solo testigo a todas las solicitudes seleccionadas</label>
+                    <div id="payment-proof-mapping" style="display:grid;gap:8px;"></div>
+                    <button class="button secondary" type="submit" onclick="return confirm('Se cargarán los testigos con la asignación mostrada y las solicitudes pasarán a Pagada. ¿Continuar?');">Cargar testigos seleccionados y pagar</button>
+                </form>
+                <script>
+                (function () {{
+                    var files = document.getElementById('payment-proof-files');
+                    var applyOne = document.getElementById('payment-proof-apply-one');
+                    var mapping = document.getElementById('payment-proof-mapping');
+                    function selected() {{ return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')); }}
+                    function refresh() {{
+                        var selectedRows = selected();
+                        var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
+                        var uploads = Array.prototype.slice.call(files.files || []);
+                        mapping.innerHTML = '';
+                        if (!uploads.length) return;
+                        if (!selectedOptions.length) {{ mapping.textContent = 'Selecciona al menos una solicitud de la tabla.'; return; }}
+                        if (applyOne.checked) {{
+                            mapping.textContent = uploads.length === 1 ? uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).' : 'Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.';
+                            return;
+                        }}
+                        uploads.forEach(function (file) {{
+                            var row = document.createElement('label');
+                            row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                            var name = document.createElement('span'); name.textContent = file.name;
+                            var select = document.createElement('select'); select.name = 'proof_document_ids';
+                            selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
+                            row.appendChild(name); row.appendChild(select); mapping.appendChild(row);
+                        }});
+                    }}
+                    files.addEventListener('change', refresh); applyOne.addEventListener('change', refresh);
+                    document.addEventListener('change', function (event) {{ if (event.target && event.target.matches('[data-payment-proof-selection]')) refresh(); }});
+                }})();
+                </script>
+                """ if can_confirm_payment else ""}
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
-	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
-	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
+	                        <thead><tr><th>Seleccionar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
+	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment, payment_proof_selection=True)}</tbody>
 	                    </table>
                 </div>
             </section>
@@ -9928,17 +10038,22 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
-            success_msg=f"Comprobante cargado y solicitud {ref} marcada como pagada."
+            success_msg=f"Comprobante cargado y solicitud {ref} marcada como pagada.",
+            anchor="comprobantes-pendientes",
         )
     except SolicitudValidationError as exc:
         await session.rollback()
-        return _payment_run_redirect(error_msg=str(exc))
+        return _payment_run_redirect(
+            error_msg=str(exc), anchor="comprobantes-pendientes"
+        )
     except DocumentoPaymentPermissionError as exc:
         await session.rollback()
         raise HTTPException(status_code=403, detail=exc.message)
     except DocumentoPaymentValidationError as exc:
         await session.rollback()
-        return _payment_run_redirect(error_msg=exc.message)
+        return _payment_run_redirect(
+            error_msg=exc.message, anchor="comprobantes-pendientes"
+        )
     except Exception:
         await session.rollback()
         logger.exception(
@@ -9949,7 +10064,124 @@ async def admin_finance_payment_run_upload_payment_proof(
             },
         )
         return _payment_run_redirect(
-            error_msg="No se pudo cargar el comprobante ni marcar el pago."
+            error_msg="No se pudo cargar el comprobante ni marcar el pago.",
+            anchor="comprobantes-pendientes",
+        )
+
+
+@router.post("/admin/finanzas/payment-run/comprobantes-pago/lote")
+async def admin_finance_payment_run_upload_payment_proofs_bulk(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    selected_document_ids: List[UUIDType] = Form(...),
+    proof_document_ids: Optional[List[UUIDType]] = Form(None),
+    comprobantes_pago: List[UploadFile] = File(...),
+    apply_one_to_all: bool = Form(False),
+) -> RedirectResponse:
+    """Attach explicitly mapped Payment Run proofs and confirm the selected payments."""
+    from devnous.gastos.services.documento_payment_service import (
+        DocumentoPaymentPermissionError,
+        DocumentoPaymentValidationError,
+        _schedule_solicitud_paid_telegram_notifications,
+        register_document_payment,
+    )
+
+    try:
+        require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
+        plan = _build_payment_proof_upload_plan(
+            selected_document_ids=selected_document_ids,
+            proof_document_ids=proof_document_ids or [],
+            uploads=comprobantes_pago,
+            apply_one_to_all=apply_one_to_all,
+        )
+
+        prepared: list[tuple[UUIDType, SolicitudTercerosAttachment]] = []
+        upload_bytes: dict[int, bytes] = {}
+        for documento_id, upload in plan:
+            upload_key = id(upload)
+            raw = upload_bytes.get(upload_key)
+            if raw is None:
+                raw = await upload.read()
+                upload_bytes[upload_key] = raw
+            content_type = (upload.content_type or "").split(";", 1)[0].strip().lower()
+            attachment = SolicitudTercerosAttachment(
+                raw_bytes=raw,
+                filename=upload.filename or "comprobante_pago",
+                mime_type=content_type or resolve_media_type(upload.filename, raw),
+                categoria="comprobante_pago",
+            )
+            validate_solicitud_terceros_attachment(attachment)
+            prepared.append((documento_id, attachment))
+
+        documentos: dict[UUIDType, Documento] = {}
+        for documento_id, _ in prepared:
+            documento = await session.get(Documento, documento_id)
+            if documento is None:
+                raise SolicitudValidationError(
+                    "documento_not_found", "Una de las solicitudes ya no existe."
+                )
+            if (documento.estado or "").strip().lower() != "en_proceso_pago":
+                raise SolicitudValidationError(
+                    "invalid_payment_proof_state",
+                    "Todas las solicitudes deben seguir En Proceso de Pago.",
+                )
+            documentos[documento_id] = documento
+
+        paid_references: list[tuple[UUIDType, str]] = []
+        for documento_id, attachment in prepared:
+            documento = documentos[documento_id]
+            await add_solicitud_documento_adjuntos(
+                session,
+                documento=documento,
+                attachments=[attachment],
+                commit=False,
+            )
+            result = await register_document_payment(
+                session,
+                documento_id=documento_id,
+                actor_id=current_empleado.id,
+                actor=current_empleado,
+                notify=False,
+                commit=False,
+            )
+            paid_references.append(
+                (result.documento.id, result.documento.numero_referencia or str(result.documento.id))
+            )
+        await session.commit()
+        for documento_id, _ in paid_references:
+            _schedule_solicitud_paid_telegram_notifications(
+                documento_id=documento_id,
+                actor_id=current_empleado.id,
+            )
+        return _payment_run_redirect(
+            success_msg=f"{len(paid_references)} solicitud(es) marcada(s) como pagadas con su comprobante.",
+            anchor="comprobantes-pendientes",
+        )
+    except SolicitudValidationError as exc:
+        await session.rollback()
+        return _payment_run_redirect(
+            error_msg=str(exc), anchor="comprobantes-pendientes"
+        )
+    except DocumentoPaymentPermissionError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=403, detail=exc.message)
+    except DocumentoPaymentValidationError as exc:
+        await session.rollback()
+        return _payment_run_redirect(
+            error_msg=exc.message, anchor="comprobantes-pendientes"
+        )
+    except Exception:
+        await session.rollback()
+        logger.exception(
+            "Unexpected error uploading bulk payment proofs from payment run",
+            extra={"actor_id": str(current_empleado.id)},
+        )
+        return _payment_run_redirect(
+            error_msg="No se pudo cargar el lote de comprobantes ni marcar los pagos.",
+            anchor="comprobantes-pendientes",
+        )
         )
 
 

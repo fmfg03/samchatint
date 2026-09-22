@@ -10,6 +10,61 @@ from devnous.gastos.routes import admin_routes, dependencies
 from devnous.gastos.services import payment_run_service
 
 
+def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    uploads = [
+        SimpleNamespace(filename="spei-1.pdf"),
+        SimpleNamespace(filename="spei-2.pdf"),
+    ]
+
+    plan = admin_routes._build_payment_proof_upload_plan(
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[second_id, first_id],
+        uploads=uploads,
+        apply_one_to_all=False,
+    )
+
+    assert [(document_id, upload.filename) for document_id, upload in plan] == [
+        (second_id, "spei-1.pdf"),
+        (first_id, "spei-2.pdf"),
+    ]
+
+
+def test_payment_run_bulk_proof_plan_supports_one_proof_for_all_selected() -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    shared_upload = SimpleNamespace(filename="spei-lote.pdf")
+
+    plan = admin_routes._build_payment_proof_upload_plan(
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[],
+        uploads=[shared_upload],
+        apply_one_to_all=True,
+    )
+
+    assert [(document_id, upload.filename) for document_id, upload in plan] == [
+        (first_id, "spei-lote.pdf"),
+        (second_id, "spei-lote.pdf"),
+    ]
+
+
+def test_payment_run_bulk_proof_plan_rejects_duplicate_mapping() -> None:
+    first_id = uuid4()
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[first_id, uuid4()],
+            proof_document_ids=[first_id, first_id],
+            uploads=[
+                SimpleNamespace(filename="spei-1.pdf"),
+                SimpleNamespace(filename="spei-2.pdf"),
+            ],
+            apply_one_to_all=False,
+        )
+
+    assert exc.value.code == "duplicate_payment_proof_mapping"
+
+
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
     document_id = uuid4()
     html = admin_routes._render_payment_run_items(
@@ -158,7 +213,7 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     )
     html = response.body.decode("utf-8")
 
-    assert "Solicitudes aprobadas para corte" in html
+    assert "Programa de pagos" in html
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "/admin/finanzas/payment-run/documentos/" in html
     assert 'name="fecha_pago"' in html
@@ -169,7 +224,7 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     assert "comprobante-pago" not in html
     assert "Subir comprobante y marcar pagado" not in html
     assert "sin registrar pago" not in html
-    assert "Finanzas ajusta la fecha de pago y cierra el corte operativo." in html
+    assert "Finanzas ajusta la fecha de pago y cierra el corte operativo" in html
     assert "Contabilidad o un usuario autorizado adjunta el comprobante" in html
     assert "Benjamín ajusta fecha_pago" not in html
     assert "Dani, Sebas, Jacquie" not in html
@@ -508,6 +563,10 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "comprobante-pago" in html
     assert "Subir comprobante y marcar pagado" in html
+    assert "Programa de pagos" in html
+    assert "Carga por lote de comprobantes" in html
+    assert 'name="selected_document_ids"' in html
+    assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
 
 
 @pytest.mark.asyncio
@@ -642,6 +701,19 @@ def test_payment_run_upload_payment_proof_is_atomic() -> None:
     assert "actor=current_empleado" in block
     assert "comprobante" in block
     assert "testigo" not in block
+
+
+def test_payment_run_bulk_payment_proof_is_atomic_and_keeps_mapping() -> None:
+    source = open("src/devnous/gastos/routes/admin_routes.py", encoding="utf-8").read()
+    start = source.index("async def admin_finance_payment_run_upload_payment_proofs_bulk")
+    end = source.index("@router.get(\n    \"/admin/finanzas/payment-run/closures", start)
+    block = source[start:end]
+
+    assert "validate_solicitud_terceros_attachment(attachment)" in block
+    assert "commit=False" in block
+    assert "notify=False" in block
+    assert "await session.commit()" in block
+    assert "anchor=\"comprobantes-pendientes\"" in block
 
 
 def test_accounting_profile_can_create_employee_beneficiary_requests() -> None:
