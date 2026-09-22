@@ -148,6 +148,21 @@ def _schedule_solicitud_paid_telegram_notifications(
         )
 
 
+async def _finalize_document_payment_write(
+    session: AsyncSession,
+    *,
+    documento: Documento,
+    aprobacion: Aprobacion,
+    commit: bool,
+) -> None:
+    if commit:
+        await session.commit()
+        await session.refresh(documento)
+        await session.refresh(aprobacion)
+    else:
+        await session.flush()
+
+
 async def register_document_payment(
     session: AsyncSession,
     *,
@@ -235,13 +250,10 @@ async def register_document_payment(
             fecha=datetime.utcnow(),
         )
         session.add(aprobacion)
-        if commit:
-            await session.commit()
-            await session.refresh(documento)
-            await session.refresh(aprobacion)
-        else:
-            await session.flush()
-        if notify and commit:
+        await _finalize_document_payment_write(
+            session, documento=documento, aprobacion=aprobacion, commit=commit
+        )
+        if notify:
             _schedule_solicitud_paid_telegram_notifications(
                 documento_id=documento.id,
                 actor_id=payment_actor.id,
@@ -286,13 +298,10 @@ async def register_document_payment(
                 fecha=datetime.utcnow(),
             )
             session.add(aprobacion)
-            if commit:
-                await session.commit()
-                await session.refresh(documento)
-                await session.refresh(aprobacion)
-            else:
-                await session.flush()
-            if notify and commit:
+            await _finalize_document_payment_write(
+                session, documento=documento, aprobacion=aprobacion, commit=commit
+            )
+            if notify:
                 _schedule_solicitud_paid_telegram_notifications(
                     documento_id=documento.id,
                     actor_id=payment_actor.id,
@@ -467,13 +476,10 @@ async def register_document_payment(
         fecha=datetime.utcnow(),
     )
     session.add(aprobacion)
-    if commit:
-        await session.commit()
-        await session.refresh(documento)
-        await session.refresh(aprobacion)
-    else:
-        await session.flush()
-    if notify and commit:
+    await _finalize_document_payment_write(
+        session, documento=documento, aprobacion=aprobacion, commit=commit
+    )
+    if notify:
         _schedule_solicitud_paid_telegram_notifications(
             documento_id=documento.id,
             actor_id=payment_actor.id,

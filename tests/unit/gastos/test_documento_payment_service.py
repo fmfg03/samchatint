@@ -16,6 +16,7 @@ class FakeSession:
         self.added = []
         self.committed = False
         self.refreshed = []
+        self.flushed = False
 
     def add(self, value) -> None:
         self.added.append(value)
@@ -25,6 +26,43 @@ class FakeSession:
 
     async def refresh(self, value) -> None:
         self.refreshed.append(value)
+
+    async def flush(self) -> None:
+        self.flushed = True
+
+
+@pytest.mark.asyncio
+async def test_document_payment_write_flushes_when_the_caller_owns_the_transaction() -> None:
+    session = FakeSession()
+    documento = SimpleNamespace()
+    aprobacion = SimpleNamespace()
+
+    await documento_payment_service._finalize_document_payment_write(
+        session,
+        documento=documento,
+        aprobacion=aprobacion,
+        commit=False,
+    )
+
+    assert session.flushed is True
+    assert session.committed is False
+
+
+@pytest.mark.asyncio
+async def test_document_payment_write_commits_and_refreshes_by_default() -> None:
+    session = FakeSession()
+    documento = SimpleNamespace()
+    aprobacion = SimpleNamespace()
+
+    await documento_payment_service._finalize_document_payment_write(
+        session,
+        documento=documento,
+        aprobacion=aprobacion,
+        commit=True,
+    )
+
+    assert session.committed is True
+    assert session.refreshed == [documento, aprobacion]
 
 
 @pytest.mark.asyncio

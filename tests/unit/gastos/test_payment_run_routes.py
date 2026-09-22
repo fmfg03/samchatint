@@ -7,7 +7,17 @@ import pytest
 from fastapi import HTTPException
 
 from devnous.gastos.routes import admin_routes, dependencies
-from devnous.gastos.services import payment_run_service
+from devnous.gastos.services import documento_payment_service, payment_run_service
+
+
+class _PaymentProofUpload:
+    def __init__(self, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self.content = content
+        self.content_type = "application/pdf"
+
+    async def read(self) -> bytes:
+        return self.content
 
 
 def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
@@ -63,6 +73,62 @@ def test_payment_run_bulk_proof_plan_rejects_duplicate_mapping() -> None:
         )
 
     assert exc.value.code == "duplicate_payment_proof_mapping"
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch(
+    monkeypatch,
+) -> None:
+    actor_id = uuid4()
+    first_id = uuid4()
+    second_id = uuid4()
+    first_document = SimpleNamespace(id=first_id, estado="en_proceso_pago")
+    second_document = SimpleNamespace(id=second_id, estado="en_proceso_pago")
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[first_document, second_document])
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(
+        admin_routes, "validate_solicitud_terceros_attachment", lambda _: None
+    )
+    attach_mock = AsyncMock()
+    monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", attach_mock)
+
+    async def register_payment(*_, documento_id, **__):
+        return SimpleNamespace(
+            documento=SimpleNamespace(
+                id=documento_id, numero_referencia=f"S-{str(documento_id)[:8]}"
+            )
+        )
+
+    notifications = []
+    monkeypatch.setattr(documento_payment_service, "register_document_payment", register_payment)
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_schedule_solicitud_paid_telegram_notifications",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=actor_id),
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[second_id, first_id],
+        comprobantes_pago=[
+            _PaymentProofUpload("spei-2.pdf", b"%PDF-1.4 second"),
+            _PaymentProofUpload("spei-1.pdf", b"%PDF-1.4 first"),
+        ],
+        apply_one_to_all=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("#comprobantes-pendientes")
+    assert attach_mock.await_count == 2
+    session.commit.assert_awaited_once()
+    assert [item["documento_id"] for item in notifications] == [second_id, first_id]
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
