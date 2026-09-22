@@ -88,6 +88,24 @@ async def _assigned_direction_portfolios(
     return portfolio_ids
 
 
+async def direction_entry_visible(
+    session: AsyncSession,
+    current_empleado: object,
+) -> bool:
+    """Return whether Direction should be discoverable for this identity.
+
+    Discovery follows the same read authority as the route itself: active
+    internal identity, no explicit deny, and assigned Direction scope.
+    """
+    try:
+        await _assigned_direction_portfolios(session, current_empleado)
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return False
+        raise
+    return True
+
+
 def _render_dashboard(payload: dict) -> str:
     """Compatibility wrapper for route and focused rendering tests."""
     return render_direction_dashboard(payload)
