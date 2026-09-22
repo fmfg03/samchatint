@@ -9899,10 +9899,10 @@ async def admin_finance_payment_run_upload_payment_proof(
         return _payment_run_redirect(error_msg="Solicitud no encontrada.")
     if (documento.estado or "").strip().lower() != "en_proceso_pago":
         return _payment_run_redirect(
-            error_msg="Solo se puede subir testigo desde En Proceso de Pago."
+            error_msg="Solo se puede subir comprobante desde En Proceso de Pago."
         )
     if not comprobante_pago or not comprobante_pago.filename:
-        return _payment_run_redirect(error_msg="Selecciona el testigo de pago.")
+        return _payment_run_redirect(error_msg="Selecciona el comprobante de pago.")
 
     try:
         raw = await comprobante_pago.read()
@@ -9928,7 +9928,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
-            success_msg=f"Testigo cargado y solicitud {ref} marcada como pagada."
+            success_msg=f"Comprobante cargado y solicitud {ref} marcada como pagada."
         )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -9949,7 +9949,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             },
         )
         return _payment_run_redirect(
-            error_msg="No se pudo cargar el testigo ni marcar el pago."
+            error_msg="No se pudo cargar el comprobante ni marcar el pago."
         )
 
 
