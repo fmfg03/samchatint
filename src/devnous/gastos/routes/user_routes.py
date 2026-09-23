@@ -34998,6 +34998,7 @@ async def _render_solicitud_terceros_form(
                             "MATERIALIDADES:",
                             render_materialidades_file_picker_html(),
                         )}
+                        {render_shared_cfdi_reference_input()}
                         <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
                             <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
                                 <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
@@ -35380,6 +35381,64 @@ async def _render_solicitud_terceros_form(
     return html
 
 
+def render_shared_cfdi_reference_input() -> str:
+    """Render the safe reuse control for a CFDI already attached to a prior request."""
+    return """
+        <div class="st-cfdi-existing-reference" style="margin-top:12px;padding:12px 14px;border:1px solid #0f766e;border-radius:8px;background:#f0fdfa;">
+            <label for="referencia_factura_compartida"><strong>Factura ya registrada (opcional)</strong></label>
+            <input type="text" name="referencia_factura_compartida" id="referencia_factura_compartida" placeholder="Referencia anterior, ej. S-26000213" autocomplete="off">
+            <small>Si esta factura ya se adjuntó en otra solicitud propia, capture su referencia. El sistema reutiliza el CFDI canónico; no vuelva a cargar PDF/XML.</small>
+        </div>
+    """
+
+
+async def _resolve_shared_cfdi_reference(
+    session: AsyncSession,
+    *,
+    current_empleado: Empleado,
+    referencia: Optional[str],
+) -> Optional[str]:
+    """Resolve a prior authorized solicitud reference to its canonical CFDI UUID."""
+    reference = (referencia or "").strip().upper()
+    if not reference:
+        return None
+    result = await session.execute(
+        select(Documento).where(Documento.numero_referencia == reference).limit(1)
+    )
+    source_document = result.scalar_one_or_none()
+    if source_document is None:
+        raise SolicitudValidationError(
+            "shared_cfdi_reference_not_found",
+            "No se encontró una solicitud con esa referencia.",
+        )
+
+    role = (getattr(current_empleado, "rol", None) or "").strip().lower()
+    may_reuse = (
+        source_document.empleado_id == current_empleado.id
+        or role in {"admin", "superadmin", "super_admin", "finanzas"}
+    )
+    if not may_reuse:
+        raise SolicitudValidationError(
+            "shared_cfdi_reference_forbidden",
+            "No tiene permiso para reutilizar la factura de esa solicitud.",
+        )
+
+    cfdi_uuid = (getattr(source_document, "cfdi_uuid_manual", None) or "").strip()
+    if not cfdi_uuid and getattr(source_document, "cfdi_report_id", None):
+        cfdi_result = await session.execute(
+            select(CFDIReport.cfdi_uuid).where(
+                CFDIReport.id == source_document.cfdi_report_id
+            )
+        )
+        cfdi_uuid = (cfdi_result.scalar_one_or_none() or "").strip()
+    if not cfdi_uuid:
+        raise SolicitudValidationError(
+            "shared_cfdi_reference_without_cfdi",
+            "La solicitud indicada no tiene un CFDI disponible para reutilizar.",
+        )
+    return cfdi_uuid
+
+
 @router.post("/documentos/nueva-solicitud-terceros")
 async def crear_nueva_solicitud_terceros(
     request: Request,
@@ -35404,6 +35463,7 @@ async def crear_nueva_solicitud_terceros(
     fecha_fin: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
     pago_urgente: Optional[str] = Form(None),
+    referencia_factura_compartida: Optional[str] = Form(None),
     cfdi_compartido_confirmado: Optional[str] = Form(None),
     client_submission_id: Optional[str] = Form(None),
     submit_mode: str = Form("create"),
@@ -35467,6 +35527,12 @@ async def crear_nueva_solicitud_terceros(
                 status_code=303,
             )
 
+        cfdi_uuid_manual = await _resolve_shared_cfdi_reference(
+            session,
+            current_empleado=current_empleado,
+            referencia=referencia_factura_compartida,
+        )
+
         payload = build_solicitud_terceros_payload(
             empleado_id=current_empleado.id,
             monto_solicitado=monto_solicitado,
@@ -35487,6 +35553,7 @@ async def crear_nueva_solicitud_terceros(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
+            cfdi_uuid_manual=cfdi_uuid_manual,
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
