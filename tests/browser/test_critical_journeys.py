@@ -79,6 +79,14 @@ def test_employee_transfer_request_reaches_canonical_creation_form(
         provider_select.locator("option", has_text="Proveedor Browser UX")
     ).to_have_count(1)
 
+    support_upload = page.locator("#archivo_pdf")
+    expect(support_upload).to_be_visible()
+    core_precedes_support = provider_select.evaluate(
+        "(core) => Boolean(core.compareDocumentPosition("
+        "document.getElementById('archivo_pdf')) & Node.DOCUMENT_POSITION_FOLLOWING)"
+    )
+    assert core_precedes_support is True
+
     expect(
         page.get_by_role("button", name="Crear solicitud", exact=True)
     ).to_be_visible()
