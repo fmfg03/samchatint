@@ -168,10 +168,16 @@ def _payment_proof_audit_comment(
     *,
     review_status: str | None,
     resolution_reason: str | None,
+    evidence_source: str | None,
+    template_id: str | None,
 ) -> str:
     if not review_status:
         return base
     suffix = f" Revisión de comprobante: {review_status}."
+    if evidence_source:
+        suffix += f" Origen: {evidence_source}."
+    if template_id:
+        suffix += f" Plantilla: {template_id}."
     if resolution_reason:
         suffix += f" Resolución de Finanzas: {resolution_reason.strip()}."
     return base + suffix
@@ -186,6 +192,8 @@ async def register_document_payment(
     fecha_pago_efectiva: date | None = None,
     payment_proof_review_status: str | None = None,
     payment_proof_resolution_reason: str | None = None,
+    payment_proof_evidence_source: str | None = None,
+    payment_proof_template_id: str | None = None,
     notify: bool = True,
     commit: bool = True,
 ) -> DocumentoPagoResult:
@@ -269,6 +277,8 @@ async def register_document_payment(
                 "Pago AMEX marcado como pagado contra pasivo de tarjeta.",
                 review_status=payment_proof_review_status,
                 resolution_reason=payment_proof_resolution_reason,
+                evidence_source=payment_proof_evidence_source,
+                template_id=payment_proof_template_id,
             ),
             fecha=datetime.utcnow(),
         )
@@ -321,6 +331,8 @@ async def register_document_payment(
                     "Solicitud de transferencia marcada como pagada.",
                     review_status=payment_proof_review_status,
                     resolution_reason=payment_proof_resolution_reason,
+                    evidence_source=payment_proof_evidence_source,
+                    template_id=payment_proof_template_id,
                 ),
                 fecha=datetime.utcnow(),
             )
@@ -501,6 +513,8 @@ async def register_document_payment(
             f"Gasto: {expense.numero_referencia}",
             review_status=payment_proof_review_status,
             resolution_reason=payment_proof_resolution_reason,
+            evidence_source=payment_proof_evidence_source,
+            template_id=payment_proof_template_id,
         ),
         fecha=datetime.utcnow(),
     )

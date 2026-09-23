@@ -10244,6 +10244,8 @@ async def admin_finance_payment_run_upload_payment_proof(
             fecha_pago_efectiva=effective_payment_date,
             payment_proof_review_status=("conflict_resolved" if resolution_reason else review.status),
             payment_proof_resolution_reason=resolution_reason or None,
+            payment_proof_evidence_source=("local_pdf_text" if review.template_id else "manual_review"),
+            payment_proof_template_id=review.template_id,
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
@@ -10463,6 +10465,8 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 fecha_pago_efectiva=effective_payment_date,
                 payment_proof_review_status=("conflict_resolved" if resolution_reason else review.status),
                 payment_proof_resolution_reason=resolution_reason or None,
+                payment_proof_evidence_source=("local_pdf_text" if review.template_id else "manual_review"),
+                payment_proof_template_id=review.template_id,
                 notify=False,
                 commit=False,
             )

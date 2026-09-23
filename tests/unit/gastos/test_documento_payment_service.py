@@ -135,6 +135,8 @@ async def test_register_document_payment_uses_authenticated_actor_permissions(
         fecha_pago_efectiva=date(2026, 9, 2),
         payment_proof_review_status="conflict_resolved",
         payment_proof_resolution_reason="Confirmado contra instrucción bancaria autorizada",
+        payment_proof_evidence_source="local_pdf_text",
+        payment_proof_template_id="spei_transferencia_v1",
     )
 
     assert result.documento.estado == "pagado"
@@ -143,6 +145,8 @@ async def test_register_document_payment_uses_authenticated_actor_permissions(
     assert payment_dates == [date(2026, 9, 2)]
     assert "conflict_resolved" in result.aprobacion.comentario
     assert "instrucción bancaria autorizada" in result.aprobacion.comentario
+    assert "local_pdf_text" in result.aprobacion.comentario
+    assert "spei_transferencia_v1" in result.aprobacion.comentario
     assert not load_actor_called
 
 
