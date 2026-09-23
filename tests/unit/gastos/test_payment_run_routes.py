@@ -75,6 +75,39 @@ def test_payment_run_bulk_proof_plan_rejects_duplicate_mapping() -> None:
     assert exc.value.code == "duplicate_payment_proof_mapping"
 
 
+@pytest.mark.parametrize(
+    ("selected_ids", "mapped_ids", "uploads", "apply_one_to_all", "code"),
+    [
+        ([], [], [SimpleNamespace(filename="proof.pdf")], False, "payment_proof_selection_required"),
+        ([uuid4(), uuid4()], [], [], False, "payment_proof_files_required"),
+        ([uuid4(), uuid4()], [], [SimpleNamespace(filename="a.pdf"), SimpleNamespace(filename="b.pdf")], True, "single_proof_required"),
+        ([uuid4()], [], [SimpleNamespace(filename="proof.pdf")], False, "payment_proof_mapping_required"),
+    ],
+)
+def test_payment_run_bulk_proof_plan_rejects_incomplete_input(
+    selected_ids, mapped_ids, uploads, apply_one_to_all, code
+) -> None:
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=selected_ids,
+            proof_document_ids=mapped_ids,
+            uploads=uploads,
+            apply_one_to_all=apply_one_to_all,
+        )
+    assert exc.value.code == code
+
+
+def test_payment_run_bulk_proof_plan_rejects_unselected_mapping() -> None:
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[uuid4()],
+            proof_document_ids=[uuid4()],
+            uploads=[SimpleNamespace(filename="proof.pdf")],
+            apply_one_to_all=False,
+        )
+    assert exc.value.code == "payment_proof_mapping_invalid"
+
+
 @pytest.mark.asyncio
 async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch(
     monkeypatch,
