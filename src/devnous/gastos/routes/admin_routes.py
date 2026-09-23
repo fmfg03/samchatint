@@ -9743,6 +9743,7 @@ async def admin_finance_payment_run(
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
                     f'<input type="hidden" name="status" value="{selected_status}">'
+                    f'<input type="hidden" name="vista" value="{selected_view}">'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from_value or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to_value or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q_value or "")}" placeholder="Referencia, solicitante, beneficiario"></div>'

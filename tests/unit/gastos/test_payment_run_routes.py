@@ -734,6 +734,7 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert 'name="selected_document_ids"' in html
     assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
     assert 'aria-current="page">Comprobantes pendientes</a>' in html
+    assert '<input type="hidden" name="vista" value="comprobantes">' in html
     assert '<section id="programa-de-pagos" class="workspace-card payment-run-view" style="margin-bottom:18px;" hidden>' in html
 
 

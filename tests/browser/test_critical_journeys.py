@@ -405,6 +405,15 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         page.locator("#programa-de-pagos").get_by_text("Programa de pagos", exact=True)
     ).to_be_hidden()
     expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_hidden()
+    page.get_by_placeholder("Referencia, solicitante, beneficiario").fill("S-PAY-0002")
+    page.get_by_role("button", name="Filtrar", exact=True).click()
+    assert "vista=comprobantes" in page.url
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Comprobantes pendientes - En Proceso de Pago", exact=True
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
     expect(
         page.locator("#comprobantes-pendientes").get_by_text(
             "Comprobante de pago", exact=True
