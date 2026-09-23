@@ -4,15 +4,26 @@ import base64
 import logging
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime, date
 from typing import Dict, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
-from ..models import Aprobacion, Adjunto, CuentaDeGastos, Documento, Empleado, ProveedorCliente, Tournament
+from ..models import (
+    Aprobacion,
+    Adjunto,
+    CFDIReport,
+    CuentaDeGastos,
+    Documento,
+    Empleado,
+    ExpenseReport,
+    ProveedorCliente,
+    Tournament,
+)
 from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
 from .tournament_project_visibility import visibility_validation_error
 from ..utils.receipt_bytes import (
@@ -84,6 +95,131 @@ class SolicitudValidationError(ValueError):
 
     def __str__(self) -> str:
         return self.user_message
+
+
+_CFDI_PAYMENT_RESERVING_STATES = frozenset(
+    {
+        "control_presupuestal",
+        "enviado",
+        "aprobado",
+        "en_proceso_pago",
+        "pagado",
+        "cerrado",
+        "reembolsado",
+        "aplicado",
+        "liquidado",
+    }
+)
+_CFDI_MONEY_CENT = Decimal("0.01")
+
+
+def _cfdi_money(value: object, *, field: str) -> Decimal:
+    try:
+        amount = Decimal(str(value)).quantize(_CFDI_MONEY_CENT, rounding=ROUND_HALF_UP)
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise SolicitudValidationError(
+            "invalid_cfdi_amount",
+            f"No se pudo validar el {field} fiscal de la factura.",
+        ) from exc
+    if not amount.is_finite() or amount < 0:
+        raise SolicitudValidationError(
+            "invalid_cfdi_amount",
+            f"El {field} fiscal de la factura no es válido.",
+        )
+    return amount
+
+
+def shared_cfdi_remaining_amount(
+    *,
+    invoice_total: object,
+    reserved_amounts: Sequence[object],
+    requested_amount: object,
+) -> Decimal:
+    """Return invoice balance after enforcing the shared-CFDI amount invariant."""
+    invoice = _cfdi_money(invoice_total, field="total")
+    if invoice <= 0:
+        raise SolicitudValidationError(
+            "invalid_cfdi_amount",
+            "La factura compartida no tiene un total fiscal válido para calcular el saldo.",
+        )
+    reserved = sum(
+        (_cfdi_money(amount, field="monto reservado") for amount in reserved_amounts),
+        Decimal("0.00"),
+    )
+    requested = _cfdi_money(requested_amount, field="monto solicitado")
+    remaining = (invoice - reserved).quantize(_CFDI_MONEY_CENT, rounding=ROUND_HALF_UP)
+    if remaining <= 0:
+        raise SolicitudValidationError(
+            "cfdi_fully_allocated",
+            (
+                "La factura ya está cubierta por solicitudes o pagos previos "
+                f"(${reserved:,.2f} de ${invoice:,.2f})."
+            ),
+        )
+    if requested > remaining:
+        raise SolicitudValidationError(
+            "cfdi_amount_exceeds_remaining",
+            (
+                f"El monto solicitado (${requested:,.2f}) excede el saldo disponible "
+                f"de la factura (${remaining:,.2f}). Ajuste la solicitud al saldo restante."
+            ),
+        )
+    return remaining
+
+
+async def validate_shared_cfdi_payment_amount(
+    session: AsyncSession,
+    *,
+    cfdi_report: object,
+    requested_amount: object,
+    exclude_documento_id: Optional[UUID] = None,
+) -> Decimal:
+    """Atomically enforce that shared CFDI requests never exceed fiscal total."""
+    report_id = getattr(cfdi_report, "id", None)
+    if report_id is None:
+        raise SolicitudValidationError(
+            "invalid_cfdi_amount",
+            "No se pudo identificar la factura compartida para validar su saldo.",
+        )
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
+        {"lock_key": f"shared_cfdi_amount:{report_id}"},
+    )
+    documento_conditions = [
+        Documento.cfdi_report_id == report_id,
+        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+        Documento.monto_solicitado.is_not(None),
+    ]
+    if exclude_documento_id is not None:
+        documento_conditions.append(Documento.id != exclude_documento_id)
+    documento_result = await session.execute(
+        select(Documento.monto_solicitado).where(and_(*documento_conditions))
+    )
+    expense_conditions = [
+        ExpenseReport.cfdi_report_id == report_id,
+        ExpenseReport.estado_gasto != "cancelado",
+        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+    ]
+    if exclude_documento_id is not None:
+        expense_conditions.append(Documento.id != exclude_documento_id)
+    expense_result = await session.execute(
+        select(ExpenseReport.gasto_cantidad)
+        .join(
+            Documento,
+            or_(
+                ExpenseReport.informe_documento_id == Documento.id,
+                ExpenseReport.documento_id == Documento.id,
+            ),
+        )
+        .where(and_(*expense_conditions))
+    )
+    return shared_cfdi_remaining_amount(
+        invoice_total=getattr(cfdi_report, "total", None),
+        reserved_amounts=(
+            documento_result.scalars().all() + expense_result.scalars().all()
+        ),
+        requested_amount=requested_amount,
+    )
 
 
 @dataclass(slots=True)
@@ -671,21 +807,27 @@ async def create_solicitud_terceros_document(
         )
         if matched is not None:
             conflict = await find_blocking_cfdi_usage(session, matched.id)
-            if conflict is not None and not payload.cfdi_compartido_confirmado:
-                message = (
-                    "No se puede continuar porque el UUID CFDI ya está reservado "
-                    "en otro gasto o solicitud; este control evita duplicar comprobantes. "
-                    "Si el vínculo es un duplicado, un superadmin puede revisarlo y "
-                    "liberarlo desde la consola de comprobantes."
-                )
-                if (
-                    payload.can_disclose_cfdi_conflict
-                    or conflict.empleado_id == payload.empleado_id
-                ):
-                    message = conflict.message()
-                raise SolicitudValidationError(
-                    "duplicate_cfdi",
-                    message + " Confirme explícitamente que es una factura compartida para continuar.",
+            if conflict is not None:
+                if not payload.cfdi_compartido_confirmado:
+                    message = (
+                        "No se puede continuar porque el UUID CFDI ya está reservado "
+                        "en otro gasto o solicitud; este control evita duplicar comprobantes. "
+                        "Si el vínculo es un duplicado, un superadmin puede revisarlo y "
+                        "liberarlo desde la consola de comprobantes."
+                    )
+                    if (
+                        payload.can_disclose_cfdi_conflict
+                        or conflict.empleado_id == payload.empleado_id
+                    ):
+                        message = conflict.message()
+                    raise SolicitudValidationError(
+                        "duplicate_cfdi",
+                        message + " Confirme explícitamente que es una factura compartida para continuar.",
+                    )
+                await validate_shared_cfdi_payment_amount(
+                    session,
+                    cfdi_report=matched,
+                    requested_amount=payload.monto_solicitado,
                 )
             cfdi_report_id = matched.id
 
@@ -811,7 +953,7 @@ async def _ingest_solicitud_cfdi_from_attachments(
         return
 
     try:
-        await ingest_cfdi_from_upload(
+        ingestion = await ingest_cfdi_from_upload(
             session,
             xml_bytes=xml_bytes,
             pdf_bytes=pdf_bytes,
@@ -821,6 +963,12 @@ async def _ingest_solicitud_cfdi_from_attachments(
             allow_shared=bool(documento.cfdi_compartido_confirmado),
             require_shared_confirmation=True,
         )
+        if ingestion is not None and documento.cfdi_compartido_confirmado:
+            await validate_shared_cfdi_payment_amount(
+                session,
+                cfdi_report=ingestion.cfdi_report,
+                requested_amount=documento.monto_solicitado,
+            )
     except CFDIDuplicateLinkError as exc:
         raise SolicitudValidationError("duplicate_cfdi", str(exc)) from exc
     except CFDIIngestionError as exc:
@@ -1020,6 +1168,23 @@ async def update_solicitud_terceros_document(
         raise SolicitudValidationError(
             "invalid_categorias",
             "Las categorías solo pueden seleccionarse para un proyecto configurado.",
+        )
+
+    if (
+        documento.cfdi_report_id
+        and payload.cfdi_compartido_confirmado
+    ):
+        cfdi_report = await session.get(CFDIReport, documento.cfdi_report_id)
+        if cfdi_report is None:
+            raise SolicitudValidationError(
+                "invalid_cfdi_amount",
+                "No se encontró la factura compartida vinculada a la solicitud.",
+            )
+        await validate_shared_cfdi_payment_amount(
+            session,
+            cfdi_report=cfdi_report,
+            requested_amount=payload.monto_solicitado,
+            exclude_documento_id=documento.id,
         )
 
     documento.monto_solicitado = payload.monto_solicitado
