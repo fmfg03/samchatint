@@ -10177,6 +10177,12 @@ _INFORME_READ_ONLY_GLOBAL_EMAILS = {
     "azuniga@plataformasports.com",  # Alicia
     "otrujillo@plataformasports.com",  # José Odilón Trujillo Macedo
 }
+_ALICIA_OPERATIONS_REFERENCE_READ_ONLY_IDS = {
+    "90701d00-5f0b-4b3d-b677-e491e53caf82",
+}
+_ALICIA_OPERATIONS_REFERENCE_READ_ONLY_EMAILS = {
+    "azuniga@plataformasports.com",
+}
 
 
 def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
@@ -10185,6 +10191,34 @@ def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
     return (
         employee_id in _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS
         or email in _INFORME_READ_ONLY_GLOBAL_EMAILS
+    )
+
+
+def _is_alicia_operations_reference_observer(empleado: Empleado) -> bool:
+    """Return whether Alicia has read-only Operations-reference visibility."""
+    employee_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    email = (getattr(empleado, "correo", None) or "").strip().lower()
+    return (
+        employee_id in _ALICIA_OPERATIONS_REFERENCE_READ_ONLY_IDS
+        or email in _ALICIA_OPERATIONS_REFERENCE_READ_ONLY_EMAILS
+    )
+
+
+def _is_operations_reference_document(documento: Documento) -> bool:
+    """Return whether a document is in the read-only Operations scope."""
+    document_type = str(getattr(documento, "tipo", "") or "").strip().upper()
+    reference = str(
+        getattr(documento, "referencia_operaciones", "") or ""
+    ).strip()
+    return document_type in {"SOLICITUD", "INFORME"} and bool(reference)
+
+
+def _operations_reference_document_filter():
+    """SQL scope shared by Alicia's Operations-reference read-only views."""
+    return and_(
+        Documento.tipo.in_(("SOLICITUD", "INFORME")),
+        Documento.referencia_operaciones.isnot(None),
+        func.btrim(Documento.referencia_operaciones) != "",
     )
 
 
@@ -10202,6 +10236,11 @@ def _can_read_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bo
 def _can_access_read_only_informe_document(
     documento: Documento, empleado: Empleado
 ) -> bool:
+    if (
+        _is_alicia_operations_reference_observer(empleado)
+        and _is_operations_reference_document(documento)
+    ):
+        return True
     return (
         getattr(documento, "tipo", None) == "INFORME"
         and bool(getattr(documento, "cuenta_gastos_id", None))
@@ -30617,11 +30656,31 @@ async def historial_aprobador(
     - Admin/superadmin: see all approvals/rejections in the system
     """
 
-    if not await _can_review_pending_approvals(session, current_empleado):
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    if (
+        not alicia_operations_observer
+        and not await _can_review_pending_approvals(session, current_empleado)
+    ):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
     # Build query based on role
-    if current_empleado.rol in ('admin', 'superadmin', 'super_admin'):
+    if alicia_operations_observer:
+        # Alicia can review Operations-reference history without receiving
+        # any approval, payment, or other workflow authority.
+        query = select(Aprobacion).join(
+            Documento, Documento.id == Aprobacion.entidad_id
+        ).options(
+            selectinload(Aprobacion.aprobador)
+        ).where(
+            and_(
+                Aprobacion.tipo_entidad == 'documento',
+                Aprobacion.accion.in_(['aprobar', 'rechazar', 'pagar']),
+                _operations_reference_document_filter(),
+            )
+        ).order_by(Aprobacion.fecha.desc())
+    elif current_empleado.rol in ('admin', 'superadmin', 'super_admin'):
         # Admin sees all aprobaciones with accion IN ('aprobar', 'rechazar', 'pagar')
         query = select(Aprobacion).options(
             selectinload(Aprobacion.aprobador)
@@ -31095,7 +31154,14 @@ async def documentos_todos(
         undefer(Documento.fase),
     )
 
-    scope_dept = empleado_list_view_department_scope(current_empleado)
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    scope_dept = (
+        None
+        if alicia_operations_observer
+        else empleado_list_view_department_scope(current_empleado)
+    )
     q_value = (q or "").strip()
     needs_empleado_join = (
         bool(empleado_nombre and empleado_nombre.strip())
@@ -31121,6 +31187,8 @@ async def documentos_todos(
 
     # Apply filters
     filters = []
+    if alicia_operations_observer:
+        filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
     if estado and estado.strip():
@@ -31439,7 +31507,14 @@ async def _query_documentos_todos_for_export(
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.cuenta_gastos),
     )
-    scope_dept = empleado_list_view_department_scope(current_empleado)
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    scope_dept = (
+        None
+        if alicia_operations_observer
+        else empleado_list_view_department_scope(current_empleado)
+    )
     q_value = (q or "").strip()
     needs_empleado_join = bool((empleado_nombre or "").strip()) or bool(scope_dept) or bool(q_value)
     if needs_empleado_join:
@@ -31460,6 +31535,8 @@ async def _query_documentos_todos_for_export(
         )
 
     filters = []
+    if alicia_operations_observer:
+        filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
     if estado and estado.strip():
@@ -35090,6 +35167,47 @@ async def _render_solicitud_terceros_form(
     # El concepto presupuestal ya no se captura al crear solicitudes.
     # Flujo canonico: usuario captura operacion -> Control Presupuestal asigna.
     budget_concept_row_terceros = ""
+    support_section_html = f"""
+                    <div class="st-support-section">
+                        <h3>Documentación de soporte</h3>
+                        <div class="st-doc-row st-support-cfdi-pdf-row">
+                            <div class="st-doc-label">CFDI PDF:</div>
+                            <div class="st-doc-value">
+                                <input type="file" name="archivo_pdf" id="archivo_pdf" accept=".pdf,application/pdf">
+                                <small>Archivo PDF (máx. 15&nbsp;MB).</small>
+                            </div>
+                            <div class="st-support-cfdi-pdf-preview">
+                                <div id="archivo_pdf_preview" class="st-file-preview" hidden>
+                                    <div class="st-file-preview-head">
+                                        <strong>Vista previa del PDF</strong>
+                                        <span id="archivo_pdf_preview_name">Sin archivo seleccionado</span>
+                                    </div>
+                                    <iframe
+                                        id="archivo_pdf_preview_frame"
+                                        title="Vista previa del CFDI PDF"
+                                        class="st-file-preview-frame"
+                                        loading="lazy"
+                                    ></iframe>
+                                </div>
+                            </div>
+                        </div>
+                        {render_st_doc_row(
+                            "CFDI XML:",
+                            '<input type="file" name="archivo_xml" id="archivo_xml" accept=".xml,application/xml,text/xml"><small>Archivo XML (máx. 15&nbsp;MB).</small>',
+                        )}
+                        {render_st_doc_row(
+                            "MATERIALIDADES:",
+                            render_materialidades_file_picker_html(),
+                        )}
+                        {render_shared_cfdi_reference_input()}
+                        <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
+                            <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
+                                <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
+                                <span><strong>Factura compartida / pago parcial</strong><br><small>Confirma que este CFDI ya fue usado porque corresponde a otro pago parcial de la misma factura. La confirmación quedará registrada.</small></span>
+                            </label>
+                        </div>
+                    </div>
+    """
 
     html = f"""
     <!DOCTYPE html>
@@ -35181,6 +35299,7 @@ async def _render_solicitud_terceros_form(
             <form method="POST" action="{form_action}" enctype="multipart/form-data" id="solicitud-terceros-form">
                 {f'<input type="hidden" name="client_submission_id" value="{client_submission_id}">' if not edit_documento else ''}
                 <div class="st-page-wrap">
+                    {support_section_html}
                     <div class="st-doc">
                         {render_st_doc_header_form()}
                         {render_st_doc_row(
@@ -35270,46 +35389,6 @@ async def _render_solicitud_terceros_form(
                             right_readonly=True,
                         )}
                         {render_st_doc_firmas(escape(current_empleado.nombre or ""), "")}
-                    </div>
-
-                    <div class="st-support-section">
-                        <h3>Documentación de soporte</h3>
-                        <div class="st-doc-row st-support-cfdi-pdf-row">
-                            <div class="st-doc-label">CFDI PDF:</div>
-                            <div class="st-doc-value">
-                                <input type="file" name="archivo_pdf" id="archivo_pdf" accept=".pdf,application/pdf">
-                                <small>Archivo PDF (máx. 15&nbsp;MB).</small>
-                            </div>
-                            <div class="st-support-cfdi-pdf-preview">
-                                <div id="archivo_pdf_preview" class="st-file-preview" hidden>
-                                    <div class="st-file-preview-head">
-                                        <strong>Vista previa del PDF</strong>
-                                        <span id="archivo_pdf_preview_name">Sin archivo seleccionado</span>
-                                    </div>
-                                    <iframe
-                                        id="archivo_pdf_preview_frame"
-                                        title="Vista previa del CFDI PDF"
-                                        class="st-file-preview-frame"
-                                        loading="lazy"
-                                    ></iframe>
-                                </div>
-                            </div>
-                        </div>
-                        {render_st_doc_row(
-                            "CFDI XML:",
-                            '<input type="file" name="archivo_xml" id="archivo_xml" accept=".xml,application/xml,text/xml"><small>Archivo XML (máx. 15&nbsp;MB).</small>',
-                        )}
-                        {render_st_doc_row(
-                            "MATERIALIDADES:",
-                            render_materialidades_file_picker_html(),
-                        )}
-                        {render_shared_cfdi_reference_input()}
-                        <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
-                            <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
-                                <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
-                                <span><strong>Factura compartida / pago parcial</strong><br><small>Confirma que este CFDI ya fue usado porque corresponde a otro pago parcial de la misma factura. La confirmación quedará registrada.</small></span>
-                            </label>
-                        </div>
                     </div>
 
                     <details class="st-doc-supplement">
@@ -37014,11 +37093,19 @@ async def ver_documento(
     ):
         return _render_documento_access_denied_page(current_empleado)
 
-    if ensure_fecha_pago_for_approved_solicitud(documento):
+    is_read_only_operations_observer = (
+        _is_alicia_operations_reference_observer(current_empleado)
+        and _is_operations_reference_document(documento)
+    )
+    if (
+        not is_read_only_operations_observer
+        and ensure_fecha_pago_for_approved_solicitud(documento)
+    ):
         await session.commit()
 
     if (
-        documento.tipo == "SOLICITUD"
+        not is_read_only_operations_observer
+        and documento.tipo == "SOLICITUD"
         and documento.estado == "aprobado"
         and not documento.gasto_generado_id
     ):

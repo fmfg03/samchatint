@@ -81,11 +81,11 @@ def test_employee_transfer_request_reaches_canonical_creation_form(
 
     support_upload = page.locator("#archivo_pdf")
     expect(support_upload).to_be_visible()
-    core_precedes_support = provider_select.evaluate(
-        "(core) => Boolean(core.compareDocumentPosition("
-        "document.getElementById('archivo_pdf')) & Node.DOCUMENT_POSITION_FOLLOWING)"
+    support_precedes_core = support_upload.evaluate(
+        "(support) => Boolean(support.compareDocumentPosition("
+        "document.getElementById('proveedor_cliente_id')) & Node.DOCUMENT_POSITION_FOLLOWING)"
     )
-    assert core_precedes_support is True
+    assert support_precedes_core is True
 
     expect(
         page.get_by_role("button", name="Crear solicitud", exact=True)
@@ -302,6 +302,58 @@ def test_budget_control_decision_and_context_stay_visible_at_1280(
     _capture(page, "budget-control-sticky-decision-1280")
 
 
+def test_budget_operator_finds_budget_actual_and_partida_with_context(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(f"{browser_server}/admin/presupuestos")
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.get_by_role("heading", name="Presupuestos 2026")).to_be_visible()
+    tournament = page.get_by_role("link", name="Copa Browser UX").first
+    expect(tournament).to_be_visible()
+    expect(tournament).to_contain_text("Presupuesto autorizado")
+    expect(tournament).to_contain_text("$120,000.00")
+    expect(tournament).to_contain_text("Ejercido real")
+    expect(tournament).to_contain_text("$45,000.00")
+
+    tournament.click()
+    expect(page).to_have_url(
+        f"{browser_server}/admin/presupuestos/torneo/copa-browser-ux"
+        "?edition_year=2026&version_id=92000000-0000-0000-0000-000000000001"
+        "&show_committed=1&show_yoy=0"
+    )
+    expect(page.get_by_role("heading", name="Copa Browser UX")).to_be_visible()
+    dashboard = page.locator("#tablero-ejecutivo-presupuesto")
+    expect(dashboard).to_be_visible()
+    expect(dashboard).to_contain_text("Presupuesto autorizado")
+    expect(dashboard).to_contain_text("$120,000.00")
+    expect(dashboard).to_contain_text("Ejercido real")
+    expect(dashboard).to_contain_text("$45,000.00")
+    expect(dashboard).to_contain_text("Comprometido pendiente")
+    expect(page.get_by_text("Hospedaje y alimentación", exact=True)).to_be_visible()
+    expect(page.get_by_text("Fase regional", exact=True)).to_be_visible()
+    _capture(page, "budget-versus-actual")
+
+
+def test_budget_journey_keeps_wide_partida_inside_scroll_at_mobile(
+    page: Page, browser_server: str
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    response = page.goto(
+        f"{browser_server}/admin/presupuestos/torneo/copa-browser-ux"
+        "?edition_year=2026&version_id=92000000-0000-0000-0000-000000000001"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    _assert_no_body_overflow(page)
+    matrix = page.locator(".budget-excel-grid")
+    expect(matrix).to_be_visible()
+    assert matrix.evaluate("(el) => el.scrollWidth > el.clientWidth") is True
+    _capture(page, "budget-versus-actual-mobile")
+
+
 def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
     page: Page, browser_server: str
 ) -> None:
@@ -325,18 +377,48 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
     ).to_be_visible()
 
     expect(
-        page.get_by_text("Programa de pagos", exact=True)
+        page.locator("#programa-de-pagos").get_by_text("Programa de pagos", exact=True)
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0001", exact=True)).to_be_visible()
     expect(
         page.get_by_text("Hospedaje aprobado para corte", exact=False)
     ).to_be_visible()
+    expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_visible()
 
     expect(
-        page.get_by_text("Comprobantes pendientes - En Proceso de Pago", exact=True)
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Comprobantes pendientes - En Proceso de Pago", exact=True
+        )
+    ).to_be_hidden()
+    expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_hidden()
+    page.get_by_role("link", name="Comprobantes pendientes", exact=True).click()
+    expect(page).to_have_url(
+        f"{browser_server}/admin/finanzas/payment-run?status=pendientes&vista=comprobantes"
+    )
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Comprobantes pendientes - En Proceso de Pago", exact=True
+        )
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
-    expect(page.get_by_text("Comprobante de pago", exact=True).first).to_be_visible()
+    expect(
+        page.locator("#programa-de-pagos").get_by_text("Programa de pagos", exact=True)
+    ).to_be_hidden()
+    expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_hidden()
+    page.get_by_placeholder("Referencia, solicitante, beneficiario").fill("S-PAY-0002")
+    page.get_by_role("button", name="Filtrar", exact=True).click()
+    assert "vista=comprobantes" in page.url
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Comprobantes pendientes - En Proceso de Pago", exact=True
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Comprobante de pago", exact=True
+        )
+    ).to_be_visible()
     expect(
         page.get_by_text(
             "carga varios archivos y revisa la asignación antes de confirmar",
@@ -344,7 +426,6 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         )
     ).to_be_visible()
 
-    expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_visible()
     expect(
         page.get_by_role("button", name="Subir comprobante y marcar pagado", exact=True)
     ).to_be_visible()

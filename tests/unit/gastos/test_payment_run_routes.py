@@ -41,6 +41,22 @@ def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
     ]
 
 
+def test_payment_run_bulk_proof_form_ids_are_parsed_before_planning() -> None:
+    document_id = uuid4()
+
+    assert admin_routes._parse_payment_proof_document_ids(
+        [str(document_id)], field="selected_document_ids"
+    ) == [document_id]
+
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._parse_payment_proof_document_ids(
+            ["Dar formato al texto"], field="proof_document_ids"
+    )
+
+    assert exc.value.code == "payment_proof_form_invalid"
+    assert "asignación" in str(exc.value)
+
+
 def test_payment_run_bulk_proof_plan_supports_one_proof_for_all_selected() -> None:
     first_id = uuid4()
     second_id = uuid4()
@@ -141,6 +157,29 @@ async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
 
 
 @pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_redirects_invalid_form_values(monkeypatch) -> None:
+    session = AsyncMock()
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[str(uuid4())],
+        proof_document_ids=["Dar formato al texto"],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        apply_one_to_all=False,
+    )
+
+    assert response.status_code == 303
+    assert "asignaci%C3%B3n" in response.headers["location"]
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["attachment", "payment"])
 async def test_payment_run_single_proof_rolls_back_validation_failures(
     monkeypatch, failure
@@ -225,6 +264,7 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("#comprobantes-pendientes")
+    assert "vista=comprobantes" in response.headers["location"]
     assert attach_mock.await_count == 2
     session.commit.assert_awaited_once()
     assert [item["documento_id"] for item in notifications] == [second_id, first_id]
@@ -732,6 +772,14 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "Carga por lote de comprobantes" in html
     assert 'name="selected_document_ids"' in html
     assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
+    assert 'id="payment-proof-selected-inputs"' in html
+    assert 'id="payment-proof-form-error"' in html
+    assert "form.addEventListener('submit'" in html
+    assert "checkbox.disabled = true" in html
+    assert "uuidPattern.test(select.value)" in html
+    assert 'aria-current="page">Comprobantes pendientes</a>' in html
+    assert '<input type="hidden" name="vista" value="comprobantes">' in html
+    assert '<section id="programa-de-pagos" class="workspace-card payment-run-view" style="margin-bottom:18px;" hidden>' in html
 
 
 @pytest.mark.asyncio
@@ -853,6 +901,8 @@ async def test_payment_run_upload_requires_payment_proof() -> None:
 
     assert response.status_code == 303
     assert "Selecciona%20el%20comprobante%20de%20pago" in response.headers["location"]
+    assert "vista=comprobantes" in response.headers["location"]
+    assert response.headers["location"].endswith("#comprobantes-pendientes")
 
 
 def test_payment_run_upload_payment_proof_is_atomic() -> None:
