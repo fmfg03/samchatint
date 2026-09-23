@@ -10195,6 +10195,34 @@ def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
     return _has_read_only_cross_account_informe_access(empleado)
 
 
+def _can_read_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    return cuenta.empleado_id == empleado.id or _can_view_all_cuentas_de_gastos(empleado)
+
+
+def _can_access_read_only_informe_document(
+    documento: Documento, empleado: Empleado
+) -> bool:
+    return (
+        documento.tipo == "INFORME"
+        and bool(documento.cuenta_gastos_id)
+        and _has_read_only_cross_account_informe_access(empleado)
+    )
+
+
+async def _can_access_read_only_informe_expense(
+    session: AsyncSession, expense: ExpenseReport, empleado: Empleado
+) -> bool:
+    if _can_access_expense_comprobante(expense, empleado):
+        return True
+    if not (
+        expense.cuenta_gastos_id
+        and _has_read_only_cross_account_informe_access(empleado)
+    ):
+        return False
+    cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+    return cuenta is not None and _can_read_cuenta_de_gastos(cuenta, empleado)
+
+
 def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
     return not (
         cuenta.empleado_id != empleado.id
@@ -26273,6 +26301,8 @@ def _can_access_expense_comprobante(expense: ExpenseReport, empleado: Empleado) 
 
 
 def _can_access_documento_adjunto(documento: Documento, empleado: Empleado) -> bool:
+    if _can_access_read_only_informe_document(documento, empleado):
+        return True
     if documento.empleado_id == empleado.id:
         return True
     return empleado.rol in (
@@ -26299,7 +26329,9 @@ async def descargar_gasto_comprobante(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    if not _can_access_expense_comprobante(expense, current_empleado):
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
     if not expense.archivo_data:
         raise HTTPException(status_code=404, detail="Este gasto no tiene comprobante adjunto")
@@ -26335,7 +26367,9 @@ async def descargar_gasto_adjunto(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    if not _can_access_expense_comprobante(expense, current_empleado):
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     key = (attachment_key or "").strip()
@@ -26438,8 +26472,10 @@ async def ver_gasto(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
-    # Verify access: owner OR coordinador/finanzas/admin
-    if expense.empleado_id != current_empleado.id and current_empleado.rol not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']:
+    # Allow report delegates to inspect linked evidence without authorizing changes.
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     # Get CFDI data if available (via nova_request_id)
@@ -26491,7 +26527,13 @@ async def ver_gasto(
         """
 
     # Check if CFDI can be requested
+    is_read_only_cross_account_view = (
+        expense.empleado_id != current_empleado.id
+        and _has_read_only_cross_account_informe_access(current_empleado)
+    )
     can_request_cfdi = (
+        not is_read_only_cross_account_view
+        and
         expense.tipo_gasto == "ticket" and
         expense.archivo_data and
         (not expense.nova_request_id or
@@ -26517,7 +26559,7 @@ async def ver_gasto(
 
     # Determine if can edit
     can_edit = False
-    if not is_cancelled:
+    if not is_cancelled and not is_read_only_cross_account_view:
         # Check lock status for editing
         is_locked = (
             (expense.documento_id is not None and documento_estado and documento_estado != 'borrador') or
@@ -26533,7 +26575,7 @@ async def ver_gasto(
 
     # Determine if can cancel
     can_cancel = False
-    if not is_cancelled:
+    if not is_cancelled and not is_read_only_cross_account_view:
         if is_owner:
             # Owner can cancel if CFDI not locked and documento is NULL or borrador
             cfdi_locked = expense.estado_factura in ('en_proceso', 'completada')
@@ -33131,7 +33173,7 @@ async def _informe_for_cuenta_or_redirect(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
@@ -33751,8 +33793,13 @@ async def exportar_informe_gastos(
     if not documento:
         raise HTTPException(status_code=404, detail="Documento not found")
 
-    # Verify access: owner OR coordinador/finanzas/admin
-    if documento.empleado_id != current_empleado.id and current_empleado.rol not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']:
+    # Permit only the explicitly delegated report document, never SOLICITUD data.
+    if (
+        documento.empleado_id != current_empleado.id
+        and current_empleado.rol
+        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        and not _can_access_read_only_informe_document(documento, current_empleado)
+    ):
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Load empleado
@@ -36845,6 +36892,7 @@ async def ver_documento(
         documento.empleado_id != current_empleado.id
         and current_empleado.rol
         not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        and not _can_access_read_only_informe_document(documento, current_empleado)
     ):
         return _render_documento_access_denied_page(current_empleado)
 
