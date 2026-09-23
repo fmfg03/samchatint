@@ -254,6 +254,54 @@ def test_budget_control_queue_keeps_wide_actions_inside_table_scroll(
     assert shell.evaluate("(el) => el.scrollWidth > el.clientWidth") is True
 
 
+def test_budget_control_decision_and_context_stay_visible_at_1280(
+    page: Page, browser_server: str
+) -> None:
+    page.set_viewport_size({"width": 1280, "height": 900})
+    response = page.goto(f"{browser_server}/documentos/control-presupuestal")
+    assert response is not None
+    assert response.status == 200
+
+    _assert_no_body_overflow(page)
+    shell = page.locator(".table-shell").last
+    expect(shell).to_be_visible()
+    assert shell.evaluate("(el) => el.scrollWidth > el.clientWidth") is True
+
+    row = page.locator("tbody tr").filter(has_text="S-UX-0001").first
+    decision = row.locator("td.budget-control-decision-cell")
+    amount = row.locator("td.budget-control-amount")
+    description = row.locator("td.budget-control-description")
+    concept = decision.locator('select[name^="budget_concept_id_"]')
+    assign = decision.get_by_role("button", name="Asignar y enviar", exact=True)
+
+    expect(decision).to_be_visible()
+    expect(concept).to_be_visible()
+    expect(assign).to_be_visible()
+    assert decision.evaluate("(el) => getComputedStyle(el).position") == "sticky"
+
+    shell.evaluate("(el) => { el.scrollLeft = el.scrollWidth; }")
+    shell_box = shell.bounding_box()
+    decision_box = decision.bounding_box()
+    amount_box = amount.bounding_box()
+    description_box = description.bounding_box()
+    assert shell_box is not None
+    assert decision_box is not None
+    assert amount_box is not None
+    assert description_box is not None
+
+    shell_left = shell_box["x"]
+    shell_right = shell_box["x"] + shell_box["width"]
+    assert decision_box["x"] >= shell_left - 1
+    assert decision_box["x"] + decision_box["width"] <= shell_right + 1
+    assert decision_box["width"] <= 370
+    assert description_box["x"] >= shell_left - 1
+    assert description_box["x"] + description_box["width"] <= decision_box["x"] + 1
+    assert amount_box["x"] >= shell_left - 1
+    assert amount_box["x"] + amount_box["width"] <= description_box["x"] + 1
+
+    _capture(page, "budget-control-sticky-decision-1280")
+
+
 def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
     page: Page, browser_server: str
 ) -> None:
