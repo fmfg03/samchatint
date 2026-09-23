@@ -726,6 +726,7 @@ def _prematch_rows(
                         action_base=action_base,
                         return_to=return_to,
                         can_operate_matches=can_operate_matches,
+                        bank_accounts=bank_accounts,
                     ),
                 ]
             )

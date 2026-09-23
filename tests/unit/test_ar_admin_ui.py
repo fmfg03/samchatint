@@ -292,13 +292,22 @@ def test_render_ar_matching_workbench_html_includes_candidate_notice():
                 }
             ],
             "unmatched_bank_inflows": [],
-        }
+        },
+        bank_accounts=[
+            {
+                "id": "bank-account-1",
+                "codigo": "1020-001",
+                "nombre": "Banco CxC",
+            }
+        ],
     )
 
     assert "Pre-matching AR" in html
     assert "Evidencia candidata; no prueba cobranza" in html
     assert "candidate_match" in html
     assert "bank-1" in html
+    assert 'value="bank-account-1"' in html
+    assert "1020-001 · Banco CxC" in html
 
 
 def test_render_ar_matching_workbench_html_does_not_confirm_collection():
