@@ -1688,10 +1688,11 @@ async def journey_payment_run(request: Request):
         request,
         _EmptySession(),
         PROFILE_FIXTURES["finance"]["employee"],
-        status="pendientes",
-        date_from=None,
-        date_to=None,
-        q=None,
+        status=request.query_params.get("status", "pendientes"),
+        date_from=request.query_params.get("date_from"),
+        date_to=request.query_params.get("date_to"),
+        q=request.query_params.get("q"),
+        vista=request.query_params.get("vista"),
     )
 
 

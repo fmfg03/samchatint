@@ -225,6 +225,7 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
 
     assert response.status_code == 303
     assert response.headers["location"].endswith("#comprobantes-pendientes")
+    assert "vista=comprobantes" in response.headers["location"]
     assert attach_mock.await_count == 2
     session.commit.assert_awaited_once()
     assert [item["documento_id"] for item in notifications] == [second_id, first_id]
@@ -732,6 +733,9 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "Carga por lote de comprobantes" in html
     assert 'name="selected_document_ids"' in html
     assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
+    assert 'aria-current="page">Comprobantes pendientes</a>' in html
+    assert '<input type="hidden" name="vista" value="comprobantes">' in html
+    assert '<section id="programa-de-pagos" class="workspace-card payment-run-view" style="margin-bottom:18px;" hidden>' in html
 
 
 @pytest.mark.asyncio
@@ -853,6 +857,8 @@ async def test_payment_run_upload_requires_payment_proof() -> None:
 
     assert response.status_code == 303
     assert "Selecciona%20el%20comprobante%20de%20pago" in response.headers["location"]
+    assert "vista=comprobantes" in response.headers["location"]
+    assert response.headers["location"].endswith("#comprobantes-pendientes")
 
 
 def test_payment_run_upload_payment_proof_is_atomic() -> None:
