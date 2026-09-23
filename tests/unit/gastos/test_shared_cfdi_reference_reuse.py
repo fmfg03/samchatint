@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -138,6 +139,71 @@ async def test_shared_cfdi_reference_rejects_a_different_beneficiary() -> None:
         )
 
     assert raised.value.code == "shared_cfdi_reference_beneficiary_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_shared_cfdi_reference_accepts_blank_and_rejects_invalid_beneficiary() -> None:
+    actor = _employee()
+    assert await user_routes._resolve_shared_cfdi_reference(
+        _Session([]),
+        current_empleado=actor,
+        referencia=" ",
+        proveedor_cliente_id=str(uuid4()),
+    ) is None
+
+    previous = SimpleNamespace(
+        empleado_id=actor.id,
+        proveedor_cliente_id=uuid4(),
+        cfdi_uuid_manual="ABCD1234-1111-2222-3333-444444444444",
+        cfdi_report_id=None,
+    )
+    with pytest.raises(SolicitudValidationError) as raised:
+        await user_routes._resolve_shared_cfdi_reference(
+            _Session([previous]),
+            current_empleado=actor,
+            referencia="S-26000213",
+            proveedor_cliente_id="not-a-uuid",
+        )
+    assert raised.value.code == "invalid_proveedor"
+
+
+@pytest.mark.asyncio
+async def test_edit_shared_cfdi_reference_is_resolved(monkeypatch) -> None:
+    document_id = uuid4()
+    document = SimpleNamespace(id=document_id)
+    session = AsyncMock()
+    session.execute.return_value = _Result(document)
+    actor = _employee()
+    resolve = AsyncMock(return_value="ABCD1234-1111-2222-3333-444444444444")
+    monkeypatch.setattr(user_routes, "documento_workflow_locked_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(user_routes, "_can_edit_solicitud_terceros", lambda *_args: True)
+    monkeypatch.setattr(
+        user_routes,
+        "_read_solicitud_terceros_attachments_from_form",
+        AsyncMock(return_value=(None, None, [])),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_validate_solicitud_terceros_fase",
+        AsyncMock(return_value=(None, None)),
+    )
+    monkeypatch.setattr(user_routes, "_resolve_shared_cfdi_reference", resolve)
+    monkeypatch.setattr(user_routes, "build_solicitud_terceros_payload", lambda **kwargs: kwargs)
+    monkeypatch.setattr(user_routes, "update_solicitud_terceros_document", AsyncMock())
+
+    response = await user_routes.editar_solicitud_terceros_post(
+        documento_id=document_id,
+        request=SimpleNamespace(), session=session, current_empleado=actor,
+        archivo_pdf=None, archivo_xml=None, archivos_generales=[], monto_solicitado="100",
+        proveedor_cliente_id=str(uuid4()), torneo_id=str(uuid4()), proyecto_otro=None,
+        fase=None, categorias=[], edicion=None, currency="MXN", concepto_pago="Pago",
+        budget_concept_id=None, numero_factura=None, referencia_pago=None,
+        fecha_inicio=None, fecha_fin=None, notas=None, pago_urgente=None,
+        referencia_factura_compartida="S-26000213", cfdi_compartido_confirmado="1",
+    )
+
+    assert response.status_code == 303
+    resolve.assert_awaited_once()
 
 
 def test_shared_cfdi_reference_control_explains_safe_reuse() -> None:
