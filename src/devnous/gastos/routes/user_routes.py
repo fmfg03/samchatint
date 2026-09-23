@@ -29904,9 +29904,17 @@ async def documentos_pendientes(
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
         actions_html = (
-            '<div class="table-actions">'
+            '<div class="table-actions" style="align-items:flex-start;">'
             f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary">Aprobar</button>'
-            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button danger">Rechazar</button>'
+            f'<details class="reject-reason-details" data-reject-details="{documento.id}" style="min-width:220px;">'
+            '<summary style="cursor:pointer;font-weight:800;color:#991b1b;">Motivo si rechazas</summary>'
+            f'<label for="reject_reason_{documento.id}" style="display:block;margin:7px 0 4px;font-size:12px;font-weight:800;">Motivo de rechazo</label>'
+            f'<input id="reject_reason_{documento.id}" type="text" data-reject-reason="{documento.id}" '
+            'placeholder="Explica qué debe corregir..." autocomplete="off" style="width:100%;min-width:210px;">'
+            '<div class="section-note" style="margin-top:4px;">Este motivo quedará en la evidencia de aprobación.</div>'
+            '</details>'
+            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" '
+            f'data-reject-documento-id="{documento.id}" name="single_action" value="reject" class="button danger">Rechazar</button>'
             '</div>'
         )
         rows_html += f"""
@@ -30007,13 +30015,20 @@ async def documentos_pendientes(
 
     if rows_html:
         table_html = f"""
-            <form method="POST" action="/documentos/pendientes/accion-lote">
+            <form method="POST" action="/documentos/pendientes/accion-lote" data-approval-queue-form>
                 <input type="hidden" name="next" value="{escape(next_path)}">
-                <div class="table-actions" style="justify-content:flex-end;margin-bottom:12px;">
+                <input type="hidden" name="comentario" value="" data-reject-comment>
+                <div class="table-actions" style="justify-content:flex-end;align-items:flex-end;margin-bottom:12px;">
+                    <label style="display:grid;gap:4px;min-width:260px;font-size:12px;font-weight:800;">
+                        Motivo para rechazo seleccionado(s)
+                        <input type="text" name="bulk_comentario" data-bulk-reject-reason
+                               placeholder="Explica qué deben corregir..." autocomplete="off">
+                    </label>
                     <button type="button" class="button secondary" data-select-all-approval>Seleccionar todo</button>
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
                     <button type="submit" name="action" value="reject" class="button danger">Rechazar seleccionados</button>
                 </div>
+                <div class="notice warn" role="alert" data-reject-validation style="display:none;margin-bottom:12px;"></div>
                 <div class="table-shell"><table data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>
@@ -30099,6 +30114,52 @@ async def documentos_pendientes(
               button.textContent = allChecked ? 'Seleccionar todo' : 'Limpiar selección';
             }});
           }});
+
+          document.querySelectorAll('[data-approval-queue-form]').forEach(function(form) {{
+            form.addEventListener('submit', function(event) {{
+              var submitter = event.submitter || document.activeElement;
+              if (!submitter) return;
+
+              var validation = form.querySelector('[data-reject-validation]');
+              if (validation) {{
+                validation.style.display = 'none';
+                validation.textContent = '';
+              }}
+
+              if (submitter.name === 'single_action' && submitter.value === 'reject') {{
+                var documentoId = submitter.getAttribute('data-reject-documento-id') || '';
+                var reasonInput = form.querySelector('[data-reject-reason="' + documentoId + '"]');
+                var reason = reasonInput ? reasonInput.value.trim() : '';
+                if (!reason) {{
+                  event.preventDefault();
+                  var details = form.querySelector('[data-reject-details="' + documentoId + '"]');
+                  if (details) details.open = true;
+                  if (validation) {{
+                    validation.textContent = 'Escribe el motivo del rechazo para que el solicitante sepa qué corregir.';
+                    validation.style.display = 'block';
+                  }}
+                  if (reasonInput) reasonInput.focus();
+                  return;
+                }}
+                var hiddenComment = form.querySelector('[data-reject-comment]');
+                if (hiddenComment) hiddenComment.value = reason;
+                return;
+              }}
+
+              if (submitter.name === 'action' && submitter.value === 'reject') {{
+                var bulkReason = form.querySelector('[data-bulk-reject-reason]');
+                var bulkValue = bulkReason ? bulkReason.value.trim() : '';
+                if (!bulkValue) {{
+                  event.preventDefault();
+                  if (validation) {{
+                    validation.textContent = 'Escribe un motivo común para los documentos que vas a rechazar.';
+                    validation.style.display = 'block';
+                  }}
+                  if (bulkReason) bulkReason.focus();
+                }}
+              }}
+            }});
+          }});
         }})();
         </script>
     </body>
@@ -30126,6 +30187,17 @@ async def documentos_pendientes_accion_lote(
         raise HTTPException(status_code=400, detail="Acción inválida")
 
     form = await request.form()
+    bulk_comment = str(form.get("bulk_comentario") or "").strip()
+    if workflow_action == "reject" and not bulk_comment:
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="reject_reason_required",
+                error_msg="Escribe un motivo para que el solicitante sepa qué corregir.",
+            ),
+            status_code=303,
+        )
+
     documento_ids: list[UUIDType] = []
     for raw_id in form.getlist("documento_ids"):
         raw_text = str(raw_id or "").strip()
@@ -30153,6 +30225,7 @@ async def documentos_pendientes_accion_lote(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
                 action=workflow_action,
+                comentario=bulk_comment if workflow_action == "reject" else None,
                 request_context=audit_context_from_request(request),
             )
             ok_count += 1
@@ -32304,13 +32377,26 @@ async def rechazar_documento(
     Args:
         next: Optional redirect URL after action (from form field or query param)
     """
+    queue_return = str(next or "").strip().startswith("/documentos/pendientes")
+    rejection_comment = str(comentario or "").strip()
+    if queue_return and not rejection_comment:
+        redirect_url = determine_redirect_url(next, documento_id, default_to_detail=True)
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="reject_reason_required",
+                error_msg="Escribe un motivo para que el solicitante sepa qué corregir.",
+            ),
+            status_code=303,
+        )
+
     try:
         await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
             action="reject",
-            comentario=comentario,
+            comentario=rejection_comment or None,
             request_context=audit_context_from_request(request),
         )
     except DocumentoWorkflowPermissionError as exc:

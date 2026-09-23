@@ -127,6 +127,19 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     expect(
         page.get_by_text("Documentos esperando tu decisión", exact=False)
     ).to_be_visible()
+
+    reject.click()
+    expect(page).to_have_url(f"{browser_server}/documentos/pendientes")
+    reason = page.get_by_label("Motivo de rechazo").first
+    expect(reason).to_be_focused()
+    expect(
+        page.get_by_role("alert").get_by_text(
+            "Escribe el motivo del rechazo", exact=False
+        )
+    ).to_be_visible()
+
+    reason.fill("Falta la orden de compra")
+    expect(reason).to_have_value("Falta la orden de compra")
     _capture(page, "approver-pending-queue")
 
 
