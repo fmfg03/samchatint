@@ -10182,7 +10182,6 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             error_msg="No se pudo cargar el lote de comprobantes ni marcar los pagos.",
             anchor="comprobantes-pendientes",
         )
-        )
 
 
 @router.get(
