@@ -28967,7 +28967,10 @@ async def documentos_control_presupuestal(
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
-            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.fase)
+            .selectinload(CuentaDeGastos.torneo),
+            undefer(Documento.fase),
             selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id),
             selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
             undefer(Documento.fase),
@@ -29747,7 +29750,10 @@ async def documentos_pendientes(
             selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
-            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.fase)
+            .selectinload(CuentaDeGastos.torneo),
+            undefer(Documento.fase),
         )
         .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
         .outerjoin(
@@ -30798,11 +30804,21 @@ def _documentos_todos_reporting_row_values(
 ) -> dict[str, Any]:
     parties = _documentos_todos_party_values(documento)
     currency = currency_for(documento)
+    cuenta = getattr(documento, "cuenta_gastos", None)
+    torneo = getattr(documento, "torneo", None) or getattr(cuenta, "torneo", None)
+    torneo_display = documento_project_name(documento, torneo) or "—"
+    fase_display = (
+        getattr(documento, "fase", None)
+        or getattr(cuenta, "fase", None)
+        or "—"
+    )
     return {
         "id": str(documento.id),
         "numero_referencia": getattr(documento, "numero_referencia", None) or "—",
         "tipo_documento": getattr(documento, "tipo", None) or "—",
         "tipo_solicitud": _documentos_todos_reporting_type(documento),
+        "torneo": torneo_display,
+        "fase": str(fase_display),
         "solicitante": parties["solicitante"],
         "beneficiario": parties["beneficiario"],
         "proveedor": parties["proveedor"],
@@ -30887,7 +30903,11 @@ async def documentos_todos(
         selectinload(Documento.beneficiario_empleado),
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
-        selectinload(Documento.cuenta_gastos),
+        selectinload(Documento.torneo),
+        selectinload(Documento.cuenta_gastos)
+        .undefer(CuentaDeGastos.fase)
+        .selectinload(CuentaDeGastos.torneo),
+        undefer(Documento.fase),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
@@ -30993,6 +31013,8 @@ async def documentos_todos(
             <td title="{documento.id}">{doc_id_short}...</td>
             <td>{escape(row_values["tipo_documento"])}</td>
             <td>{escape(row_values["tipo_solicitud"])}</td>
+            <td>{escape(row_values["torneo"])}</td>
+            <td>{escape(row_values["fase"])}</td>
             <td>{escape(row_values["solicitante"])}</td>
             <td>{escape(row_values["beneficiario"])}</td>
             <td>{escape(row_values["proveedor"])}</td>
@@ -31169,6 +31191,8 @@ async def documentos_todos(
                             <th data-sort-key="id_interno" data-sort-type="text">ID Interno</th>
                             <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                             <th data-sort-key="tipo_solicitud" data-sort-type="text">Tipo solicitud</th>
+                            <th data-sort-key="torneo" data-sort-type="text">Torneo</th>
+                            <th data-sort-key="fase" data-sort-type="text">Fase</th>
                             <th data-sort-key="solicitante" data-sort-type="text">Solicitante</th>
                             <th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th>
                             <th data-sort-key="proveedor" data-sort-type="text">Proveedor</th>

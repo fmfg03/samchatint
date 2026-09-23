@@ -27,6 +27,8 @@ def _doc(**overrides):
         "proveedor_cliente": None,
         "proveedor_cliente_id": None,
         "cuenta_gastos": None,
+        "torneo": None,
+        "fase": None,
         "concepto_pago": "Hospedaje regional",
         "referencia_pago": "RP-001",
         "referencia_operaciones": "456",
@@ -66,6 +68,32 @@ def test_documentos_todos_reporting_values_for_provider_solicitud():
     assert row["currency"] == "MXN"
     assert row["situacion"] == "Abierta"
     assert row["aprobador"] == "Finanzas"
+
+
+def test_documentos_todos_reporting_includes_torneo_and_fase():
+    documento = _doc(
+        torneo=SimpleNamespace(name="Nacional de Béisbol"),
+        fase="Regional",
+    )
+
+    row = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row["torneo"] == "Nacional de Béisbol"
+    assert row["fase"] == "Regional"
+
+
+def test_documentos_lists_eager_load_deferred_fase_before_rendering():
+    with open(user_routes.__file__, encoding="utf-8") as source_file:
+        source = source_file.read()
+    for marker, next_marker in (
+        ("async def documentos_pendientes(", '@router.post("/documentos/pendientes/accion-lote"'),
+        ("async def documentos_todos(", '@router.get("/documentos/todos/exportar-exceles.zip"'),
+    ):
+        start = source.index(marker)
+        end = source.index(next_marker, start)
+        block = source[start:end]
+        assert ".undefer(CuentaDeGastos.fase)" in block
+        assert "undefer(Documento.fase)" in block
 
 
 def test_documentos_todos_reporting_values_for_employee_beneficiary():
