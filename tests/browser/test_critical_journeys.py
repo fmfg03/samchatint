@@ -157,6 +157,7 @@ def test_approver_decision_actions_stay_in_view_at_1280(
 
     shell = page.locator(".table-shell").last
     expect(shell).to_be_visible()
+    _assert_no_body_overflow(page)
     assert shell.evaluate("(el) => el.scrollWidth > el.clientWidth") is True
 
     cell = page.locator("td.approval-actions-cell").first
@@ -177,7 +178,6 @@ def test_approver_decision_actions_stay_in_view_at_1280(
 
     before_x = cell_box["x"]
     shell.evaluate("(el) => { el.scrollLeft = el.scrollWidth; }")
-    page.wait_for_timeout(50)
     after_box = cell.bounding_box()
     assert after_box is not None
     assert abs(after_box["x"] - before_x) <= 1
