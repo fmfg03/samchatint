@@ -29130,16 +29130,18 @@ async def documentos_control_presupuestal(
                     <td>{escape(row_values['solicitante'])}</td>
                     <td>{escape(beneficiary_provider)}</td>
                     <td>INFORME / PARTIDA</td>
-                    <td>{format_currency(float(getattr(expense, 'gasto_cantidad', 0) or 0), currency_for(documento))}</td>
-                    <td>{escape(description)}</td>
-                    <td>
-                        <div style="display:flex;gap:8px;align-items:center;min-width:470px;">
-                            <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
+                    <td class="budget-control-amount">{format_currency(float(getattr(expense, 'gasto_cantidad', 0) or 0), currency_for(documento))}</td>
+                    <td class="budget-control-description">{escape(description)}</td>
+                    <td class="budget-control-decision-cell">
+                        <div class="budget-control-decision">
+                            <div class="budget-control-decision-fields">
                                 <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
-                                <select id="{select_id}" name="budget_concept_id_{item_key}" style="min-width:260px;">{options}</select>
+                                <select id="{select_id}" name="budget_concept_id_{item_key}">{options}</select>
                             </div>
-                            <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar partida</button>
-                            <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
+                            <div class="budget-control-decision-actions">
+                                <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar partida</button>
+                                <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
+                            </div>
                         </div>
                     </td>
                 </tr>
@@ -29165,16 +29167,18 @@ async def documentos_control_presupuestal(
             <td>{escape(row_values['solicitante'])}</td>
             <td>{escape(beneficiary_provider)}</td>
             <td>{escape(row_values['tipo_documento'])}</td>
-            <td>{escape(row_values['monto_total'])}</td>
-            <td>{escape(row_values['concepto'])}</td>
-            <td>
-                <div style="display:flex;gap:8px;align-items:center;min-width:470px;">
-                    <div style="display:flex;flex-direction:column;gap:6px;min-width:280px;">
+            <td class="budget-control-amount">{escape(row_values['monto_total'])}</td>
+            <td class="budget-control-description">{escape(row_values['concepto'])}</td>
+            <td class="budget-control-decision-cell">
+                <div class="budget-control-decision">
+                    <div class="budget-control-decision-fields">
                         <input type="search" class="budget-concept-filter" data-target="{select_id}" placeholder="Buscar concepto..." style="padding:8px 10px;font-size:12px;">
-                        <select id="{select_id}" name="budget_concept_id_{item_key}" style="min-width:260px;">{options}</select>
+                        <select id="{select_id}" name="budget_concept_id_{item_key}">{options}</select>
                     </div>
-                    <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
-                    <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
+                    <div class="budget-control-decision-actions">
+                        <button type="submit" name="single_item_id" value="{item_key}" class="button primary" style="padding:8px 10px;font-size:12px;">Asignar y enviar</button>
+                        <button type="submit" name="reject_documento_id" value="{documento.id}" class="button secondary" style="padding:8px 10px;font-size:12px;">Rechazar</button>
+                    </div>
                 </div>
             </td>
         </tr>
@@ -29188,10 +29192,10 @@ async def documentos_control_presupuestal(
                 <button type="submit" class="button primary">Asignar seleccionados</button>
                 <button type="submit" name="bulk_action" value="reject_selected" class="button secondary">Rechazar seleccionados</button>
             </div>
-            <div class="table-shell"><table>
+            <div class="table-shell"><table class="budget-control-table">
                 <thead><tr>
                     <th>Sel.</th><th>Referencia</th><th>Referencia Operaciones</th><th>Torneo</th><th>Solicitante</th>
-                    <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripción</th><th>Concepto presupuestal</th>
+                    <th>Beneficiario/Proveedor</th><th>Tipo</th><th>Monto</th><th>Descripción</th><th class="budget-control-decision-cell">Concepto presupuestal</th>
                 </tr></thead>
                 <tbody>{rows_html or '<tr><td colspan="10" class="section-note">Sin documentos pendientes de Control Presupuestal.</td></tr>'}</tbody>
             </table></div>
@@ -29199,7 +29203,51 @@ async def documentos_control_presupuestal(
     """
     html = f"""
     <!DOCTYPE html>
-    <html><head><title>Control Presupuestal - SamChat</title><style>{_workspace_shell_styles("1580px", layout="data")}</style></head>
+    <html><head><title>Control Presupuestal - SamChat</title><style>
+        {_workspace_shell_styles("1580px", layout="data")}
+        .budget-control-table .budget-control-decision-cell {{
+            position: sticky;
+            right: 0;
+            z-index: 2;
+            box-shadow: -10px 0 14px -14px rgba(15, 23, 42, 0.45);
+        }}
+        .budget-control-table thead .budget-control-decision-cell {{
+            z-index: 4;
+            background: #0f172a;
+            color: #f8fafc;
+        }}
+        .budget-control-table tbody .budget-control-decision-cell {{
+            min-width: 320px;
+            background: #fff;
+        }}
+        .budget-control-decision {{
+            display: grid;
+            gap: 8px;
+            min-width: 292px;
+        }}
+        .budget-control-decision-fields {{
+            display: grid;
+            gap: 6px;
+            min-width: 0;
+        }}
+        .budget-control-decision-fields input,
+        .budget-control-decision-fields select {{
+            min-width: 0;
+            width: 100%;
+        }}
+        .budget-control-decision-actions {{
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            align-items: center;
+        }}
+        .budget-control-amount {{
+            white-space: nowrap;
+        }}
+        .budget-control-description {{
+            min-width: 220px;
+        }}
+    </style></head>
     <body><div class="container">
         {render_top_navigation(current_empleado, "operacion")}
         {_gastos_workspace_nav_html(current_empleado, "documentos")}
