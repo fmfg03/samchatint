@@ -385,6 +385,18 @@ def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
     assert f'name="document_ids" value="{document_id}"' not in html
 
 
+def test_single_payment_proof_form_has_review_hooks() -> None:
+    document_id = uuid4()
+    html = admin_routes._render_payment_run_items(
+        [{"id": document_id, "numero_referencia": "S-260099", "status": "en proceso de pago", "can_upload_payment_proof": True}],
+        can_confirm_payment=True,
+    )
+
+    assert 'data-payment-proof-form' in html
+    assert 'data-documento-id="' + str(document_id) + '"' in html
+    assert 'data-payment-proof-effective-date' in html
+
+
 @pytest.mark.asyncio
 async def test_payment_run_closure_preserves_empty_snapshotted_beneficiary(monkeypatch) -> None:
     closure_id = uuid4()

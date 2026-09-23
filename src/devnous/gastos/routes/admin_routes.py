@@ -9580,14 +9580,21 @@ def _render_payment_run_items(
                 effective_date_html = (
                     '<label style="font-size:12px;color:#334155;">'
                     'Fecha efectiva de pago'
-                    '<input type="date" name="fecha_pago_efectiva" required>'
+                    '<input type="date" name="fecha_pago_efectiva" '
+                    'data-payment-proof-effective-date required>'
                     '</label>'
                 )
+            form_attributes = (
+                f'data-payment-proof-form data-documento-id="{documento_id}"'
+                if entity_type == "documento"
+                else ""
+            )
             proof_html = f"""
-                <form method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
-                    <input type="file" name="comprobante_pago" required>
+                <form {form_attributes} method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
+                    <input type="file" name="comprobante_pago" data-payment-proof-file required>
                     {effective_date_html}
                     <input name="payment_proof_resolution_reason" placeholder="Motivo si se resuelve un conflicto detectado">
+                    <small data-payment-proof-review style="color:#475569;"></small>
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
             """
@@ -9863,6 +9870,17 @@ async def admin_finance_payment_run(
                             }})
                             .catch(function() {{ target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
                     }}
+                    document.querySelectorAll('[data-payment-proof-form]').forEach(function(singleForm) {{
+                        var singleFile = singleForm.querySelector('[data-payment-proof-file]');
+                        var singleDate = singleForm.querySelector('[data-payment-proof-effective-date]');
+                        var singleReview = singleForm.querySelector('[data-payment-proof-review]');
+                        if (!singleFile || !singleDate || !singleReview) return;
+                        singleFile.addEventListener('change', function() {{
+                            if (singleFile.files && singleFile.files[0]) {{
+                                reviewProof(singleForm.getAttribute('data-documento-id'), singleFile.files[0], singleDate, singleReview);
+                            }}
+                        }});
+                    }});
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
