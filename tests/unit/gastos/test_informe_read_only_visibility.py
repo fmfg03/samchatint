@@ -1,0 +1,21 @@
+from types import SimpleNamespace
+from uuid import uuid4
+
+from devnous.gastos.routes import user_routes
+
+
+def test_alicia_can_read_all_reports_without_receiving_financial_authority():
+    alicia = SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+    )
+
+    assert user_routes._can_view_all_cuentas_de_gastos(alicia)
+    assert alicia.rol not in {"admin", "finanzas", "superadmin", "super_admin"}
+
+
+def test_an_unrelated_operations_user_cannot_read_all_reports():
+    other = SimpleNamespace(id=uuid4(), correo="other@example.com", rol="operaciones")
+
+    assert not user_routes._can_view_all_cuentas_de_gastos(other)

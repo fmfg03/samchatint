@@ -10167,6 +10167,29 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
 }
 
 
+# Explicit reporting visibility is intentionally separate from financial authority.
+# Alicia may inspect all employee reports, including Mike's, but receives none of
+# the owner/Finance actions that can mutate an informe or trigger a payment.
+_INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS = {
+    "90701d00-5f0b-4b3d-b677-e491e53caf82",  # Alicia
+}
+_INFORME_READ_ONLY_GLOBAL_EMAILS = {
+    "azuniga@plataformasports.com",  # Alicia
+}
+
+
+def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
+    role = (getattr(empleado, "rol", None) or "").strip().lower()
+    if role in {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}:
+        return True
+    employee_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    email = (getattr(empleado, "correo", None) or "").strip().lower()
+    return (
+        employee_id in _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS
+        or email in _INFORME_READ_ONLY_GLOBAL_EMAILS
+    )
+
+
 _COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES = {
     "jose odilon trujillo macedo",
     "luis angel orozco colin",
@@ -39947,9 +39970,8 @@ async def cuentas_de_gastos_list(
     from html import escape
 
     try:
-        _global_cuentas_roles = ('coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin')
         scope_dept = empleado_list_view_department_scope(current_empleado)
-        if current_empleado.rol in _global_cuentas_roles:
+        if _can_view_all_cuentas_de_gastos(current_empleado):
             query = (
                 select(CuentaDeGastos)
                 .options(
@@ -41417,9 +41439,8 @@ async def cuenta_de_gastos_detail(
     if not cuenta:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
 
-    # Check ownership (unless global read role: coordinador/finanzas/admin/super)
-    _cuenta_global_read_roles = ('admin', 'finanzas', 'coordinador', 'superadmin', 'super_admin')
-    if current_empleado.rol not in _cuenta_global_read_roles and cuenta.empleado_id != current_empleado.id:
+    # Global report readers may inspect, but only owners/Finance roles may mutate.
+    if not _can_view_all_cuentas_de_gastos(current_empleado) and cuenta.empleado_id != current_empleado.id:
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este informe de gastos")
 
     _is_cuenta_owner = cuenta.empleado_id == current_empleado.id
