@@ -54,6 +54,8 @@ async def test_payment_proof_review_returns_unpersisted_candidates(monkeypatch) 
 
     assert response.status_code == 200
     assert b"2026-09-22" in response.body
+    assert b"expected_amount" in response.body
+    assert b"Proveedor Demo" in response.body
     session.commit.assert_not_awaited()
 
 

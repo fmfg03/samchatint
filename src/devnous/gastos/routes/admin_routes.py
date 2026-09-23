@@ -9856,7 +9856,9 @@ async def admin_finance_payment_run(
                             .then(function(review) {{
                                 if (review.detected_date && !dateInput.value) dateInput.value = review.detected_date;
                                 var labels = {{ match: 'Coincide', revision_required: 'Revisión requerida', conflict: 'Conflicto' }};
-                                target.textContent = (labels[review.status] || 'Revisión requerida') + (review.reasons && review.reasons.length ? ': ' + review.reasons.join(' ') : '');
+                                var detectedAmount = review.detected_amount ? review.detected_amount + ' ' + (review.detected_currency || '') : 'No detectado';
+                                var expectedAmount = review.expected_amount ? review.expected_amount + ' ' + (review.expected_currency || '') : 'No disponible';
+                                target.textContent = (labels[review.status] || 'Revisión requerida') + ' · Monto: ' + detectedAmount + ' / esperado: ' + expectedAmount + ' · Beneficiario: ' + (review.detected_beneficiary || 'No detectado') + ' / esperado: ' + (review.expected_beneficiary || 'No disponible') + (review.reasons && review.reasons.length ? '. ' + review.reasons.join(' ') : '');
                                 target.style.color = review.status === 'conflict' ? '#b91c1c' : (review.status === 'match' ? '#166534' : '#92400e');
                             }})
                             .catch(function() {{ target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
@@ -10293,6 +10295,9 @@ async def admin_finance_payment_run_review_payment_proof(
             "detected_currency": review.detected_currency,
             "detected_beneficiary": review.detected_beneficiary,
             "detected_reference": review.detected_reference,
+            "expected_amount": str(_payment_proof_expected_amount(documento) or ""),
+            "expected_currency": str(getattr(documento, "currency", None) or "MXN"),
+            "expected_beneficiary": _payment_proof_expected_beneficiary(documento),
             "reasons": list(review.reasons),
         }
     )
