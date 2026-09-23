@@ -10195,6 +10195,23 @@ def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
     return _has_read_only_cross_account_informe_access(empleado)
 
 
+def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    return not (
+        cuenta.empleado_id != empleado.id
+        and _has_read_only_cross_account_informe_access(empleado)
+    )
+
+
+async def _ensure_can_mutate_informe_expense(
+    session: AsyncSession, expense: ExpenseReport, empleado: Empleado
+) -> None:
+    if not expense.cuenta_gastos_id or not _has_read_only_cross_account_informe_access(empleado):
+        return
+    cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+    if cuenta is not None and not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe de gastos")
+
+
 _COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES = {
     "jose odilon trujillo macedo",
     "luis angel orozco colin",
@@ -26935,6 +26952,8 @@ async def cancelar_gasto(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if already cancelled
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -27074,6 +27093,8 @@ async def editar_gasto_form(
 
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
+
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
 
     linked_informe_url = (
         f"/informes-de-gastos/{expense.cuenta_gastos_id}"
@@ -41450,8 +41471,7 @@ async def cuenta_de_gastos_detail(
 
     _is_cuenta_owner = cuenta.empleado_id == current_empleado.id
     _is_read_only_cross_account_view = (
-        not _is_cuenta_owner
-        and _has_read_only_cross_account_informe_access(current_empleado)
+        not _can_mutate_cuenta_de_gastos(cuenta, current_empleado)
     )
     _can_manage_cuenta = not _is_read_only_cross_account_view and (
         _is_cuenta_owner or current_empleado.rol in (
@@ -41558,6 +41578,12 @@ async def cuenta_de_gastos_detail(
         return datetime.min
 
     def _movimiento_gasto_actions(exp: ExpenseReport) -> str:
+        if not _can_manage_cuenta:
+            return (
+                f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
+                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
+                f'</div>'
+            )
         if exp.estado_gasto == 'cancelado':
             return (
                 f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
@@ -43274,6 +43300,9 @@ async def cerrar_cuenta_de_gastos(
     if not cuenta:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
 
+    if not _can_mutate_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe de gastos")
+
     # Check ownership (unless admin/finanzas)
     if current_empleado.rol not in ('admin', 'finanzas', 'superadmin', 'super_admin') and cuenta.empleado_id != current_empleado.id:
         raise HTTPException(status_code=403, detail="No tienes permiso para cerrar este informe de gastos")
@@ -43583,6 +43612,8 @@ async def _compute_cuenta_saldo_context(
 
 
 def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    if not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        return False
     if cuenta.empleado_id == empleado.id:
         return True
     rol = (empleado.rol or "").strip().lower()
@@ -43592,6 +43623,8 @@ def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> 
 def _can_submit_settlement(
     cuenta: CuentaDeGastos, empleado: Empleado, tipo: str
 ) -> bool:
+    if not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        return False
     rol = (empleado.rol or "").strip().lower()
     if tipo == "reembolso":
         return rol in {"admin", "finanzas", "superadmin", "super_admin"}
