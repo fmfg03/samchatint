@@ -32590,13 +32590,27 @@ async def rechazar_documento(
     Args:
         next: Optional redirect URL after action (from form field or query param)
     """
+    comentario_normalizado = (comentario or "").strip()
+    if not comentario_normalizado:
+        redirect_url = determine_redirect_url(
+            next, documento_id, default_to_detail=True
+        )
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="rejection_reason_required",
+                error_msg="Indica el motivo de rechazo antes de continuar.",
+            ),
+            status_code=303,
+        )
+
     try:
         await transition_documento_workflow(
             session,
             documento_id=documento_id,
             actor_id=current_empleado.id,
             action="reject",
-            comentario=comentario,
+            comentario=comentario_normalizado,
             request_context=audit_context_from_request(request),
         )
     except DocumentoWorkflowPermissionError as exc:
