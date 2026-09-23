@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -32,13 +32,20 @@ def _normalized(value: Any) -> str:
 
 
 def _parse_date(value: Any) -> date | None:
-    match = re.search(r"20\d{2}-\d{2}-\d{2}", str(value or ""))
-    if not match:
-        return None
-    try:
-        return date.fromisoformat(match.group(0))
-    except ValueError:
-        return None
+    raw = str(value or "")
+    iso_match = re.search(r"20\d{2}-\d{2}-\d{2}", raw)
+    if iso_match:
+        try:
+            return date.fromisoformat(iso_match.group(0))
+        except ValueError:
+            return None
+    local_match = re.search(r"\b\d{2}/\d{2}/20\d{2}\b", raw)
+    if local_match:
+        try:
+            return datetime.strptime(local_match.group(0), "%d/%m/%Y").date()
+        except ValueError:
+            return None
+    return None
 
 
 def _detected_currency(text: str) -> str | None:
@@ -71,7 +78,10 @@ def review_payment_proof(
     detected_beneficiary = str(entities.get("beneficiary") or "").strip() or None
     reasons: list[str] = []
     has_conflict = False
-    dates = set(re.findall(r"20\d{2}-\d{2}-\d{2}", text))
+    date_candidates = re.findall(
+        r"20\d{2}-\d{2}-\d{2}|\b\d{2}/\d{2}/20\d{2}\b", text
+    )
+    dates = {parsed for candidate in date_candidates if (parsed := _parse_date(candidate))}
     if len(dates) > 1:
         detected_date = None
         reasons.append("Se detectaron varias fechas; Finanzas debe elegir la fecha efectiva.")
