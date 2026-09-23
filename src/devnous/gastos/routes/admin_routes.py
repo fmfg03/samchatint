@@ -9593,7 +9593,7 @@ def _render_payment_run_items(
                 <form {form_attributes} method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" data-payment-proof-file required>
                     {effective_date_html}
-                    <input name="payment_proof_resolution_reason" placeholder="Motivo si se resuelve un conflicto detectado">
+                    <input name="payment_proof_resolution_reason" data-payment-proof-resolution-reason placeholder="Motivo si se resuelve un conflicto detectado">
                     <small data-payment-proof-review style="color:#475569;"></small>
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
@@ -9866,6 +9866,7 @@ async def admin_finance_payment_run(
                                 var detectedAmount = review.detected_amount ? review.detected_amount + ' ' + (review.detected_currency || '') : 'No detectado';
                                 var expectedAmount = review.expected_amount ? review.expected_amount + ' ' + (review.expected_currency || '') : 'No disponible';
                                 target.textContent = (labels[review.status] || 'Revisión requerida') + ' · Monto: ' + detectedAmount + ' / esperado: ' + expectedAmount + ' · Beneficiario: ' + (review.detected_beneficiary || 'No detectado') + ' / esperado: ' + (review.expected_beneficiary || 'No disponible') + (review.reasons && review.reasons.length ? '. ' + review.reasons.join(' ') : '');
+                                target.dataset.reviewStatus = review.status;
                                 target.style.color = review.status === 'conflict' ? '#b91c1c' : (review.status === 'match' ? '#166534' : '#92400e');
                             }})
                             .catch(function() {{ target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
@@ -9878,6 +9879,12 @@ async def admin_finance_payment_run(
                         singleFile.addEventListener('change', function() {{
                             if (singleFile.files && singleFile.files[0]) {{
                                 reviewProof(singleForm.getAttribute('data-documento-id'), singleFile.files[0], singleDate, singleReview);
+                            }}
+                        }});
+                        singleForm.addEventListener('submit', function(event) {{
+                            var reason = singleForm.querySelector('[data-payment-proof-resolution-reason]');
+                            if (singleReview.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim())) {{
+                                event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
                             }}
                         }});
                     }});
@@ -9895,8 +9902,8 @@ async def admin_finance_payment_run(
                                 var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
                                 var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
                                 var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
-                                var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.placeholder = 'Motivo si se resuelve un conflicto';
-                                var review = document.createElement('small'); review.style.gridColumn = '1 / -1';
+                                var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
+                                var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                                 row.appendChild(name); row.appendChild(input); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
                                 reviewProof(option.value, uploads[0], input, review);
                             }});
@@ -9908,8 +9915,8 @@ async def admin_finance_payment_run(
                             var name = document.createElement('span'); name.textContent = file.name;
                             var select = document.createElement('select'); select.name = 'proof_document_ids';
                             var dateInput = document.createElement('input'); dateInput.type = 'date'; dateInput.name = 'effective_payment_dates'; dateInput.required = true;
-                            var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.placeholder = 'Motivo si se resuelve un conflicto';
-                            var review = document.createElement('small'); review.style.gridColumn = '1 / -1';
+                            var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
+                            var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                             selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
                             select.addEventListener('change', function () {{ reviewProof(select.value, file, dateInput, review); }});
                             row.appendChild(name); row.appendChild(select); row.appendChild(dateInput); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
@@ -9929,6 +9936,8 @@ async def admin_finance_payment_run(
                         if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
                         if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
                         if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
+                        var unresolvedConflict = Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
+                        if (unresolvedConflict) {{ event.preventDefault(); showError('Captura el motivo de resolución para cada conflicto detectado.'); return; }}
                         if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
                         selectedRows.forEach(function (checkbox) {{
                             var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
