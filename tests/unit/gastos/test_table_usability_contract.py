@@ -103,6 +103,25 @@ def test_pending_approval_keeps_decision_column_sticky():
     assert "color: #f8fafc;" in page
 
 
+def test_budget_control_keeps_compact_decision_column_sticky():
+    page = _function_source(
+        USER_ROUTES,
+        "async def documentos_control_presupuestal(",
+        "async def _apply_control_presupuestal_assignment(",
+    )
+    assert 'class="budget-control-table"' in page
+    assert page.count('class="budget-control-decision-cell"') >= 2
+    assert ".budget-control-table .budget-control-decision-cell" in page
+    assert "position: sticky;" in page
+    assert "right: 0;" in page
+    assert ".budget-control-table thead .budget-control-decision-cell" in page
+    assert "background: #0f172a;" in page
+    assert "color: #f8fafc;" in page
+    assert 'class="budget-control-decision"' in page
+    assert "min-width: 320px;" in page
+    assert "min-width:470px" not in page
+
+
 def test_admin_fragments_adopt_shared_table_shell():
     artifact = _source(ARTIFACT_UI)
     cashflow = _source(CASHFLOW_UI)
