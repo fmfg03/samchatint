@@ -10,7 +10,16 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import Aprobacion, Anticipo, CuentaDeGastos, Documento, Empleado, ExpenseReport, Reembolso
+from ..models import (
+    Aprobacion,
+    Anticipo,
+    CFDIReport,
+    CuentaDeGastos,
+    Documento,
+    Empleado,
+    ExpenseReport,
+    Reembolso,
+)
 from ..utils.mexico_city_dates import utc_now
 from .payment_schedule_service import assign_fecha_pago_on_solicitud_approval
 from .amex_accounting_posting_service import ensure_amex_report_approval_posting
@@ -26,7 +35,10 @@ from .documento_semantics import (
     EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX,
     approval_subject_empleado,
 )
-from .documento_service import allocate_next_referencia_operaciones
+from .documento_service import (
+    allocate_next_referencia_operaciones,
+    validate_shared_cfdi_payment_amount,
+)
 from .cfdi_ingestion_service import find_blocking_cfdi_usage
 from .project_authorization_service import (
     actor_is_route_approver,
@@ -46,7 +58,26 @@ async def reserve_documento_cfdis_or_raise(
 ) -> None:
     """Atomically reserve this document's CFDIs when it enters budget control."""
     report_ids = set()
-    if documento.cfdi_report_id and not documento.cfdi_compartido_confirmado:
+    if (
+        getattr(documento, "cfdi_report_id", None)
+        and documento.cfdi_compartido_confirmado
+    ):
+        cfdi_report = await session.get(CFDIReport, documento.cfdi_report_id)
+        if cfdi_report is None:
+            raise DocumentoWorkflowValidationError(
+                "invalid_cfdi_amount",
+                "No se encontró la factura compartida vinculada a la solicitud.",
+            )
+        await validate_shared_cfdi_payment_amount(
+            session,
+            cfdi_report=cfdi_report,
+            requested_amount=documento.monto_solicitado,
+            exclude_documento_id=documento.id,
+        )
+    if (
+        getattr(documento, "cfdi_report_id", None)
+        and not documento.cfdi_compartido_confirmado
+    ):
         report_ids.add(documento.cfdi_report_id)
     if documento.tipo == "INFORME":
         expense_report_ids = await session.execute(
@@ -597,6 +628,7 @@ async def transition_documento_workflow(
         else:
             documento.estado = "enviado"
             documento.enviado_en = now
+            await reserve_documento_cfdis_or_raise(session, documento, actor)
             aprobacion_accion = "enviar"
             informe_aprobador_id = await _linked_informe_approval_actor_id(
                 session, documento

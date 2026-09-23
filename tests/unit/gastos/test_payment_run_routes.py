@@ -165,9 +165,9 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     assert 'form="payment-run-close-form"' in html
     assert "/admin/finanzas/payment-run/pay" not in html
     assert "En Proceso de Pago" in html
-    assert "Testigo de pago" in html
+    assert "Comprobante de pago" in html
     assert "comprobante-pago" not in html
-    assert "Subir testigo y pagar" not in html
+    assert "Subir comprobante y marcar pagado" not in html
     assert "sin registrar pago" not in html
     assert "Finanzas ajusta la fecha de pago y cierra el corte operativo." in html
     assert "Contabilidad o un usuario autorizado adjunta el comprobante" in html
@@ -507,7 +507,7 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
 
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "comprobante-pago" in html
-    assert "Subir testigo y pagar" in html
+    assert "Subir comprobante y marcar pagado" in html
 
 
 @pytest.mark.asyncio
@@ -609,6 +609,28 @@ async def test_payment_run_legacy_pay_endpoint_is_blocked() -> None:
     assert "comprobante" in response.headers["location"]
 
 
+@pytest.mark.asyncio
+async def test_payment_run_upload_requires_payment_proof() -> None:
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(estado="en_proceso_pago")
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        documento_id=uuid4(),
+        request=SimpleNamespace(query_params={}),
+        session=session,
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="superadmin",
+            departamento="Contabilidad",
+            nombre="Superadmin",
+        ),
+        comprobante_pago=None,
+    )
+
+    assert response.status_code == 303
+    assert "Selecciona%20el%20comprobante%20de%20pago" in response.headers["location"]
+
+
 def test_payment_run_upload_payment_proof_is_atomic() -> None:
     source = open("src/devnous/gastos/routes/admin_routes.py", encoding="utf-8").read()
     start = source.index("async def admin_finance_payment_run_upload_payment_proof")
@@ -618,6 +640,8 @@ def test_payment_run_upload_payment_proof_is_atomic() -> None:
     assert "commit=False" in block
     assert "await register_document_payment(" in block
     assert "actor=current_empleado" in block
+    assert "comprobante" in block
+    assert "testigo" not in block
 
 
 def test_accounting_profile_can_create_employee_beneficiary_requests() -> None:

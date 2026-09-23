@@ -9,11 +9,21 @@ from datetime import datetime, date
 from typing import Dict, Optional, Sequence
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
-from ..models import Aprobacion, Adjunto, CuentaDeGastos, Documento, Empleado, ProveedorCliente, Tournament
+from ..models import (
+    Aprobacion,
+    Adjunto,
+    CFDIReport,
+    CuentaDeGastos,
+    Documento,
+    Empleado,
+    ExpenseReport,
+    ProveedorCliente,
+    Tournament,
+)
 from ..expense_metadata import normalize_categories, normalize_currency, normalize_edition
 from .tournament_project_visibility import visibility_validation_error
 from ..utils.receipt_bytes import (
@@ -162,6 +172,7 @@ async def validate_shared_cfdi_payment_amount(
     *,
     cfdi_report: object,
     requested_amount: object,
+    exclude_documento_id: Optional[UUID] = None,
 ) -> Decimal:
     """Atomically enforce that shared CFDI requests never exceed fiscal total."""
     report_id = getattr(cfdi_report, "id", None)
@@ -174,16 +185,39 @@ async def validate_shared_cfdi_payment_amount(
         text("SELECT pg_advisory_xact_lock(hashtext(:lock_key))"),
         {"lock_key": f"shared_cfdi_amount:{report_id}"},
     )
-    result = await session.execute(
-        select(Documento.monto_solicitado).where(
-            Documento.cfdi_report_id == report_id,
-            Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
-            Documento.monto_solicitado.is_not(None),
+    documento_conditions = [
+        Documento.cfdi_report_id == report_id,
+        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+        Documento.monto_solicitado.is_not(None),
+    ]
+    if exclude_documento_id is not None:
+        documento_conditions.append(Documento.id != exclude_documento_id)
+    documento_result = await session.execute(
+        select(Documento.monto_solicitado).where(and_(*documento_conditions))
+    )
+    expense_conditions = [
+        ExpenseReport.cfdi_report_id == report_id,
+        ExpenseReport.estado_gasto != "cancelado",
+        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+    ]
+    if exclude_documento_id is not None:
+        expense_conditions.append(Documento.id != exclude_documento_id)
+    expense_result = await session.execute(
+        select(ExpenseReport.gasto_cantidad)
+        .join(
+            Documento,
+            or_(
+                ExpenseReport.informe_documento_id == Documento.id,
+                ExpenseReport.documento_id == Documento.id,
+            ),
         )
+        .where(and_(*expense_conditions))
     )
     return shared_cfdi_remaining_amount(
         invoice_total=getattr(cfdi_report, "total", None),
-        reserved_amounts=result.scalars().all(),
+        reserved_amounts=(
+            documento_result.scalars().all() + expense_result.scalars().all()
+        ),
         requested_amount=requested_amount,
     )
 
@@ -1134,6 +1168,23 @@ async def update_solicitud_terceros_document(
         raise SolicitudValidationError(
             "invalid_categorias",
             "Las categorías solo pueden seleccionarse para un proyecto configurado.",
+        )
+
+    if (
+        documento.cfdi_report_id
+        and payload.cfdi_compartido_confirmado
+    ):
+        cfdi_report = await session.get(CFDIReport, documento.cfdi_report_id)
+        if cfdi_report is None:
+            raise SolicitudValidationError(
+                "invalid_cfdi_amount",
+                "No se encontró la factura compartida vinculada a la solicitud.",
+            )
+        await validate_shared_cfdi_payment_amount(
+            session,
+            cfdi_report=cfdi_report,
+            requested_amount=payload.monto_solicitado,
+            exclude_documento_id=documento.id,
         )
 
     documento.monto_solicitado = payload.monto_solicitado
