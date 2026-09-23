@@ -98,6 +98,9 @@ def test_pending_approval_keeps_decision_column_sticky():
     assert ".approval-queue-table .approval-actions-cell" in page
     assert "position: sticky;" in page
     assert "right: 0;" in page
+    assert ".approval-queue-table thead .approval-actions-cell" in page
+    assert "background: #0f172a;" in page
+    assert "color: #f8fafc;" in page
 
 
 def test_admin_fragments_adopt_shared_table_shell():
