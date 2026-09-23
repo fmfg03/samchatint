@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 
 from devnous.gastos.services import documento_service
+from devnous.gastos.services import documento_workflow_service
 from devnous.gastos.services.documento_service import (
     SolicitudTercerosPayload,
     SolicitudValidationError,
@@ -65,20 +66,20 @@ class _AmountResult:
 
 
 class _AmountSession:
-    def __init__(self, amounts):
-        self.amounts = amounts
+    def __init__(self, *amount_sets):
+        self.amount_sets = amount_sets
         self.calls = []
 
     async def execute(self, statement, *args):
         self.calls.append((statement, args))
         if len(self.calls) == 1:
             return None
-        return _AmountResult(self.amounts)
+        return _AmountResult(self.amount_sets[len(self.calls) - 2])
 
 
 @pytest.mark.asyncio
 async def test_shared_cfdi_amount_validation_locks_and_reads_existing_reservations() -> None:
-    session = _AmountSession([Decimal("102312.00")])
+    session = _AmountSession([Decimal("102312.00")], [])
     report = SimpleNamespace(id=uuid4(), total=204624.00)
 
     remaining = await documento_service.validate_shared_cfdi_payment_amount(
@@ -88,7 +89,59 @@ async def test_shared_cfdi_amount_validation_locks_and_reads_existing_reservatio
     )
 
     assert remaining == Decimal("102312.00")
-    assert len(session.calls) == 2
+    assert len(session.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_shared_cfdi_amount_validation_excludes_current_document_and_counts_expenses() -> None:
+    current_document_id = uuid4()
+    session = _AmountSession([Decimal("50000.00")], [Decimal("52312.00")])
+    report = SimpleNamespace(id=uuid4(), total=204624.00)
+
+    remaining = await documento_service.validate_shared_cfdi_payment_amount(
+        session,
+        cfdi_report=report,
+        requested_amount=Decimal("102312.00"),
+        exclude_documento_id=current_document_id,
+    )
+
+    assert remaining == Decimal("102312.00")
+    assert len(session.calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_shared_cfdi_reservation_revalidates_shared_document(monkeypatch) -> None:
+    document_id = uuid4()
+    report = SimpleNamespace(id=uuid4(), total=204624.00)
+    calls = []
+
+    class _ReservationSession:
+        async def get(self, _model, _id):
+            return report
+
+    async def fake_validate(
+        _session, *, cfdi_report, requested_amount, exclude_documento_id
+    ):
+        calls.append((cfdi_report, requested_amount, exclude_documento_id))
+        return Decimal("102312.00")
+
+    monkeypatch.setattr(
+        documento_workflow_service, "validate_shared_cfdi_payment_amount", fake_validate
+    )
+
+    await documento_workflow_service.reserve_documento_cfdis_or_raise(
+        _ReservationSession(),
+        SimpleNamespace(
+            id=document_id,
+            tipo="SOLICITUD",
+            cfdi_report_id=report.id,
+            cfdi_compartido_confirmado=True,
+            monto_solicitado=Decimal("102312.00"),
+        ),
+        SimpleNamespace(id=uuid4(), rol="usuario"),
+    )
+
+    assert calls == [(report, Decimal("102312.00"), document_id)]
 
 
 @pytest.mark.asyncio
@@ -164,6 +217,24 @@ class _CreationSession:
         return None
 
 
+class _UpdateSession:
+    def __init__(self, report, proveedor, empleado):
+        self.report = report
+        self.results = iter([proveedor, empleado])
+
+    async def execute(self, *_args, **_kwargs):
+        return _CreationResult(next(self.results))
+
+    async def get(self, _model, _id):
+        return self.report
+
+    async def commit(self):
+        return None
+
+    async def refresh(self, _value):
+        return None
+
+
 def _shared_payload(*, confirmed: bool) -> SolicitudTercerosPayload:
     return SolicitudTercerosPayload(
         empleado_id=uuid4(),
@@ -215,6 +286,49 @@ async def test_manual_shared_cfdi_validates_remaining_balance_before_creation(mo
 
     assert documento.cfdi_report_id == report.id
     assert calls == [(report, 102312.00)]
+
+
+@pytest.mark.asyncio
+async def test_editing_linked_shared_cfdi_revalidates_new_amount(monkeypatch) -> None:
+    empleado_id = uuid4()
+    report = SimpleNamespace(id=uuid4(), total=204624.00)
+    document = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="control_presupuestal",
+        empleado_id=empleado_id,
+        budget_concept_id=None,
+        cfdi_report_id=report.id,
+        cfdi_compartido_confirmado=True,
+    )
+    calls = []
+
+    async def fake_validate(
+        _session, *, cfdi_report, requested_amount, exclude_documento_id
+    ):
+        calls.append((cfdi_report, requested_amount, exclude_documento_id))
+        return Decimal("102312.00")
+
+    monkeypatch.setattr(
+        documento_service, "validate_shared_cfdi_payment_amount", fake_validate
+    )
+
+    updated = await documento_service.update_solicitud_terceros_document(
+        _UpdateSession(report, SimpleNamespace(), SimpleNamespace()),
+        documento=document,
+        payload=SolicitudTercerosPayload(
+            empleado_id=empleado_id,
+            monto_solicitado=102312.00,
+            proveedor_cliente_id=uuid4(),
+            torneo_id=None,
+            proyecto_otro="Nacional Morelos",
+            concepto_pago="Segundo 50% de factura",
+            cfdi_compartido_confirmado=True,
+        ),
+    )
+
+    assert updated.monto_solicitado == 102312.00
+    assert calls == [(report, 102312.00, document.id)]
 
 
 @pytest.mark.asyncio
