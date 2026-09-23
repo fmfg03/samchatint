@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from devnous.gastos.routes.admin_routes import (
     _cleanup_document_origin,
+    _cleanup_fiscal_controls_are_blockers,
     _cleanup_period_bounds,
 )
 
@@ -46,6 +47,18 @@ def test_cleanup_period_keeps_an_inherited_bi_year_without_a_month() -> None:
     assert period == "2025-09"
     assert start == datetime(2025, 9, 1)
     assert end == datetime(2025, 10, 1)
+
+
+def test_cleanup_opens_fiscal_controls_only_when_they_are_blockers() -> None:
+    assert _cleanup_fiscal_controls_are_blockers(
+        ["Falta cuenta de cargo", "Falta cuenta de IVA"]
+    )
+    assert _cleanup_fiscal_controls_are_blockers(
+        ["Falta cuenta de retención ISR"]
+    )
+    assert not _cleanup_fiscal_controls_are_blockers(
+        ["Falta cuenta de cargo", "Falta CFDI vinculado"]
+    )
 
 
 def test_cleanup_document_origin_uses_explicit_informe_link() -> None:
