@@ -108,6 +108,38 @@ def test_payment_run_bulk_proof_plan_rejects_unselected_mapping() -> None:
     assert exc.value.code == "payment_proof_mapping_invalid"
 
 
+def test_payment_run_bulk_proof_plan_rejects_duplicate_selection() -> None:
+    document_id = uuid4()
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[document_id, document_id],
+            proof_document_ids=[],
+            uploads=[SimpleNamespace(filename="proof.pdf")],
+            apply_one_to_all=True,
+        )
+    assert exc.value.code == "duplicate_payment_proof_selection"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("documento", [None, SimpleNamespace(id=uuid4(), estado="aprobado")])
+async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
+    monkeypatch, documento
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=documento)
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(), session=session, current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[document_id], proof_document_ids=[document_id],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        apply_one_to_all=False,
+    )
+    assert response.status_code == 303
+    session.rollback.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch(
     monkeypatch,
