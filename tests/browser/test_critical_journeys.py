@@ -147,6 +147,43 @@ def test_approver_pending_queue_contains_table_scroll_on_mobile(
     assert has_horizontal_scroll is True
 
 
+def test_approver_decision_actions_stay_in_view_at_1280(
+    page: Page, browser_server: str
+) -> None:
+    page.set_viewport_size({"width": 1280, "height": 900})
+    response = page.goto(f"{browser_server}/documentos/pendientes")
+    assert response is not None
+    assert response.status == 200
+
+    shell = page.locator(".table-shell").last
+    expect(shell).to_be_visible()
+    assert shell.evaluate("(el) => el.scrollWidth > el.clientWidth") is True
+
+    cell = page.locator("td.approval-actions-cell").first
+    approve = cell.get_by_role("button", name="Aprobar", exact=True)
+    reject = cell.get_by_role("button", name="Rechazar", exact=True)
+    expect(approve).to_be_visible()
+    expect(reject).to_be_visible()
+    assert cell.evaluate("(el) => getComputedStyle(el).position") == "sticky"
+
+    shell_box = shell.bounding_box()
+    cell_box = cell.bounding_box()
+    assert shell_box is not None
+    assert cell_box is not None
+    assert cell_box["x"] >= shell_box["x"] - 1
+    assert cell_box["x"] + cell_box["width"] <= (
+        shell_box["x"] + shell_box["width"] + 1
+    )
+
+    before_x = cell_box["x"]
+    shell.evaluate("(el) => { el.scrollLeft = el.scrollWidth; }")
+    page.wait_for_timeout(50)
+    after_box = cell.bounding_box()
+    assert after_box is not None
+    assert abs(after_box["x"] - before_x) <= 1
+    _capture(page, "approver-sticky-decision-actions-1280")
+
+
 def test_budget_control_reaches_classification_queue_with_context(
     page: Page, browser_server: str
 ) -> None:
