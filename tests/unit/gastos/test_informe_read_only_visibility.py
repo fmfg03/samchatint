@@ -15,6 +15,17 @@ def test_alicia_can_read_all_reports_without_receiving_financial_authority():
     assert alicia.rol not in {"admin", "finanzas", "superadmin", "super_admin"}
 
 
+def test_odilon_has_read_only_cross_account_visibility_despite_admin_role():
+    odilon = SimpleNamespace(
+        id=uuid4(),
+        correo="otrujillo@plataformasports.com",
+        rol="admin",
+    )
+
+    assert user_routes._can_view_all_cuentas_de_gastos(odilon)
+    assert user_routes._has_read_only_cross_account_informe_access(odilon)
+
+
 def test_an_unrelated_operations_user_cannot_read_all_reports():
     other = SimpleNamespace(id=uuid4(), correo="other@example.com", rol="operaciones")
 

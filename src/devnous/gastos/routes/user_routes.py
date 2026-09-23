@@ -10168,26 +10168,31 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
 
 
 # Explicit reporting visibility is intentionally separate from financial authority.
-# Alicia may inspect all employee reports, including Mike's, but receives none of
-# the owner/Finance actions that can mutate an informe or trigger a payment.
+# Alicia and Odilón may inspect all employee reports, including Mike's, but their
+# cross-account access does not include report mutation or payment actions.
 _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS = {
     "90701d00-5f0b-4b3d-b677-e491e53caf82",  # Alicia
 }
 _INFORME_READ_ONLY_GLOBAL_EMAILS = {
     "azuniga@plataformasports.com",  # Alicia
+    "otrujillo@plataformasports.com",  # José Odilón Trujillo Macedo
 }
 
 
-def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
-    role = (getattr(empleado, "rol", None) or "").strip().lower()
-    if role in {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}:
-        return True
+def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
     employee_id = str(getattr(empleado, "id", "") or "").strip().lower()
     email = (getattr(empleado, "correo", None) or "").strip().lower()
     return (
         employee_id in _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS
         or email in _INFORME_READ_ONLY_GLOBAL_EMAILS
     )
+
+
+def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
+    role = (getattr(empleado, "rol", None) or "").strip().lower()
+    if role in {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}:
+        return True
+    return _has_read_only_cross_account_informe_access(empleado)
 
 
 _COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES = {
@@ -41444,10 +41449,18 @@ async def cuenta_de_gastos_detail(
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este informe de gastos")
 
     _is_cuenta_owner = cuenta.empleado_id == current_empleado.id
-    _can_manage_cuenta = _is_cuenta_owner or current_empleado.rol in (
+    _is_read_only_cross_account_view = (
+        not _is_cuenta_owner
+        and _has_read_only_cross_account_informe_access(current_empleado)
+    )
+    _can_manage_cuenta = not _is_read_only_cross_account_view and (
+        _is_cuenta_owner or current_empleado.rol in (
         'admin', 'finanzas', 'superadmin', 'super_admin'
+        )
     )
     _can_manage_amex = (
+        not _is_read_only_cross_account_view
+        and
         (current_empleado.rol or "").strip().lower() in FINANCE_AMEX_ROLES
         and _cuenta_allows_company_amex(cuenta)
     )
