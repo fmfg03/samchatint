@@ -9234,6 +9234,21 @@ def _build_payment_proof_upload_plan(
     return list(zip(proof_document_ids, uploads))
 
 
+def _parse_payment_proof_document_ids(
+    raw_document_ids: Optional[list[Any]], *, field: str
+) -> list[UUIDType]:
+    """Convert form values to IDs while keeping malformed batch input user-visible."""
+    try:
+        return [UUIDType(str(document_id)) for document_id in raw_document_ids or []]
+    except (TypeError, ValueError, AttributeError) as exc:
+        message = (
+            "La selección de solicitudes no es válida. Actualiza la página e inténtalo de nuevo."
+            if field == "selected_document_ids"
+            else "La asignación de comprobantes no es válida. Actualiza la página e inténtalo de nuevo."
+        )
+        raise SolicitudValidationError("payment_proof_form_invalid", message) from exc
+
+
 def _payment_run_money(value: Any, currency: str = "MXN") -> str:
     try:
         amount = float(value or 0)
@@ -9782,6 +9797,8 @@ async def admin_finance_payment_run(
                     <div style="font-size:13px;color:#475569;">Selecciona las solicitudes abajo. Después elige los archivos y asigna cada uno a su solicitud. Esta operación marca como pagadas únicamente las solicitudes confirmadas.</div>
                     <input id="payment-proof-files" type="file" name="comprobantes_pago" multiple required>
                     <label style="display:flex;gap:8px;align-items:center;font-size:13px;color:#334155;"><input id="payment-proof-apply-one" type="checkbox" name="apply_one_to_all" value="true"> Aplicar un solo testigo a todas las solicitudes seleccionadas</label>
+                    <div id="payment-proof-selected-inputs"></div>
+                    <div id="payment-proof-form-error" role="alert" aria-live="polite" style="display:none;color:#b91c1c;font-size:13px;font-weight:700;"></div>
                     <div id="payment-proof-mapping" style="display:grid;gap:8px;"></div>
                     <button class="button secondary" type="submit" onclick="return confirm('Se cargarán los testigos con la asignación mostrada y las solicitudes pasarán a Pagada. ¿Continuar?');">Cargar testigos seleccionados y pagar</button>
                 </form>
@@ -9790,7 +9807,13 @@ async def admin_finance_payment_run(
                     var files = document.getElementById('payment-proof-files');
                     var applyOne = document.getElementById('payment-proof-apply-one');
                     var mapping = document.getElementById('payment-proof-mapping');
+                    var form = document.getElementById('payment-run-bulk-proof-form');
+                    var selectedInputs = document.getElementById('payment-proof-selected-inputs');
+                    var formError = document.getElementById('payment-proof-form-error');
+                    var uuidPattern = /^[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}$/i;
                     function selected() {{ return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')); }}
+                    function showError(message) {{ formError.textContent = message; formError.style.display = 'block'; }}
+                    function clearError() {{ formError.textContent = ''; formError.style.display = 'none'; }}
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
@@ -9813,6 +9836,20 @@ async def admin_finance_payment_run(
                     }}
                     files.addEventListener('change', refresh); applyOne.addEventListener('change', refresh);
                     document.addEventListener('change', function (event) {{ if (event.target && event.target.matches('[data-payment-proof-selection]')) refresh(); }});
+                    form.addEventListener('submit', function (event) {{
+                        var selectedRows = selected();
+                        var uploads = Array.prototype.slice.call(files.files || []);
+                        var mapped = Array.prototype.slice.call(mapping.querySelectorAll('select[name="proof_document_ids"]'));
+                        clearError(); selectedInputs.innerHTML = '';
+                        if (!selectedRows.length) {{ event.preventDefault(); showError('Selecciona al menos una solicitud antes de cargar el lote.'); return; }}
+                        if (!uploads.length) {{ event.preventDefault(); showError('Selecciona los comprobantes de pago.'); return; }}
+                        if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
+                        if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
+                        if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
+                        selectedRows.forEach(function (checkbox) {{
+                            var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
+                        }});
+                    }});
                 }})();
                 </script>
                 """ if can_confirm_payment else ""}
@@ -10130,9 +10167,9 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    selected_document_ids: List[UUIDType] = Form(...),
-    proof_document_ids: Optional[List[UUIDType]] = Form(None),
-    comprobantes_pago: List[UploadFile] = File(...),
+    selected_document_ids: Optional[List[str]] = Form(None),
+    proof_document_ids: Optional[List[str]] = Form(None),
+    comprobantes_pago: Optional[List[UploadFile]] = File(None),
     apply_one_to_all: bool = Form(False),
 ) -> RedirectResponse:
     """Attach explicitly mapped Payment Run proofs and confirm the selected payments."""
@@ -10146,10 +10183,16 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     try:
         require_payment_run_access(current_empleado)
         require_payment_run_payment_confirmation(current_empleado)
+        selected_ids = _parse_payment_proof_document_ids(
+            selected_document_ids, field="selected_document_ids"
+        )
+        mapped_ids = _parse_payment_proof_document_ids(
+            proof_document_ids, field="proof_document_ids"
+        )
         plan = _build_payment_proof_upload_plan(
-            selected_document_ids=selected_document_ids,
-            proof_document_ids=proof_document_ids or [],
-            uploads=comprobantes_pago,
+            selected_document_ids=selected_ids,
+            proof_document_ids=mapped_ids,
+            uploads=comprobantes_pago or [],
             apply_one_to_all=apply_one_to_all,
         )
 
@@ -10218,6 +10261,16 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
         )
     except SolicitudValidationError as exc:
         await session.rollback()
+        logger.info(
+            "Bulk payment proof form rejected",
+            extra={
+                "actor_id": str(current_empleado.id),
+                "validation_code": exc.code,
+                "selected_count": len(selected_document_ids or []),
+                "mapping_count": len(proof_document_ids or []),
+                "upload_count": len(comprobantes_pago or []),
+            },
+        )
         return _payment_run_redirect(
             error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
         )
