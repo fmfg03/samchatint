@@ -10186,6 +10186,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             mime_type=content_type,
             expected_amount=_payment_proof_expected_amount(documento),
             expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+            expected_currency=str(getattr(documento, "currency", None) or "MXN"),
         )
         resolution_reason = (payment_proof_resolution_reason or "").strip()
         if review.status == "conflict" and not resolution_reason:
@@ -10282,12 +10283,14 @@ async def admin_finance_payment_run_review_payment_proof(
         mime_type=content_type,
         expected_amount=_payment_proof_expected_amount(documento),
         expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+        expected_currency=str(getattr(documento, "currency", None) or "MXN"),
     )
     return JSONResponse(
         {
             "status": review.status,
             "detected_date": review.detected_date.isoformat() if review.detected_date else None,
             "detected_amount": str(review.detected_amount) if review.detected_amount is not None else None,
+            "detected_currency": review.detected_currency,
             "detected_beneficiary": review.detected_beneficiary,
             "detected_reference": review.detected_reference,
             "reasons": list(review.reasons),
@@ -10389,6 +10392,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 mime_type=attachment.mime_type,
                 expected_amount=_payment_proof_expected_amount(documento),
                 expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+                expected_currency=str(getattr(documento, "currency", None) or "MXN"),
             )
             resolution_reason = str(raw_reason or "").strip()
             if review.status == "conflict" and not resolution_reason:

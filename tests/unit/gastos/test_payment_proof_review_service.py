@@ -21,3 +21,22 @@ def test_payment_proof_review_keeps_unreadable_proof_manual(monkeypatch):
     )
     review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
     assert review.status == "revision_required"
+
+
+def test_payment_proof_review_marks_multiple_dates_for_manual_review(monkeypatch):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: "Fecha: 2026-09-22\nGenerado: 2026-09-23\nMonto: 100.00\nBeneficiario: Proveedor Demo",
+    )
+    review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
+    assert review.status == "revision_required"
+    assert review.detected_date is None
+
+
+def test_payment_proof_review_blocks_declared_currency_conflict(monkeypatch):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: "Fecha: 2026-09-22\nMonto: 100.00 USD\nBeneficiario: Proveedor Demo",
+    )
+    review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo", expected_currency="MXN")
+    assert review.status == "conflict"

@@ -41,7 +41,7 @@ async def test_payment_proof_review_returns_unpersisted_candidates(monkeypatch) 
     monkeypatch.setattr(
         "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
         lambda **_: PaymentProofReview(
-            "match", date(2026, 9, 22), Decimal("100.00"), "Proveedor Demo", "REF-1", ()
+            "match", date(2026, 9, 22), Decimal("100.00"), "MXN", "Proveedor Demo", "REF-1", ()
         ),
     )
 

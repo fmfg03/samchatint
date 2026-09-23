@@ -20,6 +20,7 @@ class PaymentProofReview:
     status: str
     detected_date: date | None
     detected_amount: Decimal | None
+    detected_currency: str | None
     detected_beneficiary: str | None
     detected_reference: str | None
     reasons: tuple[str, ...]
@@ -40,6 +41,11 @@ def _parse_date(value: Any) -> date | None:
         return None
 
 
+def _detected_currency(text: str) -> str | None:
+    match = re.search(r"\b(MXN|USD|EUR)\b", text or "", flags=re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
 def _parse_amount(value: Any) -> Decimal | None:
     try:
         return Decimal(str(value or "").replace(",", ""))
@@ -49,7 +55,7 @@ def _parse_amount(value: Any) -> Decimal | None:
 
 def review_payment_proof(
     *, raw: bytes, filename: str, mime_type: str, expected_amount: Any,
-    expected_beneficiary: str | None,
+    expected_beneficiary: str | None, expected_currency: str | None = None,
 ) -> PaymentProofReview:
     """Return audit-safe candidates; never persists or treats a candidate as fact."""
     try:
@@ -57,21 +63,32 @@ def review_payment_proof(
             raw=raw, filename=filename, mime_type=mime_type, allow_pdf=True
         )
     except HTTPException:
-        return PaymentProofReview("revision_required", None, None, None, None, ("No fue posible extraer texto local del comprobante.",))
+        return PaymentProofReview("revision_required", None, None, None, None, None, ("No fue posible extraer texto local del comprobante.",))
     entities = _extract_payment_entities(text)
     detected_date = _parse_date(entities.get("date"))
     detected_amount = _parse_amount(entities.get("amount"))
+    detected_currency = _detected_currency(text)
     detected_beneficiary = str(entities.get("beneficiary") or "").strip() or None
     reasons: list[str] = []
+    has_conflict = False
+    dates = set(re.findall(r"20\d{2}-\d{2}-\d{2}", text))
+    if len(dates) > 1:
+        detected_date = None
+        reasons.append("Se detectaron varias fechas; Finanzas debe elegir la fecha efectiva.")
     try:
         expected = Decimal(str(expected_amount))
     except (InvalidOperation, ValueError):
         expected = None
     if detected_amount is not None and expected is not None and detected_amount != expected:
         reasons.append("El monto detectado no coincide con el monto programado.")
+        has_conflict = True
+    if detected_currency and expected_currency and detected_currency != expected_currency.upper():
+        reasons.append("La moneda detectada no coincide con la moneda programada.")
+        has_conflict = True
     if detected_beneficiary and expected_beneficiary and _normalized(detected_beneficiary) != _normalized(expected_beneficiary):
         reasons.append("El beneficiario detectado no coincide con el beneficiario programado.")
-    if reasons:
+        has_conflict = True
+    if has_conflict:
         status = "conflict"
     elif not (detected_date and detected_amount and detected_beneficiary):
         status = "revision_required"
@@ -79,6 +96,6 @@ def review_payment_proof(
     else:
         status = "match"
     return PaymentProofReview(
-        status, detected_date, detected_amount, detected_beneficiary,
+        status, detected_date, detected_amount, detected_currency, detected_beneficiary,
         str(entities.get("bank_reference") or "").strip() or None, tuple(reasons)
     )
