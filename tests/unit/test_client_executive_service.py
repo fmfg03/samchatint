@@ -279,6 +279,31 @@ async def test_authorized_tournaments_does_not_require_a_tournament_slug_column(
 
 
 @pytest.mark.asyncio
+async def test_authorized_direction_portfolios_orders_by_the_distinct_projection():
+    """Keep the Direction entry query valid for PostgreSQL DISTINCT semantics."""
+
+    class Result:
+        def __iter__(self):
+            return iter([])
+
+    class Session:
+        statement = ""
+
+        async def execute(self, statement, _params=None):
+            self.statement = str(statement)
+            return Result()
+
+    session = Session()
+    assert (
+        await service.authorized_direction_portfolio_ids(session, "direction-holder")
+        == []
+    )
+    assert "SELECT DISTINCT portfolio.id::text AS id" in session.statement
+    assert "ORDER BY portfolio.id::text" in session.statement
+    assert "ORDER BY portfolio.id\n" not in session.statement
+
+
+@pytest.mark.asyncio
 async def test_superadmin_reads_all_tournaments_without_a_portfolio_position():
     class Result:
         def __iter__(self):
