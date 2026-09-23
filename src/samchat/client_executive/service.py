@@ -141,7 +141,7 @@ async def authorized_direction_portfolio_ids(
                 WHERE holder.empleado_id = :empleado_id
                   AND holder.active = TRUE
                   AND holder.position_key = ANY(:position_keys)
-                ORDER BY portfolio.id
+                ORDER BY portfolio.id::text
                 """),
             {
                 "empleado_id": str(empleado_id),
