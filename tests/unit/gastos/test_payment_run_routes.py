@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -55,6 +56,20 @@ def test_payment_run_bulk_proof_form_ids_are_parsed_before_planning() -> None:
 
     assert exc.value.code == "payment_proof_form_invalid"
     assert "asignación" in str(exc.value)
+
+
+def test_payment_proof_effective_dates_require_one_valid_date_per_payment() -> None:
+    assert admin_routes._parse_effective_payment_dates(
+        ["2026-09-22", "2026-09-23"], expected_count=2
+    ) == [date(2026, 9, 22), date(2026, 9, 23)]
+
+    with pytest.raises(admin_routes.SolicitudValidationError) as missing:
+        admin_routes._parse_effective_payment_dates([], expected_count=1)
+    assert missing.value.code == "effective_payment_date_required"
+
+    with pytest.raises(admin_routes.SolicitudValidationError) as invalid:
+        admin_routes._parse_effective_payment_dates(["22/09/2026"], expected_count=1)
+    assert invalid.value.code == "effective_payment_date_invalid"
 
 
 def test_payment_run_bulk_proof_plan_supports_one_proof_for_all_selected() -> None:
@@ -150,6 +165,7 @@ async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
         request=SimpleNamespace(), session=session, current_empleado=SimpleNamespace(id=uuid4()),
         selected_document_ids=[document_id], proof_document_ids=[document_id],
         comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
         apply_one_to_all=False,
     )
     assert response.status_code == 303
@@ -171,6 +187,7 @@ async def test_payment_run_bulk_proof_upload_redirects_invalid_form_values(monke
         selected_document_ids=[str(uuid4())],
         proof_document_ids=["Dar formato al texto"],
         comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
         apply_one_to_all=False,
     )
 
@@ -208,6 +225,7 @@ async def test_payment_run_single_proof_rolls_back_validation_failures(
         documento_id=document_id, request=SimpleNamespace(), session=session,
         current_empleado=SimpleNamespace(id=uuid4()),
         comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+        fecha_pago_efectiva="2026-09-22",
     )
     assert response.status_code == 303
     session.rollback.assert_awaited_once()
@@ -234,7 +252,10 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
     attach_mock = AsyncMock()
     monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", attach_mock)
 
-    async def register_payment(*_, documento_id, **__):
+    registered_effective_dates = []
+
+    async def register_payment(*_, documento_id, **kwargs):
+        registered_effective_dates.append(kwargs["fecha_pago_efectiva"])
         return SimpleNamespace(
             documento=SimpleNamespace(
                 id=documento_id, numero_referencia=f"S-{str(documento_id)[:8]}"
@@ -259,6 +280,7 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
             _PaymentProofUpload("spei-2.pdf", b"%PDF-1.4 second"),
             _PaymentProofUpload("spei-1.pdf", b"%PDF-1.4 first"),
         ],
+        effective_payment_dates=["2026-09-22", "2026-09-23"],
         apply_one_to_all=False,
     )
 
@@ -267,6 +289,10 @@ async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch
     assert "vista=comprobantes" in response.headers["location"]
     assert attach_mock.await_count == 2
     session.commit.assert_awaited_once()
+    assert [value.isoformat() for value in registered_effective_dates] == [
+        "2026-09-22",
+        "2026-09-23",
+    ]
     assert [item["documento_id"] for item in notifications] == [second_id, first_id]
 
 

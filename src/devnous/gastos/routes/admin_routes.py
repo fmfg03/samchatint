@@ -9249,6 +9249,31 @@ def _parse_payment_proof_document_ids(
         raise SolicitudValidationError("payment_proof_form_invalid", message) from exc
 
 
+def _parse_effective_payment_dates(
+    raw_dates: Optional[list[str]], *, expected_count: int
+) -> list[date]:
+    if len(raw_dates or []) != expected_count:
+        raise SolicitudValidationError(
+            "effective_payment_date_required",
+            "Captura una fecha efectiva de pago para cada solicitud.",
+        )
+    try:
+        return [date.fromisoformat(str(value)) for value in raw_dates or []]
+    except (TypeError, ValueError) as exc:
+        raise SolicitudValidationError(
+            "effective_payment_date_invalid",
+            "Una fecha efectiva de pago no es válida.",
+        ) from exc
+
+
+def _payment_proof_expected_beneficiary(documento: Documento) -> str | None:
+    return getattr(getattr(documento, "beneficiario_empleado", None), "nombre", None) or getattr(getattr(documento, "proveedor_cliente", None), "nombre", None)
+
+
+def _payment_proof_expected_amount(documento: Documento) -> Any:
+    return getattr(documento, "monto_total", None) or getattr(documento, "monto_solicitado", None)
+
+
 def _payment_run_money(value: Any, currency: str = "MXN") -> str:
     try:
         amount = float(value or 0)
@@ -9550,9 +9575,18 @@ def _render_payment_run_items(
                 if entity_type == "prestamo"
                 else f"/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago"
             )
+            effective_date_html = ""
+            if entity_type != "prestamo":
+                effective_date_html = (
+                    '<label style="font-size:12px;color:#334155;">'
+                    'Fecha efectiva de pago'
+                    '<input type="date" name="fecha_pago_efectiva" required>'
+                    '</label>'
+                )
             proof_html = f"""
                 <form method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" required>
+                    {effective_date_html}
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
             """
@@ -9822,16 +9856,24 @@ async def admin_finance_payment_run(
                         if (!uploads.length) return;
                         if (!selectedOptions.length) {{ mapping.textContent = 'Selecciona al menos una solicitud de la tabla.'; return; }}
                         if (applyOne.checked) {{
-                            mapping.textContent = uploads.length === 1 ? uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).' : 'Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.';
+                            if (uploads.length !== 1) {{ mapping.textContent = 'Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.'; return; }}
+                            mapping.textContent = uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).';
+                            selectedOptions.forEach(function (option) {{
+                                var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                                var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
+                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
+                                row.appendChild(name); row.appendChild(input); mapping.appendChild(row);
+                            }});
                             return;
                         }}
                         uploads.forEach(function (file) {{
                             var row = document.createElement('label');
-                            row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                            row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) minmax(160px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
                             var name = document.createElement('span'); name.textContent = file.name;
                             var select = document.createElement('select'); select.name = 'proof_document_ids';
+                            var dateInput = document.createElement('input'); dateInput.type = 'date'; dateInput.name = 'effective_payment_dates'; dateInput.required = true;
                             selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
-                            row.appendChild(name); row.appendChild(select); mapping.appendChild(row);
+                            row.appendChild(name); row.appendChild(select); row.appendChild(dateInput); mapping.appendChild(row);
                         }});
                     }}
                     files.addEventListener('change', refresh); applyOne.addEventListener('change', refresh);
@@ -9840,11 +9882,13 @@ async def admin_finance_payment_run(
                         var selectedRows = selected();
                         var uploads = Array.prototype.slice.call(files.files || []);
                         var mapped = Array.prototype.slice.call(mapping.querySelectorAll('select[name="proof_document_ids"]'));
+                        var effectiveDates = Array.prototype.slice.call(mapping.querySelectorAll('input[name="effective_payment_dates"]'));
                         clearError(); selectedInputs.innerHTML = '';
                         if (!selectedRows.length) {{ event.preventDefault(); showError('Selecciona al menos una solicitud antes de cargar el lote.'); return; }}
                         if (!uploads.length) {{ event.preventDefault(); showError('Selecciona los comprobantes de pago.'); return; }}
                         if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
                         if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
+                        if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
                         if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
                         selectedRows.forEach(function (checkbox) {{
                             var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
@@ -9892,6 +9936,7 @@ def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
         beneficiario = escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))
         fecha_aprobacion = escape(str(row.get("aprobado_en") or "-")[:10])
         fecha_programacion = escape(str(row.get("fecha_pago") or "-")[:10])
+        fecha_efectiva = escape(str(row.get("fecha_pago_efectiva") or "No registrada")[:10])
         fecha_pagada = escape(str(row.get("pagado_en") or "-")[:10])
         concepto = escape(str(row.get("concepto_pago") or ""))[:180]
         rendered_rows.append(
@@ -9903,13 +9948,14 @@ def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
                 <td>{beneficiario}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('aprobado_en'), kind='date'))}">{fecha_aprobacion}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('fecha_pago'), kind='date'))}">{fecha_programacion}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('fecha_pago_efectiva'), kind='date'))}">{fecha_efectiva}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('pagado_en'), kind='date'))}">{fecha_pagada}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
             </tr>
             """
         )
-    return "".join(rendered_rows) or '<tr><td colspan="9">Sin pagos para este filtro.</td></tr>'
+    return "".join(rendered_rows) or '<tr><td colspan="10">Sin pagos para este filtro.</td></tr>'
 
 
 @router.get("/admin/finanzas/payment-history", response_class=HTMLResponse)
@@ -9974,8 +10020,8 @@ async def admin_finance_payment_history(
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-history" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Programadas/vencidas</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>En proceso de pago</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option></select></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde (fecha efectiva al ver pagadas)</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta (fecha efectiva al ver pagadas)</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q or "")}" placeholder="Referencia, op., solicitante, beneficiario"></div>'
                     '<button class="button" type="submit">Filtrar</button>'
                     '<a class="button secondary" href="/admin/finanzas/payment-history">Limpiar</a>'
@@ -9990,10 +10036,10 @@ async def admin_finance_payment_history(
             {alerts}
             <section class="workspace-card">
                 <div class="workspace-section-title">Solicitudes por estado de pago</div>
-                <div class="workspace-section-subtitle">Incluye fecha de aprobación, fecha programada, fecha pagada, solicitante y beneficiario.</div>
+                <div class="workspace-section-subtitle">Incluye fecha programada, fecha efectiva y el momento en que SamChat capturó la confirmación.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="1" data-default-sort-dir="desc">
-	                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_pagada" data-sort-type="date">Fecha Pagada</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
+                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_efectiva" data-sort-type="date">Fecha efectiva</th><th data-sort-key="fecha_captura" data-sort-type="date">Capturado como pagado</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
 	                        <tbody>{_render_payment_history_rows(rows)}</tbody>
 	                    </table>
                 </div>
@@ -10071,6 +10117,7 @@ async def admin_finance_payment_run_upload_payment_proof(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     comprobante_pago: UploadFile = File(...),
+    fecha_pago_efectiva: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Attach payment proof for an in-process Payment Run item and mark it paid."""
     from devnous.gastos.services.documento_payment_service import (
@@ -10078,6 +10125,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+    from devnous.gastos.services.payment_proof_review_service import review_payment_proof
 
     try:
         require_payment_run_access(current_empleado)
@@ -10106,8 +10154,22 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
     try:
+        effective_payment_date = _parse_effective_payment_dates(
+            [fecha_pago_efectiva] if fecha_pago_efectiva else [], expected_count=1
+        )[0]
         raw = await comprobante_pago.read()
         content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+        review = review_payment_proof(
+            raw=raw,
+            filename=comprobante_pago.filename or "comprobante_pago",
+            mime_type=content_type,
+            expected_amount=_payment_proof_expected_amount(documento),
+            expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+        )
+        if review.status == "conflict":
+            raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+        if review.detected_date and review.detected_date != effective_payment_date:
+            raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
         await add_solicitud_documento_adjuntos(
             session,
             documento=documento,
@@ -10126,6 +10188,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             documento_id=documento_id,
             actor_id=current_empleado.id,
             actor=current_empleado,
+            fecha_pago_efectiva=effective_payment_date,
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
@@ -10170,6 +10233,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     selected_document_ids: Optional[List[str]] = Form(None),
     proof_document_ids: Optional[List[str]] = Form(None),
     comprobantes_pago: Optional[List[UploadFile]] = File(None),
+    effective_payment_dates: Optional[List[str]] = Form(None),
     apply_one_to_all: bool = Form(False),
 ) -> RedirectResponse:
     """Attach explicitly mapped Payment Run proofs and confirm the selected payments."""
@@ -10179,6 +10243,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
         _schedule_solicitud_paid_telegram_notifications,
         register_document_payment,
     )
+    from devnous.gastos.services.payment_proof_review_service import review_payment_proof
 
     try:
         require_payment_run_access(current_empleado)
@@ -10194,6 +10259,9 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             proof_document_ids=mapped_ids,
             uploads=comprobantes_pago or [],
             apply_one_to_all=apply_one_to_all,
+        )
+        parsed_effective_dates = _parse_effective_payment_dates(
+            effective_payment_dates, expected_count=len(plan)
         )
 
         prepared: list[tuple[UUIDType, SolicitudTercerosAttachment]] = []
@@ -10229,8 +10297,21 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             documentos[documento_id] = documento
 
         paid_references: list[tuple[UUIDType, str]] = []
-        for documento_id, attachment in prepared:
+        for (documento_id, attachment), effective_payment_date in zip(
+            prepared, parsed_effective_dates
+        ):
             documento = documentos[documento_id]
+            review = review_payment_proof(
+                raw=attachment.raw_bytes,
+                filename=attachment.filename,
+                mime_type=attachment.mime_type,
+                expected_amount=_payment_proof_expected_amount(documento),
+                expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+            )
+            if review.status == "conflict":
+                raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+            if review.detected_date and review.detected_date != effective_payment_date:
+                raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
             await add_solicitud_documento_adjuntos(
                 session,
                 documento=documento,
@@ -10242,6 +10323,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
                 actor=current_empleado,
+                fecha_pago_efectiva=effective_payment_date,
                 notify=False,
                 commit=False,
             )

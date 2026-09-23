@@ -169,6 +169,7 @@ async def register_document_payment(
     documento_id: UUID | str,
     actor_id: UUID | str,
     actor: Any | None = None,
+    fecha_pago_efectiva: date | None = None,
     notify: bool = True,
     commit: bool = True,
 ) -> DocumentoPagoResult:
@@ -222,8 +223,10 @@ async def register_document_payment(
             "El documento debe tener un monto solicitado válido.",
         )
 
-    fecha_pago = documento.fecha_pago if documento.fecha_pago else date.today()
+    fecha_pago = fecha_pago_efectiva or documento.fecha_pago or date.today()
     fecha_pago_dt = datetime.combine(fecha_pago, datetime.min.time())
+    if fecha_pago_efectiva is not None:
+        documento.fecha_pago_efectiva = fecha_pago_efectiva
     metodo_pago = documento.metodo_pago if documento.metodo_pago else "TRANSFERENCIA"
 
     amex_card_payment_id = parse_amex_payment_card_id(documento)
@@ -279,7 +282,7 @@ async def register_document_payment(
                     session,
                     documento=documento,
                     empleado=beneficiary,
-                    fecha_pago=documento.fecha_pago or date.today(),
+                    fecha_pago=fecha_pago,
                 )
                 if posting.status == "pending":
                     raise DocumentoPaymentValidationError(

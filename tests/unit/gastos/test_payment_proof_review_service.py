@@ -1,0 +1,23 @@
+from decimal import Decimal
+
+from devnous.gastos.services.payment_proof_review_service import review_payment_proof
+
+
+def test_payment_proof_review_blocks_known_amount_conflict(monkeypatch):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: "Fecha: 2026-09-22\nMonto: 99.00\nBeneficiario: Proveedor Demo",
+    )
+    review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
+    assert review.status == "conflict"
+    assert review.detected_date.isoformat() == "2026-09-22"
+
+
+def test_payment_proof_review_keeps_unreadable_proof_manual(monkeypatch):
+    from fastapi import HTTPException
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: (_ for _ in ()).throw(HTTPException(status_code=400, detail="no")),
+    )
+    review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
+    assert review.status == "revision_required"

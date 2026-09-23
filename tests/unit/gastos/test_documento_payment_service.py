@@ -110,7 +110,10 @@ async def test_register_document_payment_uses_authenticated_actor_permissions(
         lambda documento: uuid4(),
     )
 
+    payment_dates = []
+
     async def fake_amex_posting(*args, **kwargs):
+        payment_dates.append(kwargs["payment_date"])
         return SimpleNamespace(status="ready")
 
     monkeypatch.setattr(
@@ -129,10 +132,13 @@ async def test_register_document_payment_uses_authenticated_actor_permissions(
         documento_id=documento_id,
         actor_id=actor_id,
         actor=actor,
+        fecha_pago_efectiva=date(2026, 9, 2),
     )
 
     assert result.documento.estado == "pagado"
     assert result.aprobacion.aprobador_id == actor_id
+    assert documento.fecha_pago_efectiva == date(2026, 9, 2)
+    assert payment_dates == [date(2026, 9, 2)]
     assert not load_actor_called
 
 
