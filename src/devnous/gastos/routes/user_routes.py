@@ -35397,8 +35397,11 @@ async def _resolve_shared_cfdi_reference(
     *,
     current_empleado: Empleado,
     referencia: Optional[str],
+    proveedor_cliente_id: str,
 ) -> Optional[str]:
     """Resolve a prior authorized solicitud reference to its canonical CFDI UUID."""
+    if not isinstance(referencia, str):
+        return None
     reference = (referencia or "").strip().upper()
     if not reference:
         return None
@@ -35421,6 +35424,19 @@ async def _resolve_shared_cfdi_reference(
         raise SolicitudValidationError(
             "shared_cfdi_reference_forbidden",
             "No tiene permiso para reutilizar la factura de esa solicitud.",
+        )
+
+    try:
+        selected_proveedor_id = UUIDType(str(proveedor_cliente_id))
+    except (TypeError, ValueError) as exc:
+        raise SolicitudValidationError(
+            "invalid_proveedor",
+            "Proveedor/Cliente inválido.",
+        ) from exc
+    if source_document.proveedor_cliente_id != selected_proveedor_id:
+        raise SolicitudValidationError(
+            "shared_cfdi_reference_beneficiary_mismatch",
+            "La factura indicada pertenece a otro beneficiario; seleccione el mismo proveedor.",
         )
 
     cfdi_uuid = (getattr(source_document, "cfdi_uuid_manual", None) or "").strip()
@@ -35531,6 +35547,7 @@ async def crear_nueva_solicitud_terceros(
             session,
             current_empleado=current_empleado,
             referencia=referencia_factura_compartida,
+            proveedor_cliente_id=proveedor_cliente_id,
         )
 
         payload = build_solicitud_terceros_payload(
@@ -35553,7 +35570,11 @@ async def crear_nueva_solicitud_terceros(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
-            cfdi_uuid_manual=cfdi_uuid_manual,
+            **(
+                {"cfdi_uuid_manual": cfdi_uuid_manual}
+                if cfdi_uuid_manual
+                else {}
+            ),
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
@@ -35768,6 +35789,7 @@ async def editar_solicitud_terceros_post(
     fecha_fin: Optional[str] = Form(None),
     notas: Optional[str] = Form(None),
     pago_urgente: Optional[str] = Form(None),
+    referencia_factura_compartida: Optional[str] = Form(None),
     cfdi_compartido_confirmado: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Update a SOLICITUD a terceros before Control Presupuestal assigns concept."""
@@ -35825,6 +35847,13 @@ async def editar_solicitud_terceros_post(
                 status_code=303,
             )
 
+        cfdi_uuid_manual = await _resolve_shared_cfdi_reference(
+            session,
+            current_empleado=current_empleado,
+            referencia=referencia_factura_compartida,
+            proveedor_cliente_id=proveedor_cliente_id,
+        )
+
         payload = build_solicitud_terceros_payload(
             empleado_id=current_empleado.id,
             monto_solicitado=monto_solicitado,
@@ -35845,6 +35874,11 @@ async def editar_solicitud_terceros_post(
             pdf_bytes=pdf_bytes,
             pdf_filename=pdf_filename,
             attachments=attachments,
+            **(
+                {"cfdi_uuid_manual": cfdi_uuid_manual}
+                if cfdi_uuid_manual
+                else {}
+            ),
             pago_urgente=pago_urgente in ("1", "true", "on", "yes"),
             cfdi_compartido_confirmado=(
                 cfdi_compartido_confirmado in ("1", "true", "on", "yes")
