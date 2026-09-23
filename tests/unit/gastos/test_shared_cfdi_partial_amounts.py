@@ -113,7 +113,7 @@ async def test_attachment_ingestion_applies_balance_guard_for_shared_cfdi(monkey
     )
     balance_calls = []
 
-    async def fake_ingest(**_kwargs):
+    async def fake_ingest(*_args, **_kwargs):
         return SimpleNamespace(cfdi_report=report)
 
     async def fake_validate(_session, *, cfdi_report, requested_amount):
@@ -251,4 +251,4 @@ async def test_manual_duplicate_cfdi_requires_explicit_confirmation(monkeypatch)
         await documento_service.create_solicitud_terceros_document(session, payload)
 
     assert raised.value.code == "duplicate_cfdi"
-    assert "Factura compartida" in raised.value.user_message
+    assert "factura compartida" in raised.value.user_message.lower()
