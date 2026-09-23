@@ -34998,6 +34998,12 @@ async def _render_solicitud_terceros_form(
                             "MATERIALIDADES:",
                             render_materialidades_file_picker_html(),
                         )}
+                        <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
+                            <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
+                                <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
+                                <span><strong>Factura compartida / pago parcial</strong><br><small>Confirma que este CFDI ya fue usado porque corresponde a otro pago parcial de la misma factura. La confirmación quedará registrada.</small></span>
+                            </label>
+                        </div>
                     </div>
 
                     <div class="st-doc">
@@ -35310,6 +35316,64 @@ async def _render_solicitud_terceros_form(
                 "currencySelectName": "currency",
             }
         ])}
+        <script>
+            (function() {{
+                const form = document.getElementById('solicitud-terceros-form');
+                if (!form || !window.sessionStorage) return;
+                const storageKey = 'samchat:solicitud-terceros:draft';
+                const params = new URLSearchParams(window.location.search);
+                const hasError = Boolean(params.get('error') || params.get('error_msg'));
+
+                if (hasError) {{
+                    try {{
+                        const saved = JSON.parse(sessionStorage.getItem(storageKey) || '{{}}');
+                        Object.entries(saved).forEach(function([name, value]) {{
+                            const field = form.elements.namedItem(name);
+                            if (!field) return;
+                            if (field instanceof RadioNodeList) {{
+                                Array.from(field).forEach(function(item) {{
+                                    if (item.type === 'checkbox' || item.type === 'radio') {{
+                                        item.checked = Array.isArray(value) ? value.includes(item.value) : value === item.value;
+                                    }}
+                                }});
+                            }} else if (field.type === 'checkbox') {{
+                                field.checked = Boolean(value);
+                            }} else if (field.tagName === 'SELECT' && field.multiple) {{
+                                Array.from(field.options).forEach(function(option) {{
+                                    option.selected = Array.isArray(value) && value.includes(option.value);
+                                }});
+                            }} else {{
+                                field.value = value;
+                            }}
+                            field.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        }});
+                    }} catch (_error) {{
+                        sessionStorage.removeItem(storageKey);
+                    }}
+                }} else {{
+                    sessionStorage.removeItem(storageKey);
+                }}
+
+                form.addEventListener('submit', function() {{
+                    const draft = {{}};
+                    Array.from(form.elements).forEach(function(field) {{
+                        if (!field.name || field.type === 'file' || field.type === 'submit') return;
+                        if (field.type === 'checkbox' || field.type === 'radio') {{
+                            if (field.checked) {{
+                                draft[field.name] = field.value || true;
+                            }}
+                            return;
+                        }}
+                        if (field.tagName === 'SELECT' && field.multiple) {{
+                            draft[field.name] = Array.from(field.selectedOptions).map(function(option) {{ return option.value; }});
+                            return;
+                        }}
+                        draft[field.name] = field.value;
+                    }});
+                    sessionStorage.setItem(storageKey, JSON.stringify(draft));
+                }});
+            }})();
+        </script>
     </body>
     </html>
     """
