@@ -81,11 +81,11 @@ def test_employee_transfer_request_reaches_canonical_creation_form(
 
     support_upload = page.locator("#archivo_pdf")
     expect(support_upload).to_be_visible()
-    core_precedes_support = provider_select.evaluate(
-        "(core) => Boolean(core.compareDocumentPosition("
-        "document.getElementById('archivo_pdf')) & Node.DOCUMENT_POSITION_FOLLOWING)"
+    support_precedes_core = support_upload.evaluate(
+        "(support) => Boolean(support.compareDocumentPosition("
+        "document.getElementById('proveedor_cliente_id')) & Node.DOCUMENT_POSITION_FOLLOWING)"
     )
-    assert core_precedes_support is True
+    assert support_precedes_core is True
 
     expect(
         page.get_by_role("button", name="Crear solicitud", exact=True)
