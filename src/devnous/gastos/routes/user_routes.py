@@ -28967,7 +28967,10 @@ async def documentos_control_presupuestal(
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
-            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.fase)
+            .selectinload(CuentaDeGastos.torneo),
+            undefer(Documento.fase),
             selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.torneo_id),
             selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
             undefer(Documento.fase),
@@ -29747,7 +29750,10 @@ async def documentos_pendientes(
             selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.proveedor_cliente),
             selectinload(Documento.torneo),
-            selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+            selectinload(Documento.cuenta_gastos)
+            .undefer(CuentaDeGastos.fase)
+            .selectinload(CuentaDeGastos.torneo),
+            undefer(Documento.fase),
         )
         .outerjoin(solicitante_alias, Documento.empleado_id == solicitante_alias.id)
         .outerjoin(
@@ -30898,7 +30904,10 @@ async def documentos_todos(
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.torneo),
-        selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
+        selectinload(Documento.cuenta_gastos)
+        .undefer(CuentaDeGastos.fase)
+        .selectinload(CuentaDeGastos.torneo),
+        undefer(Documento.fase),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
