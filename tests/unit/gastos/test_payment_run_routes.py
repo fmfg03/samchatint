@@ -7,7 +7,227 @@ import pytest
 from fastapi import HTTPException
 
 from devnous.gastos.routes import admin_routes, dependencies
-from devnous.gastos.services import payment_run_service
+from devnous.gastos.services import documento_payment_service, payment_run_service
+
+
+class _PaymentProofUpload:
+    def __init__(self, filename: str, content: bytes) -> None:
+        self.filename = filename
+        self.content = content
+        self.content_type = "application/pdf"
+
+    async def read(self) -> bytes:
+        return self.content
+
+
+def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    uploads = [
+        SimpleNamespace(filename="spei-1.pdf"),
+        SimpleNamespace(filename="spei-2.pdf"),
+    ]
+
+    plan = admin_routes._build_payment_proof_upload_plan(
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[second_id, first_id],
+        uploads=uploads,
+        apply_one_to_all=False,
+    )
+
+    assert [(document_id, upload.filename) for document_id, upload in plan] == [
+        (second_id, "spei-1.pdf"),
+        (first_id, "spei-2.pdf"),
+    ]
+
+
+def test_payment_run_bulk_proof_plan_supports_one_proof_for_all_selected() -> None:
+    first_id = uuid4()
+    second_id = uuid4()
+    shared_upload = SimpleNamespace(filename="spei-lote.pdf")
+
+    plan = admin_routes._build_payment_proof_upload_plan(
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[],
+        uploads=[shared_upload],
+        apply_one_to_all=True,
+    )
+
+    assert [(document_id, upload.filename) for document_id, upload in plan] == [
+        (first_id, "spei-lote.pdf"),
+        (second_id, "spei-lote.pdf"),
+    ]
+
+
+def test_payment_run_bulk_proof_plan_rejects_duplicate_mapping() -> None:
+    first_id = uuid4()
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[first_id, uuid4()],
+            proof_document_ids=[first_id, first_id],
+            uploads=[
+                SimpleNamespace(filename="spei-1.pdf"),
+                SimpleNamespace(filename="spei-2.pdf"),
+            ],
+            apply_one_to_all=False,
+        )
+
+    assert exc.value.code == "duplicate_payment_proof_mapping"
+
+
+@pytest.mark.parametrize(
+    ("selected_ids", "mapped_ids", "uploads", "apply_one_to_all", "code"),
+    [
+        ([], [], [SimpleNamespace(filename="proof.pdf")], False, "payment_proof_selection_required"),
+        ([uuid4(), uuid4()], [], [], False, "payment_proof_files_required"),
+        ([uuid4(), uuid4()], [], [SimpleNamespace(filename="a.pdf"), SimpleNamespace(filename="b.pdf")], True, "single_proof_required"),
+        ([uuid4()], [], [SimpleNamespace(filename="proof.pdf")], False, "payment_proof_mapping_required"),
+    ],
+)
+def test_payment_run_bulk_proof_plan_rejects_incomplete_input(
+    selected_ids, mapped_ids, uploads, apply_one_to_all, code
+) -> None:
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=selected_ids,
+            proof_document_ids=mapped_ids,
+            uploads=uploads,
+            apply_one_to_all=apply_one_to_all,
+        )
+    assert exc.value.code == code
+
+
+def test_payment_run_bulk_proof_plan_rejects_unselected_mapping() -> None:
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[uuid4()],
+            proof_document_ids=[uuid4()],
+            uploads=[SimpleNamespace(filename="proof.pdf")],
+            apply_one_to_all=False,
+        )
+    assert exc.value.code == "payment_proof_mapping_invalid"
+
+
+def test_payment_run_bulk_proof_plan_rejects_duplicate_selection() -> None:
+    document_id = uuid4()
+    with pytest.raises(admin_routes.SolicitudValidationError) as exc:
+        admin_routes._build_payment_proof_upload_plan(
+            selected_document_ids=[document_id, document_id],
+            proof_document_ids=[],
+            uploads=[SimpleNamespace(filename="proof.pdf")],
+            apply_one_to_all=True,
+        )
+    assert exc.value.code == "duplicate_payment_proof_selection"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("documento", [None, SimpleNamespace(id=uuid4(), estado="aprobado")])
+async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
+    monkeypatch, documento
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=documento)
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(), session=session, current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[document_id], proof_document_ids=[document_id],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        apply_one_to_all=False,
+    )
+    assert response.status_code == 303
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["attachment", "payment"])
+async def test_payment_run_single_proof_rolls_back_validation_failures(
+    monkeypatch, failure
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(id=document_id, estado="en_proceso_pago")
+    )
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    if failure == "attachment":
+        monkeypatch.setattr(
+            admin_routes,
+            "add_solicitud_documento_adjuntos",
+            AsyncMock(side_effect=admin_routes.SolicitudValidationError("invalid", "invalid")),
+        )
+    else:
+        monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", AsyncMock())
+        monkeypatch.setattr(
+            documento_payment_service,
+            "register_document_payment",
+            AsyncMock(side_effect=documento_payment_service.DocumentoPaymentValidationError("invalid", "invalid")),
+        )
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        documento_id=document_id, request=SimpleNamespace(), session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+    )
+    assert response.status_code == 303
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch(
+    monkeypatch,
+) -> None:
+    actor_id = uuid4()
+    first_id = uuid4()
+    second_id = uuid4()
+    first_document = SimpleNamespace(id=first_id, estado="en_proceso_pago")
+    second_document = SimpleNamespace(id=second_id, estado="en_proceso_pago")
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=[first_document, second_document])
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(
+        admin_routes, "validate_solicitud_terceros_attachment", lambda _: None
+    )
+    attach_mock = AsyncMock()
+    monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", attach_mock)
+
+    async def register_payment(*_, documento_id, **__):
+        return SimpleNamespace(
+            documento=SimpleNamespace(
+                id=documento_id, numero_referencia=f"S-{str(documento_id)[:8]}"
+            )
+        )
+
+    notifications = []
+    monkeypatch.setattr(documento_payment_service, "register_document_payment", register_payment)
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_schedule_solicitud_paid_telegram_notifications",
+        lambda **kwargs: notifications.append(kwargs),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=actor_id),
+        selected_document_ids=[first_id, second_id],
+        proof_document_ids=[second_id, first_id],
+        comprobantes_pago=[
+            _PaymentProofUpload("spei-2.pdf", b"%PDF-1.4 second"),
+            _PaymentProofUpload("spei-1.pdf", b"%PDF-1.4 first"),
+        ],
+        apply_one_to_all=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"].endswith("#comprobantes-pendientes")
+    assert attach_mock.await_count == 2
+    session.commit.assert_awaited_once()
+    assert [item["documento_id"] for item in notifications] == [second_id, first_id]
 
 
 def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
@@ -158,7 +378,7 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     )
     html = response.body.decode("utf-8")
 
-    assert "Solicitudes aprobadas para corte" in html
+    assert "Programa de pagos" in html
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "/admin/finanzas/payment-run/documentos/" in html
     assert 'name="fecha_pago"' in html
@@ -169,7 +389,7 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
     assert "comprobante-pago" not in html
     assert "Subir comprobante y marcar pagado" not in html
     assert "sin registrar pago" not in html
-    assert "Finanzas ajusta la fecha de pago y cierra el corte operativo." in html
+    assert "Finanzas ajusta la fecha de pago y cierra el corte operativo" in html
     assert "Contabilidad o un usuario autorizado adjunta el comprobante" in html
     assert "Benjamín ajusta fecha_pago" not in html
     assert "Dani, Sebas, Jacquie" not in html
@@ -508,6 +728,10 @@ async def test_payment_run_page_renders_payment_proof_for_accounting(
     assert "Comprobantes pendientes - En Proceso de Pago" in html
     assert "comprobante-pago" in html
     assert "Subir comprobante y marcar pagado" in html
+    assert "Programa de pagos" in html
+    assert "Carga por lote de comprobantes" in html
+    assert 'name="selected_document_ids"' in html
+    assert "/admin/finanzas/payment-run/comprobantes-pago/lote" in html
 
 
 @pytest.mark.asyncio
@@ -642,6 +866,19 @@ def test_payment_run_upload_payment_proof_is_atomic() -> None:
     assert "actor=current_empleado" in block
     assert "comprobante" in block
     assert "testigo" not in block
+
+
+def test_payment_run_bulk_payment_proof_is_atomic_and_keeps_mapping() -> None:
+    source = open("src/devnous/gastos/routes/admin_routes.py", encoding="utf-8").read()
+    start = source.index("async def admin_finance_payment_run_upload_payment_proofs_bulk")
+    end = source.index("@router.get(\n    \"/admin/finanzas/payment-run/closures", start)
+    block = source[start:end]
+
+    assert "validate_solicitud_terceros_attachment(attachment)" in block
+    assert "commit=False" in block
+    assert "notify=False" in block
+    assert "await session.commit()" in block
+    assert "anchor=\"comprobantes-pendientes\"" in block
 
 
 def test_accounting_profile_can_create_employee_beneficiary_requests() -> None:
