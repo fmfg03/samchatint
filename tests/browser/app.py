@@ -31,6 +31,8 @@ from devnous.gastos.services import (
     expense_accounting_cleanup_service,
     payment_run_service,
 )
+from samchat.ar import admin_ui as ar_admin_ui
+from samchat.ar import collection_matches
 
 EMPLOYEE_ID = UUID("10000000-0000-0000-0000-000000000354")
 
@@ -71,6 +73,233 @@ class _RowsSession:
 
     async def execute(self, *_args, **_kwargs):
         return _FakeResult(self._rows)
+
+
+class _ArMappingRows:
+    """Small mapping-result adapter for the canonical AR writers."""
+
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+    def all(self):
+        return list(self._rows)
+
+
+class _ArResult:
+    def __init__(self, rows=()):
+        self._rows = list(rows)
+
+    def mappings(self):
+        return _ArMappingRows(self._rows)
+
+
+class _ArMutationSession:
+    """In-memory transaction boundary used only by the browser AR fixture."""
+
+    def __init__(self, fixture):
+        self.fixture = fixture
+
+    async def execute(self, statement, *_args, **_kwargs):
+        sql = str(statement)
+        if "SUM(accepted_amount)" in sql:
+            total = (
+                self.fixture.amount
+                if self.fixture.match
+                and self.fixture.match["status"] == collection_matches.ACCEPTED_STATUS
+                else 0.0
+            )
+            return _ArResult([{"total": total}])
+        if "FROM ar_bank_account_mappings map" in sql:
+            return _ArResult(
+                [
+                    {
+                        "id": self.fixture.bank_account_id,
+                        "codigo": "1020-001",
+                    }
+                ]
+            )
+        return _ArResult()
+
+    async def commit(self):
+        self.fixture.commits += 1
+
+    async def rollback(self):
+        self.fixture.rollbacks += 1
+
+
+class _ArFixture:
+    budget_version_id = "91000000-0000-0000-0000-000000000001"
+    budget_line_id = "91000000-0000-0000-0000-000000000002"
+    cfdi_report_id = "91000000-0000-0000-0000-000000000003"
+    bank_movement_id = "91000000-0000-0000-0000-000000000004"
+    bank_account_id = "91000000-0000-0000-0000-000000000005"
+    match_id = "91000000-0000-0000-0000-000000000006"
+    ar_item_id = "cfdi:UX-CXC-001"
+    amount = 12500.0
+
+    def reset(self):
+        self.match = None
+        self.audit = []
+        self.commits = 0
+        self.rollbacks = 0
+        self.session = _ArMutationSession(self)
+
+    def ar_item(self):
+        collected = (
+            self.amount
+            if self.match and self.match["status"] == collection_matches.ACCEPTED_STATUS
+            else 0.0
+        )
+        return {
+            "ar_item_id": self.ar_item_id,
+            "budget_version_id": self.budget_version_id,
+            "budget_line_id": self.budget_line_id,
+            "cfdi_report_id": self.cfdi_report_id,
+            "tournament_id": "torneo-browser-cxc",
+            "tournament_name": "Copa Browser UX",
+            "tournament_code": "CBUX",
+            "phase": "Regional",
+            "concept_name": "Patrocinio regional",
+            "payer_name": "Patrocinador Browser UX",
+            "payer_rfc": "PBU010101AR1",
+            "cfdi_uuid": "UX-CXC-001",
+            "issued_date": "2026-09-15",
+            "due_date": "2026-10-15",
+            "expected_income_amount": self.amount,
+            "issued_amount": self.amount,
+            "linked_income_amount": self.amount,
+            "collected_amount": collected,
+            "balance_amount": self.amount - collected,
+            "collection_status": (
+                "matched_collected" if collected else "collection_unknown"
+            ),
+            "operational_status": "Cobrado" if collected else "Cobranza desconocida",
+            "source": "issued_linked",
+        }
+
+    def read_model(self):
+        item = self.ar_item()
+        return {
+            "summary": {
+                "expected_income_total": self.amount,
+                "linked_income_total": self.amount,
+                "issued_unlinked_total": 0.0,
+                "invoiced_total": self.amount,
+                "collected_total": item["collected_amount"],
+                "balance_total": item["balance_amount"],
+                "overdue_total": 0.0,
+                "collection_gap_count": 0 if item["collected_amount"] else 1,
+                "matching_gap_count": 0 if item["collected_amount"] else 1,
+            },
+            "expected_income": [item],
+            "issued_linked": [item],
+            "issued_unlinked": [],
+            "collection_gaps": [] if item["collected_amount"] else [item],
+            "matching_gaps": [] if item["collected_amount"] else [item],
+            "operational_rows": [item],
+        }
+
+    def matching_workbench(self):
+        candidate = {
+            "bank_movement_id": self.bank_movement_id,
+            "bank_amount": self.amount,
+            "bank_date": "2026-09-21",
+            "bank_name": "Patrocinador Browser UX",
+            "bank_rfc": "PBU010101AR1",
+            "signals": "RFC y monto coinciden",
+        }
+        return {
+            "budget_version_id": self.budget_version_id,
+            "summary": {
+                "accepted_match_count": int(bool(self.match and self.match["status"] == collection_matches.ACCEPTED_STATUS)),
+                "candidate_match_count": int(not self.match or self.match["status"] != collection_matches.ACCEPTED_STATUS),
+                "manual_match_required_count": 0,
+                "collection_unknown_count": int(not self.match or self.match["status"] != collection_matches.ACCEPTED_STATUS),
+                "payer_gap_count": 0,
+                "unmatched_bank_inflow_count": 0,
+            },
+            "items": [] if self.match and self.match["status"] == collection_matches.ACCEPTED_STATUS else [{
+                **self.ar_item(),
+                "status": "candidate_match",
+                "amount": self.amount,
+                "candidate_evidence": [candidate],
+            }],
+            "accepted_matches": [self.match] if self.match and self.match["status"] == collection_matches.ACCEPTED_STATUS else [],
+            "unmatched_bank_inflows": [],
+        }
+
+
+AR_FIXTURE = _ArFixture()
+AR_FIXTURE.reset()
+
+
+async def _ar_no_schema(*_args, **_kwargs):
+    return None
+
+
+async def _ar_load_bank(_session, _bank_movement_id):
+    return {
+        "id": AR_FIXTURE.bank_movement_id,
+        "signo": "+",
+        "importe": AR_FIXTURE.amount,
+        "fecha": "2026-09-21",
+        "cuenta_bancaria": "012345678901234567",
+        "rfc_ordenante": "PBU010101AR1",
+        "nombre_ordenante": "Patrocinador Browser UX",
+        "descripcion": "Cobro patrocinio regional",
+        "concepto_banco": "UX-CXC-001",
+    }
+
+
+async def _ar_find_active(_session, **_kwargs):
+    if AR_FIXTURE.match and AR_FIXTURE.match["status"] == collection_matches.ACCEPTED_STATUS:
+        return dict(AR_FIXTURE.match)
+    return {}
+
+
+async def _ar_bank_account(*_args, **_kwargs):
+    return {"id": AR_FIXTURE.bank_account_id, "codigo": "1020-001", "nombre": "Banco Browser UX"}
+
+
+async def _ar_cxc_account(*_args, **_kwargs):
+    return {"id": AR_FIXTURE.budget_line_id, "codigo": "1050-001"}
+
+
+async def _ar_insert(_session, *, ar_item, bank_movement, **_kwargs):
+    AR_FIXTURE.match = {
+        "id": AR_FIXTURE.match_id,
+        "ar_item_id": ar_item["ar_item_id"],
+        "bank_movement_id": bank_movement["id"],
+        "accepted_amount": AR_FIXTURE.amount,
+        "collection_date": bank_movement["fecha"],
+        "payer_name": ar_item["payer_name"],
+        "cfdi_report_id": ar_item["cfdi_report_id"],
+        "status": collection_matches.ACCEPTED_STATUS,
+    }
+    return AR_FIXTURE.match
+
+
+async def _ar_create_poliza(*_args, **_kwargs):
+    return "91000000-0000-0000-0000-000000000007"
+
+
+async def _ar_load_match(_session, match_id):
+    return dict(AR_FIXTURE.match) if AR_FIXTURE.match and match_id == AR_FIXTURE.match_id else {}
+
+
+async def _ar_update_reversed(_session, *, match_id, reversal_reason, **_kwargs):
+    if not AR_FIXTURE.match or match_id != AR_FIXTURE.match_id:
+        return {}
+    AR_FIXTURE.match["status"] = collection_matches.REVERSED_STATUS
+    AR_FIXTURE.match["reversal_reason"] = reversal_reason
+    return dict(AR_FIXTURE.match)
+
+
+async def _ar_audit(*_args, **kwargs):
+    AR_FIXTURE.audit.append(kwargs)
 
 
 async def _db_session():
@@ -800,6 +1029,20 @@ admin_routes.resolve_project_name = _journey_project_name
 admin_routes.resolve_effective_budget_concept = _journey_effective_budget_concept
 cuenta_suggester_module.CuentaContableSuggester = _JourneyCuentaContableSuggester
 
+# These are the persistence seams of the canonical AR writers. The validation,
+# acceptance, reversal, and route contracts remain production code; only storage
+# is held in memory for this browser-only fixture.
+collection_matches.ensure_ar_collection_match_schema = _ar_no_schema
+collection_matches._load_bank_movement = _ar_load_bank
+collection_matches._find_active_match = _ar_find_active
+collection_matches._resolve_bank_account = _ar_bank_account
+collection_matches._resolve_cxc_account = _ar_cxc_account
+collection_matches._insert_match = _ar_insert
+collection_matches._create_collection_poliza = _ar_create_poliza
+collection_matches._load_match = _ar_load_match
+collection_matches._update_match_reversed = _ar_update_reversed
+collection_matches._audit_match_event = _ar_audit
+
 # The mutation pages invoke the existing writers. Their persistence collaborators
 # are constrained to the resettable test transaction above, not replaced by a
 # production-style route or identity bypass.
@@ -1324,3 +1567,106 @@ async def journey_accounting_cleanup(request: Request):
         current_empleado=PROFILE_FIXTURES["accounting"]["employee"],
     )
     return HTMLResponse(html)
+
+
+def _ar_shell(*, title: str, body: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"""<!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{escape(title)} - Samchat</title>
+        <style>{admin_routes._admin_workspace_styles("1380px", layout="data")}{ar_admin_ui.ar_admin_styles()}</style>
+        </head><body><div class="workspace-shell">{body}</div></body></html>"""
+    )
+
+
+@app.get("/admin/finanzas/cuentas-por-cobrar", response_class=HTMLResponse)
+async def journey_finance_accounts_receivable(reset: bool = False):
+    """Test-only shell over the canonical AR read and matching renderers."""
+    if reset:
+        AR_FIXTURE.reset()
+    read_model = AR_FIXTURE.read_model()
+    body = ar_admin_ui.render_ar_read_model_html(
+        read_model,
+        base_url="/admin/finanzas/cuentas-por-cobrar",
+        export_url="/admin/finanzas/cuentas-por-cobrar/export.xlsx",
+        prepoliza_export_url=(
+            "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
+        ),
+        return_to="/admin/finanzas/cuentas-por-cobrar",
+    )
+    body += ar_admin_ui.render_ar_matching_workbench_html(
+        AR_FIXTURE.matching_workbench(),
+        return_to="/admin/finanzas/cuentas-por-cobrar",
+        bank_accounts=[
+            {
+                "id": AR_FIXTURE.bank_account_id,
+                "codigo": "1020-001",
+                "nombre": "Banco Browser UX",
+            }
+        ],
+    )
+    return _ar_shell(title="Cuentas por cobrar", body=body)
+
+
+@app.post("/admin/finanzas/cuentas-por-cobrar/matches/accept")
+async def journey_finance_ar_match_accept(
+    budget_version_id: str = Form(...),
+    ar_item_id: str = Form(...),
+    bank_movement_id: str = Form(...),
+    ar_amount: float = Form(...),
+    acceptance_reason: str = Form(...),
+    bank_account_id: str = Form(...),
+    budget_line_id: str = Form(""),
+    cfdi_report_id: str = Form(""),
+    payer_rfc: str = Form(""),
+    payer_name: str = Form(""),
+    return_to: str = Form("/admin/finanzas/cuentas-por-cobrar"),
+):
+    return await admin_routes.admin_finance_ar_match_accept(
+        budget_version_id=budget_version_id,
+        ar_item_id=ar_item_id,
+        bank_movement_id=bank_movement_id,
+        ar_amount=ar_amount,
+        acceptance_reason=acceptance_reason,
+        bank_account_id=bank_account_id,
+        budget_line_id=budget_line_id or None,
+        cfdi_report_id=cfdi_report_id or None,
+        payer_rfc=payer_rfc or None,
+        payer_name=payer_name or None,
+        return_to=return_to,
+        current_empleado=PROFILE_FIXTURES["accounting"]["employee"],
+        session=AR_FIXTURE.session,
+    )
+
+
+@app.post("/admin/finanzas/cuentas-por-cobrar/matches/{match_id}/reverse")
+async def journey_finance_ar_match_reverse(
+    match_id: str,
+    reversal_reason: str = Form(...),
+    return_to: str = Form("/admin/finanzas/cuentas-por-cobrar"),
+):
+    return await admin_routes.admin_finance_ar_match_reverse(
+        match_id=match_id,
+        reversal_reason=reversal_reason,
+        return_to=return_to,
+        current_empleado=PROFILE_FIXTURES["accounting"]["employee"],
+        session=AR_FIXTURE.session,
+    )
+
+
+@app.get("/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx")
+async def journey_finance_ar_prepoliza_export():
+    return HTMLResponse("<h1>Prepólizas CxC</h1><p>Exportación COI preparada.</p>")
+
+
+@app.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
+async def journey_accounting_accounts_receivable():
+    """Isolated destination proving the accounting CxC purpose remains distinct."""
+    return _ar_shell(
+        title="Vista contable CxC",
+        body="""
+        <section class="workspace-card"><h1>Vista contable CxC</h1>
+        <p>Consulta de CFDI emitidos y pólizas de ingreso cobrado.</p>
+        <p>Esta vista no acepta ni revierte matches de cobranza.</p></section>
+        """,
+    )
