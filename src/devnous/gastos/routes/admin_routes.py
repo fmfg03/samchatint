@@ -1105,7 +1105,7 @@ def render_admin_navigation(
     if can_access_payment_run(current_empleado):
         payment_run_item = (
             "/admin/finanzas/payment-run",
-            "Payment Run",
+            "Programación de pagos",
             "payment_run",
         )
     if can_manage_payment_run(current_empleado):
@@ -7200,14 +7200,14 @@ async def admin_finance_platform(
             </section>
             <section class="finance-section-grid" style="margin-bottom:18px;">
                 <div class="workspace-card">
-                    <div class="workspace-section-title">Payment Run</div>
+                    <div class="workspace-section-title">Programación de pagos</div>
                     <div class="workspace-section-subtitle">SOLICITUDES aprobadas todavía no pagadas. Registrar pago genera el gasto operativo con la lógica canónica.</div>
                     <div class="finance-grid" style="margin-top:14px;">
                         {_sports_card("Items", payment_run.get("payable_count", 0), "Autorizados sin pago")}
                         {_sports_card("Total", f'${float(payment_run.get("payable_total") or 0):,.2f}', str(payment_run.get("next_step") or "-"))}
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
-                        <a class="button secondary" href="/admin/finanzas/payment-run">Abrir Payment Run</a>
+                        <a class="button secondary" href="/admin/finanzas/payment-run">Abrir programación de pagos</a>
                         <a class="button secondary" href="/admin/finanzas/payment-history">Historial de pagos</a>
                     </div>
                     <div class="table-shell" style="margin-top:16px;"><table class="finance-table">
@@ -9465,7 +9465,7 @@ def _render_payment_run_items(
             proof_html = f"""
                 <form method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
                     <input type="file" name="comprobante_pago" required>
-                    <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir testigo y marcar la solicitud como pagada?');">Subir testigo y pagar</button>
+                    <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
             """
         detail_href = (
@@ -9609,12 +9609,14 @@ async def admin_finance_payment_run(
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Payment Run - Samchat</title>
+        <title>Programación de pagos - Samchat</title>
         <style>
             {_admin_workspace_styles("1380px", layout="data")}
             .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
             .payment-table th, .payment-table td {{ text-align:left; padding:12px; border-bottom:1px solid #e2e8f0; vertical-align:top; }}
             .payment-table th {{ color:#64748b; font-size:11px; text-transform:uppercase; letter-spacing:.11em; background:#f8fafc; }}
+            .payment-table th:first-child, .payment-table td:first-child {{ min-width:72px; }}
+            .payment-table th:nth-child(9), .payment-table td:nth-child(9) {{ min-width:180px; }}
             input, select, textarea {{ width:100%; padding:10px 12px; border-radius:12px; border:1px solid #cbd5e1; }}
             input[type="checkbox"] {{ width:auto; }}
             .alert {{ border-radius:14px; padding:12px 14px; margin-bottom:14px; font-weight:700; }}
@@ -9624,10 +9626,10 @@ async def admin_finance_payment_run(
     </head>
     <body>
         <div class="workspace-shell">
-            {render_admin_navigation(current_empleado, "payment_run", subtitle="Payment Run: consulta, fecha de pago y cierre operativo.")}
+            {render_admin_navigation(current_empleado, "payment_run", subtitle="Programación de pagos: consulta, fecha de pago y cierre operativo.")}
             {_render_admin_workspace_hero(
                 eyebrow="Payment Run",
-                title="Corte operativo de solicitudes aprobadas",
+                title="Programación de pagos",
                 description="Consulta solicitudes aprobadas, ajusta fecha_pago y cierra el corte operativo. Al cerrar, las solicitudes pasan a En Proceso de Pago para que Contabilidad adjunte el comprobante.",
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-run" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
@@ -9651,7 +9653,7 @@ async def admin_finance_payment_run(
                 <div class="workspace-section-subtitle">Finanzas ajusta la fecha de pago y cierra el corte operativo. Al cerrar, estas solicitudes pasan a En Proceso de Pago.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
-	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
+	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
                         <tbody>{_render_payment_run_items(approved_rows, can_close_run=can_close_run, can_confirm_payment=False, can_edit_payment_date=can_close_run)}</tbody>
 	                    </table>
                 </div>
@@ -9662,7 +9664,7 @@ async def admin_finance_payment_run(
                 <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante; al guardarlo, la solicitud se marca Pagada automáticamente.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
-	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Testigo de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
+	                        <thead><tr><th>Cerrar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
 	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment)}</tbody>
 	                    </table>
                 </div>
@@ -9775,7 +9777,7 @@ async def admin_finance_payment_history(
         <div class="workspace-shell">
             {render_admin_navigation(current_empleado, "payment_history", subtitle="Historial de pagos: vencidas, programadas, en proceso y pagadas.")}
             {_render_admin_workspace_hero(
-                eyebrow="Payment Run",
+                eyebrow="Programación de pagos",
                 title="Historial de pagos",
                 description="Consulta solicitudes vencidas, programadas, en proceso de pago y pagadas con fechas clave y trazabilidad operativa.",
                 actions_html=(
@@ -9897,10 +9899,10 @@ async def admin_finance_payment_run_upload_payment_proof(
         return _payment_run_redirect(error_msg="Solicitud no encontrada.")
     if (documento.estado or "").strip().lower() != "en_proceso_pago":
         return _payment_run_redirect(
-            error_msg="Solo se puede subir testigo desde En Proceso de Pago."
+            error_msg="Solo se puede subir comprobante desde En Proceso de Pago."
         )
     if not comprobante_pago or not comprobante_pago.filename:
-        return _payment_run_redirect(error_msg="Selecciona el testigo de pago.")
+        return _payment_run_redirect(error_msg="Selecciona el comprobante de pago.")
 
     try:
         raw = await comprobante_pago.read()
@@ -9926,7 +9928,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
-            success_msg=f"Testigo cargado y solicitud {ref} marcada como pagada."
+            success_msg=f"Comprobante cargado y solicitud {ref} marcada como pagada."
         )
     except SolicitudValidationError as exc:
         await session.rollback()
@@ -9947,7 +9949,7 @@ async def admin_finance_payment_run_upload_payment_proof(
             },
         )
         return _payment_run_redirect(
-            error_msg="No se pudo cargar el testigo ni marcar el pago."
+            error_msg="No se pudo cargar el comprobante ni marcar el pago."
         )
 
 
@@ -10022,7 +10024,7 @@ async def admin_finance_payment_run_closure_detail(
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>Corte Payment Run - Samchat</title>
+        <title>Corte de programación de pagos - Samchat</title>
         <style>
             {_admin_workspace_styles("1180px")}
             .payment-table {{ width:100%; border-collapse:separate; border-spacing:0; }}
@@ -10032,14 +10034,14 @@ async def admin_finance_payment_run_closure_detail(
     </head>
     <body>
         <div class="workspace-shell">
-            {render_admin_navigation(current_empleado, "payment_run", subtitle="Detalle de corte Payment Run.")}
+            {render_admin_navigation(current_empleado, "payment_run", subtitle="Detalle de corte de programación de pagos.")}
             {_render_admin_workspace_hero(
-                eyebrow="Corte Payment Run",
+                eyebrow="Corte de pagos",
                 title=f"Corte {escape(str(closure.get('id') or ''))[:8]}",
-                description="Snapshot operativo de solicitudes incluidas en el corte. Los pagos se completan subiendo el testigo desde Payment Run.",
+                description="Snapshot operativo de solicitudes incluidas en el corte. Los pagos se completan subiendo el comprobante desde Programación de pagos.",
                 actions_html=(
                     f'{order_export_html}'
-                    '<a class="button secondary" href="/admin/finanzas/payment-run">Volver a Payment Run</a>'
+                    '<a class="button secondary" href="/admin/finanzas/payment-run">Volver a programación de pagos</a>'
                 ),
                 side_html=(
                     '<div class="eyebrow">Resumen</div>'
