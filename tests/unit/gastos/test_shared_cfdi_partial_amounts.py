@@ -94,7 +94,7 @@ async def test_shared_cfdi_amount_validation_locks_and_reads_existing_reservatio
 
 
 @pytest.mark.asyncio
-async def test_shared_cfdi_amount_validation_excludes_current_document_and_counts_expenses() -> None:
+async def test_shared_cfdi_amount_validation_excludes_expenses_reserved_by_any_linked_document() -> None:
     current_document_id = uuid4()
     session = _AmountSession([Decimal("50000.00")], [Decimal("52312.00")])
     report = SimpleNamespace(id=uuid4(), total=204624.00)
@@ -108,7 +108,11 @@ async def test_shared_cfdi_amount_validation_excludes_current_document_and_count
 
     assert remaining == Decimal("102312.00")
     assert len(session.calls) == 3
-    assert "monto_solicitado IS NULL" in str(session.calls[2][0])
+    expense_query = str(session.calls[2][0])
+    assert "NOT (EXISTS" in expense_query
+    assert "expense_reports.documento_id" in expense_query
+    assert "expense_reports.solicitud_documento_id" in expense_query
+    assert "expense_reports.informe_documento_id" in expense_query
 
 
 @pytest.mark.asyncio

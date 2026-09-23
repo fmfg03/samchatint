@@ -197,25 +197,29 @@ async def validate_shared_cfdi_payment_amount(
     )
     # A request amount is the reservation authority. An ExpenseReport linked to
     # that same Documento commonly carries the CFDI's full fiscal total, so adding
-    # both would double-count a partial payment. Only count standalone expenses
-    # whose source Documento has no requested amount.
+    # both would double-count a partial payment. An expense can be linked to both
+    # its paid request and an INFORME; exclude it when any linked Documento has
+    # already supplied the reservation.
+    reservation_document_exists = select(Documento.id).where(
+        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+        Documento.monto_solicitado.is_not(None),
+        or_(
+            Documento.id == ExpenseReport.documento_id,
+            Documento.id == ExpenseReport.solicitud_documento_id,
+            Documento.id == ExpenseReport.informe_documento_id,
+        ),
+    )
+    if exclude_documento_id is not None:
+        reservation_document_exists = reservation_document_exists.where(
+            Documento.id != exclude_documento_id
+        )
     expense_conditions = [
         ExpenseReport.cfdi_report_id == report_id,
         ExpenseReport.estado_gasto != "cancelado",
-        Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
-        Documento.monto_solicitado.is_(None),
+        ~reservation_document_exists.exists(),
     ]
-    if exclude_documento_id is not None:
-        expense_conditions.append(Documento.id != exclude_documento_id)
     expense_result = await session.execute(
         select(ExpenseReport.gasto_cantidad)
-        .join(
-            Documento,
-            or_(
-                ExpenseReport.informe_documento_id == Documento.id,
-                ExpenseReport.documento_id == Documento.id,
-            ),
-        )
         .where(and_(*expense_conditions))
     )
     return shared_cfdi_remaining_amount(
