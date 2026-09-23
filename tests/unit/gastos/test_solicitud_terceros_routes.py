@@ -228,7 +228,7 @@ async def test_terceros_form_shows_xml_and_materialidades_without_manual_cfdi_fi
     assert "/api/documentos/cfdi-autofill" in html
     assert "Crear solicitud y enviar para aprobación" in html
     assert 'name="submit_mode" value="create_and_send"' in html
-    assert html.index("BENEFICIARIO:") < html.index("Documentación de soporte")
+    assert html.index("Documentación de soporte") < html.index("BENEFICIARIO:")
     assert 'name="fecha_pago"' not in html
     assert "st-fecha-pago-locked" in html
     assert "Si se aprueba hoy" in html
