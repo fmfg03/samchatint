@@ -9165,12 +9165,15 @@ def _payment_run_redirect(
     success_msg: Optional[str] = None,
     error_msg: Optional[str] = None,
     anchor: Optional[str] = None,
+    vista: Optional[str] = None,
 ) -> RedirectResponse:
     params = []
     if success_msg:
         params.append(f"success_msg={quote(success_msg)}")
     if error_msg:
         params.append(f"error_msg={quote(error_msg)}")
+    if vista:
+        params.append(f"vista={quote(vista)}")
     suffix = ("?" + "&".join(params)) if params else ""
     fragment = f"#{anchor}" if anchor else ""
     return RedirectResponse(
@@ -9600,6 +9603,7 @@ async def admin_finance_payment_run(
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
+    vista: Optional[str] = Query(None),
 ) -> HTMLResponse:
     """Consult, date-edit and operationally close approved SOLICITUD payment runs."""
     try:
@@ -9655,6 +9659,35 @@ async def admin_finance_payment_run(
     closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)
     can_confirm_payment = can_confirm_payment_run_payment(current_empleado)
+    vista_value = vista if isinstance(vista, str) else ""
+    requested_view = vista_value.strip().lower()
+    if requested_view not in {"programa", "comprobantes"}:
+        # Accounting users arrive at the action they are authorized to perform;
+        # managers retain the established program-first view.
+        selected_view = (
+            "comprobantes" if can_confirm_payment and not can_close_run else "programa"
+        )
+    else:
+        selected_view = requested_view
+
+    view_params = {
+        key: value
+        for key, value in {
+            "status": status or "pendientes",
+            "date_from": date_from_value or None,
+            "date_to": date_to_value or None,
+            "q": q_value or None,
+        }.items()
+        if value is not None
+    }
+
+    def payment_run_view_url(view_name: str) -> str:
+        return "/admin/finanzas/payment-run?" + urlencode(
+            {**view_params, "vista": view_name}
+        )
+
+    program_view_url = payment_run_view_url("programa")
+    proof_view_url = payment_run_view_url("comprobantes")
     close_form_html = ""
     if can_close_run:
         close_form_html = """
@@ -9692,6 +9725,12 @@ async def admin_finance_payment_run(
             .alert {{ border-radius:14px; padding:12px 14px; margin-bottom:14px; font-weight:700; }}
             .alert-success {{ background:#dcfce7; color:#166534; border:1px solid #86efac; }}
             .alert-error {{ background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }}
+            .payment-run-tabs {{ display:flex; gap:8px; margin:0 0 18px; border-bottom:1px solid #cbd5e1; }}
+            .payment-run-tab {{ display:inline-block; padding:10px 14px; border-radius:10px 10px 0 0; color:#475569; font-size:14px; font-weight:800; text-decoration:none; }}
+            .payment-run-tab:hover {{ background:#f1f5f9; color:#0f172a; }}
+            .payment-run-tab:focus-visible {{ outline:3px solid #2563eb; outline-offset:2px; }}
+            .payment-run-tab[aria-current="page"] {{ background:#e0f2fe; color:#075985; box-shadow:inset 0 -3px 0 #0284c7; }}
+            .payment-run-view[hidden] {{ display:none !important; }}
         </style>
     </head>
     <body>
@@ -9718,7 +9757,11 @@ async def admin_finance_payment_run(
                 ),
             )}
             {alerts}
-            <section id="programa-de-pagos" class="workspace-card" style="margin-bottom:18px;">
+            <nav class="payment-run-tabs" aria-label="Vistas de Payment Run">
+                <a class="payment-run-tab" href="{program_view_url}"{' aria-current="page"' if selected_view == 'programa' else ''}>Programa de pagos</a>
+                <a class="payment-run-tab" href="{proof_view_url}"{' aria-current="page"' if selected_view == 'comprobantes' else ''}>Comprobantes pendientes</a>
+            </nav>
+            <section id="programa-de-pagos" class="workspace-card payment-run-view" style="margin-bottom:18px;"{' hidden' if selected_view != 'programa' else ''}>
                 <div class="workspace-section-title">Programa de pagos</div>
                 <div class="workspace-section-subtitle">Solicitudes programadas para el corte. Finanzas ajusta la fecha de pago y cierra el corte operativo; el programa no acredita que el dinero se haya movido.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
@@ -9729,7 +9772,7 @@ async def admin_finance_payment_run(
                 </div>
                 {close_form_html}
             </section>
-            <section id="comprobantes-pendientes" class="workspace-card" style="margin-bottom:18px;">
+            <section id="comprobantes-pendientes" class="workspace-card payment-run-view" style="margin-bottom:18px;"{' hidden' if selected_view != 'comprobantes' else ''}>
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
                 <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante y confirma el pago. Para varias solicitudes, selecciona las filas, carga varios archivos y revisa la asignación antes de confirmar.</div>
                 {"""
@@ -9779,7 +9822,7 @@ async def admin_finance_payment_run(
 	                    </table>
                 </div>
             </section>
-            <section class="workspace-card">
+            <section class="workspace-card payment-run-view"{' hidden' if selected_view != 'programa' else ''}>
                 <div class="workspace-section-title">Cortes recientes</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
                     <table class="payment-table">
@@ -10006,13 +10049,23 @@ async def admin_finance_payment_run_upload_payment_proof(
 
     documento = await session.get(Documento, documento_id)
     if documento is None:
-        return _payment_run_redirect(error_msg="Solicitud no encontrada.")
+        return _payment_run_redirect(
+            error_msg="Solicitud no encontrada.",
+            anchor="comprobantes-pendientes",
+            vista="comprobantes",
+        )
     if (documento.estado or "").strip().lower() != "en_proceso_pago":
         return _payment_run_redirect(
-            error_msg="Solo se puede subir comprobante desde En Proceso de Pago."
+            error_msg="Solo se puede subir comprobante desde En Proceso de Pago.",
+            anchor="comprobantes-pendientes",
+            vista="comprobantes",
         )
     if not comprobante_pago or not comprobante_pago.filename:
-        return _payment_run_redirect(error_msg="Selecciona el comprobante de pago.")
+        return _payment_run_redirect(
+            error_msg="Selecciona el comprobante de pago.",
+            anchor="comprobantes-pendientes",
+            vista="comprobantes",
+        )
 
     try:
         raw = await comprobante_pago.read()
@@ -10040,11 +10093,12 @@ async def admin_finance_payment_run_upload_payment_proof(
         return _payment_run_redirect(
             success_msg=f"Comprobante cargado y solicitud {ref} marcada como pagada.",
             anchor="comprobantes-pendientes",
+            vista="comprobantes",
         )
     except SolicitudValidationError as exc:
         await session.rollback()
         return _payment_run_redirect(
-            error_msg=str(exc), anchor="comprobantes-pendientes"
+            error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
         )
     except DocumentoPaymentPermissionError as exc:
         await session.rollback()
@@ -10052,7 +10106,7 @@ async def admin_finance_payment_run_upload_payment_proof(
     except DocumentoPaymentValidationError as exc:
         await session.rollback()
         return _payment_run_redirect(
-            error_msg=exc.message, anchor="comprobantes-pendientes"
+            error_msg=exc.message, anchor="comprobantes-pendientes", vista="comprobantes"
         )
     except Exception:
         await session.rollback()
@@ -10066,6 +10120,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         return _payment_run_redirect(
             error_msg="No se pudo cargar el comprobante ni marcar el pago.",
             anchor="comprobantes-pendientes",
+            vista="comprobantes",
         )
 
 
@@ -10158,11 +10213,12 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
         return _payment_run_redirect(
             success_msg=f"{len(paid_references)} solicitud(es) marcada(s) como pagadas con su comprobante.",
             anchor="comprobantes-pendientes",
+            vista="comprobantes",
         )
     except SolicitudValidationError as exc:
         await session.rollback()
         return _payment_run_redirect(
-            error_msg=str(exc), anchor="comprobantes-pendientes"
+            error_msg=str(exc), anchor="comprobantes-pendientes", vista="comprobantes"
         )
     except DocumentoPaymentPermissionError as exc:
         await session.rollback()
@@ -10170,7 +10226,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     except DocumentoPaymentValidationError as exc:
         await session.rollback()
         return _payment_run_redirect(
-            error_msg=exc.message, anchor="comprobantes-pendientes"
+            error_msg=exc.message, anchor="comprobantes-pendientes", vista="comprobantes"
         )
     except Exception:
         await session.rollback()
@@ -10181,6 +10237,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
         return _payment_run_redirect(
             error_msg="No se pudo cargar el lote de comprobantes ni marcar los pagos.",
             anchor="comprobantes-pendientes",
+            vista="comprobantes",
         )
 
 

@@ -1692,6 +1692,7 @@ async def journey_payment_run(request: Request):
         date_from=None,
         date_to=None,
         q=None,
+        vista=request.query_params.get("vista"),
     )
 
 
