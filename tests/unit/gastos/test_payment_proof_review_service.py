@@ -45,7 +45,7 @@ def test_payment_proof_review_blocks_declared_currency_conflict(monkeypatch):
 def test_payment_proof_review_accepts_one_labeled_local_date(monkeypatch):
     monkeypatch.setattr(
         "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
-        lambda **_: "Fecha: 22/09/2026\nMonto: 100.00\nBeneficiario: Proveedor Demo\nReferencia: REF123",
+        lambda **_: "Referencia: REF123\nMonto: 100.00\nFecha: 22/09/2026\nBeneficiario: Proveedor Demo",
     )
     review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
     assert review.status == "match"
@@ -67,6 +67,16 @@ def test_payment_proof_review_requires_recognized_bank_template(monkeypatch):
     monkeypatch.setattr(
         "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
         lambda **_: "Fecha: 22/09/2026\nMonto: 100.00\nBeneficiario: Proveedor Demo",
+    )
+    review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
+    assert review.status == "revision_required"
+    assert review.template_id is None
+
+
+def test_payment_proof_review_rejects_reordered_template_markers(monkeypatch):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: "Fecha: 22/09/2026\nMonto: 100.00\nBeneficiario: Proveedor Demo\nReferencia: REF123",
     )
     review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
     assert review.status == "revision_required"

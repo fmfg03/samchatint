@@ -63,10 +63,23 @@ def _parse_amount(value: Any) -> Decimal | None:
 
 def _bank_template_id(text: str, *, reference: str | None) -> str | None:
     normalized = _normalized(text)
-    markers = ("FECHA", "BENEFICIARIO")
-    has_amount_marker = any(marker in normalized for marker in ("MONTO", "IMPORTE", "CANTIDAD"))
-    has_reference_marker = "CLAVE DE RASTREO" in normalized or "REFERENCIA" in normalized
-    if reference and has_amount_marker and has_reference_marker and all(marker in normalized for marker in markers):
+    amount_marker = next(
+        (marker for marker in ("MONTO", "IMPORTE", "CANTIDAD") if marker in normalized),
+        None,
+    )
+    reference_marker = next(
+        (marker for marker in ("CLAVE DE RASTREO", "REFERENCIA") if marker in normalized),
+        None,
+    )
+    if not reference or not amount_marker or not reference_marker:
+        return None
+    marker_positions = [
+        normalized.find(reference_marker),
+        normalized.find(amount_marker),
+        normalized.find("FECHA"),
+        normalized.find("BENEFICIARIO"),
+    ]
+    if all(position >= 0 for position in marker_positions) and marker_positions == sorted(marker_positions):
         return "spei_transferencia_v1"
     return None
 
