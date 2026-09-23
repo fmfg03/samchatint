@@ -1123,9 +1123,12 @@ def test_document_detail_authorizes_before_pending_payment_side_effects() -> Non
 
     assert "selectinload(Documento.empleado)" in block
     assert block.index("documento.empleado_id != current_empleado.id") < block.index(
-        "if ensure_fecha_pago_for_approved_solicitud(documento)"
+        "is_read_only_operations_observer"
     )
-    assert block.index("documento.empleado_id != current_empleado.id") < block.index(
+    assert block.index("is_read_only_operations_observer") < block.index(
+        "await session.commit()"
+    )
+    assert block.index("is_read_only_operations_observer") < block.index(
         "await ensure_finance_pending_payment_notifications(session, documento)"
     )
 
