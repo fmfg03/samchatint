@@ -28686,7 +28686,6 @@ async def mis_documentos(
 
     # Build rows HTML
     rows_html = ""
-    rejection_forms_html = ""
     for documento in documentos:
         # Format dates
         fecha_inicio_str = format_value(documento.fecha_inicio)
@@ -30020,6 +30019,7 @@ async def documentos_pendientes(
     next_url = quote(next_path)
 
     rows_html = ""
+    rejection_forms_html = ""
     for documento in documentos:
         row_values = _documentos_todos_reporting_row_values(
             documento,
