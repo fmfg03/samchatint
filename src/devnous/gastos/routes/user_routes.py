@@ -10167,6 +10167,79 @@ _THIRD_PARTY_EMPLOYEE_REQUESTER_PERMISSIONS = {
 }
 
 
+# Explicit reporting visibility is intentionally separate from financial authority.
+# Alicia and Odilón may inspect all employee reports, including Mike's, but their
+# cross-account access does not include report mutation or payment actions.
+_INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS = {
+    "90701d00-5f0b-4b3d-b677-e491e53caf82",  # Alicia
+}
+_INFORME_READ_ONLY_GLOBAL_EMAILS = {
+    "azuniga@plataformasports.com",  # Alicia
+    "otrujillo@plataformasports.com",  # José Odilón Trujillo Macedo
+}
+
+
+def _has_read_only_cross_account_informe_access(empleado: Empleado) -> bool:
+    employee_id = str(getattr(empleado, "id", "") or "").strip().lower()
+    email = (getattr(empleado, "correo", None) or "").strip().lower()
+    return (
+        employee_id in _INFORME_READ_ONLY_GLOBAL_EMPLOYEE_IDS
+        or email in _INFORME_READ_ONLY_GLOBAL_EMAILS
+    )
+
+
+def _can_view_all_cuentas_de_gastos(empleado: Empleado) -> bool:
+    role = (getattr(empleado, "rol", None) or "").strip().lower()
+    if role in {"coordinador", "finanzas", "admin", "superadmin", "super_admin"}:
+        return True
+    return _has_read_only_cross_account_informe_access(empleado)
+
+
+def _can_read_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    return cuenta.empleado_id == empleado.id or _can_view_all_cuentas_de_gastos(empleado)
+
+
+def _can_access_read_only_informe_document(
+    documento: Documento, empleado: Empleado
+) -> bool:
+    return (
+        getattr(documento, "tipo", None) == "INFORME"
+        and bool(getattr(documento, "cuenta_gastos_id", None))
+        and _has_read_only_cross_account_informe_access(empleado)
+    )
+
+
+async def _can_access_read_only_informe_expense(
+    session: AsyncSession, expense: ExpenseReport, empleado: Empleado
+) -> bool:
+    if _can_access_expense_comprobante(expense, empleado):
+        return True
+    if not (
+        expense.cuenta_gastos_id
+        and _has_read_only_cross_account_informe_access(empleado)
+    ):
+        return False
+    cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+    return cuenta is not None and _can_read_cuenta_de_gastos(cuenta, empleado)
+
+
+def _can_mutate_cuenta_de_gastos(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    return not (
+        cuenta.empleado_id != empleado.id
+        and _has_read_only_cross_account_informe_access(empleado)
+    )
+
+
+async def _ensure_can_mutate_informe_expense(
+    session: AsyncSession, expense: ExpenseReport, empleado: Empleado
+) -> None:
+    if not expense.cuenta_gastos_id or not _has_read_only_cross_account_informe_access(empleado):
+        return
+    cuenta = await session.get(CuentaDeGastos, expense.cuenta_gastos_id)
+    if cuenta is not None and not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe de gastos")
+
+
 _COMPANY_AMEX_ALLOWED_BENEFICIARY_NAMES = {
     "jose odilon trujillo macedo",
     "luis angel orozco colin",
@@ -26228,6 +26301,8 @@ def _can_access_expense_comprobante(expense: ExpenseReport, empleado: Empleado) 
 
 
 def _can_access_documento_adjunto(documento: Documento, empleado: Empleado) -> bool:
+    if _can_access_read_only_informe_document(documento, empleado):
+        return True
     if documento.empleado_id == empleado.id:
         return True
     return empleado.rol in (
@@ -26254,7 +26329,9 @@ async def descargar_gasto_comprobante(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    if not _can_access_expense_comprobante(expense, current_empleado):
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
     if not expense.archivo_data:
         raise HTTPException(status_code=404, detail="Este gasto no tiene comprobante adjunto")
@@ -26290,7 +26367,9 @@ async def descargar_gasto_adjunto(
     expense = result.scalar_one_or_none()
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
-    if not _can_access_expense_comprobante(expense, current_empleado):
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     key = (attachment_key or "").strip()
@@ -26393,8 +26472,10 @@ async def ver_gasto(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
-    # Verify access: owner OR coordinador/finanzas/admin
-    if expense.empleado_id != current_empleado.id and current_empleado.rol not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']:
+    # Allow report delegates to inspect linked evidence without authorizing changes.
+    if not await _can_access_read_only_informe_expense(
+        session, expense, current_empleado
+    ):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     # Get CFDI data if available (via nova_request_id)
@@ -26446,7 +26527,13 @@ async def ver_gasto(
         """
 
     # Check if CFDI can be requested
+    is_read_only_cross_account_view = (
+        expense.empleado_id != current_empleado.id
+        and _has_read_only_cross_account_informe_access(current_empleado)
+    )
     can_request_cfdi = (
+        not is_read_only_cross_account_view
+        and
         expense.tipo_gasto == "ticket" and
         expense.archivo_data and
         (not expense.nova_request_id or
@@ -26472,7 +26559,7 @@ async def ver_gasto(
 
     # Determine if can edit
     can_edit = False
-    if not is_cancelled:
+    if not is_cancelled and not is_read_only_cross_account_view:
         # Check lock status for editing
         is_locked = (
             (expense.documento_id is not None and documento_estado and documento_estado != 'borrador') or
@@ -26488,7 +26575,7 @@ async def ver_gasto(
 
     # Determine if can cancel
     can_cancel = False
-    if not is_cancelled:
+    if not is_cancelled and not is_read_only_cross_account_view:
         if is_owner:
             # Owner can cancel if CFDI not locked and documento is NULL or borrador
             cfdi_locked = expense.estado_factura in ('en_proceso', 'completada')
@@ -26907,6 +26994,8 @@ async def cancelar_gasto(
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
 
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
+
     # Check if already cancelled
     if expense.estado_gasto == 'cancelado':
         return RedirectResponse(
@@ -27046,6 +27135,8 @@ async def editar_gasto_form(
 
     if not expense:
         raise HTTPException(status_code=404, detail="Gasto no encontrado")
+
+    await _ensure_can_mutate_informe_expense(session, expense, current_empleado)
 
     linked_informe_url = (
         f"/informes-de-gastos/{expense.cuenta_gastos_id}"
@@ -33106,7 +33197,7 @@ async def _informe_for_cuenta_or_redirect(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     informe_doc = await _informe_documento_for_cuenta(session, cuenta_id)
@@ -33726,8 +33817,13 @@ async def exportar_informe_gastos(
     if not documento:
         raise HTTPException(status_code=404, detail="Documento not found")
 
-    # Verify access: owner OR coordinador/finanzas/admin
-    if documento.empleado_id != current_empleado.id and current_empleado.rol not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']:
+    # Permit only the explicitly delegated report document, never SOLICITUD data.
+    if (
+        documento.empleado_id != current_empleado.id
+        and current_empleado.rol
+        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        and not _can_access_read_only_informe_document(documento, current_empleado)
+    ):
         raise HTTPException(status_code=403, detail="Access denied")
 
     # Load empleado
@@ -36820,6 +36916,7 @@ async def ver_documento(
         documento.empleado_id != current_empleado.id
         and current_empleado.rol
         not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        and not _can_access_read_only_informe_document(documento, current_empleado)
     ):
         return _render_documento_access_denied_page(current_empleado)
 
@@ -39971,9 +40068,8 @@ async def cuentas_de_gastos_list(
     from html import escape
 
     try:
-        _global_cuentas_roles = ('coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin')
         scope_dept = empleado_list_view_department_scope(current_empleado)
-        if current_empleado.rol in _global_cuentas_roles:
+        if _can_view_all_cuentas_de_gastos(current_empleado):
             query = (
                 select(CuentaDeGastos)
                 .options(
@@ -41441,16 +41537,22 @@ async def cuenta_de_gastos_detail(
     if not cuenta:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
 
-    # Check ownership (unless global read role: coordinador/finanzas/admin/super)
-    _cuenta_global_read_roles = ('admin', 'finanzas', 'coordinador', 'superadmin', 'super_admin')
-    if current_empleado.rol not in _cuenta_global_read_roles and cuenta.empleado_id != current_empleado.id:
+    # Global report readers may inspect, but only owners/Finance roles may mutate.
+    if not _can_view_all_cuentas_de_gastos(current_empleado) and cuenta.empleado_id != current_empleado.id:
         raise HTTPException(status_code=403, detail="No tienes permiso para ver este informe de gastos")
 
     _is_cuenta_owner = cuenta.empleado_id == current_empleado.id
-    _can_manage_cuenta = _is_cuenta_owner or current_empleado.rol in (
+    _is_read_only_cross_account_view = (
+        not _can_mutate_cuenta_de_gastos(cuenta, current_empleado)
+    )
+    _can_manage_cuenta = not _is_read_only_cross_account_view and (
+        _is_cuenta_owner or current_empleado.rol in (
         'admin', 'finanzas', 'superadmin', 'super_admin'
+        )
     )
     _can_manage_amex = (
+        not _is_read_only_cross_account_view
+        and
         (current_empleado.rol or "").strip().lower() in FINANCE_AMEX_ROLES
         and _cuenta_allows_company_amex(cuenta)
     )
@@ -41548,6 +41650,12 @@ async def cuenta_de_gastos_detail(
         return datetime.min
 
     def _movimiento_gasto_actions(exp: ExpenseReport) -> str:
+        if not _can_manage_cuenta:
+            return (
+                f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
+                f'<a href="/gastos/{exp.id}" style="color:#4CAF50;text-decoration:none;">Abrir gasto</a>'
+                f'</div>'
+            )
         if exp.estado_gasto == 'cancelado':
             return (
                 f'<div class="inline-actions" style="gap:6px;justify-content:flex-end;">'
@@ -43264,6 +43372,9 @@ async def cerrar_cuenta_de_gastos(
     if not cuenta:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
 
+    if not _can_mutate_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso de solo lectura al informe de gastos")
+
     # Check ownership (unless admin/finanzas)
     if current_empleado.rol not in ('admin', 'finanzas', 'superadmin', 'super_admin') and cuenta.empleado_id != current_empleado.id:
         raise HTTPException(status_code=403, detail="No tienes permiso para cerrar este informe de gastos")
@@ -43573,6 +43684,8 @@ async def _compute_cuenta_saldo_context(
 
 
 def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> bool:
+    if not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        return False
     if cuenta.empleado_id == empleado.id:
         return True
     rol = (empleado.rol or "").strip().lower()
@@ -43582,6 +43695,8 @@ def _can_access_reembolso_cuenta(cuenta: CuentaDeGastos, empleado: Empleado) -> 
 def _can_submit_settlement(
     cuenta: CuentaDeGastos, empleado: Empleado, tipo: str
 ) -> bool:
+    if not _can_mutate_cuenta_de_gastos(cuenta, empleado):
+        return False
     rol = (empleado.rol or "").strip().lower()
     if tipo == "reembolso":
         return rol in {"admin", "finanzas", "superadmin", "super_admin"}
