@@ -41442,10 +41442,12 @@ async def cuenta_de_gastos_detail(
         solicitudes_list = [d for d in documentos if d.tipo == 'SOLICITUD']
         informe_doc = next((d for d in documentos if d.tipo == 'INFORME'), None)
 
-        # Fetch expenses
+        # Cancelled expenses stay in the audit trail, but must not be rendered
+        # back into the requester's working report after deletion.
         expenses_result = await session.execute(
             select(ExpenseReport).where(
-                ExpenseReport.cuenta_gastos_id == cuenta.id
+                ExpenseReport.cuenta_gastos_id == cuenta.id,
+                ExpenseReport.estado_gasto != "cancelado",
             ).options(
                 selectinload(ExpenseReport.cuenta_contable),
                 selectinload(ExpenseReport.cfdi_report)
