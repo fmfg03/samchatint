@@ -30153,14 +30153,16 @@ async def documentos_pendientes(
                 position: sticky;
                 right: 0;
                 z-index: 2;
-                background: #fff;
                 box-shadow: -10px 0 14px -14px rgba(15, 23, 42, 0.45);
             }}
             .approval-queue-table thead .approval-actions-cell {{
                 z-index: 4;
+                background: #0f172a;
+                color: #f8fafc;
             }}
             .approval-queue-table tbody .approval-actions-cell {{
                 min-width: 176px;
+                background: #fff;
             }}
         </style>
     </head>
