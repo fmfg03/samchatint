@@ -455,7 +455,7 @@ async def list_payment_run_items(
             LEFT JOIN closure_items ci ON ci.documento_id = d.id
             WHERE {" AND ".join(filters)}
             ORDER BY
-                d.fecha_pago NULLS LAST,
+                {report_date_column} NULLS LAST,
                 d.aprobado_en NULLS LAST,
                 d.creado_en DESC
             LIMIT :limit
