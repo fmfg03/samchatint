@@ -195,10 +195,15 @@ async def validate_shared_cfdi_payment_amount(
     documento_result = await session.execute(
         select(Documento.monto_solicitado).where(and_(*documento_conditions))
     )
+    # A request amount is the reservation authority. An ExpenseReport linked to
+    # that same Documento commonly carries the CFDI's full fiscal total, so adding
+    # both would double-count a partial payment. Only count standalone expenses
+    # whose source Documento has no requested amount.
     expense_conditions = [
         ExpenseReport.cfdi_report_id == report_id,
         ExpenseReport.estado_gasto != "cancelado",
         Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
+        Documento.monto_solicitado.is_(None),
     ]
     if exclude_documento_id is not None:
         expense_conditions.append(Documento.id != exclude_documento_id)
