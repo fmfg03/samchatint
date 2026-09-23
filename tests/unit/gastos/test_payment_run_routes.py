@@ -141,6 +141,40 @@ async def test_payment_run_bulk_proof_upload_rolls_back_invalid_document(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["attachment", "payment"])
+async def test_payment_run_single_proof_rolls_back_validation_failures(
+    monkeypatch, failure
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(id=document_id, estado="en_proceso_pago")
+    )
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    if failure == "attachment":
+        monkeypatch.setattr(
+            admin_routes,
+            "add_solicitud_documento_adjuntos",
+            AsyncMock(side_effect=admin_routes.SolicitudValidationError("invalid", "invalid")),
+        )
+    else:
+        monkeypatch.setattr(admin_routes, "add_solicitud_documento_adjuntos", AsyncMock())
+        monkeypatch.setattr(
+            documento_payment_service,
+            "register_document_payment",
+            AsyncMock(side_effect=documento_payment_service.DocumentoPaymentValidationError("invalid", "invalid")),
+        )
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        documento_id=document_id, request=SimpleNamespace(), session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+    )
+    assert response.status_code == 303
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_payment_run_bulk_proof_upload_commits_one_explicitly_mapped_batch(
     monkeypatch,
 ) -> None:
