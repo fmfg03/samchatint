@@ -59,6 +59,36 @@ async def test_payment_proof_review_returns_unpersisted_candidates(monkeypatch) 
     session.commit.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_payment_proof_review_rejects_invalid_attachment_before_extraction(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(id=document_id, estado="en_proceso_pago")
+    )
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes,
+        "validate_solicitud_terceros_attachment",
+        lambda _: (_ for _ in ()).throw(
+            admin_routes.SolicitudValidationError("invalid", "Archivo inválido")
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_routes.admin_finance_payment_run_review_payment_proof(
+            documento_id=document_id,
+            session=session,
+            current_empleado=SimpleNamespace(id=uuid4()),
+            comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+        )
+
+    assert exc.value.status_code == 400
+
+
 def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
     first_id = uuid4()
     second_id = uuid4()

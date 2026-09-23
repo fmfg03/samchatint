@@ -10279,6 +10279,17 @@ async def admin_finance_payment_run_review_payment_proof(
         raise HTTPException(status_code=400, detail="Selecciona el comprobante de pago.")
     raw = await comprobante_pago.read()
     content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+    try:
+        validate_solicitud_terceros_attachment(
+            SolicitudTercerosAttachment(
+                raw_bytes=raw,
+                filename=comprobante_pago.filename,
+                mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
+                categoria="comprobante_pago",
+            )
+        )
+    except SolicitudValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     review = review_payment_proof(
         raw=raw,
         filename=comprobante_pago.filename,
