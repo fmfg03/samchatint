@@ -163,6 +163,20 @@ async def _finalize_document_payment_write(
         await session.flush()
 
 
+def _payment_proof_audit_comment(
+    base: str,
+    *,
+    review_status: str | None,
+    resolution_reason: str | None,
+) -> str:
+    if not review_status:
+        return base
+    suffix = f" Revisión de comprobante: {review_status}."
+    if resolution_reason:
+        suffix += f" Resolución de Finanzas: {resolution_reason.strip()}."
+    return base + suffix
+
+
 async def register_document_payment(
     session: AsyncSession,
     *,
@@ -170,6 +184,8 @@ async def register_document_payment(
     actor_id: UUID | str,
     actor: Any | None = None,
     fecha_pago_efectiva: date | None = None,
+    payment_proof_review_status: str | None = None,
+    payment_proof_resolution_reason: str | None = None,
     notify: bool = True,
     commit: bool = True,
 ) -> DocumentoPagoResult:
@@ -249,7 +265,11 @@ async def register_document_payment(
             entidad_id=documento.id,
             aprobador_id=payment_actor.id,
             accion="pagar",
-            comentario="Pago AMEX marcado como pagado contra pasivo de tarjeta.",
+            comentario=_payment_proof_audit_comment(
+                "Pago AMEX marcado como pagado contra pasivo de tarjeta.",
+                review_status=payment_proof_review_status,
+                resolution_reason=payment_proof_resolution_reason,
+            ),
             fecha=datetime.utcnow(),
         )
         session.add(aprobacion)
@@ -297,7 +317,11 @@ async def register_document_payment(
                 entidad_id=documento.id,
                 aprobador_id=payment_actor.id,
                 accion="pagar",
-                comentario="Solicitud de transferencia marcada como pagada.",
+                comentario=_payment_proof_audit_comment(
+                    "Solicitud de transferencia marcada como pagada.",
+                    review_status=payment_proof_review_status,
+                    resolution_reason=payment_proof_resolution_reason,
+                ),
                 fecha=datetime.utcnow(),
             )
             session.add(aprobacion)
@@ -472,9 +496,11 @@ async def register_document_payment(
         entidad_id=documento.id,
         aprobador_id=payment_actor.id,
         accion="pagar",
-        comentario=(
+        comentario=_payment_proof_audit_comment(
             f"Pago registrado y gasto generado automáticamente ({flow_type}). "
-            f"Gasto: {expense.numero_referencia}"
+            f"Gasto: {expense.numero_referencia}",
+            review_status=payment_proof_review_status,
+            resolution_reason=payment_proof_resolution_reason,
         ),
         fecha=datetime.utcnow(),
     )

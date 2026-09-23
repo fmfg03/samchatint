@@ -9,6 +9,7 @@ from fastapi import HTTPException
 
 from devnous.gastos.routes import admin_routes, dependencies
 from devnous.gastos.services import documento_payment_service, payment_run_service
+from devnous.gastos.services.payment_proof_review_service import PaymentProofReview
 
 
 class _PaymentProofUpload:
@@ -19,6 +20,41 @@ class _PaymentProofUpload:
 
     async def read(self) -> bytes:
         return self.content
+
+
+@pytest.mark.asyncio
+async def test_payment_proof_review_returns_unpersisted_candidates(monkeypatch) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(
+        return_value=SimpleNamespace(
+            id=document_id,
+            estado="en_proceso_pago",
+            monto_solicitado=Decimal("100.00"),
+            monto_total=None,
+            beneficiario_empleado=None,
+            proveedor_cliente=SimpleNamespace(nombre="Proveedor Demo"),
+        )
+    )
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: PaymentProofReview(
+            "match", date(2026, 9, 22), Decimal("100.00"), "Proveedor Demo", "REF-1", ()
+        ),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_review_payment_proof(
+        documento_id=document_id,
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+    )
+
+    assert response.status_code == 200
+    assert b"2026-09-22" in response.body
+    session.commit.assert_not_awaited()
 
 
 def test_payment_run_bulk_proof_plan_requires_explicit_mapping() -> None:
