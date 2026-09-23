@@ -87,6 +87,22 @@ def test_pending_approval_witness_uses_semantic_action_group_and_existing_posts(
     assert 'value="reject"' in page
 
 
+def test_pending_approval_keeps_decision_column_sticky():
+    page = _function_source(
+        USER_ROUTES,
+        '@router.get("/documentos/pendientes"',
+        '@router.post("/documentos/pendientes/accion-lote")',
+    )
+    assert 'class="approval-queue-table"' in page
+    assert page.count('class="approval-actions-cell"') >= 2
+    assert ".approval-queue-table .approval-actions-cell" in page
+    assert "position: sticky;" in page
+    assert "right: 0;" in page
+    assert ".approval-queue-table thead .approval-actions-cell" in page
+    assert "background: #0f172a;" in page
+    assert "color: #f8fafc;" in page
+
+
 def test_admin_fragments_adopt_shared_table_shell():
     artifact = _source(ARTIFACT_UI)
     cashflow = _source(CASHFLOW_UI)

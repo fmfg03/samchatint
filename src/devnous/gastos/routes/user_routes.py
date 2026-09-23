@@ -30020,7 +30020,7 @@ async def documentos_pendientes(
             <td data-sort-value="{escape(monto_total_sort)}">{escape(row_values["monto_total"])}</td>
             <td>{escape(descripcion)}</td>
             <td data-sort-value="{escape(enviado_sort)}">{escape(str(enviado_str))}</td>
-            <td>{actions_html}</td>
+            <td class="approval-actions-cell">{actions_html}</td>
         </tr>
         """
 
@@ -30111,7 +30111,7 @@ async def documentos_pendientes(
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
                     <button type="submit" name="action" value="reject" class="button danger">Rechazar seleccionados</button>
                 </div>
-                <div class="table-shell"><table data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
+                <div class="table-shell"><table class="approval-queue-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>
                             <th>Sel.</th>
@@ -30126,7 +30126,7 @@ async def documentos_pendientes(
                             <th data-sort-key="monto_total" data-sort-type="money">Monto Total</th>
                             <th data-sort-key="descripcion" data-sort-type="text">Descripción</th>
                             <th data-sort-key="fecha_envio" data-sort-type="date">Fecha de Envío</th>
-                            <th>Acciones</th>
+                            <th class="approval-actions-cell">Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -30147,7 +30147,24 @@ async def documentos_pendientes(
     <html>
     <head>
         <title>Documentos Pendientes por Aprobar - Copa Telmex</title>
-        <style>{_workspace_shell_styles("1580px", layout="data")}</style>
+        <style>
+            {_workspace_shell_styles("1580px", layout="data")}
+            .approval-queue-table .approval-actions-cell {{
+                position: sticky;
+                right: 0;
+                z-index: 2;
+                box-shadow: -10px 0 14px -14px rgba(15, 23, 42, 0.45);
+            }}
+            .approval-queue-table thead .approval-actions-cell {{
+                z-index: 4;
+                background: #0f172a;
+                color: #f8fafc;
+            }}
+            .approval-queue-table tbody .approval-actions-cell {{
+                min-width: 176px;
+                background: #fff;
+            }}
+        </style>
     </head>
     <body>
         <div class="container">
