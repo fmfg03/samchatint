@@ -15,6 +15,16 @@ def test_movimientos_gasto_rows_offer_view_edit_and_delete_actions():
     assert 'motivo_cancelacion' in helper
 
 
+def test_cancelled_expenses_are_hidden_from_the_requester_report_view():
+    source = Path('src/devnous/gastos/routes/user_routes.py').read_text()
+    start = source.index('async def cuenta_de_gastos_detail(')
+    end = source.index('@router.get("/informes-de-gastos/{cuenta_id}/editar"', start)
+    detail = source[start:end]
+
+    assert 'ExpenseReport.cuenta_gastos_id == cuenta.id,' in detail
+    assert 'ExpenseReport.estado_gasto != "cancelado"' in detail
+
+
 def test_cancelar_gasto_supports_safe_return_to_for_contextual_delete():
     source = Path('src/devnous/gastos/routes/user_routes.py').read_text()
     start = source.index('async def cancelar_gasto')
