@@ -35104,46 +35104,6 @@ async def _render_solicitud_terceros_form(
             <form method="POST" action="{form_action}" enctype="multipart/form-data" id="solicitud-terceros-form">
                 {f'<input type="hidden" name="client_submission_id" value="{client_submission_id}">' if not edit_documento else ''}
                 <div class="st-page-wrap">
-                    <div class="st-support-section">
-                        <h3>Documentación de soporte</h3>
-                        <div class="st-doc-row st-support-cfdi-pdf-row">
-                            <div class="st-doc-label">CFDI PDF:</div>
-                            <div class="st-doc-value">
-                                <input type="file" name="archivo_pdf" id="archivo_pdf" accept=".pdf,application/pdf">
-                                <small>Archivo PDF (máx. 15&nbsp;MB).</small>
-                            </div>
-                            <div class="st-support-cfdi-pdf-preview">
-                                <div id="archivo_pdf_preview" class="st-file-preview" hidden>
-                                    <div class="st-file-preview-head">
-                                        <strong>Vista previa del PDF</strong>
-                                        <span id="archivo_pdf_preview_name">Sin archivo seleccionado</span>
-                                    </div>
-                                    <iframe
-                                        id="archivo_pdf_preview_frame"
-                                        title="Vista previa del CFDI PDF"
-                                        class="st-file-preview-frame"
-                                        loading="lazy"
-                                    ></iframe>
-                                </div>
-                            </div>
-                        </div>
-                        {render_st_doc_row(
-                            "CFDI XML:",
-                            '<input type="file" name="archivo_xml" id="archivo_xml" accept=".xml,application/xml,text/xml"><small>Archivo XML (máx. 15&nbsp;MB).</small>',
-                        )}
-                        {render_st_doc_row(
-                            "MATERIALIDADES:",
-                            render_materialidades_file_picker_html(),
-                        )}
-                        {render_shared_cfdi_reference_input()}
-                        <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
-                            <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
-                                <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
-                                <span><strong>Factura compartida / pago parcial</strong><br><small>Confirma que este CFDI ya fue usado porque corresponde a otro pago parcial de la misma factura. La confirmación quedará registrada.</small></span>
-                            </label>
-                        </div>
-                    </div>
-
                     <div class="st-doc">
                         {render_st_doc_header_form()}
                         {render_st_doc_row(
@@ -35233,6 +35193,46 @@ async def _render_solicitud_terceros_form(
                             right_readonly=True,
                         )}
                         {render_st_doc_firmas(escape(current_empleado.nombre or ""), "")}
+                    </div>
+
+                    <div class="st-support-section">
+                        <h3>Documentación de soporte</h3>
+                        <div class="st-doc-row st-support-cfdi-pdf-row">
+                            <div class="st-doc-label">CFDI PDF:</div>
+                            <div class="st-doc-value">
+                                <input type="file" name="archivo_pdf" id="archivo_pdf" accept=".pdf,application/pdf">
+                                <small>Archivo PDF (máx. 15&nbsp;MB).</small>
+                            </div>
+                            <div class="st-support-cfdi-pdf-preview">
+                                <div id="archivo_pdf_preview" class="st-file-preview" hidden>
+                                    <div class="st-file-preview-head">
+                                        <strong>Vista previa del PDF</strong>
+                                        <span id="archivo_pdf_preview_name">Sin archivo seleccionado</span>
+                                    </div>
+                                    <iframe
+                                        id="archivo_pdf_preview_frame"
+                                        title="Vista previa del CFDI PDF"
+                                        class="st-file-preview-frame"
+                                        loading="lazy"
+                                    ></iframe>
+                                </div>
+                            </div>
+                        </div>
+                        {render_st_doc_row(
+                            "CFDI XML:",
+                            '<input type="file" name="archivo_xml" id="archivo_xml" accept=".xml,application/xml,text/xml"><small>Archivo XML (máx. 15&nbsp;MB).</small>',
+                        )}
+                        {render_st_doc_row(
+                            "MATERIALIDADES:",
+                            render_materialidades_file_picker_html(),
+                        )}
+                        {render_shared_cfdi_reference_input()}
+                        <div class="st-cfdi-shared-confirmation" style="margin-top:12px;padding:12px 14px;border:1px solid #f59e0b;border-radius:8px;background:#fffbeb;">
+                            <label for="cfdi_compartido_confirmado" style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
+                                <input type="checkbox" name="cfdi_compartido_confirmado" id="cfdi_compartido_confirmado" value="1" style="margin-top:3px;">
+                                <span><strong>Factura compartida / pago parcial</strong><br><small>Confirma que este CFDI ya fue usado porque corresponde a otro pago parcial de la misma factura. La confirmación quedará registrada.</small></span>
+                            </label>
+                        </div>
                     </div>
 
                     <details class="st-doc-supplement">
