@@ -27,6 +27,8 @@ def _doc(**overrides):
         "proveedor_cliente": None,
         "proveedor_cliente_id": None,
         "cuenta_gastos": None,
+        "torneo": None,
+        "fase": None,
         "concepto_pago": "Hospedaje regional",
         "referencia_pago": "RP-001",
         "referencia_operaciones": "456",
@@ -66,6 +68,18 @@ def test_documentos_todos_reporting_values_for_provider_solicitud():
     assert row["currency"] == "MXN"
     assert row["situacion"] == "Abierta"
     assert row["aprobador"] == "Finanzas"
+
+
+def test_documentos_todos_reporting_includes_torneo_and_fase():
+    documento = _doc(
+        torneo=SimpleNamespace(name="Nacional de Béisbol"),
+        fase="Regional",
+    )
+
+    row = user_routes._documentos_todos_reporting_row_values(documento)
+
+    assert row["torneo"] == "Nacional de Béisbol"
+    assert row["fase"] == "Regional"
 
 
 def test_documentos_todos_reporting_values_for_employee_beneficiary():
