@@ -22,6 +22,7 @@ from devnous.gastos.routes import (
     dependencies,
     user_routes,
 )
+from devnous.gastos.routes import admin_budget_ui
 from devnous.gastos.services import cuenta_contable_suggester as cuenta_suggester_module
 from devnous.gastos.services import (
     documento_payment_service,
@@ -1541,6 +1542,144 @@ async def journey_budget_control_queue(request: Request):
         PROFILE_FIXTURES["budget_control"]["employee"],
     )
     return HTMLResponse(html)
+
+
+_BUDGET_JOURNEY_VERSION_ID = "92000000-0000-0000-0000-000000000001"
+_BUDGET_JOURNEY_TOURNAMENT_KEY = "copa-browser-ux"
+_BUDGET_JOURNEY_LINE_ID = "92000000-0000-0000-0000-000000000002"
+
+
+def _budget_journey_line() -> dict[str, object]:
+    return {
+        "id": _BUDGET_JOURNEY_LINE_ID,
+        "budget_concept_id": "92000000-0000-0000-0000-000000000003",
+        "concept_name": "Hospedaje y alimentación",
+        "budget_amount": 120_000,
+        "phase": "Fase regional",
+        "cuenta_codigo": "6100-001",
+        "cuenta_nombre": "Gastos de torneo",
+    }
+
+
+def _budget_journey_plan() -> dict[str, dict[int, dict[str, float]]]:
+    return {
+        _BUDGET_JOURNEY_LINE_ID: {
+            week: {
+                "budget_expense_amount": 120_000.0 if week == 1 else 0.0,
+                "expected_income_amount": 0.0,
+            }
+            for week in range(1, 54)
+        }
+    }
+
+
+def _budget_journey_actuals() -> dict[str, dict[int, dict[str, float]]]:
+    return {
+        _BUDGET_JOURNEY_LINE_ID: {
+            week: {
+                "real_expense_cash": 45_000.0 if week == 1 else 0.0,
+                "committed_unpaid": 15_000.0 if week == 1 else 0.0,
+                "real_income": 0.0,
+            }
+            for week in range(1, 54)
+        }
+    }
+
+
+def _budget_journey_shell(*, title: str, body: str) -> HTMLResponse:
+    return HTMLResponse(
+        f"""
+        <!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>{escape(title)}</title>
+        <style>
+          {admin_routes._admin_workspace_styles("1400px", layout="data")}
+          html,body{{margin:0;max-width:100%;}}
+          .workspace-shell{{box-sizing:border-box;max-width:100%;padding:24px;}}
+          .workspace-card{{box-sizing:border-box;max-width:100%;}}
+        </style></head><body><main class="workspace-shell">{body}</main></body></html>
+        """
+    )
+
+
+@app.get("/admin/presupuestos", response_class=HTMLResponse)
+async def journey_budget_dashboard() -> HTMLResponse:
+    """Test-only, read-only budget dashboard using canonical UI renderers."""
+    cards = admin_budget_ui.render_tournament_dashboard_cards(
+        [
+            {
+                "tournament_id": _BUDGET_JOURNEY_TOURNAMENT_KEY,
+                "tournament_code": "CBUX-2026",
+                "tournament_name": "Copa Browser UX",
+                "line_count": 1,
+            }
+        ],
+        edition_year=2026,
+        version_id=_BUDGET_JOURNEY_VERSION_ID,
+        tournament_rollups={
+            _BUDGET_JOURNEY_TOURNAMENT_KEY: {
+                "budget_expense_total": 120_000.0,
+                "real_expense_total": 45_000.0,
+                "committed_pending_total": 15_000.0,
+            }
+        },
+    )
+    return _budget_journey_shell(
+        title="Presupuestos - Administración",
+        body=f"""
+        <h1>Presupuestos 2026</h1>
+        <p>Selecciona un torneo para revisar presupuesto y ejercido real.</p>
+        <section class="workspace-card" aria-label="Torneos presupuestales">
+          {cards}
+        </section>
+        """,
+    )
+
+
+@app.get(
+    "/admin/presupuestos/torneo/{tournament_key}", response_class=HTMLResponse
+)
+async def journey_budget_tournament_detail(tournament_key: str) -> HTMLResponse:
+    if tournament_key != _BUDGET_JOURNEY_TOURNAMENT_KEY:
+        return HTMLResponse("<h1>Torneo no encontrado</h1>", status_code=404)
+
+    line = _budget_journey_line()
+    plan_map = _budget_journey_plan()
+    actuals_map = _budget_journey_actuals()
+    executive = admin_budget_ui.render_budget_executive_dashboard(
+        [line],
+        plan_map=plan_map,
+        actuals_map=actuals_map,
+        tournament_key=tournament_key,
+        edition_year=2026,
+        version_id=_BUDGET_JOURNEY_VERSION_ID,
+        budget_view="expenses",
+        show_committed=True,
+    )
+    matrix = admin_budget_ui.render_budget_partida_matrix(
+        [line],
+        plan_map=plan_map,
+        actuals_map=actuals_map,
+        version_id=_BUDGET_JOURNEY_VERSION_ID,
+        tournament_key=tournament_key,
+        can_edit=False,
+        edition_year=2026,
+        matrix_mode="expenses",
+        budget_view="expenses",
+        show_committed=True,
+    )
+    return _budget_journey_shell(
+        title="Copa Browser UX - Presupuestos",
+        body=f"""
+        <h1>Copa Browser UX</h1>
+        <p>Presupuesto operativo 2026</p>
+        <a href="/admin/presupuestos">← Dashboard</a>
+        {executive}
+        <section class="workspace-card" aria-label="Partidas presupuestales">
+          {matrix}
+        </section>
+        """,
+    )
 
 
 @app.get("/admin/finanzas/payment-run", response_class=HTMLResponse)
