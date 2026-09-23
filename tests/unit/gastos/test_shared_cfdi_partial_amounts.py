@@ -1,5 +1,6 @@
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -329,6 +330,31 @@ async def test_editing_linked_shared_cfdi_revalidates_new_amount(monkeypatch) ->
 
     assert updated.monto_solicitado == 102312.00
     assert calls == [(report, 102312.00, document.id)]
+
+
+@pytest.mark.asyncio
+async def test_editing_reused_cfdi_persists_its_canonical_link(monkeypatch) -> None:
+    empleado_id = uuid4()
+    report = SimpleNamespace(id=uuid4(), total=204624.00)
+    document = SimpleNamespace(
+        id=uuid4(), tipo="SOLICITUD", estado="borrador", empleado_id=empleado_id,
+        budget_concept_id=None, cfdi_report_id=None, cfdi_compartido_confirmado=False,
+    )
+    monkeypatch.setattr(
+        documento_service, "find_cfdi_report_by_fiscal_uuid", AsyncMock(return_value=report)
+    )
+
+    updated = await documento_service.update_solicitud_terceros_document(
+        _UpdateSession(report, SimpleNamespace(), SimpleNamespace()), documento=document,
+        payload=SolicitudTercerosPayload(
+            empleado_id=empleado_id, monto_solicitado=100.00, proveedor_cliente_id=uuid4(),
+            torneo_id=None, proyecto_otro="Nacional Morelos", concepto_pago="Pago",
+            cfdi_uuid_manual="ABCD1234-1111-2222-3333-444444444444",
+        ),
+    )
+
+    assert updated.cfdi_report_id == report.id
+    assert updated.cfdi_uuid_manual == "ABCD1234-1111-2222-3333-444444444444"
 
 
 @pytest.mark.asyncio

@@ -1170,10 +1170,15 @@ async def update_solicitud_terceros_document(
             "Las categorías solo pueden seleccionarse para un proyecto configurado.",
         )
 
-    if (
-        documento.cfdi_report_id
-        and payload.cfdi_compartido_confirmado
-    ):
+    if payload.cfdi_uuid_manual:
+        matched_cfdi = await find_cfdi_report_by_fiscal_uuid(
+            session, payload.cfdi_uuid_manual
+        )
+        if matched_cfdi is not None:
+            documento.cfdi_report_id = matched_cfdi.id
+        documento.cfdi_uuid_manual = payload.cfdi_uuid_manual
+
+    if documento.cfdi_report_id and payload.cfdi_compartido_confirmado:
         cfdi_report = await session.get(CFDIReport, documento.cfdi_report_id)
         if cfdi_report is None:
             raise SolicitudValidationError(
