@@ -10203,8 +10203,8 @@ def _can_access_read_only_informe_document(
     documento: Documento, empleado: Empleado
 ) -> bool:
     return (
-        documento.tipo == "INFORME"
-        and bool(documento.cuenta_gastos_id)
+        getattr(documento, "tipo", None) == "INFORME"
+        and bool(getattr(documento, "cuenta_gastos_id", None))
         and _has_read_only_cross_account_informe_access(empleado)
     )
 
