@@ -40549,7 +40549,8 @@ async def cancelar_informe_vacio_borrador(
         (
             await session.execute(
                 select(func.count(ExpenseReport.id)).where(
-                    ExpenseReport.cuenta_gastos_id == cuenta.id
+                    ExpenseReport.cuenta_gastos_id == cuenta.id,
+                    ExpenseReport.estado_gasto != "cancelado",
                 )
             )
         ).scalar_one()

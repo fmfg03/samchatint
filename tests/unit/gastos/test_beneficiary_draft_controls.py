@@ -560,3 +560,13 @@ async def test_cancel_empty_draft_route_rejects_linked_solicitudes_without_commi
     assert informe.estado == "borrador"
     session.commit.assert_not_awaited()
     session.add.assert_not_called()
+
+
+def test_cancel_empty_draft_counts_only_active_expenses() -> None:
+    """A cancelled expense must not block cancellation of an otherwise empty draft."""
+    source = inspect.getsource(user_routes.cancelar_informe_vacio_borrador)
+
+    expense_count_query = source.split("expense_count = int(", 1)[1].split(
+        "solicitud_count = int(", 1
+    )[0]
+    assert 'ExpenseReport.estado_gasto != "cancelado"' in expense_count_query
