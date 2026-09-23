@@ -108,6 +108,7 @@ async def test_shared_cfdi_amount_validation_excludes_current_document_and_count
 
     assert remaining == Decimal("102312.00")
     assert len(session.calls) == 3
+    assert "monto_solicitado IS NULL" in str(session.calls[2][0])
 
 
 @pytest.mark.asyncio
