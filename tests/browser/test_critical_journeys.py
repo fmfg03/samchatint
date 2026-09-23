@@ -124,6 +124,14 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     reject = page.get_by_role("button", name="Rechazar", exact=True)
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
+
+    viewport_width = page.viewport_size["width"]
+    for action in (approve, reject):
+        box = action.bounding_box()
+        assert box is not None
+        assert box["x"] >= 0
+        assert box["x"] + box["width"] <= viewport_width
+
     expect(
         page.get_by_text("Documentos esperando tu decisión", exact=False)
     ).to_be_visible()
