@@ -669,6 +669,7 @@ def test_isolated_payment_proof_marks_paid_with_actor_and_cleanup_is_row_scoped(
             "buffer": b"browser fixture proof",
         },
     )
+    page.locator('input[name="fecha_pago_efectiva"]').fill("2026-09-22")
     page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
     expect(page.get_by_text("Resultado: Pago registrado", exact=True)).to_be_visible()
     expect(page.get_by_text("Estado: pagado", exact=True)).to_be_visible()

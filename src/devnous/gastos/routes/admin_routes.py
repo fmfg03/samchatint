@@ -9258,12 +9258,18 @@ def _parse_effective_payment_dates(
             "Captura una fecha efectiva de pago para cada solicitud.",
         )
     try:
-        return [date.fromisoformat(str(value)) for value in raw_dates or []]
+        parsed_dates = [date.fromisoformat(str(value)) for value in raw_dates or []]
     except (TypeError, ValueError) as exc:
         raise SolicitudValidationError(
             "effective_payment_date_invalid",
             "Una fecha efectiva de pago no es válida.",
         ) from exc
+    if any(effective_date > date.today() for effective_date in parsed_dates):
+        raise SolicitudValidationError(
+            "effective_payment_date_future",
+            "La fecha efectiva de pago no puede ser posterior a hoy.",
+        )
+    return parsed_dates
 
 
 def _payment_proof_expected_beneficiary(documento: Documento) -> str | None:
@@ -10210,15 +10216,26 @@ async def admin_finance_payment_run_upload_payment_proof(
         )[0]
         raw = await comprobante_pago.read()
         content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
-        review = review_payment_proof(
-            raw=raw,
+        attachment = SolicitudTercerosAttachment(
+            raw_bytes=raw,
             filename=comprobante_pago.filename or "comprobante_pago",
-            mime_type=content_type,
+            mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
+            categoria="comprobante_pago",
+        )
+        validate_solicitud_terceros_attachment(attachment)
+        review = review_payment_proof(
+            raw=attachment.raw_bytes,
+            filename=attachment.filename,
+            mime_type=attachment.mime_type,
             expected_amount=_payment_proof_expected_amount(documento),
             expected_beneficiary=_payment_proof_expected_beneficiary(documento),
             expected_currency=str(getattr(documento, "currency", None) or "MXN"),
         )
-        resolution_reason = (payment_proof_resolution_reason or "").strip()
+        resolution_reason = (
+            (payment_proof_resolution_reason or "").strip()
+            if review.status == "conflict"
+            else ""
+        )
         if review.status == "conflict" and not resolution_reason:
             raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
         if review.detected_date and review.detected_date != effective_payment_date:
@@ -10226,14 +10243,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         await add_solicitud_documento_adjuntos(
             session,
             documento=documento,
-            attachments=[
-                SolicitudTercerosAttachment(
-                    raw_bytes=raw,
-                    filename=comprobante_pago.filename or "comprobante_pago",
-                    mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
-                    categoria="comprobante_pago",
-                )
-            ],
+            attachments=[attachment],
             commit=False,
         )
         result = await register_document_payment(
@@ -10446,7 +10456,9 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 expected_beneficiary=_payment_proof_expected_beneficiary(documento),
                 expected_currency=str(getattr(documento, "currency", None) or "MXN"),
             )
-            resolution_reason = str(raw_reason or "").strip()
+            resolution_reason = (
+                str(raw_reason or "").strip() if review.status == "conflict" else ""
+            )
             if review.status == "conflict" and not resolution_reason:
                 raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
             if review.detected_date and review.detected_date != effective_payment_date:
