@@ -426,6 +426,92 @@ def test_accounting_cleanup_stays_actionable_on_mobile(
     expect(page.get_by_role("button", name="Revisar", exact=True)).to_be_visible()
 
 
+def test_finance_cxc_keeps_candidate_separate_until_acceptance(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(
+        f"{browser_server}/admin/finanzas/cuentas-por-cobrar?reset=true"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.get_by_text("Cuentas por Cobrar", exact=True).first).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Un CFDI vinculado no prueba pago; solo los matches aceptados cuentan como cobro.",
+            exact=False,
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("Evidencia candidata; no prueba cobranza hasta su aceptación.")).to_be_visible()
+    expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
+
+    row = page.locator("tbody tr").filter(has_text="cfdi:UX-CXC-001").last
+    expect(row.get_by_text("candidate_match", exact=True)).to_be_visible()
+    row.locator('select[name="bank_account_id"]').select_option(index=1)
+    row.locator('input[name="acceptance_reason"]').fill("RFC y monto verificados")
+    row.get_by_role("button", name="Aceptar match", exact=True).click()
+
+    expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
+    expect(page.get_by_text("accepted_collection_match", exact=True)).to_be_visible()
+    operational = page.locator("tbody tr").filter(has_text="UX-CXC-001").first
+    expect(operational.get_by_text("Cobrado", exact=True)).to_be_visible()
+    _capture(page, "finance-cxc-accepted-match")
+
+    page.locator('input[name="reversal_reason"]').fill(
+        "Evidencia bancaria corregida"
+    )
+    page.get_by_role("button", name="Revertir", exact=True).click()
+    expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
+    expect(page.get_by_text("candidate_match", exact=True)).to_be_visible()
+    expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
+
+
+def test_finance_cxc_exposes_prepolliza_and_accounting_context(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(f"{browser_server}/_test/profile/finance")
+    assert response is not None
+    assert response.status == 200
+
+    entry = page.locator('a[href="/admin/finanzas/cuentas-por-cobrar"]').first
+    expect(entry).to_be_visible()
+    entry.click()
+    expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
+
+    prepoliza = page.get_by_role("link", name="Descargar prepólizas CxC", exact=True)
+    expect(prepoliza).to_have_attribute(
+        "href", "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
+    )
+    accounting = page.get_by_role("link", name="Vista contable", exact=True)
+    expect(accounting).to_be_visible()
+    accounting.click()
+    expect(page).to_have_url(
+        f"{browser_server}/admin/contabilidad/cuentas-por-cobrar"
+    )
+    expect(page.get_by_role("heading", name="Vista contable CxC")).to_be_visible()
+    expect(
+        page.get_by_text("Esta vista no acepta ni revierte matches de cobranza.")
+    ).to_be_visible()
+
+
+def test_finance_cxc_remains_operable_without_mobile_body_overflow(
+    page: Page, browser_server: str
+) -> None:
+    page.set_viewport_size({"width": 390, "height": 844})
+    response = page.goto(
+        f"{browser_server}/admin/finanzas/cuentas-por-cobrar?reset=true"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    expect(page.get_by_text("Pre-matching AR", exact=True)).to_be_visible()
+    _assert_no_body_overflow(page)
+    accept = page.get_by_role("button", name="Aceptar match", exact=True)
+    expect(accept).to_be_visible()
+    accept.focus()
+    assert page.evaluate("() => document.activeElement.textContent") == "Aceptar match"
+
+
 def test_isolated_approval_and_rejection_preserve_outcome_and_reason(
     page: Page, browser_server: str
 ) -> None:
