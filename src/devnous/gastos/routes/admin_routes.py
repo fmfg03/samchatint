@@ -9866,7 +9866,7 @@ async def admin_finance_payment_run(
                                 var detectedAmount = review.detected_amount ? review.detected_amount + ' ' + (review.detected_currency || '') : 'No detectado';
                                 var expectedAmount = review.expected_amount ? review.expected_amount + ' ' + (review.expected_currency || '') : 'No disponible';
                                 var source = review.evidence_source === 'local_pdf_text' ? 'Fuente: texto local del PDF' : 'Fuente: revisión manual';
-                                target.textContent = (labels[review.status] || 'Revisión requerida') + ' · ' + source + ' · Monto: ' + detectedAmount + ' / esperado: ' + expectedAmount + ' · Beneficiario: ' + (review.detected_beneficiary || 'No detectado') + ' / esperado: ' + (review.expected_beneficiary || 'No disponible') + ' · Referencia: ' + (review.detected_reference || 'No detectada') + (review.reasons && review.reasons.length ? '. ' + review.reasons.join(' ') : '');
+                                target.textContent = (labels[review.status] || 'Revisión requerida') + ' · ' + source + ' · Plantilla: ' + (review.template_id || 'No reconocida') + ' · Monto: ' + detectedAmount + ' / esperado: ' + expectedAmount + ' · Beneficiario: ' + (review.detected_beneficiary || 'No detectado') + ' / esperado: ' + (review.expected_beneficiary || 'No disponible') + ' · Referencia: ' + (review.detected_reference || 'No detectada') + (review.reasons && review.reasons.length ? '. ' + review.reasons.join(' ') : '');
                                 target.dataset.reviewStatus = review.status;
                                 target.style.color = review.status === 'conflict' ? '#b91c1c' : (review.status === 'match' ? '#166534' : '#92400e');
                             }})
@@ -10334,6 +10334,7 @@ async def admin_finance_payment_run_review_payment_proof(
             "detected_currency": review.detected_currency,
             "detected_beneficiary": review.detected_beneficiary,
             "detected_reference": review.detected_reference,
+            "template_id": review.template_id,
             "evidence_source": (
                 "manual_review"
                 if review.reasons and review.reasons[0].startswith("No fue posible")

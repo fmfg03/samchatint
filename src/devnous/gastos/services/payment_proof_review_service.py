@@ -24,6 +24,7 @@ class PaymentProofReview:
     detected_beneficiary: str | None
     detected_reference: str | None
     reasons: tuple[str, ...]
+    template_id: str | None = None
 
 
 def _normalized(value: Any) -> str:
@@ -60,6 +61,16 @@ def _parse_amount(value: Any) -> Decimal | None:
         return None
 
 
+def _bank_template_id(text: str, *, reference: str | None) -> str | None:
+    normalized = _normalized(text)
+    markers = ("FECHA", "BENEFICIARIO")
+    has_amount_marker = any(marker in normalized for marker in ("MONTO", "IMPORTE", "CANTIDAD"))
+    has_reference_marker = "CLAVE DE RASTREO" in normalized or "REFERENCIA" in normalized
+    if reference and has_amount_marker and has_reference_marker and all(marker in normalized for marker in markers):
+        return "spei_transferencia_v1"
+    return None
+
+
 def review_payment_proof(
     *, raw: bytes, filename: str, mime_type: str, expected_amount: Any,
     expected_beneficiary: str | None, expected_currency: str | None = None,
@@ -76,6 +87,8 @@ def review_payment_proof(
     detected_amount = _parse_amount(entities.get("amount"))
     detected_currency = _detected_currency(text)
     detected_beneficiary = str(entities.get("beneficiary") or "").strip() or None
+    detected_reference = str(entities.get("bank_reference") or "").strip() or None
+    template_id = _bank_template_id(text, reference=detected_reference)
     reasons: list[str] = []
     has_conflict = False
     date_candidates = re.findall(
@@ -103,9 +116,12 @@ def review_payment_proof(
     elif not (detected_date and detected_amount and detected_beneficiary):
         status = "revision_required"
         reasons.append("Faltan datos detectables; Finanzas debe revisarlos manualmente.")
+    elif not template_id:
+        status = "revision_required"
+        reasons.append("La plantilla bancaria no coincide; Finanzas debe revisarla.")
     else:
         status = "match"
     return PaymentProofReview(
         status, detected_date, detected_amount, detected_currency, detected_beneficiary,
-        str(entities.get("bank_reference") or "").strip() or None, tuple(reasons)
+        detected_reference, tuple(reasons), template_id
     )
