@@ -1031,7 +1031,8 @@ def test_pending_approval_page_has_bulk_selection_controls():
     assert "Aprobar seleccionados" in block
     assert "Rechazar seleccionados" in block
     assert "formaction=\"/documentos/{documento.id}/aprobar\"" in block
-    assert "formaction=\"/documentos/{documento.id}/rechazar\"" in block
+    assert "action=\"/documentos/{documento.id}/rechazar\"" in block
+    assert 'id="comentario-rechazo-lote"' in block
 
 
 def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():

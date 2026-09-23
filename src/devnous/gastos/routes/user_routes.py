@@ -28686,6 +28686,7 @@ async def mis_documentos(
 
     # Build rows HTML
     rows_html = ""
+    rejection_forms_html = ""
     for documento in documentos:
         # Format dates
         fecha_inicio_str = format_value(documento.fecha_inicio)
@@ -30048,11 +30049,22 @@ async def documentos_pendientes(
         provider_value = row_values["proveedor"]
         if provider_value and provider_value not in {"-", "?"} and provider_value != beneficiary_provider:
             beneficiary_provider = provider_value
+        rejection_form_id = f"documento-rechazo-{documento.id}"
         actions_html = (
             '<div class="table-actions">'
             f'<button type="submit" formaction="/documentos/{documento.id}/aprobar" name="single_action" value="approve" class="button primary">Aprobar</button>'
-            f'<button type="submit" formaction="/documentos/{documento.id}/rechazar" name="single_action" value="reject" class="button danger">Rechazar</button>'
+            '<details class="approval-rejection">'
+            '<summary class="button danger">Rechazar</summary>'
+            f'<label for="comentario-rechazo-{documento.id}">Motivo de rechazo</label>'
+            f'<textarea id="comentario-rechazo-{documento.id}" name="comentario" form="{rejection_form_id}" required></textarea>'
+            f'<button type="submit" form="{rejection_form_id}" class="button danger">Confirmar rechazo</button>'
+            '</details>'
             '</div>'
+        )
+        rejection_forms_html += (
+            f'<form id="{rejection_form_id}" method="POST" '
+            f'action="/documentos/{documento.id}/rechazar">'
+            f'<input type="hidden" name="next" value="{escape(next_path)}"></form>'
         )
         rows_html += f"""
         <tr>
@@ -30159,6 +30171,9 @@ async def documentos_pendientes(
                     <button type="submit" name="action" value="approve" class="button primary">Aprobar seleccionados</button>
                     <button type="submit" name="action" value="reject" class="button danger">Rechazar seleccionados</button>
                 </div>
+                <label class="form-group">Motivo para rechazo masivo
+                    <textarea name="comentario" id="comentario-rechazo-lote" rows="2" placeholder="Obligatorio al rechazar seleccionados"></textarea>
+                </label>
                 <div class="table-shell"><table class="approval-queue-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
                     <thead>
                         <tr>
@@ -30182,6 +30197,7 @@ async def documentos_pendientes(
                     </tbody>
                 </table></div>
             </form>
+            {rejection_forms_html}
         """
     else:
         table_html = """
@@ -30275,6 +30291,7 @@ async def documentos_pendientes_accion_lote(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     action: str = Form(...),
+    comentario: Optional[str] = Form(None),
     next: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Approve or reject multiple pending documents using the canonical workflow gate."""
@@ -30286,6 +30303,17 @@ async def documentos_pendientes_accion_lote(
     workflow_action = {"approve": "approve", "reject": "reject"}.get(normalized_action)
     if workflow_action is None:
         raise HTTPException(status_code=400, detail="Acción inválida")
+
+    comentario_normalizado = (comentario or "").strip()
+    if workflow_action == "reject" and not comentario_normalizado:
+        return RedirectResponse(
+            url=_append_error_params(
+                redirect_url,
+                error="rejection_reason_required",
+                error_msg="Indica el motivo de rechazo antes de continuar.",
+            ),
+            status_code=303,
+        )
 
     form = await request.form()
     documento_ids: list[UUIDType] = []
@@ -30315,6 +30343,7 @@ async def documentos_pendientes_accion_lote(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
                 action=workflow_action,
+                comentario=comentario_normalizado or None,
                 request_context=audit_context_from_request(request),
             )
             ok_count += 1
