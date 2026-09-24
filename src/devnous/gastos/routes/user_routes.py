@@ -29948,6 +29948,7 @@ async def documentos_pendientes(
             selectinload(Documento.beneficiario_empleado).selectinload(Empleado.aprobador),
             selectinload(Documento.beneficiario_proveedor_cliente),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos)
             .undefer(CuentaDeGastos.fase)
