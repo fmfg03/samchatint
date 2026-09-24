@@ -3,7 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
+
+import pytest
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_service
@@ -1182,6 +1185,87 @@ def test_documentos_todos_is_available_to_active_authenticated_users() -> None:
     assert user_routes._can_view_documentos_todos(active_user) is True
     assert user_routes._can_view_documentos_todos(inactive_user) is False
     assert user_routes._can_view_documentos_todos(anonymousish_user) is False
+
+
+def test_alicia_operations_reference_observer_scope_is_applied_to_both_views(
+) -> None:
+    source = open(
+        "src/devnous/gastos/routes/user_routes.py", encoding="utf-8"
+    ).read()
+    history_start = source.index("async def historial_aprobador")
+    history_end = source.index(
+        "def _documentos_todos_reporting_type", history_start
+    )
+    all_docs_start = source.index("async def documentos_todos")
+    all_docs_end = source.index(
+        "async def _query_documentos_todos_for_export", all_docs_start
+    )
+    export_start = all_docs_end
+    export_end = source.index(
+        '@router.get("/documentos/todos/exportar-exceles.zip"', export_start
+    )
+
+    for block in (
+        source[history_start:history_end],
+        source[all_docs_start:all_docs_end],
+        source[export_start:export_end],
+    ):
+        assert "_is_alicia_operations_reference_observer" in block
+        assert "_operations_reference_document_filter" in block
+
+
+class _EmptyResult:
+    def scalars(self):
+        return self
+
+    def all(self):
+        return []
+
+
+@pytest.mark.asyncio
+async def test_alicia_operations_reference_observer_executes_read_only_queries(
+    monkeypatch,
+) -> None:
+    """Exercise Alicia's runtime-only query branches, including ZIP scope."""
+    alicia = SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+        nombre="Alicia Zuniga",
+        departamento="operaciones",
+    )
+    session = SimpleNamespace(execute=AsyncMock(return_value=_EmptyResult()))
+
+    monkeypatch.setattr(
+        user_routes,
+        "fetch_documento_aprobador_display_batch",
+        AsyncMock(return_value={}),
+    )
+
+    history_html = await user_routes.historial_aprobador(
+        None,
+        session,
+        alicia,
+        torneo=None,
+        concepto=None,
+        beneficiario=None,
+        tipo=None,
+        estado=None,
+    )
+    todos_html = await user_routes.documentos_todos(
+        None,
+        session,
+        alicia,
+        empleado_nombre=None,
+        q=None,
+        situacion=None,
+    )
+    exported = await user_routes._query_documentos_todos_for_export(session, alicia)
+
+    assert "Historial de aprobaciones" in history_html
+    assert "Todos los Documentos" in todos_html
+    assert exported == []
+    assert session.execute.await_count == 3
 
 
 def test_pending_approval_summary_shows_accumulated_amount() -> None:
