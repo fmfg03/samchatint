@@ -491,6 +491,12 @@ async def test_sync_informe_to_control_presupuestal_records_requester_actor_not_
         return 1
 
     monkeypatch.setattr(user_routes, "_count_active_cuenta_expenses", fake_count)
+    monkeypatch.setattr(
+        user_routes, "reserve_documento_cfdis_or_raise", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "_informe_has_unassigned_budget_lines", AsyncMock(return_value=False)
+    )
 
     changed = await user_routes._sync_informe_documento_to_enviado(
         session,
@@ -521,6 +527,12 @@ async def test_sync_informe_to_enviado_when_budget_concept_is_assigned(monkeypat
         return 1
 
     monkeypatch.setattr(user_routes, "_count_active_cuenta_expenses", fake_count)
+    monkeypatch.setattr(
+        user_routes, "reserve_documento_cfdis_or_raise", AsyncMock()
+    )
+    monkeypatch.setattr(
+        user_routes, "_informe_has_unassigned_budget_lines", AsyncMock(return_value=False)
+    )
 
     changed = await user_routes._sync_informe_documento_to_enviado(
         session,

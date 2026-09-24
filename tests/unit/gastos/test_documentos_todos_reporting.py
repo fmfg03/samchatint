@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -73,6 +74,118 @@ def test_documentos_todos_reporting_values_for_provider_solicitud():
     assert row["aprobador"] == "Finanzas"
 
 
+def test_budget_impact_uses_cfdi_subtotal_less_discount_and_marks_unassigned():
+    documento = _doc(budget_concept_id=None, cfdi_report_id=uuid4())
+    row = user_routes._documentos_todos_reporting_row_values(
+        documento,
+        cfdi_report=SimpleNamespace(
+            subtotal=Decimal("1000.00"), descuento=Decimal("125.50")
+        ),
+    )
+
+    assert row["monto_presupuestal_valor"] == Decimal("874.50")
+    assert row["monto_presupuestal"] == "$874.50"
+    assert row["asignacion_presupuestal"] == "Sin asignar"
+
+
+def test_budget_impact_falls_back_to_total_without_cfdi_and_never_negative():
+    documento = _doc(monto_total=Decimal("1160.00"), monto_solicitado=Decimal("1000"))
+
+    assert user_routes._document_budget_impact_amount(documento) == Decimal("1160.00")
+    assert user_routes._document_budget_impact_amount(
+        documento,
+        SimpleNamespace(subtotal=Decimal("10"), descuento=Decimal("11")),
+    ) == Decimal("0")
+
+
+def test_budget_impact_applies_partida_lodging_tip_and_no_deductible_rules():
+    documento = _doc(
+        gastos=[
+            SimpleNamespace(gasto_cantidad=116, iva=16, hospedaje_impuesto_monto=3,
+                            propina_no_deducible=0, estado_gasto="activo", adjuntos=[]),
+            SimpleNamespace(gasto_cantidad=58, iva=8, hospedaje_impuesto_monto=0,
+                            propina_no_deducible=10, estado_gasto="activo", adjuntos=[]),
+            SimpleNamespace(gasto_cantidad=75, iva=10, hospedaje_impuesto_monto=0,
+                            propina_no_deducible=0, estado_gasto="activo",
+                            adjuntos=[SimpleNamespace(activo=True, categoria="comprobante_no_deducible")]),
+        ]
+    )
+
+    assert user_routes._document_budget_impact_amount(documento) == Decimal("238")
+
+
+def test_consolidated_xlsx_includes_budget_impact_and_assignment_state():
+    from openpyxl import load_workbook
+
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(budget_concept_id=None),
+        cfdi_report=SimpleNamespace(subtotal=Decimal("100"), descuento=Decimal("10")),
+    )
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="Todos los documentos", rows=[row], filename_prefix="documentos"
+    )
+    worksheet = load_workbook(BytesIO(response.body)).active
+
+    assert worksheet["J1"].value == "Monto que afecta presupuesto"
+    assert worksheet["J2"].value == 90
+    assert worksheet["K2"].value == "Sin asignar"
+
+
+def test_consolidated_xlsx_escapes_text_and_writes_amounts_as_currency_numbers():
+    from openpyxl import load_workbook
+
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(concepto_pago="=HYPERLINK(\"https://example.test\", \"Abrir\")")
+    )
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="Todos los documentos", rows=[row], filename_prefix="documentos"
+    )
+    worksheet = load_workbook(BytesIO(response.body)).active
+
+    assert worksheet["G2"].value.startswith("'=")
+    assert worksheet["I2"].value == 1160
+    assert "MXN" in worksheet["I2"].number_format
+    assert "MXN" in worksheet["J2"].number_format
+
+
+def test_empty_history_xlsx_keeps_history_headers():
+    from openpyxl import load_workbook
+
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="Historial de aprobaciones",
+        rows=[],
+        filename_prefix="historial_aprobaciones",
+        export_kind="historial_aprobaciones",
+    )
+    worksheet = load_workbook(BytesIO(response.body)).active
+
+    assert worksheet["A1"].value == "Fecha"
+    assert worksheet["B1"].value == "Acción"
+    assert worksheet.cell(row=1, column=worksheet.max_column).value == "Comentario"
+
+
+@pytest.mark.asyncio
+async def test_bulk_zip_queries_all_documents_before_applying_export_limit(monkeypatch):
+    query_documents = AsyncMock(return_value=[])
+    monkeypatch.setattr(user_routes, "_query_documentos_todos_for_export", query_documents)
+
+    await user_routes.documentos_todos_exportar_exceles_zip(
+        None,
+        object(),
+        SimpleNamespace(),
+        estado=["aprobado"],
+        tipo=["SOLICITUD"],
+        torneo=["Nacional"],
+        concepto=["Hospedaje"],
+        beneficiario=["Alicia"],
+        empleado_nombre="Odilón",
+        q="operaciones",
+        situacion="abiertas",
+    )
+
+    assert query_documents.await_args.kwargs["limit"] is None
+
+
 def test_documentos_todos_reporting_includes_torneo_and_fase():
     documento = _doc(
         torneo=SimpleNamespace(name="Nacional de Béisbol"),
@@ -83,6 +196,36 @@ def test_documentos_todos_reporting_includes_torneo_and_fase():
 
     assert row["torneo"] == "Nacional de Béisbol"
     assert row["fase"] == "Regional"
+
+
+def test_reporting_routes_keep_filtered_xlsx_and_zip_exports_separate():
+    source = open(user_routes.__file__, encoding="utf-8").read()
+    todos_start = source.index("async def documentos_todos(")
+    todos_end = source.index("async def _query_documentos_todos_for_export", todos_start)
+    todos = source[todos_start:todos_end]
+    export_start = source.index("async def documentos_todos_exportar_xlsx(")
+    export_end = source.index('@router.get("/documentos/todos/exportar-exceles.zip"', export_start)
+    export = source[export_start:export_end]
+
+    assert 'name="torneo"' in todos
+    assert 'name="concepto"' in todos
+    assert 'name="beneficiario"' in todos
+    assert 'Monto que afecta presupuesto' in todos
+    assert "/documentos/todos/exportar.xlsx" in todos
+    assert "urlencode(bulk_params, doseq=True)" in todos
+    assert "limit=None" in export
+    assert "_operations_reference_document_filter()" in source
+
+
+def test_history_has_its_own_filtered_xlsx_export_and_budget_column():
+    source = open(user_routes.__file__, encoding="utf-8").read()
+    start = source.index("async def historial_aprobador(")
+    end = source.index("def _documentos_todos_reporting_type", start)
+    block = source[start:end]
+
+    assert "/documentos/historial-aprobador/exportar.xlsx" in block
+    assert 'Monto que afecta presupuesto' in block
+    assert "_operations_reference_document_filter()" in block
 
 
 def test_documentos_lists_eager_load_deferred_fase_before_rendering():
@@ -226,13 +369,13 @@ def test_documentos_todos_bulk_zip_href_is_built_from_filters():
     route = text[start:end]
 
     assert "bulk_params = {" in route
-    assert '"estado": (estado or "").strip()' in route
-    assert '"tipo": (tipo or "").strip()' in route
+    assert '"estado": estado or []' in route
+    assert '"tipo": tipo or []' in route
     assert '"empleado_nombre": (empleado_nombre or "").strip()' in route
     assert '"q": q_value' in route
     assert '"situacion": situacion_value' in route
     assert 'bulk_href = "/documentos/todos/exportar-exceles.zip"' in route
-    assert "urlencode(bulk_params)" in route
+    assert "urlencode(bulk_params, doseq=True)" in route
 
 
 def test_documentos_todos_has_workspace_navigation_context():
@@ -1560,6 +1703,108 @@ class _FakeResult:
 
     def scalars(self):
         return _FakeScalars(self._rows)
+
+
+class _SequenceSession:
+    def __init__(self, *result_rows):
+        self._result_rows = iter(result_rows)
+
+    async def execute(self, _statement):
+        return _FakeResult(next(self._result_rows))
+
+
+def _alicia_operations_observer():
+    return SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+        nombre="Alicia Zuniga",
+        departamento="operaciones",
+    )
+
+
+def _reporting_document():
+    return _doc(
+        cfdi_report_id=uuid4(),
+        budget_concept_id=None,
+        torneo=SimpleNamespace(name="Nacional"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_history_page_and_xlsx_export_cover_same_filtered_event(monkeypatch):
+    documento = _reporting_document()
+    aprobacion = SimpleNamespace(
+        entidad_id=documento.id,
+        fecha=datetime(2026, 9, 24, 10, 0, 0),
+        accion="aprobar",
+        comentario="Conforme",
+        aprobador=SimpleNamespace(nombre="Odilón"),
+    )
+    cfdi = SimpleNamespace(
+        id=documento.cfdi_report_id,
+        subtotal=Decimal("100.00"),
+        descuento=Decimal("10.00"),
+    )
+    filters = {"torneo": ["Nacional"], "concepto": None, "beneficiario": None,
+               "tipo": None, "estado": None}
+
+    page = await user_routes.historial_aprobador(
+        None, _SequenceSession([aprobacion], [documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    assert "Descargar Excel filtrado" in page
+    assert "Monto que afecta presupuesto" in page
+    assert "torneo=Nacional" in page
+
+    response = await user_routes.historial_aprobador_exportar_xlsx(
+        None, _SequenceSession([aprobacion], [documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    from openpyxl import load_workbook
+
+    worksheet = load_workbook(BytesIO(response.body)).active
+    assert worksheet["A1"].value == "Fecha"
+    assert worksheet["B2"].value == "Aprobado"
+    assert worksheet["L2"].value == 90
+    assert worksheet["M2"].value == "Sin asignar"
+
+
+@pytest.mark.asyncio
+async def test_todos_page_and_xlsx_export_share_authorized_filter_values(monkeypatch):
+    documento = _reporting_document()
+    cfdi = SimpleNamespace(
+        id=documento.cfdi_report_id,
+        subtotal=Decimal("100.00"),
+        descuento=Decimal("10.00"),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "fetch_documento_aprobador_display_batch",
+        AsyncMock(return_value={}),
+    )
+    filters = {
+        "estado": ["aprobado"], "tipo": ["SOLICITUD"],
+        "torneo": ["Nacional"], "concepto": None, "beneficiario": None,
+        "empleado_nombre": None, "q": None, "situacion": None,
+    }
+    page = await user_routes.documentos_todos(
+        None, _SequenceSession([documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    assert "Descargar Excel filtrado" in page
+    assert "estado=aprobado" in page
+    assert "torneo=Nacional" in page
+
+    response = await user_routes.documentos_todos_exportar_xlsx(
+        None, _SequenceSession([documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    from openpyxl import load_workbook
+
+    worksheet = load_workbook(BytesIO(response.body)).active
+    assert worksheet["J2"].value == 90
+    assert worksheet["K2"].value == "Sin asignar"
 
 
 class _FakeAprobadorSession:

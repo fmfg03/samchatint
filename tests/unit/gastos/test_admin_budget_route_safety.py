@@ -69,6 +69,8 @@ CANONICAL_BUDGET_ROUTE_PATHS = {
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos",
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/link",
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/upload-link",
+    "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/collection",
+    "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/decision",
     "/admin/presupuestos/torneo/{tournament_key}/cfdi-ingresos/{link_id}/unlink",
     "/admin/presupuestos/versiones/create",
     "/admin/presupuestos/versiones/copy-forward",
@@ -255,7 +257,7 @@ def test_assign_existing_rejects_negative_budget_amounts() -> None:
         1,
     )[1].split('@router.post("/admin/presupuestos/lineas/{line_id}/update")', 1)[0]
 
-    assert "if budget_amount < 0:" in route
+    assert "budget_amount is not None and budget_amount < 0" in route
     assert "El monto presupuestal no puede ser negativo." in route
 
 

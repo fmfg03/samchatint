@@ -155,6 +155,7 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
     ensure_debtor_payment_posting_for_document,
@@ -30164,7 +30165,6 @@ async def documentos_pendientes(
             </form>
         </section>
     """
-
     pending_amount_by_currency: dict[str, Decimal] = {}
     for documento in documentos:
         row_currency = currency_for(documento)
@@ -30423,6 +30423,8 @@ async def documentos_pendientes_accion_lote(
 
 
 def _approval_history_filter_values(values: Optional[List[str]]) -> set[str]:
+    if not isinstance(values, (list, tuple, set)):
+        return set()
     return {
         _normalize_filter_value(value)
         for value in values or []
@@ -30715,6 +30717,7 @@ async def historial_aprobador(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.budget_concept),
+                selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
                 selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
                 selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -30726,6 +30729,9 @@ async def historial_aprobador(
         documentos_dict = {doc.id: doc for doc in documentos_result.scalars().all()}
     else:
         documentos_dict = {}
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(
+        session, documentos_dict.values()
+    )
 
     selected_torneo = _approval_history_filter_values(torneo)
     selected_concepto = _approval_history_filter_values(concepto)
@@ -30748,6 +30754,10 @@ async def historial_aprobador(
             "empleado": empleado_nombre,
             "tipo": _approval_history_display_value(documento.tipo),
             "estado": _approval_history_display_value(documento.estado),
+            "monto_presupuestal": _document_budget_impact_amount(
+                documento, cfdi_reports_by_id.get(documento.cfdi_report_id)
+            ),
+            "asignacion_presupuestal": _document_budget_assignment_label(documento),
         }
         history_items.append((aprobacion, documento, row_values))
     history_items.sort(
@@ -30816,6 +30826,21 @@ async def historial_aprobador(
                     </form>
     """
 
+    history_export_params = {
+        key: values
+        for key, values in {
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
+            "tipo": tipo or [],
+            "estado": estado or [],
+        }.items()
+        if values
+    }
+    history_export_href = "/documentos/historial-aprobador/exportar.xlsx"
+    if history_export_params:
+        history_export_href += "?" + urlencode(history_export_params, doseq=True)
+
     # Build rows HTML
     rows_html = ""
     for aprobacion, documento, row_values in history_items:
@@ -30850,6 +30875,12 @@ async def historial_aprobador(
         )
         monto_total_sort = _sort_value_attr(monto_total, kind="money")
         monto_total_display = format_currency(monto_total, currency_for(documento))
+        monto_presupuestal_display = format_currency(
+            row_values["monto_presupuestal"], currency_for(documento)
+        )
+        monto_presupuestal_sort = _sort_value_attr(
+            row_values["monto_presupuestal"], kind="money"
+        )
 
         # Link to documento detail
         doc_link = f'<a href="/documentos/{documento.id}" style="color: #4CAF50; text-decoration: none;">{documento.numero_referencia}</a>'
@@ -30873,6 +30904,7 @@ async def historial_aprobador(
             <td>{escape(row_values["tipo"])}</td>
             <td>{escape(row_values["estado"])}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{escape(monto_total_display)}</td>
+            <td data-sort-value="{escape(monto_presupuestal_sort)}">{escape(monto_presupuestal_display)}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
             <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{comentario_safe}">{comentario_safe}</td>
         </tr>
         """
@@ -30945,6 +30977,7 @@ async def historial_aprobador(
                     '<a href="/documentos/pendientes" class="button secondary">Pendientes</a>'
                     '<a href="/documentos/historial-aprobador" class="button primary">'
                     'Ya autorizadas</a>'
+                    f'<a href="{history_export_href}" class="button secondary">Descargar Excel filtrado</a>'
                     '<a href="/panel" class="button secondary">Volver al panel</a>'
                 ),
                 side_html=historial_side_html,
@@ -30975,6 +31008,7 @@ async def historial_aprobador(
                         <th data-sort-key="tipo" data-sort-type="text">Tipo</th>
                         <th data-sort-key="estado_actual" data-sort-type="text">Estado Actual</th>
                         <th data-sort-key="monto_total" data-sort-type="money">Monto</th>
+                        <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
                         <th data-sort-key="comentario" data-sort-type="text">Comentario</th>
                     </tr>
                 </thead>
@@ -30995,6 +31029,111 @@ async def historial_aprobador(
     </html>
     """
     return html
+
+
+@router.get("/documentos/historial-aprobador/exportar.xlsx", response_model=None)
+async def historial_aprobador_exportar_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    estado: Optional[List[str]] = Query(None),
+) -> Response:
+    """Export the authorized, currently filtered approval-history events."""
+    alicia_operations_observer = _is_alicia_operations_reference_observer(
+        current_empleado
+    )
+    if (
+        not alicia_operations_observer
+        and not await _can_review_pending_approvals(session, current_empleado)
+    ):
+        raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
+    base_filters = [
+        Aprobacion.tipo_entidad == "documento",
+        Aprobacion.accion.in_(["aprobar", "rechazar", "pagar"]),
+    ]
+    query = select(Aprobacion).options(selectinload(Aprobacion.aprobador))
+    if alicia_operations_observer:
+        query = query.join(Documento, Documento.id == Aprobacion.entidad_id)
+        base_filters.append(_operations_reference_document_filter())
+    elif current_empleado.rol not in ("admin", "superadmin", "super_admin"):
+        base_filters.append(Aprobacion.aprobador_id == current_empleado.id)
+    aprobaciones = (
+        await session.execute(query.where(and_(*base_filters)).order_by(Aprobacion.fecha.desc()))
+    ).scalars().all()
+    documento_ids = [aprobacion.entidad_id for aprobacion in aprobaciones]
+    documentos = []
+    if documento_ids:
+        documentos = (
+            await session.execute(
+                select(Documento).options(
+                    selectinload(Documento.empleado),
+                    selectinload(Documento.beneficiario_empleado),
+                    selectinload(Documento.beneficiario_proveedor_cliente),
+                    selectinload(Documento.proveedor_cliente),
+                    selectinload(Documento.budget_concept),
+                    selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
+                    selectinload(Documento.torneo),
+                    selectinload(Documento.cuenta_gastos)
+                    .undefer(CuentaDeGastos.fase)
+                    .selectinload(CuentaDeGastos.torneo),
+                    undefer(Documento.fase),
+                ).where(Documento.id.in_(documento_ids))
+            )
+        ).scalars().all()
+    documentos_by_id = {documento.id: documento for documento in documentos}
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    selected = {
+        "torneo": _approval_history_filter_values(torneo),
+        "concepto": _approval_history_filter_values(concepto),
+        "beneficiario": _approval_history_filter_values(beneficiario),
+        "tipo": _approval_history_filter_values(tipo),
+        "estado": _approval_history_filter_values(estado),
+    }
+    rows = []
+    for aprobacion in aprobaciones:
+        documento = documentos_by_id.get(aprobacion.entidad_id)
+        if documento is None:
+            continue
+        values = _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=getattr(aprobacion.aprobador, "nombre", "—"),
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+        )
+        matches = {
+            "torneo": _approval_history_torneo(documento),
+            "concepto": _approval_history_budget_concept(documento),
+            "beneficiario": _approval_history_beneficiario(documento),
+            "tipo": _approval_history_display_value(documento.tipo),
+            "estado": _approval_history_display_value(documento.estado),
+        }
+        if all(
+            not selected[key] or _normalize_filter_value(value) in selected[key]
+            for key, value in matches.items()
+        ):
+            if aprobacion.accion == "aprobar":
+                accion = "Aprobado"
+            elif aprobacion.accion == "rechazar":
+                accion = "Rechazado"
+            elif aprobacion.accion == "pagar":
+                accion = "Pagado"
+            else:
+                accion = (aprobacion.accion or "—").capitalize()
+            values.update(
+                fecha_evento=format_value(aprobacion.fecha),
+                accion_evento=accion,
+                comentario_evento=aprobacion.comentario or "-",
+            )
+            rows.append(values)
+    return _documentos_reporting_xlsx_response(
+        title="Historial de aprobaciones",
+        rows=rows,
+        filename_prefix="historial_aprobaciones",
+        export_kind="historial_aprobaciones",
+    )
 
 
 def _documentos_todos_reporting_type(documento: Documento) -> str:
@@ -31043,8 +31182,94 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
     return concepto or "—"
 
 
+def _document_budget_impact_amount(
+    documento: Documento, cfdi_report: Optional[CFDIReport] = None
+) -> Decimal:
+    """Return the reporting amount, including approved per-partida exceptions."""
+
+    def _nonnegative(value: Any) -> Decimal:
+        try:
+            return max(Decimal(str(value)), Decimal("0"))
+        except (InvalidOperation, TypeError, ValueError):
+            return Decimal("0")
+
+    expenses = [
+        expense
+        for expense in (getattr(documento, "gastos", None) or [])
+        if getattr(expense, "estado_gasto", None) != "cancelado"
+    ]
+    if expenses:
+        total = Decimal("0")
+        for expense in expenses:
+            is_no_deductible = any(
+                getattr(adjunto, "activo", False)
+                and getattr(adjunto, "categoria", None) == "comprobante_no_deducible"
+                for adjunto in (getattr(expense, "adjuntos", None) or [])
+            )
+            expense_total = _nonnegative(getattr(expense, "gasto_cantidad", None))
+            if is_no_deductible:
+                total += expense_total
+                continue
+            total += max(
+                expense_total - _nonnegative(getattr(expense, "iva", None)),
+                Decimal("0"),
+            )
+            total += _nonnegative(getattr(expense, "hospedaje_impuesto_monto", None))
+            total += _nonnegative(getattr(expense, "propina_no_deducible", None))
+        return total
+
+    if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
+        return max(
+            _nonnegative(cfdi_report.subtotal)
+            - _nonnegative(getattr(cfdi_report, "descuento", None)),
+            Decimal("0"),
+        )
+    for field in ("monto_total", "monto_solicitado"):
+        value = getattr(documento, field, None)
+        if value is not None:
+            return _nonnegative(value)
+    return Decimal("0")
+
+
+async def _document_cfdi_reports_by_id(
+    session: AsyncSession, documentos: Iterable[Documento]
+) -> dict[Any, CFDIReport]:
+    """Fetch the CFDIs needed for budget-impact reporting in one query."""
+
+    cfdi_ids = {
+        documento.cfdi_report_id
+        for documento in documentos
+        if getattr(documento, "cfdi_report_id", None)
+    }
+    if not cfdi_ids:
+        return {}
+    result = await session.execute(
+        select(CFDIReport).where(CFDIReport.id.in_(cfdi_ids))
+    )
+    return {report.id: report for report in result.scalars().all()}
+
+
+def _document_budget_assignment_label(documento: Documento) -> str:
+    return "Asignado" if getattr(documento, "budget_concept_id", None) else "Sin asignar"
+
+
+def _document_total_reporting_amount(documento: Documento) -> Decimal:
+    """Return a non-negative numeric total suitable for spreadsheet export."""
+    for field in ("monto_total", "monto_solicitado"):
+        value = getattr(documento, field, None)
+        if value is not None:
+            try:
+                return max(Decimal(str(value)), Decimal("0"))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+    return Decimal("0")
+
+
 def _documentos_todos_reporting_row_values(
-    documento: Documento, *, aprobador_nombre: str = "—"
+    documento: Documento,
+    *,
+    aprobador_nombre: str = "—",
+    cfdi_report: Optional[CFDIReport] = None,
 ) -> dict[str, Any]:
     parties = _documentos_todos_party_values(documento)
     currency = currency_for(documento)
@@ -31056,6 +31281,7 @@ def _documentos_todos_reporting_row_values(
         or getattr(cuenta, "fase", None)
         or "—"
     )
+    monto_presupuestal = _document_budget_impact_amount(documento, cfdi_report)
     return {
         "id": str(documento.id),
         "numero_referencia": getattr(documento, "numero_referencia", None) or "—",
@@ -31076,6 +31302,10 @@ def _documentos_todos_reporting_row_values(
             getattr(documento, "monto_solicitado", None), currency
         ),
         "monto_total": format_currency(getattr(documento, "monto_total", None), currency),
+        "monto_total_valor": _document_total_reporting_amount(documento),
+        "monto_presupuestal": format_currency(monto_presupuestal, currency),
+        "monto_presupuestal_valor": monto_presupuestal,
+        "asignacion_presupuestal": _document_budget_assignment_label(documento),
         "currency": currency,
         "situacion": _documentos_todos_reporting_situation(documento),
         "estado": getattr(documento, "estado", None) or "—",
@@ -31123,8 +31353,11 @@ async def documentos_todos(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
@@ -31141,6 +31374,14 @@ async def documentos_todos(
     if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
 
+    # Keep direct route calls (including unit tests) equivalent to FastAPI's
+    # resolved Query(None) values.
+    estado = estado if isinstance(estado, list) else None
+    tipo = tipo if isinstance(tipo, list) else None
+    torneo = torneo if isinstance(torneo, list) else None
+    concepto = concepto if isinstance(concepto, list) else None
+    beneficiario = beneficiario if isinstance(beneficiario, list) else None
+
     # Build base query
     query = select(Documento).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
@@ -31148,6 +31389,7 @@ async def documentos_todos(
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.torneo),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
         selectinload(Documento.cuenta_gastos)
         .undefer(CuentaDeGastos.fase)
         .selectinload(CuentaDeGastos.torneo),
@@ -31191,10 +31433,11 @@ async def documentos_todos(
         filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
-    if estado and estado.strip():
-        filters.append(Documento.estado == estado.strip())
-    if tipo and tipo.strip():
-        filters.append(Documento.tipo == tipo.strip())
+    selected_estado = _approval_history_filter_values(estado)
+    selected_tipo = _approval_history_filter_values(tipo)
+    selected_torneo = _approval_history_filter_values(torneo)
+    selected_concepto = _approval_history_filter_values(concepto)
+    selected_beneficiario = _approval_history_filter_values(beneficiario)
     situacion_value = (situacion or "").strip().lower()
     if situacion_value == "abiertas":
         filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
@@ -31225,7 +31468,24 @@ async def documentos_todos(
 
     result = await session.execute(query)
     documentos = result.scalars().all()
+    filter_options = {
+        "torneo": [_approval_history_torneo(documento) for documento in documentos],
+        "concepto": [_approval_history_budget_concept(documento) for documento in documentos],
+        "beneficiario": [_approval_history_beneficiario(documento) for documento in documentos],
+        "tipo": [_approval_history_display_value(documento.tipo) for documento in documentos],
+        "estado": [_approval_history_display_value(documento.estado) for documento in documentos],
+    }
+    documentos = [
+        documento
+        for documento in documentos
+        if (not selected_torneo or _normalize_filter_value(_approval_history_torneo(documento)) in selected_torneo)
+        and (not selected_concepto or _normalize_filter_value(_approval_history_budget_concept(documento)) in selected_concepto)
+        and (not selected_beneficiario or _normalize_filter_value(_approval_history_beneficiario(documento)) in selected_beneficiario)
+        and (not selected_tipo or _normalize_filter_value(_approval_history_display_value(documento.tipo)) in selected_tipo)
+        and (not selected_estado or _normalize_filter_value(_approval_history_display_value(documento.estado)) in selected_estado)
+    ]
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
 
     # Build rows HTML
     rows_html = ""
@@ -31234,6 +31494,7 @@ async def documentos_todos(
         row_values = _documentos_todos_reporting_row_values(
             documento,
             aprobador_nombre=aprobador_nombre,
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
         )
 
         # Link to documento detail with next parameter
@@ -31254,6 +31515,9 @@ async def documentos_todos(
         monto_total_sort = _sort_value_attr(
             getattr(documento, "monto_total", None),
             kind="money",
+        )
+        monto_presupuestal_sort = _sort_value_attr(
+            row_values["monto_presupuestal_valor"], kind="money"
         )
         creado_sort = _sort_value_attr(getattr(documento, "creado_en", None), kind="date")
         enviado_sort = _sort_value_attr(getattr(documento, "enviado_en", None), kind="date")
@@ -31277,6 +31541,7 @@ async def documentos_todos(
             <td data-sort-value="{escape(referencia_operaciones_sort)}">{escape(row_values["referencia_operaciones"])}</td>
             <td data-sort-value="{escape(monto_solicitado_sort)}">{row_values["monto_solicitado"]}</td>
             <td data-sort-value="{escape(monto_total_sort)}">{row_values["monto_total"]}</td>
+            <td data-sort-value="{escape(monto_presupuestal_sort)}">{row_values["monto_presupuestal"]}<br><small>{escape(row_values["asignacion_presupuestal"])}</small></td>
             <td>{escape(row_values["currency"])}</td>
             <td>{escape(row_values["situacion"])}</td>
             <td>{escape(row_values["estado"])}</td>
@@ -31292,8 +31557,11 @@ async def documentos_todos(
         key: value
         for key, value in {
             "q": q_value,
-            "estado": (estado or "").strip(),
-            "tipo": (tipo or "").strip(),
+            "estado": estado or [],
+            "tipo": tipo or [],
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
             "situacion": situacion_value,
             "empleado_nombre": (empleado_nombre or "").strip(),
         }.items()
@@ -31301,14 +31569,17 @@ async def documentos_todos(
     }
     bulk_href = "/documentos/todos/exportar-exceles.zip"
     if bulk_params:
-        bulk_href = f"{bulk_href}?{urlencode(bulk_params)}"
+        bulk_href = f"{bulk_href}?{urlencode(bulk_params, doseq=True)}"
     documents_amount_totals = _documentos_amount_totals_by_currency(documentos)
     active_filter_count = sum(
         1
         for value in (
             q_value,
-            (estado or "").strip(),
-            (tipo or "").strip(),
+            selected_estado,
+            selected_tipo,
+            selected_torneo,
+            selected_concepto,
+            selected_beneficiario,
             situacion_value,
             (empleado_nombre or "").strip(),
         )
@@ -31331,23 +31602,27 @@ async def documentos_todos(
             </div>
             <div>
                 <label for="estado" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Estado:</label>
-                <select name="estado" id="estado">
-                    <option value="">Todos</option>
-                    <option value="borrador" {'selected' if estado == 'borrador' else ''}>Borrador</option>
-                    <option value="enviado" {'selected' if estado == 'enviado' else ''}>Enviado</option>
-                    <option value="aprobado" {'selected' if estado == 'aprobado' else ''}>Aprobado</option>
-                    <option value="en_proceso_pago" {'selected' if estado == 'en_proceso_pago' else ''}>En proceso de pago</option>
-                    <option value="rechazado" {'selected' if estado == 'rechazado' else ''}>Rechazado</option>
-                    <option value="pagado" {'selected' if estado == 'pagado' else ''}>Pagado</option>
+                <select name="estado" id="estado" multiple size="4">
+                    {_approval_history_select_options(filter_options["estado"], selected_estado)}
                 </select>
             </div>
             <div>
                 <label for="tipo" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Tipo:</label>
-                <select name="tipo" id="tipo">
-                    <option value="">Todos</option>
-                    <option value="INFORME" {'selected' if tipo == 'INFORME' else ''}>INFORME</option>
-                    <option value="SOLICITUD" {'selected' if tipo == 'SOLICITUD' else ''}>SOLICITUD</option>
+                <select name="tipo" id="tipo" multiple size="4">
+                    {_approval_history_select_options(filter_options["tipo"], selected_tipo)}
                 </select>
+            </div>
+            <div>
+                <label for="todos_torneo" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Torneo:</label>
+                <select name="torneo" id="todos_torneo" multiple size="4">{_approval_history_select_options(filter_options["torneo"], selected_torneo)}</select>
+            </div>
+            <div>
+                <label for="todos_concepto" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Concepto:</label>
+                <select name="concepto" id="todos_concepto" multiple size="4">{_approval_history_select_options(filter_options["concepto"], selected_concepto)}</select>
+            </div>
+            <div>
+                <label for="todos_beneficiario" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Beneficiario:</label>
+                <select name="beneficiario" id="todos_beneficiario" multiple size="4">{_approval_history_select_options(filter_options["beneficiario"], selected_beneficiario)}</select>
             </div>
             <div>
                 <label for="situacion" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Situación:</label>
@@ -31393,8 +31668,11 @@ async def documentos_todos(
     bulk_params = {
         key: value
         for key, value in {
-            "estado": (estado or "").strip(),
-            "tipo": (tipo or "").strip(),
+            "estado": estado or [],
+            "tipo": tipo or [],
+            "torneo": torneo or [],
+            "concepto": concepto or [],
+            "beneficiario": beneficiario or [],
             "empleado_nombre": (empleado_nombre or "").strip(),
             "q": q_value,
             "situacion": situacion_value,
@@ -31403,7 +31681,10 @@ async def documentos_todos(
     }
     bulk_href = "/documentos/todos/exportar-exceles.zip"
     if bulk_params:
-        bulk_href += "?" + urlencode(bulk_params)
+        bulk_href += "?" + urlencode(bulk_params, doseq=True)
+    xlsx_href = "/documentos/todos/exportar.xlsx"
+    if bulk_params:
+        xlsx_href += "?" + urlencode(bulk_params, doseq=True)
 
     html = f"""
     <!DOCTYPE html>
@@ -31423,7 +31704,7 @@ async def documentos_todos(
                 eyebrow="Supervisión",
                 title="Todos los documentos",
                 description="Vista consolidada de reportería para finanzas y administración, con tipo de solicitud, solicitante, beneficiario, proveedor, referencias y montos en una sola tabla.",
-                actions_html=f'<a href="/panel" class="button secondary">Volver a Panel</a><a href="{bulk_href}" class="button primary">Descargar Exceles filtrados (ZIP)</a>',
+                actions_html=f'<a href="/panel" class="button secondary">Volver a Panel</a><a href="{xlsx_href}" class="button primary">Descargar Excel filtrado</a><a href="{bulk_href}" class="button secondary">Descargar Exceles (ZIP)</a>',
                 side_html=todos_side_html,
             )}
             <div class="stack">
@@ -31455,6 +31736,7 @@ async def documentos_todos(
                             <th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia operaciones</th>
                             <th data-sort-key="monto_solicitado" data-sort-type="money">Monto solicitado</th>
                             <th data-sort-key="monto_total" data-sort-type="money">Monto total</th>
+                            <th data-sort-key="monto_presupuestal" data-sort-type="money">Monto que afecta presupuesto</th>
                             <th data-sort-key="moneda" data-sort-type="text">Moneda</th>
                             <th data-sort-key="situacion" data-sort-type="text">Situación</th>
                             <th data-sort-key="estado" data-sort-type="text">Estado</th>
@@ -31491,11 +31773,15 @@ async def _query_documentos_todos_for_export(
     session: AsyncSession,
     current_empleado: Empleado,
     *,
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = None,
+    tipo: Optional[List[str]] = None,
+    torneo: Optional[List[str]] = None,
+    concepto: Optional[List[str]] = None,
+    beneficiario: Optional[List[str]] = None,
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
+    limit: Optional[int] = 500,
 ) -> list[Documento]:
     if not _can_view_documentos_todos(current_empleado):
         raise HTTPException(status_code=403, detail="Access denied. Insufficient permissions.")
@@ -31505,7 +31791,13 @@ async def _query_documentos_todos_for_export(
         selectinload(Documento.beneficiario_empleado),
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
-        selectinload(Documento.cuenta_gastos),
+        selectinload(Documento.budget_concept),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
+        selectinload(Documento.torneo),
+        selectinload(Documento.cuenta_gastos)
+        .undefer(CuentaDeGastos.fase)
+        .selectinload(CuentaDeGastos.torneo),
+        undefer(Documento.fase),
     )
     alicia_operations_observer = _is_alicia_operations_reference_observer(
         current_empleado
@@ -31539,10 +31831,6 @@ async def _query_documentos_todos_for_export(
         filters.append(_operations_reference_document_filter())
     if scope_dept:
         filters.append(departamento_column_matches(Empleado.departamento, scope_dept))
-    if estado and estado.strip():
-        filters.append(Documento.estado == estado.strip())
-    if tipo and tipo.strip():
-        filters.append(Documento.tipo == tipo.strip())
     situacion_value = (situacion or "").strip().lower()
     if situacion_value == "abiertas":
         filters.append(Documento.estado.notin_(["pagado", "rechazado", "cerrado"]))
@@ -31566,8 +31854,125 @@ async def _query_documentos_todos_for_export(
         )
     if filters:
         query_stmt = query_stmt.where(and_(*filters))
-    result = await session.execute(query_stmt.order_by(Documento.creado_en.desc()).limit(500))
-    return list(result.scalars().all())
+    if limit is not None:
+        query_stmt = query_stmt.limit(limit)
+    result = await session.execute(query_stmt.order_by(Documento.creado_en.desc()))
+    selected_torneo = _approval_history_filter_values(torneo)
+    selected_concepto = _approval_history_filter_values(concepto)
+    selected_beneficiario = _approval_history_filter_values(beneficiario)
+    selected_tipo = _approval_history_filter_values(tipo)
+    selected_estado = _approval_history_filter_values(estado)
+    return [
+        documento
+        for documento in result.scalars().all()
+        if (not selected_torneo or _normalize_filter_value(_approval_history_torneo(documento)) in selected_torneo)
+        and (not selected_concepto or _normalize_filter_value(_approval_history_budget_concept(documento)) in selected_concepto)
+        and (not selected_beneficiario or _normalize_filter_value(_approval_history_beneficiario(documento)) in selected_beneficiario)
+        and (not selected_tipo or _normalize_filter_value(_approval_history_display_value(documento.tipo)) in selected_tipo)
+        and (not selected_estado or _normalize_filter_value(_approval_history_display_value(documento.estado)) in selected_estado)
+    ]
+
+
+def _documentos_reporting_xlsx_response(
+    *,
+    title: str,
+    rows: Iterable[dict[str, Any]],
+    filename_prefix: str,
+    export_kind: str = "documentos",
+) -> Response:
+    """Build the direct, consolidated XLSX used by reporting views."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    xlsx_rows = list(rows)
+    include_history = export_kind == "historial_aprobaciones"
+    headers = [
+        "Número de referencia", "Tipo", "Torneo", "Fase", "Solicitante",
+        "Beneficiario", "Concepto", "Referencia operaciones", "Monto total",
+        "Monto que afecta presupuesto", "Asignación presupuestal", "Moneda",
+        "Situación", "Estado",
+    ]
+    if include_history:
+        headers = ["Fecha", "Acción", *headers, "Comentario"]
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = title[:31]
+    worksheet.append(headers)
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+    total_column = headers.index("Monto total") + 1
+    budget_column = headers.index("Monto que afecta presupuesto") + 1
+    for row_index, row in enumerate(xlsx_rows, start=2):
+        values = [
+            row["numero_referencia"], row["tipo_documento"], row["torneo"],
+            row["fase"], row["solicitante"], row["beneficiario"], row["concepto"],
+            row["referencia_operaciones"], float(row["monto_total_valor"]),
+            float(row["monto_presupuestal_valor"]), row["asignacion_presupuestal"],
+            row["currency"], row["situacion"], row["estado"],
+        ]
+        if include_history:
+            values = [
+                row.get("fecha_evento", "—"), row.get("accion_evento", "—"),
+                *values, row.get("comentario_evento", "-"),
+            ]
+        worksheet.append(
+            [
+                _safe_spreadsheet_cell_text(value) if isinstance(value, str) else value
+                for value in values
+            ]
+        )
+        currency_format = f'"{row["currency"]}" #,##0.00'
+        worksheet.cell(row=row_index, column=total_column).number_format = currency_format
+        worksheet.cell(row=row_index, column=budget_column).number_format = currency_format
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+    for column in worksheet.columns:
+        letter = column[0].column_letter
+        worksheet.column_dimensions[letter].width = min(
+            max(len(str(cell.value or "")) for cell in column) + 2, 36
+        )
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    filename = f"{filename_prefix}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/documentos/todos/exportar.xlsx", response_model=None)
+async def documentos_todos_exportar_xlsx(
+    request: Request,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
+    empleado_nombre: Optional[str] = None,
+    q: Optional[str] = None,
+    situacion: Optional[str] = None,
+) -> Response:
+    documentos = await _query_documentos_todos_for_export(
+        session, current_empleado, estado=estado, tipo=tipo, torneo=torneo,
+        concepto=concepto, beneficiario=beneficiario,
+        empleado_nombre=empleado_nombre, q=q, situacion=situacion, limit=None,
+    )
+    aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
+    cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    rows = (
+        _documentos_todos_reporting_row_values(
+            documento,
+            aprobador_nombre=aprobador_by_doc.get(documento.id, "—"),
+            cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+        )
+        for documento in documentos
+    )
+    return _documentos_reporting_xlsx_response(
+        title="Todos los documentos", rows=rows, filename_prefix="documentos",
+    )
 
 
 @router.get("/documentos/todos/exportar-exceles.zip", response_model=None)
@@ -31575,8 +31980,11 @@ async def documentos_todos_exportar_exceles_zip(
     request: Request,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
-    estado: Optional[str] = None,
-    tipo: Optional[str] = None,
+    estado: Optional[List[str]] = Query(None),
+    tipo: Optional[List[str]] = Query(None),
+    torneo: Optional[List[str]] = Query(None),
+    concepto: Optional[List[str]] = Query(None),
+    beneficiario: Optional[List[str]] = Query(None),
     empleado_nombre: Optional[str] = None,
     q: Optional[str] = None,
     situacion: Optional[str] = None,
@@ -31587,9 +31995,13 @@ async def documentos_todos_exportar_exceles_zip(
         current_empleado,
         estado=estado,
         tipo=tipo,
+        torneo=torneo,
+        concepto=concepto,
+        beneficiario=beneficiario,
         empleado_nombre=empleado_nombre,
         q=q,
         situacion=situacion,
+        limit=None,
     )
     buffer = io.BytesIO()
     exported = 0
