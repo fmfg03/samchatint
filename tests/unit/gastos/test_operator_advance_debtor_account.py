@@ -94,14 +94,21 @@ async def test_operator_advance_blocks_without_own_debtor_account(monkeypatch):
         async def get(self, model, identifier):
             return cuenta
 
-    monkeypatch.setattr(accounting, "_existing_event_poliza", AsyncMock(return_value=None))
-    monkeypatch.setattr(accounting, "resolve_cuenta_debtor_account", AsyncMock(return_value=None))
-    bank = AsyncMock(side_effect=AssertionError("no bank posting without debtor account"))
+    monkeypatch.setattr(
+        accounting, "_existing_event_poliza", AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        accounting, "resolve_cuenta_debtor_account", AsyncMock(return_value=None)
+    )
+    bank = AsyncMock(
+        side_effect=AssertionError("no bank posting without debtor account")
+    )
     monkeypatch.setattr(accounting, "resolve_default_bank_account", bank)
     result = await accounting.ensure_debtor_payment_posting_for_document(
         Session(),
         documento=SimpleNamespace(
-            id=uuid4(), cuenta_gastos_id=uuid4(),
+            id=uuid4(),
+            cuenta_gastos_id=uuid4(),
             proveedor_cliente_id=operator_id,
             beneficiario_proveedor_cliente_id=operator_id,
         ),
@@ -113,3 +120,48 @@ async def test_operator_advance_blocks_without_own_debtor_account(monkeypatch):
     assert result.status == "pending"
     assert result.reason == "missing_operator_debtor_account"
     bank.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_employee_bank_beneficiary_stays_on_employee_debtor_account(monkeypatch):
+    employee_id = uuid4()
+    cuenta = SimpleNamespace(
+        beneficiario_empleado_id=employee_id,
+        beneficiario_proveedor_cliente_id=uuid4(),
+    )
+    employee = SimpleNamespace(id=employee_id, nombre="Empleado beneficiario")
+    employee_account = SimpleNamespace(codigo="1170-001-012", nombre=employee.nombre)
+
+    class Session:
+        async def get(self, model, identifier):
+            if model is ProveedorCliente:
+                pytest.fail("the linked employee bank record is not an operator")
+            return cuenta
+
+    resolve_employee = AsyncMock(return_value=employee_account)
+    monkeypatch.setattr(accounting, "resolve_employee_debtor_account", resolve_employee)
+
+    resolved = await accounting.resolve_cuenta_debtor_account(
+        Session(), cuenta, employee
+    )
+    assert resolved is employee_account
+    resolve_employee.assert_awaited_once()
+
+    existing_poliza = SimpleNamespace(id=uuid4())
+    monkeypatch.setattr(
+        accounting, "_existing_event_poliza", AsyncMock(return_value=existing_poliza)
+    )
+    result = await accounting.ensure_debtor_payment_posting_for_document(
+        Session(),
+        documento=SimpleNamespace(
+            id=uuid4(),
+            cuenta_gastos_id=uuid4(),
+            beneficiario_empleado_id=employee_id,
+            proveedor_cliente_id=None,
+            beneficiario_proveedor_cliente_id=None,
+        ),
+        empleado=employee,
+        fecha_pago=accounting.date(2026, 9, 24),
+    )
+    assert result.status == "exists"
+    assert result.poliza is existing_poliza

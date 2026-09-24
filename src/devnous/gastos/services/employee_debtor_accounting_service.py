@@ -333,6 +333,7 @@ async def resolve_cuenta_debtor_account(
     operator_id = (
         getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
         if cuenta is not None
+        and getattr(cuenta, "beneficiario_empleado_id", None) is None
         else None
     )
     if operator_id is not None:
@@ -894,7 +895,11 @@ async def ensure_debtor_payment_posting_for_document(
     cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     if cuenta is None:
         return DebtorPostingResult(status="pending", reason="missing_cuenta_gastos")
-    operator_id = getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+    operator_id = (
+        getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+        if getattr(cuenta, "beneficiario_empleado_id", None) is None
+        else None
+    )
     if operator_id is not None and (
         getattr(documento, "beneficiario_proveedor_cliente_id", None) != operator_id
         or getattr(documento, "proveedor_cliente_id", None) != operator_id
