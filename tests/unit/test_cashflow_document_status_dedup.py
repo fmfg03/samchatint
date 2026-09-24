@@ -148,3 +148,21 @@ def test_legacy_cashflow_commitments_use_current_state_and_total_helper() -> Non
     assert 'Documento.estado.in_(["aprobado", "enviado"])' in view
     assert "_cashflow_document_total(document) for document in approved_pending" in view
     assert "monto_solicitado or d.monto_total" not in view
+
+
+def test_legacy_cashflow_period_filter_bounds_projection_sources() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    view = source.split(
+        '@router.get("/admin/contabilidad/cash-flow"', 1
+    )[1].split(
+        '@router.get("/admin/contabilidad/cash-flow/export.xlsx")', 1
+    )[0]
+
+    assert "cashflow_window_start = start_dt.date()" in view
+    assert "cashflow_window_end = min(" in view
+    assert "Documento.fecha_pago >= cashflow_window_start" in view
+    assert "Documento.fecha_pago < cashflow_window_end" in view
+    assert "CFDIReport.fecha < datetime.combine(cashflow_window_end" in view
+    assert "target_date - cashflow_window_start" in view
+    assert "CFDIReport.fecha >= datetime(today.year, 1, 1)" not in view
+    assert "El banco se filtra por cuenta y período, no por proyecto" in view
