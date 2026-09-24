@@ -21765,7 +21765,11 @@ async def contabilidad_cash_flow_view(
     bank_query = "" if selected_bank_account == "all" else f"&cuenta_bancaria={quote(selected_bank_account)}"
     project_query = "" if selected_project_scope == "all" else f"&proyecto_scope={quote(selected_project_scope)}"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+    cashflow_window_start = start_dt.date()
+    cashflow_window_end = min(
+        end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
+    )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [
@@ -21870,7 +21874,13 @@ async def contabilidad_cash_flow_view(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -21922,15 +21932,14 @@ async def contabilidad_cash_flow_view(
     emitted_total = sum(float(c.total or 0) for c in emitted_cfdis)
     received_total = sum(float(c.total or 0) for c in received_cfdis)
 
-    receivable_horizon_end = today + timedelta(days=horizon_days)
     receivable_cfdis: List[CFDIReport] = []
     if platform_rfcs:
         receivable_result = await session.execute(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(receivable_horizon_end + timedelta(days=1), datetime.min.time()),
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
@@ -21990,11 +21999,11 @@ async def contabilidad_cash_flow_view(
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
-        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        issue_date = cfdi.fecha.date() if cfdi.fecha else cashflow_window_start
         due_date = issue_date + timedelta(days=dias_credito)
-        if due_date <= receivable_horizon_end:
+        if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_30_total += saldo
-        if due_date < today:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -22004,8 +22013,8 @@ async def contabilidad_cash_flow_view(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
                 ]))
@@ -22121,7 +22130,7 @@ async def contabilidad_cash_flow_view(
         if isinstance(target_date, datetime):
             clean_date = target_date.date()
         else:
-            clean_date = target_date or today
+            clean_date = target_date or cashflow_window_start
         if periodo == "semanal":
             start = clean_date - timedelta(days=clean_date.weekday())
             end = start + timedelta(days=6)
@@ -22232,7 +22241,7 @@ async def contabilidad_cash_flow_view(
     def _cash_bucket_for(target_date: Optional[date]) -> str:
         if target_date is None:
             return "sin_fecha"
-        delta = (target_date - today).days
+        delta = (target_date - cashflow_window_start).days
         if delta < 0:
             return "vencido"
         if delta <= 7:
@@ -22258,7 +22267,7 @@ async def contabilidad_cash_flow_view(
     def _daily_bucket(target_date: Optional[date]) -> Optional[Dict[str, Any]]:
         if target_date is None:
             return None
-        delta = (target_date - today).days
+        delta = (target_date - cashflow_window_start).days
         if delta < 0 or delta > horizon_days:
             return None
         return daily_cash_rows.setdefault(
@@ -22551,7 +22560,7 @@ async def contabilidad_cash_flow_view(
         {render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("cash_flow")}
         <div class="card">
             <h1 style="margin:0 0 8px 0;">Cash Flow Operativo</h1>
-            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only: banco real del período, compromisos próximos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se filtra por asignación manual a proyecto cuando existe; CFDI sin amarre quedan sólo en Todos.</p>
+            <p class="muted" style="margin:0 0 16px 0;">Snapshot read-only del período seleccionado: banco real, compromisos, cartera CFDI y contexto fiscal SAT. No sustituye el cierre contable; lo prepara. Cuenta bancaria: <strong>{escape(selected_bank_account if selected_bank_account != 'all' else 'Todas')}</strong>. Proyecto operativo: <strong>{escape(selected_project_label)}</strong>. SAT/CxC/CxP CFDI se filtra por asignación manual a proyecto cuando existe; CFDI sin amarre quedan sólo en Todos. El banco se filtra por cuenta y período, no por proyecto, porque sus movimientos no tienen atribución de proyecto.</p>
             <form method="GET" action="/admin/contabilidad/cash-flow" class="toolbar">
                 <div><label>Año</label><br><select name="year">{year_options}</select></div>
                 <div><label>Mes</label><br><select name="month">{month_options}</select></div>
@@ -22683,7 +22692,11 @@ async def contabilidad_cash_flow_export_xlsx(
     elif selected_project_scope != "all":
         selected_project_scope = "all"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+    cashflow_window_start = start_dt.date()
+    cashflow_window_end = min(
+        end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
+    )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
@@ -22731,7 +22744,13 @@ async def contabilidad_cash_flow_export_xlsx(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -22773,8 +22792,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
@@ -22825,11 +22844,11 @@ async def contabilidad_cash_flow_export_xlsx(
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
-        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        issue_date = cfdi.fecha.date() if cfdi.fecha else cashflow_window_start
         due_date = issue_date + timedelta(days=dias_credito)
-        if due_date <= today + timedelta(days=horizon_days):
+        if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_total += saldo
-        if due_date < today:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -22839,8 +22858,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
                 ]))
