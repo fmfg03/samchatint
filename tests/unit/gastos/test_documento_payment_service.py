@@ -181,7 +181,7 @@ async def _async_value(value):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("posting_status", ["created", "pending"])
+@pytest.mark.parametrize("posting_status", ["created", "pending", "bank_pending"])
 async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
     monkeypatch,
     posting_status,
@@ -223,7 +223,11 @@ async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
             reason=(
                 "missing_operator_debtor_account"
                 if posting_status == "pending"
-                else None
+                else (
+                    "missing_santander_account"
+                    if posting_status == "bank_pending"
+                    else None
+                )
             ),
         )
     )
@@ -242,7 +246,7 @@ async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
     monkeypatch.setattr(documento_payment_service, "create_expense_from_data", expense)
     session = FakeSession()
 
-    if posting_status == "pending":
+    if posting_status != "created":
         with pytest.raises(DocumentoPaymentValidationError) as exc:
             await register_document_payment(
                 session,
@@ -251,8 +255,12 @@ async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
                 actor=actor,
                 notify=False,
             )
-        assert exc.value.code == "missing_operator_debtor_account"
-        assert "cuenta de deudores activa" in exc.value.message
+        if posting_status == "pending":
+            assert exc.value.code == "missing_operator_debtor_account"
+            assert "cuenta de deudores activa" in exc.value.message
+        else:
+            assert exc.value.code == "accounting_posting_pending"
+            assert "missing_santander_account" in exc.value.message
         assert documento.estado == "en_proceso_pago"
         assert not session.committed
     else:
@@ -271,3 +279,60 @@ async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
     assert posting.await_args.kwargs["require_employee_beneficiary"] is False
     provider.assert_not_awaited()
     expense.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["beneficiary_mismatch", "missing_requester"])
+async def test_operator_advance_rejects_invalid_payment_identity(monkeypatch, invalid):
+    operator_id, actor_id = uuid4(), uuid4()
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="en_proceso_pago",
+        gasto_generado_id=None,
+        monto_solicitado=17100,
+        fecha_pago=date(2026, 9, 24),
+        metodo_pago="TRANSFERENCIA",
+        proveedor_cliente_id=(
+            uuid4() if invalid == "beneficiary_mismatch" else operator_id
+        ),
+        beneficiario_proveedor_cliente_id=operator_id,
+        beneficiario_empleado_id=None,
+        cuenta_gastos_id=uuid4(),
+        empleado=(
+            None if invalid == "missing_requester" else SimpleNamespace(id=uuid4())
+        ),
+    )
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_load_documento_for_payment",
+        lambda *_: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        documento_payment_service, "parse_amex_payment_card_id", lambda *_: None
+    )
+    posting = AsyncMock(side_effect=AssertionError("invalid identity must not post"))
+    monkeypatch.setattr(
+        documento_payment_service, "ensure_debtor_payment_posting_for_document", posting
+    )
+    actor = SimpleNamespace(
+        id=actor_id,
+        rol="finanzas",
+        departamento="Finanzas",
+        permissions={"contabilidad.pagos.marcar_pagado"},
+    )
+
+    with pytest.raises(DocumentoPaymentValidationError) as exc:
+        await register_document_payment(
+            FakeSession(),
+            documento_id=documento.id,
+            actor_id=actor_id,
+            actor=actor,
+            notify=False,
+        )
+    assert exc.value.code == (
+        "operator_beneficiary_mismatch"
+        if invalid == "beneficiary_mismatch"
+        else "missing_empleado"
+    )
+    posting.assert_not_awaited()
