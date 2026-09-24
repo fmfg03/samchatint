@@ -21,6 +21,7 @@ from ..models import (
     Documento,
     Empleado,
     ExpenseReport,
+    ProveedorCliente,
     Reembolso,
 )
 from .amex_expense_service import employee_paid_sql_condition
@@ -329,6 +330,35 @@ async def resolve_cuenta_debtor_account(
             )
         )
         return result.scalar_one_or_none()
+    operator_id = (
+        getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+        if cuenta is not None
+        else None
+    )
+    if operator_id is not None:
+        operator = await session.get(ProveedorCliente, operator_id)
+        if (
+            operator is None
+            or not getattr(operator, "activo", False)
+            or getattr(operator, "tipo", None) != "operadores_regionales"
+        ):
+            return None
+        operator_name = _normalize_text(getattr(operator, "nombre", None))
+        if not operator_name:
+            return None
+        result = await session.execute(
+            select(CuentaContable).where(
+                CuentaContable.activo.is_(True),
+                CuentaContable.codigo.like(f"{DEBTOR_ACCOUNT_PREFIX}%"),
+                CuentaContable.codigo != DEBTOR_ACCOUNT_ROOT_CODE,
+            )
+        )
+        matches = [
+            account
+            for account in result.scalars().all()
+            if _normalize_text(account.nombre) == operator_name
+        ]
+        return matches[0] if len(matches) == 1 else None
     if empleado is None:
         return None
     return await resolve_employee_debtor_account(session, empleado)
@@ -861,6 +891,17 @@ async def ensure_debtor_payment_posting_for_document(
         and getattr(documento, "beneficiario_empleado_id", None) is None
     ):
         return DebtorPostingResult(status="skipped", reason="not_employee_cuenta_payment")
+    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
+    if cuenta is None:
+        return DebtorPostingResult(status="pending", reason="missing_cuenta_gastos")
+    operator_id = getattr(cuenta, "beneficiario_proveedor_cliente_id", None)
+    if operator_id is not None and (
+        getattr(documento, "beneficiario_proveedor_cliente_id", None) != operator_id
+        or getattr(documento, "proveedor_cliente_id", None) != operator_id
+    ):
+        return DebtorPostingResult(
+            status="pending", reason="operator_beneficiary_mismatch"
+        )
     numero_poliza = _event_poliza_number("DEU-PAY", documento.id)
     existing = await _existing_event_poliza(
         session,
@@ -870,11 +911,16 @@ async def ensure_debtor_payment_posting_for_document(
     )
     if existing is not None:
         return DebtorPostingResult(status="exists", poliza=existing)
-
-    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     debtor = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     if debtor is None:
-        return DebtorPostingResult(status="pending", reason="missing_employee_debtor_account")
+        return DebtorPostingResult(
+            status="pending",
+            reason=(
+                "missing_operator_debtor_account"
+                if operator_id is not None
+                else "missing_employee_debtor_account"
+            ),
+        )
     bank = await resolve_default_bank_account(session)
     if bank is None:
         return DebtorPostingResult(status="pending", reason="missing_santander_account")
@@ -894,15 +940,16 @@ async def ensure_debtor_payment_posting_for_document(
         documento_id=documento.id,
     )
     concepto = format_samchat_poliza_concept(
-        "Pago a deudor empleado",
+        "Anticipo a operador regional" if operator_id else "Pago a deudor empleado",
         documento=documento,
     )
+    operator = await session.get(ProveedorCliente, operator_id) if operator_id else None
     poliza = await _create_poliza(
         session,
         origen="deudores_anticipo",
         numero_poliza=numero_poliza,
         fecha=fecha_dt,
-        beneficiario_nombre=empleado.nombre,
+        beneficiario_nombre=(operator.nombre if operator is not None else empleado.nombre),
         concepto=concepto,
         lines=[
             {

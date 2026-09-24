@@ -1,4 +1,5 @@
 from datetime import date
+from unittest.mock import AsyncMock
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -32,7 +33,9 @@ class FakeSession:
 
 
 @pytest.mark.asyncio
-async def test_document_payment_write_flushes_when_the_caller_owns_the_transaction() -> None:
+async def test_document_payment_write_flushes_when_the_caller_owns_the_transaction() -> (
+    None
+):
     session = FakeSession()
     documento = SimpleNamespace()
     aprobacion = SimpleNamespace()
@@ -175,3 +178,96 @@ async def test_register_document_payment_rejects_actor_mismatch(
 
 async def _async_value(value):
     return value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("posting_status", ["created", "pending"])
+async def test_operator_advance_uses_debtor_posting_without_expense_or_budget(
+    monkeypatch,
+    posting_status,
+) -> None:
+    operator_id = uuid4()
+    actor_id = uuid4()
+    documento = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="en_proceso_pago",
+        gasto_generado_id=None,
+        monto_solicitado=17100,
+        fecha_pago=date(2026, 9, 24),
+        metodo_pago="TRANSFERENCIA",
+        proveedor_cliente_id=operator_id,
+        beneficiario_proveedor_cliente_id=operator_id,
+        beneficiario_empleado_id=None,
+        cuenta_gastos_id=uuid4(),
+        empleado=SimpleNamespace(id=uuid4(), nombre="Solicitante"),
+        budget_concept_id=None,
+    )
+    actor = SimpleNamespace(
+        id=actor_id,
+        rol="finanzas",
+        departamento="Finanzas",
+        permissions={"contabilidad.pagos.marcar_pagado"},
+    )
+    monkeypatch.setattr(
+        documento_payment_service,
+        "_load_documento_for_payment",
+        lambda *_: _async_value(documento),
+    )
+    monkeypatch.setattr(
+        documento_payment_service, "parse_amex_payment_card_id", lambda *_: None
+    )
+    posting = AsyncMock(
+        return_value=SimpleNamespace(
+            status=posting_status,
+            reason=(
+                "missing_operator_debtor_account"
+                if posting_status == "pending"
+                else None
+            ),
+        )
+    )
+    provider = AsyncMock(
+        side_effect=AssertionError("provider posting is not an advance")
+    )
+    expense = AsyncMock(
+        side_effect=AssertionError("advance must not create an expense")
+    )
+    monkeypatch.setattr(
+        documento_payment_service, "ensure_debtor_payment_posting_for_document", posting
+    )
+    monkeypatch.setattr(
+        documento_payment_service, "ensure_provider_payment_posting", provider
+    )
+    monkeypatch.setattr(documento_payment_service, "create_expense_from_data", expense)
+    session = FakeSession()
+
+    if posting_status == "pending":
+        with pytest.raises(DocumentoPaymentValidationError) as exc:
+            await register_document_payment(
+                session,
+                documento_id=documento.id,
+                actor_id=actor_id,
+                actor=actor,
+                notify=False,
+            )
+        assert exc.value.code == "missing_operator_debtor_account"
+        assert "cuenta de deudores activa" in exc.value.message
+        assert documento.estado == "en_proceso_pago"
+        assert not session.committed
+    else:
+        result = await register_document_payment(
+            session,
+            documento_id=documento.id,
+            actor_id=actor_id,
+            actor=actor,
+            notify=False,
+        )
+        assert result.documento.estado == "pagado"
+        assert result.expense is None
+        assert session.committed
+
+    assert posting.await_args.kwargs["empleado"] is documento.empleado
+    assert posting.await_args.kwargs["require_employee_beneficiary"] is False
+    provider.assert_not_awaited()
+    expense.assert_not_awaited()
