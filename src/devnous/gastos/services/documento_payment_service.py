@@ -299,27 +299,58 @@ async def register_document_payment(
 
     has_proveedor = documento.proveedor_cliente_id is not None
     has_beneficiario = documento.beneficiario_empleado_id is not None
+    is_operator_advance = (
+        documento.cuenta_gastos_id is not None
+        and getattr(documento, "beneficiario_proveedor_cliente_id", None) is not None
+        and not has_beneficiario
+    )
+    if is_operator_advance and (
+        documento.proveedor_cliente_id != documento.beneficiario_proveedor_cliente_id
+    ):
+        raise DocumentoPaymentValidationError(
+            "operator_beneficiary_mismatch",
+            "El operador beneficiario del anticipo no coincide con el destinatario del pago.",
+        )
     if not has_proveedor and not has_beneficiario:
         raise DocumentoPaymentValidationError(
             "missing_beneficiary",
             "El documento debe tener un proveedor/cliente o un beneficiario empleado asociado.",
         )
-    if has_proveedor and has_beneficiario:
+    if (has_proveedor and has_beneficiario) or is_operator_advance:
         if documento.cuenta_gastos_id:
-            beneficiary = documento.beneficiario_empleado
-            if beneficiary is not None:
-                posting = await ensure_debtor_payment_posting_for_document(
-                    session,
-                    documento=documento,
-                    empleado=beneficiary,
-                    fecha_pago=fecha_pago,
+            beneficiary = (
+                documento.empleado
+                if is_operator_advance
+                else documento.beneficiario_empleado
+            )
+            if beneficiary is None:
+                raise DocumentoPaymentValidationError(
+                    (
+                        "missing_empleado"
+                        if is_operator_advance
+                        else "missing_beneficiario"
+                    ),
+                    "No se encontró el empleado asociado al anticipo.",
                 )
-                if posting.status == "pending":
+            posting = await ensure_debtor_payment_posting_for_document(
+                session,
+                documento=documento,
+                empleado=beneficiary,
+                fecha_pago=fecha_pago,
+                require_employee_beneficiary=not is_operator_advance,
+            )
+            if posting.status != "created" and posting.status != "exists":
+                if posting.reason == "missing_operator_debtor_account":
                     raise DocumentoPaymentValidationError(
-                        "accounting_posting_pending",
-                        "No se puede registrar el pago hasta completar su configuraci\u00f3n "
-                        f"contable ({posting.reason or 'incompleta'}).",
+                        "missing_operator_debtor_account",
+                        "Falta una cuenta de deudores activa a nombre del operador regional. "
+                        "Contabilidad debe configurarla antes de registrar este anticipo.",
                     )
+                raise DocumentoPaymentValidationError(
+                    "accounting_posting_pending",
+                    "No se puede registrar el pago hasta completar su configuraci\u00f3n "
+                    f"contable ({posting.reason or 'incompleta'}).",
+                )
             documento.estado = "pagado"
             documento.pagado_en = datetime.utcnow()
             aprobacion = Aprobacion(
