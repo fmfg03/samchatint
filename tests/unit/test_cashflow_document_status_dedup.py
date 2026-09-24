@@ -12,6 +12,7 @@ from devnous.gastos.routes import user_routes
 from devnous.gastos.routes.user_routes import (
     _cashflow_document_total,
     contabilidad_cash_flow_view,
+    contabilidad_cash_flow_export_xlsx,
 )
 from samchat.finance_platform.service import build_finance_platform_snapshot
 
@@ -275,3 +276,33 @@ async def test_legacy_cashflow_uses_selected_period_for_projected_rows() -> None
 
     assert response.status_code == 200
     assert "Cobros esperados 15 días" in response.body.decode()
+
+
+@pytest.mark.asyncio
+async def test_legacy_cashflow_export_uses_selected_period_for_projections() -> None:
+    cfdi = SimpleNamespace(
+        id="cfdi-export", total=100.0, cfdi_uuid="UUID-EXPORT",
+        fecha=datetime(2026, 1, 5), receptor_nombre="Cliente",
+        receptor_rfc="CLI010101AAA", emisor_nombre="Proveedor",
+        emisor_rfc="RFC010101AAA", moneda="MXN", serie="A", folio="2",
+        descripcion_concepto_principal="Servicio",
+    )
+    session = _CashflowSession([
+        _CashflowResult([("RFC010101AAA",)]), _CashflowResult(),
+        _CashflowResult(), _CashflowResult(), _CashflowResult(),
+        _CashflowResult(), _CashflowResult([cfdi]), _CashflowResult(),
+        _CashflowResult([cfdi]), _CashflowResult(),
+    ])
+    empty_matches = {"total": 0.0, "count": 0, "by_uuid": {}, "by_id": {}}
+    with (
+        patch.object(user_routes, "_active_cfdi_project_assignment_ids", new=AsyncMock(return_value=[])),
+        patch.object(user_routes, "_load_active_treasury_cfdi_match_amounts", new=AsyncMock(return_value=empty_matches)),
+    ):
+        response = await contabilidad_cash_flow_export_xlsx(
+            request=SimpleNamespace(), session=session, current_empleado=SimpleNamespace(),
+            year=2026, month=1, horizon_days=15, dias_credito=0,
+            cuenta_bancaria="all", proyecto_scope="all",
+        )
+
+    assert response.status_code == 200
+    assert response.media_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
