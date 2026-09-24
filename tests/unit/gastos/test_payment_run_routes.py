@@ -731,6 +731,7 @@ def test_payment_proof_form_waits_for_review_before_submit() -> None:
     ).read_text(encoding="utf-8")
 
     assert "target.dataset.reviewStatus = 'checking'" in source
+    assert "target.dataset.reviewStatus = 'revision_required'" in source
     assert "Espera a que termine la validación del comprobante." in source
     assert "Espera a que termine la validación de cada comprobante." in source
 

@@ -9948,7 +9948,7 @@ async def admin_finance_payment_run(
                                 target.dataset.reviewStatus = review.status;
                                 target.style.color = review.status === 'conflict' ? '#b91c1c' : (review.status === 'match' ? '#166534' : '#92400e');
                             }})
-                            .catch(function() {{ target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
+                            .catch(function() {{ target.dataset.reviewStatus = 'revision_required'; target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
                     }}
                     document.querySelectorAll('[data-payment-proof-form]').forEach(function(singleForm) {{
                         var singleFile = singleForm.querySelector('[data-payment-proof-file]');
