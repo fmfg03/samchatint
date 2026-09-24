@@ -1,6 +1,5 @@
 # Exact pre-existing unit failures observed on 2026-09-18.
 # Remove an entry as soon as its underlying test is repaired.
-tests.unit.gastos.test_admin_budget_route_safety::test_assign_existing_rejects_negative_budget_amounts
 tests.unit.gastos.test_admin_budget_route_safety::test_presupuestos_canonical_route_inventory_is_owned_by_budget_module
 tests.unit.gastos.test_authorization_profile_board::test_authorization_profile_board_routes_and_nav_are_registered
 tests.unit.gastos.test_authorization_profile_board::test_document_workflow_send_persists_authorization_strategy_evidence
