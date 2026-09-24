@@ -129,7 +129,7 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     ).to_be_visible()
 
     approve = page.get_by_role("button", name="Aprobar", exact=True)
-    reject = page.locator("summary.approval-rejection")
+    reject = page.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
     reject.click()
@@ -175,7 +175,7 @@ def test_approver_decision_actions_stay_in_view_at_1280(
 
     cell = page.locator("td.approval-actions-cell").first
     approve = cell.get_by_role("button", name="Aprobar", exact=True)
-    reject = cell.locator("summary.approval-rejection")
+    reject = cell.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
     reject.click()
