@@ -98,6 +98,22 @@ def test_budget_impact_falls_back_to_total_without_cfdi_and_never_negative():
     ) == Decimal("0")
 
 
+def test_budget_impact_applies_partida_lodging_tip_and_no_deductible_rules():
+    documento = _doc(
+        gastos=[
+            SimpleNamespace(gasto_cantidad=116, iva=16, hospedaje_impuesto_monto=3,
+                            propina_no_deducible=0, estado_gasto="activo", adjuntos=[]),
+            SimpleNamespace(gasto_cantidad=58, iva=8, hospedaje_impuesto_monto=0,
+                            propina_no_deducible=10, estado_gasto="activo", adjuntos=[]),
+            SimpleNamespace(gasto_cantidad=75, iva=10, hospedaje_impuesto_monto=0,
+                            propina_no_deducible=0, estado_gasto="activo",
+                            adjuntos=[SimpleNamespace(activo=True, categoria="comprobante_no_deducible")]),
+        ]
+    )
+
+    assert user_routes._document_budget_impact_amount(documento) == Decimal("238")
+
+
 def test_consolidated_xlsx_includes_budget_impact_and_assignment_state():
     from openpyxl import load_workbook
 

@@ -30716,6 +30716,7 @@ async def historial_aprobador(
                 selectinload(Documento.beneficiario_proveedor_cliente),
                 selectinload(Documento.proveedor_cliente),
                 selectinload(Documento.budget_concept),
+                selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
                 selectinload(Documento.torneo),
                 selectinload(Documento.cuenta_gastos).undefer(CuentaDeGastos.fase),
                 selectinload(Documento.cuenta_gastos).selectinload(CuentaDeGastos.torneo),
@@ -31073,6 +31074,7 @@ async def historial_aprobador_exportar_xlsx(
                     selectinload(Documento.beneficiario_proveedor_cliente),
                     selectinload(Documento.proveedor_cliente),
                     selectinload(Documento.budget_concept),
+                    selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
                     selectinload(Documento.torneo),
                     selectinload(Documento.cuenta_gastos)
                     .undefer(CuentaDeGastos.fase)
@@ -31179,13 +31181,38 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
 def _document_budget_impact_amount(
     documento: Documento, cfdi_report: Optional[CFDIReport] = None
 ) -> Decimal:
-    """Mirror the canonical budget base for a document without a budget line."""
+    """Return the reporting amount, including approved per-partida exceptions."""
 
     def _nonnegative(value: Any) -> Decimal:
         try:
             return max(Decimal(str(value)), Decimal("0"))
         except (InvalidOperation, TypeError, ValueError):
             return Decimal("0")
+
+    expenses = [
+        expense
+        for expense in (getattr(documento, "gastos", None) or [])
+        if getattr(expense, "estado_gasto", None) != "cancelado"
+    ]
+    if expenses:
+        total = Decimal("0")
+        for expense in expenses:
+            is_no_deductible = any(
+                getattr(adjunto, "activo", False)
+                and getattr(adjunto, "categoria", None) == "comprobante_no_deducible"
+                for adjunto in (getattr(expense, "adjuntos", None) or [])
+            )
+            expense_total = _nonnegative(getattr(expense, "gasto_cantidad", None))
+            if is_no_deductible:
+                total += expense_total
+                continue
+            total += max(
+                expense_total - _nonnegative(getattr(expense, "iva", None)),
+                Decimal("0"),
+            )
+            total += _nonnegative(getattr(expense, "hospedaje_impuesto_monto", None))
+            total += _nonnegative(getattr(expense, "propina_no_deducible", None))
+        return total
 
     if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
         return max(
@@ -31345,6 +31372,7 @@ async def documentos_todos(
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.torneo),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
         selectinload(Documento.cuenta_gastos)
         .undefer(CuentaDeGastos.fase)
         .selectinload(CuentaDeGastos.torneo),
@@ -31747,6 +31775,7 @@ async def _query_documentos_todos_for_export(
         selectinload(Documento.beneficiario_proveedor_cliente),
         selectinload(Documento.proveedor_cliente),
         selectinload(Documento.budget_concept),
+        selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
         selectinload(Documento.torneo),
         selectinload(Documento.cuenta_gastos)
         .undefer(CuentaDeGastos.fase)
