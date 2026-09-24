@@ -25,6 +25,7 @@ class PaymentProofReview:
     detected_reference: str | None
     reasons: tuple[str, ...]
     template_id: str | None = None
+    confirmation_blocked: bool = False
 
 
 def _normalized(value: Any) -> str:
@@ -104,6 +105,14 @@ def review_payment_proof(
     template_id = _bank_template_id(text, reference=detected_reference)
     reasons: list[str] = []
     has_conflict = False
+    santander_pending = bool(
+        re.search(r"\bSANTANDER\b", text, flags=re.IGNORECASE)
+        and re.search(r"\bENVIADA\b", text, flags=re.IGNORECASE)
+    )
+    if santander_pending:
+        reasons.append(
+            "El comprobante de Santander indica ENVIADA y no confirma un pago ejecutado."
+        )
     date_candidates = re.findall(
         r"20\d{2}-\d{2}-\d{2}|\b\d{2}/\d{2}/20\d{2}\b", text
     )
@@ -126,7 +135,9 @@ def review_payment_proof(
         has_conflict = True
     if has_conflict:
         status = "conflict"
-    elif not (detected_date and detected_amount and detected_beneficiary):
+    elif santander_pending or not (
+        detected_date and detected_amount and detected_beneficiary
+    ):
         status = "revision_required"
         reasons.append("Faltan datos detectables; Finanzas debe revisarlos manualmente.")
     elif not template_id:
@@ -136,5 +147,5 @@ def review_payment_proof(
         status = "match"
     return PaymentProofReview(
         status, detected_date, detected_amount, detected_currency, detected_beneficiary,
-        detected_reference, tuple(reasons), template_id
+        detected_reference, tuple(reasons), template_id, santander_pending
     )
