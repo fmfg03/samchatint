@@ -129,9 +129,14 @@ def test_approver_reaches_real_pending_queue_with_decision_context(
     ).to_be_visible()
 
     approve = page.get_by_role("button", name="Aprobar", exact=True)
-    reject = page.get_by_role("button", name="Rechazar", exact=True)
+    reject = page.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
+    reject.click()
+    expect(page.get_by_label("Motivo de rechazo")).to_be_visible()
+    expect(
+        page.get_by_role("button", name="Confirmar rechazo", exact=True)
+    ).to_be_visible()
     expect(
         page.get_by_text("Documentos esperando tu decisión", exact=False)
     ).to_be_visible()
@@ -170,9 +175,11 @@ def test_approver_decision_actions_stay_in_view_at_1280(
 
     cell = page.locator("td.approval-actions-cell").first
     approve = cell.get_by_role("button", name="Aprobar", exact=True)
-    reject = cell.get_by_role("button", name="Rechazar", exact=True)
+    reject = cell.locator("details.approval-rejection > summary")
     expect(approve).to_be_visible()
     expect(reject).to_be_visible()
+    reject.click()
+    expect(cell.get_by_label("Motivo de rechazo")).to_be_visible()
     assert cell.evaluate("(el) => getComputedStyle(el).position") == "sticky"
 
     shell_box = shell.bounding_box()

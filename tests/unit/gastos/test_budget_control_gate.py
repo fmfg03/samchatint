@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -1031,7 +1032,8 @@ def test_pending_approval_page_has_bulk_selection_controls():
     assert "Aprobar seleccionados" in block
     assert "Rechazar seleccionados" in block
     assert "formaction=\"/documentos/{documento.id}/aprobar\"" in block
-    assert "formaction=\"/documentos/{documento.id}/rechazar\"" in block
+    assert "action=\"/documentos/{documento.id}/rechazar\"" in block
+    assert 'id="comentario-rechazo-lote"' in block
 
 
 def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
@@ -1044,6 +1046,84 @@ def test_bulk_pending_approval_endpoint_uses_canonical_workflow_gate():
     assert "workflow_action" in block
     assert 'workflow_action = {"approve": "approve", "reject": "reject"}' in block
     assert "DocumentoWorkflowPermissionError" in block
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_page_renders_rejection_forms(monkeypatch) -> None:
+    documento = SimpleNamespace(
+        id="f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f",
+        referencia_operaciones="OP-1",
+        monto_total=100,
+        monto_solicitado=None,
+        enviado_en=None,
+        creado_en=None,
+        cuenta_gastos=None,
+        torneo=None,
+    )
+    result = SimpleNamespace(
+        scalars=lambda: SimpleNamespace(unique=lambda: SimpleNamespace(all=lambda: [documento]))
+    )
+    session = SimpleNamespace(execute=AsyncMock(return_value=result))
+    monkeypatch.setattr(user_routes, "_can_review_pending_approvals", AsyncMock(return_value=True))
+    monkeypatch.setattr(user_routes, "fetch_documento_aprobador_display_batch", AsyncMock(return_value={}))
+    monkeypatch.setattr(
+        user_routes,
+        "_documentos_todos_reporting_row_values",
+        lambda *_args, **_kwargs: {
+            "enviado": "-", "creado": "2026-09-24", "numero_referencia": "DOC-1",
+            "concepto": "Prueba", "beneficiario": "Beneficiario", "proveedor": "-",
+            "tipo_documento": "SOLICITUD", "estado": "Enviado", "monto_total": "$100.00",
+            "solicitante": "Solicitante",
+        },
+    )
+    monkeypatch.setattr(user_routes, "documento_project_name", lambda *_args: "Torneo")
+    monkeypatch.setattr(user_routes, "currency_for", lambda *_args: "MXN")
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_args: "")
+    monkeypatch.setattr(user_routes, "_gastos_workspace_nav_html", lambda *_args: "")
+    monkeypatch.setattr(user_routes, "_gastos_breadcrumb_html", lambda *_args: "")
+    monkeypatch.setattr(user_routes, "_render_workspace_hero", lambda **_kwargs: "")
+
+    html = await user_routes.documentos_pendientes(
+        request=SimpleNamespace(query_params={}),
+        session=session,
+        current_empleado=SimpleNamespace(id="actor", rol="superadmin"),
+    )
+
+    assert 'id="documento-rechazo-f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f"' in html
+    assert 'name="comentario"' in html
+    assert 'name="comentario" id="comentario-rechazo-lote"' in html
+
+
+@pytest.mark.asyncio
+async def test_pending_approval_rejections_require_reason_before_workflow(monkeypatch) -> None:
+    can_review = AsyncMock(return_value=True)
+    transition = AsyncMock()
+    monkeypatch.setattr(user_routes, "_can_review_pending_approvals", can_review)
+    monkeypatch.setattr(user_routes, "transition_documento_workflow", transition)
+    documento_id = "f4f97ca4-8e9b-4d4b-b8a2-80e6f4540d1f"
+    actor = SimpleNamespace(id="e824e899-9942-4a35-b0fa-621a139d5e66")
+
+    single = await user_routes.rechazar_documento(
+        documento_id=documento_id,
+        request=SimpleNamespace(),
+        session=AsyncMock(),
+        current_empleado=actor,
+        comentario="  ",
+        next="/documentos/pendientes",
+    )
+    bulk = await user_routes.documentos_pendientes_accion_lote(
+        request=SimpleNamespace(),
+        session=AsyncMock(),
+        current_empleado=actor,
+        action="reject",
+        comentario="  ",
+        next="/documentos/pendientes",
+    )
+
+    assert single.status_code == bulk.status_code == 303
+    assert "rejection_reason_required" in single.headers["location"]
+    assert "rejection_reason_required" in bulk.headers["location"]
+    transition.assert_not_awaited()
 
 
 def test_solicitud_owner_edit_window_extends_until_budget_assignment() -> None:
