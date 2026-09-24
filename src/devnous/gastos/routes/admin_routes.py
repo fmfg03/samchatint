@@ -9196,6 +9196,10 @@ def _payment_proof_review_value(value: Any) -> str:
     return rendered or "No detectado"
 
 
+def _payment_proof_review_blocks_confirmation(review: Any) -> bool:
+    return bool(getattr(review, "confirmation_blocked", False))
+
+
 def _payment_proof_conflict_response(
     *,
     documento: Documento,
@@ -10308,6 +10312,15 @@ async def admin_finance_payment_run_upload_payment_proof(
             if review.status == "conflict"
             else ""
         )
+        if _payment_proof_review_blocks_confirmation(review):
+            await session.rollback()
+            return _payment_proof_conflict_response(
+                documento=documento,
+                review=review,
+                effective_payment_date=effective_payment_date,
+                reasons=review.reasons,
+                bulk=False,
+            )
         if review.status == "conflict" and not resolution_reason:
             await session.rollback()
             return _payment_proof_conflict_response(
@@ -10547,6 +10560,15 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             resolution_reason = (
                 str(raw_reason or "").strip() if review.status == "conflict" else ""
             )
+            if _payment_proof_review_blocks_confirmation(review):
+                await session.rollback()
+                return _payment_proof_conflict_response(
+                    documento=documento,
+                    review=review,
+                    effective_payment_date=effective_payment_date,
+                    reasons=review.reasons,
+                    bulk=True,
+                )
             if review.status == "conflict" and not resolution_reason:
                 await session.rollback()
                 return _payment_proof_conflict_response(

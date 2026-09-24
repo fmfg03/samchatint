@@ -403,6 +403,90 @@ async def test_payment_run_single_proof_conflict_shows_detected_and_programmed_v
 
 
 @pytest.mark.asyncio
+async def test_payment_run_blocks_santander_enviada_even_with_resolution_reason(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_payment_proof_conflict_document(document_id))
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: PaymentProofReview(
+            "revision_required",
+            date(2026, 9, 22),
+            Decimal("100.00"),
+            "MXN",
+            "Beneficiario Programado",
+            "REF-1",
+            ("El comprobante de Santander indica ENVIADA y no confirma un pago ejecutado.",),
+            confirmation_blocked=True,
+        ),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proof(
+        documento_id=document_id,
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        comprobante_pago=_PaymentProofUpload("proof.pdf", b"%PDF-1.4"),
+        fecha_pago_efectiva="2026-09-22",
+        payment_proof_resolution_reason="La transferencia fue enviada.",
+    )
+
+    assert response.status_code == 422
+    assert b"ENVIADA" in response.body
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_run_bulk_blocks_santander_enviada_even_with_resolution_reason(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=_payment_proof_conflict_document(document_id))
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(
+        admin_routes, "require_payment_run_payment_confirmation", lambda _: None
+    )
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: PaymentProofReview(
+            "revision_required",
+            date(2026, 9, 22),
+            Decimal("100.00"),
+            "MXN",
+            "Beneficiario Programado",
+            "REF-1",
+            ("El comprobante de Santander indica ENVIADA y no confirma un pago ejecutado.",),
+            confirmation_blocked=True,
+        ),
+    )
+
+    response = await admin_routes.admin_finance_payment_run_upload_payment_proofs_bulk(
+        request=SimpleNamespace(),
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        selected_document_ids=[str(document_id)],
+        proof_document_ids=[str(document_id)],
+        comprobantes_pago=[_PaymentProofUpload("proof.pdf", b"%PDF-1.4")],
+        effective_payment_dates=["2026-09-22"],
+        payment_proof_resolution_reasons=["La transferencia fue enviada."],
+        apply_one_to_all=False,
+    )
+
+    assert response.status_code == 422
+    assert b"ENVIADA" in response.body
+    session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_payment_run_bulk_proof_conflict_shows_detected_and_programmed_values(
     monkeypatch,
 ) -> None:

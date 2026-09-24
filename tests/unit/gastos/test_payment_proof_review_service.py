@@ -81,3 +81,50 @@ def test_payment_proof_review_rejects_reordered_template_markers(monkeypatch):
     review = review_payment_proof(raw=b"pdf", filename="proof.pdf", mime_type="application/pdf", expected_amount=Decimal("100.00"), expected_beneficiary="Proveedor Demo")
     assert review.status == "revision_required"
     assert review.template_id is None
+
+
+def test_payment_proof_review_does_not_cross_empty_santander_rfc_beneficiary(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: (
+            "Santander\nRFC Beneficiario:\nOperación realizada por internet\n"
+            "Cuenta de abono: YERALDIN STHEFANIA BUENDIA ROSAS\n"
+            "Referencia: REF123\nMonto: 17100.00\nFecha: 22/09/2026"
+        ),
+    )
+
+    review = review_payment_proof(
+        raw=b"pdf",
+        filename="proof.pdf",
+        mime_type="application/pdf",
+        expected_amount=Decimal("17100.00"),
+        expected_beneficiary="YERALDIN STHEFANIA BUENDIA ROSAS",
+    )
+
+    assert review.detected_beneficiary is None
+    assert review.status == "revision_required"
+    assert "beneficiario programado" not in " ".join(review.reasons)
+
+
+def test_payment_proof_review_keeps_santander_enviada_manual(monkeypatch):
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.extract_document_text_from_bytes",
+        lambda **_: (
+            "Santander\nEstado: ENVIADA\nReferencia: REF123\nMonto: 17100.00\n"
+            "Fecha: 22/09/2026\nBeneficiario: YERALDIN STHEFANIA BUENDIA ROSAS"
+        ),
+    )
+
+    review = review_payment_proof(
+        raw=b"pdf",
+        filename="proof.pdf",
+        mime_type="application/pdf",
+        expected_amount=Decimal("17100.00"),
+        expected_beneficiary="YERALDIN STHEFANIA BUENDIA ROSAS",
+    )
+
+    assert review.status == "revision_required"
+    assert any("no confirma un pago ejecutado" in reason for reason in review.reasons)
+    assert review.confirmation_blocked is True
