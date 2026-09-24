@@ -1,10 +1,18 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
-from devnous.gastos.routes.user_routes import _cashflow_document_total
+import pytest
+
+from devnous.gastos.routes import user_routes
+from devnous.gastos.routes.user_routes import (
+    _cashflow_document_total,
+    contabilidad_cash_flow_view,
+)
 from samchat.finance_platform.service import build_finance_platform_snapshot
 
 
@@ -166,3 +174,96 @@ def test_legacy_cashflow_period_filter_bounds_projection_sources() -> None:
     assert "target_date - cashflow_window_start" in view
     assert "CFDIReport.fecha >= datetime(today.year, 1, 1)" not in view
     assert "El banco se filtra por cuenta y período, no por proyecto" in view
+
+
+class _CashflowResult:
+    def __init__(self, rows: list[Any] | None = None) -> None:
+        self.rows = rows or []
+
+    def all(self) -> list[Any]:
+        return self.rows
+
+    def scalars(self) -> "_CashflowResult":
+        return self
+
+    def __iter__(self):
+        return iter(self.rows)
+
+
+class _CashflowSession:
+    def __init__(self, responses: list[_CashflowResult]) -> None:
+        self.responses = responses
+
+    async def execute(self, *_args: Any, **_kwargs: Any) -> _CashflowResult:
+        return self.responses.pop(0) if self.responses else _CashflowResult()
+
+
+@pytest.mark.asyncio
+async def test_legacy_cashflow_uses_selected_period_for_projected_rows() -> None:
+    cfdi = SimpleNamespace(
+        id="cfdi-1",
+        total=100.0,
+        cfdi_uuid="UUID-1",
+        fecha=datetime(2026, 1, 5),
+        receptor_nombre="Cliente",
+        receptor_rfc="CLI010101AAA",
+        emisor_nombre="Proveedor",
+        emisor_rfc="RFC010101AAA",
+        moneda="MXN",
+        serie="A",
+        folio="1",
+        descripcion_concepto_principal="Servicio",
+    )
+    session = _CashflowSession(
+        [
+            _CashflowResult([("RFC010101AAA",)]),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult(),
+            _CashflowResult([cfdi]),
+            _CashflowResult(),
+            _CashflowResult([cfdi]),
+            _CashflowResult(),
+        ]
+    )
+    empty_matches = {"total": 0.0, "count": 0, "by_uuid": {}, "by_id": {}}
+    with (
+        patch.object(
+            user_routes,
+            "_ensure_cfdi_project_assignment_schema",
+            new=AsyncMock(),
+        ),
+        patch.object(
+            user_routes,
+            "_active_cfdi_project_assignment_ids",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch.object(
+            user_routes,
+            "_load_active_treasury_cfdi_match_amounts",
+            new=AsyncMock(return_value=empty_matches),
+        ),
+        patch.object(user_routes, "render_top_navigation", return_value=""),
+        patch.object(user_routes, "_contabilidad_subnav", return_value=""),
+    ):
+        response = await contabilidad_cash_flow_view(
+            request=SimpleNamespace(),
+            session=session,
+            current_empleado=SimpleNamespace(),
+            year=2026,
+            month=1,
+            horizon_days=15,
+            dias_credito=0,
+            periodo="semanal",
+            cuenta_bancaria="all",
+            proyecto_scope="all",
+        )
+
+    assert response.status_code == 200
+    assert "Cobros esperados 15 días" in response.body.decode()
