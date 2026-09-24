@@ -20,9 +20,12 @@ except Exception:  # pragma: no cover
     load_workbook = None
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz
 except Exception:  # pragma: no cover
-    fitz = None
+    try:
+        import fitz  # PyMuPDF compatibility import
+    except Exception:  # pragma: no cover
+        fitz = None
 
 
 def _normalize_col_name(value: str) -> str:

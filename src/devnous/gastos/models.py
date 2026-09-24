@@ -1950,6 +1950,7 @@ class Documento(Base):
     pagado_en = Column(DateTime(timezone=True), nullable=True)
     # SOLICITUD-specific payment fields
     fecha_pago = Column(Date, nullable=True)  # Payment date for SOLICITUD
+    fecha_pago_efectiva = Column(Date, nullable=True, index=True)
     pago_urgente = Column(Boolean, default=False, nullable=False, index=True)
     concepto_pago = Column(
         Text, nullable=True
@@ -2086,6 +2087,11 @@ class Documento(Base):
             "aprobado_en": self.aprobado_en.isoformat() if self.aprobado_en else None,
             "pagado_en": self.pagado_en.isoformat() if self.pagado_en else None,
             "fecha_pago": self.fecha_pago.isoformat() if self.fecha_pago else None,
+            "fecha_pago_efectiva": (
+                self.fecha_pago_efectiva.isoformat()
+                if self.fecha_pago_efectiva
+                else None
+            ),
             "pago_urgente": bool(self.pago_urgente),
             "concepto_pago": self.concepto_pago,
             "numero_factura": self.numero_factura,
