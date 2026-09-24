@@ -9190,6 +9190,62 @@ def _payment_run_redirect(
     )
 
 
+def _payment_proof_review_value(value: Any) -> str:
+    """Render an extracted candidate without treating it as a confirmed fact."""
+    rendered = str(value or "").strip()
+    return rendered or "No detectado"
+
+
+def _payment_proof_conflict_response(
+    *,
+    documento: Documento,
+    review: Any,
+    effective_payment_date: date,
+    reasons: tuple[str, ...],
+    bulk: bool,
+) -> HTMLResponse:
+    """Return authorized review details without placing financial data in a URL."""
+    expected_amount = _payment_proof_expected_amount(documento)
+    expected_currency = str(getattr(documento, "currency", None) or "MXN")
+    expected_beneficiary = _payment_proof_expected_beneficiary(documento)
+    reference = str(getattr(documento, "numero_referencia", None) or documento.id)
+    source = "texto local del PDF" if getattr(review, "template_id", None) else "revisión manual"
+    detail_rows = (
+        ("Beneficiario", getattr(review, "detected_beneficiary", None), expected_beneficiary),
+        ("Monto", getattr(review, "detected_amount", None), expected_amount),
+        ("Moneda", getattr(review, "detected_currency", None), expected_currency),
+        ("Fecha efectiva", getattr(review, "detected_date", None), effective_payment_date),
+    )
+    rendered_rows = "".join(
+        "<tr>"
+        f"<td>{escape(label)}</td>"
+        f"<td>{escape(_payment_proof_review_value(detected))}</td>"
+        f"<td>{escape(_payment_proof_review_value(expected))}</td>"
+        "</tr>"
+        for label, detected, expected in detail_rows
+    )
+    reason_html = "".join(f"<li>{escape(reason)}</li>" for reason in reasons)
+    batch_label = " del lote" if bulk else ""
+    html = f"""
+    <!DOCTYPE html>
+    <html lang="es"><head><meta charset="utf-8"><title>Conflicto de comprobante</title></head>
+    <body style="font-family:system-ui,sans-serif;max-width:800px;margin:40px auto;padding:0 20px;">
+      <section style="border:1px solid #fecaca;background:#fff1f2;border-radius:12px;padding:20px;">
+        <h1 style="margin-top:0;color:#991b1b;">Comprobante no registrado</h1>
+        <p>La solicitud <strong>{escape(reference)}</strong>{batch_label} no se marcó como pagada.</p>
+        <p>Fuente de la revisión: <strong>{escape(source)}</strong>. Los valores detectados son candidatos del comprobante y requieren revisión de Finanzas.</p>
+        <ul>{reason_html}</ul>
+        <table style="border-collapse:collapse;width:100%;background:white;">
+          <thead><tr><th>Campo</th><th>Detectado</th><th>Programado</th></tr></thead>
+          <tbody>{rendered_rows}</tbody>
+        </table>
+        <p><a href="/admin/finanzas/payment-run?vista=comprobantes#comprobantes-pendientes">Volver a comprobantes pendientes</a></p>
+      </section>
+    </body></html>
+    """
+    return HTMLResponse(content=html, status_code=422)
+
+
 def _build_payment_proof_upload_plan(
     *,
     selected_document_ids: list[UUIDType],
@@ -9872,6 +9928,9 @@ async def admin_finance_payment_run(
                     function showError(message) {{ formError.textContent = message; formError.style.display = 'block'; }}
                     function clearError() {{ formError.textContent = ''; formError.style.display = 'none'; }}
                     function reviewProof(documentId, file, dateInput, target) {{
+                        target.dataset.reviewStatus = 'checking';
+                        target.textContent = 'Validando comprobante...';
+                        target.style.color = '#92400e';
                         var body = new FormData(); body.append('comprobante_pago', file);
                         fetch('/admin/finanzas/payment-run/documentos/' + encodeURIComponent(documentId) + '/comprobante-pago/revision', {{ method: 'POST', body: body }})
                             .then(function(response) {{ return response.ok ? response.json() : Promise.reject(); }})
@@ -9899,6 +9958,9 @@ async def admin_finance_payment_run(
                         }});
                         singleForm.addEventListener('submit', function(event) {{
                             var reason = singleForm.querySelector('[data-payment-proof-resolution-reason]');
+                            if (singleReview.dataset.reviewStatus === 'checking') {{
+                                event.preventDefault(); singleReview.textContent = 'Espera a que termine la validación del comprobante.'; return;
+                            }}
                             if (singleReview.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim())) {{
                                 event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
                             }}
@@ -9952,6 +10014,7 @@ async def admin_finance_payment_run(
                         if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
                         if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
                         if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
+                        if (Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ return review.dataset.reviewStatus === 'checking'; }})) {{ event.preventDefault(); showError('Espera a que termine la validación de cada comprobante.'); return; }}
                         var unresolvedConflict = Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
                         if (unresolvedConflict) {{ event.preventDefault(); showError('Captura el motivo de resolución para cada conflicto detectado.'); return; }}
                         if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
@@ -10184,7 +10247,7 @@ async def admin_finance_payment_run_upload_payment_proof(
     comprobante_pago: UploadFile = File(...),
     fecha_pago_efectiva: Optional[str] = Form(None),
     payment_proof_resolution_reason: Optional[str] = Form(None),
-) -> RedirectResponse:
+) -> Response:
     """Attach payment proof for an in-process Payment Run item and mark it paid."""
     from devnous.gastos.services.documento_payment_service import (
         DocumentoPaymentPermissionError,
@@ -10246,9 +10309,25 @@ async def admin_finance_payment_run_upload_payment_proof(
             else ""
         )
         if review.status == "conflict" and not resolution_reason:
-            raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+            await session.rollback()
+            return _payment_proof_conflict_response(
+                documento=documento,
+                review=review,
+                effective_payment_date=effective_payment_date,
+                reasons=review.reasons,
+                bulk=False,
+            )
         if review.detected_date and review.detected_date != effective_payment_date:
-            raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
+            await session.rollback()
+            return _payment_proof_conflict_response(
+                documento=documento,
+                review=review,
+                effective_payment_date=effective_payment_date,
+                reasons=(
+                    "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.",
+                ),
+                bulk=False,
+            )
         await add_solicitud_documento_adjuntos(
             session,
             documento=documento,
@@ -10380,7 +10459,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     effective_payment_dates: Optional[List[str]] = Form(None),
     payment_proof_resolution_reasons: Optional[List[str]] = Form(None),
     apply_one_to_all: bool = Form(False),
-) -> RedirectResponse:
+) -> Response:
     """Attach explicitly mapped Payment Run proofs and confirm the selected payments."""
     from devnous.gastos.services.documento_payment_service import (
         DocumentoPaymentPermissionError,
@@ -10469,9 +10548,25 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 str(raw_reason or "").strip() if review.status == "conflict" else ""
             )
             if review.status == "conflict" and not resolution_reason:
-                raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+                await session.rollback()
+                return _payment_proof_conflict_response(
+                    documento=documento,
+                    review=review,
+                    effective_payment_date=effective_payment_date,
+                    reasons=review.reasons,
+                    bulk=True,
+                )
             if review.detected_date and review.detected_date != effective_payment_date:
-                raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
+                await session.rollback()
+                return _payment_proof_conflict_response(
+                    documento=documento,
+                    review=review,
+                    effective_payment_date=effective_payment_date,
+                    reasons=(
+                        "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.",
+                    ),
+                    bulk=True,
+                )
             await add_solicitud_documento_adjuntos(
                 session,
                 documento=documento,
