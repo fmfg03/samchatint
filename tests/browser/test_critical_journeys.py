@@ -663,6 +663,7 @@ def test_isolated_payment_cutoff_proof_and_duplicate_guard(
     page: Page, browser_server: str
 ) -> None:
     _mutation_home(page, browser_server)
+    page.locator('input[name="fecha_pago_efectiva"]').fill("2026-09-22")
     page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
     expect(page.get_by_text("Resultado: Pago rechazado", exact=True)).to_be_visible()
     expect(page.get_by_text("Se requiere corte previo", exact=False)).to_be_visible()
@@ -690,6 +691,7 @@ def test_isolated_payment_proof_marks_paid_with_actor_and_cleanup_is_row_scoped(
             "buffer": b"browser fixture proof",
         },
     )
+    page.locator('input[name="fecha_pago_efectiva"]').fill("2026-09-22")
     page.get_by_role("button", name="Registrar comprobante y pago", exact=True).click()
     expect(page.get_by_text("Resultado: Pago registrado", exact=True)).to_be_visible()
     expect(page.get_by_text("Estado: pagado", exact=True)).to_be_visible()

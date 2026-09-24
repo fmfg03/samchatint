@@ -9258,6 +9258,37 @@ def _parse_payment_proof_document_ids(
         raise SolicitudValidationError("payment_proof_form_invalid", message) from exc
 
 
+def _parse_effective_payment_dates(
+    raw_dates: Optional[list[str]], *, expected_count: int
+) -> list[date]:
+    if len(raw_dates or []) != expected_count:
+        raise SolicitudValidationError(
+            "effective_payment_date_required",
+            "Captura una fecha efectiva de pago para cada solicitud.",
+        )
+    try:
+        parsed_dates = [date.fromisoformat(str(value)) for value in raw_dates or []]
+    except (TypeError, ValueError) as exc:
+        raise SolicitudValidationError(
+            "effective_payment_date_invalid",
+            "Una fecha efectiva de pago no es válida.",
+        ) from exc
+    if any(effective_date > date.today() for effective_date in parsed_dates):
+        raise SolicitudValidationError(
+            "effective_payment_date_future",
+            "La fecha efectiva de pago no puede ser posterior a hoy.",
+        )
+    return parsed_dates
+
+
+def _payment_proof_expected_beneficiary(documento: Documento) -> str | None:
+    return getattr(getattr(documento, "beneficiario_empleado", None), "nombre", None) or getattr(getattr(documento, "proveedor_cliente", None), "nombre", None)
+
+
+def _payment_proof_expected_amount(documento: Documento) -> Any:
+    return getattr(documento, "monto_total", None) or getattr(documento, "monto_solicitado", None)
+
+
 def _payment_run_money(value: Any, currency: str = "MXN") -> str:
     try:
         amount = float(value or 0)
@@ -9559,9 +9590,26 @@ def _render_payment_run_items(
                 if entity_type == "prestamo"
                 else f"/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago"
             )
+            effective_date_html = ""
+            if entity_type != "prestamo":
+                effective_date_html = (
+                    '<label style="font-size:12px;color:#334155;">'
+                    'Fecha efectiva de pago'
+                    '<input type="date" name="fecha_pago_efectiva" '
+                    'data-payment-proof-effective-date required>'
+                    '</label>'
+                )
+            form_attributes = (
+                f'data-payment-proof-form data-documento-id="{documento_id}"'
+                if entity_type == "documento"
+                else ""
+            )
             proof_html = f"""
-                <form method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
-                    <input type="file" name="comprobante_pago" required>
+                <form {form_attributes} method="POST" enctype="multipart/form-data" action="{proof_action}" style="display:grid;gap:8px;min-width:220px;">
+                    <input type="file" name="comprobante_pago" data-payment-proof-file required>
+                    {effective_date_html}
+                    <input name="payment_proof_resolution_reason" data-payment-proof-resolution-reason placeholder="Motivo si se resuelve un conflicto detectado">
+                    <small data-payment-proof-review style="color:#475569;"></small>
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
             """
@@ -9823,6 +9871,39 @@ async def admin_finance_payment_run(
                     function selected() {{ return Array.prototype.slice.call(document.querySelectorAll('[data-payment-proof-selection]:checked')); }}
                     function showError(message) {{ formError.textContent = message; formError.style.display = 'block'; }}
                     function clearError() {{ formError.textContent = ''; formError.style.display = 'none'; }}
+                    function reviewProof(documentId, file, dateInput, target) {{
+                        var body = new FormData(); body.append('comprobante_pago', file);
+                        fetch('/admin/finanzas/payment-run/documentos/' + encodeURIComponent(documentId) + '/comprobante-pago/revision', {{ method: 'POST', body: body }})
+                            .then(function(response) {{ return response.ok ? response.json() : Promise.reject(); }})
+                            .then(function(review) {{
+                                if (review.detected_date && !dateInput.value) dateInput.value = review.detected_date;
+                                var labels = {{ match: 'Coincide', revision_required: 'Revisión requerida', conflict: 'Conflicto' }};
+                                var detectedAmount = review.detected_amount ? review.detected_amount + ' ' + (review.detected_currency || '') : 'No detectado';
+                                var expectedAmount = review.expected_amount ? review.expected_amount + ' ' + (review.expected_currency || '') : 'No disponible';
+                                var source = review.evidence_source === 'local_pdf_text' ? 'Fuente: texto local del PDF' : 'Fuente: revisión manual';
+                                target.textContent = (labels[review.status] || 'Revisión requerida') + ' · ' + source + ' · Plantilla: ' + (review.template_id || 'No reconocida') + ' · Monto: ' + detectedAmount + ' / esperado: ' + expectedAmount + ' · Beneficiario: ' + (review.detected_beneficiary || 'No detectado') + ' / esperado: ' + (review.expected_beneficiary || 'No disponible') + ' · Referencia: ' + (review.detected_reference || 'No detectada') + (review.reasons && review.reasons.length ? '. ' + review.reasons.join(' ') : '');
+                                target.dataset.reviewStatus = review.status;
+                                target.style.color = review.status === 'conflict' ? '#b91c1c' : (review.status === 'match' ? '#166534' : '#92400e');
+                            }})
+                            .catch(function() {{ target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
+                    }}
+                    document.querySelectorAll('[data-payment-proof-form]').forEach(function(singleForm) {{
+                        var singleFile = singleForm.querySelector('[data-payment-proof-file]');
+                        var singleDate = singleForm.querySelector('[data-payment-proof-effective-date]');
+                        var singleReview = singleForm.querySelector('[data-payment-proof-review]');
+                        if (!singleFile || !singleDate || !singleReview) return;
+                        singleFile.addEventListener('change', function() {{
+                            if (singleFile.files && singleFile.files[0]) {{
+                                reviewProof(singleForm.getAttribute('data-documento-id'), singleFile.files[0], singleDate, singleReview);
+                            }}
+                        }});
+                        singleForm.addEventListener('submit', function(event) {{
+                            var reason = singleForm.querySelector('[data-payment-proof-resolution-reason]');
+                            if (singleReview.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim())) {{
+                                event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
+                            }}
+                        }});
+                    }});
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
@@ -9831,16 +9912,31 @@ async def admin_finance_payment_run(
                         if (!uploads.length) return;
                         if (!selectedOptions.length) {{ mapping.textContent = 'Selecciona al menos una solicitud de la tabla.'; return; }}
                         if (applyOne.checked) {{
-                            mapping.textContent = uploads.length === 1 ? uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).' : 'Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.';
+                            if (uploads.length !== 1) {{ mapping.textContent = 'Para aplicar un comprobante a varias solicitudes selecciona un solo archivo.'; return; }}
+                            mapping.textContent = uploads[0].name + ' se aplicará a ' + selectedOptions.length + ' solicitud(es) seleccionada(s).';
+                            selectedOptions.forEach(function (option) {{
+                                var row = document.createElement('label'); row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                                var name = document.createElement('span'); name.textContent = 'Fecha efectiva: ' + option.label;
+                                var input = document.createElement('input'); input.type = 'date'; input.name = 'effective_payment_dates'; input.required = true;
+                                var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
+                                var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
+                                row.appendChild(name); row.appendChild(input); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
+                                reviewProof(option.value, uploads[0], input, review);
+                            }});
                             return;
                         }}
                         uploads.forEach(function (file) {{
                             var row = document.createElement('label');
-                            row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
+                            row.style.cssText = 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) minmax(160px,1fr);gap:10px;align-items:center;font-size:13px;color:#334155;';
                             var name = document.createElement('span'); name.textContent = file.name;
                             var select = document.createElement('select'); select.name = 'proof_document_ids';
+                            var dateInput = document.createElement('input'); dateInput.type = 'date'; dateInput.name = 'effective_payment_dates'; dateInput.required = true;
+                            var reason = document.createElement('input'); reason.name = 'payment_proof_resolution_reasons'; reason.dataset.paymentProofResolutionReason = 'true'; reason.placeholder = 'Motivo si se resuelve un conflicto';
+                            var review = document.createElement('small'); review.dataset.paymentProofReview = 'true'; review.style.gridColumn = '1 / -1';
                             selectedOptions.forEach(function (option) {{ var item = document.createElement('option'); item.value = option.value; item.textContent = option.label; select.appendChild(item); }});
-                            row.appendChild(name); row.appendChild(select); mapping.appendChild(row);
+                            select.addEventListener('change', function () {{ reviewProof(select.value, file, dateInput, review); }});
+                            row.appendChild(name); row.appendChild(select); row.appendChild(dateInput); row.appendChild(reason); row.appendChild(review); mapping.appendChild(row);
+                            reviewProof(select.value, file, dateInput, review);
                         }});
                     }}
                     files.addEventListener('change', refresh); applyOne.addEventListener('change', refresh);
@@ -9849,11 +9945,15 @@ async def admin_finance_payment_run(
                         var selectedRows = selected();
                         var uploads = Array.prototype.slice.call(files.files || []);
                         var mapped = Array.prototype.slice.call(mapping.querySelectorAll('select[name="proof_document_ids"]'));
+                        var effectiveDates = Array.prototype.slice.call(mapping.querySelectorAll('input[name="effective_payment_dates"]'));
                         clearError(); selectedInputs.innerHTML = '';
                         if (!selectedRows.length) {{ event.preventDefault(); showError('Selecciona al menos una solicitud antes de cargar el lote.'); return; }}
                         if (!uploads.length) {{ event.preventDefault(); showError('Selecciona los comprobantes de pago.'); return; }}
                         if (!applyOne.checked && mapped.length !== uploads.length) {{ event.preventDefault(); showError('Asigna una solicitud a cada comprobante.'); return; }}
                         if (!applyOne.checked && mapped.some(function (select) {{ return !uuidPattern.test(select.value); }})) {{ event.preventDefault(); showError('Una asignación de comprobante no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
+                        if (effectiveDates.length !== (applyOne.checked ? selectedRows.length : uploads.length)) {{ event.preventDefault(); showError('Captura una fecha efectiva para cada solicitud.'); return; }}
+                        var unresolvedConflict = Array.prototype.slice.call(mapping.querySelectorAll('[data-payment-proof-review]')).some(function(review) {{ var reason = review.parentElement.querySelector('[data-payment-proof-resolution-reason]'); return review.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim()); }});
+                        if (unresolvedConflict) {{ event.preventDefault(); showError('Captura el motivo de resolución para cada conflicto detectado.'); return; }}
                         if (selectedRows.some(function (checkbox) {{ return !uuidPattern.test(checkbox.value); }})) {{ event.preventDefault(); showError('Una solicitud seleccionada no es válida. Actualiza la página e inténtalo de nuevo.'); return; }}
                         selectedRows.forEach(function (checkbox) {{
                             var hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.name = 'selected_document_ids'; hidden.value = checkbox.value; selectedInputs.appendChild(hidden); checkbox.disabled = true;
@@ -9901,6 +10001,7 @@ def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
         beneficiario = escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))
         fecha_aprobacion = escape(str(row.get("aprobado_en") or "-")[:10])
         fecha_programacion = escape(str(row.get("fecha_pago") or "-")[:10])
+        fecha_efectiva = escape(str(row.get("fecha_pago_efectiva") or "No registrada")[:10])
         fecha_pagada = escape(str(row.get("pagado_en") or "-")[:10])
         concepto = escape(str(row.get("concepto_pago") or ""))[:180]
         rendered_rows.append(
@@ -9912,13 +10013,14 @@ def _render_payment_history_rows(rows: list[dict[str, Any]]) -> str:
                 <td>{beneficiario}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('aprobado_en'), kind='date'))}">{fecha_aprobacion}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('fecha_pago'), kind='date'))}">{fecha_programacion}</td>
+                <td data-sort-value="{escape(_payment_run_sort_value(row.get('fecha_pago_efectiva'), kind='date'))}">{fecha_efectiva}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('pagado_en'), kind='date'))}">{fecha_pagada}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{_payment_run_money(row.get("monto"), str(row.get("currency") or "MXN"))}</td>
                 <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
             </tr>
             """
         )
-    return "".join(rendered_rows) or '<tr><td colspan="9">Sin pagos para este filtro.</td></tr>'
+    return "".join(rendered_rows) or '<tr><td colspan="10">Sin pagos para este filtro.</td></tr>'
 
 
 @router.get("/admin/finanzas/payment-history", response_class=HTMLResponse)
@@ -9983,8 +10085,8 @@ async def admin_finance_payment_history(
                 actions_html=(
                     '<form method="GET" action="/admin/finanzas/payment-history" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Estado</label><select name="status"><option value="todas" {"selected" if selected_status == "todas" else ""}>Todas</option><option value="pendientes" {"selected" if selected_status == "pendientes" else ""}>Programadas/vencidas</option><option value="cerradas" {"selected" if selected_status == "cerradas" else ""}>En proceso de pago</option><option value="pagadas" {"selected" if selected_status == "pagadas" else ""}>Pagadas</option></select></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
-                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Desde (fecha efectiva al ver pagadas)</label><input name="date_from" type="date" value="{escape(date_from or "")}"></div>'
+                    f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Hasta (fecha efectiva al ver pagadas)</label><input name="date_to" type="date" value="{escape(date_to or "")}"></div>'
                     f'<div><label style="font-size:12px;font-weight:800;color:#475569;">Buscar</label><input name="q" value="{escape(q or "")}" placeholder="Referencia, op., solicitante, beneficiario"></div>'
                     '<button class="button" type="submit">Filtrar</button>'
                     '<a class="button secondary" href="/admin/finanzas/payment-history">Limpiar</a>'
@@ -9999,10 +10101,10 @@ async def admin_finance_payment_history(
             {alerts}
             <section class="workspace-card">
                 <div class="workspace-section-title">Solicitudes por estado de pago</div>
-                <div class="workspace-section-subtitle">Incluye fecha de aprobación, fecha programada, fecha pagada, solicitante y beneficiario.</div>
+                <div class="workspace-section-subtitle">Incluye fecha programada, fecha efectiva y el momento en que SamChat capturó la confirmación.</div>
                 <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
 	                    <table class="payment-table" data-sortable-table data-default-sort-index="1" data-default-sort-dir="desc">
-	                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_pagada" data-sort-type="date">Fecha Pagada</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
+                        <thead><tr><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_aprobacion" data-sort-type="date">Fecha Aprobación</th><th data-sort-key="fecha_programacion" data-sort-type="date">Fecha Programación</th><th data-sort-key="fecha_efectiva" data-sort-type="date">Fecha efectiva</th><th data-sort-key="fecha_captura" data-sort-type="date">Capturado como pagado</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th></tr></thead>
 	                        <tbody>{_render_payment_history_rows(rows)}</tbody>
 	                    </table>
                 </div>
@@ -10080,6 +10182,8 @@ async def admin_finance_payment_run_upload_payment_proof(
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
     comprobante_pago: UploadFile = File(...),
+    fecha_pago_efectiva: Optional[str] = Form(None),
+    payment_proof_resolution_reason: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Attach payment proof for an in-process Payment Run item and mark it paid."""
     from devnous.gastos.services.documento_payment_service import (
@@ -10087,6 +10191,7 @@ async def admin_finance_payment_run_upload_payment_proof(
         DocumentoPaymentValidationError,
         register_document_payment,
     )
+    from devnous.gastos.services.payment_proof_review_service import review_payment_proof
 
     try:
         require_payment_run_access(current_empleado)
@@ -10115,19 +10220,39 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
     try:
+        effective_payment_date = _parse_effective_payment_dates(
+            [fecha_pago_efectiva] if fecha_pago_efectiva else [], expected_count=1
+        )[0]
         raw = await comprobante_pago.read()
         content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+        attachment = SolicitudTercerosAttachment(
+            raw_bytes=raw,
+            filename=comprobante_pago.filename or "comprobante_pago",
+            mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
+            categoria="comprobante_pago",
+        )
+        validate_solicitud_terceros_attachment(attachment)
+        review = review_payment_proof(
+            raw=attachment.raw_bytes,
+            filename=attachment.filename,
+            mime_type=attachment.mime_type,
+            expected_amount=_payment_proof_expected_amount(documento),
+            expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+            expected_currency=str(getattr(documento, "currency", None) or "MXN"),
+        )
+        resolution_reason = (
+            (payment_proof_resolution_reason or "").strip()
+            if review.status == "conflict"
+            else ""
+        )
+        if review.status == "conflict" and not resolution_reason:
+            raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+        if review.detected_date and review.detected_date != effective_payment_date:
+            raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
         await add_solicitud_documento_adjuntos(
             session,
             documento=documento,
-            attachments=[
-                SolicitudTercerosAttachment(
-                    raw_bytes=raw,
-                    filename=comprobante_pago.filename or "comprobante_pago",
-                    mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
-                    categoria="comprobante_pago",
-                )
-            ],
+            attachments=[attachment],
             commit=False,
         )
         result = await register_document_payment(
@@ -10135,6 +10260,11 @@ async def admin_finance_payment_run_upload_payment_proof(
             documento_id=documento_id,
             actor_id=current_empleado.id,
             actor=current_empleado,
+            fecha_pago_efectiva=effective_payment_date,
+            payment_proof_review_status=("conflict_resolved" if resolution_reason else review.status),
+            payment_proof_resolution_reason=resolution_reason or None,
+            payment_proof_evidence_source=("local_pdf_text" if review.template_id else "manual_review"),
+            payment_proof_template_id=review.template_id,
         )
         ref = result.documento.numero_referencia or str(result.documento.id)
         return _payment_run_redirect(
@@ -10171,6 +10301,74 @@ async def admin_finance_payment_run_upload_payment_proof(
         )
 
 
+@router.post(
+    "/admin/finanzas/payment-run/documentos/{documento_id}/comprobante-pago/revision",
+    response_class=JSONResponse,
+)
+async def admin_finance_payment_run_review_payment_proof(
+    documento_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    comprobante_pago: UploadFile = File(...),
+) -> JSONResponse:
+    """Return local, unpersisted proof candidates for an authorized reviewer."""
+    from devnous.gastos.services.payment_proof_review_service import review_payment_proof
+
+    try:
+        require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    documento = await session.get(Documento, documento_id)
+    if documento is None:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+    if (documento.estado or "").strip().lower() != "en_proceso_pago":
+        raise HTTPException(status_code=409, detail="La solicitud ya no está En Proceso de Pago.")
+    if not comprobante_pago or not comprobante_pago.filename:
+        raise HTTPException(status_code=400, detail="Selecciona el comprobante de pago.")
+    raw = await comprobante_pago.read()
+    content_type = (comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+    try:
+        validate_solicitud_terceros_attachment(
+            SolicitudTercerosAttachment(
+                raw_bytes=raw,
+                filename=comprobante_pago.filename,
+                mime_type=content_type or resolve_media_type(comprobante_pago.filename, raw),
+                categoria="comprobante_pago",
+            )
+        )
+    except SolicitudValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    review = review_payment_proof(
+        raw=raw,
+        filename=comprobante_pago.filename,
+        mime_type=content_type,
+        expected_amount=_payment_proof_expected_amount(documento),
+        expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+        expected_currency=str(getattr(documento, "currency", None) or "MXN"),
+    )
+    return JSONResponse(
+        {
+            "status": review.status,
+            "detected_date": review.detected_date.isoformat() if review.detected_date else None,
+            "detected_amount": str(review.detected_amount) if review.detected_amount is not None else None,
+            "detected_currency": review.detected_currency,
+            "detected_beneficiary": review.detected_beneficiary,
+            "detected_reference": review.detected_reference,
+            "template_id": review.template_id,
+            "evidence_source": (
+                "manual_review"
+                if review.reasons and review.reasons[0].startswith("No fue posible")
+                else "local_pdf_text"
+            ),
+            "expected_amount": str(_payment_proof_expected_amount(documento) or ""),
+            "expected_currency": str(getattr(documento, "currency", None) or "MXN"),
+            "expected_beneficiary": _payment_proof_expected_beneficiary(documento),
+            "reasons": list(review.reasons),
+        }
+    )
+
+
 @router.post("/admin/finanzas/payment-run/comprobantes-pago/lote")
 async def admin_finance_payment_run_upload_payment_proofs_bulk(
     request: Request,
@@ -10179,6 +10377,8 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
     selected_document_ids: Optional[List[str]] = Form(None),
     proof_document_ids: Optional[List[str]] = Form(None),
     comprobantes_pago: Optional[List[UploadFile]] = File(None),
+    effective_payment_dates: Optional[List[str]] = Form(None),
+    payment_proof_resolution_reasons: Optional[List[str]] = Form(None),
     apply_one_to_all: bool = Form(False),
 ) -> RedirectResponse:
     """Attach explicitly mapped Payment Run proofs and confirm the selected payments."""
@@ -10188,6 +10388,7 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
         _schedule_solicitud_paid_telegram_notifications,
         register_document_payment,
     )
+    from devnous.gastos.services.payment_proof_review_service import review_payment_proof
 
     try:
         require_payment_run_access(current_empleado)
@@ -10204,6 +10405,20 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             uploads=comprobantes_pago or [],
             apply_one_to_all=apply_one_to_all,
         )
+        parsed_effective_dates = _parse_effective_payment_dates(
+            effective_payment_dates, expected_count=len(plan)
+        )
+        raw_resolution_reasons = (
+            payment_proof_resolution_reasons
+            if isinstance(payment_proof_resolution_reasons, list)
+            else []
+        )
+        if len(raw_resolution_reasons) not in {0, len(plan)}:
+            raise SolicitudValidationError(
+                "payment_proof_resolution_reason_invalid",
+                "Captura un motivo de resolución por cada comprobante aplicable.",
+            )
+        resolution_reasons = list(raw_resolution_reasons or [""] * len(plan))
 
         prepared: list[tuple[UUIDType, SolicitudTercerosAttachment]] = []
         upload_bytes: dict[int, bytes] = {}
@@ -10238,8 +10453,25 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
             documentos[documento_id] = documento
 
         paid_references: list[tuple[UUIDType, str]] = []
-        for documento_id, attachment in prepared:
+        for (documento_id, attachment), effective_payment_date, raw_reason in zip(
+            prepared, parsed_effective_dates, resolution_reasons
+        ):
             documento = documentos[documento_id]
+            review = review_payment_proof(
+                raw=attachment.raw_bytes,
+                filename=attachment.filename,
+                mime_type=attachment.mime_type,
+                expected_amount=_payment_proof_expected_amount(documento),
+                expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+                expected_currency=str(getattr(documento, "currency", None) or "MXN"),
+            )
+            resolution_reason = (
+                str(raw_reason or "").strip() if review.status == "conflict" else ""
+            )
+            if review.status == "conflict" and not resolution_reason:
+                raise SolicitudValidationError("payment_proof_conflict", " ".join(review.reasons))
+            if review.detected_date and review.detected_date != effective_payment_date:
+                raise SolicitudValidationError("payment_proof_date_conflict", "La fecha detectada en el comprobante no coincide con la fecha efectiva capturada.")
             await add_solicitud_documento_adjuntos(
                 session,
                 documento=documento,
@@ -10251,6 +10483,11 @@ async def admin_finance_payment_run_upload_payment_proofs_bulk(
                 documento_id=documento_id,
                 actor_id=current_empleado.id,
                 actor=current_empleado,
+                fecha_pago_efectiva=effective_payment_date,
+                payment_proof_review_status=("conflict_resolved" if resolution_reason else review.status),
+                payment_proof_resolution_reason=resolution_reason or None,
+                payment_proof_evidence_source=("local_pdf_text" if review.template_id else "manual_review"),
+                payment_proof_template_id=review.template_id,
                 notify=False,
                 commit=False,
             )

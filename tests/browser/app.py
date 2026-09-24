@@ -1114,6 +1114,7 @@ def _mutation_page(receipt: str = "") -> HTMLResponse:
         <form method="post" action="/_test/mutations/proof"
               enctype="multipart/form-data">
           <label>Comprobante <input type="file" name="proof"></label>
+          <label>Fecha efectiva <input type="date" name="fecha_pago_efectiva" required></label>
           <button>Registrar comprobante y pago</button>
         </form></section>
         <section><h2>Limpieza contable</h2>
@@ -1237,7 +1238,10 @@ async def mutation_cutoff():
 
 
 @app.post("/_test/mutations/proof", response_class=HTMLResponse)
-async def mutation_proof(proof: UploadFile | None = File(None)):
+async def mutation_proof(
+    proof: UploadFile | None = File(None),
+    fecha_pago_efectiva: str | None = Form(None),
+):
     document = MUTATIONS.documentos[MUTATIONS.payment_id]
     if document.estado != "en_proceso_pago":
         return _mutation_receipt(
@@ -1259,6 +1263,7 @@ async def mutation_proof(proof: UploadFile | None = File(None)):
         MUTATIONS.session,
         MUTATIONS.accounting,
         proof,
+        fecha_pago_efectiva=fecha_pago_efectiva,
     )
     stored = MUTATIONS.proofs[-1] if MUTATIONS.proofs else None
     if response.status_code != 303 or stored is None:

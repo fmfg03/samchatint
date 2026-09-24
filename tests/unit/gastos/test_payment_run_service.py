@@ -162,3 +162,10 @@ def test_payment_history_all_filter_excludes_ineligible_documents() -> None:
     assert (
         "d.estado IN ('aprobado', 'en_proceso_pago', 'pagado')" in source
     )
+
+
+def test_paid_payment_history_filters_by_effective_payment_date() -> None:
+    source = Path("src/devnous/gastos/services/payment_run_service.py").read_text()
+
+    assert '"d.fecha_pago_efectiva" if normalized_status == "pagadas"' in source
+    assert "{report_date_column} NULLS LAST" in source

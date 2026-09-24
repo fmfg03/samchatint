@@ -163,12 +163,37 @@ async def _finalize_document_payment_write(
         await session.flush()
 
 
+def _payment_proof_audit_comment(
+    base: str,
+    *,
+    review_status: str | None,
+    resolution_reason: str | None,
+    evidence_source: str | None,
+    template_id: str | None,
+) -> str:
+    if not review_status:
+        return base
+    suffix = f" Revisión de comprobante: {review_status}."
+    if evidence_source:
+        suffix += f" Origen: {evidence_source}."
+    if template_id:
+        suffix += f" Plantilla: {template_id}."
+    if resolution_reason:
+        suffix += f" Resolución de Finanzas: {resolution_reason.strip()}."
+    return base + suffix
+
+
 async def register_document_payment(
     session: AsyncSession,
     *,
     documento_id: UUID | str,
     actor_id: UUID | str,
     actor: Any | None = None,
+    fecha_pago_efectiva: date | None = None,
+    payment_proof_review_status: str | None = None,
+    payment_proof_resolution_reason: str | None = None,
+    payment_proof_evidence_source: str | None = None,
+    payment_proof_template_id: str | None = None,
     notify: bool = True,
     commit: bool = True,
 ) -> DocumentoPagoResult:
@@ -222,8 +247,10 @@ async def register_document_payment(
             "El documento debe tener un monto solicitado válido.",
         )
 
-    fecha_pago = documento.fecha_pago if documento.fecha_pago else date.today()
+    fecha_pago = fecha_pago_efectiva or documento.fecha_pago or date.today()
     fecha_pago_dt = datetime.combine(fecha_pago, datetime.min.time())
+    if fecha_pago_efectiva is not None:
+        documento.fecha_pago_efectiva = fecha_pago_efectiva
     metodo_pago = documento.metodo_pago if documento.metodo_pago else "TRANSFERENCIA"
 
     amex_card_payment_id = parse_amex_payment_card_id(documento)
@@ -246,7 +273,13 @@ async def register_document_payment(
             entidad_id=documento.id,
             aprobador_id=payment_actor.id,
             accion="pagar",
-            comentario="Pago AMEX marcado como pagado contra pasivo de tarjeta.",
+            comentario=_payment_proof_audit_comment(
+                "Pago AMEX marcado como pagado contra pasivo de tarjeta.",
+                review_status=payment_proof_review_status,
+                resolution_reason=payment_proof_resolution_reason,
+                evidence_source=payment_proof_evidence_source,
+                template_id=payment_proof_template_id,
+            ),
             fecha=datetime.utcnow(),
         )
         session.add(aprobacion)
@@ -279,7 +312,7 @@ async def register_document_payment(
                     session,
                     documento=documento,
                     empleado=beneficiary,
-                    fecha_pago=documento.fecha_pago or date.today(),
+                    fecha_pago=fecha_pago,
                 )
                 if posting.status == "pending":
                     raise DocumentoPaymentValidationError(
@@ -294,7 +327,13 @@ async def register_document_payment(
                 entidad_id=documento.id,
                 aprobador_id=payment_actor.id,
                 accion="pagar",
-                comentario="Solicitud de transferencia marcada como pagada.",
+                comentario=_payment_proof_audit_comment(
+                    "Solicitud de transferencia marcada como pagada.",
+                    review_status=payment_proof_review_status,
+                    resolution_reason=payment_proof_resolution_reason,
+                    evidence_source=payment_proof_evidence_source,
+                    template_id=payment_proof_template_id,
+                ),
                 fecha=datetime.utcnow(),
             )
             session.add(aprobacion)
@@ -469,9 +508,13 @@ async def register_document_payment(
         entidad_id=documento.id,
         aprobador_id=payment_actor.id,
         accion="pagar",
-        comentario=(
+        comentario=_payment_proof_audit_comment(
             f"Pago registrado y gasto generado automáticamente ({flow_type}). "
-            f"Gasto: {expense.numero_referencia}"
+            f"Gasto: {expense.numero_referencia}",
+            review_status=payment_proof_review_status,
+            resolution_reason=payment_proof_resolution_reason,
+            evidence_source=payment_proof_evidence_source,
+            template_id=payment_proof_template_id,
         ),
         fecha=datetime.utcnow(),
     )
