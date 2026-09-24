@@ -39,6 +39,9 @@ class _ExecuteResult:
     def scalars(self):
         return _ScalarResult(self._values)
 
+    def all(self):
+        return self._values
+
 
 class _SequencedSession:
     def __init__(self, results):
@@ -742,6 +745,7 @@ async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_c
     session = _SequencedSession(
         [
             _ExecuteResult(scalar=len(expenses)),
+            _ExecuteResult(values=[]),
             _ExecuteResult(values=expenses),
         ]
     )
@@ -779,6 +783,7 @@ async def test_informe_with_all_lines_assigned_goes_to_approval():
     session = _SequencedSession(
         [
             _ExecuteResult(scalar=len(expenses)),
+            _ExecuteResult(values=[]),
             _ExecuteResult(values=expenses),
         ]
     )
@@ -1172,7 +1177,7 @@ def test_budget_matrix_labels_total_before_weeks() -> None:
     source = Path("src/devnous/gastos/routes/admin_budget_ui.py").read_text()
     assert "Monto total" in source
     assert "Semana {idx}" in source
-    assert "Guardar gasto por semanas" in source
+    assert "Guardar monto autorizado y semanas" in source
 
 
 def test_admin_root_is_not_a_non_configurable_gateway() -> None:
