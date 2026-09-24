@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import MissingGreenlet
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.services import documento_service
@@ -112,6 +113,83 @@ def test_budget_impact_applies_partida_lodging_tip_and_no_deductible_rules():
     )
 
     assert user_routes._document_budget_impact_amount(documento) == Decimal("238")
+
+
+@pytest.mark.asyncio
+async def test_budget_control_queue_renders_expense_with_attachment_without_lazy_load(
+    monkeypatch,
+):
+    class LazyRelationship:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+        @property
+        def gastos(self):
+            if "_gastos" not in self.__dict__:
+                raise MissingGreenlet("documento.gastos was not eagerly loaded")
+            return self._gastos
+
+        @property
+        def adjuntos(self):
+            if "_adjuntos" not in self.__dict__:
+                raise MissingGreenlet("expense.adjuntos was not eagerly loaded")
+            return self._adjuntos
+
+    expense = LazyRelationship(
+        estado_gasto="activo",
+        gasto_cantidad=Decimal("116"),
+        iva=Decimal("16"),
+        hospedaje_impuesto_monto=0,
+        propina_no_deducible=0,
+    )
+    documento = LazyRelationship(
+        **vars(
+            _doc(
+                estado="control_presupuestal",
+                monto_total=Decimal("116"),
+                budget_concept_id=None,
+            )
+        )
+    )
+
+    class Result:
+        def scalars(self):
+            return self
+
+        def unique(self):
+            return self
+
+        def all(self):
+            return [documento]
+
+    class Session:
+        async def execute(self, query):
+            paths = [str(option.path) for option in query._with_options]
+            if any(
+                "Documento.gastos" in path and "ExpenseReport.adjuntos" in path
+                for path in paths
+            ):
+                documento._gastos = [expense]
+                expense._adjuntos = [
+                    SimpleNamespace(activo=True, categoria="comprobante_no_deducible")
+                ]
+            return Result()
+
+    monkeypatch.setattr(user_routes, "_is_budget_control_user", lambda _actor: True)
+    monkeypatch.setattr(
+        user_routes, "_budget_concepts_for_document", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_: "")
+    monkeypatch.setattr(user_routes, "_gastos_workspace_nav_html", lambda *_: "")
+    monkeypatch.setattr(user_routes, "_gastos_breadcrumb_html", lambda *_: "")
+    monkeypatch.setattr(user_routes, "_render_workspace_hero", lambda **_: "")
+
+    html = await user_routes.documentos_control_presupuestal(
+        SimpleNamespace(query_params={}), Session(), SimpleNamespace(rol="superadmin")
+    )
+
+    assert "S-26000123" in html
+    assert "Bandeja de Control Presupuestal" in html
 
 
 def test_consolidated_xlsx_includes_budget_impact_and_assignment_state():

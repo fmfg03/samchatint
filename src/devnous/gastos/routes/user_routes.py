@@ -29116,6 +29116,7 @@ async def documentos_control_presupuestal(
             selectinload(Documento.empleado),
             selectinload(Documento.beneficiario_empleado),
             selectinload(Documento.proveedor_cliente),
+            selectinload(Documento.gastos).selectinload(ExpenseReport.adjuntos),
             selectinload(Documento.torneo),
             selectinload(Documento.cuenta_gastos)
             .undefer(CuentaDeGastos.fase)
