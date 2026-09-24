@@ -131,6 +131,61 @@ def test_consolidated_xlsx_includes_budget_impact_and_assignment_state():
     assert worksheet["K2"].value == "Sin asignar"
 
 
+def test_consolidated_xlsx_escapes_text_and_writes_amounts_as_currency_numbers():
+    from openpyxl import load_workbook
+
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(concepto_pago="=HYPERLINK(\"https://example.test\", \"Abrir\")")
+    )
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="Todos los documentos", rows=[row], filename_prefix="documentos"
+    )
+    worksheet = load_workbook(BytesIO(response.body)).active
+
+    assert worksheet["G2"].value.startswith("'=")
+    assert worksheet["I2"].value == 1160
+    assert "MXN" in worksheet["I2"].number_format
+    assert "MXN" in worksheet["J2"].number_format
+
+
+def test_empty_history_xlsx_keeps_history_headers():
+    from openpyxl import load_workbook
+
+    response = user_routes._documentos_reporting_xlsx_response(
+        title="Historial de aprobaciones",
+        rows=[],
+        filename_prefix="historial_aprobaciones",
+        export_kind="historial_aprobaciones",
+    )
+    worksheet = load_workbook(BytesIO(response.body)).active
+
+    assert worksheet["A1"].value == "Fecha"
+    assert worksheet["B1"].value == "Acción"
+    assert worksheet.cell(row=1, column=worksheet.max_column).value == "Comentario"
+
+
+@pytest.mark.asyncio
+async def test_bulk_zip_queries_all_documents_before_applying_export_limit(monkeypatch):
+    query_documents = AsyncMock(return_value=[])
+    monkeypatch.setattr(user_routes, "_query_documentos_todos_for_export", query_documents)
+
+    await user_routes.documentos_todos_exportar_exceles_zip(
+        None,
+        object(),
+        SimpleNamespace(),
+        estado=["aprobado"],
+        tipo=["SOLICITUD"],
+        torneo=["Nacional"],
+        concepto=["Hospedaje"],
+        beneficiario=["Alicia"],
+        empleado_nombre="Odilón",
+        q="operaciones",
+        situacion="abiertas",
+    )
+
+    assert query_documents.await_args.kwargs["limit"] is None
+
+
 def test_documentos_todos_reporting_includes_torneo_and_fase():
     documento = _doc(
         torneo=SimpleNamespace(name="Nacional de Béisbol"),

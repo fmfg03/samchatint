@@ -155,6 +155,7 @@ from ..services.budget_concept_account_service import (
     apply_budget_concept_cuenta_mapping,
 )
 from ..services.expense_accounting_service import build_expense_accounting_preview
+from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
     ensure_debtor_payment_posting_for_document,
@@ -31128,7 +31129,10 @@ async def historial_aprobador_exportar_xlsx(
             )
             rows.append(values)
     return _documentos_reporting_xlsx_response(
-        title="Historial de aprobaciones", rows=rows, filename_prefix="historial_aprobaciones",
+        title="Historial de aprobaciones",
+        rows=rows,
+        filename_prefix="historial_aprobaciones",
+        export_kind="historial_aprobaciones",
     )
 
 
@@ -31249,6 +31253,18 @@ def _document_budget_assignment_label(documento: Documento) -> str:
     return "Asignado" if getattr(documento, "budget_concept_id", None) else "Sin asignar"
 
 
+def _document_total_reporting_amount(documento: Documento) -> Decimal:
+    """Return a non-negative numeric total suitable for spreadsheet export."""
+    for field in ("monto_total", "monto_solicitado"):
+        value = getattr(documento, field, None)
+        if value is not None:
+            try:
+                return max(Decimal(str(value)), Decimal("0"))
+            except (InvalidOperation, TypeError, ValueError):
+                continue
+    return Decimal("0")
+
+
 def _documentos_todos_reporting_row_values(
     documento: Documento,
     *,
@@ -31286,6 +31302,7 @@ def _documentos_todos_reporting_row_values(
             getattr(documento, "monto_solicitado", None), currency
         ),
         "monto_total": format_currency(getattr(documento, "monto_total", None), currency),
+        "monto_total_valor": _document_total_reporting_amount(documento),
         "monto_presupuestal": format_currency(monto_presupuestal, currency),
         "monto_presupuestal_valor": monto_presupuestal,
         "asignacion_presupuestal": _document_budget_assignment_label(documento),
@@ -31857,14 +31874,18 @@ async def _query_documentos_todos_for_export(
 
 
 def _documentos_reporting_xlsx_response(
-    *, title: str, rows: Iterable[dict[str, Any]], filename_prefix: str
+    *,
+    title: str,
+    rows: Iterable[dict[str, Any]],
+    filename_prefix: str,
+    export_kind: str = "documentos",
 ) -> Response:
     """Build the direct, consolidated XLSX used by reporting views."""
     from openpyxl import Workbook
     from openpyxl.styles import Font
 
     xlsx_rows = list(rows)
-    include_history = any("fecha_evento" in row for row in xlsx_rows)
+    include_history = export_kind == "historial_aprobaciones"
     headers = [
         "Número de referencia", "Tipo", "Torneo", "Fase", "Solicitante",
         "Beneficiario", "Concepto", "Referencia operaciones", "Monto total",
@@ -31879,11 +31900,13 @@ def _documentos_reporting_xlsx_response(
     worksheet.append(headers)
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
-    for row in xlsx_rows:
+    total_column = headers.index("Monto total") + 1
+    budget_column = headers.index("Monto que afecta presupuesto") + 1
+    for row_index, row in enumerate(xlsx_rows, start=2):
         values = [
             row["numero_referencia"], row["tipo_documento"], row["torneo"],
             row["fase"], row["solicitante"], row["beneficiario"], row["concepto"],
-            row["referencia_operaciones"], row["monto_total"],
+            row["referencia_operaciones"], float(row["monto_total_valor"]),
             float(row["monto_presupuestal_valor"]), row["asignacion_presupuestal"],
             row["currency"], row["situacion"], row["estado"],
         ]
@@ -31892,7 +31915,15 @@ def _documentos_reporting_xlsx_response(
                 row.get("fecha_evento", "—"), row.get("accion_evento", "—"),
                 *values, row.get("comentario_evento", "-"),
             ]
-        worksheet.append(values)
+        worksheet.append(
+            [
+                _safe_spreadsheet_cell_text(value) if isinstance(value, str) else value
+                for value in values
+            ]
+        )
+        currency_format = f'"{row["currency"]}" #,##0.00'
+        worksheet.cell(row=row_index, column=total_column).number_format = currency_format
+        worksheet.cell(row=row_index, column=budget_column).number_format = currency_format
     worksheet.freeze_panes = "A2"
     worksheet.auto_filter.ref = worksheet.dimensions
     for column in worksheet.columns:
@@ -31970,6 +32001,7 @@ async def documentos_todos_exportar_exceles_zip(
         empleado_nombre=empleado_nombre,
         q=q,
         situacion=situacion,
+        limit=None,
     )
     buffer = io.BytesIO()
     exported = 0
