@@ -9950,26 +9950,23 @@ async def admin_finance_payment_run(
                             }})
                             .catch(function() {{ target.dataset.reviewStatus = 'revision_required'; target.textContent = 'Revisión requerida: no fue posible analizar este comprobante ahora.'; target.style.color = '#92400e'; }});
                     }}
-                    document.querySelectorAll('[data-payment-proof-form]').forEach(function(singleForm) {{
-                        var singleFile = singleForm.querySelector('[data-payment-proof-file]');
+                    function reviewSingleProof(singleForm, singleFile) {{
                         var singleDate = singleForm.querySelector('[data-payment-proof-effective-date]');
                         var singleReview = singleForm.querySelector('[data-payment-proof-review]');
-                        if (!singleFile || !singleDate || !singleReview) return;
-                        singleFile.addEventListener('change', function() {{
-                            if (singleFile.files && singleFile.files[0]) {{
-                                reviewProof(singleForm.getAttribute('data-documento-id'), singleFile.files[0], singleDate, singleReview);
-                            }}
-                        }});
-                        singleForm.addEventListener('submit', function(event) {{
-                            var reason = singleForm.querySelector('[data-payment-proof-resolution-reason]');
-                            if (singleReview.dataset.reviewStatus === 'checking') {{
-                                event.preventDefault(); singleReview.textContent = 'Espera a que termine la validación del comprobante.'; return;
-                            }}
-                            if (singleReview.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim())) {{
-                                event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
-                            }}
-                        }});
-                    }});
+                        if (!singleDate || !singleReview || !singleFile.files || !singleFile.files[0]) return;
+                        reviewProof(singleForm.getAttribute('data-documento-id'), singleFile.files[0], singleDate, singleReview);
+                    }}
+                    function validateSingleProofSubmit(singleForm, event) {{
+                        var singleReview = singleForm.querySelector('[data-payment-proof-review]');
+                        var reason = singleForm.querySelector('[data-payment-proof-resolution-reason]');
+                        if (!singleReview) return;
+                        if (singleReview.dataset.reviewStatus === 'checking') {{
+                            event.preventDefault(); singleReview.textContent = 'Espera a que termine la validación del comprobante.'; return;
+                        }}
+                        if (singleReview.dataset.reviewStatus === 'conflict' && !(reason && reason.value.trim())) {{
+                            event.preventDefault(); singleReview.textContent += ' Captura el motivo de resolución antes de confirmar.';
+                        }}
+                    }}
                     function refresh() {{
                         var selectedRows = selected();
                         var selectedOptions = selectedRows.map(function (input) {{ return {{ value: input.value, label: input.getAttribute('data-reference') || input.value }}; }});
@@ -10006,7 +10003,19 @@ async def admin_finance_payment_run(
                         }});
                     }}
                     files.addEventListener('change', refresh); applyOne.addEventListener('change', refresh);
-                    document.addEventListener('change', function (event) {{ if (event.target && event.target.matches('[data-payment-proof-selection]')) refresh(); }});
+                    document.addEventListener('change', function (event) {{
+                        if (!event.target) return;
+                        if (event.target.matches('[data-payment-proof-file]')) {{
+                            var singleForm = event.target.closest('[data-payment-proof-form]');
+                            if (singleForm) reviewSingleProof(singleForm, event.target);
+                            return;
+                        }}
+                        if (event.target.matches('[data-payment-proof-selection]')) refresh();
+                    }});
+                    document.addEventListener('submit', function (event) {{
+                        var singleForm = event.target && event.target.closest('[data-payment-proof-form]');
+                        if (singleForm) validateSingleProofSubmit(singleForm, event);
+                    }});
                     form.addEventListener('submit', function (event) {{
                         var selectedRows = selected();
                         var uploads = Array.prototype.slice.call(files.files || []);
