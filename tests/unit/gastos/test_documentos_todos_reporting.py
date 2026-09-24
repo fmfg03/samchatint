@@ -1634,6 +1634,108 @@ class _FakeResult:
         return _FakeScalars(self._rows)
 
 
+class _SequenceSession:
+    def __init__(self, *result_rows):
+        self._result_rows = iter(result_rows)
+
+    async def execute(self, _statement):
+        return _FakeResult(next(self._result_rows))
+
+
+def _alicia_operations_observer():
+    return SimpleNamespace(
+        id="90701d00-5f0b-4b3d-b677-e491e53caf82",
+        correo="azuniga@plataformasports.com",
+        rol="operaciones",
+        nombre="Alicia Zuniga",
+        departamento="operaciones",
+    )
+
+
+def _reporting_document():
+    return _doc(
+        cfdi_report_id=uuid4(),
+        budget_concept_id=None,
+        torneo=SimpleNamespace(name="Nacional"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_history_page_and_xlsx_export_cover_same_filtered_event(monkeypatch):
+    documento = _reporting_document()
+    aprobacion = SimpleNamespace(
+        entidad_id=documento.id,
+        fecha=datetime(2026, 9, 24, 10, 0, 0),
+        accion="aprobar",
+        comentario="Conforme",
+        aprobador=SimpleNamespace(nombre="Odilón"),
+    )
+    cfdi = SimpleNamespace(
+        id=documento.cfdi_report_id,
+        subtotal=Decimal("100.00"),
+        descuento=Decimal("10.00"),
+    )
+    filters = {"torneo": ["Nacional"], "concepto": None, "beneficiario": None,
+               "tipo": None, "estado": None}
+
+    page = await user_routes.historial_aprobador(
+        None, _SequenceSession([aprobacion], [documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    assert "Descargar Excel filtrado" in page
+    assert "Monto que afecta presupuesto" in page
+    assert "torneo=Nacional" in page
+
+    response = await user_routes.historial_aprobador_exportar_xlsx(
+        None, _SequenceSession([aprobacion], [documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    from openpyxl import load_workbook
+
+    worksheet = load_workbook(BytesIO(response.body)).active
+    assert worksheet["A1"].value == "Fecha"
+    assert worksheet["B2"].value == "Aprobado"
+    assert worksheet["L2"].value == 90
+    assert worksheet["M2"].value == "Sin asignar"
+
+
+@pytest.mark.asyncio
+async def test_todos_page_and_xlsx_export_share_authorized_filter_values(monkeypatch):
+    documento = _reporting_document()
+    cfdi = SimpleNamespace(
+        id=documento.cfdi_report_id,
+        subtotal=Decimal("100.00"),
+        descuento=Decimal("10.00"),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "fetch_documento_aprobador_display_batch",
+        AsyncMock(return_value={}),
+    )
+    filters = {
+        "estado": ["aprobado"], "tipo": ["SOLICITUD"],
+        "torneo": ["Nacional"], "concepto": None, "beneficiario": None,
+        "empleado_nombre": None, "q": None, "situacion": None,
+    }
+    page = await user_routes.documentos_todos(
+        None, _SequenceSession([documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    assert "Descargar Excel filtrado" in page
+    assert "estado=aprobado" in page
+    assert "torneo=Nacional" in page
+
+    response = await user_routes.documentos_todos_exportar_xlsx(
+        None, _SequenceSession([documento], [cfdi]),
+        _alicia_operations_observer(), **filters
+    )
+    from openpyxl import load_workbook
+
+    worksheet = load_workbook(BytesIO(response.body)).active
+    assert worksheet["J2"].value == 90
+    assert worksheet["K2"].value == "Sin asignar"
+
+
 class _FakeAprobadorSession:
     def __init__(self, employee):
         self._employee = employee
