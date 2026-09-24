@@ -3332,6 +3332,15 @@ def _cleanup_period_bounds(
     return start.strftime("%Y-%m"), start, end
 
 
+def _cleanup_fiscal_controls_are_blockers(issues: List[str]) -> bool:
+    """Keep fiscal controls visible when the COI preview requires them."""
+    return any(
+        issue == "Falta cuenta de IVA"
+        or issue.startswith("Falta cuenta de retención ")
+        for issue in issues
+    )
+
+
 def _cleanup_document_origin(expense: ExpenseReport) -> Tuple[str, str]:
     """Describe the linked document without inferring an accounting origin."""
     documents = [
@@ -25621,16 +25630,18 @@ async def gastos_sin_cuenta_contable(
                         </div>
                         <button class="cleanup-toggle secondary" type="button" data-target="{detail_id}">Cerrar</button>
                     </div>
-                    <div class="cleanup-detail-grid">
+                    <section class="cleanup-readiness" aria-label="Estado de preparación COI">
+                        <div class="cleanup-readiness-title">Qué falta para COI</div>
+                        <div class="cleanup-readiness-badges">{readiness_html}</div>
+                        <p>Completa únicamente los campos marcados. El detalle fiscal y la evidencia quedan disponibles si los necesitas.</p>
+                    </section>
+                    <div class="cleanup-primary-grid">
                         <section class="cleanup-card cleanup-card-wide">
+                            <div style="font-size:12px; font-weight:700; color:#0f172a; margin:0 0 8px;">Correcciones necesarias</div>
                             {cfdi_match_html}
                         </section>
                         <section class="cleanup-card">
-                            {tax_summary_html}
-                        </section>
-                        <section class="cleanup-card">
                             <div style="font-size:12px; font-weight:700; color:#0f172a; margin:0 0 8px;">Cuentas contables</div>
-                            {historical_precedent_html}
                             {suggestion_html}
                             <div style="display:grid; gap:10px;">
                                 <div class="cuenta-selector" {preselect_data}>
@@ -25648,14 +25659,6 @@ async def gastos_sin_cuenta_contable(
                                     <input type="hidden" class="contra-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(gasto.contra_cuenta_contable_id or ''))}">
                                     <div style="font-size:11px; color:#64748b; margin-top:4px;">{contra_prefill_note}</div>
                                 </div>
-                                <div class="cuenta-selector" {iva_preselect_data}>
-                                    <div style="font-size:12px; font-weight:700; color:#0f172a; margin-bottom:4px;">Cuenta IVA</div>
-                                    {iva_assigned_html}
-                                    <input type="text" class="account-search" data-gasto-id="{gasto.id}" data-target="iva" data-existing-id="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}" placeholder="Buscar cuenta de IVA acreditable..." autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-                                    <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index: 1000; width: 100%; box-shadow: 0 2px 8px rgba(0,0,0,0.15);"></div>
-                                    <input type="hidden" class="iva-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}">
-                                    <div style="font-size:11px; color:#64748b; margin-top:4px;">{escape("manual" if current_iva_account else "heuristic") if (current_iva_account or iva_account) else "Se resolvera automaticamente si no la eliges."}</div>
-                                </div>
                             </div>
                         </section>
                         <section class="cleanup-card cleanup-action-card">
@@ -25664,6 +25667,28 @@ async def gastos_sin_cuenta_contable(
                             <button class="btn-asignar" data-gasto-id="{gasto.id}" style="padding: 10px 16px; background: #0f766e; color: white; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; width:100%;">Guardar preparación COI</button>
                         </section>
                     </div>
+                    <details class="cleanup-advanced-details{" open" if _cleanup_fiscal_controls_are_blockers(readiness_issues) else ""}">
+                        <summary>Ver desglose fiscal y evidencia contable</summary>
+                        <div class="cleanup-advanced-grid">
+                            <section class="cleanup-card">
+                                {tax_summary_html}
+                            </section>
+                            <section class="cleanup-card">
+                                <div style="font-size:12px; font-weight:700; color:#0f172a; margin:0 0 8px;">Cuenta IVA</div>
+                                {iva_assigned_html}
+                                <div class="cuenta-selector" {iva_preselect_data}>
+                                    <input type="text" class="account-search" data-gasto-id="{gasto.id}" data-target="iva" data-existing-id="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}" placeholder="Buscar cuenta de IVA acreditable..." autocomplete="off" style="width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                                    <div class="account-results" style="display: none; position: absolute; background: white; border: 1px solid #ddd; max-height: 200px; overflow-y: auto; z-index:1000; width:100%; box-shadow:0 2px 8px rgba(0,0,0,0.15);"></div>
+                                    <input type="hidden" class="iva-cuenta-id" data-gasto-id="{gasto.id}" value="{escape(str(getattr(gasto, 'cuenta_iva_id', '') or ''))}">
+                                    <div style="font-size:11px; color:#64748b; margin-top:4px;">{escape("manual" if current_iva_account else "heuristic") if (current_iva_account or iva_account) else "Se resolvera automaticamente si no la eliges."}</div>
+                                </div>
+                            </section>
+                            <section class="cleanup-card">
+                                <div style="font-size:12px; font-weight:700; color:#0f172a; margin:0 0 8px;">Evidencia histórica</div>
+                                {historical_precedent_html or '<p class="muted-mini" style="margin:0;">Sin antecedentes comparables para esta fila.</p>'}
+                            </section>
+                        </div>
+                    </details>
                 </div>
             </td>
         </tr>
@@ -25970,10 +25995,57 @@ async def gastos_sin_cuenta_contable(
                 border-bottom:1px solid #e2e8f0;
                 margin-bottom:12px;
             }}
-            .cleanup-detail-grid {{
+            .cleanup-readiness {{
+                margin:0 0 14px;
+                padding:12px 14px;
+                border-left:4px solid #b45309;
+                border-radius:12px;
+                background:#fffbeb;
+            }}
+            .cleanup-readiness-title {{
+                color:#78350f;
+                font-size:13px;
+                font-weight:800;
+            }}
+            .cleanup-readiness-badges {{
+                display:flex;
+                gap:6px;
+                flex-wrap:wrap;
+                margin-top:8px;
+            }}
+            .cleanup-readiness p {{
+                margin:8px 0 0;
+                color:#78350f;
+                font-size:12px;
+                line-height:1.45;
+            }}
+            .cleanup-primary-grid {{
                 display:grid;
-                grid-template-columns:minmax(280px, 1fr) minmax(300px, 1fr) minmax(340px, 1.2fr) minmax(190px, .65fr);
+                grid-template-columns:minmax(280px, 1fr) minmax(340px, 1.2fr) minmax(190px, .65fr);
                 gap:14px;
+                align-items:start;
+            }}
+            .cleanup-advanced-details {{
+                margin-top:14px;
+                border:1px solid #dbe2ea;
+                border-radius:14px;
+                background:#f8fafc;
+            }}
+            .cleanup-advanced-details summary {{
+                padding:12px 14px;
+                color:#334155;
+                cursor:pointer;
+                font-size:13px;
+                font-weight:800;
+            }}
+            .cleanup-advanced-details[open] summary {{
+                border-bottom:1px solid #dbe2ea;
+            }}
+            .cleanup-advanced-grid {{
+                display:grid;
+                grid-template-columns:minmax(280px, 1.2fr) minmax(260px, .9fr) minmax(260px, .9fr);
+                gap:14px;
+                padding:14px;
                 align-items:start;
             }}
             .cleanup-card {{
@@ -25990,12 +26062,14 @@ async def gastos_sin_cuenta_contable(
                 top:12px;
             }}
             @media (max-width: 1300px) {{
-                .cleanup-detail-grid {{
+                .cleanup-primary-grid,
+                .cleanup-advanced-grid {{
                     grid-template-columns:1fr 1fr;
                 }}
             }}
             @media (max-width: 900px) {{
-                .cleanup-detail-grid {{
+                .cleanup-primary-grid,
+                .cleanup-advanced-grid {{
                     grid-template-columns:1fr;
                 }}
                 .review-toolbar,

@@ -477,11 +477,21 @@ def test_accounting_reaches_cleanup_and_sees_exact_blockers(
     expect(review).to_be_visible()
     review.click()
 
+    expect(page.get_by_text("Qué falta para COI", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Correcciones necesarias", exact=True)
+    ).to_be_visible()
     expect(page.get_by_text("Cuentas contables", exact=True)).to_be_visible()
-    expect(page.get_by_text("Desglose fiscal", exact=True)).to_be_visible()
     expect(
         page.get_by_role("button", name="Guardar preparación COI", exact=True)
     ).to_be_visible()
+    expect(page.get_by_text("Desglose fiscal", exact=True)).not_to_be_visible()
+    advanced_details = page.get_by_text(
+        "Ver desglose fiscal y evidencia contable", exact=True
+    )
+    expect(advanced_details).to_be_visible()
+    advanced_details.click()
+    expect(page.get_by_text("Desglose fiscal", exact=True)).to_be_visible()
     expect(
         page.get_by_text(
             "Falta clasificación contable antes de exportar a COI.",
@@ -504,7 +514,11 @@ def test_accounting_cleanup_stays_actionable_on_mobile(
 
     shell = page.locator(".table-shell").last
     expect(shell).to_be_visible()
-    expect(page.get_by_role("button", name="Revisar", exact=True)).to_be_visible()
+    review = page.get_by_role("button", name="Revisar", exact=True).first
+    expect(review).to_be_visible()
+    review.click()
+    expect(page.get_by_text("Qué falta para COI", exact=True)).to_be_visible()
+    _assert_no_body_overflow(page)
 
 
 def test_finance_cxc_keeps_candidate_separate_until_acceptance(
