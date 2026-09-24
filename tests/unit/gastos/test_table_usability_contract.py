@@ -81,7 +81,9 @@ def test_pending_approval_witness_uses_semantic_action_group_and_existing_posts(
     )
     assert 'class="table-actions"' in page
     assert 'formaction="/documentos/{documento.id}/aprobar"' in page
-    assert 'formaction="/documentos/{documento.id}/rechazar"' in page
+    assert 'action="/documentos/{documento.id}/rechazar"' in page
+    assert 'name="comentario"' in page
+    assert 'required' in page
     assert 'action="/documentos/pendientes/accion-lote"' in page
     assert 'value="approve"' in page
     assert 'value="reject"' in page
