@@ -21769,6 +21769,7 @@ async def contabilidad_cash_flow_view(
     cashflow_window_end = min(
         end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
     )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [
@@ -21873,8 +21874,13 @@ async def contabilidad_cash_flow_view(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        Documento.fecha_pago >= cashflow_window_start,
-        Documento.fecha_pago < cashflow_window_end,
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -21932,7 +21938,7 @@ async def contabilidad_cash_flow_view(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
                     CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
@@ -21997,7 +22003,7 @@ async def contabilidad_cash_flow_view(
         due_date = issue_date + timedelta(days=dias_credito)
         if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_30_total += saldo
-        if due_date < cashflow_window_start:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -22686,7 +22692,11 @@ async def contabilidad_cash_flow_export_xlsx(
     elif selected_project_scope != "all":
         selected_project_scope = "all"
     start_dt, end_dt = _accounting_month_bounds(selected_year, selected_month)
-    horizon_end = datetime.combine(today + timedelta(days=horizon_days), datetime.min.time())
+    cashflow_window_start = start_dt.date()
+    cashflow_window_end = min(
+        end_dt.date(), cashflow_window_start + timedelta(days=horizon_days + 1)
+    )
+    cashflow_as_of = min(today, cashflow_window_end - timedelta(days=1))
 
     rfc_rows = await session.execute(select(RFCConfig.tax_id).where(RFCConfig.active.is_(True)))
     platform_rfcs = [str(row[0]).strip().upper() for row in rfc_rows.all() if row and row[0] and str(row[0]).strip()]
@@ -22734,7 +22744,13 @@ async def contabilidad_cash_flow_export_xlsx(
     committed_conditions = [
         Documento.tipo == "SOLICITUD",
         Documento.estado.in_(["aprobado", "enviado"]),
-        or_(Documento.fecha_pago.is_(None), Documento.fecha_pago <= horizon_end.date()),
+        or_(
+            and_(
+                Documento.fecha_pago >= cashflow_window_start,
+                Documento.fecha_pago < cashflow_window_end,
+            ),
+            and_(Documento.estado == "enviado", Documento.fecha_pago.is_(None)),
+        ),
     ]
     if selected_tournament_id is not None:
         committed_conditions.append(Documento.torneo_id == selected_tournament_id)
@@ -22776,8 +22792,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= datetime(selected_year, 1, 1),
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.emisor_rfc).in_(platform_rfcs),
                 ]))
@@ -22828,11 +22844,11 @@ async def contabilidad_cash_flow_export_xlsx(
         saldo = max(total - collected, 0.0)
         if saldo <= 0.01:
             continue
-        issue_date = cfdi.fecha.date() if cfdi.fecha else today
+        issue_date = cfdi.fecha.date() if cfdi.fecha else cashflow_window_start
         due_date = issue_date + timedelta(days=dias_credito)
-        if due_date <= today + timedelta(days=horizon_days):
+        if cashflow_window_start <= due_date < cashflow_window_end:
             receivable_due_total += saldo
-        if due_date < today:
+        if due_date < cashflow_as_of:
             receivable_overdue_total += saldo
         receivable_rows.append({"cfdi": cfdi, "saldo": saldo, "due_date": due_date})
 
@@ -22842,8 +22858,8 @@ async def contabilidad_cash_flow_export_xlsx(
             select(CFDIReport)
             .where(
                 and_(*_append_manual_project_cfdi_filter([
-                    CFDIReport.fecha >= datetime(today.year, 1, 1),
-                    CFDIReport.fecha < datetime.combine(today + timedelta(days=horizon_days + 1), datetime.min.time()),
+                    CFDIReport.fecha >= start_dt,
+                    CFDIReport.fecha < datetime.combine(cashflow_window_end, datetime.min.time()),
                     CFDIReport.tipo_de_comprobante == "I",
                     func.upper(CFDIReport.receptor_rfc).in_(platform_rfcs),
                 ]))

@@ -175,6 +175,14 @@ def test_legacy_cashflow_period_filter_bounds_projection_sources() -> None:
     assert "CFDIReport.fecha >= datetime(today.year, 1, 1)" not in view
     assert "El banco se filtra por cuenta y período, no por proyecto" in view
 
+    export = source.split(
+        '@router.get("/admin/contabilidad/cash-flow/export.xlsx")', 1
+    )[1].split('@router.get("/admin/contabilidad/tesoreria-matches")', 1)[0]
+    assert "cashflow_window_start = start_dt.date()" in export
+    assert "cashflow_window_end = min(" in export
+    assert "Documento.fecha_pago.is_(None)" in export
+    assert "CFDIReport.fecha < datetime.combine(cashflow_window_end" in export
+
 
 class _CashflowResult:
     def __init__(self, rows: list[Any] | None = None) -> None:
