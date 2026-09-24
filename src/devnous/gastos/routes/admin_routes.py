@@ -9908,7 +9908,7 @@ async def admin_finance_payment_run(
             <section id="comprobantes-pendientes" class="workspace-card payment-run-view" style="margin-bottom:18px;"{' hidden' if selected_view != 'comprobantes' else ''}>
                 <div class="workspace-section-title">Comprobantes pendientes - En Proceso de Pago</div>
                 <div class="workspace-section-subtitle">Contabilidad o un usuario autorizado adjunta el comprobante y confirma el pago. Para varias solicitudes, selecciona las filas, carga varios archivos y revisa la asignación antes de confirmar.</div>
-                {"""
+                {f"""
                 <form id="payment-run-bulk-proof-form" method="POST" enctype="multipart/form-data" action="/admin/finanzas/payment-run/comprobantes-pago/lote" style="margin-top:16px;padding:14px;border:1px solid #cbd5e1;border-radius:14px;background:#f8fafc;display:grid;gap:10px;">
                     <div style="font-weight:800;color:#0f172a;">Carga por lote de comprobantes</div>
                     <div style="font-size:13px;color:#475569;">Selecciona las solicitudes abajo. Después elige los archivos y asigna cada uno a su solicitud. Esta operación marca como pagadas únicamente las solicitudes confirmadas.</div>

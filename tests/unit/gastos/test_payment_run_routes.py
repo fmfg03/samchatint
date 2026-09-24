@@ -881,6 +881,60 @@ async def test_payment_run_page_renders_fecha_pago_close_without_payment_proof_f
 
 
 @pytest.mark.asyncio
+async def test_payment_run_page_renders_executable_payment_proof_review_script(
+    monkeypatch,
+) -> None:
+    document_id = uuid4()
+    monkeypatch.setattr(
+        admin_routes,
+        "list_payment_run_items",
+        AsyncMock(
+            side_effect=[
+                [],
+                [
+                    {
+                        "id": document_id,
+                        "numero_referencia": "S-26000253",
+                        "beneficiario_nombre": "YERALDIN STHEFANIA BUENDIA ROSAS",
+                        "monto": Decimal("17100.00"),
+                        "currency": "MXN",
+                        "status": "en proceso de pago",
+                        "can_upload_payment_proof": True,
+                    }
+                ],
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        admin_routes, "list_prestamo_payment_run_items", AsyncMock(side_effect=[[], []])
+    )
+    monkeypatch.setattr(
+        admin_routes, "list_payment_run_closures", AsyncMock(return_value=[])
+    )
+
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}),
+        session=AsyncMock(),
+        current_empleado=SimpleNamespace(
+            id=uuid4(),
+            rol="contabilidad",
+            departamento="Contabilidad",
+            nombre="Contabilidad",
+        ),
+        status="pendientes",
+        date_from=None,
+        date_to=None,
+        q=None,
+        vista="comprobantes",
+    )
+    html = response.body.decode("utf-8")
+
+    assert "(function () {" in html
+    assert "(function () {{" not in html
+    assert "uuidPattern = /^[0-9a-f]{8}" in html
+
+
+@pytest.mark.asyncio
 async def test_payment_run_page_queries_approved_and_in_process_sections(
     monkeypatch,
 ) -> None:
