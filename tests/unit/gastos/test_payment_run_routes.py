@@ -932,6 +932,9 @@ async def test_payment_run_page_renders_executable_payment_proof_review_script(
     assert "(function () {" in html
     assert "(function () {{" not in html
     assert "uuidPattern = /^[0-9a-f]{8}" in html
+    assert "event.target.matches('[data-payment-proof-file]')" in html
+    assert "event.target.closest('[data-payment-proof-form]')" in html
+    assert "document.querySelectorAll('[data-payment-proof-form]')" not in html
 
 
 @pytest.mark.asyncio
