@@ -196,23 +196,14 @@ async def build_no_deductibles_source(
             for tournament in tournaments.scalars().all()
         }
     source_cfdi_ids = {
-        str(
-            getattr(
-                expense.informe_documento
-                or expense.solicitud_documento
-                or expense.documento,
-                "cfdi_report_id",
-                None,
-            )
-        )
+        str(document.cfdi_report_id)
         for expense, _ in records
-        if getattr(
-            expense.informe_documento
-            or expense.solicitud_documento
-            or expense.documento,
-            "cfdi_report_id",
-            None,
+        for document in (
+            expense.informe_documento,
+            expense.solicitud_documento,
+            expense.documento,
         )
+        if document is not None and getattr(document, "cfdi_report_id", None)
     }
     source_cfdi_uuids: dict[str, str] = {}
     if source_cfdi_ids:
@@ -240,9 +231,19 @@ async def build_no_deductibles_source(
             else str(getattr(source_document, "tipo", "Gasto"))
         )
         scope_id_text = str(scope_id) if scope_id else ""
-        selected_cfdi_report_id = expense.cfdi_report_id or getattr(
-            source_document, "cfdi_report_id", None
+        source_cfdi_report_id = next(
+            (
+                document.cfdi_report_id
+                for document in (
+                    informe_documento,
+                    solicitud_documento,
+                    generic_documento,
+                )
+                if document is not None and getattr(document, "cfdi_report_id", None)
+            ),
+            None,
         )
+        selected_cfdi_report_id = expense.cfdi_report_id or source_cfdi_report_id
         rows.append(
             {
                 "id": str(expense.id),
