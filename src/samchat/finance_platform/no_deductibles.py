@@ -130,7 +130,13 @@ async def build_no_deductibles_source(
     account and budget context.  Rows with no resolvable tournament remain in
     the unfiltered view so missing governance data cannot be hidden.
     """
-    from devnous.gastos.models import BudgetConcept, CuentaDeGastos, Documento, ExpenseReport
+    from devnous.gastos.models import (
+        BudgetConcept,
+        CFDIReport,
+        CuentaDeGastos,
+        Documento,
+        ExpenseReport,
+    )
 
     start, end = period_bounds(year, month)
     informe = aliased(Documento)
@@ -189,6 +195,36 @@ async def build_no_deductibles_source(
             str(tournament.id): str(tournament.name)
             for tournament in tournaments.scalars().all()
         }
+    source_cfdi_ids = {
+        str(
+            getattr(
+                expense.informe_documento
+                or expense.solicitud_documento
+                or expense.documento,
+                "cfdi_report_id",
+                None,
+            )
+        )
+        for expense, _ in records
+        if getattr(
+            expense.informe_documento
+            or expense.solicitud_documento
+            or expense.documento,
+            "cfdi_report_id",
+            None,
+        )
+    }
+    source_cfdi_uuids: dict[str, str] = {}
+    if source_cfdi_ids:
+        source_cfdi_reports = await session.execute(
+            select(CFDIReport).where(
+                CFDIReport.id.in_([UUID(value) for value in source_cfdi_ids])
+            )
+        )
+        source_cfdi_uuids = {
+            str(cfdi_report.id): str(cfdi_report.cfdi_uuid or "")
+            for cfdi_report in source_cfdi_reports.scalars().all()
+        }
 
     rows: list[dict[str, Any]] = []
     for expense, scope_id in records:
@@ -224,10 +260,9 @@ async def build_no_deductibles_source(
                     or ""
                 ),
                 "cfdi_uuid": getattr(expense.cfdi_report, "cfdi_uuid", None)
-                or getattr(
-                    getattr(source_document, "cfdi_report", None), "cfdi_uuid", None
-                )
-                or "",
+                or source_cfdi_uuids.get(
+                    str(getattr(source_document, "cfdi_report_id", None)), ""
+                ),
                 "cfdi_uuid_manual": expense.cfdi_uuid_manual or "",
             }
         )

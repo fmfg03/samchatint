@@ -104,6 +104,7 @@ def test_xlsx_contains_only_non_deductible_detail_rows():
 @pytest.mark.asyncio
 async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
     tournament_id = uuid4()
+    source_cfdi_id = uuid4()
     expense = SimpleNamespace(
         id=uuid4(),
         numero_referencia="G-001",
@@ -114,8 +115,7 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
         informe_documento=SimpleNamespace(
             numero_referencia="I-001",
             fase="Nacional",
-            cfdi_report_id="cfdi-on-source-document",
-            cfdi_report=SimpleNamespace(cfdi_uuid="source-cfdi-uuid"),
+            cfdi_report_id=source_cfdi_id,
         ),
         solicitud_documento=None,
         documento=None,
@@ -144,7 +144,17 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
             self.calls += 1
             if self.calls == 1:
                 return Result(records=[(expense, tournament_id)])
-            return Result(tournaments=[SimpleNamespace(id=tournament_id, name="Morelos")])
+            if self.calls == 2:
+                return Result(
+                    tournaments=[SimpleNamespace(id=tournament_id, name="Morelos")]
+                )
+            return Result(
+                tournaments=[
+                    SimpleNamespace(
+                        id=source_cfdi_id, cfdi_uuid="source-cfdi-uuid"
+                    )
+                ]
+            )
 
     report = await build_no_deductibles_source(
         Session(), year=2026, month=9, tournament_id=None
