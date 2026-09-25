@@ -159,13 +159,21 @@ async def test_finance_route_renders_and_exports_control(monkeypatch):
     monkeypatch.setattr(admin_routes, "_render_admin_workspace_hero", lambda **kwargs: kwargs["title"])
 
     response = await admin_routes.admin_no_deductibles_control(
-        current_empleado=SimpleNamespace(), session=SimpleNamespace(), year=2026, month=9
+        current_empleado=SimpleNamespace(),
+        session=SimpleNamespace(),
+        year=2026,
+        month=9,
+        tournament_id=None,
     )
     assert "No Deducibles" in response.body.decode()
     assert "Taxi" in response.body.decode()
 
     export = await admin_routes.admin_no_deductibles_export_xlsx(
-        current_empleado=SimpleNamespace(), session=SimpleNamespace(), year=2026, month=9
+        current_empleado=SimpleNamespace(),
+        session=SimpleNamespace(),
+        year=2026,
+        month=9,
+        tournament_id=None,
     )
     assert export.body[:2] == b"PK"
 
