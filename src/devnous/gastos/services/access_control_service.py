@@ -597,6 +597,31 @@ async def can_access_path(
     return await can_access_tool(session, empleado, tool.key, action_for_method(method))
 
 
+async def can_defer_path_authorization_to_route_guard(
+    session: AsyncSession,
+    empleado: Any,
+    path: str,
+    method: str = "GET",
+) -> bool:
+    """Allow a route-owned guard only when no explicit tool denial exists.
+
+    Route-owned authorization is intentionally narrower than normal path access:
+    it lets the route enforce its own required permission instead of the tool's
+    role default. Persisted access-control decisions remain authoritative,
+    especially explicit denials.
+    """
+    tool = path_to_tool(path)
+    if tool is None:
+        return True
+    decision = await explicit_tool_decision(
+        session,
+        empleado,
+        tool.key,
+        action_for_method(method),
+    )
+    return decision is not False
+
+
 async def list_rules(session: AsyncSession) -> dict[tuple[str, str, str, str], bool]:
     try:
         result = await session.execute(
