@@ -240,6 +240,9 @@ async def build_no_deductibles_source(
             else str(getattr(source_document, "tipo", "Gasto"))
         )
         scope_id_text = str(scope_id) if scope_id else ""
+        selected_cfdi_report_id = expense.cfdi_report_id or getattr(
+            source_document, "cfdi_report_id", None
+        )
         rows.append(
             {
                 "id": str(expense.id),
@@ -254,15 +257,13 @@ async def build_no_deductibles_source(
                 "tournament_id": scope_id_text,
                 "tournament_name": tournament_names.get(scope_id_text, "Sin torneo asignado"),
                 "phase": getattr(source_document, "fase", None) or expense.fase_torneo or "-",
-                "cfdi_report_id": str(
-                    expense.cfdi_report_id
-                    or getattr(source_document, "cfdi_report_id", None)
-                    or ""
-                ),
-                "cfdi_uuid": getattr(expense.cfdi_report, "cfdi_uuid", None)
-                or source_cfdi_uuids.get(
-                    str(getattr(source_document, "cfdi_report_id", None)), ""
-                ),
+                "cfdi_report_id": str(selected_cfdi_report_id or ""),
+                "cfdi_uuid": (
+                    getattr(expense.cfdi_report, "cfdi_uuid", None)
+                    if expense.cfdi_report_id
+                    else source_cfdi_uuids.get(str(selected_cfdi_report_id), "")
+                )
+                or "",
                 "cfdi_uuid_manual": expense.cfdi_uuid_manual or "",
             }
         )
