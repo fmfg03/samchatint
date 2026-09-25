@@ -7149,6 +7149,7 @@ async def admin_finance_platform(
                     '</form>'
                     f'<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">{"".join(quick_period_links)}</div>'
                     f'<div style="margin-top:12px;"><a class="button secondary" href="/admin/finanzas/export.xlsx?year={current_year}&month={current_month}">Descargar Excel financiero</a></div>'
+                    f'<div style="margin-top:12px;"><a class="button secondary" href="/admin/finanzas/no-deducibles?year={current_year}&month={current_month}">Control de No Deducibles</a></div>'
                     f'<div style="margin-top:12px;"><a class="button secondary" href="/admin/finanzas/coi-lote-consolidado.xlsx?year={current_year}&month={current_month}">Descargar COI consolidado</a></div>'
                     f'<div style="margin-top:12px;"><a class="button secondary" href="/admin/finanzas/coi-lote.zip?year={current_year}&month={current_month}">Descargar COI por póliza</a></div>'
                 ),
@@ -8825,6 +8826,109 @@ async def admin_finance_platform_export_xlsx(
     )
 
 
+
+@router.get("/admin/finanzas/no-deducibles", response_class=HTMLResponse)
+async def admin_no_deductibles_control(
+    current_empleado: Empleado = require_admin_finanzas(),
+    session: AsyncSession = Depends(get_db_session),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+):
+    """Audit-ready monthly control: missing linked CFDI means no deducible."""
+    from samchat.finance_platform.no_deductibles import (
+        build_no_deductibles_source,
+        list_tournaments_for_no_deductibles,
+    )
+
+    today = datetime.utcnow()
+    selected_year = int(year or today.year)
+    selected_month = int(month or today.month)
+    selected_tournament_id = (tournament_id or "").strip()
+    try:
+        report = await build_no_deductibles_source(
+            session,
+            year=selected_year,
+            month=selected_month,
+            tournament_id=selected_tournament_id or None,
+        )
+        tournaments = await list_tournaments_for_no_deductibles(session)
+        error_html = ""
+    except Exception as exc:
+        report = {"summary": {}, "non_deductible_rows": []}
+        tournaments = []
+        error_html = (
+            '<section class="workspace-card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;">'
+            f'No se pudo cargar el control: {escape(str(exc)[:220])}</section>'
+        )
+
+    summary = report.get("summary") or {}
+    options = ['<option value="">Todos los torneos</option>']
+    for tournament in tournaments:
+        value = str(tournament["id"])
+        selected = " selected" if value == selected_tournament_id else ""
+        options.append(
+            f'<option value="{escape(value)}"{selected}>{escape(str(tournament["name"]))}</option>'
+        )
+    rows_html = "".join(
+        f'''<tr>
+            <td>{escape(str(row.get("expense_date") or ""))[:10]}</td>
+            <td>{escape(str(row.get("tournament_name") or "-"))}</td>
+            <td>{escape(str(row.get("phase") or "-"))}</td>
+            <td>{escape(str(row.get("source_type") or "-"))}<br><small>{escape(str(row.get("source_reference") or "-"))}</small></td>
+            <td>{escape(str(row.get("reference") or "-"))}</td>
+            <td>{escape(str(row.get("concept") or "-"))}</td>
+            <td>{escape(str(row.get("employee_name") or "-"))}</td>
+            <td>{escape(str(row.get("currency") or "MXN"))}</td>
+            <td>{escape(str(row.get("currency") or "MXN"))} {float(row.get("amount") or 0):,.2f}</td>
+            <td><span class="no-deductible-pill">No deducible</span><br><small>{escape(str(row.get("fiscal_reason") or ""))}</small></td>
+        </tr>'''
+        for row in report.get("non_deductible_rows") or []
+    )
+    currency_cards = "".join(
+        f'''<div class="metric"><span>{escape(str(currency))} · gasto del periodo</span><strong>{escape(str(currency))} {float(currency_summary.get("total_amount") or 0):,.2f}</strong></div><div class="metric"><span>{escape(str(currency))} · deducible</span><strong>{escape(str(currency))} {float(currency_summary.get("deductible_amount") or 0):,.2f}</strong></div><div class="metric"><span>{escape(str(currency))} · no deducible</span><strong>{escape(str(currency))} {float(currency_summary.get("non_deductible_amount") or 0):,.2f}<small>{float(currency_summary.get("non_deductible_percent") or 0):.2f}%</small></strong></div>'''
+        for currency, currency_summary in (summary.get("by_currency") or {}).items()
+    ) or '<div class="metric"><span>Gasto del periodo</span><strong>Sin partidas</strong></div>'
+    query = urlencode(
+        {
+            "year": selected_year,
+            "month": selected_month,
+            **({"tournament_id": selected_tournament_id} if selected_tournament_id else {}),
+        }
+    )
+    html = f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>No Deducibles · Samchat</title><style>
+        {_admin_workspace_styles("1440px", layout="data")}
+        .control-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}}.metric{{padding:18px;border:1px solid #dbe2ea;border-radius:16px;background:#fff}}.metric strong{{display:block;font-size:1.55rem;color:#0f172a;margin-top:6px}}.metric span{{color:#64748b;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.06em}}.control-table{{width:100%;border-collapse:collapse;min-width:1040px}}.control-table th,.control-table td{{padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}}.control-table th{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#475569;background:#f8fafc}}input,select{{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px}}.no-deductible-pill{{display:inline-block;padding:4px 8px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11px;font-weight:900}}</style></head><body><div class="workspace-shell">
+        {render_admin_navigation(current_empleado, "finanzas", subtitle="Control fiscal por torneo y fecha de gasto.")}
+        {_render_admin_workspace_hero(eyebrow="Finanzas · control fiscal", title="No Deducibles", description="Regla automática: una partida es No Deducible cuando no tiene un CFDI fiscal vinculado. Se calcula por fecha del gasto, sin una marca manual paralela.", actions_html=f'''<form method="GET" action="/admin/finanzas/no-deducibles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end"><div><label>Año</label><input type="number" name="year" min="2020" max="2100" value="{selected_year}"></div><div><label>Mes de fecha de gasto</label><input type="number" name="month" min="1" max="12" value="{selected_month}"></div><div><label>Torneo</label><select name="tournament_id">{"".join(options)}</select></div><button class="button" type="submit">Consultar</button></form><div style="margin-top:12px"><a class="button secondary" href="/admin/finanzas/no-deducibles/export.xlsx?{query}">Descargar Excel</a> <a class="button secondary" href="/admin/finanzas?year={selected_year}&month={selected_month}">Volver a Finanzas</a></div>''', side_html=f'<div class="eyebrow">Criterio vigente</div><div style="font-weight:900;font-size:1.2rem">CFDI vinculado</div><div style="margin-top:8px;color:#64748b">No cuentan comprobantes de pago, programas de pago ni UUID sólo capturado.</div>')}
+        {error_html}
+        <section class="workspace-card" style="margin-bottom:18px"><div class="control-grid">{currency_cards}</div></section>
+        <section class="workspace-card"><div class="workspace-section-title">Partidas sin factura fiscal vinculada</div><div class="workspace-section-subtitle">{int(summary.get("non_deductible_count") or 0)} partidas. Al vincular el CFDI canónico, desaparecen automáticamente de este control.</div><div class="table-shell" style="margin-top:14px"><table class="control-table"><thead><tr><th>Fecha gasto</th><th>Torneo</th><th>Fase</th><th>Origen</th><th>Gasto</th><th>Concepto</th><th>Responsable</th><th>Moneda</th><th>Monto</th><th>Resultado</th></tr></thead><tbody>{rows_html or '<tr><td colspan="10">No hay partidas No Deducibles para este filtro.</td></tr>'}</tbody></table></div></section></div></body></html>'''
+    return HTMLResponse(content=html)
+
+
+@router.get("/admin/finanzas/no-deducibles/export.xlsx", response_class=Response)
+async def admin_no_deductibles_export_xlsx(
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+    year: Optional[int] = Query(None),
+    month: Optional[int] = Query(None),
+    tournament_id: Optional[str] = Query(None),
+) -> Response:
+    from samchat.finance_platform.no_deductibles import build_no_deductibles_source
+    from samchat.finance_platform.no_deductibles_exporter import generate_no_deductibles_xlsx
+
+    today = datetime.utcnow()
+    selected_year = int(year or today.year)
+    selected_month = int(month or today.month)
+    report = await build_no_deductibles_source(
+        session, year=selected_year, month=selected_month, tournament_id=(tournament_id or None)
+    )
+    return Response(
+        content=generate_no_deductibles_xlsx(report),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="no_deducibles_{selected_year}_{selected_month:02d}.xlsx"'},
+    )
 def _finance_period_bounds(
     year: Optional[int],
     month: Optional[int],
