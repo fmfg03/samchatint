@@ -111,7 +111,12 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
         concepto="Hospedaje",
         gasto_cantidad=500,
         empleado=SimpleNamespace(nombre="Ana"),
-        informe_documento=SimpleNamespace(numero_referencia="I-001", fase="Nacional"),
+        informe_documento=SimpleNamespace(
+            numero_referencia="I-001",
+            fase="Nacional",
+            cfdi_report_id="cfdi-on-source-document",
+            cfdi_report=SimpleNamespace(cfdi_uuid="source-cfdi-uuid"),
+        ),
         solicitud_documento=None,
         documento=None,
         fase_torneo=None,
@@ -145,9 +150,10 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
         Session(), year=2026, month=9, tournament_id=None
     )
 
-    assert report["summary"]["by_currency"]["MXN"]["non_deductible_amount"] == 500
+    assert report["summary"]["by_currency"]["MXN"]["deductible_amount"] == 500
     assert report["rows"][0]["tournament_name"] == "Morelos"
     assert report["rows"][0]["source_type"] == "Informe"
+    assert report["rows"][0]["cfdi_uuid"] == "source-cfdi-uuid"
 
 
 @pytest.mark.asyncio

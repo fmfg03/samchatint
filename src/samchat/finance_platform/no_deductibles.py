@@ -218,8 +218,16 @@ async def build_no_deductibles_source(
                 "tournament_id": scope_id_text,
                 "tournament_name": tournament_names.get(scope_id_text, "Sin torneo asignado"),
                 "phase": getattr(source_document, "fase", None) or expense.fase_torneo or "-",
-                "cfdi_report_id": str(expense.cfdi_report_id or ""),
-                "cfdi_uuid": getattr(expense.cfdi_report, "cfdi_uuid", None) or "",
+                "cfdi_report_id": str(
+                    expense.cfdi_report_id
+                    or getattr(source_document, "cfdi_report_id", None)
+                    or ""
+                ),
+                "cfdi_uuid": getattr(expense.cfdi_report, "cfdi_uuid", None)
+                or getattr(
+                    getattr(source_document, "cfdi_report", None), "cfdi_uuid", None
+                )
+                or "",
                 "cfdi_uuid_manual": expense.cfdi_uuid_manual or "",
             }
         )
