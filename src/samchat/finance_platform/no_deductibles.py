@@ -130,7 +130,13 @@ async def build_no_deductibles_source(
     account and budget context.  Rows with no resolvable tournament remain in
     the unfiltered view so missing governance data cannot be hidden.
     """
-    from devnous.gastos.models import BudgetConcept, CuentaDeGastos, Documento, ExpenseReport
+    from devnous.gastos.models import (
+        BudgetConcept,
+        CFDIReport,
+        CuentaDeGastos,
+        Documento,
+        ExpenseReport,
+    )
 
     start, end = period_bounds(year, month)
     informe = aliased(Documento)
@@ -189,6 +195,27 @@ async def build_no_deductibles_source(
             str(tournament.id): str(tournament.name)
             for tournament in tournaments.scalars().all()
         }
+    source_cfdi_ids = {
+        str(document.cfdi_report_id)
+        for expense, _ in records
+        for document in (
+            expense.informe_documento,
+            expense.solicitud_documento,
+            expense.documento,
+        )
+        if document is not None and getattr(document, "cfdi_report_id", None)
+    }
+    source_cfdi_uuids: dict[str, str] = {}
+    if source_cfdi_ids:
+        source_cfdi_reports = await session.execute(
+            select(CFDIReport).where(
+                CFDIReport.id.in_([UUID(value) for value in source_cfdi_ids])
+            )
+        )
+        source_cfdi_uuids = {
+            str(cfdi_report.id): str(cfdi_report.cfdi_uuid or "")
+            for cfdi_report in source_cfdi_reports.scalars().all()
+        }
 
     rows: list[dict[str, Any]] = []
     for expense, scope_id in records:
@@ -204,6 +231,19 @@ async def build_no_deductibles_source(
             else str(getattr(source_document, "tipo", "Gasto"))
         )
         scope_id_text = str(scope_id) if scope_id else ""
+        source_cfdi_report_id = next(
+            (
+                document.cfdi_report_id
+                for document in (
+                    informe_documento,
+                    solicitud_documento,
+                    generic_documento,
+                )
+                if document is not None and getattr(document, "cfdi_report_id", None)
+            ),
+            None,
+        )
+        selected_cfdi_report_id = expense.cfdi_report_id or source_cfdi_report_id
         rows.append(
             {
                 "id": str(expense.id),
@@ -218,8 +258,13 @@ async def build_no_deductibles_source(
                 "tournament_id": scope_id_text,
                 "tournament_name": tournament_names.get(scope_id_text, "Sin torneo asignado"),
                 "phase": getattr(source_document, "fase", None) or expense.fase_torneo or "-",
-                "cfdi_report_id": str(expense.cfdi_report_id or ""),
-                "cfdi_uuid": getattr(expense.cfdi_report, "cfdi_uuid", None) or "",
+                "cfdi_report_id": str(selected_cfdi_report_id or ""),
+                "cfdi_uuid": (
+                    getattr(expense.cfdi_report, "cfdi_uuid", None)
+                    if expense.cfdi_report_id
+                    else source_cfdi_uuids.get(str(selected_cfdi_report_id), "")
+                )
+                or "",
                 "cfdi_uuid_manual": expense.cfdi_uuid_manual or "",
             }
         )

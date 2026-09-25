@@ -104,6 +104,7 @@ def test_xlsx_contains_only_non_deductible_detail_rows():
 @pytest.mark.asyncio
 async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
     tournament_id = uuid4()
+    source_cfdi_id = uuid4()
     expense = SimpleNamespace(
         id=uuid4(),
         numero_referencia="G-001",
@@ -111,7 +112,11 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
         concepto="Hospedaje",
         gasto_cantidad=500,
         empleado=SimpleNamespace(nombre="Ana"),
-        informe_documento=SimpleNamespace(numero_referencia="I-001", fase="Nacional"),
+        informe_documento=SimpleNamespace(
+            numero_referencia="I-001",
+            fase="Nacional",
+            cfdi_report_id=source_cfdi_id,
+        ),
         solicitud_documento=None,
         documento=None,
         fase_torneo=None,
@@ -139,15 +144,26 @@ async def test_source_resolves_document_tournament_and_marks_missing_cfdi():
             self.calls += 1
             if self.calls == 1:
                 return Result(records=[(expense, tournament_id)])
-            return Result(tournaments=[SimpleNamespace(id=tournament_id, name="Morelos")])
+            if self.calls == 2:
+                return Result(
+                    tournaments=[SimpleNamespace(id=tournament_id, name="Morelos")]
+                )
+            return Result(
+                tournaments=[
+                    SimpleNamespace(
+                        id=source_cfdi_id, cfdi_uuid="source-cfdi-uuid"
+                    )
+                ]
+            )
 
     report = await build_no_deductibles_source(
         Session(), year=2026, month=9, tournament_id=None
     )
 
-    assert report["summary"]["by_currency"]["MXN"]["non_deductible_amount"] == 500
+    assert report["summary"]["by_currency"]["MXN"]["deductible_amount"] == 500
     assert report["rows"][0]["tournament_name"] == "Morelos"
     assert report["rows"][0]["source_type"] == "Informe"
+    assert report["rows"][0]["cfdi_uuid"] == "source-cfdi-uuid"
 
 
 @pytest.mark.asyncio

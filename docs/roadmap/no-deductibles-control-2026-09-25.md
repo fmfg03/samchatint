@@ -5,7 +5,8 @@ Date: 2026-09-25
 ## Operational rule
 
 For the monthly control, each `Solicitud` or `Informe` expense line without a
-linked canonical fiscal CFDI is classified as `No deducible`. The control
+linked canonical fiscal CFDI is classified as `No deducible`. The CFDI link may
+belong to the expense itself or to its source `Solicitud`/`Informe`. The control
 period is the calendar month of the expense date, not the accounting month of
 the policy. The projection retains the source document, tournament, phase,
 expense reference, employee, currency, linked-CFDI state, and resulting
