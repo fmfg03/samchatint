@@ -8879,11 +8879,16 @@ async def admin_no_deductibles_control(
             <td>{escape(str(row.get("reference") or "-"))}</td>
             <td>{escape(str(row.get("concept") or "-"))}</td>
             <td>{escape(str(row.get("employee_name") or "-"))}</td>
-            <td>${float(row.get("amount") or 0):,.2f}</td>
+            <td>{escape(str(row.get("currency") or "MXN"))}</td>
+            <td>{escape(str(row.get("currency") or "MXN"))} {float(row.get("amount") or 0):,.2f}</td>
             <td><span class="no-deductible-pill">No deducible</span><br><small>{escape(str(row.get("fiscal_reason") or ""))}</small></td>
         </tr>'''
         for row in report.get("non_deductible_rows") or []
     )
+    currency_cards = "".join(
+        f'''<div class="metric"><span>{escape(str(currency))} · gasto del periodo</span><strong>{escape(str(currency))} {float(currency_summary.get("total_amount") or 0):,.2f}</strong></div><div class="metric"><span>{escape(str(currency))} · deducible</span><strong>{escape(str(currency))} {float(currency_summary.get("deductible_amount") or 0):,.2f}</strong></div><div class="metric"><span>{escape(str(currency))} · no deducible</span><strong>{escape(str(currency))} {float(currency_summary.get("non_deductible_amount") or 0):,.2f}<small>{float(currency_summary.get("non_deductible_percent") or 0):.2f}%</small></strong></div>'''
+        for currency, currency_summary in (summary.get("by_currency") or {}).items()
+    ) or '<div class="metric"><span>Gasto del periodo</span><strong>Sin partidas</strong></div>'
     query = urlencode(
         {
             "year": selected_year,
@@ -8897,8 +8902,8 @@ async def admin_no_deductibles_control(
         {render_admin_navigation(current_empleado, "finanzas", subtitle="Control fiscal por torneo y fecha de gasto.")}
         {_render_admin_workspace_hero(eyebrow="Finanzas · control fiscal", title="No Deducibles", description="Regla automática: una partida es No Deducible cuando no tiene un CFDI fiscal vinculado. Se calcula por fecha del gasto, sin una marca manual paralela.", actions_html=f'''<form method="GET" action="/admin/finanzas/no-deducibles" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end"><div><label>Año</label><input type="number" name="year" min="2020" max="2100" value="{selected_year}"></div><div><label>Mes de fecha de gasto</label><input type="number" name="month" min="1" max="12" value="{selected_month}"></div><div><label>Torneo</label><select name="tournament_id">{"".join(options)}</select></div><button class="button" type="submit">Consultar</button></form><div style="margin-top:12px"><a class="button secondary" href="/admin/finanzas/no-deducibles/export.xlsx?{query}">Descargar Excel</a> <a class="button secondary" href="/admin/finanzas?year={selected_year}&month={selected_month}">Volver a Finanzas</a></div>''', side_html=f'<div class="eyebrow">Criterio vigente</div><div style="font-weight:900;font-size:1.2rem">CFDI vinculado</div><div style="margin-top:8px;color:#64748b">No cuentan comprobantes de pago, programas de pago ni UUID sólo capturado.</div>')}
         {error_html}
-        <section class="workspace-card" style="margin-bottom:18px"><div class="control-grid"><div class="metric"><span>Gasto del periodo</span><strong>${float(summary.get("total_amount") or 0):,.2f}</strong></div><div class="metric"><span>Deducible · CFDI vinculado</span><strong>${float(summary.get("deductible_amount") or 0):,.2f}</strong></div><div class="metric"><span>No deducible · sin CFDI</span><strong>${float(summary.get("non_deductible_amount") or 0):,.2f}</strong></div><div class="metric"><span>Exposición no deducible</span><strong>{float(summary.get("non_deductible_percent") or 0):.2f}%</strong></div></div></section>
-        <section class="workspace-card"><div class="workspace-section-title">Partidas sin factura fiscal vinculada</div><div class="workspace-section-subtitle">{int(summary.get("non_deductible_count") or 0)} partidas. Al vincular el CFDI canónico, desaparecen automáticamente de este control.</div><div class="table-shell" style="margin-top:14px"><table class="control-table"><thead><tr><th>Fecha gasto</th><th>Torneo</th><th>Fase</th><th>Origen</th><th>Gasto</th><th>Concepto</th><th>Responsable</th><th>Monto</th><th>Resultado</th></tr></thead><tbody>{rows_html or '<tr><td colspan="9">No hay partidas No Deducibles para este filtro.</td></tr>'}</tbody></table></div></section></div></body></html>'''
+        <section class="workspace-card" style="margin-bottom:18px"><div class="control-grid">{currency_cards}</div></section>
+        <section class="workspace-card"><div class="workspace-section-title">Partidas sin factura fiscal vinculada</div><div class="workspace-section-subtitle">{int(summary.get("non_deductible_count") or 0)} partidas. Al vincular el CFDI canónico, desaparecen automáticamente de este control.</div><div class="table-shell" style="margin-top:14px"><table class="control-table"><thead><tr><th>Fecha gasto</th><th>Torneo</th><th>Fase</th><th>Origen</th><th>Gasto</th><th>Concepto</th><th>Responsable</th><th>Moneda</th><th>Monto</th><th>Resultado</th></tr></thead><tbody>{rows_html or '<tr><td colspan="10">No hay partidas No Deducibles para este filtro.</td></tr>'}</tbody></table></div></section></div></body></html>'''
     return HTMLResponse(content=html)
 
 

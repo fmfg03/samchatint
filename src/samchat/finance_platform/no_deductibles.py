@@ -30,6 +30,11 @@ def has_linked_fiscal_invoice(row: dict[str, Any]) -> bool:
     return bool(str(row.get("cfdi_report_id") or "").strip())
 
 
+def _currency(value: Any) -> str:
+    """Normalize the row currency without converting or combining amounts."""
+    return str(value or "MXN").strip().upper() or "MXN"
+
+
 def build_no_deductibles_report(
     rows: list[dict[str, Any]], *, year: int, month: int, tournament_id: str | None
 ) -> dict[str, Any]:
@@ -37,6 +42,7 @@ def build_no_deductibles_report(
     classified: list[dict[str, Any]] = []
     for row in rows:
         item = dict(row)
+        item["currency"] = _currency(item.get("currency"))
         item["fiscal_status"] = (
             "deducible" if has_linked_fiscal_invoice(item) else "no_deducible"
         )
@@ -47,14 +53,48 @@ def build_no_deductibles_report(
         )
         classified.append(item)
 
-    total_amount = round(sum(float(row.get("amount") or 0) for row in classified), 2)
     non_deductible_rows = [
         row for row in classified if row["fiscal_status"] == "no_deducible"
     ]
-    non_deductible_amount = round(
-        sum(float(row.get("amount") or 0) for row in non_deductible_rows), 2
-    )
-    deductible_amount = round(total_amount - non_deductible_amount, 2)
+    by_currency: dict[str, dict[str, Any]] = {}
+    for row in classified:
+        currency = row["currency"]
+        currency_summary = by_currency.setdefault(
+            currency,
+            {
+                "expense_count": 0,
+                "deductible_count": 0,
+                "non_deductible_count": 0,
+                "total_amount": 0.0,
+                "deductible_amount": 0.0,
+                "non_deductible_amount": 0.0,
+            },
+        )
+        amount = float(row.get("amount") or 0)
+        currency_summary["expense_count"] += 1
+        currency_summary["total_amount"] += amount
+        if row["fiscal_status"] == "deducible":
+            currency_summary["deductible_count"] += 1
+            currency_summary["deductible_amount"] += amount
+        else:
+            currency_summary["non_deductible_count"] += 1
+            currency_summary["non_deductible_amount"] += amount
+    for currency_summary in by_currency.values():
+        for field in (
+            "total_amount",
+            "deductible_amount",
+            "non_deductible_amount",
+        ):
+            currency_summary[field] = round(currency_summary[field], 2)
+        total_amount = currency_summary["total_amount"]
+        currency_summary["non_deductible_percent"] = round(
+            (
+                currency_summary["non_deductible_amount"] / total_amount * 100
+                if total_amount
+                else 0
+            ),
+            2,
+        )
     return {
         "period": {"year": year, "month": month},
         "tournament_id": tournament_id or "",
@@ -64,12 +104,7 @@ def build_no_deductibles_report(
             "expense_count": len(classified),
             "deductible_count": len(classified) - len(non_deductible_rows),
             "non_deductible_count": len(non_deductible_rows),
-            "total_amount": total_amount,
-            "deductible_amount": deductible_amount,
-            "non_deductible_amount": non_deductible_amount,
-            "non_deductible_percent": round(
-                (non_deductible_amount / total_amount * 100) if total_amount else 0, 2
-            ),
+            "by_currency": dict(sorted(by_currency.items())),
         },
     }
 
@@ -176,6 +211,7 @@ async def build_no_deductibles_source(
                 "expense_date": expense.fecha.isoformat() if expense.fecha else "",
                 "concept": expense.concepto or "",
                 "amount": round(float(expense.gasto_cantidad or 0), 2),
+                "currency": _currency(getattr(expense, "currency", None)),
                 "employee_name": getattr(expense.empleado, "nombre", None) or "-",
                 "source_type": source_type,
                 "source_reference": getattr(source_document, "numero_referencia", None) or "-",
