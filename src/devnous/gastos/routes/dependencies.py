@@ -13,11 +13,24 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Empleado
-from ..services.access_control_service import can_access_path, visible_tools_for
+from ..services.access_control_service import (
+    can_access_path,
+    can_defer_path_authorization_to_route_guard,
+    visible_tools_for,
+)
 from ..services.payment_run_service import can_access_payment_run
 
 logger = logging.getLogger(__name__)
 ROUTE_OWNED_AUTHORIZATION_PREFIXES = ("/direccion/",)
+# These finance controls own their authorization at the route dependency.  Keep
+# this set exact: a profile permission must not turn into broad /admin/finanzas
+# visibility through the role-default access-control middleware.
+ROUTE_OWNED_AUTHORIZATION_PATHS = frozenset(
+    {
+        "/admin/finanzas/no-deducibles",
+        "/admin/finanzas/no-deducibles/export.xlsx",
+    }
+)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -44,7 +57,17 @@ def _uses_route_owned_authorization(path: str) -> bool:
     position, portfolio, tournament, and action decisions are enforced by the
     owning route guard rather than role-default middleware policy.
     """
-    return (path or "").startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
+    normalized_path = (path or "").rstrip("/") or "/"
+    return (
+        normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
+        or normalized_path.startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
+    )
+
+
+def _requires_explicit_decision_check(path: str) -> bool:
+    """Return whether a route-owned path must preserve a tool denial."""
+    normalized_path = (path or "").rstrip("/") or "/"
+    return normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
 
 
 def set_db_session_maker(session_maker):
@@ -237,16 +260,25 @@ async def get_current_empleado(
     try:
         empleado.visible_tool_keys = await visible_tools_for(session, empleado)
         request_path = str(getattr(request.url, "path", "") or "")
-        empleado.can_access_path = (
-            True
-            if _uses_route_owned_authorization(request_path)
-            else await can_access_path(
+        request_method = str(getattr(request, "method", "GET") or "GET")
+        if _uses_route_owned_authorization(request_path):
+            empleado.can_access_path = (
+                await can_defer_path_authorization_to_route_guard(
+                    session,
+                    empleado,
+                    request_path,
+                    request_method,
+                )
+                if _requires_explicit_decision_check(request_path)
+                else True
+            )
+        else:
+            empleado.can_access_path = await can_access_path(
                 session,
                 empleado,
                 request_path,
-                str(getattr(request, "method", "GET") or "GET"),
+                request_method,
             )
-        )
         if (
             not empleado.can_access_path
             and request_path.startswith("/admin/finanzas/payment-run")
