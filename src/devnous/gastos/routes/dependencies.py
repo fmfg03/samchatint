@@ -18,6 +18,15 @@ from ..services.payment_run_service import can_access_payment_run
 
 logger = logging.getLogger(__name__)
 ROUTE_OWNED_AUTHORIZATION_PREFIXES = ("/direccion/",)
+# These finance controls own their authorization at the route dependency.  Keep
+# this set exact: a profile permission must not turn into broad /admin/finanzas
+# visibility through the role-default access-control middleware.
+ROUTE_OWNED_AUTHORIZATION_PATHS = frozenset(
+    {
+        "/admin/finanzas/no-deducibles",
+        "/admin/finanzas/no-deducibles/export.xlsx",
+    }
+)
 
 # This will be set by the app that includes these routes
 _db_session_maker = None
@@ -44,7 +53,11 @@ def _uses_route_owned_authorization(path: str) -> bool:
     position, portfolio, tournament, and action decisions are enforced by the
     owning route guard rather than role-default middleware policy.
     """
-    return (path or "").startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
+    normalized_path = (path or "").rstrip("/") or "/"
+    return (
+        normalized_path in ROUTE_OWNED_AUTHORIZATION_PATHS
+        or normalized_path.startswith(ROUTE_OWNED_AUTHORIZATION_PREFIXES)
+    )
 
 
 def set_db_session_maker(session_maker):
