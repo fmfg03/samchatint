@@ -17215,6 +17215,21 @@ async def gastos_terceros(
     result = await session.execute(query)
     documentos = result.scalars().all()
 
+    solicitud_gasto_conceptos_by_doc: Dict[Any, List[str]] = {}
+    if documentos:
+        solicitud_gastos = await session.execute(
+            select(ExpenseReport.solicitud_documento_id, ExpenseReport.concepto).where(
+                ExpenseReport.solicitud_documento_id.in_(
+                    [doc.id for doc in documentos]
+                ),
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+        )
+        for solicitud_doc_id, gasto_concepto in solicitud_gastos.all():
+            solicitud_gasto_conceptos_by_doc.setdefault(solicitud_doc_id, []).append(
+                gasto_concepto or ""
+            )
+
     terceros_adj_meta = await fetch_documento_adjuntos_meta_batch(
         session, [d.id for d in documentos]
     )
@@ -17254,7 +17269,12 @@ async def gastos_terceros(
             and getattr(gasto, "estado_gasto", None) != "cancelado"
         )
         busqueda_attr = escape(
-            " ".join((proveedor_raw, concepto_raw, gasto_conceptos)).lower()
+            " ".join((
+                proveedor_raw,
+                concepto_raw,
+                gasto_conceptos,
+                *solicitud_gasto_conceptos_by_doc.get(doc.id, []),
+            )).lower()
         )
         ref_ops_attr = escape(ro_terc_raw.lower())
         solicitante_attr = escape(solicitante_nombre.lower())
