@@ -515,7 +515,20 @@ def test_documentos_todos_filter_form_preserves_q_field():
     assert 'name="situacion"' in text
     assert "Abiertas" in text
     assert "Cerradas" in text
-    assert "Referencia, proveedor, beneficiario, concepto" in text
+    assert "Proveedor o gasto específico" in text
+    assert "Concepto presupuestal" in text
+
+
+def test_documentos_todos_text_search_includes_active_linked_expenses():
+    from sqlalchemy.dialects import postgresql
+
+    expression = user_routes._documento_gasto_concepto_matches("%hospedaje%")
+    sql = str(expression.compile(dialect=postgresql.dialect()))
+    assert sql.count("expense_reports.concepto ILIKE") == 3
+    assert "expense_reports.documento_id = documentos.id" in sql
+    assert "expense_reports.solicitud_documento_id = documentos.id" in sql
+    assert "documentos.gasto_generado_id" in sql
+    assert "expense_reports.estado_gasto !=" in sql
 
 
 def test_documentos_todos_bulk_zip_href_is_built_from_filters():
