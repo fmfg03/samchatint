@@ -41014,25 +41014,15 @@ async def cuentas_de_gastos_list(
                     informe_doc_by_cuenta_id[cid] = inf
         reembolsos_by_cuenta_id: Dict[UUIDType, List[Reembolso]] = {}
         if cuentas:
-            informe_to_cuenta = {
-                inf.id: cid for cid, inf in informe_doc_by_cuenta_id.items()
-            }
-            settlement_filters = [Reembolso.cuenta_gastos_id.in_(cuenta_ids)]
-            if informe_to_cuenta:
-                settlement_filters.append(
-                    Reembolso.documento_id.in_(list(informe_to_cuenta))
-                )
             reembolsos_result = await session.execute(
                 select(Reembolso).where(
-                    or_(*settlement_filters),
+                    Reembolso.cuenta_gastos_id.in_(cuenta_ids),
                     Reembolso.tipo == "reembolso",
                     Reembolso.estado != "cancelado",
                 )
             )
             for item in reembolsos_result.scalars().all():
-                cid = item.cuenta_gastos_id or informe_to_cuenta.get(item.documento_id)
-                if cid in cuenta_ids:
-                    reembolsos_by_cuenta_id.setdefault(cid, []).append(item)
+                reembolsos_by_cuenta_id.setdefault(item.cuenta_gastos_id, []).append(item)
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
 
