@@ -1,10 +1,15 @@
 """DR paper balance and provenance from the accountant's sample layout."""
 
 from io import BytesIO
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
+from fastapi import HTTPException
 from openpyxl import load_workbook
 
+from devnous.gastos.routes import user_routes
 from devnous.gastos.services.informe_poliza_workpaper import (
     InformeWorkpaperExpense,
     generate_informe_poliza_workpaper,
@@ -79,3 +84,58 @@ def test_invalid_amounts_do_not_produce_a_plausible_dr(change):
         generate_informe_poliza_workpaper(
             [_expense(**change)], reference="REF 3", title="X", currency="MXN"
         )
+
+
+@pytest.mark.asyncio
+async def test_finance_route_includes_unclassified_expenses_without_writing(monkeypatch):
+    cuenta_id = uuid4()
+    owner_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=cuenta_id, empleado_id=owner_id, currency="MXN",
+        nombre="Gastos Edgar", referencia_base="IG-3",
+    )
+    expense = SimpleNamespace(
+        id=uuid4(), numero_referencia="G-1", fecha=None,
+        concepto="Gasolina", gasto_cantidad=700, iva=94.12,
+        cuenta_contable=None, cuenta_iva=None, contra_cuenta_contable=None,
+        cfdi_report=None, currency="MXN", pagado_con_amex_empresa=False,
+    )
+    session = SimpleNamespace(
+        get=AsyncMock(return_value=cuenta),
+        execute=AsyncMock(return_value=SimpleNamespace(
+            scalars=lambda: SimpleNamespace(all=lambda: [expense])
+        )),
+    )
+    monkeypatch.setattr(
+        user_routes, "_informe_documento_for_cuenta",
+        AsyncMock(return_value=SimpleNamespace(referencia_operaciones="3")),
+    )
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas")
+
+    response = await user_routes.exportar_papel_poliza_informe(
+        cuenta_id=cuenta_id, session=session, current_empleado=actor
+    )
+
+    assert response.status_code == 200
+    wb = load_workbook(BytesIO(response.body))
+    assert wb["Papel DR"]["F4"].value == 605.88
+    assert wb["Papel DR"]["B4"].value is None
+    assert wb["Origen y revisión"]["A2"].value == str(expense.id)
+    session.execute.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_finance_route_rejects_missing_informe(monkeypatch):
+    cuenta_id = uuid4()
+    cuenta = SimpleNamespace(id=cuenta_id, empleado_id=uuid4())
+    session = SimpleNamespace(get=AsyncMock(return_value=cuenta))
+    monkeypatch.setattr(
+        user_routes, "_informe_documento_for_cuenta", AsyncMock(return_value=None)
+    )
+    with pytest.raises(HTTPException) as error:
+        await user_routes.exportar_papel_poliza_informe(
+            cuenta_id=cuenta_id,
+            session=session,
+            current_empleado=SimpleNamespace(id=uuid4(), rol="finanzas"),
+        )
+    assert error.value.status_code == 409
