@@ -58,6 +58,10 @@ from ..services.coi_poliza_exporter import (
     generate_coi_poliza_csv,
     generate_coi_poliza_xlsx,
 )
+from ..services.informe_poliza_workpaper import (
+    InformeWorkpaperExpense,
+    generate_informe_poliza_workpaper,
+)
 from ..services.diot_exporter import (
     build_diot_export,
     create_diot_excel,
@@ -17191,7 +17195,9 @@ async def gastos_terceros(
     ).options(
         selectinload(Documento.empleado).selectinload(Empleado.aprobador),
         selectinload(Documento.proveedor_cliente),
-        selectinload(Documento.torneo)
+        selectinload(Documento.torneo),
+        selectinload(Documento.gastos),
+        selectinload(Documento.gasto_generado),
     )
 
     scope_dept = empleado_list_view_department_scope(current_empleado)
@@ -17208,6 +17214,21 @@ async def gastos_terceros(
 
     result = await session.execute(query)
     documentos = result.scalars().all()
+
+    solicitud_gasto_conceptos_by_doc: Dict[Any, List[str]] = {}
+    if documentos:
+        solicitud_gastos = await session.execute(
+            select(ExpenseReport.solicitud_documento_id, ExpenseReport.concepto).where(
+                ExpenseReport.solicitud_documento_id.in_(
+                    [doc.id for doc in documentos]
+                ),
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+        )
+        for solicitud_doc_id, gasto_concepto in solicitud_gastos.all():
+            solicitud_gasto_conceptos_by_doc.setdefault(solicitud_doc_id, []).append(
+                gasto_concepto or ""
+            )
 
     terceros_adj_meta = await fetch_documento_adjuntos_meta_batch(
         session, [d.id for d in documentos]
@@ -17238,6 +17259,23 @@ async def gastos_terceros(
         fecha_aprobacion_display = (format_value(doc.aprobado_en) if getattr(doc, "aprobado_en", None) else "-")
         concepto_raw = (doc.concepto_pago or "").strip()
         concepto_display = escape(concepto_raw) if concepto_raw else "—"
+        gasto_conceptos = " ".join(
+            str(gasto.concepto or "")
+            for gasto in [
+                *(getattr(doc, "gastos", None) or []),
+                getattr(doc, "gasto_generado", None),
+            ]
+            if gasto is not None
+            and getattr(gasto, "estado_gasto", None) != "cancelado"
+        )
+        busqueda_attr = escape(
+            " ".join((
+                proveedor_raw,
+                concepto_raw,
+                gasto_conceptos,
+                *solicitud_gasto_conceptos_by_doc.get(doc.id, []),
+            )).lower()
+        )
         ref_ops_attr = escape(ro_terc_raw.lower())
         solicitante_attr = escape(solicitante_nombre.lower())
         concepto_attr = escape(concepto_raw.lower())
@@ -17266,7 +17304,7 @@ async def gastos_terceros(
         )
 
         rows_html += f"""
-        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-accion="{accion_attr}">
+        <tr data-ref-ops="{ref_ops_attr}" data-concepto="{concepto_attr}" data-solicitante="{solicitante_attr}" data-proveedor="{proveedor_attr}" data-busqueda="{busqueda_attr}" data-accion="{accion_attr}">
             <td>{doc_link}</td>
             <td style="white-space: nowrap;">{ro_terc_display}</td>
             <td>{solicitante_nombre}</td>
@@ -17375,6 +17413,10 @@ async def gastos_terceros(
                     </div>
                     <div class="terceros-filter-bar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin:14px 0 16px 0;padding:14px;border:1px solid #e5e7eb;border-radius:14px;background:#f8fafc;">
                         <div>
+                            <label for="terceros-search-texto" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Proveedor o gasto</label>
+                            <input type="search" id="terceros-search-texto" placeholder="Nombre del proveedor o gasto específico…" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
+                        </div>
+                        <div>
                             <label for="terceros-search-ref" style="display:block; font-size:12px; color:#6b7280; margin-bottom:4px;">Referencia Operaciones</label>
                             <input type="search" id="terceros-search-ref" inputmode="numeric" placeholder="Ej. 3" autocomplete="off" style="width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; font-size:14px; box-sizing:border-box;">
                         </div>
@@ -17423,13 +17465,14 @@ async def gastos_terceros(
                 </section>
                 <script>
                     (function() {{
+                        var textoInput = document.getElementById('terceros-search-texto');
                         var refInput = document.getElementById('terceros-search-ref');
                         var proveedorInput = document.getElementById('terceros-search-proveedor');
                         var solicitanteInput = document.getElementById('terceros-search-solicitante');
                         var conInput = document.getElementById('terceros-search-concepto');
                         var accionInput = document.getElementById('terceros-search-accion');
                         var table = document.getElementById('terceros-table');
-                        if (!table || (!refInput && !proveedorInput && !solicitanteInput && !conInput && !accionInput)) return;
+                        if (!table || (!textoInput && !refInput && !proveedorInput && !solicitanteInput && !conInput && !accionInput)) return;
                         var noMatches = document.getElementById('terceros-no-matches');
                         var rows = table.querySelectorAll('tbody tr[data-ref-ops]');
                         function normalizeText(value) {{
@@ -17442,6 +17485,7 @@ async def gastos_terceros(
                                 .trim();
                         }}
                         function applyFilter() {{
+                            var qTexto = normalizeText(textoInput && textoInput.value);
                             var qRef = normalizeText(refInput && refInput.value);
                             var qProveedor = normalizeText(proveedorInput && proveedorInput.value);
                             var qSolicitante = normalizeText(solicitanteInput && solicitanteInput.value);
@@ -17449,6 +17493,7 @@ async def gastos_terceros(
                             var qAccion = normalizeText(accionInput && accionInput.value);
                             var visible = 0;
                             rows.forEach(function(row) {{
+                                var texto = normalizeText(row.getAttribute('data-busqueda'));
                                 var ref = normalizeText(row.getAttribute('data-ref-ops'));
                                 var proveedor = normalizeText(row.getAttribute('data-proveedor'));
                                 var solicitante = normalizeText(row.getAttribute('data-solicitante'));
@@ -17459,7 +17504,8 @@ async def gastos_terceros(
                                 var matchSolicitante = !qSolicitante || solicitante.indexOf(qSolicitante) !== -1;
                                 var matchCon = !qCon || con.indexOf(qCon) !== -1;
                                 var matchAccion = !qAccion || accion.indexOf(qAccion) !== -1;
-                                var match = matchRef && matchProveedor && matchSolicitante && matchCon && matchAccion;
+                                var matchTexto = !qTexto || texto.indexOf(qTexto) !== -1;
+                                var match = matchTexto && matchRef && matchProveedor && matchSolicitante && matchCon && matchAccion;
                                 row.style.display = match ? '' : 'none';
                                 if (match) visible++;
                             }});
@@ -17467,6 +17513,7 @@ async def gastos_terceros(
                                 noMatches.style.display = (rows.length > 0 && visible === 0) ? '' : 'none';
                             }}
                         }}
+                        if (textoInput) textoInput.addEventListener('input', applyFilter);
                         if (refInput) refInput.addEventListener('input', applyFilter);
                         if (proveedorInput) proveedorInput.addEventListener('input', applyFilter);
                         if (solicitanteInput) solicitanteInput.addEventListener('input', applyFilter);
@@ -31421,6 +31468,21 @@ def _documentos_amount_totals_by_currency(
     return totals
 
 
+def _documento_gasto_concepto_matches(q_filter: str):
+    """Match active expenses explicitly linked to a document, without widening access."""
+    active_concept = and_(
+        ExpenseReport.estado_gasto != "cancelado",
+        ExpenseReport.concepto.ilike(q_filter),
+    )
+    return or_(
+        Documento.gastos.any(active_concept),
+        Documento.gasto_generado.has(active_concept),
+        select(ExpenseReport.id)
+        .where(ExpenseReport.solicitud_documento_id == Documento.id, active_concept)
+        .exists(),
+    )
+
+
 @router.get("/documentos/todos", response_class=HTMLResponse)
 async def documentos_todos(
     request: Request,
@@ -31526,6 +31588,7 @@ async def documentos_todos(
                 Documento.concepto_pago.ilike(q_filter),
                 Documento.referencia_pago.ilike(q_filter),
                 Documento.referencia_operaciones.ilike(q_filter),
+                _documento_gasto_concepto_matches(q_filter),
                 Empleado.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),
@@ -31665,13 +31728,13 @@ async def documentos_todos(
         <div class="section-head" style="margin-bottom:12px;">
             <div>
                 <h2>Filtros</h2>
-                <div class="section-note">Reduce la vista consolidada por referencia, estado, tipo, solicitante, beneficiario, proveedor o concepto.</div>
+                <div class="section-note">Selecciona Tipo: Solicitud y busca por proveedor, descripción de pago o gasto. El selector de concepto es presupuestal.</div>
             </div>
         </div>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: end;">
             <div>
-                <label for="q" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Búsqueda:</label>
-                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Referencia, proveedor, beneficiario, concepto...">
+                <label for="q" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Proveedor, pago o gasto:</label>
+                <input type="text" name="q" id="q" value="{escape(q_value)}" placeholder="Proveedor o gasto específico...">
             </div>
             <div>
                 <label for="estado" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Estado:</label>
@@ -31690,7 +31753,7 @@ async def documentos_todos(
                 <select name="torneo" id="todos_torneo" multiple size="4">{_approval_history_select_options(filter_options["torneo"], selected_torneo)}</select>
             </div>
             <div>
-                <label for="todos_concepto" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Concepto:</label>
+                <label for="todos_concepto" style="display: block; margin-bottom: 5px; font-weight: bold; color: #333;">Concepto presupuestal:</label>
                 <select name="concepto" id="todos_concepto" multiple size="4">{_approval_history_select_options(filter_options["concepto"], selected_concepto)}</select>
             </div>
             <div>
@@ -31919,6 +31982,7 @@ async def _query_documentos_todos_for_export(
                 Documento.concepto_pago.ilike(q_filter),
                 Documento.referencia_pago.ilike(q_filter),
                 Documento.referencia_operaciones.ilike(q_filter),
+                _documento_gasto_concepto_matches(q_filter),
                 Empleado.nombre.ilike(q_filter),
                 beneficiario_alias.nombre.ilike(q_filter),
                 proveedor_alias.nombre.ilike(q_filter),
@@ -33914,6 +33978,92 @@ async def exportar_coi_poliza_cuenta(
     return RedirectResponse(
         url=f"/documentos/{informe_or_response.id}/exportar-coi",
         status_code=303,
+    )
+
+
+@router.get("/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx")
+async def exportar_papel_poliza_informe(
+    cuenta_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> Response:
+    """A DR workpaper for Finance, independent of COI classification readiness."""
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de gastos no encontrado.")
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso denegado.")
+    informe = await _informe_documento_for_cuenta(session, cuenta_id)
+    if informe is None:
+        raise HTTPException(status_code=409, detail="Falta el documento INFORME vinculado.")
+
+    expenses = (
+        await session.execute(
+            select(ExpenseReport)
+            .options(
+                selectinload(ExpenseReport.cuenta_contable),
+                selectinload(ExpenseReport.cuenta_iva),
+                selectinload(ExpenseReport.contra_cuenta_contable),
+                selectinload(ExpenseReport.cfdi_report),
+            )
+            .where(
+                ExpenseReport.cuenta_gastos_id == cuenta_id,
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+            .order_by(ExpenseReport.created_at.asc(), ExpenseReport.fecha.asc())
+        )
+    ).scalars().all()
+    if not expenses:
+        raise HTTPException(status_code=409, detail="El informe no tiene gastos activos.")
+    currency = str(cuenta.currency or "MXN").upper()
+    if any(str(expense.currency or "MXN").upper() != currency for expense in expenses):
+        raise HTTPException(
+            status_code=409,
+            detail="El informe contiene gastos en distintas monedas; no es posible cuadrarlos juntos.",
+        )
+    workpaper_expenses = [
+        InformeWorkpaperExpense(
+            source_id=str(expense.id),
+            reference=expense.numero_referencia or "",
+            date=expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "",
+            description=(
+                " / ".join(
+                    part
+                    for part in (
+                        getattr(expense.cfdi_report, "emisor_nombre", None),
+                        expense.concepto,
+                    )
+                    if part
+                )
+            ),
+            amount=float(expense.gasto_cantidad or 0),
+            vat=float(expense.iva) if expense.iva is not None else None,
+            expense_account=getattr(expense.cuenta_contable, "codigo", "") or "",
+            vat_account=getattr(expense.cuenta_iva, "codigo", "") or "",
+            counterpart_account=(
+                getattr(expense.contra_cuenta_contable, "codigo", "") or ""
+            ),
+            company_amex=is_company_amex_expense(expense),
+            cfdi_uuid=getattr(expense.cfdi_report, "cfdi_uuid", "") or "",
+        )
+        for expense in expenses
+    ]
+    try:
+        workbook = generate_informe_poliza_workpaper(
+            workpaper_expenses,
+            reference=(informe.referencia_operaciones or cuenta.referencia_base or ""),
+            title=cuenta.nombre or cuenta.referencia_base or "Informe de gastos",
+            currency=currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    name = _safe_export_filename(
+        informe.referencia_operaciones or cuenta.referencia_base or str(cuenta.id)[:8]
+    )
+    return Response(
+        content=workbook,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Papel_poliza_{name}.xlsx"'},
     )
 
 
@@ -42730,7 +42880,15 @@ async def cuenta_de_gastos_detail(
         """
     coi_actions_html = ""
     diot_actions_html = ""
+    papel_poliza_html = ""
     if informe_doc and active_expenses:
+        if (current_empleado.rol or "").strip().lower() in {
+            "finanzas", "admin", "superadmin", "super_admin"
+        }:
+            papel_poliza_html = (
+                f'<a href="/informes-de-gastos/{cuenta.id}/papel-poliza.xlsx" '
+                'class="button secondary">Armar papel de póliza (Excel)</a>'
+            )
         if informe_doc_approved:
             coi_actions_html = f"""
         <a href="/informes-de-gastos/{cuenta.id}/preview-coi" class="button secondary">Vista previa COI</a>
@@ -42754,6 +42912,7 @@ async def cuenta_de_gastos_detail(
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
+        {papel_poliza_html}
         {coi_actions_html}
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if _can_manage_cuenta and _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc) else ''}

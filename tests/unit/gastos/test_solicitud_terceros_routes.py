@@ -704,6 +704,9 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
         currency="MXN",
         fecha_pago=None,
         concepto_pago="PRIMER APOYO DE ACUERDO A CONVENIO",
+        gasto_generado=SimpleNamespace(
+            concepto="Hospedaje fase nacional", estado_gasto="aprobado"
+        ),
         estado="enviado",
     )
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_args: "")
@@ -713,7 +716,13 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
     monkeypatch.setattr(user_routes, "has_permission", lambda *_args, **_kwargs: False)
 
     session = AsyncMock()
-    session.execute = AsyncMock(return_value=_scalars_result([doc]))
+    solicitud_gastos_result = MagicMock()
+    solicitud_gastos_result.all.return_value = [
+        (doc_id, "Traslado de equipo nacional"),
+    ]
+    session.execute = AsyncMock(
+        side_effect=[_scalars_result([doc]), solicitud_gastos_result]
+    )
     empleado = SimpleNamespace(
         id=uuid4(),
         nombre="Ana Operaciones",
@@ -729,6 +738,10 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
 
     assert 'class="terceros-filter-bar"' in html
     assert 'id="terceros-search-proveedor"' in html
+    assert 'id="terceros-search-texto"' in html
+    assert 'data-busqueda="hk diseno, s.a. de c.v. primer apoyo de acuerdo a convenio hospedaje fase nacional traslado de equipo nacional"' in html
+    assert session.execute.await_count == 2
+    assert "matchTexto" in html
     assert "Por proveedor" in html
     assert 'data-proveedor="hk diseno, s.a. de c.v."' in html
     assert "normalize('NFD')" in html
