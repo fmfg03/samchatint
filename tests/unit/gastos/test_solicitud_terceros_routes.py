@@ -704,6 +704,9 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
         currency="MXN",
         fecha_pago=None,
         concepto_pago="PRIMER APOYO DE ACUERDO A CONVENIO",
+        gasto_generado=SimpleNamespace(
+            concepto="Hospedaje fase nacional", estado_gasto="aprobado"
+        ),
         estado="enviado",
     )
     monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_args: "")
@@ -729,6 +732,9 @@ async def test_gastos_terceros_includes_provider_search_filter(monkeypatch) -> N
 
     assert 'class="terceros-filter-bar"' in html
     assert 'id="terceros-search-proveedor"' in html
+    assert 'id="terceros-search-texto"' in html
+    assert 'data-busqueda="hk diseno, s.a. de c.v. primer apoyo de acuerdo a convenio hospedaje fase nacional"' in html
+    assert "matchTexto" in html
     assert "Por proveedor" in html
     assert 'data-proveedor="hk diseno, s.a. de c.v."' in html
     assert "normalize('NFD')" in html
