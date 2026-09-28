@@ -40893,7 +40893,10 @@ def _informe_reembolso_payment_state(
     ]
     paid_docs = [
         doc for doc in reimbursement_docs
-        if str(getattr(doc, "estado", "") or "").lower() == "pagado"
+        if (
+            str(getattr(doc, "estado", "") or "").lower() == "pagado"
+            or getattr(doc, "pagado_en", None) is not None
+        )
     ]
     paid_settlements = [
         item for item in reembolsos
@@ -45366,7 +45369,7 @@ async def descargar_reembolso_adjunto(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     reembolso_result = await session.execute(
