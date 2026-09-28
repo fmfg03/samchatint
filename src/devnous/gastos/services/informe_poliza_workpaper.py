@@ -60,9 +60,6 @@ def generate_informe_poliza_workpaper(
     sheet["A3"] = "Dr"
     sheet["B3"] = 3
     sheet["C3"] = _safe_text(f"{reference} / {title}")
-    sheet["D3"] = sum(1 + (1 if _money(item.vat or 0) > 0 else 0) for item in expenses) + len(
-        {item.company_amex for item in expenses}
-    )
 
     origin = wb.create_sheet("Origen y revisión")
     origin.append(
@@ -132,6 +129,7 @@ def generate_informe_poliza_workpaper(
         sheet.cell(row, 7, float(totals[group]))
         row += 1
     last = row - 1
+    sheet["D3"] = last - 3
     sheet.cell(row, 2, "FIN_PARTIDAS")
 
     review = wb.create_sheet("Cuadre")
