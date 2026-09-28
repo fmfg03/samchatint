@@ -5121,7 +5121,7 @@ async def contabilidad_coi_view(
 
     html = f"""
     <!DOCTYPE html>
-    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Historial COI</title>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>COI: preparar, exportar e historial</title>
     <style>
     body {{ font-family: Arial, sans-serif; background:#f6f8fb; margin:0; padding:20px; }}
     .container {{ max-width: 1520px; margin:0 auto; }}
@@ -5138,14 +5138,32 @@ async def contabilidad_coi_view(
     .button {{ display:inline-block; padding:10px 14px; border-radius:8px; text-decoration:none; background:#111827; color:#fff; border:none; cursor:pointer; }}
     .button.secondary {{ background:#e5e7eb; color:#111827; }}
     .muted {{ color:#6b7280; font-size:13px; }}
+    .task-journey {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:0 0 16px; }}
+    .task-link {{ display:block; border:1px solid #dbe3ee; border-radius:10px; padding:12px; color:#111827; text-decoration:none; background:#f8fafc; }}
+    .task-link:hover, .task-link:focus {{ border-color:#111827; background:#fff; }}
+    .task-link strong {{ display:block; margin-bottom:4px; }}
     code {{ font-size:12px; }}
     </style></head>
     <body><div class="container">{render_top_navigation(current_empleado, "contabilidad")}{_contabilidad_subnav("coi")}
     <div class="card">
-        <h1 style="margin:0 0 8px 0;">Historial COI</h1>
-        <p class="muted" style="margin:0 0 16px 0;">Consulta pólizas importadas y gastos preparados o exportados por SamChat. El mes de los gastos se determina exclusivamente por su fecha contable.</p>
+        <h1 style="margin:0 0 8px 0;">COI: preparar, exportar e historial</h1>
+        <p class="muted" style="margin:0 0 16px 0;">Completa la preparación contable, revisa y exporta gastos listos, y consulta las pólizas e imports registrados. El mes de los gastos se determina exclusivamente por su fecha contable.</p>
         {f'<div style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>✅ Éxito:</strong> {escape(success_msg)}</div>' if success_msg else ''}
         {f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>❌ Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
+        <nav class="task-journey" aria-label="Flujo de trabajo COI">
+            <a class="task-link" href="/admin/gastos/sin-cuenta-contable?period={selected_year}-{selected_month:02d}">
+                <strong>1. Preparar COI</strong>
+                <span class="muted">Corrige cuentas y clasificación en Limpieza contable antes de exportar.</span>
+            </a>
+            <a class="task-link" href="#coi-exportacion">
+                <strong>2. Revisar y exportar</strong>
+                <span class="muted">Selecciona explícitamente los gastos listos que deben integrar el archivo COI.</span>
+            </a>
+            <a class="task-link" href="#coi-historial">
+                <strong>3. Consultar historial</strong>
+                <span class="muted">Revisa pólizas importadas, sus totales y las últimas cargas registradas.</span>
+            </a>
+        </nav>
         <form method="GET" action="/admin/contabilidad/coi" class="toolbar" style="margin-bottom:16px;">
             <div><label>Año</label><input type="number" name="year" value="{selected_year}"></div>
             <div><label>Mes</label><input type="number" min="1" max="12" name="month" value="{selected_month}"></div>
@@ -5160,9 +5178,9 @@ async def contabilidad_coi_view(
             <div class="box"><div class="label">Diferencia</div><div class="value">{format_currency(total_debe - total_haber)}</div></div>
         </div>
     </div>
-    <div class="card">
+    <div class="card" id="coi-exportacion">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
-            <h2 style="margin:0;">Gastos preparados para COI en este periodo</h2>
+            <h2 style="margin:0;">2. Revisar y exportar gastos listos</h2>
             <form id="coi-export-form" method="POST" action="/admin/contabilidad/coi/exportar-gastos-lote.xlsx" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                 <input type="hidden" name="year" value="{selected_year}">
                 <input type="hidden" name="month" value="{selected_month}">
@@ -5209,8 +5227,10 @@ async def contabilidad_coi_view(
             <tbody>{exportable_rows_html}</tbody>
         </table>
     </div>
+    <section id="coi-historial" aria-labelledby="coi-historial-heading">
     <div class="card">
-        <h2 style="margin:0 0 12px 0;">Resumen por tipo de póliza</h2>
+        <h2 id="coi-historial-heading" style="margin:0 0 12px 0;">3. Historial e imports</h2>
+        <h3 style="margin:0 0 12px 0;">Resumen por tipo de póliza</h3>
         <table>
             <thead><tr><th>Tipo</th><th>Pólizas</th><th>Debe</th><th>Haber</th></tr></thead>
             <tbody>{summary_rows if summary_rows else '<tr><td colspan="4" class="muted">Sin pólizas para el filtro seleccionado.</td></tr>'}</tbody>
@@ -5218,7 +5238,7 @@ async def contabilidad_coi_view(
     </div>
     <div class="card">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">
-            <h2 style="margin:0;">Pólizas importadas</h2>
+            <h3 style="margin:0;">Pólizas importadas</h3>
             <a href="/admin/contabilidad/coi/carga-masiva" class="button secondary">Cargar COI</a>
         </div>
         <table>
@@ -5227,12 +5247,13 @@ async def contabilidad_coi_view(
         </table>
     </div>
     <div class="card">
-        <h2 style="margin:0 0 12px 0;">Últimos imports COI</h2>
+        <h3 style="margin:0 0 12px 0;">Últimos imports COI</h3>
         <table>
             <thead><tr><th>Inicio</th><th>Archivo</th><th>Modo</th><th>Status</th><th>Usuario</th></tr></thead>
             <tbody>{run_rows if run_rows else '<tr><td colspan="5" class="muted">Sin imports COI registrados.</td></tr>'}</tbody>
         </table>
     </div>
+    </section>
     </div>
     <script>
     (() => {{

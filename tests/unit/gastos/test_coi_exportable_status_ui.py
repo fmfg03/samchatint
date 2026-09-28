@@ -60,6 +60,37 @@ def test_coi_export_page_requires_explicit_visible_selection():
     assert 'coi_estado = "contabilizado"' in source
 
 
+def test_coi_view_separates_preparation_export_and_history_tasks():
+    from pathlib import Path
+
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def contabilidad_coi_view")
+    end = source.index(
+        '@router.post("/admin/contabilidad/coi/gastos/{expense_id}/estado")',
+        start,
+    )
+    view_source = source[start:end]
+
+    assert (
+        '<nav class="task-journey" aria-label="Flujo de trabajo COI">'
+        in view_source
+    )
+    assert (
+        'href="/admin/gastos/sin-cuenta-contable?period={selected_year}-{selected_month:02d}"'
+        in view_source
+    )
+    assert "1. Preparar COI" in view_source
+    assert "2. Revisar y exportar" in view_source
+    assert "3. Consultar historial" in view_source
+    assert 'id="coi-exportacion"' in view_source
+    assert (
+        '<section id="coi-historial" aria-labelledby="coi-historial-heading">'
+        in view_source
+    )
+    assert "2. Revisar y exportar gastos listos" in view_source
+    assert "3. Historial e imports" in view_source
+
+
 def test_coi_lote_filters_expenses_by_accounting_date_not_document_date():
     from pathlib import Path
 
