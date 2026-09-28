@@ -10,6 +10,7 @@ from devnous.gastos.routes.user_routes import (
     _derive_informe_operational_status,
     _informe_reembolso_payment_state,
     _informe_reembolso_proof_links,
+    _render_informe_reembolso_payment_html,
 )
 
 
@@ -126,6 +127,43 @@ def test_direct_reembolso_payment_and_proof_are_visible():
     assert f"/documentos/{doc_id}/adjuntos/{proof_id}" in links[0]
     assert str(unrelated_id) not in " ".join(links)
     assert f"/informes-de-gastos/{cuenta_id}/reembolsos/{settlement_id}/adjuntos/{proof_id}" in links[1]
+
+
+def test_reembolso_detail_panel_distinguishes_pending_paid_and_missing_proof():
+    cuenta_id, doc_id, settlement_id, proof_id = (uuid4() for _ in range(4))
+    doc = SimpleNamespace(id=doc_id, numero_referencia="S-167")
+    settlement = SimpleNamespace(id=settlement_id)
+    kwargs = dict(
+        cuenta_id=cuenta_id,
+        documento_metas={doc_id: [SimpleNamespace(id=proof_id, categoria="comprobante_pago")]},
+        settlement_metas={settlement_id: [SimpleNamespace(id=proof_id)]},
+    )
+    assert _render_informe_reembolso_payment_html(
+        state="no_aplica", documento=None, settlement=None, **kwargs
+    ) == ""
+    pending = _render_informe_reembolso_payment_html(
+        state="pendiente", documento=doc, settlement=None, **kwargs
+    )
+    assert "Pendiente de pago" in pending
+    assert "S-167" in pending
+    assert str(proof_id) not in pending
+    paid = _render_informe_reembolso_payment_html(
+        state="pagado", documento=doc, settlement=None, **kwargs
+    )
+    assert f"/documentos/{doc_id}/adjuntos/{proof_id}" in paid
+    direct = _render_informe_reembolso_payment_html(
+        state="pagado", documento=None, settlement=settlement, **kwargs
+    )
+    assert f"/reembolsos/{settlement_id}/adjuntos/{proof_id}" in direct
+    without_proof = _render_informe_reembolso_payment_html(
+        state="pagado", documento=doc, settlement=None,
+        cuenta_id=cuenta_id, documento_metas={}, settlement_metas={},
+    )
+    assert "Comprobante pendiente de adjuntar" in without_proof
+    without_request = _render_informe_reembolso_payment_html(
+        state="sin_solicitud", documento=None, settlement=None, **kwargs
+    )
+    assert "sin solicitud registrada" in without_request
 
 
 def _rows(items):
