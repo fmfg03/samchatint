@@ -1725,19 +1725,24 @@ def _ar_shell(*, title: str, body: str) -> HTMLResponse:
 
 
 @app.get("/admin/finanzas/cuentas-por-cobrar", response_class=HTMLResponse)
-async def journey_finance_accounts_receivable(reset: bool = False):
+async def journey_finance_accounts_receivable(
+    request: Request, reset: bool = False
+):
     """Test-only shell over the canonical AR read and matching renderers."""
     if reset:
         AR_FIXTURE.reset()
     read_model = AR_FIXTURE.read_model()
+    base_url = str(request.url.path)
+    if request.url.query:
+        base_url = f"{base_url}?{request.url.query}"
     body = ar_admin_ui.render_ar_read_model_html(
         read_model,
-        base_url="/admin/finanzas/cuentas-por-cobrar",
+        base_url=base_url,
         export_url="/admin/finanzas/cuentas-por-cobrar/export.xlsx",
         prepoliza_export_url=(
             "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
         ),
-        return_to="/admin/finanzas/cuentas-por-cobrar",
+        return_to=base_url,
     )
     body += ar_admin_ui.render_ar_matching_workbench_html(
         AR_FIXTURE.matching_workbench(),
@@ -1805,13 +1810,20 @@ async def journey_finance_ar_prepoliza_export():
 
 
 @app.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
-async def journey_accounting_accounts_receivable():
+async def journey_accounting_accounts_receivable(request: Request):
     """Isolated destination proving the accounting CxC purpose remains distinct."""
+    finance_href = user_routes._finance_cxc_workbench_href(
+        edition_year=request.query_params.get("edition_year"),
+        tournament_id=request.query_params.get("tournament_id"),
+        client=request.query_params.get("cliente"),
+        credit_days=int(request.query_params.get("dias_credito") or 0),
+    )
     return _ar_shell(
-        title="Vista contable CxC",
+        title="Vista contable CxC: CFDI y pólizas",
         body="""
-        <section class="workspace-card"><h1>Vista contable CxC</h1>
+        <section class="workspace-card"><h1>Vista contable CxC: CFDI y pólizas</h1>
         <p>Consulta de CFDI emitidos y pólizas de ingreso cobrado.</p>
-        <p>Esta vista no acepta ni revierte matches de cobranza.</p></section>
-        """,
+        <p>Esta vista no acepta ni revierte matches de cobranza.</p>
+        """
+        + f'<a class="button secondary" href="{escape(finance_href, quote=True)}">Workbench CxC: facturación y cobranza</a></section>',
     )

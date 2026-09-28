@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from samchat.ar.admin_ui import (
+    _accounting_cxc_href,
     render_ar_item_detail_html,
     render_ar_matching_workbench_html,
     render_ar_read_model_html,
@@ -89,7 +90,7 @@ def _payload() -> dict:
 def test_render_ar_read_model_html_includes_expected_sections():
     html = render_ar_read_model_html(_payload())
 
-    assert "Cuentas por Cobrar" in html
+    assert "Workbench CxC: facturación y cobranza" in html
     assert "Lectura ejecutiva CxC" in html
     assert "Cartera filtrada" in html
     assert "Prioridad ejecutiva de cartera" in html
@@ -105,6 +106,29 @@ def test_render_ar_read_model_html_includes_expected_sections():
     assert "collection_unknown" in html
     assert "Descargar Excel CxC" in html
     assert "Descargar prepólizas CxC" in html
+    assert "Vista contable: CFDI y pólizas" in html
+
+
+def test_accounting_cxc_href_preserves_only_equivalent_finance_context():
+    href = _accounting_cxc_href(
+        "/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&budget_version_id=version-1&tournament_id=torneo-1&cliente=Cliente+UX"
+        "&dias_credito=30&estado=Vencido"
+    )
+
+    assert href == (
+        "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=vencido"
+    )
+
+
+def test_accounting_cxc_href_does_not_invent_an_accounting_status():
+    href = _accounting_cxc_href(
+        "/admin/finanzas/cuentas-por-cobrar?estado=Cobranza+desconocida"
+    )
+
+    assert href == "/admin/contabilidad/cuentas-por-cobrar"
 
 
 def test_render_ar_read_model_html_includes_executive_cxc_kpis():

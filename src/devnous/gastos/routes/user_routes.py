@@ -21049,6 +21049,25 @@ def _safe_cxc_return_url(return_to: Optional[str]) -> str:
     return "/admin/contabilidad/cuentas-por-cobrar"
 
 
+def _finance_cxc_workbench_href(
+    *,
+    edition_year: Optional[int],
+    tournament_id: Optional[str],
+    client: Optional[str],
+    credit_days: int,
+) -> str:
+    """Return the Finance CxC workbench with only shared filter context."""
+    query = []
+    if edition_year:
+        query.append(("edition_year", str(edition_year)))
+    if tournament_id:
+        query.append(("tournament_id", str(tournament_id)))
+    if client:
+        query.append(("cliente", str(client)))
+    query.append(("dias_credito", str(credit_days)))
+    return "/admin/finanzas/cuentas-por-cobrar?" + urlencode(query)
+
+
 @router.get("/admin/contabilidad/cuentas-por-cobrar", response_class=HTMLResponse)
 async def contabilidad_cuentas_por_cobrar_view(
     request: Request,
@@ -21411,6 +21430,12 @@ async def contabilidad_cuentas_por_cobrar_view(
     )
     desde_value = escape(from_date.date().isoformat())
     hasta_value = escape((to_date_exclusive.date() - timedelta(days=1)).isoformat())
+    finance_workbench_href = _finance_cxc_workbench_href(
+        edition_year=resolved_edition_year,
+        tournament_id=selected_torneo_id or None,
+        client=cliente_filter or None,
+        credit_days=dias_credito,
+    )
 
     html = f"""
     <!DOCTYPE html>
@@ -21447,8 +21472,13 @@ async def contabilidad_cuentas_por_cobrar_view(
         {f'<div class="card" style="border-color:#bbf7d0;background:#f0fdf4;color:#166534;font-weight:700;">{escape(success_msg)}</div>' if success_msg else ''}
         {f'<div class="card" style="border-color:#fecaca;background:#fef2f2;color:#991b1b;font-weight:700;">{escape(error_msg)}</div>' if error_msg else ''}
         <div class="card">
-            <h1 style="margin:0 0 8px 0;">Cuentas por Cobrar</h1>
-            <p class="muted" style="margin:0;">Facturas emitidas por las RFC activas de Plataforma cruzadas contra ingresos cobrados registrados por UUID. Vista read-only para cartera y cash flow.</p>
+            <h1 style="margin:0 0 8px 0;">Vista contable CxC: CFDI y pólizas</h1>
+            <p class="muted" style="margin:0;">
+                Facturas emitidas por las RFC activas de Plataforma cruzadas contra
+                ingresos cobrados registrados por UUID. Esta vista no acepta ni
+                revierte matches de cobranza; la clasificación de CFDI PSP conserva
+                su permiso restringido.
+            </p>
         </div>
         <div class="card">
             <form method="GET" action="/admin/contabilidad/cuentas-por-cobrar" class="toolbar">
@@ -21462,6 +21492,7 @@ async def contabilidad_cuentas_por_cobrar_view(
                 <div><button type="submit" class="button">Filtrar</button></div>
                 <div><a class="button secondary" href="/admin/contabilidad/cash-flow">Cash Flow</a></div>
                 <div><a class="button secondary" href="/admin/finanzas/cuentas-por-cobrar/export.xlsx?edition_year={resolved_edition_year}&dias_credito={dias_credito}">Excel CxC</a></div>
+                <div><a class="button secondary" href="{escape(finance_workbench_href, quote=True)}">Workbench CxC: facturación y cobranza</a></div>
             </form>
         </div>
         <div class="grid">

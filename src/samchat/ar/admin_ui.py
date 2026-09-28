@@ -83,6 +83,29 @@ def _url_with_query_value(base_url: str, key: str, value: Any) -> str:
     )
 
 
+def _accounting_cxc_href(base_url: str) -> str:
+    """Carry only equivalent Finance CxC context into the accounting view."""
+    parsed = urlsplit(base_url)
+    finance_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    accounting_query = [
+        (key, value)
+        for key in ("edition_year", "tournament_id", "cliente", "dias_credito")
+        if (value := finance_query.get(key))
+    ]
+    status = str(finance_query.get("estado") or "").strip().lower()
+    accounting_status = {
+        "todos": "todos",
+        "cobrado": "cobrado",
+        "vencido": "vencido",
+    }.get(status)
+    if accounting_status:
+        accounting_query.append(("estado", accounting_status))
+    query = urlencode(accounting_query)
+    return "/admin/contabilidad/cuentas-por-cobrar" + (
+        f"?{query}" if query else ""
+    )
+
+
 def _executive_kpi_card(
     label: str,
     value: Any,
@@ -518,16 +541,12 @@ def _detail_action_links(item: dict[str, Any], *, return_to: str) -> str:
             accounting_query.append(
                 f"torneo_id={quote(str(item.get('tournament_id')), safe='')}"
             )
-        if budget_version_id:
-            accounting_query.append(
-                f"budget_version_id={quote(budget_version_id, safe='')}"
-            )
         accounting_href = "/admin/contabilidad/cuentas-por-cobrar"
         if accounting_query:
             accounting_href = f"{accounting_href}?{'&'.join(accounting_query)}"
         links.append(
             '<a class="button secondary" '
-            f'href="{escape(accounting_href)}">Vista contable CxC</a>'
+            f'href="{escape(accounting_href)}">Vista contable: CFDI y pólizas</a>'
         )
     return "".join(links)
 
@@ -1119,10 +1138,11 @@ def render_ar_read_model_html(
         "<th>Detalle</th>"
         "</tr></thead>"
     )
+    accounting_href = _accounting_cxc_href(base_url)
 
     return f"""
         <section class="workspace-card ar-warning" style="margin-bottom:18px;">
-            <div class="workspace-section-title">Cuentas por Cobrar</div>
+            <div class="workspace-section-title">Workbench CxC: facturación y cobranza</div>
             <div class="workspace-section-subtitle">
                 Esta vista separa ingreso presupuestado, CFDI emitido, ingreso
                 reconocido y cobranza comprobada. Un CFDI vinculado no prueba
@@ -1131,7 +1151,7 @@ def render_ar_read_model_html(
             <div style="margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">
                 <a class="button secondary" href="{escape(export_url)}">Descargar Excel CxC</a>
                 <a class="button secondary" href="{escape(prepoliza_export_url)}">Descargar prepólizas CxC</a>
-                <a class="button secondary" href="/admin/contabilidad/cuentas-por-cobrar">Vista contable</a>
+                <a class="button secondary" href="{escape(accounting_href)}">Vista contable: CFDI y pólizas</a>
             </div>
         </section>
         <section class="workspace-card" style="margin-bottom:18px;">
