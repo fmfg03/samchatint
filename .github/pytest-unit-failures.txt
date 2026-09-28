@@ -1,7 +1,1 @@
-# Exact pre-existing unit failures observed on 2026-09-18.
-# Remove an entry as soon as its underlying test is repaired.
-tests.unit.gastos.test_authorization_profile_board::test_authorization_profile_board_routes_and_nav_are_registered
-tests.unit.gastos.test_authorization_profile_board::test_document_workflow_send_persists_authorization_strategy_evidence
-tests.unit.gastos.test_authorization_profile_board::test_document_workflow_approval_persists_soft_authorization_warning
-tests.unit.gastos.test_authorization_profile_board::test_authorization_warnings_dashboard_is_registered_read_only
-tests.unit.gastos.test_authorization_profile_board::test_document_workflow_has_feature_flagged_authorization_enforcement
+# No pre-existing unit failures.
