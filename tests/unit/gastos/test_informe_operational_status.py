@@ -200,3 +200,24 @@ async def test_informes_list_shows_reimbursement_payment_and_proof(monkeypatch, 
         empleado_nombre=None, torneo_nombre=None,
     )
     assert "I-700715" not in filtered
+
+    # Legacy direct settlement can be linked through the informe document only.
+    settlement_id = uuid4()
+    settlement = SimpleNamespace(
+        id=settlement_id, cuenta_gastos_id=None, documento_id=informe_id,
+        tipo="reembolso", estado="pagado",
+    )
+    solicitud.estado = "aprobado"
+    monkeypatch.setattr(user_routes, "fetch_reembolso_adjuntos_meta_batch", AsyncMock(return_value={
+        settlement_id: [SimpleNamespace(id=proof_id)]
+    }))
+    session.execute.side_effect = [
+        _rows([cuenta]), _rows([informe]), _rows([settlement]),
+        _rows([SimpleNamespace(id=uuid4())]), _rows([solicitud]),
+    ]
+    direct = await user_routes.cuentas_de_gastos_list(
+        request=SimpleNamespace(query_params={}), session=session,
+        current_empleado=actor, q=None, estado=None, reembolso="pagado",
+        empleado_nombre=None, torneo_nombre=None,
+    )
+    assert f"/informes-de-gastos/{cuenta_id}/reembolsos/{settlement_id}/adjuntos/{proof_id}" in direct
