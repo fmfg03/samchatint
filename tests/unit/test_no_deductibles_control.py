@@ -213,7 +213,11 @@ async def test_finance_route_renders_and_exports_control(monkeypatch):
     )
     monkeypatch.setattr(admin_routes, "render_admin_navigation", lambda *args, **kwargs: "")
     monkeypatch.setattr(admin_routes, "_admin_workspace_styles", lambda *args, **kwargs: "")
-    monkeypatch.setattr(admin_routes, "_render_admin_workspace_hero", lambda **kwargs: kwargs["title"])
+    monkeypatch.setattr(
+        admin_routes,
+        "_render_admin_workspace_hero",
+        lambda **kwargs: kwargs["title"] + kwargs["actions_html"],
+    )
 
     response = await admin_routes.admin_no_deductibles_control(
         current_empleado=SimpleNamespace(),
