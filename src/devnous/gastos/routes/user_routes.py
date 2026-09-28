@@ -5151,7 +5151,7 @@ async def contabilidad_coi_view(
         {f'<div style="background:#d1fae5;color:#065f46;border:1px solid #a7f3d0;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>✅ Éxito:</strong> {escape(success_msg)}</div>' if success_msg else ''}
         {f'<div style="background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:10px;padding:12px 14px;margin:0 0 16px 0;"><strong>❌ Error:</strong> {escape(error_msg)}</div>' if error_msg else ''}
         <nav class="task-journey" aria-label="Flujo de trabajo COI">
-            <a class="task-link" href="/admin/gastos/sin-cuenta-contable">
+            <a class="task-link" href="/admin/gastos/sin-cuenta-contable?period={selected_year}-{selected_month:02d}">
                 <strong>1. Preparar COI</strong>
                 <span class="muted">Corrige cuentas y clasificación en Limpieza contable antes de exportar.</span>
             </a>

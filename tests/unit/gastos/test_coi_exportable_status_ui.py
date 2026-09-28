@@ -75,7 +75,10 @@ def test_coi_view_separates_preparation_export_and_history_tasks():
         '<nav class="task-journey" aria-label="Flujo de trabajo COI">'
         in view_source
     )
-    assert 'href="/admin/gastos/sin-cuenta-contable"' in view_source
+    assert (
+        'href="/admin/gastos/sin-cuenta-contable?period={selected_year}-{selected_month:02d}"'
+        in view_source
+    )
     assert "1. Preparar COI" in view_source
     assert "2. Revisar y exportar" in view_source
     assert "3. Consultar historial" in view_source
