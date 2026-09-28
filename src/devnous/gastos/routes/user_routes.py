@@ -40879,11 +40879,112 @@ def _render_informe_operational_status_badge(**kwargs: Any) -> str:
     return _informe_status_badge(label, color=color)
 
 
+def _informe_reembolso_payment_state(
+    *, solicitudes: List[Any], reembolsos: List[Any], saldo: float
+) -> Tuple[str, Optional[Any], Optional[Any]]:
+    """Keep authorization separate from actual payment evidence."""
+    reimbursement_docs = [
+        doc for doc in solicitudes
+        if str(getattr(doc, "concepto_pago", "") or "").strip().startswith(
+            EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX
+        )
+        and str(getattr(doc, "estado", "") or "").lower()
+        not in {"rechazado", "cancelado"}
+    ]
+    paid_docs = [
+        doc for doc in reimbursement_docs
+        if (
+            str(getattr(doc, "estado", "") or "").lower() == "pagado"
+            or getattr(doc, "pagado_en", None) is not None
+        )
+    ]
+    paid_settlements = [
+        item for item in reembolsos
+        if str(getattr(item, "tipo", "") or "").lower() == "reembolso"
+        and str(getattr(item, "estado", "") or "").lower() == "pagado"
+    ]
+    if paid_docs:
+        return "pagado", paid_docs[0], None
+    if paid_settlements:
+        return "pagado", None, paid_settlements[0]
+    if reimbursement_docs:
+        return "pendiente", reimbursement_docs[0], None
+    if float(saldo or 0) < -0.005:
+        return "sin_solicitud", None, None
+    return "no_aplica", None, None
+
+
+def _informe_reembolso_proof_links(
+    *, cuenta_id: UUIDType, documento: Optional[Any], settlement: Optional[Any],
+    documento_metas: Dict[Any, List[Any]], settlement_metas: Dict[Any, List[Any]],
+) -> List[str]:
+    links: List[str] = []
+    if documento is not None:
+        for meta in documento_metas.get(documento.id, []):
+            if (getattr(meta, "categoria", "") or "").strip().lower() == "comprobante_pago":
+                links.append(
+                    f'<a href="/documentos/{documento.id}/adjuntos/{meta.id}" '
+                    f'target="_blank" rel="noopener noreferrer">Ver comprobante de transferencia</a>'
+                )
+    if settlement is not None:
+        for meta in settlement_metas.get(settlement.id, []):
+            links.append(
+                f'<a href="/informes-de-gastos/{cuenta_id}/reembolsos/'
+                f'{settlement.id}/adjuntos/{meta.id}" target="_blank" '
+                f'rel="noopener noreferrer">Ver comprobante de transferencia</a>'
+            )
+    return links
+
+
+def _render_informe_reembolso_payment_html(
+    *, cuenta_id: UUIDType, state: str, documento: Optional[Any],
+    settlement: Optional[Any], documento_metas: Dict[Any, List[Any]],
+    settlement_metas: Dict[Any, List[Any]],
+) -> str:
+    if state == "no_aplica":
+        return ""
+    labels = {
+        "pagado": "Pagado",
+        "pendiente": "Pendiente de pago",
+        "sin_solicitud": "Saldo a favor · sin solicitud registrada",
+    }
+    proofs = _informe_reembolso_proof_links(
+        cuenta_id=cuenta_id,
+        documento=documento if state == "pagado" else None,
+        settlement=settlement if state == "pagado" else None,
+        documento_metas=documento_metas,
+        settlement_metas=settlement_metas,
+    )
+    source = (
+        f'<a href="/documentos/{documento.id}">Solicitud '
+        f'{escape(documento.numero_referencia or "")}</a>'
+        if documento is not None else (
+            f'<a href="/informes-de-gastos/{cuenta_id}/reembolsos/'
+            f'{settlement.id}">Registro del reembolso</a>'
+            if settlement is not None else ""
+        )
+    )
+    proof_html = " · ".join(proofs) or (
+        "Comprobante pendiente de adjuntar" if state == "pagado" else ""
+    )
+    return (
+        '<section class="surface"><div class="section-head"><div>'
+        '<h2>Pago del reembolso al empleado</h2>'
+        '<div class="section-note">La aprobación del informe no confirma la transferencia.</div>'
+        '</div></div>'
+        f'<p><strong>{escape(labels[state])}</strong></p>'
+        f'<p>{source}</p>'
+        f'<p>{proof_html}</p>'
+        '</section>'
+    )
+
+
 @router.get("/informes-de-gastos", response_class=HTMLResponse)
 async def cuentas_de_gastos_list(
     request: Request,
     q: Optional[str] = Query(None),
     estado: Optional[str] = Query(None),
+    reembolso: Optional[str] = Query(None),
     empleado_nombre: Optional[str] = Query(None),
     torneo_nombre: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db_session),
@@ -40957,6 +41058,17 @@ async def cuentas_de_gastos_list(
                     ro = (inf.referencia_operaciones or "").strip() or None
                     informe_ro_by_cuenta_id[cid] = ro
                     informe_doc_by_cuenta_id[cid] = inf
+        reembolsos_by_cuenta_id: Dict[UUIDType, List[Reembolso]] = {}
+        if cuentas:
+            reembolsos_result = await session.execute(
+                select(Reembolso).where(
+                    Reembolso.cuenta_gastos_id.in_(cuenta_ids),
+                    Reembolso.tipo == "reembolso",
+                    Reembolso.estado != "cancelado",
+                )
+            )
+            for item in reembolsos_result.scalars().all():
+                reembolsos_by_cuenta_id.setdefault(item.cuenta_gastos_id, []).append(item)
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
 
@@ -41016,9 +41128,28 @@ async def cuentas_de_gastos_list(
                 'settlement_count': settled_count_list,
                 'solicitudes': solicitudes_list,
                 'informe_doc': informe_doc_by_cuenta_id.get(cuenta.id),
+                'reembolsos': reembolsos_by_cuenta_id.get(cuenta.id, []),
+                'reembolso_payment': _informe_reembolso_payment_state(
+                    solicitudes=solicitudes_list,
+                    reembolsos=reembolsos_by_cuenta_id.get(cuenta.id, []),
+                    saldo=saldo,
+                ),
             })
     except (ProgrammingError, OperationalError):
         return _schema_outdated_html_response()
+
+    reembolso_solicitudes = [
+        doc for item in cuenta_data for doc in item['solicitudes']
+        if str(getattr(doc, 'concepto_pago', '') or '').strip().startswith(
+            EMPLOYEE_REIMBURSEMENT_CONCEPT_PREFIX
+        )
+    ]
+    reembolso_adj_by_doc = await fetch_documento_adjuntos_meta_batch(
+        session, [doc.id for doc in reembolso_solicitudes]
+    )
+    reembolso_adj_by_id = await fetch_reembolso_adjuntos_meta_batch(
+        session, [r.id for item in cuenta_data for r in item['reembolsos']]
+    )
 
     def _informe_filter_blob(item: Dict[str, Any]) -> str:
         cuenta = item["cuenta"]
@@ -41073,6 +41204,7 @@ async def cuentas_de_gastos_list(
     empleado_norm = _normalize_employee_identity_text(empleado_nombre or "")
     torneo_norm = _normalize_employee_identity_text(torneo_nombre or "")
     estado_norm = (estado or "").strip().lower()
+    reembolso_norm = (reembolso if isinstance(reembolso, str) else "").strip().lower()
     filtered_cuenta_data = []
     for item in cuenta_data:
         blob = _informe_filter_blob(item)
@@ -41095,6 +41227,11 @@ async def cuentas_de_gastos_list(
         if torneo_norm and torneo_norm not in proyecto_blob:
             continue
         if estado_norm and _estado_filter_value(item) != estado_norm:
+            continue
+        payment_state = item['reembolso_payment'][0]
+        if reembolso_norm == 'pendiente' and payment_state not in {'pendiente', 'sin_solicitud'}:
+            continue
+        if reembolso_norm == 'pagado' and payment_state != 'pagado':
             continue
         filtered_cuenta_data.append(item)
     cuenta_data = filtered_cuenta_data
@@ -41135,6 +41272,35 @@ async def cuentas_de_gastos_list(
 
         saldo_color = '#f44336' if data['saldo'] > 0 else '#4CAF50'
         saldo_label = 'A pagar' if data['saldo'] > 0 else ('A favor' if data['saldo'] < 0 else 'Saldado')
+        payment_state, payment_doc, payment_settlement = data['reembolso_payment']
+        payment_labels = {
+            'pagado': 'Pagado',
+            'pendiente': 'Pendiente de pago',
+            'sin_solicitud': 'Saldo a favor · sin solicitud',
+            'no_aplica': 'No aplica',
+        }
+        proof_links = _informe_reembolso_proof_links(
+            cuenta_id=cuenta.id,
+            documento=payment_doc if payment_state == 'pagado' else None,
+            settlement=payment_settlement if payment_state == 'pagado' else None,
+            documento_metas=reembolso_adj_by_doc,
+            settlement_metas=reembolso_adj_by_id,
+        )
+        payment_link = (
+            f'<a href="/documentos/{payment_doc.id}">Ver solicitud</a>'
+            if payment_doc is not None else (
+                f'<a href="/informes-de-gastos/{cuenta.id}/reembolsos/'
+                f'{payment_settlement.id}">Ver reembolso</a>'
+                if payment_settlement is not None else ''
+            )
+        )
+        proof_html = ' · '.join(proof_links) if proof_links else (
+            'Comprobante pendiente' if payment_state == 'pagado' else ''
+        )
+        reembolso_cell = (
+            f'{escape(payment_labels[payment_state])}<br><small>{payment_link}'
+            f'{" · " if payment_link and proof_html else ""}{proof_html}</small>'
+        )
 
         nombre_display = getattr(cuenta, "nombre", None) and (cuenta.nombre or "").strip()
         titulo_cuenta = escape(nombre_display) if nombre_display else escape(cuenta.referencia_base)
@@ -41237,6 +41403,7 @@ async def cuentas_de_gastos_list(
             <td class="table-value-nowrap" data-sort-value="{escape(_sort_value_attr(data['saldo'], kind='money'))}" style="color: {saldo_color}; font-weight: bold;">
                 {format_currency(abs(data['saldo']), cuenta_currency)} <small>({saldo_label})</small>
             </td>
+            <td data-sort-value="{escape(payment_state)}">{reembolso_cell}</td>
             <td data-sort-value="{escape(_sort_value_attr(cuenta.created_at, kind='date'))}">{cuenta.created_at.strftime('%Y-%m-%d') if cuenta.created_at else '-'}</td>
             <td class="table-actions-cell">
                 <div class="table-actions inline-actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;min-width:150px;">
@@ -41292,19 +41459,24 @@ async def cuentas_de_gastos_list(
         f'<option value="{escape(value)}" {"selected" if value == estado_value else ""}>{escape(label)}</option>'
         for value, label in estado_options
     )
-    filters_active = sum(1 for value in (q_value, estado_value, empleado_value, torneo_value) if value)
+    reembolso_options_html = "".join(
+        f'<option value="{value}" {"selected" if value == reembolso_norm else ""}>{label}</option>'
+        for value, label in (("", "Todos"), ("pendiente", "Pendiente"), ("pagado", "Pagado"))
+    )
+    filters_active = sum(1 for value in (q_value, estado_value, reembolso_norm, empleado_value, torneo_value) if value)
     cuentas_filters_html = f'''
                 <section class="surface">
                     <div class="section-head">
                         <div>
                             <h2>Buscar informes</h2>
-                            <div class="section-note">Filtra por referencia de operaciones, solicitante, beneficiario, torneo, concepto o estado.</div>
+                            <div class="section-note">Filtra por referencia, persona, torneo, estado o pago de reembolso.</div>
                         </div>
                         <span class="badge">{filters_active} filtros activos</span>
                     </div>
-                    <form method="GET" action="/informes-de-gastos" class="form-grid" style="grid-template-columns:2fr 1fr 1.4fr 1.4fr auto auto;align-items:end;">
+                    <form method="GET" action="/informes-de-gastos" class="form-grid" style="grid-template-columns:2fr 1fr 1fr 1.4fr 1.4fr auto auto;align-items:end;">
                         <label>Búsqueda<br><input type="text" name="q" value="{q_value}" placeholder="Ref., concepto, descripción..."></label>
                         <label>Estado<br><select name="estado">{estado_options_html}</select></label>
+                        <label>Reembolso<br><select name="reembolso">{reembolso_options_html}</select></label>
                         <label>Solicitante / beneficiario<br><input type="text" name="empleado_nombre" value="{empleado_value}" placeholder="Ej. Alicia, Bibiana..."></label>
                         <label>Torneo / fase<br><input type="text" name="torneo_nombre" value="{torneo_value}" placeholder="Ej. Telmex, Béisbol..."></label>
                         <button class="button primary" type="submit">Filtrar</button>
@@ -41393,13 +41565,14 @@ async def cuentas_de_gastos_list(
                         <th class="table-value-nowrap" data-sort-key="solicitado" data-sort-type="money">Solicitado</th>
                         <th class="table-value-nowrap" data-sort-key="moneda" data-sort-type="text">Moneda</th>
                         <th class="table-value-nowrap" data-sort-key="saldo" data-sort-type="money">Saldo</th>
+                        <th data-sort-key="reembolso" data-sort-type="text">Pago de reembolso / comprobante</th>
                         <th data-sort-key="creada" data-sort-type="date">Creada</th>
                         <th class="table-actions-cell">Acciones</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {rows_html if rows_html else '<tr><td colspan="14" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
-                    <tr id="informes-no-matches" data-sort-ignore style="display:none;"><td colspan="14" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
+                    {rows_html if rows_html else '<tr><td colspan="15" style="text-align: center; padding: 20px;">No hay informes de gastos. Crea uno desde "Mis Gastos".</td></tr>'}
+                    <tr id="informes-no-matches" data-sort-ignore style="display:none;"><td colspan="15" style="text-align:center; padding:20px; color:#6b7280;">No hay informes que coincidan con tu búsqueda.</td></tr>
                 </tbody>
             </table>
                     </div>
@@ -42461,6 +42634,22 @@ async def cuenta_de_gastos_detail(
     )
     saldo = saldo_breakdown.saldo
 
+    reembolso_state, reembolso_doc, reembolso_settlement = (
+        _informe_reembolso_payment_state(
+            solicitudes=solicitudes_list,
+            reembolsos=active_cuenta_reembolsos,
+            saldo=saldo,
+        )
+    )
+    reembolso_payment_html = _render_informe_reembolso_payment_html(
+        cuenta_id=cuenta.id,
+        state=reembolso_state,
+        documento=reembolso_doc,
+        settlement=reembolso_settlement,
+        documento_metas=solicitud_adj_by_doc,
+        settlement_metas=reembolso_adj_by_id,
+    )
+
     # Build Movimientos: expenses + solicitudes + reembolsos (newest first)
     def _movimiento_sort_dt(*candidates: object) -> datetime:
         from datetime import timezone as _tz
@@ -43201,6 +43390,7 @@ async def cuenta_de_gastos_detail(
                 {success_msg}
                 {error_msg_html}
                 {sin_informe_banner}
+                {reembolso_payment_html}
                 <section class="surface">
                     {clasificacion_info}
                     <div class="meta-grid" style="margin-top:14px;">
@@ -45179,7 +45369,7 @@ async def descargar_reembolso_adjunto(
     cuenta = cuenta_result.scalar_one_or_none()
     if cuenta is None:
         raise HTTPException(status_code=404, detail="Informe de Gastos no encontrado")
-    if not _can_access_reembolso_cuenta(cuenta, current_empleado):
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
         raise HTTPException(status_code=403, detail="Acceso denegado")
 
     reembolso_result = await session.execute(
