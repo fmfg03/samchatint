@@ -302,12 +302,47 @@ def test_render_ar_matching_workbench_html_includes_candidate_notice():
         ],
     )
 
-    assert "Pre-matching AR" in html
-    assert "Evidencia candidata; no prueba cobranza" in html
+    assert "Conciliación CxC: evidencia y decisión" in html
+    assert "1. Evidencia candidata — requiere decisión" in html
+    assert (
+        "Un candidato bancario es evidencia para revisar, no prueba de cobranza."
+        in html
+    )
     assert "candidate_match" in html
     assert "bank-1" in html
     assert 'value="bank-account-1"' in html
     assert "1020-001 · Banco CxC" in html
+
+
+def test_render_ar_matching_workbench_orders_evidence_before_accepted_matches():
+    html = render_ar_matching_workbench_html(
+        {
+            "summary": {},
+            "items": [
+                {
+                    "ar_item_id": "linked:1",
+                    "source": "issued_linked",
+                    "amount": 100,
+                    "status": "candidate_match",
+                    "candidate_evidence": [{"bank_movement_id": "bank-1"}],
+                }
+            ],
+            "accepted_matches": [
+                {"id": "match-1", "status": "accepted_collection_match"}
+            ],
+            "unmatched_bank_inflows": [],
+        }
+    )
+
+    candidate_heading = "1. Evidencia candidata — requiere decisión"
+    accepted_heading = "2. Matches AR aceptados — cobranza comprobada"
+    assert html.index(candidate_heading) < html.index(accepted_heading)
+    assert "Reversión auditada" in html
+    assert (
+        "la reversión requiere una razón y conserva la auditoría del match"
+        in html
+    )
+    assert "3. Entradas bancarias sin AR — pendientes de investigación" in html
 
 
 def test_render_ar_matching_workbench_html_does_not_confirm_collection():

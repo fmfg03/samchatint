@@ -544,7 +544,17 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
             exact=False,
         )
     ).to_be_visible()
-    expect(page.get_by_text("Evidencia candidata; no prueba cobranza hasta su aceptación.")).to_be_visible()
+    expect(
+        page.get_by_text("Conciliación CxC: evidencia y decisión", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text("1. Evidencia candidata — requiere decisión", exact=True)
+    ).to_be_visible()
+    expect(
+        page.get_by_text(
+            "Un candidato bancario es evidencia para revisar, no prueba de cobranza."
+        )
+    ).to_be_visible()
     expect(page.get_by_text("Cobranza desconocida", exact=True).first).to_be_visible()
 
     row = page.locator("tbody tr").filter(has_text="cfdi:UX-CXC-001").last
@@ -555,6 +565,12 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
 
     expect(page).to_have_url(f"{browser_server}/admin/finanzas/cuentas-por-cobrar")
     expect(page.get_by_text("accepted_collection_match", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text(
+            "2. Matches AR aceptados — cobranza comprobada", exact=True
+        )
+    ).to_be_visible()
+    expect(page.get_by_text("Reversión auditada", exact=True)).to_be_visible()
     operational = page.locator("tbody tr").filter(has_text="UX-CXC-001").first
     expect(operational.get_by_text("Cobrado", exact=True)).to_be_visible()
     _capture(page, "finance-cxc-accepted-match")
