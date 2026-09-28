@@ -8822,7 +8822,11 @@ async def admin_finance_platform_export_xlsx(
         media_type=(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         ),
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}@router.get("/admin/finanzas/no-deducibles", response_class=HTMLResponse)
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@router.get("/admin/finanzas/no-deducibles", response_class=HTMLResponse)
 async def admin_no_deductibles_control(
     current_empleado: Empleado = require_admin_finanzas(),
     session: AsyncSession = Depends(get_db_session),
