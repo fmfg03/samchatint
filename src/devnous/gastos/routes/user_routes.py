@@ -40933,6 +40933,49 @@ def _informe_reembolso_proof_links(
     return links
 
 
+def _render_informe_reembolso_payment_html(
+    *, cuenta_id: UUIDType, state: str, documento: Optional[Any],
+    settlement: Optional[Any], documento_metas: Dict[Any, List[Any]],
+    settlement_metas: Dict[Any, List[Any]],
+) -> str:
+    if state == "no_aplica":
+        return ""
+    labels = {
+        "pagado": "Pagado",
+        "pendiente": "Pendiente de pago",
+        "sin_solicitud": "Saldo a favor · sin solicitud registrada",
+    }
+    proofs = _informe_reembolso_proof_links(
+        cuenta_id=cuenta_id,
+        documento=documento if state == "pagado" else None,
+        settlement=settlement if state == "pagado" else None,
+        documento_metas=documento_metas,
+        settlement_metas=settlement_metas,
+    )
+    source = (
+        f'<a href="/documentos/{documento.id}">Solicitud '
+        f'{escape(documento.numero_referencia or "")}</a>'
+        if documento is not None else (
+            f'<a href="/informes-de-gastos/{cuenta_id}/reembolsos/'
+            f'{settlement.id}">Registro del reembolso</a>'
+            if settlement is not None else ""
+        )
+    )
+    proof_html = " · ".join(proofs) or (
+        "Comprobante pendiente de adjuntar" if state == "pagado" else ""
+    )
+    return (
+        '<section class="surface"><div class="section-head"><div>'
+        '<h2>Pago del reembolso al empleado</h2>'
+        '<div class="section-note">La aprobación del informe no confirma la transferencia.</div>'
+        '</div></div>'
+        f'<p><strong>{escape(labels[state])}</strong></p>'
+        f'<p>{source}</p>'
+        f'<p>{proof_html}</p>'
+        '</section>'
+    )
+
+
 @router.get("/informes-de-gastos", response_class=HTMLResponse)
 async def cuentas_de_gastos_list(
     request: Request,
@@ -42595,42 +42638,14 @@ async def cuenta_de_gastos_detail(
             saldo=saldo,
         )
     )
-    reembolso_payment_html = ""
-    if reembolso_state != "no_aplica":
-        reembolso_labels = {
-            "pagado": "Pagado",
-            "pendiente": "Pendiente de pago",
-            "sin_solicitud": "Saldo a favor · sin solicitud registrada",
-        }
-        reembolso_proofs = _informe_reembolso_proof_links(
-            cuenta_id=cuenta.id,
-            documento=reembolso_doc if reembolso_state == "pagado" else None,
-            settlement=reembolso_settlement if reembolso_state == "pagado" else None,
-            documento_metas=solicitud_adj_by_doc,
-            settlement_metas=reembolso_adj_by_id,
-        )
-        reembolso_source = (
-            f'<a href="/documentos/{reembolso_doc.id}">Solicitud '
-            f'{escape(reembolso_doc.numero_referencia or "")}</a>'
-            if reembolso_doc is not None else (
-                f'<a href="/informes-de-gastos/{cuenta.id}/reembolsos/'
-                f'{reembolso_settlement.id}">Registro del reembolso</a>'
-                if reembolso_settlement is not None else ""
-            )
-        )
-        reembolso_proof_html = " · ".join(reembolso_proofs) or (
-            "Comprobante pendiente de adjuntar" if reembolso_state == "pagado" else ""
-        )
-        reembolso_payment_html = (
-            '<section class="surface"><div class="section-head"><div>'
-            '<h2>Pago del reembolso al empleado</h2>'
-            '<div class="section-note">La aprobación del informe no confirma la transferencia.</div>'
-            '</div></div>'
-            f'<p><strong>{escape(reembolso_labels[reembolso_state])}</strong></p>'
-            f'<p>{reembolso_source}</p>'
-            f'<p>{reembolso_proof_html}</p>'
-            '</section>'
-        )
+    reembolso_payment_html = _render_informe_reembolso_payment_html(
+        cuenta_id=cuenta.id,
+        state=reembolso_state,
+        documento=reembolso_doc,
+        settlement=reembolso_settlement,
+        documento_metas=solicitud_adj_by_doc,
+        settlement_metas=reembolso_adj_by_id,
+    )
 
     # Build Movimientos: expenses + solicitudes + reembolsos (newest first)
     def _movimiento_sort_dt(*candidates: object) -> datetime:
