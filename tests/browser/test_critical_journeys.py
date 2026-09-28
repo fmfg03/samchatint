@@ -622,7 +622,9 @@ def test_finance_cxc_remains_operable_without_mobile_body_overflow(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_text("Pre-matching AR", exact=True)).to_be_visible()
+    expect(
+        page.get_by_text("Conciliación CxC: evidencia y decisión", exact=True)
+    ).to_be_visible()
     _assert_no_body_overflow(page)
     accept = page.get_by_role("button", name="Aceptar match", exact=True)
     expect(accept).to_be_visible()
