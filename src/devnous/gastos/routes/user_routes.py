@@ -58,6 +58,10 @@ from ..services.coi_poliza_exporter import (
     generate_coi_poliza_csv,
     generate_coi_poliza_xlsx,
 )
+from ..services.informe_poliza_workpaper import (
+    InformeWorkpaperExpense,
+    generate_informe_poliza_workpaper,
+)
 from ..services.diot_exporter import (
     build_diot_export,
     create_diot_excel,
@@ -33917,6 +33921,92 @@ async def exportar_coi_poliza_cuenta(
     )
 
 
+@router.get("/informes-de-gastos/{cuenta_id}/papel-poliza.xlsx")
+async def exportar_papel_poliza_informe(
+    cuenta_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = require_admin_finanzas(),
+) -> Response:
+    """A DR workpaper for Finance, independent of COI classification readiness."""
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise HTTPException(status_code=404, detail="Informe de gastos no encontrado.")
+    if not _can_read_cuenta_de_gastos(cuenta, current_empleado):
+        raise HTTPException(status_code=403, detail="Acceso denegado.")
+    informe = await _informe_documento_for_cuenta(session, cuenta_id)
+    if informe is None:
+        raise HTTPException(status_code=409, detail="Falta el documento INFORME vinculado.")
+
+    expenses = (
+        await session.execute(
+            select(ExpenseReport)
+            .options(
+                selectinload(ExpenseReport.cuenta_contable),
+                selectinload(ExpenseReport.cuenta_iva),
+                selectinload(ExpenseReport.contra_cuenta_contable),
+                selectinload(ExpenseReport.cfdi_report),
+            )
+            .where(
+                ExpenseReport.cuenta_gastos_id == cuenta_id,
+                ExpenseReport.estado_gasto != "cancelado",
+            )
+            .order_by(ExpenseReport.created_at.asc(), ExpenseReport.fecha.asc())
+        )
+    ).scalars().all()
+    if not expenses:
+        raise HTTPException(status_code=409, detail="El informe no tiene gastos activos.")
+    currency = str(cuenta.currency or "MXN").upper()
+    if any(str(expense.currency or "MXN").upper() != currency for expense in expenses):
+        raise HTTPException(
+            status_code=409,
+            detail="El informe contiene gastos en distintas monedas; no es posible cuadrarlos juntos.",
+        )
+    workpaper_expenses = [
+        InformeWorkpaperExpense(
+            source_id=str(expense.id),
+            reference=expense.numero_referencia or "",
+            date=expense.fecha.strftime("%Y-%m-%d") if expense.fecha else "",
+            description=(
+                " / ".join(
+                    part
+                    for part in (
+                        getattr(expense.cfdi_report, "emisor_nombre", None),
+                        expense.concepto,
+                    )
+                    if part
+                )
+            ),
+            amount=float(expense.gasto_cantidad or 0),
+            vat=float(expense.iva) if expense.iva is not None else None,
+            expense_account=getattr(expense.cuenta_contable, "codigo", "") or "",
+            vat_account=getattr(expense.cuenta_iva, "codigo", "") or "",
+            counterpart_account=(
+                getattr(expense.contra_cuenta_contable, "codigo", "") or ""
+            ),
+            company_amex=is_company_amex_expense(expense),
+            cfdi_uuid=getattr(expense.cfdi_report, "cfdi_uuid", "") or "",
+        )
+        for expense in expenses
+    ]
+    try:
+        workbook = generate_informe_poliza_workpaper(
+            workpaper_expenses,
+            reference=(informe.referencia_operaciones or cuenta.referencia_base or ""),
+            title=cuenta.nombre or cuenta.referencia_base or "Informe de gastos",
+            currency=currency,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    name = _safe_export_filename(
+        informe.referencia_operaciones or cuenta.referencia_base or str(cuenta.id)[:8]
+    )
+    return Response(
+        content=workbook,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="Papel_poliza_{name}.xlsx"'},
+    )
+
+
 @router.get("/informes-de-gastos/{cuenta_id}/exportar-coi.xlsx", response_model=None)
 async def exportar_coi_poliza_excel_cuenta(
     cuenta_id: UUIDType,
@@ -42730,7 +42820,15 @@ async def cuenta_de_gastos_detail(
         """
     coi_actions_html = ""
     diot_actions_html = ""
+    papel_poliza_html = ""
     if informe_doc and active_expenses:
+        if (current_empleado.rol or "").strip().lower() in {
+            "finanzas", "admin", "superadmin", "super_admin"
+        }:
+            papel_poliza_html = (
+                f'<a href="/informes-de-gastos/{cuenta.id}/papel-poliza.xlsx" '
+                'class="button secondary">Armar papel de póliza (Excel)</a>'
+            )
         if informe_doc_approved:
             coi_actions_html = f"""
         <a href="/informes-de-gastos/{cuenta.id}/preview-coi" class="button secondary">Vista previa COI</a>
@@ -42754,6 +42852,7 @@ async def cuenta_de_gastos_detail(
     detail_actions_html = f"""
         <a href="/informes-de-gastos" class="button secondary">Volver a mis informes</a>
         {informe_support_actions_html}
+        {papel_poliza_html}
         {coi_actions_html}
         {diot_actions_html}
         {f'<a href="/informes-de-gastos/{cuenta.id}/editar" class="button primary">Editar informe</a>' if _can_manage_cuenta and _can_edit_cuenta_before_budget_assignment(cuenta, informe_doc) else ''}
