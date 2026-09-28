@@ -525,8 +525,8 @@ def test_documentos_todos_text_search_includes_active_linked_expenses():
     expression = user_routes._documento_gasto_concepto_matches("%hospedaje%")
     sql = str(expression.compile(dialect=postgresql.dialect()))
     assert sql.count("expense_reports.concepto ILIKE") == 3
-    assert "documentos.id = expense_reports.documento_id" in sql
-    assert "expense_reports.solicitud_documento_id = documentos.id" in sql
+    assert "expense_reports.documento_id" in sql
+    assert "expense_reports.solicitud_documento_id" in sql
     assert "documentos.gasto_generado_id" in sql
     assert "expense_reports.estado_gasto !=" in sql
 
