@@ -1,7 +1,11 @@
+from datetime import datetime
 from types import SimpleNamespace
-
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
+from devnous.gastos.routes import user_routes
 from devnous.gastos.routes.user_routes import (
     _derive_informe_operational_status,
     _informe_reembolso_payment_state,
@@ -122,3 +126,77 @@ def test_direct_reembolso_payment_and_proof_are_visible():
     assert f"/documentos/{doc_id}/adjuntos/{proof_id}" in links[0]
     assert str(unrelated_id) not in " ".join(links)
     assert f"/informes-de-gastos/{cuenta_id}/reembolsos/{settlement_id}/adjuntos/{proof_id}" in links[1]
+
+
+def _rows(items):
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = items
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("paid", [False, True])
+async def test_informes_list_shows_reimbursement_payment_and_proof(monkeypatch, paid):
+    cuenta_id, informe_id, solicitud_id, proof_id = (uuid4() for _ in range(4))
+    actor = SimpleNamespace(id=uuid4(), rol="finanzas", nombre="Finanzas", departamento="Finanzas")
+    empleado = SimpleNamespace(id=uuid4(), nombre="Alicia", aprobador=None)
+    cuenta = SimpleNamespace(
+        id=cuenta_id, empleado_id=empleado.id, empleado=empleado,
+        beneficiario_empleado=None, beneficiario_proveedor_cliente=None,
+        nombre="Reembolso varios", referencia_base="700715", estado="cerrada",
+        created_at=datetime(2026, 9, 15), currency="MXN", torneo=None,
+        torneo_id=None, fase=None, tipo_cuenta=None, proyecto=None,
+        motivo_gasto=None, descripcion=None, tipo_gasto=None,
+    )
+    informe = SimpleNamespace(
+        id=informe_id, cuenta_gastos_id=cuenta_id, tipo="INFORME",
+        estado="aprobado", aprobado_en=datetime(2026, 9, 16),
+        numero_referencia="I-700715", referencia_operaciones="167",
+    )
+    solicitud = SimpleNamespace(
+        id=solicitud_id, concepto_pago="Reembolso de saldo a favor — I-700715",
+        estado="pagado" if paid else "aprobado", pagado_en=None,
+        numero_referencia="S-700715", monto_solicitado=100,
+        currency="MXN", creado_en=datetime(2026, 9, 16),
+    )
+    session = AsyncMock()
+    monkeypatch.setattr(user_routes, "_can_view_all_cuentas_de_gastos", lambda *_: True)
+    monkeypatch.setattr(user_routes, "empleado_list_view_department_scope", lambda *_: None)
+    monkeypatch.setattr(user_routes, "compute_cuenta_saldo_adjustments", AsyncMock(return_value=(0, 0)))
+    monkeypatch.setattr(user_routes, "calculate_informe_expense_totals", lambda *_: SimpleNamespace(
+        total_reported=100, company_amex=0, employee_paid=100
+    ))
+    monkeypatch.setattr(user_routes, "fetch_documento_adjuntos_meta_batch", AsyncMock(return_value={
+        solicitud_id: [SimpleNamespace(id=proof_id, categoria="comprobante_pago")]
+    }))
+    monkeypatch.setattr(user_routes, "fetch_reembolso_adjuntos_meta_batch", AsyncMock(return_value={}))
+    monkeypatch.setattr(user_routes, "render_top_navigation", lambda *_: "")
+    monkeypatch.setattr(user_routes, "_gastos_workspace_nav_html", lambda *_: "")
+
+    def reset_results():
+        session.execute.side_effect = [
+            _rows([cuenta]), _rows([informe]), _rows([]),
+            _rows([SimpleNamespace(id=uuid4())]), _rows([solicitud]),
+        ]
+
+    reset_results()
+    html = await user_routes.cuentas_de_gastos_list(
+        request=SimpleNamespace(query_params={}), session=session,
+        current_empleado=actor, q=None, estado=None, reembolso=None,
+        empleado_nombre=None, torneo_nombre=None,
+    )
+    assert "Pago de reembolso / comprobante" in html
+    assert ('Pagado' if paid else 'Pendiente de pago') in html
+    if paid:
+        assert f"/documentos/{solicitud_id}/adjuntos/{proof_id}" in html
+    else:
+        assert f"/documentos/{solicitud_id}/adjuntos/{proof_id}" not in html
+
+    reset_results()
+    filtered = await user_routes.cuentas_de_gastos_list(
+        request=SimpleNamespace(query_params={}), session=session,
+        current_empleado=actor, q=None, estado=None,
+        reembolso="pendiente" if paid else "pagado",
+        empleado_nombre=None, torneo_nombre=None,
+    )
+    assert "I-700715" not in filtered
