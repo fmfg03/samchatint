@@ -32,3 +32,8 @@ automation.
 The feature is repository work under review until its pull request is merged.
 It is not evidence of deployment, production reconciliation, Finance UAT, or
 business acceptance.
+
+
+## Date-range enhancement
+
+The control also accepts an inclusive range of expense dates (Desde and Hasta) together with an optional tournament. The former month selector is a convenient default only. A tournament label such as Liga or Copa does not infer or create a season calendar: the selected dates remain the auditable control period. This remains a read-only query and export over the same canonical expense and CFDI links; it introduces no authority, persistence, workflow, or schema change. Canon unchanged for the same reason.

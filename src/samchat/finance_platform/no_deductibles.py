@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -18,6 +18,13 @@ def period_bounds(year: int, month: int) -> tuple[datetime, datetime]:
     start = datetime(year, month, 1)
     end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
     return start, end
+
+
+def date_range_bounds(start_date: date, end_date: date) -> tuple[datetime, datetime]:
+    """Return an inclusive expense-date range as a half-open datetime interval."""
+    if end_date < start_date:
+        raise ValueError("La fecha final no puede ser anterior a la fecha inicial.")
+    return datetime.combine(start_date, datetime.min.time()), datetime.combine(end_date + timedelta(days=1), datetime.min.time())
 
 
 def has_linked_fiscal_invoice(row: dict[str, Any]) -> bool:
@@ -36,7 +43,7 @@ def _currency(value: Any) -> str:
 
 
 def build_no_deductibles_report(
-    rows: list[dict[str, Any]], *, year: int, month: int, tournament_id: str | None
+    rows: list[dict[str, Any]], *, year: int, month: int, tournament_id: str | None, start_date: date | None = None, end_date: date | None = None
 ) -> dict[str, Any]:
     """Classify supplied expense rows without persisting a parallel status."""
     classified: list[dict[str, Any]] = []
@@ -96,7 +103,7 @@ def build_no_deductibles_report(
             2,
         )
     return {
-        "period": {"year": year, "month": month},
+        "period": {"year": year, "month": month, "start_date": (start_date or date(year, month, 1)).isoformat(), "end_date": (end_date or (period_bounds(year, month)[1] - timedelta(days=1)).date()).isoformat()},
         "tournament_id": tournament_id or "",
         "rows": classified,
         "non_deductible_rows": non_deductible_rows,
@@ -122,7 +129,7 @@ async def list_tournaments_for_no_deductibles(session: AsyncSession) -> list[dic
 
 
 async def build_no_deductibles_source(
-    session: AsyncSession, *, year: int, month: int, tournament_id: str | None = None
+    session: AsyncSession, *, year: int, month: int, tournament_id: str | None = None, start_date: date | None = None, end_date: date | None = None
 ) -> dict[str, Any]:
     """Read all active expense lines for an expense-date period and tournament.
 
@@ -138,7 +145,13 @@ async def build_no_deductibles_source(
         ExpenseReport,
     )
 
-    start, end = period_bounds(year, month)
+    if (start_date is None) != (end_date is None):
+        raise ValueError("Selecciona fecha inicial y fecha final.")
+    if start_date is None:
+        start, end = period_bounds(year, month)
+        start_date, end_date = start.date(), (end - timedelta(days=1)).date()
+    else:
+        start, end = date_range_bounds(start_date, end_date)
     informe = aliased(Documento)
     solicitud = aliased(Documento)
     documento = aliased(Documento)
@@ -269,5 +282,5 @@ async def build_no_deductibles_source(
             }
         )
     return build_no_deductibles_report(
-        rows, year=year, month=month, tournament_id=tournament_id
+        rows, year=year, month=month, tournament_id=tournament_id, start_date=start_date, end_date=end_date
     )

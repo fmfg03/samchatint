@@ -1,3 +1,4 @@
+from datetime import date
 from io import BytesIO
 from types import SimpleNamespace
 from uuid import uuid4
@@ -8,6 +9,7 @@ from openpyxl import load_workbook
 from samchat.finance_platform.no_deductibles import (
     build_no_deductibles_report,
     build_no_deductibles_source,
+    date_range_bounds,
     has_linked_fiscal_invoice,
     list_tournaments_for_no_deductibles,
     period_bounds,
@@ -75,6 +77,14 @@ def test_period_uses_expense_date_calendar_month():
     assert end.isoformat() == "2027-01-01T00:00:00"
 
 
+def test_explicit_expense_date_range_is_inclusive_and_rejects_inversion():
+    start, end = date_range_bounds(date(2026, 1, 1), date(2026, 12, 31))
+    assert start.isoformat() == "2026-01-01T00:00:00"
+    assert end.isoformat() == "2027-01-01T00:00:00"
+    with pytest.raises(ValueError, match="fecha final"):
+        date_range_bounds(date(2026, 9, 30), date(2026, 9, 1))
+
+
 def test_xlsx_contains_only_non_deductible_detail_rows():
     report = build_no_deductibles_report(
         [
@@ -98,6 +108,7 @@ def test_xlsx_contains_only_non_deductible_detail_rows():
     assert len(payload) > 1000
     workbook = load_workbook(BytesIO(payload), data_only=False)
     assert workbook["Detalle no deducible"]["G2"].value.startswith("\'=")
+    assert workbook["Resumen"]["B2"].value == "2026-09-01 a 2026-09-30"
     assert workbook["Resumen"]["A3"].value == "Moneda"
 
 
@@ -209,16 +220,22 @@ async def test_finance_route_renders_and_exports_control(monkeypatch):
         session=SimpleNamespace(),
         year=2026,
         month=9,
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 9, 30),
         tournament_id=None,
     )
     assert "No Deducibles" in response.body.decode()
     assert "Taxi" in response.body.decode()
+    assert 'value="2026-01-01"' in response.body.decode()
+    assert 'value="2026-09-30"' in response.body.decode()
 
     export = await admin_routes.admin_no_deductibles_export_xlsx(
         current_empleado=SimpleNamespace(),
         session=SimpleNamespace(),
         year=2026,
         month=9,
+        start_date=date(2026, 1, 1),
+        end_date=date(2026, 9, 30),
         tournament_id=None,
     )
     assert export.body[:2] == b"PK"

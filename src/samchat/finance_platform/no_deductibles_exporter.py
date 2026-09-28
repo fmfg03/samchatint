@@ -15,6 +15,12 @@ def _safe_cell_text(value: Any) -> str:
     return f"\'{text}" if text.startswith(("=", "+", "-", "@")) else text
 
 
+def _period_label(period: dict[str, Any]) -> str:
+    if period.get("start_date") and period.get("end_date"):
+        return f"{period['start_date']} a {period['end_date']}"
+    return f"{period.get('year')}-{int(period.get('month') or 0):02d}"
+
+
 def generate_no_deductibles_xlsx(report: dict[str, Any]) -> bytes:
     workbook = Workbook()
     summary_sheet = workbook.active
@@ -26,7 +32,7 @@ def generate_no_deductibles_xlsx(report: dict[str, Any]) -> bytes:
     summary_sheet.append(
         [
             "Periodo de fecha de gasto",
-            f"{period.get('year')}-{int(period.get('month') or 0):02d}",
+            _period_label(period),
         ]
     )
     summary_sheet.append(
