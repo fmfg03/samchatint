@@ -635,7 +635,7 @@ def test_finance_and_accounting_cxc_preserve_only_compatible_context(
     expect(accounting).to_have_attribute(
         "href",
         "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
-        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&torneo_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
         "&estado=vencido",
     )
     accounting.click()

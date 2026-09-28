@@ -118,7 +118,7 @@ def test_accounting_cxc_href_preserves_only_equivalent_finance_context():
 
     assert href == (
         "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
-        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&torneo_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
         "&estado=vencido"
     )
 

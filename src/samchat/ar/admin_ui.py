@@ -88,9 +88,14 @@ def _accounting_cxc_href(base_url: str) -> str:
     parsed = urlsplit(base_url)
     finance_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     accounting_query = [
-        (key, value)
-        for key in ("edition_year", "tournament_id", "cliente", "dias_credito")
-        if (value := finance_query.get(key))
+        (accounting_key, value)
+        for finance_key, accounting_key in (
+            ("edition_year", "edition_year"),
+            ("tournament_id", "torneo_id"),
+            ("cliente", "cliente"),
+            ("dias_credito", "dias_credito"),
+        )
+        if (value := finance_query.get(finance_key))
     ]
     status = str(finance_query.get("estado") or "").strip().lower()
     accounting_status = {

@@ -1814,7 +1814,7 @@ async def journey_accounting_accounts_receivable(request: Request):
     """Isolated destination proving the accounting CxC purpose remains distinct."""
     finance_href = user_routes._finance_cxc_workbench_href(
         edition_year=request.query_params.get("edition_year"),
-        tournament_id=request.query_params.get("tournament_id"),
+        tournament_id=request.query_params.get("torneo_id"),
         client=request.query_params.get("cliente"),
         credit_days=int(request.query_params.get("dias_credito") or 0),
     )
