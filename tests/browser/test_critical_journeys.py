@@ -537,7 +537,9 @@ def test_finance_cxc_keeps_candidate_separate_until_acceptance(
     assert response is not None
     assert response.status == 200
 
-    expect(page.get_by_text("Cuentas por Cobrar", exact=True).first).to_be_visible()
+    expect(
+        page.get_by_text("Workbench CxC: facturación y cobranza", exact=True)
+    ).to_be_visible()
     expect(
         page.get_by_text(
             "Un CFDI vinculado no prueba pago; solo los matches aceptados cuentan como cobro.",
@@ -600,16 +602,51 @@ def test_finance_cxc_exposes_prepolliza_and_accounting_context(
     expect(prepoliza).to_have_attribute(
         "href", "/admin/finanzas/cuentas-por-cobrar/prepolizas-coi.xlsx"
     )
-    accounting = page.get_by_role("link", name="Vista contable", exact=True)
+    accounting = page.get_by_role(
+        "link", name="Vista contable: CFDI y pólizas", exact=True
+    )
     expect(accounting).to_be_visible()
     accounting.click()
     expect(page).to_have_url(
         f"{browser_server}/admin/contabilidad/cuentas-por-cobrar"
     )
-    expect(page.get_by_role("heading", name="Vista contable CxC")).to_be_visible()
+    expect(
+        page.get_by_role("heading", name="Vista contable CxC: CFDI y pólizas")
+    ).to_be_visible()
     expect(
         page.get_by_text("Esta vista no acepta ni revierte matches de cobranza.")
     ).to_be_visible()
+
+
+def test_finance_and_accounting_cxc_preserve_only_compatible_context(
+    page: Page, browser_server: str
+) -> None:
+    response = page.goto(
+        f"{browser_server}/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=Vencido"
+    )
+    assert response is not None
+    assert response.status == 200
+
+    accounting = page.get_by_role(
+        "link", name="Vista contable: CFDI y pólizas", exact=True
+    )
+    expect(accounting).to_have_attribute(
+        "href",
+        "/admin/contabilidad/cuentas-por-cobrar?edition_year=2026"
+        "&torneo_id=torneo-1&cliente=Cliente+UX&dias_credito=30"
+        "&estado=vencido",
+    )
+    accounting.click()
+    workbench = page.get_by_role(
+        "link", name="Workbench CxC: facturación y cobranza", exact=True
+    )
+    expect(workbench).to_have_attribute(
+        "href",
+        "/admin/finanzas/cuentas-por-cobrar?edition_year=2026"
+        "&tournament_id=torneo-1&cliente=Cliente+UX&dias_credito=30",
+    )
 
 
 def test_finance_cxc_remains_operable_without_mobile_body_overflow(
