@@ -201,10 +201,10 @@ async def test_informes_list_shows_reimbursement_payment_and_proof(monkeypatch, 
     )
     assert "I-700715" not in filtered
 
-    # Legacy direct settlement can be linked through the informe document only.
+    # A direct settlement paid by Finance exposes its own proof.
     settlement_id = uuid4()
     settlement = SimpleNamespace(
-        id=settlement_id, cuenta_gastos_id=None, documento_id=informe_id,
+        id=settlement_id, cuenta_gastos_id=cuenta_id, documento_id=informe_id,
         tipo="reembolso", estado="pagado",
     )
     solicitud.estado = "aprobado"
