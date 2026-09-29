@@ -32,11 +32,20 @@ profiles, technical checks, or a successful deployment as business acceptance.
 
 ## Receipt template
 
-Record one row per observation:
+Create one session record before adding observations:
 
-| Role | Task | First click label | Route reached | Outcome | Confusion/blocker | Time optional | Follow-up |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | completed / blocked / abandoned |  |  |  |
+| Session ID | Execution date/time | Operator role or approved internal alias | Tested environment and scope | Observer |
+| --- | --- | --- | --- | --- |
+|  |  |  |  |  |
+
+Use an internal alias or role instead of personal contact data. Describe the
+tested scope without copying sensitive business-record content.
+
+Record one row per observation and link it to the session:
+
+| Session ID | Role | Task | First click label | Route reached | Outcome | Confusion/blocker | Time optional | Follow-up |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  | completed / blocked / abandoned |  |  |  |
 
 ## Evidence boundary
 
