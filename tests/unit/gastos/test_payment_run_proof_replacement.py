@@ -32,6 +32,7 @@ async def test_paid_document_proof_replacement_keeps_old_and_audits_actor():
         sustituido_por_empleado_id=None,
     )
     session = SimpleNamespace(execute=AsyncMock(), flush=AsyncMock(), add=MagicMock())
+    session.execute.return_value = MagicMock()
     session.execute.return_value.scalar_one_or_none.return_value = old
     proof = await replace_payment_run_proof(
         session,
@@ -60,6 +61,7 @@ async def test_paid_document_proof_replacement_keeps_old_and_audits_actor():
 @pytest.mark.asyncio
 async def test_stale_or_unpaid_document_cannot_replace_proof():
     session = SimpleNamespace(execute=AsyncMock(), flush=AsyncMock(), add=MagicMock())
+    session.execute.return_value = MagicMock()
     session.execute.return_value.scalar_one_or_none.return_value = None
     paid = SimpleNamespace(id=uuid4(), tipo="SOLICITUD", estado="pagado", pagado_en=datetime.now(timezone.utc))
     attachment = SolicitudTercerosAttachment(
@@ -119,6 +121,19 @@ def test_paid_rows_offer_replacement_only_to_accounting():
     assert "sustituir-comprobante" not in readonly
     assert f'value="{proof_id}"' in accounting
     assert "Sustituir archivo" in accounting
+
+
+def test_paid_loan_row_shows_current_and_prior_proofs():
+    loan_id = uuid4()
+    row = {
+        "id": loan_id, "entity_type": "prestamo", "status": "pagada",
+        "numero_referencia": "P-2601", "proof_filename": "nuevo.pdf",
+        "proof_history": [{"previous_filename": "anterior.pdf"}],
+    }
+    html = _render_payment_run_items([row], can_confirm_payment=True)
+    assert f"/prestamo/{loan_id}/comprobante/current" in html
+    assert f"/prestamo/{loan_id}/comprobante/0" in html
+    assert "Sustituir archivo" in html
 
 
 @pytest.mark.asyncio

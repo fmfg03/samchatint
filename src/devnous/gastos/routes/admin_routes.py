@@ -9676,7 +9676,7 @@ def _render_payment_run_items(
     can_confirm_payment: bool = False,
     can_edit_payment_date: bool = False,
     payment_proof_selection: bool = False,
-    current_proofs: Optional[dict[UUIDType, list[Adjunto]]] = None,
+    current_proofs: Optional[dict[UUIDType, list[Any]]] = None,
 ) -> str:
     rendered_rows = []
     for row in sorted(rows, key=_payment_run_sort_key):
@@ -9923,40 +9923,40 @@ async def admin_finance_payment_run(
             query=(q_value or "").strip() or None,
         )
     )
-    paid_rows = await list_payment_run_items(
-        session, status_filter="pagadas", date_from=parsed_from,
-        date_to=parsed_to, query=(q_value or "").strip() or None,
-    )
-    paid_rows.extend(await list_prestamo_payment_run_items(
-        session, status_filter="pagadas", date_from=parsed_from,
-        date_to=parsed_to, query=(q_value or "").strip() or None,
-    ))
-    paid_document_ids = [row["id"] for row in paid_rows if row.get("entity_type") != "prestamo"]
-    current_proofs: dict[UUIDType, list[Adjunto]] = {}
-    if paid_document_ids:
-        result = await session.execute(
-            select(Adjunto).where(
-                Adjunto.documento_id.in_(paid_document_ids),
-                Adjunto.categoria == "comprobante_pago",
-                Adjunto.activo.is_(True),
-            ).order_by(Adjunto.subido_en.asc())
-        )
-        for proof in result.scalars().all():
-            current_proofs.setdefault(proof.documento_id, []).append(proof)
-    closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)
     can_confirm_payment = can_confirm_payment_run_payment(current_empleado)
     vista_value = vista if isinstance(vista, str) else ""
     requested_view = vista_value.strip().lower()
     if requested_view not in {"programa", "comprobantes", "pagadas"}:
-        # Accounting users arrive at the action they are authorized to perform;
-        # managers retain the established program-first view.
         selected_view = (
             "comprobantes" if can_confirm_payment and not can_close_run else "programa"
         )
     else:
         selected_view = requested_view
 
+    paid_rows: list[dict[str, Any]] = []
+    if selected_view == "pagadas":
+        paid_rows = await list_payment_run_items(
+            session, status_filter="pagadas", date_from=parsed_from,
+            date_to=parsed_to, query=(q_value or "").strip() or None,
+        )
+        paid_rows.extend(await list_prestamo_payment_run_items(
+            session, status_filter="pagadas", date_from=parsed_from,
+            date_to=parsed_to, query=(q_value or "").strip() or None,
+        ))
+    paid_document_ids = [row["id"] for row in paid_rows if row.get("entity_type") != "prestamo"]
+    current_proofs: dict[UUIDType, list[Any]] = {}
+    if paid_document_ids:
+        result = await session.execute(
+            select(Adjunto.id, Adjunto.documento_id, Adjunto.nombre_archivo).where(
+                Adjunto.documento_id.in_(paid_document_ids),
+                Adjunto.categoria == "comprobante_pago",
+                Adjunto.activo.is_(True),
+            ).order_by(Adjunto.subido_en.asc())
+        )
+        for proof in result.all():
+            current_proofs.setdefault(proof.documento_id, []).append(proof)
+    closures = await list_payment_run_closures(session, limit=20)
     view_params = {
         key: value
         for key, value in {
