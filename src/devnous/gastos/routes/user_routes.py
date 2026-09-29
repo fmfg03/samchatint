@@ -168,6 +168,7 @@ from ..services.employee_debtor_accounting_service import (
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
     build_expense_cfdi_for_export,
+    group_expense_cfdis_for_document,
     load_expense_for_coi_export,
 )
 from ..services.documento_service import (
@@ -4456,10 +4457,16 @@ async def _load_coi_lote_terceros_documentos(
 async def _load_documento_active_coi_expenses(
     session: AsyncSession,
     documento: Documento,
-    start_dt: datetime,
-    end_dt: datetime,
+    start_dt: Optional[datetime] = None,
+    end_dt: Optional[datetime] = None,
 ) -> List[ExpenseReport]:
-    """Load active expenses for the document in the selected accounting month."""
+    """Load active document expenses, optionally inside one accounting month."""
+    period_conditions = []
+    if start_dt is not None and end_dt is not None:
+        period_conditions = [
+            ExpenseReport.fecha >= start_dt,
+            ExpenseReport.fecha < end_dt,
+        ]
     if documento.tipo == "INFORME":
         expense_conditions = [
             ExpenseReport.documento_id == documento.id,
@@ -4479,8 +4486,7 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     or_(*expense_conditions),
                     ExpenseReport.estado_gasto != "cancelado",
-                    ExpenseReport.fecha >= start_dt,
-                    ExpenseReport.fecha < end_dt,
+                    *period_conditions,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4496,8 +4502,7 @@ async def _load_documento_active_coi_expenses(
                 and_(
                     ExpenseReport.documento_id == documento.id,
                     ExpenseReport.estado_gasto != "cancelado",
-                    ExpenseReport.fecha >= start_dt,
-                    ExpenseReport.fecha < end_dt,
+                    *period_conditions,
                 )
             )
             .order_by(ExpenseReport.fecha.asc())
@@ -4559,7 +4564,7 @@ async def _build_coi_exportable_lote_rows(
     end_date: date,
     search_q: str = "",
 ) -> List[dict[str, Any]]:
-    """Per-expense rows for COI admin view (limpieza contable Listo COI only)."""
+    """Document policy rows for COI, with INFORME eligibility evaluated atomically."""
     documento_batches = (
         ("INFORME", await _load_coi_lote_informe_documentos(session, start_dt, end_dt)),
         (
@@ -4576,40 +4581,87 @@ async def _build_coi_exportable_lote_rows(
     rows: List[dict[str, Any]] = []
     for tipo_lote, documentos in documento_batches:
         for documento in documentos:
-            expenses = await _load_documento_active_coi_expenses(
+            period_expenses = await _load_documento_active_coi_expenses(
                 session, documento, start_dt, end_dt
             )
-            ready_expenses: List[ExpenseReport] = []
-            for expense in expenses:
-                ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
-                if ready:
-                    ready_expenses.append(expense)
-            if not ready_expenses:
+            expenses = period_expenses
+            block_reasons: List[str] = []
+            if tipo_lote == "INFORME":
+                expenses = await _load_documento_active_coi_expenses(
+                    session, documento
+                )
+                period_ids = {expense.id for expense in period_expenses}
+                outside_period = [
+                    expense for expense in expenses if expense.id not in period_ids
+                ]
+                if outside_period:
+                    references = ", ".join(
+                        expense.numero_referencia or str(expense.id)[:8]
+                        for expense in outside_period[:6]
+                    )
+                    if len(outside_period) > 6:
+                        references += f" y {len(outside_period) - 6} más"
+                    block_reasons.append(
+                        "El informe contiene partidas de otro periodo contable: "
+                        + references
+                    )
+            if not expenses:
                 continue
+            if tipo_lote != "INFORME":
+                ready_expenses = []
+                for expense in expenses:
+                    ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
+                    if ready:
+                        ready_expenses.append(expense)
+                if not _coi_exportable_matches_search(
+                    documento=documento, expenses=ready_expenses, search_q=search_q
+                ):
+                    continue
+                for expense in ready_expenses:
+                    rows.append(
+                        {
+                            "tipo_lote": tipo_lote,
+                            "documento": documento,
+                            "expenses": [expense],
+                            "period_label": _coi_lote_documento_period_label(
+                                documento, tipo_lote
+                            ),
+                            "can_export": True,
+                            "block_reason": "",
+                        }
+                    )
+                continue
+            for expense in expenses:
+                ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+                if not ready:
+                    reference = expense.numero_referencia or str(expense.id)[:8]
+                    block_reasons.append(
+                        f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                    )
             if not _coi_exportable_matches_search(
                 documento=documento,
-                expenses=ready_expenses,
+                expenses=expenses,
                 search_q=search_q,
             ):
                 continue
             period_label = _coi_lote_documento_period_label(documento, tipo_lote)
-            for expense in ready_expenses:
-                rows.append(
-                    {
-                        "tipo_lote": tipo_lote,
-                        "documento": documento,
-                        "expense": expense,
-                        "period_label": period_label,
-                        "can_export": True,
-                        "block_reason": "",
-                    }
-                )
+            rows.append(
+                {
+                    "tipo_lote": tipo_lote,
+                    "documento": documento,
+                    "expenses": expenses,
+                    "period_label": period_label,
+                    "can_export": not block_reasons,
+                    "block_reason": "; ".join(block_reasons),
+                }
+            )
     actor_ids = {
         actor_id
         for row in rows
+        for expense in row.get("expenses") or []
         for actor_id in (
-            getattr(row["expense"], "coi_status_updated_by_id", None),
-            getattr(row["expense"], "coi_exported_by_id", None),
+            getattr(expense, "coi_status_updated_by_id", None),
+            getattr(expense, "coi_exported_by_id", None),
         )
         if actor_id is not None
     }
@@ -4623,27 +4675,31 @@ async def _build_coi_exportable_lote_rows(
             for actor_id, actor_name in actor_rows.all()
         }
     for row in rows:
-        expense = row["expense"]
-        status_updated_at = getattr(expense, "coi_status_updated_at", None)
-        exported_at = getattr(expense, "coi_exported_at", None)
-        row["audit"] = {
-            "status_changed_at": (
-                status_updated_at.isoformat(sep=" ", timespec="seconds")
-                if status_updated_at
-                else "No registrado"
-            ),
-            "status_changed_by": actors_by_id.get(
-                getattr(expense, "coi_status_updated_by_id", None), "No registrado"
-            ),
-            "exported_at": (
-                exported_at.isoformat(sep=" ", timespec="seconds")
-                if exported_at
-                else "No registrado"
-            ),
-            "exported_by": actors_by_id.get(
-                getattr(expense, "coi_exported_by_id", None), "No registrado"
-            ),
-        }
+        audit_by_expense: dict[Any, dict[str, str]] = {}
+        for expense in row.get("expenses") or []:
+            status_updated_at = getattr(expense, "coi_status_updated_at", None)
+            exported_at = getattr(expense, "coi_exported_at", None)
+            audit_by_expense[expense.id] = {
+                "status_changed_at": (
+                    status_updated_at.isoformat(sep=" ", timespec="seconds")
+                    if status_updated_at
+                    else "No registrado"
+                ),
+                "status_changed_by": actors_by_id.get(
+                    getattr(expense, "coi_status_updated_by_id", None),
+                    "No registrado",
+                ),
+                "exported_at": (
+                    exported_at.isoformat(sep=" ", timespec="seconds")
+                    if exported_at
+                    else "No registrado"
+                ),
+                "exported_by": actors_by_id.get(
+                    getattr(expense, "coi_exported_by_id", None),
+                    "No registrado",
+                ),
+            }
+        row["audit_by_expense"] = audit_by_expense
     return rows
 
 
@@ -4687,6 +4743,29 @@ def _coi_estado_options(selected: Any) -> str:
     )
 
 
+def _render_coi_expense_status_form(
+    expense: ExpenseReport,
+    audit: dict[str, str],
+) -> str:
+    reference = escape(expense.numero_referencia or str(expense.id)[:8])
+    return (
+        f'<div style="margin-bottom:8px;">'
+        f'{_coi_estado_badge(getattr(expense, "coi_estado", None))} {reference}'
+        f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense.id}/estado" '
+        f'style="display:flex;gap:6px;align-items:center;min-width:170px;margin-top:4px;">'
+        f'<input type="hidden" name="next" value="/admin/contabilidad/coi">'
+        f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
+        f'{_coi_estado_options(getattr(expense, "coi_estado", None))}</select>'
+        f'<button type="submit" class="button secondary" '
+        f'style="padding:6px 8px;font-size:12px;">Guardar</button>'
+        f'</form><div class="muted" style="margin-top:4px;">'
+        f'Clasificación: {escape(audit.get("status_changed_at") or "No registrado")} · '
+        f'{escape(audit.get("status_changed_by") or "No registrado")}<br>'
+        f'Exportación: {escape(audit.get("exported_at") or "No registrado")} · '
+        f'{escape(audit.get("exported_by") or "No registrado")}</div></div>'
+    )
+
+
 def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
     if not rows:
         return (
@@ -4698,57 +4777,75 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
     rendered: List[str] = []
     for row in rows:
         documento = row["documento"]
-        expense = row["expense"]
+        expenses = list(row.get("expenses") or [])
         documento_id = str(documento.id)
-        expense_id = str(expense.id)
         doc_ref = escape(documento.numero_referencia or "(Sin referencia)")
         tipo_lote = row["tipo_lote"]
         tipo_label = "Informe" if tipo_lote == "INFORME" else "Solicitud terceros"
-        gasto_ref_raw = expense.numero_referencia or str(expense.id)[:8]
-        gasto_ref = escape(gasto_ref_raw)
-        concepto = escape((expense.concepto or "-")[:120])
-        monto = format_currency(expense.gasto_cantidad or 0)
-        fecha_gasto = (
-            expense.fecha.date().isoformat()
-            if getattr(expense, "fecha", None)
-            else "-"
+        gasto_links = "<br>".join(
+            f'<a href="/gastos/{expense.id}">'
+            f'{escape(expense.numero_referencia or str(expense.id)[:8])}</a>'
+            for expense in expenses
         )
-        coi_estado = getattr(expense, "coi_estado", None) or "pendiente"
-        audit = row.get("audit") or {}
-        status_changed_at = audit.get("status_changed_at") or "No registrado"
-        status_changed_by = audit.get("status_changed_by") or "No registrado"
-        exported_at = audit.get("exported_at") or "No registrado"
-        exported_by = audit.get("exported_by") or "No registrado"
-        gasto_link = f'<a href="/gastos/{expense_id}">{gasto_ref}</a>'
+        concepts = "<br>".join(
+            escape((expense.concepto or "-")[:120]) for expense in expenses
+        )
+        monto = format_currency(
+            sum(float(expense.gasto_cantidad or 0) for expense in expenses)
+        )
+        expense_dates = [expense.fecha.date() for expense in expenses if expense.fecha]
+        fecha_gasto = "-"
+        if expense_dates:
+            fecha_gasto = min(expense_dates).isoformat()
+            if max(expense_dates) != min(expense_dates):
+                fecha_gasto += f" a {max(expense_dates).isoformat()}"
+        is_report = tipo_lote == "INFORME"
+        selection_name = "selected_documento_id" if is_report else "selected_gasto_id"
+        selection_id = documento_id if is_report else str(expenses[0].id)
+        export_path = (
+            f"/documentos/{documento_id}" if is_report else f"/gastos/{selection_id}"
+        )
         coi_action = (
-            f'<a href="/gastos/{expense_id}/exportar-coi.xlsx" '
+            f'<a href="{export_path}/exportar-coi.xlsx" '
             f'class="button" style="padding:8px 12px;font-size:12px;">'
-            "Generar descarga COI</a>"
+            "Generar póliza COI</a>"
         )
-        status_form = (
-            f'<form method="POST" action="/admin/contabilidad/coi/gastos/{expense_id}/estado" '
-            f'style="display:flex;gap:6px;align-items:center;min-width:170px;">'
-            f'<input type="hidden" name="next" value="/admin/contabilidad/coi">'
-            f'<select name="coi_estado" style="min-width:130px;padding:6px 8px;">'
-            f'{_coi_estado_options(coi_estado)}</select>'
-            f'<button type="submit" class="button secondary" style="padding:6px 8px;font-size:12px;">Guardar</button>'
-            f'</form>'
+        audit_by_expense = row.get("audit_by_expense") or {}
+        status_forms = "".join(
+            _render_coi_expense_status_form(
+                expense,
+                audit_by_expense.get(expense.id) or {},
+            )
+            for expense in expenses
+        )
+        block_reason = escape(str(row.get("block_reason") or ""))
+        selection = (
+            f'<input class="coi-selection-checkbox" type="checkbox" '
+            f'form="coi-export-form" name="{selection_name}" '
+            f'value="{selection_id}">'
+            if row.get("can_export")
+            else '<span title="Póliza bloqueada">⛔</span>'
+        )
+        action = (
+            coi_action
+            if row.get("can_export")
+            else f'<span class="muted">Bloqueada: {block_reason}</span>'
         )
 
         rendered.append(
             f"""
         <tr>
-            <td style="text-align:center;"><input class="coi-selection-checkbox" type="checkbox" form="coi-export-form" name="selected_gasto_id" value="{expense_id}"></td>
-            <td>{_coi_estado_badge(coi_estado)}<div style="margin-top:6px;">{status_form}</div><div class="muted" style="margin-top:6px;">Clasificación: {escape(status_changed_at)} · {escape(status_changed_by)}<br>Exportación: {escape(exported_at)} · {escape(exported_by)}</div></td>
+            <td style="text-align:center;">{selection}</td>
+            <td>{status_forms}</td>
             <td>{escape(tipo_label)}</td>
             <td><a href="/documentos/{documento_id}">{doc_ref}</a></td>
             <td>{escape(row["period_label"])}</td>
             <td>{escape((documento.estado or "-").upper())}</td>
-            <td>{gasto_link}</td>
-            <td>{concepto}</td>
+            <td>{gasto_links}</td>
+            <td>{concepts}</td>
             <td>{monto}</td>
             <td>{fecha_gasto}</td>
-            <td>{coi_action}</td>
+            <td>{action}</td>
         </tr>
         """
         )
@@ -4759,7 +4856,7 @@ async def _collect_coi_lote_expense_cfdis(
     session: AsyncSession,
     exportable_rows: List[Dict[str, Any]],
 ) -> tuple[List[Any], List[List[str]], int, set[UUIDType]]:
-    """Build consolidated COI payloads in admin-table order; skip per-gasto failures."""
+    """Build complete document policies; any expense failure blocks the whole batch."""
     manifest_rows = [
         [
             "gasto_id",
@@ -4775,16 +4872,30 @@ async def _collect_coi_lote_expense_cfdis(
     expense_cfdis: List[Any] = []
     exported_ids: set[UUIDType] = set()
     for row in exportable_rows:
-        expense = row["expense"]
         documento = row["documento"]
         tipo_lote = row["tipo_lote"]
-        try:
-            expense_cfdi = await build_expense_cfdi_for_export(
-                session,
-                expense,
-                require_cleanup_ready=False,
-            )
-            expense_cfdis.append(expense_cfdi)
+        document_cfdis: List[ExpenseCFDI] = []
+        for expense_index, expense in enumerate(row.get("expenses") or [], start=1):
+            try:
+                document_cfdis.append(
+                    await build_expense_cfdi_for_export(
+                        session,
+                        expense,
+                        require_cleanup_ready=False,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Blocking COI document policy %s because expense %s failed: %s",
+                    documento.id,
+                    expense.id,
+                    exc,
+                )
+                raise ValueError(
+                    "No se generó una póliza parcial. La partida "
+                    f"{expense.numero_referencia or str(expense.id)[:8]} "
+                    f"no está lista para COI: {exc}"
+                ) from exc
             exported_ids.add(expense.id)
             manifest_rows.append(
                 [
@@ -4793,44 +4904,15 @@ async def _collect_coi_lote_expense_cfdis(
                     tipo_lote,
                     expense.numero_referencia or "",
                     documento.numero_referencia or "",
-                    str(len(expense_cfdis)),
+                    str(expense_index),
                     "exportado",
                     "",
                 ]
             )
-        except ValueError as exc:
-            manifest_rows.append(
-                [
-                    str(expense.id),
-                    str(documento.id),
-                    tipo_lote,
-                    expense.numero_referencia or "",
-                    documento.numero_referencia or "",
-                    "",
-                    "omitido",
-                    str(exc),
-                ]
-            )
-        except Exception as exc:
-            logger.error(
-                "Error exporting COI batch expense %s: %s",
-                expense.id,
-                exc,
-                exc_info=True,
-            )
-            manifest_rows.append(
-                [
-                    str(expense.id),
-                    str(documento.id),
-                    tipo_lote,
-                    expense.numero_referencia or "",
-                    documento.numero_referencia or "",
-                    "",
-                    "error",
-                    "Error al generar el Excel COI.",
-                ]
-            )
-    return expense_cfdis, manifest_rows, len(expense_cfdis), exported_ids
+        expense_cfdis.extend(
+            group_expense_cfdis_for_document(document_cfdis, documento)
+        )
+    return expense_cfdis, manifest_rows, len(exportable_rows), exported_ids
 
 
 @router.get("/admin/contabilidad/coi/exportar-gastos-lote.xlsx", response_model=None)
@@ -4859,8 +4941,9 @@ async def exportar_coi_gastos_lote_xlsx(
     year: Optional[int] = Form(None),
     month: Optional[int] = Form(None),
     q: str = Form(""),
-    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
+    selected_documento_id: Optional[List[UUIDType]] = Form(None),
     confirmed_selection_count: Optional[int] = Form(None),
+    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
 ) -> Union[Response, RedirectResponse]:
     now = datetime.utcnow()
     selected_year = year or now.year
@@ -4882,9 +4965,21 @@ async def exportar_coi_gastos_lote_xlsx(
     redirect_params = f"year={selected_year}&month={selected_month}"
     if (q or "").strip():
         redirect_params += "&q=" + quote((q or "").strip())
-    selected_ids_list = [str(item) for item in (selected_gasto_id or [])]
+    selected_ids_list = [
+        ("INFORME", str(item)) for item in (selected_documento_id or [])
+    ]
+    if isinstance(selected_gasto_id, list):
+        selected_ids_list.extend(("GASTO", str(item)) for item in selected_gasto_id)
     selected_ids = set(selected_ids_list)
-    visible_ids = {str(row["expense"].id) for row in exportable_rows}
+
+    def row_selection(row: Dict[str, Any]) -> tuple[str, str]:
+        if row.get("tipo_lote", "INFORME") == "INFORME":
+            return "INFORME", str(row["documento"].id)
+        return "GASTO", str(row["expenses"][0].id)
+
+    visible_ids = {
+        row_selection(row) for row in exportable_rows if row.get("can_export")
+    }
     if not selected_ids:
         return RedirectResponse(
             url=(
@@ -4902,7 +4997,7 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
     exportable_rows = [
-        row for row in exportable_rows if str(row["expense"].id) in selected_ids
+        row for row in exportable_rows if row_selection(row) in selected_ids
     ]
     if confirmed_selection_count != len(exportable_rows):
         return RedirectResponse(
@@ -4925,10 +5020,21 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
 
-    expense_cfdis, manifest_rows, exported_count, exported_ids = await _collect_coi_lote_expense_cfdis(
-        session,
-        exportable_rows,
-    )
+    try:
+        (
+            expense_cfdis,
+            manifest_rows,
+            exported_count,
+            exported_ids,
+        ) = await _collect_coi_lote_expense_cfdis(session, exportable_rows)
+    except ValueError as exc:
+        return RedirectResponse(
+            url=(
+                f"/admin/contabilidad/coi?{redirect_params}&error_msg="
+                + quote(str(exc))
+            ),
+            status_code=303,
+        )
 
     if exported_count == 0:
         return RedirectResponse(
@@ -4949,13 +5055,13 @@ async def exportar_coi_gastos_lote_xlsx(
     if exported_ids:
         exported_at = datetime.utcnow()
         for row in exportable_rows:
-            expense = row.get("expense")
-            if expense and expense.id in exported_ids:
-                expense.coi_estado = "contabilizado"
-                expense.coi_exported_at = exported_at
-                expense.coi_exported_by_id = current_empleado.id
-                expense.coi_status_updated_at = exported_at
-                expense.coi_status_updated_by_id = current_empleado.id
+            for expense in row.get("expenses") or []:
+                if expense.id in exported_ids:
+                    expense.coi_estado = "contabilizado"
+                    expense.coi_exported_at = exported_at
+                    expense.coi_exported_by_id = current_empleado.id
+                    expense.coi_status_updated_at = exported_at
+                    expense.coi_status_updated_by_id = current_empleado.id
         await session.commit()
     filename = f"COI_Gastos_{selected_year}_{selected_month:02d}.xlsx"
     return Response(
@@ -5018,9 +5124,12 @@ async def contabilidad_coi_view(
     )
     exportable_document_ids = {str(row["documento"].id) for row in exportable_rows}
     exportable_expense_count = sum(
-        1 for row in exportable_rows if row.get("expense") is not None
+        len(row.get("expenses") or []) for row in exportable_rows
     )
-    exportable_ready_expenses = len(exportable_rows)
+    exportable_policy_count = sum(
+        1 for row in exportable_rows if row.get("can_export")
+    )
+    blocked_policy_count = len(exportable_rows) - exportable_policy_count
     exportable_rows_html = _render_coi_exportable_lote_rows_html(exportable_rows)
 
     conditions = []
@@ -5196,17 +5305,19 @@ async def contabilidad_coi_view(
             </form>
         </div>
         <p class="muted" style="margin:0 0 12px 0;">
-            Sólo gastos con preparación COI guardada (<strong>Listo COI</strong> en
-            <a href="/admin/gastos/sin-cuenta-contable">Limpieza contable</a>) dentro de informes aprobados
-            o solicitudes a terceros pagadas, cuya fecha contable pertenece al periodo {selected_year}-{selected_month:02d}.
-            Cada fila genera una póliza individual vía <code>/gastos/{{id}}/exportar-coi.xlsx</code>
-            (mismo formato que solicitudes a terceros). El documento conserva su descarga consolidada.
-            La exportación en lote descarga un Excel COI consolidado únicamente con las filas visibles que selecciones;
-            la hoja Manifest registra partidas exportadas u omitidas.
+            Cada fila representa una póliza por documento. Para un Informe de Gastos,
+            todas sus partidas activas deben estar <strong>Listo COI</strong> en
+            <a href="/admin/gastos/sin-cuenta-contable">Limpieza contable</a>, dentro de informes aprobados,
+            y pertenecer al mismo periodo {selected_year}-{selected_month:02d}. Si una partida está incompleta
+            o pertenece a otro mes, se bloquea el informe completo y no se genera una póliza parcial.
+            Las solicitudes independientes a terceros conservan su granularidad actual.
+            La hoja Manifest registra las partidas incluidas en cada póliza.
         </p>
         <div class="summary" style="margin-bottom:12px;">
             <div class="box"><div class="label">Documentos</div><div class="value">{len(exportable_document_ids)}</div></div>
-            <div class="box"><div class="label">Gastos listos</div><div class="value">{exportable_ready_expenses}</div></div>
+            <div class="box"><div class="label">Pólizas listas</div><div class="value">{exportable_policy_count}</div></div>
+            <div class="box"><div class="label">Pólizas bloqueadas</div><div class="value">{blocked_policy_count}</div></div>
+            <div class="box"><div class="label">Partidas</div><div class="value">{exportable_expense_count}</div></div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
             <a class="button secondary" href="/documentos/todos/exportar-exceles.zip?tipo=INFORME&situacion=cerradas">Descargar informes de gastos</a>
@@ -33813,6 +33924,8 @@ async def _build_documento_coi_bundle(
     documento_id: UUIDType,
     session: AsyncSession = Depends(get_db_session),
     current_empleado: Empleado = Depends(get_current_empleado),
+    *,
+    require_complete_informe: bool = False,
 ) -> tuple[Documento, list[ExpenseReport], list[ExpenseCFDI]]:
     # Load documento
     doc_result = await session.execute(
@@ -33879,11 +33992,35 @@ async def _build_documento_coi_bundle(
             detail="No hay gastos activos asociados para exportar.",
         )
 
+    if documento.tipo == "INFORME" and require_complete_informe:
+        accounting_periods = {
+            (expense.fecha.year, expense.fecha.month)
+            for expense in expenses
+            if expense.fecha is not None
+        }
+        if len(accounting_periods) > 1:
+            period_labels = ", ".join(
+                f"{year}-{month:02d}" for year, month in sorted(accounting_periods)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No se generó una póliza parcial. Las partidas del Informe de "
+                    f"Gastos pertenecen a más de un periodo contable: {period_labels}."
+                ),
+            )
+
     expense_cfdi_list: list[ExpenseCFDI] = []
     ready_expenses: list[ExpenseReport] = []
+    blocked_expenses: list[str] = []
     for expense in expenses:
-        ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
+        ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
         if not ready:
+            if documento.tipo == "INFORME" and require_complete_informe:
+                reference = expense.numero_referencia or str(expense.id)[:8]
+                blocked_expenses.append(
+                    f"{reference}: {'; '.join(issues) or 'preparación COI incompleta'}"
+                )
             continue
         try:
             expense_cfdi_list.append(
@@ -33895,11 +34032,26 @@ async def _build_documento_coi_bundle(
             )
             ready_expenses.append(expense)
         except ValueError as exc:
+            if documento.tipo == "INFORME" and require_complete_informe:
+                reference = expense.numero_referencia or str(expense.id)[:8]
+                blocked_expenses.append(f"{reference}: {exc}")
             logger.warning(
                 "Skipping expense %s for documento COI export: %s",
                 expense.id,
                 exc,
             )
+
+    if blocked_expenses:
+        detail = "; ".join(blocked_expenses[:8])
+        if len(blocked_expenses) > 8:
+            detail += f"; y {len(blocked_expenses) - 8} partidas más"
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No se generó una póliza parcial. Completa todas las partidas del "
+                f"Informe de Gastos antes de exportar: {detail}"
+            ),
+        )
 
     if not ready_expenses:
         raise HTTPException(
@@ -33910,7 +34062,11 @@ async def _build_documento_coi_bundle(
             ),
         )
 
-    return documento, ready_expenses, expense_cfdi_list
+    return (
+        documento,
+        ready_expenses,
+        group_expense_cfdis_for_document(expense_cfdi_list, documento),
+    )
 
 
 async def _approved_informe_for_cuenta_or_redirect(
@@ -34267,6 +34423,25 @@ async def exportar_coi_poliza_gasto_excel(
     ):
         raise HTTPException(status_code=403, detail="Access denied")
 
+    informe_documento = None
+    if expense.informe_documento_id:
+        informe_documento = await session.get(
+            Documento, expense.informe_documento_id
+        )
+    if informe_documento is None and expense.documento_id:
+        candidate = await session.get(Documento, expense.documento_id)
+        if candidate is not None and candidate.tipo == "INFORME":
+            informe_documento = candidate
+    if informe_documento is None and expense.cuenta_gastos_id:
+        informe_documento = await _informe_documento_for_cuenta(
+            session, expense.cuenta_gastos_id
+        )
+    if informe_documento is not None:
+        return RedirectResponse(
+            url=f"/documentos/{informe_documento.id}/exportar-coi.xlsx",
+            status_code=303,
+        )
+
     try:
         expense_cfdi = await build_expense_cfdi_for_export(session, expense)
         xlsx_bytes = generate_coi_poliza_xlsx([expense_cfdi])
@@ -34320,15 +34495,18 @@ async def exportar_coi_poliza(
     """
     try:
         documento, _, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para exportar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303
             )
@@ -34380,15 +34558,18 @@ async def exportar_coi_poliza_excel(
     """
     try:
         documento, _, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para exportar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303,
             )
@@ -34437,15 +34618,18 @@ async def preview_coi_poliza(
 ) -> Union[HTMLResponse, RedirectResponse]:
     try:
         documento, expenses, expense_cfdi_list = await _build_documento_coi_bundle(
-            documento_id, session, current_empleado
+            documento_id,
+            session,
+            current_empleado,
+            require_complete_informe=True,
         )
     except HTTPException as exc:
         if exc.status_code == 400:
             return RedirectResponse(
                 url=_append_error_params(
                     f"/documentos/{documento_id}",
-                    error="no_gastos",
-                    error_msg="No hay gastos activos asociados para previsualizar.",
+                    error="coi_informe_incomplete",
+                    error_msg=str(exc.detail),
                 ),
                 status_code=303
             )

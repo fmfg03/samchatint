@@ -211,6 +211,23 @@ Repository status at this baseline:
 Do not describe the safety invariant as business-closed until the historical
 reconciliation, affected-reference verification, and Finance UAT are evidenced.
 
+#### 8.2.1 One COI policy per expense report
+
+For COI export, the canonical grouping key is the owning `INFORME`, not the
+individual `ExpenseReport` row. All active expenses owned by one `INFORME`
+share one policy header and one `FIN_PARTIDAS` closure while preserving each
+expense's movement lines, tax splits, and CFDI block.
+
+The document, preview, monthly batch, consolidated workbook, and ZIP paths must
+use the same grouping contract. A per-expense download must resolve and redirect
+to the owning `INFORME` when one exists. Standalone third-party requests remain
+ungrouped unless their owning workflow defines a separate document policy.
+
+An `INFORME` export fails closed when any active expense is not COI-ready or
+when active expenses cross accounting-month boundaries. The failure must not
+emit a partial policy or update any expense to `contabilizado`. Successful batch
+status updates apply to all included report expenses in one transaction.
+
 ### 8.3 Payment Run
 
 Canonical states visible to Payment Run are:

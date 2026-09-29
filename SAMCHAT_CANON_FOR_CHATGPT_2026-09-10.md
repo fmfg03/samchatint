@@ -161,6 +161,26 @@ The deployed guard does not by itself close the business incident: historical
 reconciliation and affected-reference verification remain required, and Finance
 UAT is separate evidence.
 
+### 9.1 Expense-report COI policy granularity
+
+Date: 2026-09-29
+
+An `INFORME` is the accounting export unit. Its active expense items, tax
+movements, and CFDI evidence must be emitted under exactly one COI policy
+header. A single expense that belongs to an `INFORME` must not be exported as
+an independent policy.
+
+The export is atomic. If any active item is not COI-ready, or if the active
+items span more than one accounting month, the complete `INFORME` policy is
+blocked. No partial file is generated and no item is marked `contabilizado`.
+Cancelled items remain excluded. Standalone third-party requests retain their
+existing policy granularity.
+
+Repository evidence for this amendment is the approved 2026-09-29 correction
+that groups XLSX, CSV, ZIP, document, and batch exports by `INFORME` and adds
+focused regression coverage. Merge, deployment, authenticated Finance UAT, and
+business acceptance remain separate evidence.
+
 ## 10. Current closure gates
 
 A finance capability is not “done” until it passes a real UAT path showing:
