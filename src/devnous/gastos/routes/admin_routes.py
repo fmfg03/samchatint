@@ -49,6 +49,7 @@ from sqlalchemy.orm import selectinload
 
 from ..models import (
     Aprobacion,
+    Adjunto,
     Documento,
     ExpenseReport,
     InvoiceReport,
@@ -164,6 +165,9 @@ from ..services.payment_run_exporter import generate_payment_run_order_xlsx
 from ..services.loan_request_service import (
     PRESTAMO_STATUS_APROBADA,
     PRESTAMO_STATUS_EN_PROCESO_PAGO,
+    PRESTAMO_STATUS_PAGADA,
+    PrestamoWorkflowError,
+    replace_prestamo_payment_proof,
 )
 from ..services.documento_service import (
     SolicitudTercerosAttachment,
@@ -172,6 +176,7 @@ from ..services.documento_service import (
     validate_solicitud_terceros_attachment,
 )
 from ..utils.receipt_bytes import resolve_media_type
+from ..services.payment_proof_replacement_service import replace_payment_run_proof
 from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
 from ..utils.receipt_bytes import (
@@ -9586,12 +9591,14 @@ def _loan_payment_run_row(prestamo: SolicitudPrestamo) -> dict[str, Any]:
     status = "en proceso de pago"
     if prestamo.estado == PRESTAMO_STATUS_APROBADA:
         status = "programada"
+    elif prestamo.estado == PRESTAMO_STATUS_PAGADA:
+        status = "pagada"
     return {
         "id": prestamo.id,
         "entity_type": "prestamo",
         "numero_referencia": prestamo.numero_referencia,
         "referencia_operaciones": None,
-        "fecha_pago": None,
+        "fecha_pago": prestamo.pagado_en if status == "pagada" else None,
         "aprobado_en": prestamo.aprobado_en,
         "pagado_en": prestamo.pagado_en,
         "concepto_pago": prestamo.motivo or "Prestamo",
@@ -9607,6 +9614,8 @@ def _loan_payment_run_row(prestamo: SolicitudPrestamo) -> dict[str, Any]:
         "can_upload_payment_proof": (
             prestamo.estado == PRESTAMO_STATUS_EN_PROCESO_PAGO
         ),
+        "proof_filename": prestamo.comprobante_pago_filename,
+        "proof_history": list((prestamo.metadata_json or {}).get("payment_proof_replacements") or []),
     }
 
 
@@ -9623,8 +9632,10 @@ async def list_prestamo_payment_run_items(
     estados = [PRESTAMO_STATUS_APROBADA]
     if normalized_status in {"cerradas", "en_proceso", "en_proceso_pago"}:
         estados = [PRESTAMO_STATUS_EN_PROCESO_PAGO]
+    elif normalized_status == "pagadas":
+        estados = [PRESTAMO_STATUS_PAGADA]
     elif normalized_status == "todas":
-        estados = [PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO]
+        estados = [PRESTAMO_STATUS_APROBADA, PRESTAMO_STATUS_EN_PROCESO_PAGO, PRESTAMO_STATUS_PAGADA]
     elif normalized_status not in {"pendientes", "abiertas"}:
         estados = [PRESTAMO_STATUS_APROBADA]
     stmt = (
@@ -9638,10 +9649,11 @@ async def list_prestamo_payment_run_items(
         .order_by(SolicitudPrestamo.aprobado_en.desc().nullslast())
         .limit(max(1, min(int(limit or 250), 500)))
     )
+    date_column = SolicitudPrestamo.pagado_en if normalized_status == "pagadas" else SolicitudPrestamo.aprobado_en
     if date_from:
-        stmt = stmt.where(SolicitudPrestamo.aprobado_en >= datetime.combine(date_from, datetime.min.time()))
+        stmt = stmt.where(date_column >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
-        stmt = stmt.where(SolicitudPrestamo.aprobado_en <= datetime.combine(date_to, datetime.max.time()))
+        stmt = stmt.where(date_column <= datetime.combine(date_to, datetime.max.time()))
     result = await session.execute(stmt)
     rows = [_loan_payment_run_row(prestamo) for prestamo in result.scalars().all()]
     if query:
@@ -9664,6 +9676,7 @@ def _render_payment_run_items(
     can_confirm_payment: bool = False,
     can_edit_payment_date: bool = False,
     payment_proof_selection: bool = False,
+    current_proofs: Optional[dict[UUIDType, list[Adjunto]]] = None,
 ) -> str:
     rendered_rows = []
     for row in sorted(rows, key=_payment_run_sort_key):
@@ -9750,6 +9763,51 @@ def _render_payment_run_items(
                     <button class="button secondary" type="submit" style="padding:8px 10px;" onclick="return confirm('Subir comprobante y marcar la solicitud como pagada?');">Subir comprobante y marcar pagado</button>
                 </form>
             """
+        if row.get("status") == "pagada":
+            if entity_type == "documento":
+                current = (current_proofs or {}).get(row.get("id"), [])
+                proof_links = " · ".join(
+                    f'<a href="/documentos/{documento_id}/adjuntos/{proof.id}">'
+                    f'{escape(proof.nombre_archivo or "Comprobante")}</a>'
+                    for proof in current
+                ) or "Sin comprobante vigente"
+            else:
+                current = []
+                proof_links = (
+                    f'<a href="/admin/finanzas/payment-run/prestamo/{documento_id}/comprobante/current">'
+                    f'{escape(str(row.get("proof_filename")))}</a>'
+                    if row.get("proof_filename") else "Sin comprobante vigente"
+                )
+                proof_links += "".join(
+                    f'<div><a href="/admin/finanzas/payment-run/prestamo/{documento_id}/comprobante/{idx}">'
+                    f'Anterior {idx + 1}: {escape(str(item.get("previous_filename") or "Comprobante"))}</a></div>'
+                    for idx, item in enumerate(row.get("proof_history") or [])
+                )
+            proof_html = proof_links
+            if can_confirm_payment:
+                if entity_type == "prestamo" and row.get("proof_filename"):
+                    current_options = '<input type="hidden" name="previous_id" value="loan">'
+                else:
+                    current_options = "".join(
+                        f'<option value="{proof.id}">{escape(proof.nombre_archivo or str(proof.id))}</option>'
+                        for proof in current
+                    )
+                    current_options = (
+                        '<label>Comprobante a sustituir<select name="previous_id" required>'
+                        + current_options + '</select></label>'
+                    ) if current_options else ""
+                if current_options:
+                    proof_html += f"""
+                        <form method="POST" enctype="multipart/form-data"
+                              action="/admin/finanzas/payment-run/{entity_type}/{documento_id}/sustituir-comprobante"
+                              style="display:grid;gap:6px;margin-top:8px;">
+                            {current_options}
+                            <input type="file" name="comprobante_pago" required>
+                            <input name="motivo" placeholder="Motivo de sustitución" required maxlength="500">
+                            <button class="button secondary" type="submit"
+                              onclick="return confirm('Sustituir comprobante vigente y conservar el anterior en auditoría?');">Sustituir archivo</button>
+                        </form>
+                    """
         detail_href = (
             f"/prestamos/{documento_id}"
             if entity_type == "prestamo"
@@ -9865,12 +9923,32 @@ async def admin_finance_payment_run(
             query=(q_value or "").strip() or None,
         )
     )
+    paid_rows = await list_payment_run_items(
+        session, status_filter="pagadas", date_from=parsed_from,
+        date_to=parsed_to, query=(q_value or "").strip() or None,
+    )
+    paid_rows.extend(await list_prestamo_payment_run_items(
+        session, status_filter="pagadas", date_from=parsed_from,
+        date_to=parsed_to, query=(q_value or "").strip() or None,
+    ))
+    paid_document_ids = [row["id"] for row in paid_rows if row.get("entity_type") != "prestamo"]
+    current_proofs: dict[UUIDType, list[Adjunto]] = {}
+    if paid_document_ids:
+        result = await session.execute(
+            select(Adjunto).where(
+                Adjunto.documento_id.in_(paid_document_ids),
+                Adjunto.categoria == "comprobante_pago",
+                Adjunto.activo.is_(True),
+            ).order_by(Adjunto.subido_en.asc())
+        )
+        for proof in result.scalars().all():
+            current_proofs.setdefault(proof.documento_id, []).append(proof)
     closures = await list_payment_run_closures(session, limit=20)
     can_close_run = can_manage_payment_run(current_empleado)
     can_confirm_payment = can_confirm_payment_run_payment(current_empleado)
     vista_value = vista if isinstance(vista, str) else ""
     requested_view = vista_value.strip().lower()
-    if requested_view not in {"programa", "comprobantes"}:
+    if requested_view not in {"programa", "comprobantes", "pagadas"}:
         # Accounting users arrive at the action they are authorized to perform;
         # managers retain the established program-first view.
         selected_view = (
@@ -9897,6 +9975,7 @@ async def admin_finance_payment_run(
 
     program_view_url = payment_run_view_url("programa")
     proof_view_url = payment_run_view_url("comprobantes")
+    paid_view_url = payment_run_view_url("pagadas")
     close_form_html = ""
     if can_close_run:
         close_form_html = """
@@ -9909,7 +9988,7 @@ async def admin_finance_payment_run(
     total_open = sum(float(row.get("monto") or 0) for row in approved_rows if row.get("can_close"))
     total_proof = sum(float(row.get("monto") or 0) for row in proof_rows)
     selected_status = escape(status or "pendientes")
-    total_rows = len(approved_rows) + len(proof_rows)
+    total_rows = len(approved_rows) + len(proof_rows) + len(paid_rows)
     alerts = ""
     if success_msg:
         alerts += f'<div class="alert alert-success">{escape(success_msg)}</div>'
@@ -9970,6 +10049,7 @@ async def admin_finance_payment_run(
             <nav class="payment-run-tabs" aria-label="Vistas de Payment Run">
                 <a class="payment-run-tab" href="{program_view_url}"{' aria-current="page"' if selected_view == 'programa' else ''}>Programa de pagos</a>
                 <a class="payment-run-tab" href="{proof_view_url}"{' aria-current="page"' if selected_view == 'comprobantes' else ''}>Comprobantes pendientes</a>
+                <a class="payment-run-tab" href="{paid_view_url}"{' aria-current="page"' if selected_view == 'pagadas' else ''}>Pagadas / comprobantes</a>
             </nav>
             <section id="programa-de-pagos" class="workspace-card payment-run-view" style="margin-bottom:18px;"{' hidden' if selected_view != 'programa' else ''}>
                 <div class="workspace-section-title">Programa de pagos</div>
@@ -10120,6 +10200,16 @@ async def admin_finance_payment_run(
 	                        <thead><tr><th>Seleccionar</th><th data-sort-key="solicitud" data-sort-type="text">Solicitud</th><th data-sort-key="referencia_operaciones" data-sort-type="number">Referencia Operaciones</th><th data-sort-key="solicitante" data-sort-type="text">Solicitante</th><th data-sort-key="beneficiario" data-sort-type="text">Beneficiario</th><th data-sort-key="fecha_pago" data-sort-type="date">Fecha pago</th><th data-sort-key="monto" data-sort-type="money">Monto</th><th data-sort-key="estado" data-sort-type="text">Estado</th><th>Comprobante de pago</th><th data-sort-key="corte" data-sort-type="text">Corte</th></tr></thead>
 	                        <tbody>{_render_payment_run_items(proof_rows, can_close_run=False, can_confirm_payment=can_confirm_payment, payment_proof_selection=True)}</tbody>
 	                    </table>
+                </div>
+            </section>
+            <section id="pagadas" class="workspace-card payment-run-view" style="margin-bottom:18px;"{' hidden' if selected_view != 'pagadas' else ''}>
+                <div class="workspace-section-title">Solicitudes pagadas y comprobantes vigentes</div>
+                <div class="workspace-section-subtitle">Contabilidad puede sustituir un archivo con motivo. El comprobante anterior queda en el historial; el pago y la póliza no cambian.</div>
+                <div style="overflow-x:auto;overflow-y:visible;margin-top:14px;">
+                    <table class="payment-table" data-sortable-table data-default-sort-index="2" data-default-sort-dir="desc">
+                        <thead><tr><th>Acción</th><th>Solicitud</th><th>Referencia Operaciones</th><th>Solicitante</th><th>Beneficiario</th><th>Fecha pago</th><th>Monto</th><th>Estado</th><th>Comprobante vigente</th><th>Corte</th></tr></thead>
+                        <tbody>{_render_payment_run_items(paid_rows, can_close_run=False, can_confirm_payment=can_confirm_payment, current_proofs=current_proofs)}</tbody>
+                    </table>
                 </div>
             </section>
             <section class="workspace-card payment-run-view"{' hidden' if selected_view != 'programa' else ''}>
@@ -10477,6 +10567,155 @@ async def admin_finance_payment_run_upload_payment_proof(
             anchor="comprobantes-pendientes",
             vista="comprobantes",
         )
+
+
+@router.post("/admin/finanzas/payment-run/documento/{documento_id}/sustituir-comprobante")
+async def admin_payment_run_replace_document_proof(
+    documento_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    previous_id: UUIDType = Form(...),
+    comprobante_pago: UploadFile = File(...),
+    motivo: str = Form(...),
+) -> RedirectResponse:
+    """Replace a paid document proof without recording another payment."""
+    try:
+        require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    documento = await session.get(Documento, documento_id)
+    if documento is None:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada.")
+    try:
+        if not comprobante_pago or not comprobante_pago.filename:
+            raise SolicitudValidationError("missing_proof", "Selecciona el nuevo comprobante.")
+        raw = await comprobante_pago.read()
+        attachment = SolicitudTercerosAttachment(
+            raw_bytes=raw,
+            filename=comprobante_pago.filename,
+            mime_type=(comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+                or resolve_media_type(comprobante_pago.filename, raw),
+            categoria="comprobante_pago",
+        )
+        validate_solicitud_terceros_attachment(attachment)
+        from ..services.payment_proof_review_service import review_payment_proof
+
+        review = review_payment_proof(
+            raw=raw, filename=attachment.filename, mime_type=attachment.mime_type,
+            expected_amount=_payment_proof_expected_amount(documento),
+            expected_beneficiary=_payment_proof_expected_beneficiary(documento),
+            expected_currency=str(getattr(documento, "currency", None) or "MXN"),
+        )
+        if _payment_proof_review_blocks_confirmation(review):
+            raise SolicitudValidationError("proof_conflict", "El comprobante presenta un conflicto que impide sustituirlo.")
+        if review.detected_date and documento.fecha_pago_efectiva and review.detected_date != documento.fecha_pago_efectiva:
+            raise SolicitudValidationError("proof_date_mismatch", "La fecha del comprobante difiere de la fecha efectiva del pago registrado.")
+        if review.status == "conflict" and not motivo.strip():
+            raise SolicitudValidationError("proof_conflict_reason", "Indica el motivo para resolver el conflicto detectado.")
+        await replace_payment_run_proof(
+            session, documento=documento, previous_id=previous_id,
+            actor_id=current_empleado.id, attachment=attachment, reason=motivo,
+        )
+        await session.commit()
+    except SolicitudValidationError as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=str(exc), vista="pagadas", anchor="pagadas")
+    except Exception:
+        await session.rollback()
+        logger.exception("Could not replace payment proof", extra={"documento_id": str(documento_id)})
+        return _payment_run_redirect(error_msg="No se pudo sustituir el comprobante.", vista="pagadas", anchor="pagadas")
+    return _payment_run_redirect(success_msg="Comprobante sustituido; pago sin cambios.", vista="pagadas", anchor="pagadas")
+
+
+@router.post("/admin/finanzas/payment-run/prestamo/{prestamo_id}/sustituir-comprobante")
+async def admin_payment_run_replace_loan_proof(
+    prestamo_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+    comprobante_pago: UploadFile = File(...),
+    motivo: str = Form(...),
+    previous_id: str = Form(...),
+) -> RedirectResponse:
+    """Replace a paid loan proof without changing its payment or posting."""
+    try:
+        require_payment_run_access(current_empleado)
+        require_payment_run_payment_confirmation(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    prestamo = await session.get(SolicitudPrestamo, prestamo_id)
+    if prestamo is None:
+        raise HTTPException(status_code=404, detail="Préstamo no encontrado.")
+    try:
+        if previous_id != "loan" or not motivo.strip():
+            raise PrestamoWorkflowError("replacement_required", "Indica el motivo de sustitución.")
+        if prestamo.estado != PRESTAMO_STATUS_PAGADA or not prestamo.comprobante_pago_storage_key:
+            raise PrestamoWorkflowError("not_paid", "El préstamo no tiene comprobante vigente.")
+        if not comprobante_pago or not comprobante_pago.filename:
+            raise PrestamoWorkflowError("missing_proof", "Selecciona el nuevo comprobante.")
+        raw = await comprobante_pago.read()
+        try:
+            validate_solicitud_terceros_attachment(SolicitudTercerosAttachment(
+                raw_bytes=raw, filename=comprobante_pago.filename,
+                mime_type=(comprobante_pago.content_type or "").split(";", 1)[0].strip().lower()
+                    or resolve_media_type(comprobante_pago.filename, raw),
+                categoria="comprobante_pago",
+            ))
+        except SolicitudValidationError as exc:
+            raise PrestamoWorkflowError(exc.code, str(exc)) from exc
+        await comprobante_pago.seek(0)
+        from .user_routes import _save_prestamo_payment_proof_upload
+
+        filename, storage_key = await _save_prestamo_payment_proof_upload(
+            prestamo, comprobante_pago
+        )
+        replace_prestamo_payment_proof(
+            prestamo, current_empleado, filename=filename,
+            storage_key=storage_key, reason=motivo,
+        )
+        await session.commit()
+    except PrestamoWorkflowError as exc:
+        await session.rollback()
+        return _payment_run_redirect(error_msg=exc.message, vista="pagadas", anchor="pagadas")
+    except Exception:
+        await session.rollback()
+        logger.exception("Could not replace loan payment proof", extra={"prestamo_id": str(prestamo_id)})
+        return _payment_run_redirect(error_msg="No se pudo sustituir el comprobante.", vista="pagadas", anchor="pagadas")
+    return _payment_run_redirect(success_msg="Comprobante del préstamo sustituido; pago sin cambios.", vista="pagadas", anchor="pagadas")
+
+
+@router.get("/admin/finanzas/payment-run/prestamo/{prestamo_id}/comprobante/{version}")
+async def admin_payment_run_download_loan_proof(
+    prestamo_id: UUIDType,
+    version: str,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> FileResponse:
+    """Download only a proof key recorded on this paid loan."""
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    prestamo = await session.get(SolicitudPrestamo, prestamo_id)
+    if prestamo is None or prestamo.estado != PRESTAMO_STATUS_PAGADA:
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    if version == "current":
+        key = prestamo.comprobante_pago_storage_key
+        name = prestamo.comprobante_pago_filename
+    else:
+        history = list((prestamo.metadata_json or {}).get("payment_proof_replacements") or [])
+        if not version.isdecimal() or int(version) >= len(history):
+            raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+        item = history[int(version)]
+        key = item.get("previous_storage_key")
+        name = item.get("previous_filename")
+    from .user_routes import _repo_root
+
+    root = (_repo_root() / "data" / "gastos").resolve()
+    path = (root / str(key or "")).resolve()
+    if not key or not path.is_relative_to(root / "prestamos" / str(prestamo_id)) or not path.is_file():
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    return FileResponse(path, filename=Path(str(name or "comprobante_pago")).name)
 
 
 @router.post(
