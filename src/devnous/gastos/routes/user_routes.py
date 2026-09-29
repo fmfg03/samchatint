@@ -103,6 +103,7 @@ from ..services.amex_expense_service import (
     is_company_amex_account,
     is_company_amex_expense,
     set_company_amex_status,
+    sum_active_solicitud_amounts,
     sum_paid_solicitud_amounts,
 )
 from ..services.amex_card_account_service import (
@@ -11360,8 +11361,17 @@ def _format_authorization_money_value(value: Any) -> str:
         return str(value)
 
 
-def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN") -> str:
+def _render_debtor_auxiliary_section(
+    aux: Dict[str, Any],
+    currency: str = "MXN",
+    *,
+    employee_paid: float = 0,
+    informe_estado: Optional[str] = None,
+) -> str:
     status = str(aux.get("status") or "pendiente")
+    approved = (informe_estado or "").strip().lower() == "aprobado"
+    if status == "diferencia_contable" and not approved:
+        status = "pendiente"
     status_labels = {
         "saldado": "Saldado",
         "pendiente": "Pendiente",
@@ -11376,6 +11386,25 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
     }
     bg, fg = status_colors.get(status, ("#f1f5f9", "#334155"))
     lines = list(aux.get("lines") or [])
+    unposted_expenses = max(0, round(employee_paid - (aux.get("comprobado") or 0), 2))
+    unposted_note = ""
+    if unposted_expenses >= 0.01:
+        if approved:
+            unposted_note = (
+                '<div class="notice warn" style="margin:12px 0;">'
+                "Hay gastos de bolsillo sin comprobación reflejada en este auxiliar: "
+                f"{format_currency(unposted_expenses, currency)}. Contabilidad debe conciliar "
+                "las pólizas; esta vista no genera asientos.</div>"
+            )
+        else:
+            unposted_note = (
+                '<div class="notice info" style="margin:12px 0;">'
+                "Gastos pagados por el empleado, capturados y aún sin póliza de comprobación: "
+                f"{format_currency(unposted_expenses, currency)}. "
+                "El Haber deudores y el saldo contable se actualizan al aprobar el informe. "
+                f"Saldo estimado tras esa comprobación: {format_currency((aux.get('saldo') or 0) - unposted_expenses, currency)}."
+                "</div>"
+            )
     rows = ""
     for line in lines:
         poliza = getattr(line, "poliza", None)
@@ -11421,6 +11450,7 @@ def _render_debtor_auxiliary_section(aux: Dict[str, Any], currency: str = "MXN")
                 </span>
             </div>
             {missing_note}
+            {unposted_note}
             <div class="meta-grid" style="margin-top:14px;">
                 <div class="meta-card"><span>Subcuenta empleado</span><strong>{escape(str(aux.get("debtor_account_label") or "Sin cuenta"))}</strong><small>Bloque {escape(debtor_block_label)}</small></div>
                 <div class="meta-card"><span>Debe deudores</span><strong>{format_currency(aux.get("debe") or 0, currency)}</strong><small>Cargos al empleado</small></div>
@@ -41097,7 +41127,7 @@ async def cuentas_de_gastos_list(
                 ).order_by(Documento.creado_en.desc())
             )
             solicitudes_list = solicitudes_result.scalars().all()
-            monto_solicitado = sum(float(d.monto_solicitado or 0) for d in solicitudes_list)
+            monto_solicitado = sum_active_solicitud_amounts(solicitudes_list)
             monto_entregado = sum_paid_solicitud_amounts(solicitudes_list)
             num_solicitudes = len(solicitudes_list)
 
@@ -42619,13 +42649,13 @@ async def cuenta_de_gastos_detail(
         session, [r.id for r in cuenta_reembolsos]
     )
 
-    # Compute totals (sum of all solicitudes' monto_solicitado)
+    # Cancelled/rejected requests remain in the audit trail, not in the total.
     active_expenses = [e for e in expenses if e.estado_gasto != 'cancelado']
     expense_totals = calculate_informe_expense_totals(active_expenses)
     total_gastos = expense_totals.total_reported
     total_amex = expense_totals.company_amex
     total_pagado_empleado = expense_totals.employee_paid
-    monto_solicitado = sum(float(d.monto_solicitado or 0) for d in solicitudes_list)
+    monto_solicitado = sum_active_solicitud_amounts(solicitudes_list)
     monto_entregado = sum_paid_solicitud_amounts(solicitudes_list)
     saldo_breakdown = compute_informe_saldo(
         employee_paid=total_pagado_empleado,
@@ -43289,6 +43319,8 @@ async def cuenta_de_gastos_detail(
     debtor_aux_html = _render_debtor_auxiliary_section(
         debtor_aux,
         currency_for(cuenta),
+        employee_paid=total_pagado_empleado,
+        informe_estado=getattr(informe_doc, "estado", None),
     )
 
     html = f"""
@@ -43412,7 +43444,7 @@ async def cuenta_de_gastos_detail(
                         <div class="meta-card">
                             <span>Monto solicitado</span>
                             <strong>{format_currency(monto_solicitado, currency_for(cuenta))}</strong>
-                            <small>Suma de solicitudes ligadas (incluye pendientes).</small>
+                            <small>Solicitudes vigentes, incluidas las pendientes; excluye rechazadas y canceladas.</small>
                         </div>
                         <div class="meta-card">
                             <span>Entregado por la empresa</span>

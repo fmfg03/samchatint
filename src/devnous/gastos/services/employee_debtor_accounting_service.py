@@ -1224,6 +1224,12 @@ async def build_cuenta_debtor_auxiliary(
     ).scalars().all()
     debe = sum(float(line.debe or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
     haber = sum(float(line.haber or 0) for line in lines if _is_debtor_or_petty_cash_line_code(line.cuenta_codigo))
+    comprobado = sum(
+        float(line.haber or 0)
+        for line in lines
+        if line.poliza.origen == "deudores_comprobacion"
+        and _is_debtor_or_petty_cash_line_code(line.cuenta_codigo)
+    )
     saldo = round(debe - haber, 2)
     status = "saldado" if abs(saldo) < 0.01 and lines else "pendiente"
     if debtor is None:
@@ -1239,6 +1245,7 @@ async def build_cuenta_debtor_auxiliary(
         "lines": lines,
         "debe": round(debe, 2),
         "haber": round(haber, 2),
+        "comprobado": round(comprobado, 2),
         "saldo": saldo,
         "status": status,
     }

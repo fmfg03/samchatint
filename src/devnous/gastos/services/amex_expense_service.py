@@ -72,6 +72,24 @@ def sum_paid_solicitud_amounts(documentos: Iterable[object]) -> float:
     return float(total)
 
 
+def sum_active_solicitud_amounts(documentos: Iterable[object]) -> float:
+    """Sum linked requests still in the workflow, including unpaid requests.
+
+    Rejected and cancelled requests remain visible in the audit trail but no
+    longer represent money requested from the company.
+    """
+    excluded = {"rechazado", "rechazada", "cancelado", "cancelada", "anulado", "anulada"}
+    total = sum(
+        (
+            _quantize_money(getattr(doc, "monto_solicitado", 0) or 0)
+            for doc in documentos
+            if (getattr(doc, "estado", None) or "").strip().lower() not in excluded
+        ),
+        Decimal("0"),
+    )
+    return float(total)
+
+
 def compute_informe_saldo(
     *,
     employee_paid: float,

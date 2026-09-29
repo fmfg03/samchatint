@@ -78,6 +78,26 @@ def test_debtor_accounting_is_visible_in_both_approved_views():
     assert "Empleados sin subcuenta de deudores" in admin_routes
 
 
+def test_requested_total_excludes_rejected_and_cancelled_but_keeps_pending():
+    requests = [
+        SimpleNamespace(estado="pagado", monto_solicitado="32370.00"),
+        SimpleNamespace(estado="Rechazado", monto_solicitado="45000.00"),
+        SimpleNamespace(estado="cancelado", monto_solicitado="1000.00"),
+        SimpleNamespace(estado="enviado", monto_solicitado="12.34"),
+        SimpleNamespace(estado="borrador", monto_solicitado="0.01"),
+    ]
+    assert amex_expense_service.sum_active_solicitud_amounts(requests) == 32382.35
+    assert amex_expense_service.sum_paid_solicitud_amounts(requests) == 32370.0
+
+
+def test_expense_report_shows_unposted_comprobacion_separately_from_ledger():
+    routes = read("src/devnous/gastos/routes/user_routes.py")
+    accounting = read("src/devnous/gastos/services/employee_debtor_accounting_service.py")
+    assert "sum_active_solicitud_amounts(solicitudes_list)" in routes
+    assert "Saldo estimado tras esa comprobación" in routes
+    assert '"comprobado": round(comprobado, 2)' in accounting
+
+
 def test_debtor_accounting_uses_cuenta_beneficiary_not_requester_for_reports():
     source = read("src/devnous/gastos/services/employee_debtor_accounting_service.py")
 
