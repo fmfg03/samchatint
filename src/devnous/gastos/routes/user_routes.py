@@ -186,6 +186,7 @@ from ..services.documento_service import (
     update_solicitud_terceros_document,
     generate_documento_reference_number as service_generate_documento_reference_number,
     validate_solicitud_terceros_attachment,
+    validate_shared_cfdi_payment_amount,
     fetch_documento_aprobador_display_batch,
 )
 from ..services.documento_workflow_service import (
@@ -34599,6 +34600,23 @@ def _informe_expense_export_amounts(
     """
     total_val = round(float(expense.gasto_cantidad or 0), 2)
     cfdi_rec = cfdi_linked or cfdi
+    if cfdi_rec is not None and getattr(expense, "cfdi_compartido_confirmado", False):
+        fiscal_total = Decimal(str(cfdi_rec.total or 0))
+        if fiscal_total > 0:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            applied = Decimal(str(total_val)) - tip
+            net_base = (
+                Decimal(str(cfdi_rec.subtotal or 0))
+                - Decimal(str(getattr(cfdi_rec, "descuento", None) or 0))
+            )
+            applied_base = (net_base * applied / fiscal_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            return {
+                "importe_sin_iva": float(applied_base + tip),
+                "iva": float(applied - applied_base),
+                "total": total_val,
+            }
     if cfdi_rec is not None:
         subtotal = round(float(cfdi_rec.subtotal or 0), 2)
         traslados = round(float(cfdi_rec.total_impuestos_trasladados or 0), 2)
@@ -41850,6 +41868,8 @@ def _quick_expense_decimal(
         parsed = Decimal(raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception as exc:
         raise ValueError(f"{label} debe ser un número válido") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{label} debe ser un número válido")
     if parsed < 0 and not allow_negative:
         raise ValueError(f"{label} no puede ser negativo")
     return parsed
@@ -41887,6 +41907,7 @@ def _quick_expense_values(
     impuestos_y_retenciones: Optional[str],
     propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
+    factura_compartida: bool = False,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
     concepto_final = (concepto or "").strip()
@@ -41919,7 +41940,31 @@ def _quick_expense_values(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
                 "Impuestos y retenciones"
             )
-        calculated_total = xml_total + propina_amount
+        if factura_compartida:
+            subtotal_amount = _quick_expense_decimal(subtotal, "Sub total aplicado")
+            descuento_amount = _quick_expense_decimal(
+                descuento, "Descuento aplicado", required=False
+            )
+            impuestos_net = _quick_expense_decimal(
+                impuestos_y_retenciones,
+                "Impuestos y retenciones aplicados",
+                required=False,
+                allow_negative=True,
+            )
+            applied_total = compute_quick_expense_total(
+                subtotal_amount, descuento_amount, impuestos_net
+            )
+            if applied_total <= 0 or applied_total > xml_total:
+                raise ValueError(
+                    "El monto aplicado debe ser mayor a cero y no exceder "
+                    "el total fiscal de la factura compartida."
+                )
+            iva_amount = (taxes.iva * applied_total / xml_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            calculated_total = applied_total + propina_amount
+        else:
+            calculated_total = xml_total + propina_amount
     else:
         fecha_final = (fecha or "").strip()
         numero_final = (numero_factura or "").strip()
@@ -41973,6 +42018,31 @@ def _quick_expense_values(
         "total": calculated_total,
         "propina_no_deducible": propina_amount,
     }
+
+
+async def _validate_quick_shared_cfdi_amount(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    cuenta: CuentaDeGastos,
+    values: Dict[str, Any],
+) -> None:
+    """Reserve only this report's fiscal share, excluding its own row and tip."""
+    if not expense.cfdi_report_id:
+        raise ValueError(
+            "Factura compartida requiere un CFDI válido vinculado "
+            "para verificar su saldo disponible."
+        )
+    shared_report = await session.get(CFDIReport, expense.cfdi_report_id)
+    if shared_report is None:
+        raise ValueError("No se encontró el CFDI de la factura compartida.")
+    if (shared_report.moneda or "MXN").upper() != currency_for(cuenta):
+        raise ValueError("La moneda de la factura debe coincidir con el informe.")
+    await validate_shared_cfdi_payment_amount(
+        session,
+        cfdi_report=shared_report,
+        requested_amount=values["total"] - values["propina"],
+        exclude_expense_id=expense.id,
+    )
 
 
 @router.post("/informes-de-gastos/{cuenta_id}/gastos/quick")
@@ -42122,6 +42192,7 @@ async def crear_gasto_rapido_en_informe(
             impuestos_y_retenciones=impuestos_y_retenciones,
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
+            factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
         )
         if no_deducible_material:
             values["numero_factura"] = "no facturable"
@@ -42207,6 +42278,9 @@ async def crear_gasto_rapido_en_informe(
                 shared_reason=cfdi_compartido_motivo,
                 actor_id=current_empleado.id,
             )
+
+        if _form_checkbox_checked(cfdi_compartido_confirmado):
+            await _validate_quick_shared_cfdi_amount(session, expense, cuenta, values)
 
         if no_deducible_material:
             raw_bytes, mime_type, filename, _categoria = no_deducible_material
@@ -42301,6 +42375,7 @@ async def crear_gasto_rapido_en_informe(
                 impuestos_y_retenciones=impuestos_raw,
                 propina_no_deducible="0",
                 xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
+                factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
             )
             supplement_expense = await create_expense_from_data(
                 session=session,
@@ -42359,6 +42434,11 @@ async def crear_gasto_rapido_en_informe(
                     allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
                     shared_reason=cfdi_compartido_motivo,
                     actor_id=current_empleado.id,
+                )
+
+            if _form_checkbox_checked(cfdi_compartido_confirmado):
+                await _validate_quick_shared_cfdi_amount(
+                    session, supplement_expense, cuenta, supplement_values
                 )
 
             if supplement_pdf is not None:
@@ -43240,6 +43320,7 @@ async def cuenta_de_gastos_detail(
                                             <input type="file" name="comprobante_no_deducible" id="quick-comprobante-no-deducible" accept=".pdf,image/*,application/pdf" style="display:block;margin-top:8px;max-width:190px;">
                                             <label style="display:block;margin-top:8px;font-size:12px;"><input type="checkbox" name="cfdi_compartido_confirmado" value="1"> Factura compartida</label>
                                             <input type="text" name="cfdi_compartido_motivo" placeholder="Motivo compartida" style="display:block;margin-top:4px;max-width:190px;">
+                                            <small style="display:block;margin-top:4px;max-width:190px;">Para factura compartida, ajuste Sub total e Impuestos al importe que aplica a este informe. TOTAL muestra el importe aplicado, más propina si corresponde.</small>
                                         </td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
                                         <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>

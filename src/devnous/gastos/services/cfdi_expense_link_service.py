@@ -152,7 +152,7 @@ async def _enforce_expense_cfdi_uniqueness(
         .limit(1)
     )
     duplicate_id = duplicate_result.scalar_one_or_none()
-    if not duplicate_id:
+    if not duplicate_id and not allow_shared:
         expense.cfdi_compartido_confirmado = False
         expense.cfdi_compartido_motivo = None
         return
@@ -172,8 +172,12 @@ async def _enforce_expense_cfdi_uniqueness(
             aprobador_id=actor_id,
             accion="confirmar_cfdi_compartido",
             comentario=(
-                f"CFDI {expense.cfdi_uuid_manual} compartido con partida "
-                f"{duplicate_id}: {reason}"
+                f"CFDI {expense.cfdi_uuid_manual}: {reason}. "
+                + (
+                    f"Compartido con partida {duplicate_id}."
+                    if duplicate_id
+                    else "Primera partida de una factura compartida."
+                )
             ),
         )
     )

@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from uuid import UUID
 
@@ -444,6 +445,43 @@ def summarize_cfdi_tax_components(
     }
 
 
+def summarize_expense_cfdi_tax_components(
+    expense: ExpenseReport,
+    cfdi_report: Optional[CFDIReport],
+) -> Dict[str, Any]:
+    """Allocate fiscal taxes to this expense without modifying the CFDI."""
+    shared = bool(getattr(expense, "cfdi_compartido_confirmado", False))
+    taxes = summarize_cfdi_tax_components(
+        cfdi_report,
+        fallback_iva=None if shared else getattr(expense, "iva", None),
+    )
+    if not shared or cfdi_report is None:
+        return taxes
+    fiscal_total = Decimal(str(getattr(cfdi_report, "total", None) or 0))
+    applied = (
+        Decimal(str(getattr(expense, "gasto_cantidad", None) or 0))
+        - Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+    )
+    if fiscal_total <= 0 or applied <= 0 or applied > fiscal_total:
+        raise ValueError("El importe aplicado de la factura compartida no es válido.")
+    ratio = applied / fiscal_total
+
+    def allocated(amount: object) -> float:
+        return float((Decimal(str(amount)) * ratio).quantize(
+            Decimal("0.01"), rounding=ROUND_HALF_UP
+        ))
+
+    retentions = [
+        {**item, "importe": allocated(item["importe"])}
+        for item in taxes["retenciones"]
+    ]
+    return {
+        "iva_trasladado": allocated(taxes["iva_trasladado"]),
+        "retenciones": retentions,
+        "retenciones_total": _money(sum(item["importe"] for item in retentions)),
+    }
+
+
 async def _resolve_iva_account(
     session: AsyncSession,
     accounts: List[CuentaContable],
@@ -635,10 +673,7 @@ async def build_expense_accounting_preview(
         )
         cfdi_report = result.scalar_one_or_none()
 
-    taxes = summarize_cfdi_tax_components(
-        cfdi_report,
-        fallback_iva=getattr(expense, "iva", None),
-    )
+    taxes = summarize_expense_cfdi_tax_components(expense, cfdi_report)
 
     contra_account = getattr(expense, "contra_cuenta_contable", None)
     contra_source = "stored" if contra_account else None
