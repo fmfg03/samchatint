@@ -15848,6 +15848,19 @@ def _documento_status_chip_html(value: Optional[str]) -> str:
     )
 
 
+def _latest_document_rejection(approvals: List[Aprobacion]) -> Optional[Aprobacion]:
+    """Read the latest rejection from the already date-descending history."""
+    return next(
+        (
+            approval
+            for approval in approvals
+            if str(getattr(approval, "accion", "") or "").strip().lower()
+            in {"rechazar", "rechazado", "rechazar_control_presupuestal"}
+        ),
+        None,
+    )
+
+
 def _render_document_workflow_guidance_html(
     guidance: WorkflowGuidance,
 ) -> str:
@@ -38360,15 +38373,7 @@ async def ver_documento(
         f'color:{workflow_visual.foreground};">{escape(workflow_badge)}</span>'
     )
     estado_display_detail = workflow_badge
-    latest_rejection = next(
-        (
-            approval
-            for approval in aprobaciones
-            if str(getattr(approval, "accion", "") or "").strip().lower()
-            in {"rechazar", "rechazado"}
-        ),
-        None,
-    )
+    latest_rejection = _latest_document_rejection(aprobaciones)
     rejection_actor = None
     rejection_reason = None
     if latest_rejection is not None:

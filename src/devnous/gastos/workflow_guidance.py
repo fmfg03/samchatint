@@ -47,7 +47,12 @@ def build_document_workflow_guidance(
     normalized = _clean(state).lower()
     doc_type = _clean(document_type).upper()
     visual = document_status_visual(state)
-    explicit_blocker = _clean(locked_reason) or None
+    # Edit locks only block steps that require editing or resubmitting.
+    explicit_blocker = (
+        (_clean(locked_reason) or None)
+        if normalized in {"borrador", "rechazado"}
+        else None
+    )
 
     if normalized == "borrador":
         return WorkflowGuidance(

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from devnous.gastos.routes import user_routes
 from devnous.gastos.workflow_guidance import build_document_workflow_guidance
@@ -50,7 +51,7 @@ def test_document_detail_mounts_read_only_workflow_guidance() -> None:
     block = source[start:end]
 
     assert "build_document_workflow_guidance(" in block
-    assert "latest_rejection = next(" in block
+    assert "latest_rejection = _latest_document_rejection(aprobaciones)" in block
     assert "locked_reason=locked_reason" in block
     assert "has_payment_timestamp=documento.pagado_en is not None" in block
     assert "{workflow_guidance_html}" in block
@@ -98,6 +99,7 @@ def test_pending_queue_renders_redirect_feedback() -> None:
     assert "No se pudo completar la acción:" in block
     assert "escape(error_msg)" in block
 
+
 def test_budget_control_queue_renders_assignment_feedback() -> None:
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
     start = source.index("async def documentos_control_presupuestal(")
@@ -113,3 +115,27 @@ def test_budget_control_queue_renders_assignment_feedback() -> None:
     assert "escape(success_msg)" in block
     assert "escape(error_msg)" in block
     assert "_render_transient_message_query_cleanup_script()" in block
+
+
+def test_latest_rejection_includes_budget_control_reason_and_actor():
+    approval = SimpleNamespace(accion="aprobar", comentario="Autorizada")
+    budget_rejection = SimpleNamespace(
+        accion="rechazar_control_presupuestal",
+        comentario="Partida no válida",
+        aprobador=SimpleNamespace(nombre="Control Presupuestal"),
+    )
+    older_rejection = SimpleNamespace(accion="rechazar", comentario="Motivo anterior")
+    latest = user_routes._latest_document_rejection(
+        [approval, budget_rejection, older_rejection]
+    )
+    guidance = build_document_workflow_guidance(
+        state="rechazado",
+        document_type="SOLICITUD",
+        is_owner=True,
+        can_approve_or_reject=False,
+        rejection_reason=latest.comentario,
+        rejection_actor=latest.aprobador.nombre,
+    )
+    assert guidance.blocker == "Partida no válida"
+    assert "Control Presupuestal" in guidance.why_here
+    assert user_routes._latest_document_rejection([approval]) is None

@@ -1,3 +1,5 @@
+import pytest
+
 from devnous.gastos.workflow_guidance import (
     build_document_workflow_guidance,
     build_payment_run_guidance,
@@ -171,3 +173,29 @@ def test_payment_run_amount_issue_blocks_selection_guidance() -> None:
 
     assert guidance.next_action == "Resolver el bloqueo antes de seleccionar"
     assert guidance.blocker == "Monto final no disponible"
+
+
+@pytest.mark.parametrize(
+    "state,proof,timestamp,blocker",
+    [
+        ("aprobado", False, False, None),
+        ("autorizado", False, False, None),
+        ("en_proceso_pago", False, False, "Comprobante de pago pendiente"),
+        ("en_proceso_pago", True, False, "Confirmación final de pago pendiente"),
+        ("pagado", True, True, None),
+        ("pagado", False, True, "Comprobante de pago no disponible"),
+    ],
+)
+def test_edit_lock_does_not_block_the_next_payment_action(
+    state, proof, timestamp, blocker
+):
+    guidance = build_document_workflow_guidance(
+        state=state,
+        document_type="SOLICITUD",
+        is_owner=True,
+        can_approve_or_reject=False,
+        locked_reason="autorizacion registrada",
+        has_payment_proof=proof,
+        has_payment_timestamp=timestamp,
+    )
+    assert guidance.blocker == blocker
