@@ -64,6 +64,10 @@ from ..models import (
     SolicitudPrestamo,
 )
 from ..status_semantics import payment_run_status_visual
+from ..workflow_guidance import (
+    WorkflowGuidance,
+    build_payment_run_guidance,
+)
 from ..services.import_balanza_service import parse_cuentas_contables_upload
 from ..services.import_aux_service import import_aux_workbook
 from ..services.import_bank_movements_service import import_bank_movements_csv
@@ -72,6 +76,11 @@ from ..services.coi_poliza_exporter import (
     ExpenseCFDI,
     generate_coi_poliza_xlsx,
     generate_coi_poliza_zip,
+)
+from ..services.expense_coi_export_service import (
+    assess_expense_coi_cleanup_ready,
+    build_expense_cfdi_for_export,
+    group_expense_cfdis_for_document,
 )
 from ..services.import_coi_service import import_coi_workbook
 from ..services.import_proveedores_service import (
@@ -117,7 +126,6 @@ from ..services.finance_training_seed_service import (
     reset_finance_training_dataset,
 )
 from ..services.expense_accounting_service import (
-    build_expense_accounting_preview,
     resolve_counterpart_account,
 )
 from ..services.employee_debtor_accounting_service import (
@@ -8956,7 +8964,7 @@ async def _build_finance_coi_batch_expenses(
     month: Optional[int],
     limit: int = 500,
 ) -> tuple[int, int, list[ExpenseCFDI]]:
-    """Build COI-ready ExpenseCFDI rows for the Finance Platform period."""
+    """Build complete document policies for the Finance Platform period."""
     period_year, period_month, start, end = _finance_period_bounds(year, month)
     result = await session.execute(
         select(ExpenseReport)
@@ -8964,106 +8972,136 @@ async def _build_finance_coi_batch_expenses(
             selectinload(ExpenseReport.cfdi_report),
             selectinload(ExpenseReport.cuenta_contable),
             selectinload(ExpenseReport.contra_cuenta_contable),
+            selectinload(ExpenseReport.cuenta_iva),
+            selectinload(ExpenseReport.documento),
+            selectinload(ExpenseReport.informe_documento),
         )
         .where(
             and_(
                 ExpenseReport.estado_gasto != "cancelado",
                 ExpenseReport.fecha >= start,
                 ExpenseReport.fecha < end,
-                ExpenseReport.cuenta_contable_id.isnot(None),
-                ExpenseReport.contra_cuenta_contable_id.isnot(None),
             )
         )
         .order_by(ExpenseReport.fecha.asc(), ExpenseReport.numero_referencia.asc())
         .limit(limit)
     )
-    expenses = result.scalars().all()
-    output: list[ExpenseCFDI] = []
-    for expense in expenses:
-        cuenta_contable = getattr(expense, "cuenta_contable", None)
-        allows_missing_cfdi = bool(
-            _allows_coi_without_cfdi(cuenta_contable)
-            and not getattr(expense, "cfdi_report_id", None)
+    period_expenses = list(result.scalars().all())
+
+    cuenta_ids = {
+        expense.cuenta_gastos_id
+        for expense in period_expenses
+        if expense.cuenta_gastos_id is not None
+    }
+    informe_by_cuenta: dict[Any, Documento] = {}
+    if cuenta_ids:
+        informe_rows = await session.execute(
+            select(Documento)
+            .where(
+                Documento.tipo == "INFORME",
+                Documento.cuenta_gastos_id.in_(cuenta_ids),
+            )
+            .order_by(Documento.creado_en.asc())
         )
-        if not getattr(expense, "cfdi_report_id", None) and not allows_missing_cfdi:
-            continue
-        preview = await build_expense_accounting_preview(session, expense)
-        taxes = preview.get("taxes") or {}
-        contra_account = preview.get("contra_account") or {}
-        cfdi = getattr(expense, "cfdi_report", None)
-        iva_amount = round(float(taxes.get("iva_trasladado") or 0), 2)
-        total_amount = round(float(expense.gasto_cantidad or 0), 2)
-        subtotal_amount = round(total_amount - iva_amount, 2)
-        retenciones = [
-            {
-                "label": item.get("label"),
-                "importe": float(item.get("importe") or 0.0),
-                "cuenta_contable": (item.get("account", {}) or {}).get("codigo"),
-            }
-            for item in list(taxes.get("retenciones") or [])
-        ]
-        impuestos_locales = [
-            {
-                "kind": item.get("kind") or "tax",
-                "label": item.get("label") or "Impuesto local",
-                "importe": float(item.get("importe") or 0.0),
-                "cuenta_contable": (item.get("account", {}) or {}).get("codigo"),
-                "entidad": item.get("entidad"),
-                "tasa_pct": item.get("tasa_pct"),
-                "confirmado": bool(item.get("confirmado")),
-            }
-            for item in list(taxes.get("impuestos_locales") or [])
-        ]
-        gastos_no_deducibles = [
-            {
-                "kind": item.get("kind") or "gasto",
-                "label": item.get("label") or "No deducible",
-                "importe": float(item.get("importe") or 0.0),
-                "cuenta_contable": (item.get("account", {}) or {}).get("codigo"),
-            }
-            for item in list(taxes.get("gastos_no_deducibles") or [])
-        ]
-        output.append(
-            ExpenseCFDI(
-                fecha=expense.fecha,
-                total=total_amount,
-                iva_amount=iva_amount,
-                subtotal_amount=subtotal_amount,
-                concepto=expense.concepto or "Gasto",
-                cuenta_contable=str(cuenta_contable.codigo),
-                cuenta_contrapartida=str(
-                    contra_account.get("codigo")
-                    or expense.contra_cuenta_contable.codigo
-                ),
-                cfdi_uuid=getattr(cfdi, "cfdi_uuid", None),
-                cfdi_date=getattr(cfdi, "fecha", None),
-                rfc_emisor=getattr(cfdi, "emisor_rfc", None),
-                rfc_receptor=getattr(cfdi, "receptor_rfc", None),
-                folio=getattr(cfdi, "folio", None),
-                nombre_emisor=getattr(cfdi, "emisor_nombre", None),
-                receptor_uso_cfdi=getattr(cfdi, "receptor_uso_cfdi", None),
-                cuenta_iva=str((taxes.get("iva_account") or {}).get("codigo") or ""),
-                retenciones=retenciones,
-                impuestos_locales=impuestos_locales,
-                gastos_no_deducibles=gastos_no_deducibles,
-                neto_contrapartida=float(
-                    taxes.get("neto_contrapartida") or total_amount
-                ),
-                base_amount=float(taxes.get("base_gasto") or subtotal_amount),
-                export_reference=expense.numero_referencia or expense.concepto or "",
-                proyecto=expense.proyecto,
-                cuenta_contable_nombre=str(
-                    getattr(cuenta_contable, "nombre", "") or ""
-                ),
-                allows_missing_cfdi=allows_missing_cfdi,
-                missing_cfdi_warning=(
-                    "No deducible sin CFDI. Verifica que la cuenta contable sea "
-                    "'Sin requisitos fiscales' o 'No deducible'."
-                    if allows_missing_cfdi
-                    else None
+        for informe in informe_rows.scalars().all():
+            informe_by_cuenta.setdefault(informe.cuenta_gastos_id, informe)
+
+    def informe_for_expense(expense: ExpenseReport) -> Optional[Documento]:
+        direct = getattr(expense, "informe_documento", None)
+        if direct is not None and direct.tipo == "INFORME":
+            return direct
+        documento = getattr(expense, "documento", None)
+        if documento is not None and documento.tipo == "INFORME":
+            return documento
+        return informe_by_cuenta.get(expense.cuenta_gastos_id)
+
+    informes = {
+        informe.id: informe
+        for expense in period_expenses
+        if (informe := informe_for_expense(expense)) is not None
+    }
+    for informe in informes.values():
+        if (informe.estado or "").strip().lower() != "aprobado":
+            raise ValueError(
+                f"El Informe {informe.numero_referencia or informe.id} debe estar "
+                "aprobado antes de exportar su póliza COI."
+            )
+    report_expenses_by_id: dict[Any, list[ExpenseReport]] = {}
+    if informes:
+        informe_ids = set(informes)
+        informe_cuenta_ids = {
+            informe.cuenta_gastos_id
+            for informe in informes.values()
+            if informe.cuenta_gastos_id is not None
+        }
+        report_result = await session.execute(
+            select(ExpenseReport)
+            .options(
+                selectinload(ExpenseReport.cfdi_report),
+                selectinload(ExpenseReport.cuenta_contable),
+                selectinload(ExpenseReport.contra_cuenta_contable),
+                selectinload(ExpenseReport.cuenta_iva),
+                selectinload(ExpenseReport.documento),
+                selectinload(ExpenseReport.informe_documento),
+            )
+            .where(
+                ExpenseReport.estado_gasto != "cancelado",
+                or_(
+                    ExpenseReport.informe_documento_id.in_(informe_ids),
+                    ExpenseReport.documento_id.in_(informe_ids),
+                    ExpenseReport.cuenta_gastos_id.in_(informe_cuenta_ids),
                 ),
             )
+            .order_by(ExpenseReport.fecha.asc(), ExpenseReport.numero_referencia.asc())
         )
+        for expense in report_result.scalars().all():
+            informe = informe_for_expense(expense)
+            if informe is not None and informe.id in informes:
+                report_expenses_by_id.setdefault(informe.id, []).append(expense)
+
+    output: list[ExpenseCFDI] = []
+    grouped_expense_ids: set[Any] = set()
+    for informe in sorted(
+        informes.values(), key=lambda item: item.numero_referencia or str(item.id)
+    ):
+        expenses = report_expenses_by_id.get(informe.id, [])
+        outside_period = [
+            expense for expense in expenses if not (start <= expense.fecha < end)
+        ]
+        if outside_period:
+            references = ", ".join(
+                expense.numero_referencia or str(expense.id)[:8]
+                for expense in outside_period[:6]
+            )
+            raise ValueError(
+                f"El Informe {informe.numero_referencia or informe.id} contiene "
+                f"partidas de otro periodo contable: {references}."
+            )
+        document_cfdis: list[ExpenseCFDI] = []
+        for expense in expenses:
+            ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+            if not ready:
+                raise ValueError(
+                    f"El Informe {informe.numero_referencia or informe.id} no está "
+                    "completo para COI. Partida "
+                    f"{expense.numero_referencia or str(expense.id)[:8]}: "
+                    f"{'; '.join(issues) or 'preparación incompleta'}."
+                )
+            document_cfdis.append(
+                await build_expense_cfdi_for_export(
+                    session, expense, require_cleanup_ready=False
+                )
+            )
+            grouped_expense_ids.add(expense.id)
+        output.extend(group_expense_cfdis_for_document(document_cfdis, informe))
+
+    for expense in period_expenses:
+        if expense.id in grouped_expense_ids:
+            continue
+        try:
+            output.append(await build_expense_cfdi_for_export(session, expense))
+        except ValueError:
+            continue
     return period_year, period_month, output
 
 
@@ -9164,11 +9202,21 @@ async def admin_finance_coi_batch_consolidated_xlsx(
     month: Optional[int] = Query(None),
 ) -> Union[Response, RedirectResponse]:
     """Download one consolidated COI workbook for all COI-ready period expenses."""
-    period_year, period_month, expenses = await _build_finance_coi_batch_expenses(
-        session,
-        year=year,
-        month=month,
-    )
+    try:
+        period_year, period_month, expenses = await _build_finance_coi_batch_expenses(
+            session,
+            year=year,
+            month=month,
+        )
+    except ValueError as exc:
+        period_year, period_month, _, _ = _finance_period_bounds(year, month)
+        return RedirectResponse(
+            url=(
+                f"/admin/finanzas?year={period_year}&month={period_month}"
+                "&error_msg=" + quote(str(exc))
+            ),
+            status_code=303,
+        )
     if not expenses:
         _, _, blocker_summary = await _build_finance_coi_batch_blocker_summary(
             session,
@@ -9218,12 +9266,22 @@ async def admin_finance_coi_batch_xlsx(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
 ) -> Union[Response, RedirectResponse]:
-    """Download a ZIP with one COI workbook per COI-ready period expense."""
-    period_year, period_month, expenses = await _build_finance_coi_batch_expenses(
-        session,
-        year=year,
-        month=month,
-    )
+    """Download a ZIP with one COI workbook per complete document policy."""
+    try:
+        period_year, period_month, expenses = await _build_finance_coi_batch_expenses(
+            session,
+            year=year,
+            month=month,
+        )
+    except ValueError as exc:
+        period_year, period_month, _, _ = _finance_period_bounds(year, month)
+        return RedirectResponse(
+            url=(
+                f"/admin/finanzas?year={period_year}&month={period_month}"
+                "&error_msg=" + quote(str(exc))
+            ),
+            status_code=303,
+        )
     if not expenses:
         _, _, blocker_summary = await _build_finance_coi_batch_blocker_summary(
             session,
@@ -9583,6 +9641,22 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
+def _render_payment_run_guidance_html(guidance: WorkflowGuidance) -> str:
+    blocker_html = (
+        '<div style="color:#991b1b;font-size:11px;margin-top:3px;">'
+        f"Bloqueo: {escape(guidance.blocker)}</div>"
+        if guidance.blocker
+        else ""
+    )
+    return (
+        '<div data-payment-workflow-guidance '
+        'style="font-size:11px;color:#475569;margin-top:5px;max-width:220px;">'
+        f"<strong>Siguiente paso:</strong> {escape(guidance.next_action)}"
+        f"<div>Responsable: {escape(guidance.next_owner)}</div>"
+        f"{blocker_html}</div>"
+    )
+
+
 def _prestamo_payment_run_beneficiary(prestamo: SolicitudPrestamo) -> str:
     snapshot = str(getattr(prestamo, "beneficiario_nombre_snapshot", "") or "").strip()
     if snapshot:
@@ -9835,6 +9909,17 @@ def _render_payment_run_items(
                 '<div style="color:#991b1b;font-size:12px;font-weight:700;">'
                 f"{escape(amount_issue)}</div>"
             )
+        payment_guidance = build_payment_run_guidance(
+            status=str(row.get("status") or ""),
+            can_close=can_close,
+            can_close_run=can_close_run,
+            can_upload_payment_proof=bool(row.get("can_upload_payment_proof")),
+            can_confirm_payment=can_confirm_payment,
+            amount_issue=amount_issue,
+        )
+        payment_guidance_html = _render_payment_run_guidance_html(
+            payment_guidance
+        )
         rendered_rows.append(
             f"""
             <tr>
@@ -9845,7 +9930,7 @@ def _render_payment_run_items(
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
                 <td data-sort-value="{escape(fecha_sort)}">{fecha_html}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{amount_html}</td>
-                <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
+                <td>{_payment_run_badge(str(row.get("status") or ""))}{payment_guidance_html}</td>
                 <td>{proof_html}</td>
                 <td>{closure_html}</td>
             </tr>

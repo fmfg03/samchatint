@@ -35,6 +35,43 @@ def _mutation_home(page: Page, browser_server: str) -> None:
     ).to_be_visible()
 
 
+def test_document_guidance_explains_rejection_approval_status_and_payment(
+    page: Page, browser_server: str
+) -> None:
+    expectations = {
+        "rejected": (
+            "Solicitante",
+            "Corregir y reenviar",
+            "Falta la orden de compra",
+        ),
+        "approval": (
+            "Aprobador autorizado (tú)",
+            "Revisar evidencia y decidir",
+            "Sin bloqueo registrado",
+        ),
+        "status": (
+            "Finanzas / Tesorería",
+            "Incluir en el siguiente corte de pagos",
+            "Sin bloqueo registrado",
+        ),
+        "paid": (
+            "Sin responsable pendiente",
+            "Sin acción operativa pendiente",
+            "Sin bloqueo registrado",
+        ),
+    }
+
+    for scenario, expected_texts in expectations.items():
+        response = page.goto(f"{browser_server}/_test/workflow-guidance/{scenario}")
+        assert response is not None
+        assert response.status == 200
+        expect(page.get_by_role("heading", name="Qué pasa ahora")).to_be_visible()
+        for expected_text in expected_texts:
+            expect(page.get_by_text(expected_text, exact=False).first).to_be_visible()
+        expect(page.locator("[data-workflow-guidance] form")).to_have_count(0)
+        expect(page.locator("[data-workflow-guidance] button")).to_have_count(0)
+
+
 def test_employee_transfer_request_reaches_canonical_creation_form(
     page: Page, browser_server: str
 ) -> None:
@@ -391,6 +428,11 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         page.get_by_text("Hospedaje aprobado para corte", exact=False)
     ).to_be_visible()
     expect(page.get_by_role("button", name="Cerrar corte", exact=True)).to_be_visible()
+    expect(
+        page.locator("#programa-de-pagos").get_by_text(
+            "Seleccionar para el siguiente corte", exact=False
+        )
+    ).to_be_visible()
 
     expect(
         page.locator("#comprobantes-pendientes").get_by_text(
@@ -408,6 +450,11 @@ def test_finance_reaches_payment_run_and_state_boundary_is_explicit(
         )
     ).to_be_visible()
     expect(page.get_by_text("S-PAY-0002", exact=True)).to_be_visible()
+    expect(
+        page.locator("#comprobantes-pendientes").get_by_text(
+            "Cargar o revisar el comprobante", exact=False
+        )
+    ).to_be_visible()
     expect(
         page.locator("#programa-de-pagos").get_by_text("Programa de pagos", exact=True)
     ).to_be_hidden()
