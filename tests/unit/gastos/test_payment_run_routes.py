@@ -710,6 +710,8 @@ def test_payment_run_amount_issue_is_visible_and_not_selectable() -> None:
 
     assert "requiere conciliacion" in html
     assert f'name="document_ids" value="{document_id}"' not in html
+    assert "Resolver el bloqueo antes de seleccionar" in html
+    assert "Bloqueo: Reembolso sin monto_total; requiere conciliacion." in html
 
 
 def test_single_payment_proof_form_has_review_hooks() -> None:
@@ -722,6 +724,9 @@ def test_single_payment_proof_form_has_review_hooks() -> None:
     assert 'data-payment-proof-form' in html
     assert 'data-documento-id="' + str(document_id) + '"' in html
     assert 'data-payment-proof-effective-date' in html
+    assert "Cargar o revisar el comprobante" in html
+    assert "Confirmador de pago autorizado (tú)" in html
+    assert "Comprobante de pago pendiente" in html
 
 
 def test_payment_proof_form_waits_for_review_before_submit() -> None:

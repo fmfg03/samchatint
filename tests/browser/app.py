@@ -1084,6 +1084,46 @@ async def health():
     return {"ok": True}
 
 
+@app.get("/_test/workflow-guidance/{scenario}", response_class=HTMLResponse)
+async def workflow_guidance_preview(scenario: str):
+    scenarios = {
+        "rejected": dict(
+            state="rechazado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+            rejection_reason="Falta la orden de compra",
+            rejection_actor="Aprobador Browser UX",
+        ),
+        "approval": dict(
+            state="enviado",
+            document_type="SOLICITUD",
+            is_owner=False,
+            can_approve_or_reject=True,
+        ),
+        "status": dict(
+            state="aprobado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+        ),
+        "paid": dict(
+            state="pagado",
+            document_type="SOLICITUD",
+            is_owner=True,
+            can_approve_or_reject=False,
+            has_payment_timestamp=True,
+            has_payment_proof=True,
+        ),
+    }
+    payload = scenarios.get(scenario)
+    if payload is None:
+        return HTMLResponse("Escenario no encontrado", status_code=404)
+    guidance = user_routes.build_document_workflow_guidance(**payload)
+    body = user_routes._render_document_workflow_guidance_html(guidance)
+    return HTMLResponse(f"<!doctype html><html><body><main>{body}</main></body></html>")
+
+
 def _mutation_page(receipt: str = "") -> HTMLResponse:
     payment = MUTATIONS.documentos[MUTATIONS.payment_id]
     return HTMLResponse(f"""<!doctype html><html><body><main>

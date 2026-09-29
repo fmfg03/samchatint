@@ -64,6 +64,10 @@ from ..models import (
     SolicitudPrestamo,
 )
 from ..status_semantics import payment_run_status_visual
+from ..workflow_guidance import (
+    WorkflowGuidance,
+    build_payment_run_guidance,
+)
 from ..services.import_balanza_service import parse_cuentas_contables_upload
 from ..services.import_aux_service import import_aux_workbook
 from ..services.import_bank_movements_service import import_bank_movements_csv
@@ -9637,6 +9641,22 @@ def _payment_run_badge(status: str) -> str:
     )
 
 
+def _render_payment_run_guidance_html(guidance: WorkflowGuidance) -> str:
+    blocker_html = (
+        '<div style="color:#991b1b;font-size:11px;margin-top:3px;">'
+        f"Bloqueo: {escape(guidance.blocker)}</div>"
+        if guidance.blocker
+        else ""
+    )
+    return (
+        '<div data-payment-workflow-guidance '
+        'style="font-size:11px;color:#475569;margin-top:5px;max-width:220px;">'
+        f"<strong>Siguiente paso:</strong> {escape(guidance.next_action)}"
+        f"<div>Responsable: {escape(guidance.next_owner)}</div>"
+        f"{blocker_html}</div>"
+    )
+
+
 def _prestamo_payment_run_beneficiary(prestamo: SolicitudPrestamo) -> str:
     snapshot = str(getattr(prestamo, "beneficiario_nombre_snapshot", "") or "").strip()
     if snapshot:
@@ -9889,6 +9909,17 @@ def _render_payment_run_items(
                 '<div style="color:#991b1b;font-size:12px;font-weight:700;">'
                 f"{escape(amount_issue)}</div>"
             )
+        payment_guidance = build_payment_run_guidance(
+            status=str(row.get("status") or ""),
+            can_close=can_close,
+            can_close_run=can_close_run,
+            can_upload_payment_proof=bool(row.get("can_upload_payment_proof")),
+            can_confirm_payment=can_confirm_payment,
+            amount_issue=amount_issue,
+        )
+        payment_guidance_html = _render_payment_run_guidance_html(
+            payment_guidance
+        )
         rendered_rows.append(
             f"""
             <tr>
@@ -9899,7 +9930,7 @@ def _render_payment_run_items(
                 <td>{escape(str(row.get("beneficiario_nombre") or row.get("proveedor_nombre") or "-"))}</td>
                 <td data-sort-value="{escape(fecha_sort)}">{fecha_html}</td>
                 <td data-sort-value="{escape(_payment_run_sort_value(row.get('monto'), kind='money'))}">{amount_html}</td>
-                <td>{_payment_run_badge(str(row.get("status") or ""))}</td>
+                <td>{_payment_run_badge(str(row.get("status") or ""))}{payment_guidance_html}</td>
                 <td>{proof_html}</td>
                 <td>{closure_html}</td>
             </tr>
