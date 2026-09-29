@@ -453,7 +453,9 @@ def summarize_expense_cfdi_tax_components(
     shared = bool(getattr(expense, "cfdi_compartido_confirmado", False))
     taxes = summarize_cfdi_tax_components(
         cfdi_report,
-        fallback_iva=None if shared else getattr(expense, "iva", None),
+        fallback_iva=(
+            None if shared and cfdi_report is not None else getattr(expense, "iva", None)
+        ),
     )
     if not shared or cfdi_report is None:
         return taxes

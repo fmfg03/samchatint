@@ -177,6 +177,11 @@ class SharedInvoiceQuickCaptureTests(unittest.TestCase):
         taxes = self.scope["summarize_expense_cfdi_tax_components"](expense, None)
         self.assertEqual(taxes["iva_trasladado"], 16.0)
 
+    def test_shared_accounting_keeps_fallback_until_fiscal_source_is_linked(self):
+        expense = SimpleNamespace(iva=16, cfdi_compartido_confirmado=True)
+        taxes = self.scope["summarize_expense_cfdi_tax_components"](expense, None)
+        self.assertEqual(taxes["iva_trasladado"], 16.0)
+
     def test_reservation_excludes_current_expense_and_tip(self):
         expense = SimpleNamespace(id=uuid4(), cfdi_report_id=uuid4())
         report = SimpleNamespace(id=expense.cfdi_report_id, moneda="MXN")
