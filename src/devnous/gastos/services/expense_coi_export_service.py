@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,26 @@ def allows_coi_without_cfdi(account: object) -> bool:
     return name in _NON_FISCAL_ACCOUNT_NAMES
 
 
+def group_expense_cfdis_for_document(
+    expense_cfdis: List[ExpenseCFDI],
+    documento: Any,
+) -> List[ExpenseCFDI]:
+    """Bind all INFORME expenses to one COI policy without changing SOLICITUD."""
+    if getattr(documento, "tipo", None) != "INFORME":
+        return expense_cfdis
+    reference = str(
+        getattr(documento, "numero_referencia", None)
+        or getattr(documento, "id", "INFORME")
+    )
+    group_key = f"informe:{getattr(documento, 'id', reference)}"
+    description = f"Informe de Gastos {reference}"
+    for expense_cfdi in expense_cfdis:
+        expense_cfdi.poliza_group_key = group_key
+        expense_cfdi.poliza_reference = reference
+        expense_cfdi.poliza_description = description
+    return expense_cfdis
+
+
 async def assess_expense_coi_cleanup_ready(
     session: AsyncSession,
     expense: ExpenseReport,
@@ -52,7 +72,9 @@ async def build_expense_cfdi_for_export(
     """
     ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
     if require_cleanup_ready and not ready:
-        detail = "; ".join(issues) if issues else "Gasto pendiente de limpieza contable."
+        detail = (
+            "; ".join(issues) if issues else "Gasto pendiente de limpieza contable."
+        )
         raise ValueError(detail)
 
     cuenta_contable = getattr(expense, "cuenta_contable", None)
@@ -168,5 +190,6 @@ __all__ = [
     "allows_coi_without_cfdi",
     "assess_expense_coi_cleanup_ready",
     "build_expense_cfdi_for_export",
+    "group_expense_cfdis_for_document",
     "load_expense_for_coi_export",
 ]
