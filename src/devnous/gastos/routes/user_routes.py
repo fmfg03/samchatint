@@ -43,6 +43,10 @@ from samchat.budgets.service import (
 
 from ..models import ExpenseReport, Documento, Empleado, Tournament, Aprobacion, Anticipo, Reembolso, CFDIReport, RFCConfig, TournamentConceptoMapping, InvoiceReport, ProveedorCliente, CuentaContable, CuentaDeGastos, BankMovement, AuxLedgerEntry, ReconciliationAuditLog, AccountingImportRun, AccountingPoliza, AccountingPolizaLine, AccountingClosePeriod, AccountingAuditLog, AccountingCloseChecklistItem, PayrollConcept, PayrollConceptRule, PayrollEmployee, PayrollEmployer, PayrollEmployerRegistration, PayrollAccountMapping, PayrollEmployeeCompensationProfile, PayrollEmployeePaymentProfile, PayrollEmployeeDeductionProfile, PayrollEmployeeBenefitProfile, PayrollEmployeeAddressProfile, PayrollPeriod, PayrollIncident, PayrollRun, PayrollRunLine, PayrollSATCatalogEntry, PayrollSATConceptMapping, Adjunto, BeneficiaryOnboardingRequest, AmexCardAccount, SolicitudPrestamo, PrestamoAbono, CFDIDuplicateReleaseOperation, CFDIDuplicateReleaseOperationItem
 from ..status_semantics import document_status_visual
+from ..workflow_guidance import (
+    WorkflowGuidance,
+    build_document_workflow_guidance,
+)
 from ..expense_metadata import (
     COMMON_CURRENCIES,
     configured_categories,
@@ -15842,6 +15846,50 @@ def _documento_status_chip_html(value: Optional[str]) -> str:
         f'style="background:{visual.background};color:{visual.foreground};">'
         f'{escape(visual.label)}</div>'
     )
+
+
+def _render_document_workflow_guidance_html(
+    guidance: WorkflowGuidance,
+) -> str:
+    """Render read-only workflow orientation without adding action authority."""
+
+    blocker = guidance.blocker or "Sin bloqueo registrado"
+    blocker_tone = "warn" if guidance.blocker else "info"
+    return f"""
+        <section class="surface" data-workflow-guidance>
+            <div class="section-head">
+                <div>
+                    <h2>Qué pasa ahora</h2>
+                    <div class="section-note">
+                        Orientación basada en el estado y evidencia visibles.
+                    </div>
+                </div>
+                <div class="status-chip {escape(guidance.semantic)}">
+                    {escape(guidance.status_label)}
+                </div>
+            </div>
+            <div class="meta-grid">
+                <div class="meta-card">
+                    <span>Por qué está aquí</span>
+                    <strong>{escape(guidance.why_here)}</strong>
+                    <small>{escape(guidance.status_note)}</small>
+                </div>
+                <div class="meta-card">
+                    <span>Siguiente responsable</span>
+                    <strong>{escape(guidance.next_owner)}</strong>
+                    <small>Responsable según el flujo visible actual.</small>
+                </div>
+                <div class="meta-card">
+                    <span>Siguiente acción</span>
+                    <strong>{escape(guidance.next_action)}</strong>
+                    <small>Esta orientación no concede permisos adicionales.</small>
+                </div>
+            </div>
+            <div class="notice {blocker_tone}" style="margin-top:12px;">
+                <strong>Bloqueo o evidencia pendiente:</strong> {escape(blocker)}
+            </div>
+        </section>
+    """
 
 
 def _solicitud_transferencia_list_actions_html(
@@ -38312,6 +38360,44 @@ async def ver_documento(
         f'color:{workflow_visual.foreground};">{escape(workflow_badge)}</span>'
     )
     estado_display_detail = workflow_badge
+    latest_rejection = next(
+        (
+            approval
+            for approval in aprobaciones
+            if str(getattr(approval, "accion", "") or "").strip().lower()
+            in {"rechazar", "rechazado"}
+        ),
+        None,
+    )
+    rejection_actor = None
+    rejection_reason = None
+    if latest_rejection is not None:
+        rejection_reason = str(
+            getattr(latest_rejection, "comentario", "") or ""
+        ).strip()
+        rejection_employee = getattr(latest_rejection, "aprobador", None)
+        rejection_actor = str(
+            getattr(rejection_employee, "nombre", "") or ""
+        ).strip()
+    has_payment_proof = any(
+        str(getattr(meta, "categoria", "") or "").strip().lower()
+        == "comprobante_pago"
+        for meta in adjuntos_doc
+    )
+    workflow_guidance = build_document_workflow_guidance(
+        state=workflow_value,
+        document_type=documento.tipo,
+        is_owner=documento.empleado_id == current_empleado.id,
+        can_approve_or_reject=can_approve_or_reject,
+        rejection_reason=rejection_reason,
+        rejection_actor=rejection_actor,
+        locked_reason=locked_reason,
+        has_payment_timestamp=documento.pagado_en is not None,
+        has_payment_proof=has_payment_proof,
+    )
+    workflow_guidance_html = _render_document_workflow_guidance_html(
+        workflow_guidance
+    )
 
     return_links = []
     if can_edit_solicitud_terceros:
@@ -38811,6 +38897,7 @@ async def ver_documento(
             {summary_cards}
             <div class="stack">
                 {message_html}
+                {workflow_guidance_html}
                 {base_info_cards}
                 {solicitud_transferencia_html}
                 {comprobante_pago_html}

@@ -1,5 +1,8 @@
 from pathlib import Path
 
+from devnous.gastos.routes import user_routes
+from devnous.gastos.workflow_guidance import build_document_workflow_guidance
+
 
 def _approval_controls_source() -> str:
     source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
@@ -38,6 +41,38 @@ def test_document_detail_has_one_canonical_approval_control_surface() -> None:
     assert block.count('action="/documentos/{documento_id}/aprobar"') == 1
     assert block.count('action="/documentos/{documento_id}/rechazar"') == 1
     assert "detail_approval_actions_html" not in block
+
+
+def test_document_detail_mounts_read_only_workflow_guidance() -> None:
+    source = Path("src/devnous/gastos/routes/user_routes.py").read_text()
+    start = source.index("async def ver_documento")
+    end = source.index("# CUENTAS DE GASTOS ROUTES", start)
+    block = source[start:end]
+
+    assert "build_document_workflow_guidance(" in block
+    assert "latest_rejection = next(" in block
+    assert "locked_reason=locked_reason" in block
+    assert "has_payment_timestamp=documento.pagado_en is not None" in block
+    assert "{workflow_guidance_html}" in block
+
+
+def test_document_workflow_guidance_escapes_evidence_and_adds_no_actions() -> None:
+    guidance = build_document_workflow_guidance(
+        state="rechazado",
+        document_type="SOLICITUD",
+        is_owner=True,
+        can_approve_or_reject=False,
+        rejection_reason='<script>alert("x")</script>',
+        rejection_actor="Aprobador <demo>",
+    )
+
+    html = user_routes._render_document_workflow_guidance_html(guidance)
+
+    assert "<script>" not in html
+    assert "Aprobador &lt;demo&gt;" in html
+    assert "&lt;script&gt;" in html
+    assert "<form" not in html
+    assert "<button" not in html
 
 
 def test_document_detail_preserves_post_approval_transfer_actions() -> None:
