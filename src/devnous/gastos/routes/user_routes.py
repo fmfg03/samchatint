@@ -4607,6 +4607,30 @@ async def _build_coi_exportable_lote_rows(
                     )
             if not expenses:
                 continue
+            if tipo_lote != "INFORME":
+                ready_expenses = []
+                for expense in expenses:
+                    ready, _ = await assess_expense_coi_cleanup_ready(session, expense)
+                    if ready:
+                        ready_expenses.append(expense)
+                if not _coi_exportable_matches_search(
+                    documento=documento, expenses=ready_expenses, search_q=search_q
+                ):
+                    continue
+                for expense in ready_expenses:
+                    rows.append(
+                        {
+                            "tipo_lote": tipo_lote,
+                            "documento": documento,
+                            "expenses": [expense],
+                            "period_label": _coi_lote_documento_period_label(
+                                documento, tipo_lote
+                            ),
+                            "can_export": True,
+                            "block_reason": "",
+                        }
+                    )
+                continue
             for expense in expenses:
                 ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
                 if not ready:
@@ -4775,8 +4799,14 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
             fecha_gasto = min(expense_dates).isoformat()
             if max(expense_dates) != min(expense_dates):
                 fecha_gasto += f" a {max(expense_dates).isoformat()}"
+        is_report = tipo_lote == "INFORME"
+        selection_name = "selected_documento_id" if is_report else "selected_gasto_id"
+        selection_id = documento_id if is_report else str(expenses[0].id)
+        export_path = (
+            f"/documentos/{documento_id}" if is_report else f"/gastos/{selection_id}"
+        )
         coi_action = (
-            f'<a href="/documentos/{documento_id}/exportar-coi.xlsx" '
+            f'<a href="{export_path}/exportar-coi.xlsx" '
             f'class="button" style="padding:8px 12px;font-size:12px;">'
             "Generar póliza COI</a>"
         )
@@ -4791,8 +4821,8 @@ def _render_coi_exportable_lote_rows_html(rows: List[dict[str, Any]]) -> str:
         block_reason = escape(str(row.get("block_reason") or ""))
         selection = (
             f'<input class="coi-selection-checkbox" type="checkbox" '
-            f'form="coi-export-form" name="selected_documento_id" '
-            f'value="{documento_id}">'
+            f'form="coi-export-form" name="{selection_name}" '
+            f'value="{selection_id}">'
             if row.get("can_export")
             else '<span title="Póliza bloqueada">⛔</span>'
         )
@@ -4913,6 +4943,7 @@ async def exportar_coi_gastos_lote_xlsx(
     q: str = Form(""),
     selected_documento_id: Optional[List[UUIDType]] = Form(None),
     confirmed_selection_count: Optional[int] = Form(None),
+    selected_gasto_id: Optional[List[UUIDType]] = Form(None),
 ) -> Union[Response, RedirectResponse]:
     now = datetime.utcnow()
     selected_year = year or now.year
@@ -4934,12 +4965,20 @@ async def exportar_coi_gastos_lote_xlsx(
     redirect_params = f"year={selected_year}&month={selected_month}"
     if (q or "").strip():
         redirect_params += "&q=" + quote((q or "").strip())
-    selected_ids_list = [str(item) for item in (selected_documento_id or [])]
+    selected_ids_list = [
+        ("INFORME", str(item)) for item in (selected_documento_id or [])
+    ]
+    if isinstance(selected_gasto_id, list):
+        selected_ids_list.extend(("GASTO", str(item)) for item in selected_gasto_id)
     selected_ids = set(selected_ids_list)
+
+    def row_selection(row: Dict[str, Any]) -> tuple[str, str]:
+        if row.get("tipo_lote", "INFORME") == "INFORME":
+            return "INFORME", str(row["documento"].id)
+        return "GASTO", str(row["expenses"][0].id)
+
     visible_ids = {
-        str(row["documento"].id)
-        for row in exportable_rows
-        if row.get("can_export")
+        row_selection(row) for row in exportable_rows if row.get("can_export")
     }
     if not selected_ids:
         return RedirectResponse(
@@ -4958,7 +4997,7 @@ async def exportar_coi_gastos_lote_xlsx(
             status_code=303,
         )
     exportable_rows = [
-        row for row in exportable_rows if str(row["documento"].id) in selected_ids
+        row for row in exportable_rows if row_selection(row) in selected_ids
     ]
     if confirmed_selection_count != len(exportable_rows):
         return RedirectResponse(

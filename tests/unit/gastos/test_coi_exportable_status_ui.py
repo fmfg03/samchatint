@@ -786,3 +786,97 @@ async def test_document_bundle_rejects_late_failure_after_ready_item(monkeypatch
             require_complete_informe=True,
         )
     assert {e.coi_estado for e in expenses} == {"pendiente"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_ready", [False, True])
+async def test_standalone_policies_remain_independently_selectable(
+    monkeypatch, other_ready
+):
+    document = SimpleNamespace(
+        id=uuid4(),
+        tipo="SOLICITUD",
+        estado="aprobado",
+        numero_referencia="S-1",
+        pagado_en=None,
+        fecha_pago=None,
+        aprobado_en=datetime(2026, 9, 10),
+        creado_en=datetime(2026, 9, 1),
+    )
+    expenses = [
+        SimpleNamespace(
+            id=uuid4(),
+            numero_referencia=f"G-{i}",
+            concepto="Servicios",
+            proyecto="Proyecto",
+            fecha=datetime(2026, 9, 10),
+            gasto_cantidad=100,
+        )
+        for i in range(2)
+    ]
+
+    async def informes(*args):
+        return []
+
+    async def terceros(*args):
+        return [document]
+
+    async def load(*args):
+        return expenses
+
+    async def ready(session, expense):
+        ok = expense is expenses[0] or other_ready
+        return ok, [] if ok else ["Falta cuenta"]
+
+    monkeypatch.setattr(user_routes, "_load_coi_lote_informe_documentos", informes)
+    monkeypatch.setattr(user_routes, "_load_coi_lote_terceros_documentos", terceros)
+    monkeypatch.setattr(user_routes, "_load_documento_active_coi_expenses", load)
+    monkeypatch.setattr(user_routes, "assess_expense_coi_cleanup_ready", ready)
+    rows = await user_routes._build_coi_exportable_lote_rows(
+        SimpleNamespace(),
+        start_dt=datetime(2026, 9, 1),
+        end_dt=datetime(2026, 10, 1),
+        start_date=datetime(2026, 9, 1).date(),
+        end_date=datetime(2026, 10, 1).date(),
+    )
+    assert len(rows) == (2 if other_ready else 1)
+    assert rows[0]["expenses"] == [expenses[0]]
+    assert all(row["can_export"] for row in rows)
+    html = user_routes._render_coi_exportable_lote_rows_html(rows)
+    assert f'name="selected_gasto_id" value="{expenses[0].id}"' in html
+    assert f"/gastos/{expenses[0].id}/exportar-coi.xlsx" in html
+    assert 'name="selected_documento_id"' not in html
+    collected = []
+    commits = []
+
+    async def visible(*args, **kwargs):
+        return rows
+
+    async def collect(session, selected_rows):
+        collected.extend(selected_rows)
+        return [], [], len(selected_rows), {expenses[0].id}
+
+    class Session:
+        async def commit(self):
+            commits.append(True)
+
+    monkeypatch.setattr(user_routes, "_build_coi_exportable_lote_rows", visible)
+    monkeypatch.setattr(user_routes, "_collect_coi_lote_expense_cfdis", collect)
+    monkeypatch.setattr(
+        user_routes, "generate_coi_poliza_xlsx", lambda *args, **kwargs: b"xlsx"
+    )
+    response = await user_routes.exportar_coi_gastos_lote_xlsx(
+        session=Session(),
+        current_empleado=SimpleNamespace(id=uuid4()),
+        year=2026,
+        month=9,
+        q="",
+        selected_documento_id=None,
+        selected_gasto_id=[expenses[0].id],
+        confirmed_selection_count=1,
+    )
+    assert response.status_code == 200
+    assert collected == [rows[0]]
+    assert commits == [True]
+    assert expenses[0].coi_estado == "contabilizado"
+    assert not hasattr(expenses[1], "coi_estado")
