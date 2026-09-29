@@ -1,6 +1,7 @@
 """Replacing a proof must never repeat a payment or erase its evidence."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -21,6 +22,7 @@ from devnous.gastos.services.loan_request_service import (
 from devnous.gastos.services.payment_proof_replacement_service import (
     replace_payment_run_proof,
 )
+from devnous.gastos.utils.receipt_bytes import DocumentoAdjuntoMeta, html_documento_archivos_cell
 
 
 @pytest.mark.asyncio
@@ -80,6 +82,15 @@ async def test_stale_or_unpaid_document_cannot_replace_proof():
             attachment=attachment, reason="Corrección",
         )
     session.add.assert_not_called()
+
+
+def test_historical_document_proof_is_labeled_sustituido():
+    document_id = uuid4()
+    html = html_documento_archivos_cell(document_id, [DocumentoAdjuntoMeta(
+        id=uuid4(), categoria="comprobante_pago", mime_type="application/pdf",
+        tipo_archivo="application/pdf", nombre_archivo="old.pdf", activo=False,
+    )])
+    assert "Comprobante pago (sustituido)" in html
 
 
 def test_loan_replacement_preserves_history_and_payment_state(monkeypatch):
@@ -189,3 +200,153 @@ async def test_document_replacement_route_never_registers_another_payment(monkey
     session.commit.assert_awaited_once()
     assert document.estado == "pagado"
     assert document.monto_total == 100
+
+
+@pytest.mark.asyncio
+async def test_paid_view_loads_only_proof_metadata(monkeypatch):
+    document_id, proof_id = uuid4(), uuid4()
+    list_docs = AsyncMock(side_effect=[[], [], [{
+        "id": document_id, "status": "pagada", "numero_referencia": "S-26",
+        "monto": 100,
+    }]])
+    list_loans = AsyncMock(side_effect=[[], [], []])
+    monkeypatch.setattr(admin_routes, "list_payment_run_items", list_docs)
+    monkeypatch.setattr(admin_routes, "list_prestamo_payment_run_items", list_loans)
+    monkeypatch.setattr(admin_routes, "list_payment_run_closures", AsyncMock(return_value=[]))
+    session = AsyncMock()
+    session.execute.return_value = MagicMock()
+    session.execute.return_value.all.return_value = [
+        SimpleNamespace(id=proof_id, documento_id=document_id, nombre_archivo="vigente.pdf")
+    ]
+    response = await admin_routes.admin_finance_payment_run(
+        request=SimpleNamespace(query_params={}), session=session,
+        current_empleado=SimpleNamespace(id=uuid4(), rol="contabilidad", nombre="Conta"),
+        vista="pagadas", status="pendientes", date_from=None, date_to=None, q=None,
+    )
+    assert list_docs.await_args_list[2].kwargs["status_filter"] == "pagadas"
+    assert list_loans.await_args_list[2].kwargs["status_filter"] == "pagadas"
+    assert "vigente.pdf" in response.body.decode()
+    selected = session.execute.call_args.args[0]
+    assert "ruta_archivo" not in str(selected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["missing", "file", "blocked", "date", "service", "unexpected"])
+async def test_document_replacement_rejects_invalid_evidence(monkeypatch, mode):
+    document_id = uuid4()
+    document = SimpleNamespace(
+        id=document_id, tipo="SOLICITUD", estado="pagado",
+        pagado_en=datetime.now(timezone.utc), fecha_pago_efectiva=datetime(2026, 9, 22).date(),
+        monto_solicitado=100, monto_total=100, currency="MXN",
+        beneficiario_empleado=None, proveedor_cliente=None,
+    )
+    session = AsyncMock()
+    session.get.return_value = None if mode == "missing" else document
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    monkeypatch.setattr(admin_routes, "_payment_proof_expected_beneficiary", lambda _: "Beneficiario")
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    review = SimpleNamespace(
+        status="match", detected_date=None, confirmation_blocked=False,
+    )
+    if mode == "blocked": review.confirmation_blocked = True
+    if mode == "date": review.detected_date = datetime(2026, 9, 23).date()
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: review,
+    )
+    replace = AsyncMock(side_effect=RuntimeError("db") if mode == "unexpected" else
+                        SolicitudValidationError("stale", "Sustituido") if mode == "service" else None)
+    monkeypatch.setattr(admin_routes, "replace_payment_run_proof", replace)
+    upload = None if mode == "file" else SimpleNamespace(
+        filename="proof.pdf", content_type="application/pdf",
+        read=AsyncMock(return_value=b"%PDF-1.4"),
+    )
+    if mode == "missing":
+        with pytest.raises(HTTPException) as exc:
+            await admin_routes.admin_payment_run_replace_document_proof(
+                document_id, session, SimpleNamespace(id=uuid4()), uuid4(), upload, "Corrección"
+            )
+        assert exc.value.status_code == 404
+    else:
+        response = await admin_routes.admin_payment_run_replace_document_proof(
+            document_id, session, SimpleNamespace(id=uuid4()), uuid4(), upload, "Corrección"
+        )
+        assert response.status_code == 303
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["denied", "missing", "unpaid", "bad_file", "success", "service"])
+async def test_loan_replacement_route_authority_and_history(monkeypatch, mode):
+    loan_id = uuid4()
+    loan = SimpleNamespace(
+        id=loan_id, estado="pagada", comprobante_pago_storage_key="prestamos/old.pdf",
+    )
+    if mode == "unpaid": loan.estado = "aprobada"
+    session = AsyncMock()
+    session.get.return_value = None if mode == "missing" else loan
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    def confirm(_):
+        if mode == "denied": raise admin_routes.PaymentRunPermissionError()
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", confirm)
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    from devnous.gastos.routes import user_routes
+    save = AsyncMock(return_value=("new.pdf", "prestamos/new.pdf"))
+    monkeypatch.setattr(user_routes, "_save_prestamo_payment_proof_upload", save)
+    update = MagicMock(side_effect=admin_routes.PrestamoWorkflowError("bad", "Error") if mode == "service" else None)
+    monkeypatch.setattr(admin_routes, "replace_prestamo_payment_proof", update)
+    upload = SimpleNamespace(
+        filename="new.pdf", content_type="application/pdf",
+        read=AsyncMock(return_value=b"%PDF-1.4"), seek=AsyncMock(),
+    )
+    args = dict(prestamo_id=loan_id, session=session, current_empleado=SimpleNamespace(id=uuid4()),
+                comprobante_pago=upload, motivo="Archivo equivocado", previous_id="loan")
+    if mode in {"denied", "missing"}:
+        with pytest.raises(HTTPException) as exc:
+            await admin_routes.admin_payment_run_replace_loan_proof(**args)
+        assert exc.value.status_code == (403 if mode == "denied" else 404)
+    else:
+        if mode == "bad_file": args["comprobante_pago"] = None
+        response = await admin_routes.admin_payment_run_replace_loan_proof(**args)
+        assert response.status_code == 303
+        if mode == "success":
+            upload.seek.assert_awaited_once_with(0)
+            update.assert_called_once()
+            session.commit.assert_awaited_once()
+        else:
+            session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_loan_proof_download_is_limited_to_recorded_keys(monkeypatch, tmp_path):
+    loan_id = uuid4()
+    folder = tmp_path / "data" / "gastos" / "prestamos" / str(loan_id)
+    folder.mkdir(parents=True)
+    (folder / "old.pdf").write_bytes(b"old")
+    (folder / "new.pdf").write_bytes(b"new")
+    from devnous.gastos.routes import user_routes
+    monkeypatch.setattr(user_routes, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    loan = SimpleNamespace(
+        estado="pagada", comprobante_pago_storage_key=f"prestamos/{loan_id}/new.pdf",
+        comprobante_pago_filename="new.pdf", metadata_json={
+            "payment_proof_replacements": [{
+                "previous_storage_key": f"prestamos/{loan_id}/old.pdf",
+                "previous_filename": "old.pdf",
+            }]
+        },
+    )
+    session = AsyncMock()
+    session.get.return_value = loan
+    actor = SimpleNamespace(id=uuid4())
+    current = await admin_routes.admin_payment_run_download_loan_proof(loan_id, "current", session, actor)
+    old = await admin_routes.admin_payment_run_download_loan_proof(loan_id, "0", session, actor)
+    assert Path(current.path).name == "new.pdf"
+    assert Path(old.path).name == "old.pdf"
+    with pytest.raises(HTTPException):
+        await admin_routes.admin_payment_run_download_loan_proof(loan_id, "1", session, actor)
+    loan.comprobante_pago_storage_key = "../../outside.pdf"
+    with pytest.raises(HTTPException):
+        await admin_routes.admin_payment_run_download_loan_proof(loan_id, "current", session, actor)
