@@ -1,9 +1,12 @@
+import io
+import zipfile
 from datetime import datetime
 
 from devnous.gastos.services.coi_poliza_exporter import (
     ExpenseCFDI,
     _expense_description,
     build_coi_poliza_rows,
+    generate_coi_poliza_zip,
 )
 
 
@@ -61,3 +64,124 @@ def test_coi_header_and_movement_rows_share_compact_description():
     assert rows[2][2] == description
     assert rows[3][3] == description
     assert rows[4][3] == description
+
+
+def test_expense_report_partidas_share_one_coi_policy_header_and_closure():
+    first = _expense(
+        export_reference="G-1",
+        concepto="Hospedaje",
+        poliza_group_key="informe:1",
+        poliza_reference="I-26000001",
+        poliza_description="Informe de Gastos I-26000001",
+    )
+    second = _expense(
+        export_reference="G-2",
+        concepto="Alimentos",
+        poliza_group_key="informe:1",
+        poliza_reference="I-26000001",
+        poliza_description="Informe de Gastos I-26000001",
+    )
+
+    rows = build_coi_poliza_rows([first, second])
+
+    headers = [row for row in rows if row[0] == "Eg"]
+    closures = [row for row in rows if row[1] == "FIN_PARTIDAS"]
+    assert headers == [
+        [
+            "Eg",
+            "1",
+            "Informe de Gastos I-26000001",
+            "4",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ]
+    ]
+    assert len(closures) == 1
+
+
+def test_ungrouped_standalone_expenses_keep_one_policy_each():
+    rows = build_coi_poliza_rows(
+        [
+            _expense(export_reference="G-1"),
+            _expense(export_reference="G-2"),
+        ]
+    )
+
+    assert [row[1] for row in rows if row[0] == "Eg"] == ["1", "2"]
+    assert len([row for row in rows if row[1] == "FIN_PARTIDAS"]) == 2
+
+
+def test_grouped_report_produces_one_workbook_in_zip():
+    expenses = [
+        _expense(
+            export_reference=reference,
+            poliza_group_key="informe:1",
+            poliza_reference="I-26000001",
+            poliza_description="Informe de Gastos I-26000001",
+        )
+        for reference in ("G-1", "G-2")
+    ]
+
+    payload = generate_coi_poliza_zip(expenses)
+
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        assert archive.namelist() == ["Poliza_COI_I-26000001.xlsx"]
+
+
+def test_grouped_report_preserves_each_cfdi_block_inside_single_policy():
+    expenses = [
+        _expense(
+            export_reference=reference,
+            cfdi_uuid=cfdi_uuid,
+            rfc_emisor="AAA010101AAA",
+            rfc_receptor="BBB010101BBB",
+            poliza_group_key="informe:1",
+            poliza_reference="I-26000001",
+            poliza_description="Informe de Gastos I-26000001",
+        )
+        for reference, cfdi_uuid in (("G-1", "UUID-1"), ("G-2", "UUID-2"))
+    ]
+
+    rows = build_coi_poliza_rows(expenses)
+
+    assert len([row for row in rows if row[0] == "Eg"]) == 1
+    assert len([row for row in rows if row[2] == "INICIO_CFDI"]) == 2
+    assert len([row for row in rows if row[2] == "FIN_CFDI"]) == 2
+    assert {row[8] for row in rows if row[8]} == {"UUID-1", "UUID-2"}
+
+
+def test_report_policy_preserves_tax_movements_and_balance():
+    expenses = [
+        _expense(
+            export_reference=f"G-{index}",
+            total=116,
+            subtotal_amount=100,
+            iva_amount=16,
+            cuenta_iva="1180",
+            poliza_group_key="informe:tax",
+            poliza_reference="I-TAX",
+            poliza_description="Informe I-TAX",
+        )
+        for index in (1, 2)
+    ]
+    rows = build_coi_poliza_rows(expenses)
+    movements = [row for row in rows if row[4] == "1"]
+
+    assert len([row for row in rows if row[0] == "Eg"]) == 1
+    assert len([row for row in movements if row[1] == "1180"]) == 2
+    assert sum(float(row[5] or 0) for row in movements) == 232
+    assert sum(float(row[6] or 0) for row in movements) == 232
+
+
+def test_standalone_zip_preserves_references_and_duplicate_filename_suffix():
+    payload = generate_coi_poliza_zip(
+        [
+            _expense(export_reference="G-1"),
+            _expense(export_reference="G-1"),
+        ]
+    )
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        assert archive.namelist() == ["Poliza_COI_G-1.xlsx", "Poliza_COI_002_G-1.xlsx"]
