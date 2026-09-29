@@ -246,6 +246,7 @@ class DocumentoAdjuntoMeta:
     mime_type: Optional[str]
     tipo_archivo: Optional[str]
     nombre_archivo: Optional[str]
+    activo: Optional[bool] = None
 
 
 @dataclass(frozen=True)
@@ -453,7 +454,7 @@ def _label_for_documento_meta(m: DocumentoAdjuntoMeta, index: int) -> str:
     if cat == "cfdi_xml":
         return "XML"
     if cat == "comprobante_pago":
-        return "Comprobante pago"
+        return "Comprobante pago (sustituido)" if m.activo is False else "Comprobante pago"
     if cat == "supporting" and m.nombre_archivo:
         return _truncated_attachment_label(m.nombre_archivo)
     mime = (m.mime_type or m.tipo_archivo or "").lower()
@@ -576,6 +577,7 @@ def html_documento_archivos_detail(
             f"<strong>{escape(title)}:</strong> "
             f'<a href="{escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">'
             f"{escape(filename)}</a>"
+            f"{' (sustituido)' if m.activo is False and cat == 'comprobante_pago' else ''}"
             f"{remove_control}"
             "</li>"
         )
@@ -705,6 +707,7 @@ async def fetch_documento_adjuntos_meta_batch(
             _adjunto_expr("mime_type", available),
             Adjunto.tipo_archivo,
             _adjunto_expr("nombre_archivo", available),
+            _adjunto_expr("activo", available),
         )
         .where(Adjunto.documento_id.in_(list(documento_ids)))
         .order_by(Adjunto.subido_en.asc())
@@ -722,6 +725,7 @@ async def fetch_documento_adjuntos_meta_batch(
                 mime_type=row.mime_type,
                 tipo_archivo=row.tipo_archivo,
                 nombre_archivo=row.nombre_archivo,
+                activo=row.activo,
             )
         )
     return by_doc
