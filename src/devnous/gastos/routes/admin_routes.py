@@ -175,7 +175,13 @@ from ..services.documento_service import (
     add_solicitud_documento_adjuntos,
     validate_solicitud_terceros_attachment,
 )
-from ..utils.receipt_bytes import resolve_media_type
+from ..utils.receipt_bytes import (
+    ReceiptDecodeError,
+    comprobante_response_headers,
+    fetch_adjunto_payload,
+    load_adjunto_payload_bytes,
+    resolve_media_type,
+)
 from ..services.payment_proof_replacement_service import replace_payment_run_proof
 from ..services.access_control_service import filter_cards_by_tools, visible_tools_for
 from ..services.telegram_console import TELEGRAM_APPROVER_ROLES
@@ -9454,10 +9460,16 @@ def _payment_run_ref_number(value: Any) -> Optional[int]:
 
 def _payment_run_sort_key(row: dict[str, Any]) -> tuple[int, int, str]:
     ref_number = _payment_run_ref_number(row.get("referencia_operaciones"))
-    fallback = str(row.get("fecha_pago") or row.get("aprobado_en") or "")
+    fallback = str(_payment_run_display_date(row) or row.get("aprobado_en") or "")
     if ref_number is None:
         return (1, 0, fallback)
     return (0, -ref_number, fallback)
+
+
+def _payment_run_display_date(row: dict[str, Any]) -> Any:
+    if row.get("status") == "pagada" and row.get("entity_type", "documento") == "documento":
+        return row.get("fecha_pago_efectiva")
+    return row.get("fecha_pago")
 
 
 def _payment_run_sort_value(value: Any, *, kind: str = "text") -> str:
@@ -9688,7 +9700,7 @@ def _render_payment_run_items(
             row.get("referencia_operaciones"),
             kind="referencia_operaciones",
         )
-        fecha_pago = row.get("fecha_pago")
+        fecha_pago = _payment_run_display_date(row)
         fecha_value = fecha_pago.isoformat() if hasattr(fecha_pago, "isoformat") else ""
         fecha_sort = _payment_run_sort_value(fecha_pago, kind="date")
         can_edit = bool(row.get("can_edit_fecha_pago"))
@@ -9767,7 +9779,7 @@ def _render_payment_run_items(
             if entity_type == "documento":
                 current = (current_proofs or {}).get(row.get("id"), [])
                 proof_links = " · ".join(
-                    f'<a href="/documentos/{documento_id}/adjuntos/{proof.id}">'
+                    f'<a href="/admin/finanzas/payment-run/documento/{documento_id}/comprobante/{proof.id}">'
                     f'{escape(proof.nombre_archivo or "Comprobante")}</a>'
                     for proof in current
                 ) or "Sin comprobante vigente"
@@ -10643,7 +10655,10 @@ async def admin_payment_run_replace_loan_proof(
         require_payment_run_payment_confirmation(current_empleado)
     except PaymentRunPermissionError as exc:
         raise HTTPException(status_code=403, detail=exc.message)
-    prestamo = await session.get(SolicitudPrestamo, prestamo_id)
+    prestamo_result = await session.execute(
+        select(SolicitudPrestamo).where(SolicitudPrestamo.id == prestamo_id).with_for_update()
+    )
+    prestamo = prestamo_result.scalar_one_or_none()
     if prestamo is None:
         raise HTTPException(status_code=404, detail="Préstamo no encontrado.")
     try:
@@ -10682,6 +10697,40 @@ async def admin_payment_run_replace_loan_proof(
         logger.exception("Could not replace loan payment proof", extra={"prestamo_id": str(prestamo_id)})
         return _payment_run_redirect(error_msg="No se pudo sustituir el comprobante.", vista="pagadas", anchor="pagadas")
     return _payment_run_redirect(success_msg="Comprobante del préstamo sustituido; pago sin cambios.", vista="pagadas", anchor="pagadas")
+
+
+@router.get("/admin/finanzas/payment-run/documento/{documento_id}/comprobante/{adjunto_id}")
+async def admin_payment_run_download_document_proof(
+    documento_id: UUIDType,
+    adjunto_id: UUIDType,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado: Empleado = Depends(get_current_empleado),
+) -> Response:
+    """Read a payment proof belonging to a paid Payment Run document."""
+    try:
+        require_payment_run_access(current_empleado)
+    except PaymentRunPermissionError as exc:
+        raise HTTPException(status_code=403, detail=exc.message)
+    documento = await session.get(Documento, documento_id)
+    if documento is None or documento.tipo != "SOLICITUD" or documento.estado != "pagado":
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    adjunto = await fetch_adjunto_payload(
+        session, adjunto_id=adjunto_id, documento_id=documento_id,
+    )
+    if not adjunto or adjunto.get("categoria") != "comprobante_pago":
+        raise HTTPException(status_code=404, detail="Comprobante no encontrado.")
+    try:
+        raw, _, filename = await load_adjunto_payload_bytes(
+            adjunto["ruta_archivo"],
+            mime_hint=adjunto.get("mime_type") or adjunto.get("tipo_archivo"),
+            nombre_archivo=adjunto.get("nombre_archivo"),
+        )
+    except ReceiptDecodeError as exc:
+        raise HTTPException(status_code=500, detail="No se pudo leer el comprobante.") from exc
+    media_type, disposition = comprobante_response_headers(
+        filename, resolve_media_type(filename, raw),
+    )
+    return Response(content=raw, media_type=media_type, headers={"Content-Disposition": disposition})
 
 
 @router.get("/admin/finanzas/payment-run/prestamo/{prestamo_id}/comprobante/{version}")

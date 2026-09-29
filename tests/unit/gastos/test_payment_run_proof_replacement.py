@@ -1,6 +1,6 @@
 """Replacing a proof must never repeat a payment or erase its evidence."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -132,6 +132,16 @@ def test_paid_rows_offer_replacement_only_to_accounting():
     assert "sustituir-comprobante" not in readonly
     assert f'value="{proof_id}"' in accounting
     assert "Sustituir archivo" in accounting
+    assert f"/payment-run/documento/{document_id}/comprobante/{proof_id}" in accounting
+
+
+def test_paid_document_uses_effective_payment_date():
+    row = {
+        "id": uuid4(), "status": "pagada", "fecha_pago": date(2026, 9, 20),
+        "fecha_pago_efectiva": date(2026, 9, 22),
+    }
+    html = _render_payment_run_items([row])
+    assert '<td data-sort-value="2026-09-22">2026-09-22</td>' in html
 
 
 def test_paid_loan_row_shows_current_and_prior_proofs():
@@ -286,7 +296,9 @@ async def test_loan_replacement_route_authority_and_history(monkeypatch, mode):
     )
     if mode == "unpaid": loan.estado = "aprobada"
     session = AsyncMock()
-    session.get.return_value = None if mode == "missing" else loan
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None if mode == "missing" else loan
+    session.execute.return_value = result
     monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
     def confirm(_):
         if mode == "denied": raise admin_routes.PaymentRunPermissionError()
@@ -315,8 +327,36 @@ async def test_loan_replacement_route_authority_and_history(monkeypatch, mode):
             upload.seek.assert_awaited_once_with(0)
             update.assert_called_once()
             session.commit.assert_awaited_once()
+            assert "FOR UPDATE" in str(session.execute.await_args.args[0])
         else:
             session.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_document_proof_download_requires_payment_run_access_and_matching_category(monkeypatch):
+    document_id, proof_id = uuid4(), uuid4()
+    session = AsyncMock()
+    session.get.return_value = SimpleNamespace(tipo="SOLICITUD", estado="pagado")
+    actor = SimpleNamespace(id=uuid4())
+    payload = {
+        "categoria": "comprobante_pago", "ruta_archivo": "payload",
+        "nombre_archivo": "pago.pdf", "mime_type": "application/pdf",
+    }
+    fetch = AsyncMock(return_value=payload)
+    monkeypatch.setattr(admin_routes, "fetch_adjunto_payload", fetch)
+    monkeypatch.setattr(admin_routes, "load_adjunto_payload_bytes", AsyncMock(return_value=(b"%PDF-1.4", "application/pdf", "pago.pdf")))
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    response = await admin_routes.admin_payment_run_download_document_proof(document_id, proof_id, session, actor)
+    assert response.body == b"%PDF-1.4"
+    assert fetch.await_args.kwargs == {"adjunto_id": proof_id, "documento_id": document_id}
+    payload["categoria"] = "contrato"
+    with pytest.raises(HTTPException) as exc:
+        await admin_routes.admin_payment_run_download_document_proof(document_id, proof_id, session, actor)
+    assert exc.value.status_code == 404
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: (_ for _ in ()).throw(admin_routes.PaymentRunPermissionError()))
+    with pytest.raises(HTTPException) as exc:
+        await admin_routes.admin_payment_run_download_document_proof(document_id, proof_id, session, actor)
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
