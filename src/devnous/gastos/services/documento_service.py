@@ -173,6 +173,7 @@ async def validate_shared_cfdi_payment_amount(
     cfdi_report: object,
     requested_amount: object,
     exclude_documento_id: Optional[UUID] = None,
+    exclude_expense_id: Optional[UUID] = None,
 ) -> Decimal:
     """Atomically enforce that shared CFDI requests never exceed fiscal total."""
     report_id = getattr(cfdi_report, "id", None)
@@ -201,6 +202,7 @@ async def validate_shared_cfdi_payment_amount(
     # its paid request and an INFORME; exclude it when any linked Documento has
     # already supplied the reservation.
     reservation_document_exists = select(Documento.id).where(
+        Documento.cfdi_report_id == report_id,
         Documento.estado.in_(_CFDI_PAYMENT_RESERVING_STATES),
         Documento.monto_solicitado.is_not(None),
         or_(
@@ -218,8 +220,13 @@ async def validate_shared_cfdi_payment_amount(
         ExpenseReport.estado_gasto != "cancelado",
         ~reservation_document_exists.exists(),
     ]
+    if exclude_expense_id is not None:
+        expense_conditions.append(ExpenseReport.id != exclude_expense_id)
     expense_result = await session.execute(
-        select(ExpenseReport.gasto_cantidad)
+        select(
+            ExpenseReport.gasto_cantidad
+            - func.coalesce(ExpenseReport.propina_no_deducible, 0)
+        )
         .where(and_(*expense_conditions))
     )
     return shared_cfdi_remaining_amount(

@@ -191,6 +191,7 @@ from ..services.documento_service import (
     update_solicitud_terceros_document,
     generate_documento_reference_number as service_generate_documento_reference_number,
     validate_solicitud_terceros_attachment,
+    validate_shared_cfdi_payment_amount,
     fetch_documento_aprobador_display_batch,
 )
 from ..services.documento_workflow_service import (
@@ -34844,6 +34845,23 @@ def _informe_expense_export_amounts(
     """
     total_val = round(float(expense.gasto_cantidad or 0), 2)
     cfdi_rec = cfdi_linked or cfdi
+    if cfdi_rec is not None and getattr(expense, "cfdi_compartido_confirmado", False):
+        fiscal_total = Decimal(str(cfdi_rec.total or 0))
+        if fiscal_total > 0:
+            tip = Decimal(str(getattr(expense, "propina_no_deducible", None) or 0))
+            applied = Decimal(str(total_val)) - tip
+            net_base = (
+                Decimal(str(cfdi_rec.subtotal or 0))
+                - Decimal(str(getattr(cfdi_rec, "descuento", None) or 0))
+            )
+            applied_base = (net_base * applied / fiscal_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            return {
+                "importe_sin_iva": float(applied_base + tip),
+                "iva": float(applied - applied_base),
+                "total": total_val,
+            }
     if cfdi_rec is not None:
         subtotal = round(float(cfdi_rec.subtotal or 0), 2)
         traslados = round(float(cfdi_rec.total_impuestos_trasladados or 0), 2)
@@ -42126,6 +42144,8 @@ def _quick_expense_decimal(
         parsed = Decimal(raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     except Exception as exc:
         raise ValueError(f"{label} debe ser un número válido") from exc
+    if not parsed.is_finite():
+        raise ValueError(f"{label} debe ser un número válido")
     if parsed < 0 and not allow_negative:
         raise ValueError(f"{label} no puede ser negativo")
     return parsed
@@ -42163,6 +42183,7 @@ def _quick_expense_values(
     impuestos_y_retenciones: Optional[str],
     propina_no_deducible: Optional[str] = None,
     xml_data: Optional[Dict[str, Any]] = None,
+    factura_compartida: bool = False,
 ) -> Dict[str, Any]:
     xml_data = xml_data or {}
     concepto_final = (concepto or "").strip()
@@ -42195,7 +42216,31 @@ def _quick_expense_values(
                 "El TOTAL del XML no coincide con Sub total - Descuento + "
                 "Impuestos y retenciones"
             )
-        calculated_total = xml_total + propina_amount
+        if factura_compartida:
+            subtotal_amount = _quick_expense_decimal(subtotal, "Sub total aplicado")
+            descuento_amount = _quick_expense_decimal(
+                descuento, "Descuento aplicado", required=False
+            )
+            impuestos_net = _quick_expense_decimal(
+                impuestos_y_retenciones,
+                "Impuestos y retenciones aplicados",
+                required=False,
+                allow_negative=True,
+            )
+            applied_total = compute_quick_expense_total(
+                subtotal_amount, descuento_amount, impuestos_net
+            )
+            if applied_total <= 0 or applied_total > xml_total:
+                raise ValueError(
+                    "El monto aplicado debe ser mayor a cero y no exceder "
+                    "el total fiscal de la factura compartida."
+                )
+            iva_amount = (taxes.iva * applied_total / xml_total).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            calculated_total = applied_total + propina_amount
+        else:
+            calculated_total = xml_total + propina_amount
     else:
         fecha_final = (fecha or "").strip()
         numero_final = (numero_factura or "").strip()
@@ -42251,6 +42296,31 @@ def _quick_expense_values(
     }
 
 
+async def _validate_quick_shared_cfdi_amount(
+    session: AsyncSession,
+    expense: ExpenseReport,
+    cuenta: CuentaDeGastos,
+    values: Dict[str, Any],
+) -> None:
+    """Reserve only this report's fiscal share, excluding its own row and tip."""
+    if not expense.cfdi_report_id:
+        raise ValueError(
+            "Factura compartida requiere un CFDI válido vinculado "
+            "para verificar su saldo disponible."
+        )
+    shared_report = await session.get(CFDIReport, expense.cfdi_report_id)
+    if shared_report is None:
+        raise ValueError("No se encontró el CFDI de la factura compartida.")
+    if (shared_report.moneda or "MXN").upper() != currency_for(cuenta):
+        raise ValueError("La moneda de la factura debe coincidir con el informe.")
+    await validate_shared_cfdi_payment_amount(
+        session,
+        cfdi_report=shared_report,
+        requested_amount=values["total"] - values["propina"],
+        exclude_expense_id=expense.id,
+    )
+
+
 @router.post("/informes-de-gastos/{cuenta_id}/gastos/quick")
 async def crear_gasto_rapido_en_informe(
     cuenta_id: UUIDType,
@@ -42276,11 +42346,17 @@ async def crear_gasto_rapido_en_informe(
     asiento_preferencial_cfdi_pdf: Optional[UploadFile] = File(None),
     asiento_preferencial_numero_factura: Optional[str] = Form(None),
     asiento_preferencial_subtotal: Optional[str] = Form(None),
+    asiento_preferencial_descuento: Optional[str] = Form("0"),
+    asiento_preferencial_cfdi_compartido_confirmado: Optional[str] = Form(None),
+    asiento_preferencial_cfdi_compartido_motivo: Optional[str] = Form(None),
     asiento_preferencial_impuestos_y_retenciones: Optional[str] = Form("0"),
     exceso_equipaje_cfdi_xml: Optional[UploadFile] = File(None),
     exceso_equipaje_cfdi_pdf: Optional[UploadFile] = File(None),
     exceso_equipaje_numero_factura: Optional[str] = Form(None),
     exceso_equipaje_subtotal: Optional[str] = Form(None),
+    exceso_equipaje_descuento: Optional[str] = Form("0"),
+    exceso_equipaje_cfdi_compartido_confirmado: Optional[str] = Form(None),
+    exceso_equipaje_cfdi_compartido_motivo: Optional[str] = Form(None),
     exceso_equipaje_impuestos_y_retenciones: Optional[str] = Form("0"),
 ) -> RedirectResponse:
     redirect_base = f"/informes-de-gastos/{cuenta_id}"
@@ -42398,6 +42474,7 @@ async def crear_gasto_rapido_en_informe(
             impuestos_y_retenciones=impuestos_y_retenciones,
             propina_no_deducible=propina_no_deducible,
             xml_data=xml_data,
+            factura_compartida=_form_checkbox_checked(cfdi_compartido_confirmado),
         )
         if no_deducible_material:
             values["numero_factura"] = "no facturable"
@@ -42484,6 +42561,9 @@ async def crear_gasto_rapido_en_informe(
                 actor_id=current_empleado.id,
             )
 
+        if _form_checkbox_checked(cfdi_compartido_confirmado):
+            await _validate_quick_shared_cfdi_amount(session, expense, cuenta, values)
+
         if no_deducible_material:
             raw_bytes, mime_type, filename, _categoria = no_deducible_material
             await replace_non_deductible_proof(
@@ -42524,6 +42604,9 @@ async def crear_gasto_rapido_en_informe(
             label: str,
             invoice_number: Optional[str],
             subtotal_raw: Optional[str],
+            descuento_raw: Optional[str],
+            shared_confirmed: Optional[str],
+            shared_reason: Optional[str],
             impuestos_raw: Optional[str],
             xml_upload: Optional[UploadFile],
             pdf_upload: Optional[UploadFile],
@@ -42573,10 +42656,11 @@ async def crear_gasto_rapido_en_informe(
                 fecha=values["fecha"].strftime("%Y-%m-%d"),
                 numero_factura=invoice_number,
                 subtotal=subtotal_raw,
-                descuento="0",
+                descuento=descuento_raw,
                 impuestos_y_retenciones=impuestos_raw,
                 propina_no_deducible="0",
                 xml_data=supplement_cfdi.parsed if supplement_cfdi else {},
+                factura_compartida=_form_checkbox_checked(shared_confirmed),
             )
             supplement_expense = await create_expense_from_data(
                 session=session,
@@ -42621,8 +42705,8 @@ async def crear_gasto_rapido_en_informe(
                         session,
                         supplement_expense,
                         require_unique=True,
-                        allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
-                        shared_reason=cfdi_compartido_motivo,
+                        allow_shared=_form_checkbox_checked(shared_confirmed),
+                        shared_reason=shared_reason,
                         actor_id=current_empleado.id,
                     )
             elif supplement_values["numero_factura"]:
@@ -42632,9 +42716,14 @@ async def crear_gasto_rapido_en_informe(
                     supplement_expense,
                     clear_report_if_no_match=False,
                     require_unique=True,
-                    allow_shared=_form_checkbox_checked(cfdi_compartido_confirmado),
-                    shared_reason=cfdi_compartido_motivo,
+                    allow_shared=_form_checkbox_checked(shared_confirmed),
+                    shared_reason=shared_reason,
                     actor_id=current_empleado.id,
+                )
+
+            if _form_checkbox_checked(shared_confirmed):
+                await _validate_quick_shared_cfdi_amount(
+                    session, supplement_expense, cuenta, supplement_values
                 )
 
             if supplement_pdf is not None:
@@ -42665,6 +42754,9 @@ async def crear_gasto_rapido_en_informe(
             label="Asiento preferencial",
             invoice_number=asiento_preferencial_numero_factura,
             subtotal_raw=asiento_preferencial_subtotal,
+            descuento_raw=asiento_preferencial_descuento,
+            shared_confirmed=asiento_preferencial_cfdi_compartido_confirmado,
+            shared_reason=asiento_preferencial_cfdi_compartido_motivo,
             impuestos_raw=asiento_preferencial_impuestos_y_retenciones,
             xml_upload=asiento_preferencial_cfdi_xml,
             pdf_upload=asiento_preferencial_cfdi_pdf,
@@ -42673,6 +42765,9 @@ async def crear_gasto_rapido_en_informe(
             label="Exceso de equipaje",
             invoice_number=exceso_equipaje_numero_factura,
             subtotal_raw=exceso_equipaje_subtotal,
+            descuento_raw=exceso_equipaje_descuento,
+            shared_confirmed=exceso_equipaje_cfdi_compartido_confirmado,
+            shared_reason=exceso_equipaje_cfdi_compartido_motivo,
             impuestos_raw=exceso_equipaje_impuestos_y_retenciones,
             xml_upload=exceso_equipaje_cfdi_xml,
             pdf_upload=exceso_equipaje_cfdi_pdf,
@@ -43484,7 +43579,6 @@ async def cuenta_de_gastos_detail(
                     </div>
                     <div id="quick_cfdi_autofill_notice" class="notice info" hidden style="margin-bottom:12px;background:#eff6ff;color:#1e3a8a;border:1px solid #bfdbfe;border-radius:12px;padding:12px 14px;"></div>
                     <form id="quick-expense-form" method="POST" action="/informes-de-gastos/{cuenta.id}/gastos/quick" enctype="multipart/form-data">
-                        <input type="hidden" name="descuento" id="quick-descuento" value="0">
                         <input type="hidden" name="es_no_deducible" id="quick-es-no-deducible" value="0">
                         <div class="table-shell quick-expense-shell">
                             <table class="quick-expense-table">
@@ -43498,6 +43592,7 @@ async def cuenta_de_gastos_detail(
                                         <th>FECHA DEL GASTO</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
+                                        <th>Descuento aplicado</th>
                                         <th>Impuestos y retenciones</th>
                                         <th class="quick-tip-col" hidden>Propina</th>
                                         <th>TOTAL</th>
@@ -43516,6 +43611,7 @@ async def cuenta_de_gastos_detail(
                                             <input type="file" name="comprobante_no_deducible" id="quick-comprobante-no-deducible" accept=".pdf,image/*,application/pdf" style="display:block;margin-top:8px;max-width:190px;">
                                             <label style="display:block;margin-top:8px;font-size:12px;"><input type="checkbox" name="cfdi_compartido_confirmado" value="1"> Factura compartida</label>
                                             <input type="text" name="cfdi_compartido_motivo" placeholder="Motivo compartida" style="display:block;margin-top:4px;max-width:190px;">
+                                            <small style="display:block;margin-top:4px;max-width:190px;">Para factura compartida, ajuste Sub total, Descuento e Impuestos al importe que aplica a este informe. TOTAL muestra el importe aplicado, más propina si corresponde.</small>
                                         </td>
                                         <td><input name="concepto" id="quick-concepto" required></td>
                                         <td{quick_budget_style}><select name="{quick_budget_name}" id="quick-budget-concept" {"required" if quick_budget_concepts_filtered and can_manage_budget_classification else ""}>{quick_budget_concept_options or '<option value="">&mdash; Sin concepto &mdash;</option>'}</select></td>
@@ -43528,6 +43624,7 @@ async def cuenta_de_gastos_detail(
                                             </datalist>
                                         </td>
                                         <td><input type="number" min="0" step="0.01" name="subtotal" id="quick-subtotal" required></td>
+                                        <td><input type="number" min="0" step="0.01" name="descuento" id="quick-descuento" value="0" aria-label="Descuento aplicado"></td>
                                         <td><input type="number" step="0.01" name="impuestos_y_retenciones" id="quick-impuestos-y-retenciones" value="0" required></td>
                                         <td class="quick-tip-col" hidden><input type="number" min="0" step="0.01" name="propina_no_deducible" id="quick-propina" value="0" aria-label="Propina no deducible"></td>
                                         <td><input type="text" id="quick-total" value="0.00" readonly></td>
@@ -43560,28 +43657,34 @@ async def cuenta_de_gastos_detail(
                                 <thead>
                                     <tr>
                                         <th>Concepto</th>
+                                        <th>Factura compartida</th>
                                         <th>CFDI XML</th>
                                         <th>CFDI PDF</th>
                                         <th>No. Factura</th>
                                         <th>Sub total</th>
+                                        <th>Descuento aplicado</th>
                                         <th>Impuestos y retenciones</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr>
                                         <td>Asiento preferencial</td>
+                                        <td><label><input form="quick-expense-form" type="checkbox" name="asiento_preferencial_cfdi_compartido_confirmado" value="1"> Factura compartida</label><input form="quick-expense-form" name="asiento_preferencial_cfdi_compartido_motivo" placeholder="Motivo compartida"></td>
                                         <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input form="quick-expense-form" type="file" name="asiento_preferencial_cfdi_pdf" accept=".pdf,application/pdf"></td>
                                         <td><input form="quick-expense-form" name="asiento_preferencial_numero_factura" placeholder="UUID o folio"></td>
                                         <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="asiento_preferencial_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="asiento_preferencial_descuento" value="0" aria-label="Descuento aplicado"></td>
                                         <td><input form="quick-expense-form" type="number" step="0.01" name="asiento_preferencial_impuestos_y_retenciones" value="0"></td>
                                     </tr>
                                     <tr>
                                         <td>Exceso de equipaje</td>
+                                        <td><label><input form="quick-expense-form" type="checkbox" name="exceso_equipaje_cfdi_compartido_confirmado" value="1"> Factura compartida</label><input form="quick-expense-form" name="exceso_equipaje_cfdi_compartido_motivo" placeholder="Motivo compartida"></td>
                                         <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_xml" accept=".xml,application/xml,text/xml"></td>
                                         <td><input form="quick-expense-form" type="file" name="exceso_equipaje_cfdi_pdf" accept=".pdf,application/pdf"></td>
                                         <td><input form="quick-expense-form" name="exceso_equipaje_numero_factura" placeholder="UUID o folio"></td>
                                         <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="exceso_equipaje_subtotal"></td>
+                                        <td><input form="quick-expense-form" type="number" min="0" step="0.01" name="exceso_equipaje_descuento" value="0" aria-label="Descuento aplicado"></td>
                                         <td><input form="quick-expense-form" type="number" step="0.01" name="exceso_equipaje_impuestos_y_retenciones" value="0"></td>
                                     </tr>
                                 </tbody>
