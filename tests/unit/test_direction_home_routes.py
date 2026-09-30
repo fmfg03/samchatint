@@ -103,3 +103,51 @@ def test_bad_filters_and_missing_signing_configuration_fail_closed(
     assert client.get("/direccion/inicio?edition_year=1900").status_code == 422
     monkeypatch.delenv("SESSION_SECRET_KEY")
     assert client.get("/direccion/inicio").status_code == 503
+
+
+@pytest.mark.parametrize("role", ["superadmin", "super_admin"])
+def test_superadmin_home_and_sam_use_supervision_scope(monkeypatch, role):
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-only-direction-context")
+    client = _direction_client(
+        monkeypatch,
+        _employee(role),
+        portfolios=lambda supervision: ["portfolio-a"] if supervision else [],
+    )
+    data = snapshot()
+    data["source_access"] = {"budget": True, "finance": True}
+    build = AsyncMock(return_value=(data, scope()))
+    resolve = AsyncMock(return_value=scope())
+    monkeypatch.setattr(routes, "build_home", build)
+    monkeypatch.setattr(routes, "resolve_scope", resolve)
+    monkeypatch.setattr(routes, "save_turn", AsyncMock(return_value="super-turn"))
+    client.get("/_test/login")
+    response = client.get("/direccion/inicio")
+    assert response.status_code == 200
+    assert build.await_args.kwargs["superadmin"] is True
+    page = json.loads(
+        re.search(
+            r'<script id="home-data" type="application/json">(.*?)</script>',
+            response.text,
+        ).group(1)
+    )
+    assert ask(client, page).status_code == 200
+    assert resolve.await_args.kwargs["superadmin"] is True
+    routes.save_turn.assert_awaited_once()
+
+
+@pytest.mark.parametrize("role", ["superadmin", "super_admin"])
+def test_superadmin_home_and_sam_respect_explicit_denial(monkeypatch, role):
+    client = _direction_client(
+        monkeypatch,
+        _employee(role),
+        decision=lambda _action: False,
+    )
+    build = AsyncMock()
+    save = AsyncMock()
+    monkeypatch.setattr(routes, "build_home", build)
+    monkeypatch.setattr(routes, "save_turn", save)
+    client.get("/_test/login")
+    assert client.get("/direccion/inicio").status_code == 403
+    assert ask(client, {"token": "unused", "csrf": "unused"}).status_code == 403
+    build.assert_not_awaited()
+    save.assert_not_awaited()

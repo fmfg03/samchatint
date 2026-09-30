@@ -67,7 +67,10 @@ fuentes; no sustituyen conciliación financiera.
   existentes mantienen sus valores predeterminados. AR estricto filtra asignaciones
   UUID y matching de los ítems autorizados. Finanzas scoped admite documentos únicamente;
   no retorna gastos/pólizas globales cuando falta un scope.
-- Cada acceso requiere identidad interna activa, posición y cartera asignada; un deny
+- Dueños: identidad interna activa, posición elegible y cartera asignada.
+  `superadmin` y `super_admin`: supervisión de todas las carteras activas y sus
+  torneos activos, sin asignación de posición de Dirección. Acceso a portada,
+  expedientes, consulta contextual y reportes de lectura; un deny
   explícito conserva precedencia. Denegaciones explícitas de las fuentes presupuesto/
   finanzas también impiden su lectura. No se crea ni amplía autoridad.
 - Token firmado con `SESSION_SECRET_KEY`, actor, snapshot y TTL 15 minutos.
