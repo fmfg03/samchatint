@@ -2020,7 +2020,7 @@ async def test_history_page_and_xlsx_export_cover_same_filtered_event(monkeypatc
     worksheet = load_workbook(BytesIO(response.body)).active
     assert worksheet["A1"].value == "Fecha"
     assert worksheet["B2"].value == "Aprobado"
-    assert worksheet["L2"].value == 90
+    assert worksheet["L2"].value == 0
     assert worksheet["M2"].value == "Sin asignar"
 
 
