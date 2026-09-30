@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+import unicodedata
 from dataclasses import dataclass
 from html import escape
 from ipaddress import ip_address, ip_network
@@ -156,7 +157,36 @@ def comprobante_response_headers(
     filename: Optional[str], media_type: str
 ) -> Tuple[str, str]:
     """Return (media_type, Content-Disposition value) safe for Unicode filenames."""
-    safe = (
+    safe = unicodedata.normalize(
+        "NFC",
+        (
+            (filename or "comprobante")
+            .replace('"', "_")
+            .replace("\\", "_")
+            .replace("/", "_")
+            .replace("\r", "")
+            .replace("\n", "")
+        ),
+    )
+    if not safe:
+        safe = "comprobante"
+
+    try:
+        safe.encode("ascii")
+    except UnicodeEncodeError:
+        # Starlette serializes response headers as latin-1. A filename coming
+        # from macOS or a browser can contain decomposed accents (for example
+        # O + U+0301) or other Unicode that cannot be represented safely there.
+        # Keep a readable ASCII fallback and preserve the exact normalized name
+        # through RFC 5987's filename* parameter.
+        fallback = (
+            unicodedata.normalize("NFKD", safe)
+            .encode("ascii", errors="ignore")
+            .decode("ascii")
+            .strip()
+            or "comprobante"
+        )
+        encoded = quote(safe, safe="!#    safe = (
         (filename or "comprobante")
         .replace('"', "_")
         .replace("\\", "_")
@@ -179,6 +209,13 @@ def comprobante_response_headers(
             or "comprobante"
         )
         encoded = quote(safe, safe="!#&+-.^_|~")
+        disp = (
+            f'inline; filename="{fallback}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+    else:
+        disp = f'inline; filename="{safe}"'
++-.^_\`|~")
         disp = (
             f'inline; filename="{fallback}"; '
             f"filename*=UTF-8''{encoded}"
