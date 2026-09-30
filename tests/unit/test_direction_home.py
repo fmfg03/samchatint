@@ -701,22 +701,21 @@ def test_budget_interval_and_uuid_filter_are_passed_to_both_sources():
 @pytest.mark.asyncio
 async def test_currency_gap_cannot_become_an_mxn_obligation(monkeypatch):
     monkeypatch.setattr(
-        home, "_optional_read", AsyncMock(return_value={"documents": []})
-    )
-    monkeypatch.setattr(
         home,
-        "build_finance_platform_snapshot",
-        lambda _: {
-            "cash_control_center": {
-                "approved_unpaid": [
+        "_optional_read",
+        AsyncMock(
+            return_value={
+                "documents": [
                     {
+                        "estado": "aprobado",
+                        "tipo": "SOLICITUD",
                         "currency": "USD",
                         "monto_total": 10,
                         "fecha_pago": TODAY.isoformat(),
                     }
                 ]
             }
-        },
+        ),
     )
     result = await home.payment_values(Session(), [T1], TODAY)
     assert result["value"] is None and result["gaps"]
@@ -850,3 +849,80 @@ def test_paid_fact_is_not_mistaken_for_payment_instruction():
     assert not chat.answer_snapshot(snapshot(), "paid", "Paga esta cantidad")[
         "supported"
     ]
+
+
+@pytest.mark.asyncio
+async def test_obligations_include_population_beyond_cash_preview(monkeypatch):
+    rows = [
+        {
+            "estado": "aprobado",
+            "tipo": "SOLICITUD",
+            "currency": "MXN",
+            "monto_total": 10,
+            "fecha_pago": TODAY.isoformat(),
+        }
+        for _ in range(20)
+    ]
+    source = {"documents": rows}
+    assert len(finance._build_cash_control(source)["approved_unpaid"]) == 15
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    result = await home.payment_values(Session(), [T1], TODAY)
+    assert result["value"] == Decimal("200")
+    assert len(result["evidence"]) == 20
+    source["documents"] += [
+        {**rows[0], "estado": "rechazado", "monto_total": 999},
+        {**rows[0], "tipo": "INFORME", "monto_total": 999},
+        {**rows[0], "pagado_en": TODAY.isoformat(), "monto_total": 999},
+    ]
+    result = await home.payment_values(Session(), [T1], TODAY)
+    assert result["value"] == Decimal("200")
+    assert len(result["evidence"]) == 20
+    rows[19]["currency"] = "USD"
+    result = await home.payment_values(Session(), [T1], TODAY)
+    assert result["value"] is None and result["gaps"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "quality", [None, "mixed_or_unknown_currency", "document_amount_missing"]
+)
+async def test_suppressed_budget_indicators_preserve_source_failure(
+    monkeypatch, quality
+):
+    monkeypatch.setattr(home, "resolve_scope", AsyncMock(return_value=scope()))
+    source = {
+        "source": "budget_db" if quality else "unavailable",
+        "version": {"status": "approved"},
+        "summary": {
+            "budget_total": 100,
+            "actual_total": 40,
+            "committed_total": 50,
+            "paid_total": 30,
+        },
+        "forecast": {"projected_close_total": 120},
+        "executive_quality_gaps": [quality] if quality else [],
+    }
+    monkeypatch.setattr(home, "_optional_read", AsyncMock(return_value=source))
+    monkeypatch.setattr(
+        home, "payment_values", AsyncMock(return_value={"value": None, "gaps": []})
+    )
+    monkeypatch.setattr(
+        home, "receivable_values", AsyncMock(return_value={"value": None, "gaps": []})
+    )
+    monkeypatch.setattr(
+        home.service, "_build_operational_dossier", AsyncMock(return_value={})
+    )
+    result, _ = await home.build_home(
+        Session(), actor=ACTOR, superadmin=False, year=YEAR
+    )
+    expected = quality or "Presupuesto aprobado y alcance no acreditados."
+    for metric in result["indicators"]:
+        if (
+            metric["id"]
+            in {"budget", "actual", "committed", "paid", "forecast", "deviation"}
+            and metric["value"] is None
+        ):
+            assert any(expected in gap for gap in metric["gaps"])
+            answer = chat.answer_snapshot(result, metric["id"], "¿Qué explica esto?")
+            assert expected in answer["missing_evidence"]
+            assert expected in answer["assistant_message"]

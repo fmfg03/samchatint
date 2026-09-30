@@ -16,7 +16,7 @@ from sqlalchemy import text
 
 from samchat.ar.service import build_ar_read_model
 from samchat.finance_platform.service import (
-    build_finance_platform_snapshot,
+    approved_unpaid_documents,
     build_finance_source_snapshot,
 )
 
@@ -249,8 +249,7 @@ async def payment_values(session: Any, tournament_ids: list[str], today: date) -
             "value": None,
             "gaps": ["Fuente de pagos no disponible o lectura incompleta."],
         }
-    platform = build_finance_platform_snapshot(source)
-    eligible = (platform.get("cash_control_center") or {}).get("approved_unpaid") or []
+    eligible = approved_unpaid_documents(source)
     due = []
     gaps = []
     for row in eligible:
@@ -618,8 +617,18 @@ async def build_home(
                 },
                 "as_of": datetime.now(timezone.utc).isoformat(),
                 "gaps": {
-                    "actual": budget_gaps,
-                    "forecast": budget_gaps,
+                    **{
+                        key: budget_gaps or ["Importe presupuestal no acreditado."]
+                        for key in (
+                            "budget",
+                            "actual",
+                            "committed",
+                            "paid",
+                            "forecast",
+                            "deviation",
+                        )
+                        if values[key] is None
+                    },
                     "obligations": payments["gaps"],
                     "receivables": ar["gaps"],
                 },

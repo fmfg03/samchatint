@@ -533,17 +533,22 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
-    documents = list(snapshot.get("documents") or [])
-    polizas = list(snapshot.get("polizas") or [])
-    approved_unpaid = [
+def approved_unpaid_documents(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the complete canonical population before UI preview limits."""
+    return [
         row
-        for row in documents
+        for row in snapshot.get("documents") or []
         if _safe_str(row.get("estado")).lower()
         in {"aprobado", "en_proceso_pago"}
         and _safe_str(row.get("tipo")).upper() == "SOLICITUD"
         and not row.get("pagado_en")
     ]
+
+
+def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
+    documents = list(snapshot.get("documents") or [])
+    polizas = list(snapshot.get("polizas") or [])
+    approved_unpaid = approved_unpaid_documents(snapshot)
     paid_documents = [
         row
         for row in documents

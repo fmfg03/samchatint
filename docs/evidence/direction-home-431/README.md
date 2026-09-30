@@ -65,3 +65,17 @@ consulta contextual, propagación del alcance de supervisión y rechazo explíci
 
 Sin cambios de autoridad ni permisos productivos, sin merge/despliegue y sin UAT.
 `Canon unchanged`: supervisión superadmin ya contemplada por los canons vigentes.
+
+## Review corrections (2026-09-30)
+
+The obligations aggregate now uses the complete canonical approved-unpaid
+population before the 15-row Cash Control UI preview. A 20-document regression
+verifies the full total and a currency failure beyond the preview boundary.
+All suppressed budget indicators preserve concrete source-quality evidence.
+Regression coverage also verifies excluded document states and the concrete gap
+in Sam's rendered response. The four regression cases fail against the previous
+home implementation and pass with these corrections.
+Validation: 63 Direction home, accounting-readiness and cashflow tests plus 8
+Direction HTTP route tests passed; see review-regression.log.
+Canon unchanged: these corrections enforce the existing scoped-source and
+explicit-missing-data contract without changing product or release authority.
