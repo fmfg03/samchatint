@@ -954,6 +954,10 @@ def _budget_expense_base_amount_sql(expense_alias: str = "e", cfdi_alias: str = 
                       AND budget_nd.categoria = 'comprobante_no_deducible'
                       AND budget_nd.activo = TRUE
                 ) THEN COALESCE({expense}.gasto_cantidad, 0)
+                WHEN {expense}.iva IS NOT NULL
+                THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
+                   + COALESCE({expense}.hospedaje_impuesto_monto, 0)
+                   + COALESCE({expense}.propina_no_deducible, 0)
                 WHEN {cfdi}.subtotal IS NOT NULL THEN (
                     CASE
                         WHEN COALESCE({expense}.cfdi_compartido_confirmado, FALSE)
@@ -963,20 +967,31 @@ def _budget_expense_base_amount_sql(expense_alias: str = "e", cfdi_alias: str = 
                                 AND budget_cfdi_expense.id <> {expense}.id
                                 AND budget_cfdi_expense.estado_gasto != 'cancelado'
                           )
-                        THEN GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
-                             * LEAST(GREATEST(
-                                 (COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.propina_no_deducible, 0))
-                                 / NULLIF(COALESCE({cfdi}.total, 0), 0), 0), 1)
-                        ELSE GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
+                        THEN GREATEST(
+                            COALESCE({cfdi}.subtotal, 0)
+                            - COALESCE({cfdi}.descuento, 0),
+                            0
+                        ) * LEAST(
+                            GREATEST(
+                                (
+                                    COALESCE({expense}.gasto_cantidad, 0)
+                                    - COALESCE({expense}.propina_no_deducible, 0)
+                                ) / NULLIF(COALESCE({cfdi}.total, 0), 0),
+                                0
+                            ),
+                            1
+                        )
+                        ELSE GREATEST(
+                            COALESCE({cfdi}.subtotal, 0)
+                            - COALESCE({cfdi}.descuento, 0),
+                            0
+                        )
                     END
                 ) + COALESCE({expense}.hospedaje_impuesto_monto, 0)
                   + COALESCE({expense}.propina_no_deducible, 0)
-                WHEN {expense}.iva IS NOT NULL
-                THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
-                   + COALESCE({expense}.hospedaje_impuesto_monto, 0)
-                   + COALESCE({expense}.propina_no_deducible, 0)
                 ELSE COALESCE({expense}.gasto_cantidad, 0)
-            END, 0
+            END,
+            0
         )
     """
 
@@ -1077,7 +1092,6 @@ async def _build_budget_finance_breakdowns(
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
-                LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
