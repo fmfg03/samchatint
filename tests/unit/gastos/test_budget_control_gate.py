@@ -727,7 +727,10 @@ async def test_forced_outbox_resend_bypasses_sent_suppression_and_resets_retry_s
 
 
 @pytest.mark.asyncio
-async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_control():
+async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_control(monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "validate_informe_surplus_before_submission", AsyncMock()
+    )
     documento = SimpleNamespace(
         id=uuid4(),
         estado="borrador",
@@ -765,7 +768,10 @@ async def test_informe_with_prior_budget_but_unassigned_line_returns_to_budget_c
 
 
 @pytest.mark.asyncio
-async def test_informe_with_all_lines_assigned_goes_to_approval():
+async def test_informe_with_all_lines_assigned_goes_to_approval(monkeypatch):
+    monkeypatch.setattr(
+        user_routes, "validate_informe_surplus_before_submission", AsyncMock()
+    )
     documento = SimpleNamespace(
         id=uuid4(),
         estado="borrador",

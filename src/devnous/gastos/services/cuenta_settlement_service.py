@@ -16,7 +16,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import date, datetime
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -41,14 +41,13 @@ from .employee_debtor_accounting_service import ensure_debtor_settlement_posting
 
 FINANCE_ROLES = frozenset({"finanzas", "admin", "superadmin", "super_admin"})
 
-ALLOWED_COMPROBANTE_MIME = frozenset(
-    {"application/pdf", "image/jpeg", "image/png"}
-)
+ALLOWED_COMPROBANTE_MIME = frozenset({"application/pdf", "image/jpeg", "image/png"})
 
 # Reuse the same size ceiling used for SOLICITUD PDFs. Comprobantes are comparable artifacts.
 MAX_COMPROBANTE_BYTES = MAX_SOLICITUD_PDF_BYTES
 
 MONEY_QUANT = Decimal("0.01")
+PREAPPROVAL_INFORME_STATES = frozenset({"borrador", "control_presupuestal", "enviado"})
 
 
 class CuentaSettlementError(Exception):
@@ -163,6 +162,28 @@ async def _sum_active_settlements(
     return total, count
 
 
+async def sum_active_advance_returns(
+    session: AsyncSession, cuenta_id: UUID | str
+) -> Decimal:
+    """Read actual non-cancelled returns separately from reimbursements."""
+    result = await session.execute(
+        select(func.coalesce(func.sum(Reembolso.monto), 0)).where(
+            Reembolso.cuenta_gastos_id == _to_uuid(cuenta_id),
+            Reembolso.tipo == "devolucion",
+            Reembolso.estado != "cancelado",
+        )
+    )
+    return _quantize_money(result.scalar_one() or 0)
+
+
+def advance_return_is_stale(
+    *, saldo_gross: float | Decimal, returned_amount: float | Decimal
+) -> bool:
+    """An existing full return must still match the paid-advance surplus."""
+    returned = _quantize_money(returned_amount)
+    return returned > 0 and returned != _quantize_money(saldo_gross)
+
+
 def _derive_tipo_from_saldo_gross(saldo_gross: Decimal) -> str:
     """saldo_gross > 0  -> employee owes company -> 'devolucion'.
     saldo_gross < 0  -> company owes employee -> 'reembolso'."""
@@ -174,6 +195,67 @@ def _derive_tipo_from_saldo_gross(saldo_gross: Decimal) -> str:
         "saldo_zero",
         "La cuenta ya está saldada. No hay saldo pendiente por liquidar.",
     )
+
+
+def validate_settlement_eligibility(
+    *, informe_estado: str, tipo: Optional[str], monto_entregado: float | Decimal
+) -> None:
+    """Allow paid-advance returns before approval; reimbursements follow approval."""
+    if tipo == "devolucion":
+        if _quantize_money(monto_entregado) <= 0:
+            raise CuentaSettlementValidationError(
+                "advance_not_paid", "La devolución requiere un anticipo pagado."
+            )
+        if informe_estado in PREAPPROVAL_INFORME_STATES | {"aprobado"}:
+            return
+    elif tipo == "reembolso" and informe_estado == "aprobado":
+        return
+    elif tipo is None:
+        raise CuentaSettlementValidationError(
+            "saldo_zero", "La cuenta ya está saldada."
+        )
+    raise CuentaSettlementValidationError(
+        "informe_not_approved",
+        "La devolución requiere un informe vigente; el reembolso requiere aprobación.",
+    )
+
+
+async def validate_cuenta_surplus_is_returned(
+    session: AsyncSession, cuenta_id: UUID | str
+) -> None:
+    """Serialize with settlements and block approval while a surplus remains."""
+    cuenta_uuid = _to_uuid(cuenta_id)
+    result = await session.execute(
+        select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_uuid).with_for_update()
+    )
+    if result.scalar_one_or_none() is None:
+        raise CuentaSettlementValidationError(
+            "cuenta_not_found", "Informe de gastos no encontrado."
+        )
+    gastos = await _sum_active_gastos(session, cuenta_uuid)
+    entregado = await _sum_requested_solicitudes(session, cuenta_uuid)
+    settled, active_count = await _sum_active_settlements(session, cuenta_uuid)
+    balance = compute_informe_saldo(
+        employee_paid=float(gastos),
+        monto_entregado=float(entregado),
+        settled_amount=float(settled),
+    )
+    if active_count and advance_return_is_stale(
+        saldo_gross=balance.saldo_gross,
+        returned_amount=await sum_active_advance_returns(session, cuenta_uuid),
+    ):
+        raise CuentaSettlementValidationError(
+            "settlement_balance_changed",
+            "Los gastos o anticipos cambiaron después de devolver el sobrante. "
+            "Solicita a Finanzas cancelar la devolución y recalcular el saldo "
+            "antes de enviar o aprobar el informe.",
+        )
+    if _quantize_money(balance.saldo) > 0:
+        raise CuentaSettlementValidationError(
+            "surplus_return_required",
+            "Devuelve el sobrante del anticipo y adjunta su comprobante "
+            "antes de enviar o aprobar el informe.",
+        )
 
 
 def _check_permission(actor: Empleado, tipo: str, cuenta: CuentaDeGastos) -> None:
@@ -260,13 +342,13 @@ async def register_cuenta_settlement(
 
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
-        raise CuentaSettlementValidationError("actor_not_found", "Usuario no encontrado.")
+        raise CuentaSettlementValidationError(
+            "actor_not_found", "Usuario no encontrado."
+        )
 
     # Lock the cuenta row to serialize concurrent settlement attempts.
     locked = await session.execute(
-        select(CuentaDeGastos)
-        .where(CuentaDeGastos.id == cuenta_uuid)
-        .with_for_update()
+        select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_uuid).with_for_update()
     )
     cuenta = locked.scalar_one_or_none()
     if cuenta is None:
@@ -301,6 +383,11 @@ async def register_cuenta_settlement(
 
     tipo = _derive_tipo_from_saldo_gross(saldo_raw)
     _check_permission(actor, tipo, cuenta)
+    validate_settlement_eligibility(
+        informe_estado=informe_doc.estado,
+        tipo=tipo,
+        monto_entregado=total_solicitado,
+    )
 
     expected_abs = abs(saldo_raw)
     try:
@@ -339,6 +426,12 @@ async def register_cuenta_settlement(
         comprobante_filename=comprobante_filename,
     )
 
+    if tipo == "devolucion" and (
+        not fecha_pago or (isinstance(fecha_pago, str) and not fecha_pago.strip())
+    ):
+        raise CuentaSettlementValidationError(
+            "missing_fecha_pago", "Indica la fecha de la devolución."
+        )
     fecha_pago_dt = _parse_fecha(fecha_pago)
 
     moneda_clean = (moneda or "MXN").strip().upper() or "MXN"
@@ -420,7 +513,9 @@ async def cancel_cuenta_settlement(
 
     actor = await _load_actor(session, actor_uuid)
     if actor is None:
-        raise CuentaSettlementValidationError("actor_not_found", "Usuario no encontrado.")
+        raise CuentaSettlementValidationError(
+            "actor_not_found", "Usuario no encontrado."
+        )
     if (actor.rol or "").strip().lower() not in FINANCE_ROLES:
         raise CuentaSettlementPermissionError(
             "insufficient_role",
@@ -436,9 +531,7 @@ async def cancel_cuenta_settlement(
 
     # Lock the cuenta first so readers computing saldo see a consistent state.
     locked_cuenta = await session.execute(
-        select(CuentaDeGastos)
-        .where(CuentaDeGastos.id == cuenta_uuid)
-        .with_for_update()
+        select(CuentaDeGastos).where(CuentaDeGastos.id == cuenta_uuid).with_for_update()
     )
     cuenta = locked_cuenta.scalar_one_or_none()
     if cuenta is None:
