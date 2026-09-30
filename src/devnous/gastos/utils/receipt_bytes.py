@@ -544,11 +544,13 @@ def html_documento_archivos_detail(
     metas: Sequence[DocumentoAdjuntoMeta],
     *,
     removable_adjunto_ids: Optional[Set[UUID]] = None,
+    replaceable_adjunto_ids: Optional[Set[UUID]] = None,
 ) -> str:
     """Labeled file list for document detail views."""
     if not metas:
         return "—"
     removable = removable_adjunto_ids or set()
+    replaceable = replaceable_adjunto_ids or set()
     items: List[str] = []
     for m in sorted(metas, key=_documento_meta_sort_key):
         cat = _documento_meta_category(m)
@@ -572,6 +574,34 @@ def html_documento_archivos_detail(
                 f'style="padding:4px 10px;font-size:12px;">Eliminar</button>'
                 f"</form>"
             )
+        replace_control = ""
+        if (
+            cat == "comprobante_pago"
+            and m.id in replaceable
+            and m.activo is not False
+        ):
+            replace_control = (
+                f'<details style="display:inline-block;margin-left:10px;vertical-align:top;">'
+                f'<summary class="button secondary" '
+                f'style="padding:4px 10px;font-size:12px;cursor:pointer;list-style:none;">'
+                f'Corregir comprobante</summary>'
+                f'<form method="POST" enctype="multipart/form-data" '
+                f'action="/admin/finanzas/payment-run/documento/{documento_id}/sustituir-comprobante" '
+                f'style="display:grid;gap:8px;margin-top:8px;min-width:280px;max-width:420px;" '
+                f'onsubmit="return confirm(\'¿Sustituir el comprobante vigente? El anterior quedará en auditoría.\');">'
+                f'<input type="hidden" name="previous_id" value="{m.id}">'
+                f'<input type="hidden" name="return_to" value="/documentos/{documento_id}">'
+                f'<label>Nuevo comprobante'
+                f'<input type="file" name="comprobante_pago" required '
+                f'accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,application/pdf,image/*"></label>'
+                f'<label>Motivo de la corrección'
+                f'<input type="text" name="motivo" required maxlength="500" '
+                f'placeholder="Ej. Se adjuntó el comprobante de otro pago"></label>'
+                f'<small>El archivo anterior no se borra: queda marcado como sustituido para auditoría.</small>'
+                f'<button type="submit" class="button primary" '
+                f'style="padding:6px 10px;font-size:12px;">Sustituir archivo</button>'
+                f"</form></details>"
+            )
         items.append(
             "<li style=\"display:flex;align-items:center;flex-wrap:wrap;gap:4px;\">"
             f"<strong>{escape(title)}:</strong> "
@@ -579,6 +609,7 @@ def html_documento_archivos_detail(
             f"{escape(filename)}</a>"
             f"{' (sustituido)' if m.activo is False and cat == 'comprobante_pago' else ''}"
             f"{remove_control}"
+            f"{replace_control}"
             "</li>"
         )
     return (
