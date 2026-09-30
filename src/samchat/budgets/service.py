@@ -888,17 +888,17 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
             if bool(getattr(documento, "cfdi_compartido_confirmado", False)):
                 fiscal_total = _budget_decimal_amount(getattr(cfdi_report, "total", None))
                 applied = _budget_decimal_amount(
-                    getattr(documento, "monto_total", None)
-                    if getattr(documento, "monto_total", None) is not None
-                    else getattr(documento, "monto_solicitado", None)
+                    getattr(documento, "monto_solicitado", None)
+                    if getattr(documento, "monto_solicitado", None) is not None
+                    else getattr(documento, "monto_total", None)
                 )
                 if fiscal_total > 0 and applied > 0:
                     amount *= min(applied / fiscal_total, Decimal("1"))
         else:
             amount = _budget_decimal_amount(
-                getattr(documento, "monto_total", None)
-                if getattr(documento, "monto_total", None) is not None
-                else getattr(documento, "monto_solicitado", None)
+                getattr(documento, "monto_solicitado", None)
+                if getattr(documento, "monto_solicitado", None) is not None
+                else getattr(documento, "monto_total", None)
             )
     else:
         amount = Decimal("0")
@@ -966,12 +966,12 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
                         WHEN COALESCE({document}.cfdi_compartido_confirmado, FALSE)
                           AND COALESCE({cfdi}.total, 0) > 0
                         THEN LEAST(GREATEST(
-                            COALESCE({document}.monto_total, {document}.monto_solicitado, 0) / {cfdi}.total, 0
+                            COALESCE({document}.monto_solicitado, {document}.monto_total, 0) / {cfdi}.total, 0
                         ), 1)
                         ELSE 1
                     END
                 )
-                ELSE COALESCE({document}.monto_total, {document}.monto_solicitado, 0)
+                ELSE COALESCE({document}.monto_solicitado, {document}.monto_total, 0)
             END, 0
         )
     """
@@ -1006,10 +1006,10 @@ async def _build_budget_finance_breakdowns(
                 text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
@@ -1077,10 +1077,10 @@ async def _build_budget_finance_breakdowns(
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
                     {"bc.id::text AS concept_id," if concept_identity else ""}
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN cfdi_reports document_cfdi ON document_cfdi.id = d.cfdi_report_id
@@ -6207,12 +6207,12 @@ async def _build_budget_finance_comparison(
             await session.execute(
                 text(f"""
                 SELECT
-                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
-                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS requested_total,
+                    COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'en_proceso_pago', 'pagado', 'cerrado') THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS committed_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('pagado', 'cerrado') OR d.pagado_en IS NOT NULL THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS paid_total,
                     COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago < :today THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS overdue_open_total,
                     COALESCE(SUM(CASE WHEN d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago >= :today AND d.fecha_pago <= :next_30 THEN {_budget_document_base_amount_sql('d', 'document_cfdi')} ELSE 0 END), 0) AS due_next_30_total,
-                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado')) AS document_count,
+                    COUNT(*) FILTER (WHERE d.estado IN ('enviado', 'aprobado', 'en_proceso_pago', 'pagado', 'cerrado')) AS document_count,
                     COUNT(*) FILTER (WHERE d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago < :today) AS overdue_open_count,
                     COUNT(*) FILTER (WHERE d.estado NOT IN ('pagado', 'cerrado') AND d.fecha_pago IS NOT NULL AND d.fecha_pago >= :today AND d.fecha_pago <= :next_30) AS due_next_30_count
                 FROM documentos d

@@ -210,6 +210,7 @@ def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
     assert "document_cfdi.total" in sql
     assert "d.monto_total" in sql
     assert "d.monto_solicitado" in sql
+    assert "COALESCE(d.monto_solicitado, d.monto_total, 0)" in sql
     assert "d.cfdi_compartido_confirmado" in sql
     assert "1.16" not in sql
 
@@ -227,6 +228,8 @@ def test_budget_finance_aggregates_require_budget_assignment():
     assert "d.budget_concept_id IS NOT NULL" in breakdowns
     assert "COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL" in breakdowns
     assert "_budget_document_base_amount_sql('d', 'document_cfdi')" in comparison
+    assert "en_proceso_pago" in comparison
+    assert "en_proceso_pago" in breakdowns
 
 
 def test_budget_actual_queries_enforce_reconciliation_precedence():

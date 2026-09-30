@@ -113,10 +113,10 @@ def test_informe_budget_impact_sums_only_assigned_lines():
     assert row["asignacion_presupuestal"] == "Parcial"
 
 
-def test_budget_impact_falls_back_to_total_without_cfdi_and_never_negative():
+def test_budget_impact_uses_request_amount_without_cfdi_and_never_negative():
     documento = _doc(monto_total=Decimal("1160.00"), monto_solicitado=Decimal("1000"))
 
-    assert user_routes._document_budget_impact_amount(documento) == Decimal("1160.00")
+    assert user_routes._document_budget_impact_amount(documento) == Decimal("1000.00")
     assert user_routes._document_budget_impact_amount(
         documento,
         SimpleNamespace(subtotal=Decimal("10"), descuento=Decimal("11")),
