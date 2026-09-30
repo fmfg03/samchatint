@@ -103,6 +103,51 @@ def test_nonimpact_document_states_do_not_affect_budget():
         assert row["monto_presupuestal_valor"] == Decimal("0")
 
 
+def test_solicitud_request_amount_outranks_linked_expense_fiscal_total():
+    linked_expense = SimpleNamespace(
+        budget_concept_id=uuid4(),
+        gasto_cantidad=Decimal("1160.00"),
+        iva=Decimal("160.00"),
+        hospedaje_impuesto_monto=0,
+        propina_no_deducible=0,
+        estado_gasto="activo",
+        adjuntos=[],
+    )
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(
+            tipo="SOLICITUD",
+            budget_concept_id=uuid4(),
+            monto_solicitado=Decimal("500.00"),
+            monto_total=Decimal("1160.00"),
+            gastos=[linked_expense],
+        )
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("500.00")
+    assert row["asignacion_presupuestal"] == "Asignado"
+
+
+def test_solicitud_expense_classification_does_not_replace_document_assignment():
+    linked_expense = SimpleNamespace(
+        budget_concept_id=uuid4(),
+        gasto_cantidad=Decimal("1160.00"),
+        iva=Decimal("160.00"),
+        hospedaje_impuesto_monto=0,
+        propina_no_deducible=0,
+        estado_gasto="activo",
+        adjuntos=[],
+    )
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(
+            tipo="SOLICITUD",
+            budget_concept_id=None,
+            monto_solicitado=Decimal("500.00"),
+            gastos=[linked_expense],
+        )
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("0")
+    assert row["asignacion_presupuestal"] == "Sin asignar"
+
+
 def test_derived_reimbursement_does_not_double_affect_budget():
     row = user_routes._documentos_todos_reporting_row_values(
         _doc(
@@ -139,19 +184,22 @@ def test_budget_impact_uses_request_amount_without_cfdi_and_never_negative():
 
 
 def test_budget_impact_applies_partida_lodging_tip_and_no_deductible_rules():
+    concepto_id = uuid4()
     documento = _doc(
+        tipo="INFORME",
+        budget_concept_id=None,
         gastos=[
-            SimpleNamespace(gasto_cantidad=116, iva=16, hospedaje_impuesto_monto=3,
+            SimpleNamespace(budget_concept_id=concepto_id, gasto_cantidad=116, iva=16, hospedaje_impuesto_monto=3,
                             propina_no_deducible=0, estado_gasto="activo", adjuntos=[]),
-            SimpleNamespace(gasto_cantidad=58, iva=8, hospedaje_impuesto_monto=0,
+            SimpleNamespace(budget_concept_id=concepto_id, gasto_cantidad=58, iva=8, hospedaje_impuesto_monto=0,
                             propina_no_deducible=10, estado_gasto="activo", adjuntos=[]),
-            SimpleNamespace(gasto_cantidad=75, iva=10, hospedaje_impuesto_monto=0,
+            SimpleNamespace(budget_concept_id=concepto_id, gasto_cantidad=75, iva=10, hospedaje_impuesto_monto=0,
                             propina_no_deducible=0, estado_gasto="activo",
                             adjuntos=[SimpleNamespace(activo=True, categoria="comprobante_no_deducible")]),
-        ]
+        ],
     )
 
-    assert user_routes._document_budget_impact_amount(documento) == Decimal("238")
+    assert user_routes._document_budget_impact_amount(documento) == Decimal("238.00")
 
 
 @pytest.mark.asyncio

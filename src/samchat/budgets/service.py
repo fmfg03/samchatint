@@ -863,13 +863,22 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
         if str(getattr(e, "estado_gasto", "") or "").strip().lower() != "cancelado"
     ]
     doc_concept = getattr(documento, "budget_concept_id", None)
-    assigned = [
-        e for e in expenses
-        if getattr(e, "budget_concept_id", None) or (doc_type != "INFORME" and doc_concept)
-    ]
-    if expenses:
-        assignment = "Sin asignar" if not assigned else ("Asignado" if len(assigned) == len(expenses) else "Parcial")
+    if doc_type == "INFORME":
+        assigned = [
+            e for e in expenses if getattr(e, "budget_concept_id", None)
+        ]
+        if expenses:
+            assignment = (
+                "Sin asignar"
+                if not assigned
+                else "Asignado"
+                if len(assigned) == len(expenses)
+                else "Parcial"
+            )
+        else:
+            assignment = "Asignado" if doc_concept else "Sin asignar"
     else:
+        assigned = []
         assignment = "Asignado" if doc_concept else "Sin asignar"
 
     allowed = _BUDGET_REQUESTED_DOCUMENT_STATES | _BUDGET_COMMITTED_DOCUMENT_STATES | _BUDGET_EFFECT_TERMINAL_DOCUMENT_STATES
@@ -892,8 +901,11 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
             "affects_budget": False,
         }
 
-    if expenses:
-        amount = sum((budget_expense_effect_amount(e) for e in assigned), Decimal("0"))
+    if doc_type == "INFORME" and expenses:
+        amount = sum(
+            (budget_expense_effect_amount(e) for e in assigned),
+            Decimal("0"),
+        )
     elif doc_concept:
         if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
             amount = max(
