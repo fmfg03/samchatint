@@ -5,15 +5,14 @@ It is not a client portal: access is derived from active organizational
 positions and an assigned portfolio scope.
 """
 
-import json
 import secrets
 from datetime import date, datetime
-from html import escape
-from typing import Optional
+from decimal import Decimal
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,12 +25,15 @@ from devnous.gastos.services.access_control_service import (
 from samchat.client_executive.conversation import (
     ContextError,
     answer_snapshot,
+    load_analysis,
     load_context,
     save_turn,
+    sign_analysis,
     sign_context,
 )
 from samchat.client_executive.home import TZ, build_home, resolve_scope
 from samchat.client_executive.home_ui import render_home
+from samchat.client_executive.reports import build_report, render_published_report
 from samchat.client_executive.service import (
     ClientExecutiveAccessError,
     authorized_direction_portfolio_ids,
@@ -39,6 +41,10 @@ from samchat.client_executive.service import (
     build_client_executive_summary,
 )
 from samchat.client_executive.ui import render_direction_dashboard
+from samchat.executive.exporter import (
+    generate_direction_report_pdf,
+    generate_direction_report_xlsx,
+)
 
 from .dependencies import get_current_empleado, get_db_session
 
@@ -192,17 +198,8 @@ async def direction_published_reports(
     )
     reports = (
         "".join(
-            "<article><h2>{}</h2><p>{}</p><pre>{}</pre><small>Corte: {}</small></article>".format(
-                escape(str(row.label)),
-                escape(
-                    str((row.summary or {}).get("message") or "Reporte de Dirección")
-                ),
-                escape(
-                    json.dumps(
-                        row.snapshot or {}, ensure_ascii=False, sort_keys=True, indent=2
-                    )
-                ),
-                escape(str(row.generated_at)),
+            render_published_report(
+                row.label, row.summary or {}, row.snapshot or {}, str(row.generated_at)
             )
             for row in rows
         )
@@ -233,11 +230,29 @@ async def direction_executive_tournament_dashboard(
     )
 
 
+class DirectionScenarioRequest(BaseModel):
+    kind: Literal["expense_reduction", "collection_acceleration", "payment_delay"]
+    percent: Optional[Decimal] = Field(
+        default=None, ge=0, le=100, max_digits=5, decimal_places=2
+    )
+    days: Optional[int] = Field(default=None, ge=0, le=365, strict=True)
+    basis: Literal["observed_expense", "future_expense"] = "observed_expense"
+    tournament_id: Optional[str] = Field(default=None, max_length=36)
+    concept_id: Optional[str] = Field(default=None, max_length=24)
+
+
+class DirectionReportRequest(BaseModel):
+    context_token: str = Field(min_length=1, max_length=100000)
+    analysis_token: Optional[str] = Field(default=None, max_length=100000)
+
+
 class DirectionQueryRequest(BaseModel):
     context_token: str = Field(min_length=1, max_length=100000)
     metric_id: str = Field(min_length=1, max_length=40)
     question: str = Field(min_length=1, max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=36)
+    scenario: Optional[DirectionScenarioRequest] = None
+    analysis_token: Optional[str] = Field(default=None, max_length=100000)
 
 
 def _selection(value: str) -> Optional[str]:
@@ -306,14 +321,8 @@ async def direction_home(
     )
 
 
-@router.post("/direccion/tableros/asistente/consulta", response_class=JSONResponse)
-async def direction_context_query(
-    request: Request,
-    payload: DirectionQueryRequest,
-    session: AsyncSession = Depends(get_db_session),
-    current_empleado=Depends(get_current_empleado),
-):
-    await _assigned_direction_portfolios(session, current_empleado)
+async def _verified_direction_context(request, payload, session, employee) -> dict:
+    await _assigned_direction_portfolios(session, employee)
     expected = str(request.session.get("direction_context_csrf") or "")
     submitted = request.headers.get("X-Direction-CSRF", "")
     if not expected or not secrets.compare_digest(expected, submitted):
@@ -321,12 +330,12 @@ async def direction_context_query(
             status_code=403, detail="La consulta no pertenece a esta sesión."
         )
     try:
-        snapshot = load_context(payload.context_token, str(current_empleado.id))
+        snapshot = load_context(payload.context_token, str(employee.id))
         selected_scope = snapshot["scope"]
         current = await resolve_scope(
             session,
-            actor=str(current_empleado.id),
-            superadmin=_is_superadmin(current_empleado),
+            actor=str(employee.id),
+            superadmin=_is_superadmin(employee),
             portfolio_id=selected_scope["portfolio_id"],
             tournament_id=selected_scope["tournament_id"],
         )
@@ -336,12 +345,55 @@ async def direction_context_query(
             or sorted(selected_scope["portfolio_ids"])
             != sorted(current["portfolio_ids"])
             or snapshot["source_access"]
-            != await _direction_source_access(session, current_empleado)
+            != await _direction_source_access(session, employee)
         ):
             raise ContextError(
                 "El alcance o los permisos cambiaron; actualiza el tablero."
             )
-        answer = answer_snapshot(snapshot, payload.metric_id, payload.question)
+        return snapshot
+    except ClientExecutiveAccessError as exc:
+        raise HTTPException(
+            status_code=403, detail="El alcance ya no está autorizado."
+        ) from exc
+    except ContextError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/direccion/tableros/asistente/consulta", response_class=JSONResponse)
+async def direction_context_query(
+    request: Request,
+    payload: DirectionQueryRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado=Depends(get_current_empleado),
+):
+    snapshot = await _verified_direction_context(
+        request, payload, session, current_empleado
+    )
+    try:
+        previous = (
+            load_analysis(
+                payload.analysis_token,
+                snapshot["snapshot_id"],
+                str(current_empleado.id),
+            )
+            if payload.analysis_token
+            else None
+        )
+        answer = answer_snapshot(
+            snapshot,
+            payload.metric_id,
+            payload.question,
+            scenario=(
+                payload.scenario.model_dump(mode="json", exclude_none=True)
+                if payload.scenario
+                else None
+            ),
+            previous=previous,
+        )
+        answer["analysis_token"] = sign_analysis(
+            answer, snapshot["snapshot_id"], str(current_empleado.id)
+        )
+        answer["report_ready"] = True
         answer["conversation_id"] = await save_turn(
             session,
             actor=str(current_empleado.id),
@@ -358,6 +410,61 @@ async def direction_context_query(
     except ContextError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return JSONResponse(answer, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/direccion/reportes/exportar/{output_format}")
+async def direction_export_report(
+    output_format: Literal["pdf", "xlsx"],
+    request: Request,
+    payload: DirectionReportRequest,
+    session: AsyncSession = Depends(get_db_session),
+    current_empleado=Depends(get_current_empleado),
+):
+    snapshot = await _verified_direction_context(
+        request, payload, session, current_empleado
+    )
+    try:
+        analysis = (
+            load_analysis(
+                payload.analysis_token,
+                snapshot["snapshot_id"],
+                str(current_empleado.id),
+            )
+            if payload.analysis_token
+            else None
+        )
+        report = build_report(snapshot, analysis)
+        from starlette.concurrency import run_in_threadpool
+
+        generator = (
+            generate_direction_report_pdf
+            if output_format == "pdf"
+            else generate_direction_report_xlsx
+        )
+        content = await run_in_threadpool(generator, report)
+    except ContextError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ImportError, RuntimeError) as exc:
+        raise HTTPException(
+            status_code=503, detail="El generador de reportes no está disponible."
+        ) from exc
+    media = (
+        "application/pdf"
+        if output_format == "pdf"
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    filename = f"consejo-{snapshot['snapshot_id'][:12]}.{output_format}"
+    return Response(
+        content,
+        media_type=media,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Direction-Snapshot": snapshot["snapshot_id"],
+            "X-Direction-Report": report["report_id"],
+        },
+    )
 
 
 # Compatibility only: existing bookmarks reach the internal surface without

@@ -396,8 +396,9 @@ def test_sam_exact_metric_unsupported_request_and_unknown_id():
     answer = chat.answer_snapshot(data, "actual", "¿Qué explica esto?")
     assert answer["metric"]["value"] == "100.00"
     assert answer["snapshot_id"] == data["snapshot_id"]
-    assert answer["hypotheses"] == answer["opinions"] == []
-    assert "no prueban la causa" in answer["assistant_message"]
+    assert answer["hypotheses"]  # Explicitly unverified alternatives, never causes.
+    assert answer["opinions"] == []
+    assert "no acreditan la causa" in answer["assistant_message"]
     assert not chat.answer_snapshot(data, "actual", "Paga esta factura")["supported"]
     assert not chat.answer_snapshot(data, "actual", "Inventa algo sobre otro torneo")[
         "supported"

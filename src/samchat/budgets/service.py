@@ -599,7 +599,7 @@ def _merge_breakdown_row(
 def _finalize_breakdown_store(
     store: dict[str, dict[str, Any]],
     *,
-    limit: int = 6,
+    limit: int | None = 6,
 ) -> list[dict[str, Any]]:
     rows = []
     for entry in store.values():
@@ -634,11 +634,13 @@ def _finalize_breakdown_store(
             item["label"],
         )
     )
-    return rows[: max(1, limit)]
+    return rows if limit is None else rows[: max(1, limit)]
 
 
 def _build_budget_line_breakdowns(
     rows: list[dict[str, Any]],
+    *,
+    concept_limit: int | None = 6,
 ) -> dict[str, list[dict[str, Any]]]:
     by_concept = _new_breakdown_store()
     by_phase = _new_breakdown_store()
@@ -692,7 +694,7 @@ def _build_budget_line_breakdowns(
             line_count=1,
         )
     return {
-        "by_concept": _finalize_breakdown_store(by_concept),
+        "by_concept": _finalize_breakdown_store(by_concept, limit=concept_limit),
         "by_phase": _finalize_breakdown_store(by_phase),
         "by_entity": _finalize_breakdown_store(by_entity),
         "by_owner": _finalize_breakdown_store(by_owner),
@@ -846,6 +848,7 @@ async def _build_budget_finance_breakdowns(
     tournament_code: Optional[str],
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
+    concept_limit: int | None = 6,
 ) -> dict[str, list[dict[str, Any]]]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
@@ -992,7 +995,7 @@ async def _build_budget_finance_breakdowns(
 
     return {
         "by_provider": _finalize_breakdown_store(by_provider),
-        "by_concept": _finalize_breakdown_store(by_concept),
+        "by_concept": _finalize_breakdown_store(by_concept, limit=concept_limit),
     }
 
 
@@ -6418,7 +6421,9 @@ async def build_budget_snapshot(
         "due_next_30_total": 0.0,
     }
     forecast_health_counts = {"healthy": 0, "at_risk": 0, "over_budget": 0}
-    summary_breakdowns = _build_budget_line_breakdowns([dict(row) for row in rows])
+    summary_breakdowns = _build_budget_line_breakdowns(
+        [dict(row) for row in rows], **({"concept_limit": None} if executive_read else {})
+    )
     summary_finance_breakdowns = await _build_budget_finance_breakdowns(
         session,
         edition_year=edition_year,
@@ -6426,6 +6431,7 @@ async def build_budget_snapshot(
         tournament_name=tournament_name,
         tournament_code=None,
         **period_kwargs,
+        **({"concept_limit": None} if executive_read else {}),
     )
     by_concept_store = _new_breakdown_store()
     for item in summary_breakdowns.get("by_concept", []):
@@ -6621,6 +6627,9 @@ async def build_budget_snapshot(
             {
                 "executive_quality_gaps": sorted(set(quality_gaps)),
                 "executive_monthly_actuals": executive_monthly,
+                "executive_concepts": _finalize_breakdown_store(
+                    by_concept_store, limit=None
+                ),
             }
             if executive_read
             else {}

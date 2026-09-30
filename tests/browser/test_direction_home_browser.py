@@ -121,3 +121,69 @@ def test_desktop_mobile_context_and_filter_navigation(page: Page):
     assert "2025-01-01 a 2025-12-31" in page.locator("#home-answer").inner_text()
     assert requests[-1]["conversation_id"] is None
     assert not errors
+
+
+def test_scenario_download_uses_same_context_and_signed_analysis(page: Page):
+    from samchat.client_executive.reports import build_report
+    from samchat.executive.exporter import generate_direction_report_xlsx
+
+    data = snapshot()
+    latest = None
+    captured = []
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def serve(route):
+        nonlocal latest
+        if route.request.url.endswith("/static/direction_home.js"):
+            route.fulfill(
+                content_type="application/javascript",
+                body=(ROOT / "static/direction_home.js").read_text(),
+            )
+        elif "/exportar/" in route.request.url:
+            payload = route.request.post_data_json
+            assert payload["context_token"] == "same-cut"
+            assert payload["analysis_token"] == "signed-analysis"
+            captured.append(payload)
+            route.fulfill(
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"X-Direction-Snapshot": data["snapshot_id"]},
+                body=generate_direction_report_xlsx(build_report(data, latest)),
+            )
+        elif route.request.method == "POST":
+            payload = route.request.post_data_json
+            latest = answer_snapshot(
+                data,
+                payload["metric_id"],
+                payload["question"],
+                scenario=payload.get("scenario"),
+            )
+            latest.update(
+                analysis_token="signed-analysis", conversation_id="same-conversation"
+            )
+            route.fulfill(content_type="application/json", body=json.dumps(latest))
+        else:
+            route.fulfill(
+                content_type="text/html",
+                body=render_home(data, scope(), token="same-cut", csrf="same-csrf"),
+            )
+
+    page.route("http://direction.test/**", serve)
+    page.goto("http://direction.test/direccion/inicio")
+    page.locator("#home-scenario").evaluate("el => el.parentElement.open = true")
+    page.locator("#scenario-basis").select_option("observed_expense")
+    page.locator("#scenario-percent").fill("10")
+    page.locator("#home-scenario button[type=submit]").click()
+    page.wait_for_function(
+        "document.getElementById('home-answer').textContent.includes('90.00')"
+    )
+    with page.expect_download() as download:
+        page.locator("[data-export=xlsx]").click()
+    assert download.value.suggested_filename.endswith(".xlsx")
+    assert captured and not errors
+    page.set_viewport_size({"width": 390, "height": 844})
+    assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    Path("/tmp/samchat-432-433-evidence").mkdir(exist_ok=True)
+    page.screenshot(
+        path="/tmp/samchat-432-433-evidence/mobile-scenario.png", full_page=True
+    )
