@@ -8,6 +8,7 @@
   const byId = id => document.getElementById(id);
   let selected = snapshot.indicators[0];
   let conversationId = null;
+  let analysisToken = null;
   let pending = null;
   let generation = 0;
   const money = metric => metric.formatted_value;
@@ -18,6 +19,8 @@
     if (pending) pending.abort();
     generation += 1;
     selected = found;
+    analysisToken = null;
+    byId("home-report-status").textContent = "El reporte conserva las cifras reales de este corte.";
     document.querySelectorAll('[data-metric]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.metric === id)));
     byId('home-context').textContent = context();
     byId('home-evidence').hidden = true;
@@ -39,7 +42,7 @@
     });
     area.hidden = false;
   }
-  async function ask(question) {
+  async function ask(question, scenario = null) {
     if (pending) pending.abort();
     const requestGeneration = ++generation;
     const metricId = selected.id;
@@ -53,7 +56,7 @@
       const response = await fetch('/direccion/tableros/asistente/consulta', {
         method: 'POST', credentials: 'same-origin', signal: controller.signal,
         headers: {'Content-Type': 'application/json', 'X-Direction-CSRF': data.csrf},
-        body: JSON.stringify({context_token: data.token, metric_id: metricId, question, conversation_id: conversationId})
+        body: JSON.stringify({context_token: data.token, metric_id: metricId, question, conversation_id: conversationId, scenario, analysis_token: analysisToken})
       });
       if (response.redirected) throw new Error('La sesión expiró. Vuelve a entrar.');
       const payload = await response.json();
@@ -61,6 +64,8 @@
       if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'No se pudo verificar la consulta. Actualiza el tablero.');
       if (payload.snapshot_id !== snapshot.snapshot_id || payload.metric_id !== metricId) throw new Error('El contexto cambió. Actualiza el tablero.');
       conversationId = payload.conversation_id;
+      analysisToken = payload.analysis_token || null;
+      byId("home-report-status").textContent = payload.report_requested ? "Reporte preparado con este contexto. Descarga PDF o Excel." : (payload.scenario ? "El reporte incluye este escenario separado de las cifras reales." : "El reporte incluye la conclusión de esta consulta.");
       byId('home-answer').textContent = payload.assistant_message;
       const article = document.createElement('article');
       const heading = document.createElement('strong'); heading.textContent = question;
@@ -78,6 +83,52 @@
       if (requestGeneration === generation) { pending = null; byId('home-send').disabled = false; }
     }
   }
+  async function download(format) {
+    const status = byId('home-report-status');
+    status.textContent = 'Generando reporte con el mismo alcance y corte…';
+    const exportGeneration = generation;
+    try {
+      const response = await fetch(`/direccion/reportes/exportar/${format}`, {
+        method: 'POST', credentials: 'same-origin',
+        headers: {'Content-Type': 'application/json', 'X-Direction-CSRF': data.csrf},
+        body: JSON.stringify({context_token: data.token, analysis_token: analysisToken})
+      });
+      if (response.redirected) throw new Error('La sesión expiró. Vuelve a entrar.');
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(typeof error.detail === 'string' ? error.detail : 'No se pudo generar el reporte.');
+      }
+      if (response.headers.get('X-Direction-Snapshot') !== snapshot.snapshot_id) throw new Error('El reporte no coincide con el contexto.');
+      const blob = await response.blob();
+      if (generation !== exportGeneration) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a'); link.href = url;
+      link.download = `consejo-${snapshot.snapshot_id.slice(0,12)}.${format}`;
+      document.body.append(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.textContent = 'Reporte descargado. Cifras y escenario conservan el corte del tablero.';
+    } catch (error) { status.textContent = error.message; }
+  }
+  function scenarioConcepts() {
+    const select = byId('scenario-concept'); select.replaceChildren();
+    const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Total de la base seleccionada'; select.append(empty);
+    const row = snapshot.tournaments.find(r => r.id === byId('scenario-tournament').value);
+    if (row && row.concepts && row.concepts.status === 'available') row.concepts.rows.forEach(c => {
+      const option = document.createElement('option'); option.value = c.id; option.textContent = c.label; select.append(option);
+    });
+  }
+  byId('scenario-tournament').addEventListener('change', scenarioConcepts);
+  byId('home-scenario').addEventListener('submit', e => {
+    e.preventDefault();
+    const kind = byId('scenario-kind').value;
+    const spec = {kind, basis: byId('scenario-basis').value,
+      tournament_id: byId('scenario-tournament').value || null, concept_id: kind === 'expense_reduction' ? byId('scenario-concept').value || null : null};
+    if (kind === 'payment_delay') spec.days = Number(byId('scenario-days').value);
+    else spec.percent = byId('scenario-percent').value;
+    ask('Calcula este escenario con los supuestos seleccionados', spec);
+  });
+  document.querySelectorAll('[data-question]').forEach(b => b.addEventListener('click', () => ask(b.dataset.question)));
+  document.querySelectorAll('[data-export]').forEach(b => b.addEventListener('click', () => download(b.dataset.export)));
   document.querySelectorAll('[data-metric]').forEach(b => b.addEventListener('click', () => select(b.dataset.metric)));
   document.querySelectorAll('[data-priority]').forEach(b => b.addEventListener('click', () => {
     select(b.dataset.priority); byId('home-question').focus();
@@ -95,5 +146,6 @@
   });
   // An old tournament selection must never survive a portfolio change silently.
   document.querySelector('[name=portfolio_id]').addEventListener('change', () => { document.querySelector('[name=tournament_id]').value = ''; });
+  scenarioConcepts();
   select(selected.id);
 })();

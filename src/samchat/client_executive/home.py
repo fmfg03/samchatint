@@ -382,6 +382,103 @@ def monthly_execution(
     }
 
 
+def concept_evidence(snapshot: dict, values: dict) -> dict:
+    """Only expose a complete decomposition that reconciles to the visible facts."""
+    raw = snapshot.get("executive_concepts")
+    if (
+        not isinstance(raw, list)
+        or values["actual"] is None
+        or values["budget"] is None
+    ):
+        return {
+            "status": "unavailable",
+            "rows": [],
+            "gap": "Desglose de conceptos sin cobertura conciliada.",
+        }
+    rows = []
+    for item in raw:
+        budget, actual = amount(item.get("budget_total")), amount(
+            item.get("actual_total")
+        )
+        if budget is None or actual is None:
+            return {
+                "status": "unavailable",
+                "rows": [],
+                "gap": "Desglose con importes incompletos.",
+            }
+        if budget == 0 and actual == 0:
+            continue
+        identity = str(item.get("concept_id") or "")
+        if not identity or identity == "__unassigned__":
+            return {
+                "status": "unavailable",
+                "rows": [],
+                "gap": "Falta identidad canónica de conceptos; no se atribuyen excesos por nombre.",
+            }
+        label = str(item.get("label") or "Sin concepto")
+        rows.append(
+            {
+                "id": identity,
+                "label": label,
+                "budget": str(budget),
+                "actual": str(actual),
+                "excess": str(actual - budget),
+            }
+        )
+    if any(
+        abs(sum((amount(r[key]) for r in rows), Decimal("0")) - values[key])
+        > Decimal("0.01")
+        for key in ("actual", "budget")
+    ):
+        return {
+            "status": "unavailable",
+            "rows": [],
+            "gap": "El desglose no concilia con presupuesto y ejercido.",
+        }
+    rows.sort(key=lambda r: (-amount(r["excess"]), r["label"]))
+    return {"status": "available", "rows": rows, "gap": None}
+
+
+async def previous_period_values(
+    session: Any, tournament: dict, start: date, end: date, year: int
+) -> dict:
+    """Compare equal-duration cohorts, never stocks or mismatched annual budgets."""
+    previous_end = start - timedelta(days=1)
+    previous_start = previous_end - (end - start)
+    period = {"start": previous_start.isoformat(), "end": previous_end.isoformat()}
+    if previous_start.year != year or previous_end.year != year:
+        return {
+            "period": period,
+            "values": {},
+            "gaps": [
+                "El periodo anterior atraviesa otra edición; falta una base comparable validada."
+            ],
+        }
+    source = (
+        await _optional_read(
+            session,
+            service._build_direction_budget_snapshot,
+            tournament=tournament,
+            edition_year=year,
+            executive_read=True,
+            date_from=previous_start,
+            date_to=previous_end,
+        )
+        or {}
+    )
+    previous, gaps = budget_values(
+        source, start=previous_start, end=previous_end, year=year
+    )
+    return {
+        "period": period,
+        "values": {
+            k: str(previous[k]) if previous[k] is not None else None
+            for k in ("actual", "committed", "paid")
+        },
+        "gaps": [g for g in gaps if not g.startswith("El cierre mecánico")],
+    }
+
+
 def build_snapshot(
     scope: dict,
     rows: list[dict],
@@ -576,6 +673,12 @@ async def build_home(
             else None
         ) or {}
         values, budget_gaps = budget_values(snapshot, start=start, end=end, year=year)
+        concepts = concept_evidence(snapshot, values)
+        previous = (
+            await previous_period_values(session, tournament, start, end, year)
+            if source_access["budget"]
+            else {"values": {}, "gaps": ["Fuente presupuestal no autorizada."]}
+        )
         payments = (
             await payment_values(session, [tournament["id"]], today)
             if source_access["finance"]
@@ -612,6 +715,12 @@ async def build_home(
                 "id": tournament["id"],
                 "name": tournament["name"],
                 "version_id": version or None,
+                "concepts": concepts,
+                "previous_period": previous,
+                "forecast_method": {
+                    k: (snapshot.get("forecast") or {}).get(k)
+                    for k in ("elapsed_days", "total_days", "as_of_date")
+                },
                 "values": {
                     k: str(v) if v is not None else None for k, v in values.items()
                 },

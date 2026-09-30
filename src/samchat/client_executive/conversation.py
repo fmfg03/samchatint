@@ -1,14 +1,12 @@
-"""Bounded factual Sam turns using the exact Direction snapshot.
+"""Bounded analytical Sam turns using the exact Direction snapshot.
 
 The canonical assistant models and renderer are reused. No model/tool dispatcher
-is invoked here: causal analysis, recommendations and scenarios belong to #432.
+is invoked here. Interpretations and scenarios never mutate financial records.
 """
 
 from __future__ import annotations
 
 import os
-import re
-import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,7 +16,7 @@ from sqlalchemy import select
 
 from samchat.assistant.executive_answer_renderer import render_executive_tool_result
 
-from .home import SCHEMA, format_money
+from .home import SCHEMA
 
 TOKEN_TTL_SECONDS = 900
 TOKEN_SALT = "samchat.direction.context.v1"
@@ -56,85 +54,59 @@ def load_context(token: str, actor: str) -> dict:
     return payload["snapshot"]
 
 
-def answer_snapshot(snapshot: dict, metric_id: str, question: str) -> dict:
-    """Answer definition/source/comparison questions without asserting causality."""
+def sign_analysis(analysis: dict, snapshot_id: str, actor: str) -> str:
+    """Bind server-authored recommendations and assumptions to the exact cut."""
+    return _signer().dumps(
+        {
+            "kind": "direction.analysis.v1",
+            "actor": actor,
+            "snapshot_id": snapshot_id,
+            "analysis": analysis,
+        }
+    )
+
+
+def load_analysis(token: str, snapshot_id: str, actor: str) -> dict:
+    try:
+        payload = _signer().loads(token, max_age=TOKEN_TTL_SECONDS)
+    except (BadSignature, SignatureExpired) as exc:
+        raise ContextError(
+            "El análisis expiró; repite la consulta en este contexto."
+        ) from exc
+    if (
+        payload.get("kind") != "direction.analysis.v1"
+        or payload.get("actor") != actor
+        or payload.get("snapshot_id") != snapshot_id
+    ):
+        raise ContextError("El análisis no pertenece a esta identidad y corte.")
+    return payload["analysis"]
+
+
+def answer_snapshot(
+    snapshot: dict,
+    metric_id: str,
+    question: str,
+    *,
+    scenario: dict | None = None,
+    previous: dict | None = None,
+) -> dict:
+    """Interpret and calculate using only the already signed financial facts."""
+    from .analysis import analyze
+
     metric = next((m for m in snapshot["indicators"] if m["id"] == metric_id), None)
     if metric is None:
         raise ContextError("Selecciona un indicador de este tablero.")
-    text = unicodedata.normalize("NFKD", question.lower())
-    text = "".join(c for c in text if not unicodedata.combining(c))
-    known_question = any(
-        word in text
-        for word in (
-            "explica",
-            "esto",
-            "fuente",
-            "significa",
-            "compara",
-            "definicion",
-            "cuanto",
-            "cifra",
-            "dato",
-            "monto",
-            "evidencia",
-            "corte",
-        )
-    )
-    if re.search(
-        r"\b(paga|pagar|aprueba|aprobar|elimina|eliminar|modifica|modificar|"
-        r"simula|simular|escenarios?|alternativas?|recomienda|recomendar)\b",
-        text,
-    ):
-        known_question = False
-    facts = []
-    if known_question:
-        coverage = metric["coverage"]
-        facts = [
-            f"{metric['label']}: {format_money(metric['value'])}.",
-            f"{metric['definition']}",
-            f"Periodo: {metric['period']}. Corte de consulta: {metric['as_of']}.",
-            f"Cobertura: {coverage['covered']} de {coverage['total']} torneos. Estado: {metric['status']}.",
-        ]
-        if "compara" in text:
-            facts.extend(
-                f"{r['name']}: {format_money(r['values'].get(metric_id))}."
-                for r in snapshot["tournaments"]
-            )
-    missing = list(metric["gaps"])
-    if metric["status"] == "partial":
-        missing.append(
-            "La cifra es un subtotal de fuentes cubiertas, no el total de toda la cartera."
-        )
-    if known_question:
-        missing.append(
-            "La definición y el agregado no prueban la causa de una desviación; falta investigar el detalle."
-        )
-        body = "Hechos\n" + "\n".join(facts) + "\n\nBrechas\n" + "\n".join(missing)
-    else:
-        body = (
-            "Esta consulta contextual responde cifras, definiciones, cobertura y comparaciones del tablero. "
-            "La pregunta requiere investigación o una capacidad fuera de este primer corte. "
-            "No ejecuté acciones ni generé un escenario.\n\n"
-            f"Indicador seleccionado: {metric['label']}. Corte: {snapshot['as_of']}."
-        )
-    body += "\n\nHipótesis: ninguna formulada.\nOpiniones: ninguna emitida."
-    rendered = render_executive_tool_result(
+    answer = analyze(snapshot, metric, question, spec=scenario, previous=previous)
+    answer["assistant_message"] = render_executive_tool_result(
         "direction.executive_snapshot",
-        {
-            "conversation_answer": {"rendered_text": body},
-        },
+        {"conversation_answer": {"rendered_text": answer["assistant_message"]}},
     )
     return {
-        "assistant_message": rendered,
-        "facts": facts,
-        "hypotheses": [],
-        "opinions": [],
-        "missing_evidence": missing,
+        **answer,
         "metric_id": metric_id,
         "snapshot_id": snapshot["snapshot_id"],
         "metric": metric,
         "read_only": True,
-        "supported": known_question,
     }
 
 
@@ -203,6 +175,15 @@ async def save_turn(
             tool_payload={
                 "snapshot_id": snapshot["snapshot_id"],
                 "metric": answer["metric"],
+                "analysis": {
+                    k: answer.get(k)
+                    for k in (
+                        "scenario",
+                        "conclusion",
+                        "recommendations",
+                        "missing_evidence",
+                    )
+                },
             },
         )
     )
@@ -212,7 +193,7 @@ async def save_turn(
             conversation_id=conversation.id,
             empleado_id=actor_uuid,
             status="completed",
-            model="deterministic:direction_context_v1",
+            model="deterministic:direction_context_v2",
             user_message=question,
             assistant_message=answer["assistant_message"],
             tool_trace=[
