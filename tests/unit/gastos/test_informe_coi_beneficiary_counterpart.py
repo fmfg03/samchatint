@@ -1,12 +1,15 @@
 from datetime import datetime
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from openpyxl import load_workbook
 
 from devnous.gastos.models import CuentaDeGastos
 from devnous.gastos.services import expense_coi_export_service as coi
+from devnous.gastos.services.coi_poliza_exporter import generate_coi_poliza_xlsx
 
 
 def _account(code: str, name: str = ""):
@@ -80,10 +83,13 @@ class _Session:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("expense_code", ["5300-010-001", "5300-010-031"])
 async def test_informe_coi_uses_beneficiary_detail_account_over_generic_payable(
     monkeypatch,
+    expense_code,
 ):
     expense = _expense()
+    expense.cuenta_contable = _account(expense_code)
     cuenta = SimpleNamespace(id=expense.cuenta_gastos_id)
     employee = SimpleNamespace(id=uuid4(), nombre="Persona beneficiaria")
     debtor = _account("1170-001-007", "Persona beneficiaria")
@@ -106,6 +112,12 @@ async def test_informe_coi_uses_beneficiary_detail_account_over_generic_payable(
     payload = await coi.build_expense_cfdi_for_export(_Session(cuenta), expense)
 
     assert payload.cuenta_contrapartida == "1170-001-007"
+    assert payload.cuenta_contable == expense_code
+    workbook = load_workbook(BytesIO(generate_coi_poliza_xlsx([payload])))
+    movement_rows = list(workbook.worksheets[0].iter_rows(values_only=True))
+    assert any(row[1] == expense_code and row[5] == 100 for row in movement_rows)
+    assert any(row[1] == "1170-001-007" and row[6] == 116 for row in movement_rows)
+    assert not any(row[1] == "2120-000-000" for row in movement_rows)
     employee_resolver.assert_awaited_once()
     debtor_resolver.assert_awaited_once()
 

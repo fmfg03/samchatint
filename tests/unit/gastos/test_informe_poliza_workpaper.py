@@ -87,27 +87,47 @@ def test_invalid_amounts_do_not_produce_a_plausible_dr(change):
 
 
 @pytest.mark.asyncio
-async def test_finance_route_includes_unclassified_expenses_without_writing(monkeypatch):
+@pytest.mark.parametrize("expense_code", [None, "5300-010-031"])
+async def test_finance_route_preserves_expense_account_and_beneficiary_without_writing(
+    monkeypatch,
+    expense_code,
+):
     cuenta_id = uuid4()
     owner_id = uuid4()
     cuenta = SimpleNamespace(
-        id=cuenta_id, empleado_id=owner_id, currency="MXN",
-        nombre="Gastos Edgar", referencia_base="IG-3",
+        id=cuenta_id,
+        empleado_id=owner_id,
+        currency="MXN",
+        nombre="Gastos Edgar",
+        referencia_base="IG-3",
     )
     expense = SimpleNamespace(
-        id=uuid4(), numero_referencia="G-1", fecha=None,
-        concepto="Gasolina", gasto_cantidad=700, iva=94.12,
-        cuenta_contable=None, cuenta_iva=None, contra_cuenta_contable=None,
-        cfdi_report=None, currency="MXN", pagado_con_amex_empresa=False,
+        id=uuid4(),
+        numero_referencia="G-1",
+        fecha=None,
+        concepto="Gasolina",
+        gasto_cantidad=700,
+        iva=94.12,
+        cuenta_contable=(
+            SimpleNamespace(codigo=expense_code) if expense_code else None
+        ),
+        cuenta_iva=None,
+        contra_cuenta_contable=SimpleNamespace(codigo="2120-000-000"),
+        cfdi_report=None,
+        currency="MXN",
+        pagado_con_amex_empresa=False,
     )
     session = SimpleNamespace(
         get=AsyncMock(return_value=cuenta),
-        execute=AsyncMock(return_value=SimpleNamespace(
-            scalars=lambda: SimpleNamespace(all=lambda: [expense])
-        )),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [expense])
+            )
+        ),
     )
     monkeypatch.setattr(
-        user_routes, "_informe_documento_for_cuenta",
+        user_routes,
+        "_informe_documento_for_cuenta",
         AsyncMock(return_value=SimpleNamespace(referencia_operaciones="3")),
     )
     beneficiary = SimpleNamespace(id=uuid4(), nombre="Edgar Ejemplo")
@@ -133,11 +153,12 @@ async def test_finance_route_includes_unclassified_expenses_without_writing(monk
     assert response.status_code == 200
     wb = load_workbook(BytesIO(response.body))
     assert wb["Papel DR"]["F4"].value == 605.88
-    assert wb["Papel DR"]["B4"].value is None
+    assert wb["Papel DR"]["B4"].value == expense_code
     assert wb["Papel DR"]["B6"].value == "1170-001-009"
     assert wb["Origen y revisión"]["A2"].value == str(expense.id)
     assert wb["Origen y revisión"]["K2"].value == "1170-001-009"
     session.execute.assert_awaited_once()
+    assert not hasattr(session, "commit")
 
 
 @pytest.mark.asyncio
