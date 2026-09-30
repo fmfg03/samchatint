@@ -747,7 +747,10 @@ def test_monthly_series_reconciles_and_never_fills_absent_source_with_zero():
 
 @pytest.mark.asyncio
 async def test_canonical_monthly_source_uses_same_budget_tax_base_and_scope():
-    from samchat.budgets.service import build_executive_monthly_actuals
+    from samchat.budgets.service import (
+        _budget_expense_base_amount_sql,
+        build_executive_monthly_actuals,
+    )
 
     session = Session([[{"month": 1, "actual_total": Decimal("123")}]])
     result = await build_executive_monthly_actuals(
@@ -759,7 +762,8 @@ async def test_canonical_monthly_source_uses_same_budget_tax_base_and_scope():
     )
     assert result[0]["actual_total"] == 123
     sql, params = session.calls[0]
-    assert "budget_cfdi_expense" in str(sql)
+    assert _budget_expense_base_amount_sql("e", "cfdi") in str(sql)
+    assert "CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END" in str(sql)
     assert params["tournament_id"] == T1 and params["date_to"] == date(YEAR, 1, 15)
     with pytest.raises(ValueError):
         await build_executive_monthly_actuals(
