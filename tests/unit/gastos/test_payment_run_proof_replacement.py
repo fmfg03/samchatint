@@ -250,7 +250,11 @@ async def test_document_replacement_route_never_registers_another_payment(monkey
 
 
 @pytest.mark.asyncio
-async def test_document_replacement_can_return_to_document_detail(monkeypatch):
+@pytest.mark.parametrize("outcome", ["success", "validation", "unexpected"])
+@pytest.mark.parametrize("return_target", ["document", "other_document", "external"])
+async def test_document_replacement_can_return_to_document_detail(
+    monkeypatch, outcome, return_target
+):
     session = AsyncMock()
     document_id, old_id = uuid4(), uuid4()
     document = SimpleNamespace(
@@ -274,7 +278,23 @@ async def test_document_replacement_can_return_to_document_detail(monkeypatch):
         "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
         lambda **_: SimpleNamespace(status="match", detected_date=None, confirmation_blocked=False),
     )
-    monkeypatch.setattr(admin_routes, "replace_payment_run_proof", AsyncMock())
+    replacement = AsyncMock(
+        side_effect=(
+            SolicitudValidationError("stale", "Comprobante sustituido")
+            if outcome == "validation"
+            else (
+                RuntimeError("Replacement unavailable")
+                if outcome == "unexpected"
+                else None
+            )
+        )
+    )
+    monkeypatch.setattr(admin_routes, "replace_payment_run_proof", replacement)
+    target = {
+        "document": f"/documentos/{document_id}",
+        "other_document": f"/documentos/{uuid4()}",
+        "external": "https://example.test/documentos",
+    }[return_target]
     response = await admin_routes.admin_payment_run_replace_document_proof(
         documento_id=document_id,
         session=session,
@@ -286,12 +306,28 @@ async def test_document_replacement_can_return_to_document_detail(monkeypatch):
             read=AsyncMock(return_value=b"%PDF-1.4\n"),
         ),
         motivo="Archivo equivocado",
-        return_to=f"/documentos/{document_id}",
+        return_to=target,
     )
     assert response.status_code == 303
-    assert response.headers["location"].startswith(f"/documentos/{document_id}?")
-    assert "success_msg=" in response.headers["location"]
-    assert "vista=pagadas" not in response.headers["location"]
+    location = response.headers["location"]
+    if return_target == "document":
+        assert location.startswith(f"/documentos/{document_id}?")
+        assert "vista=pagadas" not in location
+    else:
+        assert location.startswith("/admin/finanzas/payment-run?")
+        assert "vista=pagadas" in location
+        assert "example.test" not in location
+    replacement.assert_awaited_once()
+    if outcome == "success":
+        assert "success_msg=" in location
+        session.commit.assert_awaited_once()
+        session.rollback.assert_not_awaited()
+    else:
+        assert "error_msg=" in location
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
+    assert document.estado == "pagado"
+    assert document.monto_total == 100
 
 
 @pytest.mark.asyncio

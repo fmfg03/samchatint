@@ -418,6 +418,9 @@ from ..utils.receipt_bytes import (
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
 from ..services.payment_run_service import (
+    PaymentRunPermissionError,
+    require_payment_run_access,
+    require_payment_run_payment_confirmation,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
 )
@@ -11224,11 +11227,19 @@ def _can_finance_replace_comprobante_pago(
     solicitud_cancelada: bool = False,
 ) -> bool:
     """Authorized Accounting users may correct proof after payment without undoing it."""
-    if solicitud_cancelada or not _is_solicitud_terceros(documento):
+    if (
+        solicitud_cancelada
+        or getattr(documento, "tipo", None) != "SOLICITUD"
+        or getattr(documento, "estado", None) != "pagado"
+        or not getattr(documento, "pagado_en", None)
+    ):
         return False
-    if not can_confirm_payment_run_payment(empleado):
+    try:
+        require_payment_run_access(empleado)
+        require_payment_run_payment_confirmation(empleado)
+    except PaymentRunPermissionError:
         return False
-    return documento.estado == "pagado" and bool(getattr(documento, "pagado_en", None))
+    return True
 
 
 def _replaceable_solicitud_comprobante_ids(
@@ -26694,6 +26705,8 @@ def _can_access_expense_comprobante(expense: ExpenseReport, empleado: Empleado) 
 
 
 def _can_access_documento_adjunto(documento: Documento, empleado: Empleado) -> bool:
+    if _can_finance_replace_comprobante_pago(documento, empleado):
+        return True
     if _can_access_read_only_informe_document(documento, empleado):
         return True
     if documento.empleado_id == empleado.id:
@@ -38100,8 +38113,9 @@ async def ver_documento(
     if (
         documento.empleado_id != current_empleado.id
         and current_empleado.rol
-        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        not in ["coordinador", "finanzas", "admin", "superadmin", "super_admin"]
         and not _can_access_read_only_informe_document(documento, current_empleado)
+        and not _can_finance_replace_comprobante_pago(documento, current_empleado)
     ):
         return _render_documento_access_denied_page(current_empleado)
 
@@ -38906,7 +38920,7 @@ async def ver_documento(
         </section>
         """
 
-    if _is_solicitud_terceros(documento):
+    if documento.tipo == "SOLICITUD":
         removable_adjunto_ids = _removable_solicitud_adjunto_ids(
             documento,
             current_empleado,
