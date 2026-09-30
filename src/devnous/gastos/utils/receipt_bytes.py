@@ -178,14 +178,7 @@ def comprobante_response_headers(
             safe.encode("ascii", errors="ignore").decode("ascii").strip()
             or "comprobante"
         )
-        encoded = quote(safe, safe="!#def comprobante_response_headers(
-    filename: Optional[str], media_type: str
-) -> Tuple[str, str]:
-    """Return (media_type, Content-Disposition value)."""
-    safe = (filename or "comprobante").replace('"', "_").replace("\r", "").replace("\n", "")
-    disp = f'inline; filename="{safe}"'
-    return media_type, disp
-+-.^_\`|~")
+        encoded = quote(safe, safe="!#&+-.^_|~")
         disp = (
             f'inline; filename="{fallback}"; '
             f"filename*=UTF-8''{encoded}"
@@ -193,7 +186,6 @@ def comprobante_response_headers(
     else:
         disp = f'inline; filename="{safe}"'
     return media_type, disp
-
 
 def _url_fetch_allowed(url: str) -> bool:
     try:
