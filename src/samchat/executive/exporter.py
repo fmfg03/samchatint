@@ -311,6 +311,7 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet
     from reportlab.platypus import (
+        KeepTogether,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
@@ -323,6 +324,8 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
     styles = getSampleStyleSheet()
     styles["Normal"].fontSize = 9
     styles["Normal"].leading = 13
+    styles["Heading2"].keepWithNext = True
+    styles["Heading3"].keepWithNext = True
 
     def p(value, style="Normal"):
         return Paragraph(escape(str(value)).replace("\n", "<br/>"), styles[style])
@@ -403,16 +406,24 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
                 story.append(
                     p(f"Mes {point['month']:02d}: {format_money(point['value'])}")
                 )
-    story += [p("Riesgos, recomendaciones y alternativas", "Heading2")]
-    for item in report["recommendations"]:
-        story += [
-            p(item["title"], "Heading3"),
-            p("Evidencia: " + item["evidence"]),
-            p("Recomendación: " + item["recommendation"]),
-            p("Alternativa: " + item["alternative"]),
-            p("Riesgo: " + item["risk"]),
-            p("Siguiente paso: " + item["next_step"]),
-        ]
+    for index, item in enumerate(report["recommendations"]):
+        story.append(
+            KeepTogether(
+                (
+                    [p("Riesgos, recomendaciones y alternativas", "Heading2")]
+                    if index == 0
+                    else []
+                )
+                + [
+                    p(item["title"], "Heading3"),
+                    p("Evidencia: " + item["evidence"]),
+                    p("Recomendación: " + item["recommendation"]),
+                    p("Alternativa: " + item["alternative"]),
+                    p("Riesgo: " + item["risk"]),
+                    p("Siguiente paso: " + item["next_step"]),
+                ]
+            )
+        )
     if report.get("scenario"):
         s = report["scenario"]
         story += [
@@ -440,11 +451,15 @@ def generate_direction_report_pdf(report: dict[str, Any]) -> bytes:
         p("Definiciones y fuentes", "Heading2"),
     ]
     for metric in report["indicators"]:
-        story += [
-            p(metric["label"], "Heading3"),
-            p(metric["definition"]),
-            p("Fuente: " + metric["source"]),
-        ]
+        story.append(
+            KeepTogether(
+                [
+                    p(metric["label"], "Heading3"),
+                    p(metric["definition"]),
+                    p("Fuente: " + metric["source"]),
+                ]
+            )
+        )
     story.append(p("Identificador de cifras: " + report["snapshot_id"]))
     buffer = io.BytesIO()
 
