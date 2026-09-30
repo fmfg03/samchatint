@@ -20509,7 +20509,6 @@ async def amex_card_accounts_save(
     )
 
 
-
 @router.post("/admin/gastos/amex/conciliacion/vincular-cfdi")
 async def amex_conciliacion_link_cfdi(
     session: AsyncSession = Depends(get_db_session),
@@ -20635,8 +20634,6 @@ async def amex_conciliacion_link_cfdi_bulk(
     )
 
 
-
-
 @router.post("/admin/gastos/amex/conciliacion/vincular-pase-mensual")
 async def amex_conciliacion_link_pase_monthly_cfdi(
     session: AsyncSession = Depends(get_db_session),
@@ -20696,8 +20693,6 @@ async def amex_conciliacion_link_pase_monthly_cfdi(
     )
 
 
-
-
 @router.post("/admin/gastos/amex/conciliacion/programar-pago")
 async def amex_conciliacion_schedule_card_payment(
     session: AsyncSession = Depends(get_db_session),
@@ -20740,7 +20735,6 @@ async def amex_conciliacion_schedule_card_payment(
         url=redirect_base + "&msg=" + quote(msg),
         status_code=303,
     )
-
 
 
 @router.post("/admin/gastos/amex/conciliacion/validar-notificar")
@@ -21290,7 +21284,6 @@ async def amex_conciliacion_view(
     return html
 
 
-
 def _cxc_can_assign_income_cfdi(current_empleado: Empleado) -> bool:
     return str(getattr(current_empleado, "rol", "") or "").strip().lower() in {
         "superadmin",
@@ -21769,7 +21762,6 @@ async def contabilidad_cuentas_por_cobrar_view(
     </div></body></html>
     """
     return HTMLResponse(content=html)
-
 
 
 @router.post("/admin/contabilidad/cuentas-por-cobrar/cfdi-ingresos/assign")
@@ -22960,7 +22952,6 @@ async def contabilidad_cash_flow_view(
     return HTMLResponse(content=html)
 
 
-
 @router.get("/admin/contabilidad/cash-flow/export.xlsx")
 async def contabilidad_cash_flow_export_xlsx(
     request: Request,
@@ -23528,7 +23519,6 @@ async def contabilidad_cash_flow_export_xlsx(
     )
 
 
-
 @router.get("/admin/contabilidad/tesoreria-matches", response_class=HTMLResponse)
 async def contabilidad_tesoreria_matches_view(
     request: Request,
@@ -23966,8 +23956,6 @@ async def contabilidad_tesoreria_matches_view(
     return HTMLResponse(content=html)
 
 
-
-
 @router.post("/admin/contabilidad/tesoreria-matches/accept")
 async def contabilidad_tesoreria_matches_accept(
     request: Request,
@@ -24140,7 +24128,6 @@ async def contabilidad_tesoreria_matches_accept(
     )
     await session.commit()
     return RedirectResponse(url=return_url + "&success_msg=" + quote(f"Match {direction.upper()} aceptado con score {score}. Movimiento marcado como revisado."), status_code=303)
-
 
 
 @router.post("/admin/contabilidad/tesoreria-matches/accept-payment-request")
@@ -29165,7 +29152,6 @@ async def mis_documentos(
     return html
 
 
-
 async def _budget_concepts_for_document(
     session: AsyncSession,
     documento: Documento,
@@ -29241,6 +29227,17 @@ async def _active_informe_expenses_for_document(
     session: AsyncSession,
     documento: Documento,
 ) -> list[ExpenseReport]:
+    direct_filters = _active_informe_expense_filters(documento)
+    result = await session.execute(
+        select(ExpenseReport)
+        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
+        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
+    )
+    return _unique_expenses(list(result.scalars().unique().all()))
+
+
+def _active_informe_expense_filters(documento: Documento) -> list[Any]:
+    """Canonical report ownership, including unlinked legacy account lines."""
     direct_filters = [
         and_(
             ExpenseReport.documento_id == documento.id,
@@ -29261,12 +29258,7 @@ async def _active_informe_expenses_for_document(
                 ExpenseReport.informe_documento_id.is_(None),
             )
         )
-    result = await session.execute(
-        select(ExpenseReport)
-        .where(or_(*direct_filters), ExpenseReport.estado_gasto != "cancelado")
-        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
-    )
-    return _unique_expenses(list(result.scalars().unique().all()))
+    return direct_filters
 
 
 async def _informe_documento_for_expense(
@@ -31063,6 +31055,9 @@ async def historial_aprobador(
     cfdi_reports_by_id = await _document_cfdi_reports_by_id(
         session, documentos_dict.values()
     )
+    informe_expenses_by_id = await _document_informe_expenses_by_id(
+        session, documentos_dict.values()
+    )
 
     selected_torneo = _approval_history_filter_values(torneo)
     selected_concepto = _approval_history_filter_values(concepto)
@@ -31086,9 +31081,13 @@ async def historial_aprobador(
             "tipo": _approval_history_display_value(documento.tipo),
             "estado": _approval_history_display_value(documento.estado),
             "monto_presupuestal": _document_budget_impact_amount(
-                documento, cfdi_reports_by_id.get(documento.cfdi_report_id)
+                documento,
+                cfdi_reports_by_id.get(documento.cfdi_report_id),
+                expenses=informe_expenses_by_id.get(documento.id),
             ),
-            "asignacion_presupuestal": _document_budget_assignment_label(documento),
+            "asignacion_presupuestal": _document_budget_assignment_label(
+                documento, expenses=informe_expenses_by_id.get(documento.id)
+            ),
         }
         history_items.append((aprobacion, documento, row_values))
     history_items.sort(
@@ -31417,6 +31416,7 @@ async def historial_aprobador_exportar_xlsx(
         ).scalars().all()
     documentos_by_id = {documento.id: documento for documento in documentos}
     cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
     selected = {
         "torneo": _approval_history_filter_values(torneo),
         "concepto": _approval_history_filter_values(concepto),
@@ -31433,6 +31433,7 @@ async def historial_aprobador_exportar_xlsx(
             documento,
             aprobador_nombre=getattr(aprobacion.aprobador, "nombre", "—"),
             cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
         )
         matches = {
             "torneo": _approval_history_torneo(documento),
@@ -31514,10 +31515,15 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
 
 
 def _document_budget_impact_amount(
-    documento: Documento, cfdi_report: Optional[CFDIReport] = None
+    documento: Documento,
+    cfdi_report: Optional[CFDIReport] = None,
+    *,
+    expenses: Optional[list[ExpenseReport]] = None,
 ) -> Decimal:
     """Return the state-aware amount from the canonical budget service."""
-    return budget_document_effect_snapshot(documento, cfdi_report)["amount"]
+    return budget_document_effect_snapshot(documento, cfdi_report, expenses=expenses)[
+        "amount"
+    ]
 
 
 async def _document_cfdi_reports_by_id(
@@ -31538,8 +31544,59 @@ async def _document_cfdi_reports_by_id(
     return {report.id: report for report in result.scalars().all()}
 
 
-def _document_budget_assignment_label(documento: Documento) -> str:
-    return budget_document_effect_snapshot(documento)["assignment_label"]
+async def _document_informe_expenses_by_id(
+    session: AsyncSession, documentos: Iterable[Documento]
+) -> dict[Any, list[ExpenseReport]]:
+    """Resolve active report lines and attachments in one batch, without writes."""
+    informes = {d.id: d for d in documentos if d.tipo == "INFORME"}
+    if not informes:
+        return {}
+    filters = [
+        condition
+        for documento in informes.values()
+        for condition in _active_informe_expense_filters(documento)
+    ]
+    result = await session.execute(
+        select(ExpenseReport)
+        .options(
+            selectinload(ExpenseReport.adjuntos),
+            selectinload(ExpenseReport.cfdi_report),
+        )
+        .where(or_(*filters), ExpenseReport.estado_gasto != "cancelado")
+        .order_by(ExpenseReport.numero_referencia.asc(), ExpenseReport.id.asc())
+    )
+    by_id = {doc_id: [] for doc_id in informes}
+    account_reports: dict[Any, list[Any]] = {}
+    for documento in informes.values():
+        if getattr(documento, "cuenta_gastos_id", None):
+            account_reports.setdefault(documento.cuenta_gastos_id, []).append(
+                documento.id
+            )
+    for expense in result.scalars().all():
+        if getattr(expense, "estado_gasto", None) == "cancelado":
+            continue
+        explicit = getattr(expense, "informe_documento_id", None)
+        direct = getattr(expense, "documento_id", None)
+        owners = set()
+        if explicit in informes:
+            owners.add(explicit)
+        if direct in informes and (explicit is None or explicit == direct):
+            owners.add(direct)
+        if explicit is None:
+            owners.update(
+                account_reports.get(getattr(expense, "cuenta_gastos_id", None), [])
+            )
+        for owner in owners:
+            by_id[owner].append(expense)
+    return {doc_id: _unique_expenses(expenses) for doc_id, expenses in by_id.items()}
+
+
+def _document_budget_assignment_label(
+    documento: Documento, *, expenses: Optional[list[ExpenseReport]] = None
+) -> str:
+    return budget_document_effect_snapshot(documento, expenses=expenses)[
+        "assignment_label"
+    ]
 
 
 def _document_total_reporting_amount(documento: Documento) -> Decimal:
@@ -31559,6 +31616,7 @@ def _documentos_todos_reporting_row_values(
     *,
     aprobador_nombre: str = "—",
     cfdi_report: Optional[CFDIReport] = None,
+    expenses: Optional[list[ExpenseReport]] = None,
 ) -> dict[str, Any]:
     parties = _documentos_todos_party_values(documento)
     currency = currency_for(documento)
@@ -31570,7 +31628,9 @@ def _documentos_todos_reporting_row_values(
         or getattr(cuenta, "fase", None)
         or "—"
     )
-    budget_effect = budget_document_effect_snapshot(documento, cfdi_report)
+    budget_effect = budget_document_effect_snapshot(
+        documento, cfdi_report, expenses=expenses
+    )
     monto_presupuestal = budget_effect["amount"]
     return {
         "id": str(documento.id),
@@ -31591,11 +31651,13 @@ def _documentos_todos_reporting_row_values(
         "monto_solicitado": format_currency(
             getattr(documento, "monto_solicitado", None), currency
         ),
-        "monto_total": format_currency(getattr(documento, "monto_total", None), currency),
+        "monto_total": format_currency(
+            getattr(documento, "monto_total", None), currency
+        ),
         "monto_total_valor": _document_total_reporting_amount(documento),
         "monto_presupuestal": format_currency(monto_presupuestal, currency),
         "monto_presupuestal_valor": monto_presupuestal,
-        "asignacion_presupuestal": _document_budget_assignment_label(documento),
+        "asignacion_presupuestal": budget_effect["assignment_label"],
         "currency": currency,
         "situacion": _documentos_todos_reporting_situation(documento),
         "estado": getattr(documento, "estado", None) or "—",
@@ -31792,6 +31854,7 @@ async def documentos_todos(
     ]
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
     cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
 
     # Build rows HTML
     rows_html = ""
@@ -31801,6 +31864,7 @@ async def documentos_todos(
             documento,
             aprobador_nombre=aprobador_nombre,
             cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
         )
 
         # Link to documento detail with next parameter
@@ -32073,8 +32137,6 @@ async def documentos_todos(
     return html
 
 
-
-
 async def _query_documentos_todos_for_export(
     session: AsyncSession,
     current_empleado: Empleado,
@@ -32269,11 +32331,13 @@ async def documentos_todos_exportar_xlsx(
     )
     aprobador_by_doc = await fetch_documento_aprobador_display_batch(session, documentos)
     cfdi_reports_by_id = await _document_cfdi_reports_by_id(session, documentos)
+    informe_expenses_by_id = await _document_informe_expenses_by_id(session, documentos)
     rows = (
         _documentos_todos_reporting_row_values(
             documento,
             aprobador_nombre=aprobador_by_doc.get(documento.id, "—"),
             cfdi_report=cfdi_reports_by_id.get(documento.cfdi_report_id),
+            expenses=informe_expenses_by_id.get(documento.id),
         )
         for documento in documentos
     )

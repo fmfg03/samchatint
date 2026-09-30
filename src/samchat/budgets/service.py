@@ -6,7 +6,7 @@ import uuid
 from functools import lru_cache
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any, Optional
@@ -818,7 +818,7 @@ def _budget_decimal_amount(value: Any) -> Decimal:
 
 
 def _budget_round_amount(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.01"))
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def budget_expense_effect_amount(expense: Any, cfdi_report: Any = None) -> Decimal:
@@ -837,7 +837,7 @@ def budget_expense_effect_amount(expense: Any, cfdi_report: Any = None) -> Decim
     iva = getattr(expense, "iva", None)
     if iva is not None:
         return _budget_round_amount(
-            max(total - _budget_decimal_amount(iva), Decimal("0")) + lodging + tip
+            max(total - _budget_decimal_amount(iva), Decimal("0")) + lodging
         )
     if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
         base = max(
@@ -845,21 +845,27 @@ def budget_expense_effect_amount(expense: Any, cfdi_report: Any = None) -> Decim
             - _budget_decimal_amount(getattr(cfdi_report, "descuento", None)),
             Decimal("0"),
         )
-        if bool(getattr(expense, "cfdi_compartido_confirmado", False)):
-            fiscal_total = _budget_decimal_amount(getattr(cfdi_report, "total", None))
-            applied = max(total - tip, Decimal("0"))
-            if fiscal_total > 0 and applied > 0:
-                base *= min(applied / fiscal_total, Decimal("1"))
+        fiscal_total = _budget_decimal_amount(getattr(cfdi_report, "total", None))
+        applied = max(total - tip, Decimal("0"))
+        if fiscal_total > 0:
+            base *= min(applied / fiscal_total, Decimal("1"))
         return _budget_round_amount(base + lodging + tip)
     return _budget_round_amount(total)
 
 
-def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> dict[str, Any]:
+def budget_document_effect_snapshot(
+    documento: Any, cfdi_report: Any = None, *, expenses: Any = None
+) -> dict[str, Any]:
     """State-aware budget effect for document reporting surfaces."""
     state = str(getattr(documento, "estado", "") or "").strip().lower()
     doc_type = str(getattr(documento, "tipo", "") or "").strip().upper()
     expenses = [
-        e for e in (getattr(documento, "gastos", None) or [])
+        e
+        for e in (
+            expenses
+            if expenses is not None
+            else (getattr(documento, "gastos", None) or [])
+        )
         if str(getattr(e, "estado_gasto", "") or "").strip().lower() != "cancelado"
     ]
     doc_concept = getattr(documento, "budget_concept_id", None)
@@ -876,7 +882,7 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
                 else "Parcial"
             )
         else:
-            assignment = "Asignado" if doc_concept else "Sin asignar"
+            assignment = "Sin asignar"
     else:
         assigned = []
         assignment = "Asignado" if doc_concept else "Sin asignar"
@@ -901,9 +907,12 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
             "affects_budget": False,
         }
 
-    if doc_type == "INFORME" and expenses:
+    if doc_type == "INFORME":
         amount = sum(
-            (budget_expense_effect_amount(e) for e in assigned),
+            (
+                budget_expense_effect_amount(e, getattr(e, "cfdi_report", None))
+                for e in assigned
+            ),
             Decimal("0"),
         )
     elif doc_concept:
@@ -921,7 +930,7 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
                 if getattr(documento, "monto_solicitado", None) is not None
                 else getattr(documento, "monto_total", None)
             )
-            if fiscal_total > 0 and applied > 0:
+            if fiscal_total > 0:
                 amount *= min(applied / fiscal_total, Decimal("1"))
         else:
             amount = _budget_decimal_amount(
@@ -947,7 +956,7 @@ def _budget_expense_base_amount_sql(expense_alias: str = "e", cfdi_alias: str = 
     expense = _safe_str(expense_alias) or "e"
     cfdi = _safe_str(cfdi_alias) or "cfdi"
     return f"""
-        GREATEST(
+        ROUND(CAST(GREATEST(
             CASE
                 WHEN EXISTS (
                     SELECT 1 FROM adjuntos budget_nd
@@ -958,42 +967,25 @@ def _budget_expense_base_amount_sql(expense_alias: str = "e", cfdi_alias: str = 
                 WHEN {expense}.iva IS NOT NULL
                 THEN COALESCE({expense}.gasto_cantidad, 0) - COALESCE({expense}.iva, 0)
                    + COALESCE({expense}.hospedaje_impuesto_monto, 0)
-                   + COALESCE({expense}.propina_no_deducible, 0)
                 WHEN {cfdi}.subtotal IS NOT NULL THEN (
-                    CASE
-                        WHEN COALESCE({expense}.cfdi_compartido_confirmado, FALSE)
-                          OR EXISTS (
-                              SELECT 1 FROM expense_reports budget_cfdi_expense
-                              WHERE budget_cfdi_expense.cfdi_report_id = {cfdi}.id
-                                AND budget_cfdi_expense.id <> {expense}.id
-                                AND budget_cfdi_expense.estado_gasto != 'cancelado'
-                          )
-                        THEN GREATEST(
-                            COALESCE({cfdi}.subtotal, 0)
-                            - COALESCE({cfdi}.descuento, 0),
-                            0
-                        ) * LEAST(
+                    GREATEST(
+                        COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0
+                    ) * CASE
+                        WHEN COALESCE({cfdi}.total, 0) > 0 THEN LEAST(
                             GREATEST(
-                                (
-                                    COALESCE({expense}.gasto_cantidad, 0)
-                                    - COALESCE({expense}.propina_no_deducible, 0)
-                                ) / NULLIF(COALESCE({cfdi}.total, 0), 0),
-                                0
-                            ),
-                            1
+                                (COALESCE({expense}.gasto_cantidad, 0)
+                                 - COALESCE({expense}.propina_no_deducible, 0))
+                                / {cfdi}.total, 0
+                            ), 1
                         )
-                        ELSE GREATEST(
-                            COALESCE({cfdi}.subtotal, 0)
-                            - COALESCE({cfdi}.descuento, 0),
-                            0
-                        )
+                        ELSE 1
                     END
                 ) + COALESCE({expense}.hospedaje_impuesto_monto, 0)
                   + COALESCE({expense}.propina_no_deducible, 0)
                 ELSE COALESCE({expense}.gasto_cantidad, 0)
             END,
             0
-        )
+        ) AS NUMERIC), 2)
     """
 
 
@@ -1002,7 +994,7 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
     document = _safe_str(document_alias) or "d"
     cfdi = _safe_str(cfdi_alias) or "document_cfdi"
     return f"""
-        GREATEST(
+        ROUND(CAST(GREATEST(
             CASE
                 WHEN {cfdi}.subtotal IS NOT NULL THEN (
                     GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
@@ -1024,7 +1016,7 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
                 )
                 ELSE COALESCE({document}.monto_solicitado, {document}.monto_total, 0)
             END, 0
-        )
+        ) AS NUMERIC), 2)
     """
 
 
@@ -1103,7 +1095,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                  AND COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
                 GROUP BY 1
                 """),
                 params,
@@ -1176,10 +1168,10 @@ async def _build_budget_finance_breakdowns(
                 FROM expense_reports e
                 LEFT JOIN documentos d ON d.id = e.documento_id
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
-                LEFT JOIN budget_concepts bc ON bc.id = COALESCE(e.budget_concept_id, d.budget_concept_id)
+                LEFT JOIN budget_concepts bc ON bc.id = COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END)
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                  AND COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
                 GROUP BY 1 {", bc.id" if concept_identity else ""}
                 """),
                 params,
@@ -6289,7 +6281,7 @@ async def _build_budget_finance_comparison(
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                  AND COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL
+                  AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
                 """),
                 params,
             )
@@ -6414,7 +6406,7 @@ async def build_executive_monthly_actuals(
         LEFT JOIN documentos d ON d.id = e.documento_id
         LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
         WHERE {' AND '.join(filters)}
-          AND COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL
+          AND COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL
         GROUP BY EXTRACT(MONTH FROM e.fecha) ORDER BY month
     """),
                 params,

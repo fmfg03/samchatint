@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -132,8 +135,6 @@ async def test_copy_forward_rejects_mismatch_before_creating_version(monkeypatch
     create_version.assert_not_awaited()
 
 
-
-
 def test_merge_monthly_actual_accepts_budget_week_52_and_ignores_53():
     store = _monthly_actual_store()
     _merge_monthly_actual(
@@ -182,9 +183,8 @@ def test_budget_expense_base_sql_prefers_cfdi_subtotal_without_fixed_tax_rate():
     assert "e.iva" in sql
     assert "e.propina_no_deducible" in sql
     assert "WHEN cfdi.subtotal IS NOT NULL" in sql
-    assert (
-        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
-        in sql
+    assert "GREATEST(COALESCE(cfdi.subtotal,0)-COALESCE(cfdi.descuento,0),0)" in re.sub(
+        r"\s+", "", sql
     )
     assert "cfdi.subtotal IS NOT NULL AND cfdi.subtotal > 0" not in sql
     assert "1.16" not in sql
@@ -195,9 +195,8 @@ def test_budget_expense_base_sql_allocates_shared_cfdi_by_applied_amount():
     sql = _budget_expense_base_amount_sql("e", "cfdi")
     assert "COALESCE(cfdi.total, 0)" in sql
     assert "COALESCE(e.gasto_cantidad, 0)" in sql
-    assert "COALESCE(e.cfdi_compartido_confirmado, FALSE)" in sql
-    assert "FROM expense_reports budget_cfdi_expense" in sql
-    assert "budget_cfdi_expense.id <> e.id" in sql
+    assert "cfdi_compartido_confirmado" not in sql
+    assert "FROM expense_reports budget_cfdi_expense" not in sql
     assert "SELECT COUNT(*)" not in sql
     assert "FROM adjuntos budget_nd" in sql
     assert "comprobante_no_deducible" in sql
@@ -216,6 +215,176 @@ def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
     assert "1.16" not in sql
 
 
+@pytest.fixture
+def budget_sql_db():
+    """Execute amount expressions against isolated rows, never live data."""
+    with sqlite3.connect(":memory:") as db:
+        db.create_function("GREATEST", -1, lambda *values: max(values))
+        db.create_function("LEAST", -1, lambda *values: min(values))
+        db.create_function(
+            "ROUND",
+            2,
+            lambda value, places: float(
+                Decimal(str(value)).quantize(
+                    Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP
+                )
+            ),
+        )
+        db.executescript("""
+            CREATE TABLE documentos (
+                id INTEGER, tipo TEXT, budget_concept_id TEXT,
+                monto_solicitado REAL, monto_total REAL);
+            CREATE TABLE expense_reports (
+                id INTEGER, gasto_cantidad REAL, iva REAL,
+                propina_no_deducible REAL, hospedaje_impuesto_monto REAL,
+                cfdi_compartido_confirmado BOOLEAN, cfdi_report_id INTEGER,
+                estado_gasto TEXT, budget_concept_id TEXT, documento_id INTEGER);
+            CREATE TABLE cfdi_reports (
+                id INTEGER, subtotal REAL, descuento REAL, total REAL);
+            CREATE TABLE adjuntos (
+                gasto_id INTEGER, categoria TEXT, activo BOOLEAN);
+        """)
+        yield db
+
+
+@pytest.mark.parametrize(
+    "iva, shared, non_deductible, expected",
+    [
+        (16, False, False, "110.00"),
+        (None, False, False, "110.00"),
+        (None, True, False, "60.00"),
+        (16, False, True, "126.00"),
+    ],
+)
+def test_expense_sql_and_python_count_tip_once(
+    budget_sql_db, iva, shared, non_deductible, expected
+):
+    amount = 68 if shared else 126
+    budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, 100, 0, 116)")
+    budget_sql_db.execute(
+        "INSERT INTO expense_reports VALUES (1, ?, ?, 10, 0, ?, 1, 'pendiente', 'c', 1)",
+        (amount, iva, shared),
+    )
+    if non_deductible:
+        budget_sql_db.execute(
+            "INSERT INTO adjuntos VALUES (1, 'comprobante_no_deducible', TRUE)"
+        )
+    sql_amount = budget_sql_db.execute(
+        f"SELECT {_budget_expense_base_amount_sql()} FROM expense_reports e "
+        "LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id"
+    ).fetchone()[0]
+    expense = SimpleNamespace(
+        gasto_cantidad=amount,
+        iva=iva,
+        propina_no_deducible=10,
+        hospedaje_impuesto_monto=0,
+        cfdi_compartido_confirmado=shared,
+        adjuntos=(
+            [SimpleNamespace(activo=True, categoria="comprobante_no_deducible")]
+            if non_deductible
+            else []
+        ),
+    )
+    assert budgets_service.budget_expense_effect_amount(
+        expense, SimpleNamespace(subtotal=100, descuento=0, total=116)
+    ) == Decimal(expected)
+    assert Decimal(str(sql_amount)) == Decimal(expected)
+
+
+@pytest.mark.parametrize("base", ["99.99", "99.97"])
+def test_document_prorata_rounds_each_row_before_aggregation(budget_sql_db, base):
+    budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, ?, 0, 116)", (base,))
+    budget_sql_db.executemany(
+        "INSERT INTO documentos VALUES (?, 'SOLICITUD', 'c', 58, 58)", [(1,), (2,)]
+    )
+    aggregate = budget_sql_db.execute(
+        f"SELECT SUM({_budget_document_base_amount_sql()}) FROM documentos d "
+        "CROSS JOIN cfdi_reports document_cfdi"
+    ).fetchone()[0]
+    expected = sum(
+        budgets_service.budget_document_effect_snapshot(
+            SimpleNamespace(
+                tipo="SOLICITUD",
+                estado="aprobado",
+                budget_concept_id="c",
+                monto_solicitado=58,
+            ),
+            SimpleNamespace(subtotal=Decimal(base), descuento=0, total=116),
+        )["amount"]
+        for _ in range(2)
+    )
+    assert Decimal(str(aggregate)) == expected
+
+
+@pytest.mark.parametrize(
+    "applied, expected", [(0, "0.00"), (58, "49.99"), (116, "99.97")]
+)
+def test_cfdi_applied_amount_parity_without_shared_flag(
+    budget_sql_db, applied, expected
+):
+    budget_sql_db.execute("INSERT INTO cfdi_reports VALUES (1, 99.97, 0, 116)")
+    budget_sql_db.execute(
+        "INSERT INTO documentos VALUES (1, 'SOLICITUD', 'c', ?, ?)",
+        (applied, applied),
+    )
+    budget_sql_db.execute(
+        "INSERT INTO expense_reports VALUES (1, ?, NULL, 0, 0, FALSE, 1, 'activo', 'c', 1)",
+        (applied,),
+    )
+    cfdi = SimpleNamespace(subtotal=Decimal("99.97"), descuento=0, total=116)
+    expense = SimpleNamespace(
+        gasto_cantidad=applied, iva=None, cfdi_report=cfdi, budget_concept_id="c"
+    )
+    document = SimpleNamespace(
+        tipo="SOLICITUD",
+        estado="aprobado",
+        budget_concept_id="c",
+        monto_solicitado=applied,
+    )
+    expense_sql = budget_sql_db.execute(
+        f"SELECT {_budget_expense_base_amount_sql()} FROM expense_reports e "
+        "CROSS JOIN cfdi_reports cfdi"
+    ).fetchone()[0]
+    document_sql = budget_sql_db.execute(
+        f"SELECT {_budget_document_base_amount_sql()} FROM documentos d "
+        "CROSS JOIN cfdi_reports document_cfdi"
+    ).fetchone()[0]
+    assert Decimal(str(expense_sql)) == Decimal(expected)
+    assert Decimal(str(document_sql)) == Decimal(expected)
+    assert budgets_service.budget_expense_effect_amount(expense, cfdi) == Decimal(
+        expected
+    )
+    assert budgets_service.budget_document_effect_snapshot(document, cfdi)[
+        "amount"
+    ] == Decimal(expected)
+    informe = SimpleNamespace(tipo="INFORME", estado="aprobado", budget_concept_id=None)
+    assert budgets_service.budget_document_effect_snapshot(informe, expenses=[expense])[
+        "amount"
+    ] == Decimal(expected)
+
+
+def test_informe_header_does_not_classify_unassigned_expense(budget_sql_db):
+    budget_sql_db.executemany(
+        "INSERT INTO documentos VALUES (?, ?, 'header', 116, 116)",
+        [(1, "INFORME"), (2, "SOLICITUD")],
+    )
+    budget_sql_db.executemany(
+        "INSERT INTO expense_reports VALUES (?, 116, 16, 0, 0, FALSE, NULL, "
+        "'pendiente', ?, ?)",
+        [(1, None, 1), (2, "line", 1), (3, None, 2)],
+    )
+    # Execute the actual classification predicate from the aggregate query.
+    source = Path(budgets_service.__file__).read_text()
+    predicate = re.search(
+        r"AND (COALESCE\(e.budget_concept_id, CASE.*?END\) IS NOT NULL)", source
+    ).group(1)
+    rows = budget_sql_db.execute(
+        "SELECT e.id FROM expense_reports e LEFT JOIN documentos d "
+        f"ON d.id = e.documento_id WHERE {predicate} ORDER BY e.id"
+    ).fetchall()
+    assert rows == [(2,), (3,)]
+
+
 def test_budget_finance_aggregates_require_budget_assignment():
     source = Path(budgets_service.__file__).read_text()
     a = source.index("async def _build_budget_finance_comparison")
@@ -225,9 +394,15 @@ def test_budget_finance_aggregates_require_budget_assignment():
     b = source.index("async def list_budget_tournament_commitments", a)
     breakdowns = source[a:b]
     assert "d.budget_concept_id IS NOT NULL" in comparison
-    assert "COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL" in comparison
+    assert (
+        "COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL"
+        in comparison
+    )
     assert "d.budget_concept_id IS NOT NULL" in breakdowns
-    assert "COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL" in breakdowns
+    assert (
+        "COALESCE(e.budget_concept_id, CASE WHEN d.tipo = 'SOLICITUD' THEN d.budget_concept_id END) IS NOT NULL"
+        in breakdowns
+    )
     assert "_budget_document_base_amount_sql('d', 'document_cfdi')" in comparison
     assert "en_proceso_pago" in comparison
     assert "en_proceso_pago" in breakdowns
@@ -1387,7 +1562,6 @@ def test_render_cfdi_income_bridge_panel_explains_missing_income_lines():
 
     assert "Primero agrega o importa partidas de ingreso" in html
     assert "Sin partidas de ingreso disponibles" in html
-
 
 
 def test_render_budget_executive_dashboard_rolls_up_monthly_expense_view():
