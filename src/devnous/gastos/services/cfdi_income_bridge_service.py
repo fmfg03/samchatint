@@ -286,7 +286,7 @@ async def list_psp_cfdi_income_candidates(
         await session.execute(
             text(
                 f"""
-                SELECT c.id, c.cfdi_uuid, c.fecha, c.total,
+                SELECT c.id, c.cfdi_uuid, c.fecha, c.total, c.moneda,
                        c.total_impuestos_trasladados, c.emisor_rfc,
                        c.emisor_nombre, c.receptor_rfc, c.receptor_nombre,
                        c.descripcion_concepto_principal,
@@ -541,7 +541,7 @@ async def list_budget_cfdi_income_links(
                        l.tournament_id, l.phase, l.budget_concept_id, l.amount,
                        l.income_date, l.source, l.status, l.collection_date,
                        l.collection_poliza_id, l.created_at, l.unlinked_at,
-                       c.cfdi_uuid, c.fecha AS cfdi_fecha,
+                       c.cfdi_uuid, c.fecha AS cfdi_fecha, c.moneda,
                        c.total_impuestos_trasladados,
                        c.emisor_rfc, c.emisor_nombre,
                        c.receptor_rfc, c.receptor_nombre,

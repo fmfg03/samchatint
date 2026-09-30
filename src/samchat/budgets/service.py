@@ -731,6 +731,8 @@ def _build_budget_scope_filters(
     tournament_code: Optional[str],
     document_tournament_id_sql: str = "d.torneo_id",
     expense_tournament_id_sql: str = "d.torneo_id",
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> tuple[list[str], list[str], dict[str, Any]]:
     tournament_scope_requested = bool(
         _safe_str(tournament_name) or _safe_str(tournament_code)
@@ -739,7 +741,10 @@ def _build_budget_scope_filters(
         _safe_str(tournament_name),
         _safe_str(tournament_code),
     )
-    date_from, date_to = _edition_bounds(edition_year)
+    edition_from, edition_to = _edition_bounds(edition_year)
+    date_from, date_to = date_from or edition_from, date_to or edition_to
+    if not edition_from <= date_from <= date_to <= edition_to:
+        raise ValueError("Budget period must stay within the selected edition")
     document_filter = [
         "d.tipo = 'SOLICITUD'",
         "COALESCE(d.concepto_pago, '') NOT ILIKE 'Reembolso de saldo a favor%'",
@@ -753,12 +758,8 @@ def _build_budget_scope_filters(
     ]
     params: dict[str, Any] = {"date_from": date_from, "date_to": date_to}
     if tournament_id:
-        document_filter.append(
-            f"({document_tournament_id_sql} = :tournament_id)"
-        )
-        expense_filter.append(
-            f"({expense_tournament_id_sql} = :tournament_id)"
-        )
+        document_filter.append(f"({document_tournament_id_sql} = :tournament_id)")
+        expense_filter.append(f"({expense_tournament_id_sql} = :tournament_id)")
         params["tournament_id"] = tournament_id
     elif aliases:
         alias_clauses = []
@@ -843,12 +844,16 @@ async def _build_budget_finance_breakdowns(
     tournament_id: Optional[str],
     tournament_name: Optional[str],
     tournament_code: Optional[str],
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, list[dict[str, Any]]]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
+        date_from=date_from,
+        date_to=date_to,
     )
     by_provider = _new_breakdown_store()
     by_concept = _new_breakdown_store()
@@ -856,8 +861,7 @@ async def _build_budget_finance_breakdowns(
     document_provider_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
                     COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
@@ -869,8 +873,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN proveedores_clientes pc ON pc.id = d.proveedor_cliente_id
                 WHERE {' AND '.join(document_filter)}
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -894,8 +897,7 @@ async def _build_budget_finance_breakdowns(
     expense_provider_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(pc.nombre), ''), 'Sin proveedor asignado') AS label,
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
@@ -907,8 +909,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -926,8 +927,7 @@ async def _build_budget_finance_breakdowns(
     document_concept_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
                     COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
@@ -939,8 +939,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN budget_concepts bc ON bc.id = d.budget_concept_id
                 WHERE {' AND '.join(document_filter)}
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -964,8 +963,7 @@ async def _build_budget_finance_breakdowns(
     expense_concept_rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(NULLIF(TRIM(bc.concept_name), ''), 'Sin partida asignada') AS label,
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
@@ -977,8 +975,7 @@ async def _build_budget_finance_breakdowns(
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
                 GROUP BY 1
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -6030,12 +6027,16 @@ async def _build_budget_finance_comparison(
     tournament_name: Optional[str],
     tournament_code: Optional[str],
     budget_total: float,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     document_filter, expense_filter, params = _build_budget_scope_filters(
         edition_year=edition_year,
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=tournament_code,
+        date_from=date_from,
+        date_to=date_to,
     )
     today = date.today()
     next_30 = today + timedelta(days=30)
@@ -6043,8 +6044,7 @@ async def _build_budget_finance_comparison(
     document_row = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(SUM(CASE WHEN d.estado IN ('enviado', 'aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS requested_total,
                     COALESCE(SUM(CASE WHEN d.estado IN ('aprobado', 'pagado', 'cerrado') THEN COALESCE(d.monto_solicitado, d.monto_total, 0) ELSE 0 END), 0) AS committed_total,
@@ -6057,8 +6057,7 @@ async def _build_budget_finance_comparison(
                 FROM documentos d
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 WHERE {' AND '.join(document_filter)}
-                """
-                ),
+                """),
                 {**params, "today": today, "next_30": next_30},
             )
         )
@@ -6068,8 +6067,7 @@ async def _build_budget_finance_comparison(
     expense_row = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     COALESCE(SUM({_budget_expense_base_amount_sql('e', 'cfdi')}), 0) AS actual_total,
                     COUNT(*) AS expense_count
@@ -6078,8 +6076,7 @@ async def _build_budget_finance_comparison(
                 LEFT JOIN tournaments t ON t.id = d.torneo_id
                 LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
                 WHERE {' AND '.join(expense_filter)}
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -6174,6 +6171,46 @@ def _empty_budget_snapshot(
     }
 
 
+async def build_executive_monthly_actuals(
+    session: AsyncSession,
+    *,
+    tournament_id: str,
+    edition_year: int,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+) -> list[dict[str, Any]]:
+    """Read monthly execution using the same scope and tax base as the aggregate."""
+    if not tournament_id:
+        raise ValueError("Executive monthly reads require a tournament UUID")
+    _, filters, params = _build_budget_scope_filters(
+        edition_year=edition_year,
+        tournament_id=tournament_id,
+        tournament_name=None,
+        tournament_code=None,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    rows = (
+        (
+            await session.execute(
+                text(f"""
+        SELECT EXTRACT(MONTH FROM e.fecha)::int AS month,
+            SUM({_budget_expense_base_amount_sql('e', 'cfdi')}) AS actual_total
+        FROM expense_reports e
+        LEFT JOIN documentos d ON d.id = e.documento_id
+        LEFT JOIN cfdi_reports cfdi ON cfdi.id = e.cfdi_report_id
+        WHERE {' AND '.join(filters)}
+        GROUP BY EXTRACT(MONTH FROM e.fecha) ORDER BY month
+    """),
+                params,
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [dict(row) for row in rows]
+
+
 async def build_budget_snapshot(
     session: AsyncSession,
     *,
@@ -6184,6 +6221,9 @@ async def build_budget_snapshot(
     version_id: Optional[str] = None,
     ensure_schema: bool = True,
     strict_tournament_scope: bool = False,
+    executive_read: bool = False,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     if ensure_schema:
         await ensure_budget_schema(session)
@@ -6193,6 +6233,20 @@ async def build_budget_snapshot(
         version_id=version_id,
         ensure_schema=ensure_schema,
     )
+    period_kwargs = (
+        {"date_from": date_from, "date_to": date_to}
+        if date_from is not None or date_to is not None
+        else {}
+    )
+    if executive_read and (
+        not selected_version
+        or selected_version.get("status") not in {"approved", "frozen"}
+    ):
+        return _empty_budget_snapshot(
+            edition_year=edition_year,
+            source="budget_scope_unavailable",
+            version=selected_version,
+        )
     aliases = budget_alias_candidates(tournament_name or "", tournament_slug or "")
 
     if strict_tournament_scope and not tournament_id:
@@ -6246,6 +6300,8 @@ async def build_budget_snapshot(
         return artifact_snapshot
 
     filters = ["l.budget_version_id = :version_id"]
+    if executive_read:
+        filters.append("COALESCE(l.line_direction, 'expense') = 'expense'")
     params: dict[str, Any] = {"version_id": selected_version["id"]}
     if tournament_id:
         if strict_tournament_scope:
@@ -6264,8 +6320,7 @@ async def build_budget_snapshot(
     rows = (
         (
             await session.execute(
-                text(
-                    f"""
+                text(f"""
                 SELECT
                     l.tournament_id,
                     l.tournament_code,
@@ -6282,8 +6337,7 @@ async def build_budget_snapshot(
                 FROM budget_lines l
                 WHERE {' AND '.join(filters)}
                 ORDER BY l.tournament_name ASC, l.budget_amount DESC, l.concept_name ASC
-                """
-                ),
+                """),
                 params,
             )
         )
@@ -6371,6 +6425,7 @@ async def build_budget_snapshot(
         tournament_id=tournament_id,
         tournament_name=tournament_name,
         tournament_code=None,
+        **period_kwargs,
     )
     by_concept_store = _new_breakdown_store()
     for item in summary_breakdowns.get("by_concept", []):
@@ -6389,6 +6444,7 @@ async def build_budget_snapshot(
             tournament_name=name,
             tournament_code=_safe_str(items[0].get("tournament_code")) or None,
             budget_total=round(budget_total, 2),
+            **period_kwargs,
         )
         for key in summary_comparison:
             summary_comparison[key] += float(comparison.get(key) or 0)
@@ -6407,6 +6463,7 @@ async def build_budget_snapshot(
             tournament_id=_safe_str(items[0].get("tournament_id")) or tournament_id,
             tournament_name=name,
             tournament_code=_safe_str(items[0].get("tournament_code")) or None,
+            **period_kwargs,
         )
         tournament_concept_store = _new_breakdown_store()
         for item in tournament_line_breakdowns.get("by_concept", []):
@@ -6491,9 +6548,83 @@ async def build_budget_snapshot(
         "forecast_health_counts": forecast_health_counts,
     }
 
+    quality_gaps = []
+    if executive_read:
+        document_filters, expense_filters, quality_params = _build_budget_scope_filters(
+            edition_year=edition_year,
+            tournament_id=tournament_id,
+            tournament_name=tournament_name,
+            tournament_code=None,
+            **period_kwargs,
+        )
+        quality = (
+            (
+                await session.execute(
+                    text(f"""
+            SELECT COUNT(*) FILTER (WHERE e.cfdi_compartido_confirmado IS TRUE
+                OR EXISTS (SELECT 1 FROM expense_reports sibling
+                    WHERE sibling.cfdi_report_id = e.cfdi_report_id
+                      AND sibling.id <> e.id AND sibling.estado_gasto <> 'cancelado')) AS shared_count,
+                COUNT(*) FILTER (WHERE COALESCE(e.currency, '') <> 'MXN') AS currency_count,
+                COUNT(*) FILTER (WHERE e.gasto_cantidad IS NULL) AS missing_amount_count
+            FROM expense_reports e
+            LEFT JOIN documentos d ON d.id = e.documento_id
+            LEFT JOIN tournaments t ON t.id = d.torneo_id
+            WHERE {' AND '.join(expense_filters)}
+        """),
+                    quality_params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if quality and int(quality.get("shared_count") or 0):
+            quality_gaps.append("shared_cfdi_allocation_requires_reconciliation")
+        if quality and int(quality.get("currency_count") or 0):
+            quality_gaps.append("mixed_or_unknown_currency")
+        if quality and int(quality.get("missing_amount_count") or 0):
+            quality_gaps.append("expense_amount_missing")
+        document_quality = (
+            (
+                await session.execute(
+                    text(f"""
+            SELECT COUNT(*) FILTER (WHERE COALESCE(d.currency, '') <> 'MXN') AS currency_count,
+                COUNT(*) FILTER (WHERE d.monto_total IS NULL AND d.monto_solicitado IS NULL) AS missing_amount_count
+            FROM documentos d LEFT JOIN tournaments t ON t.id = d.torneo_id
+            WHERE {' AND '.join(document_filters)}
+        """),
+                    quality_params,
+                )
+            )
+            .mappings()
+            .first()
+        )
+        if document_quality and int(document_quality.get("currency_count") or 0):
+            quality_gaps.append("mixed_or_unknown_currency")
+        if document_quality and int(document_quality.get("missing_amount_count") or 0):
+            quality_gaps.append("document_amount_missing")
+
+    executive_monthly = (
+        await build_executive_monthly_actuals(
+            session,
+            tournament_id=tournament_id,
+            edition_year=edition_year,
+            **period_kwargs,
+        )
+        if executive_read and tournament_id
+        else None
+    )
     return {
         "ok": True,
         "source": "budget_db",
+        **(
+            {
+                "executive_quality_gaps": sorted(set(quality_gaps)),
+                "executive_monthly_actuals": executive_monthly,
+            }
+            if executive_read
+            else {}
+        ),
         "version": {
             "id": selected_version["id"],
             "name": selected_version["version_name"],

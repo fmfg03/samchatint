@@ -12290,7 +12290,7 @@ def render_top_navigation(current_empleado: Empleado, active_area: Optional[str]
     if can_nav("panel.home", ("empleado", "coordinador", "finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel", "Panel de administración", "panel"))
     if bool(getattr(current_empleado, "direction_entry_visible", False)):
-        links.append(("/direccion/tableros", "Dirección", "direccion"))
+        links.append(("/direccion/inicio", "Dirección", "direccion"))
     if can_nav("panel.operaciones", ("finanzas", "admin", "superadmin", "super_admin")):
         links.append(("/panel/operaciones-console", "Operaciones", "operacion"))
     if can_nav("admin.contabilidad", ('finanzas', 'admin', 'superadmin', 'super_admin')):
@@ -15704,7 +15704,7 @@ async def panel(
     if getattr(current_empleado, "direction_entry_visible", False):
         ejecutivo_cards.append(
             (
-                "/direccion/tableros",
+                "/direccion/inicio",
                 "Dirección",
                 "Tableros ejecutivos de solo lectura dentro de tu alcance asignado.",
             )

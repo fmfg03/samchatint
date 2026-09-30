@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -573,8 +573,16 @@ async def _build_direction_budget_snapshot(
     *,
     tournament: dict[str, str],
     edition_year: int,
+    executive_read: bool = False,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
 ) -> dict[str, Any]:
     """Read budget truth with a guarded bridge for legacy name/code rows."""
+    extra = (
+        {"executive_read": True, "date_from": date_from, "date_to": date_to}
+        if executive_read
+        else {}
+    )
     strict = await build_budget_snapshot(
         session,
         tournament_id=tournament["id"],
@@ -583,6 +591,7 @@ async def _build_direction_budget_snapshot(
         edition_year=edition_year,
         ensure_schema=False,
         strict_tournament_scope=True,
+        **extra,
     )
     if strict.get("source") != "budget_scope_unavailable":
         return strict
@@ -614,6 +623,7 @@ async def _build_direction_budget_snapshot(
             version_id=version_id,
             ensure_schema=False,
             strict_tournament_scope=False,
+            **extra,
         )
     except _DirectionBudgetScopeViolation:
         return strict
