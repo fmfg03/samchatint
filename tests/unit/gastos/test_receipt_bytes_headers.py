@@ -29,3 +29,14 @@ def test_content_disposition_preserves_ascii_filename() -> None:
 
     assert media_type == "application/pdf"
     assert disposition == 'inline; filename="comprobante.pdf"'
+
+
+def test_content_disposition_strips_path_and_header_controls() -> None:
+    _, disposition = comprobante_response_headers(
+        '../malo\\archivo"\r\n.pdf', "application/pdf"
+    )
+
+    assert "\r" not in disposition
+    assert "\n" not in disposition
+    assert "/" not in disposition
+    assert "\\" not in disposition
