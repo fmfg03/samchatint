@@ -168,7 +168,10 @@ from ..services.expense_accounting_service import build_expense_accounting_previ
 from ..services.payment_run_exporter import _safe_cell_text as _safe_spreadsheet_cell_text
 from ..services.employee_debtor_accounting_service import (
     build_cuenta_debtor_auxiliary,
+    debtor_account_block_label_for_employee,
     ensure_debtor_payment_posting_for_document,
+    resolve_cuenta_debtor_account,
+    resolve_cuenta_debtor_empleado,
 )
 from ..services.expense_coi_export_service import (
     assess_expense_coi_cleanup_ready,
@@ -34352,6 +34355,26 @@ async def exportar_papel_poliza_informe(
             status_code=409,
             detail="El informe contiene gastos en distintas monedas; no es posible cuadrarlos juntos.",
         )
+    employee_paid_expenses = [
+        expense for expense in expenses if not is_company_amex_expense(expense)
+    ]
+    informe_debtor_account = None
+    if employee_paid_expenses:
+        debtor_employee = await resolve_cuenta_debtor_empleado(session, cuenta)
+        informe_debtor_account = await resolve_cuenta_debtor_account(
+            session, cuenta, debtor_employee
+        )
+        if informe_debtor_account is None:
+            block = debtor_account_block_label_for_employee(debtor_employee)
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "No se puede generar el Papel DR: falta la subcuenta contable "
+                    "de detalle del beneficiario del Informe de Gastos "
+                    f"({block})."
+                ),
+            )
+
     workpaper_expenses = [
         InformeWorkpaperExpense(
             source_id=str(expense.id),
@@ -34372,7 +34395,9 @@ async def exportar_papel_poliza_informe(
             expense_account=getattr(expense.cuenta_contable, "codigo", "") or "",
             vat_account=getattr(expense.cuenta_iva, "codigo", "") or "",
             counterpart_account=(
-                getattr(expense.contra_cuenta_contable, "codigo", "") or ""
+                (getattr(expense.contra_cuenta_contable, "codigo", "") or "")
+                if is_company_amex_expense(expense)
+                else str(getattr(informe_debtor_account, "codigo", "") or "")
             ),
             company_amex=is_company_amex_expense(expense),
             cfdi_uuid=getattr(expense.cfdi_report, "cfdi_uuid", "") or "",

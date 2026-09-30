@@ -110,6 +110,20 @@ async def test_finance_route_includes_unclassified_expenses_without_writing(monk
         user_routes, "_informe_documento_for_cuenta",
         AsyncMock(return_value=SimpleNamespace(referencia_operaciones="3")),
     )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Edgar Ejemplo")
+    debtor_account = SimpleNamespace(
+        id=uuid4(), codigo="1170-001-009", nombre="Edgar Ejemplo"
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_cuenta_debtor_empleado",
+        AsyncMock(return_value=beneficiary),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_cuenta_debtor_account",
+        AsyncMock(return_value=debtor_account),
+    )
     actor = SimpleNamespace(id=uuid4(), rol="finanzas")
 
     response = await user_routes.exportar_papel_poliza_informe(
@@ -120,7 +134,9 @@ async def test_finance_route_includes_unclassified_expenses_without_writing(monk
     wb = load_workbook(BytesIO(response.body))
     assert wb["Papel DR"]["F4"].value == 605.88
     assert wb["Papel DR"]["B4"].value is None
+    assert wb["Papel DR"]["B6"].value == "1170-001-009"
     assert wb["Origen y revisión"]["A2"].value == str(expense.id)
+    assert wb["Origen y revisión"]["K2"].value == "1170-001-009"
     session.execute.assert_awaited_once()
 
 
@@ -139,3 +155,66 @@ async def test_finance_route_rejects_missing_informe(monkeypatch):
             current_empleado=SimpleNamespace(id=uuid4(), rol="finanzas"),
         )
     assert error.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_finance_route_blocks_generic_counterpart_without_beneficiary_detail(
+    monkeypatch,
+):
+    cuenta_id = uuid4()
+    cuenta = SimpleNamespace(
+        id=cuenta_id,
+        empleado_id=uuid4(),
+        currency="MXN",
+        nombre="Gastos",
+        referencia_base="IG-4",
+    )
+    expense = SimpleNamespace(
+        id=uuid4(),
+        numero_referencia="G-2",
+        fecha=None,
+        concepto="Gasolina",
+        gasto_cantidad=100,
+        iva=None,
+        cuenta_contable=SimpleNamespace(codigo="5100-006-004"),
+        cuenta_iva=None,
+        contra_cuenta_contable=SimpleNamespace(codigo="2120-000-000"),
+        cfdi_report=None,
+        currency="MXN",
+        pagado_con_amex_empresa=False,
+    )
+    session = SimpleNamespace(
+        get=AsyncMock(return_value=cuenta),
+        execute=AsyncMock(
+            return_value=SimpleNamespace(
+                scalars=lambda: SimpleNamespace(all=lambda: [expense])
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "_informe_documento_for_cuenta",
+        AsyncMock(return_value=SimpleNamespace(referencia_operaciones="4")),
+    )
+    beneficiary = SimpleNamespace(id=uuid4(), nombre="Sin subcuenta")
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_cuenta_debtor_empleado",
+        AsyncMock(return_value=beneficiary),
+    )
+    monkeypatch.setattr(
+        user_routes,
+        "resolve_cuenta_debtor_account",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(HTTPException) as error:
+        await user_routes.exportar_papel_poliza_informe(
+            cuenta_id=cuenta_id,
+            session=session,
+            current_empleado=SimpleNamespace(id=uuid4(), rol="finanzas"),
+        )
+
+    assert error.value.status_code == 409
+    assert "subcuenta contable de detalle" in error.value.detail
+    assert "1170-001" in error.value.detail
