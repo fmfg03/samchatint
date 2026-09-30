@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from html import escape
 from ipaddress import ip_address, ip_network
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from uuid import UUID
 
 import httpx
@@ -155,9 +155,43 @@ def resolve_media_type(filename: Optional[str], raw: bytes) -> str:
 def comprobante_response_headers(
     filename: Optional[str], media_type: str
 ) -> Tuple[str, str]:
+    """Return (media_type, Content-Disposition value) safe for Unicode filenames."""
+    safe = (
+        (filename or "comprobante")
+        .replace('"', "_")
+        .replace("\\", "_")
+        .replace("/", "_")
+        .replace("\r", "")
+        .replace("\n", "")
+    )
+    if not safe:
+        safe = "comprobante"
+
+    try:
+        safe.encode("ascii")
+    except UnicodeEncodeError:
+        # Starlette serializes response headers as latin-1. A user filename can
+        # contain decomposed accents (for example O + U+0301) or other Unicode
+        # characters that cannot be encoded there, raising an unhandled 500.
+        # Keep an ASCII fallback and preserve the real name through RFC 5987.
+        fallback = (
+            safe.encode("ascii", errors="ignore").decode("ascii").strip()
+            or "comprobante"
+        )
+        encoded = quote(safe, safe="!#def comprobante_response_headers(
+    filename: Optional[str], media_type: str
+) -> Tuple[str, str]:
     """Return (media_type, Content-Disposition value)."""
     safe = (filename or "comprobante").replace('"', "_").replace("\r", "").replace("\n", "")
     disp = f'inline; filename="{safe}"'
+    return media_type, disp
++-.^_\`|~")
+        disp = (
+            f'inline; filename="{fallback}"; '
+            f"filename*=UTF-8''{encoded}"
+        )
+    else:
+        disp = f'inline; filename="{safe}"'
     return media_type, disp
 
 
