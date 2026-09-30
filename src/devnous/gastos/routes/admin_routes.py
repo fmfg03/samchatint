@@ -10674,8 +10674,33 @@ async def admin_payment_run_replace_document_proof(
     previous_id: UUIDType = Form(...),
     comprobante_pago: UploadFile = File(...),
     motivo: str = Form(...),
+    return_to: Optional[str] = Form(None),
 ) -> RedirectResponse:
     """Replace a paid document proof without recording another payment."""
+    detail_return_to = f"/documentos/{documento_id}"
+    return_to_detail = (
+        isinstance(return_to, str) and return_to.strip() == detail_return_to
+    )
+
+    def replacement_redirect(
+        *,
+        success_msg: Optional[str] = None,
+        error_msg: Optional[str] = None,
+    ) -> RedirectResponse:
+        if return_to_detail:
+            params = []
+            if success_msg:
+                params.append(f"success_msg={quote(success_msg)}")
+            if error_msg:
+                params.append(f"error_msg={quote(error_msg)}")
+            suffix = ("?" + "&".join(params)) if params else ""
+            return RedirectResponse(url=f"{detail_return_to}{suffix}", status_code=303)
+        return _payment_run_redirect(
+            success_msg=success_msg,
+            error_msg=error_msg,
+            vista="pagadas",
+            anchor="pagadas",
+        )
     try:
         require_payment_run_access(current_empleado)
         require_payment_run_payment_confirmation(current_empleado)
@@ -10717,12 +10742,12 @@ async def admin_payment_run_replace_document_proof(
         await session.commit()
     except SolicitudValidationError as exc:
         await session.rollback()
-        return _payment_run_redirect(error_msg=str(exc), vista="pagadas", anchor="pagadas")
+        return replacement_redirect(error_msg=str(exc))
     except Exception:
         await session.rollback()
         logger.exception("Could not replace payment proof", extra={"documento_id": str(documento_id)})
-        return _payment_run_redirect(error_msg="No se pudo sustituir el comprobante.", vista="pagadas", anchor="pagadas")
-    return _payment_run_redirect(success_msg="Comprobante sustituido; pago sin cambios.", vista="pagadas", anchor="pagadas")
+        return replacement_redirect(error_msg="No se pudo sustituir el comprobante.")
+    return replacement_redirect(success_msg="Comprobante sustituido; pago sin cambios.")
 
 
 @router.post("/admin/finanzas/payment-run/prestamo/{prestamo_id}/sustituir-comprobante")

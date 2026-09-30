@@ -22,7 +22,11 @@ from devnous.gastos.services.loan_request_service import (
 from devnous.gastos.services.payment_proof_replacement_service import (
     replace_payment_run_proof,
 )
-from devnous.gastos.utils.receipt_bytes import DocumentoAdjuntoMeta, html_documento_archivos_cell
+from devnous.gastos.utils.receipt_bytes import (
+    DocumentoAdjuntoMeta,
+    html_documento_archivos_cell,
+    html_documento_archivos_detail,
+)
 
 
 @pytest.mark.asyncio
@@ -91,6 +95,39 @@ def test_historical_document_proof_is_labeled_sustituido():
         tipo_archivo="application/pdf", nombre_archivo="old.pdf", activo=False,
     )])
     assert "Comprobante pago (sustituido)" in html
+
+
+def test_document_detail_offers_audited_correction_for_current_payment_proof():
+    document_id, current_id, old_id = uuid4(), uuid4(), uuid4()
+    current = DocumentoAdjuntoMeta(
+        id=current_id,
+        categoria="comprobante_pago",
+        mime_type="application/pdf",
+        tipo_archivo="application/pdf",
+        nombre_archivo="vigente.pdf",
+        activo=True,
+    )
+    old = DocumentoAdjuntoMeta(
+        id=old_id,
+        categoria="comprobante_pago",
+        mime_type="application/pdf",
+        tipo_archivo="application/pdf",
+        nombre_archivo="anterior.pdf",
+        activo=False,
+    )
+    html = html_documento_archivos_detail(
+        document_id,
+        [old, current],
+        replaceable_adjunto_ids={current_id},
+    )
+    assert "Corregir comprobante" in html
+    assert "Sustituir archivo" in html
+    assert f'name="previous_id" value="{current_id}"' in html
+    assert f'name="return_to" value="/documentos/{document_id}"' in html
+    assert "El archivo anterior no se borra" in html
+    assert html.count("Corregir comprobante") == 1
+    assert "anterior.pdf" in html
+    assert "(sustituido)" in html
 
 
 def test_loan_replacement_preserves_history_and_payment_state(monkeypatch):
@@ -208,6 +245,87 @@ async def test_document_replacement_route_never_registers_another_payment(monkey
     assert "vista=pagadas" in response.headers["location"]
     replacement.assert_awaited_once()
     session.commit.assert_awaited_once()
+    assert document.estado == "pagado"
+    assert document.monto_total == 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["success", "validation", "unexpected"])
+@pytest.mark.parametrize("return_target", ["document", "other_document", "external"])
+async def test_document_replacement_can_return_to_document_detail(
+    monkeypatch, outcome, return_target
+):
+    session = AsyncMock()
+    document_id, old_id = uuid4(), uuid4()
+    document = SimpleNamespace(
+        id=document_id,
+        estado="pagado",
+        tipo="SOLICITUD",
+        pagado_en=datetime.now(timezone.utc),
+        fecha_pago_efectiva=None,
+        monto_solicitado=100,
+        monto_total=100,
+        currency="MXN",
+        beneficiario_empleado=None,
+        proveedor_cliente=None,
+    )
+    session.get.return_value = document
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    monkeypatch.setattr(admin_routes, "_payment_proof_expected_beneficiary", lambda _: "Beneficiario")
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: SimpleNamespace(status="match", detected_date=None, confirmation_blocked=False),
+    )
+    replacement = AsyncMock(
+        side_effect=(
+            SolicitudValidationError("stale", "Comprobante sustituido")
+            if outcome == "validation"
+            else (
+                RuntimeError("Replacement unavailable")
+                if outcome == "unexpected"
+                else None
+            )
+        )
+    )
+    monkeypatch.setattr(admin_routes, "replace_payment_run_proof", replacement)
+    target = {
+        "document": f"/documentos/{document_id}",
+        "other_document": f"/documentos/{uuid4()}",
+        "external": "https://example.test/documentos",
+    }[return_target]
+    response = await admin_routes.admin_payment_run_replace_document_proof(
+        documento_id=document_id,
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        previous_id=old_id,
+        comprobante_pago=SimpleNamespace(
+            filename="nuevo.pdf",
+            content_type="application/pdf",
+            read=AsyncMock(return_value=b"%PDF-1.4\n"),
+        ),
+        motivo="Archivo equivocado",
+        return_to=target,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    if return_target == "document":
+        assert location.startswith(f"/documentos/{document_id}?")
+        assert "vista=pagadas" not in location
+    else:
+        assert location.startswith("/admin/finanzas/payment-run?")
+        assert "vista=pagadas" in location
+        assert "example.test" not in location
+    replacement.assert_awaited_once()
+    if outcome == "success":
+        assert "success_msg=" in location
+        session.commit.assert_awaited_once()
+        session.rollback.assert_not_awaited()
+    else:
+        assert "error_msg=" in location
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
     assert document.estado == "pagado"
     assert document.monto_total == 100
 

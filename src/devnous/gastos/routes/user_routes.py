@@ -418,6 +418,9 @@ from ..utils.receipt_bytes import (
 )
 from .dependencies import get_current_empleado, get_db_session, has_permission, require_admin_finanzas
 from ..services.payment_run_service import (
+    PaymentRunPermissionError,
+    require_payment_run_access,
+    require_payment_run_payment_confirmation,
     can_confirm_payment_run_payment,
     can_manage_payment_run,
 )
@@ -11215,6 +11218,53 @@ def _can_finance_add_comprobante_pago(
     if not can_confirm_payment_run_payment(empleado):
         return False
     return documento.estado == "en_proceso_pago"
+
+
+def _can_finance_replace_comprobante_pago(
+    documento: Documento,
+    empleado: Empleado,
+    *,
+    solicitud_cancelada: bool = False,
+) -> bool:
+    """Authorized Accounting users may correct proof after payment without undoing it."""
+    if (
+        solicitud_cancelada
+        or getattr(documento, "tipo", None) != "SOLICITUD"
+        or getattr(documento, "estado", None) != "pagado"
+        or not getattr(documento, "pagado_en", None)
+    ):
+        return False
+    try:
+        require_payment_run_access(empleado)
+        require_payment_run_payment_confirmation(empleado)
+    except PaymentRunPermissionError:
+        return False
+    return True
+
+
+def _replaceable_solicitud_comprobante_ids(
+    documento: Documento,
+    empleado: Empleado,
+    adjuntos: list,
+    *,
+    solicitud_cancelada: bool = False,
+) -> set[UUIDType]:
+    if not _can_finance_replace_comprobante_pago(
+        documento,
+        empleado,
+        solicitud_cancelada=solicitud_cancelada,
+    ):
+        return set()
+    replaceable: set[UUIDType] = set()
+    for meta in adjuntos:
+        if (getattr(meta, "categoria", None) or "").strip().lower() != "comprobante_pago":
+            continue
+        if getattr(meta, "activo", True) is False:
+            continue
+        adjunto_id = _adjunto_meta_id(meta)
+        if adjunto_id is not None:
+            replaceable.add(adjunto_id)
+    return replaceable
 
 
 def _nueva_solicitud_terceros_form_url(
@@ -26655,6 +26705,8 @@ def _can_access_expense_comprobante(expense: ExpenseReport, empleado: Empleado) 
 
 
 def _can_access_documento_adjunto(documento: Documento, empleado: Empleado) -> bool:
+    if _can_finance_replace_comprobante_pago(documento, empleado):
+        return True
     if _can_access_read_only_informe_document(documento, empleado):
         return True
     if documento.empleado_id == empleado.id:
@@ -38061,8 +38113,9 @@ async def ver_documento(
     if (
         documento.empleado_id != current_empleado.id
         and current_empleado.rol
-        not in ['coordinador', 'finanzas', 'admin', 'superadmin', 'super_admin']
+        not in ["coordinador", "finanzas", "admin", "superadmin", "super_admin"]
         and not _can_access_read_only_informe_document(documento, current_empleado)
+        and not _can_finance_replace_comprobante_pago(documento, current_empleado)
     ):
         return _render_documento_access_denied_page(current_empleado)
 
@@ -38867,8 +38920,14 @@ async def ver_documento(
         </section>
         """
 
-    if _is_solicitud_terceros(documento):
+    if documento.tipo == "SOLICITUD":
         removable_adjunto_ids = _removable_solicitud_adjunto_ids(
+            documento,
+            current_empleado,
+            adjuntos_doc,
+            solicitud_cancelada=solicitud_cancelada,
+        )
+        replaceable_comprobante_ids = _replaceable_solicitud_comprobante_ids(
             documento,
             current_empleado,
             adjuntos_doc,
@@ -38879,6 +38938,7 @@ async def ver_documento(
                 documento_id,
                 adjuntos_doc,
                 removable_adjunto_ids=removable_adjunto_ids,
+                replaceable_adjunto_ids=replaceable_comprobante_ids,
             )
             if adjuntos_doc
             else "—"
