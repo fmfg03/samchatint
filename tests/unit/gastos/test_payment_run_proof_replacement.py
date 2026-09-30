@@ -22,7 +22,11 @@ from devnous.gastos.services.loan_request_service import (
 from devnous.gastos.services.payment_proof_replacement_service import (
     replace_payment_run_proof,
 )
-from devnous.gastos.utils.receipt_bytes import DocumentoAdjuntoMeta, html_documento_archivos_cell
+from devnous.gastos.utils.receipt_bytes import (
+    DocumentoAdjuntoMeta,
+    html_documento_archivos_cell,
+    html_documento_archivos_detail,
+)
 
 
 @pytest.mark.asyncio
@@ -91,6 +95,39 @@ def test_historical_document_proof_is_labeled_sustituido():
         tipo_archivo="application/pdf", nombre_archivo="old.pdf", activo=False,
     )])
     assert "Comprobante pago (sustituido)" in html
+
+
+def test_document_detail_offers_audited_correction_for_current_payment_proof():
+    document_id, current_id, old_id = uuid4(), uuid4(), uuid4()
+    current = DocumentoAdjuntoMeta(
+        id=current_id,
+        categoria="comprobante_pago",
+        mime_type="application/pdf",
+        tipo_archivo="application/pdf",
+        nombre_archivo="vigente.pdf",
+        activo=True,
+    )
+    old = DocumentoAdjuntoMeta(
+        id=old_id,
+        categoria="comprobante_pago",
+        mime_type="application/pdf",
+        tipo_archivo="application/pdf",
+        nombre_archivo="anterior.pdf",
+        activo=False,
+    )
+    html = html_documento_archivos_detail(
+        document_id,
+        [old, current],
+        replaceable_adjunto_ids={current_id},
+    )
+    assert "Corregir comprobante" in html
+    assert "Sustituir archivo" in html
+    assert f'name="previous_id" value="{current_id}"' in html
+    assert f'name="return_to" value="/documentos/{document_id}"' in html
+    assert "El archivo anterior no se borra" in html
+    assert html.count("Corregir comprobante") == 1
+    assert "anterior.pdf" in html
+    assert "(sustituido)" in html
 
 
 def test_loan_replacement_preserves_history_and_payment_state(monkeypatch):
@@ -210,6 +247,51 @@ async def test_document_replacement_route_never_registers_another_payment(monkey
     session.commit.assert_awaited_once()
     assert document.estado == "pagado"
     assert document.monto_total == 100
+
+
+@pytest.mark.asyncio
+async def test_document_replacement_can_return_to_document_detail(monkeypatch):
+    session = AsyncMock()
+    document_id, old_id = uuid4(), uuid4()
+    document = SimpleNamespace(
+        id=document_id,
+        estado="pagado",
+        tipo="SOLICITUD",
+        pagado_en=datetime.now(timezone.utc),
+        fecha_pago_efectiva=None,
+        monto_solicitado=100,
+        monto_total=100,
+        currency="MXN",
+        beneficiario_empleado=None,
+        proveedor_cliente=None,
+    )
+    session.get.return_value = document
+    monkeypatch.setattr(admin_routes, "require_payment_run_access", lambda _: None)
+    monkeypatch.setattr(admin_routes, "require_payment_run_payment_confirmation", lambda _: None)
+    monkeypatch.setattr(admin_routes, "validate_solicitud_terceros_attachment", lambda _: None)
+    monkeypatch.setattr(admin_routes, "_payment_proof_expected_beneficiary", lambda _: "Beneficiario")
+    monkeypatch.setattr(
+        "devnous.gastos.services.payment_proof_review_service.review_payment_proof",
+        lambda **_: SimpleNamespace(status="match", detected_date=None, confirmation_blocked=False),
+    )
+    monkeypatch.setattr(admin_routes, "replace_payment_run_proof", AsyncMock())
+    response = await admin_routes.admin_payment_run_replace_document_proof(
+        documento_id=document_id,
+        session=session,
+        current_empleado=SimpleNamespace(id=uuid4()),
+        previous_id=old_id,
+        comprobante_pago=SimpleNamespace(
+            filename="nuevo.pdf",
+            content_type="application/pdf",
+            read=AsyncMock(return_value=b"%PDF-1.4\n"),
+        ),
+        motivo="Archivo equivocado",
+        return_to=f"/documentos/{document_id}",
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].startswith(f"/documentos/{document_id}?")
+    assert "success_msg=" in response.headers["location"]
+    assert "vista=pagadas" not in response.headers["location"]
 
 
 @pytest.mark.asyncio
