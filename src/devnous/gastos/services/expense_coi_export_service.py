@@ -8,10 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import ExpenseReport
+from ..models import CuentaContable, CuentaDeGastos, ExpenseReport
+from .amex_expense_service import is_company_amex_expense
 from .coi_poliza_exporter import ExpenseCFDI
 from .expense_accounting_cleanup_service import build_cleanup_preview
 from .expense_accounting_service import build_expense_accounting_preview
+from .employee_debtor_accounting_service import (
+    resolve_cuenta_debtor_account,
+    resolve_cuenta_debtor_empleado,
+)
 
 _NON_FISCAL_ACCOUNT_NAMES = {
     "sin requisitos fiscales",
@@ -49,6 +54,46 @@ def group_expense_cfdis_for_document(
     return expense_cfdis
 
 
+async def resolve_informe_counterpart_override(
+    session: AsyncSession,
+    documento: Any,
+    expense: ExpenseReport,
+) -> Optional[CuentaContable]:
+    """Resolve the detail debtor subaccount for employee-paid INFORME expenses.
+
+    Account-based expense reports settle the advance/reimbursement against the
+    beneficiary who received the transfer. Company AMEX expenses keep their own
+    stored counterpart instead.
+    """
+    if getattr(documento, "tipo", None) != "INFORME":
+        return None
+    if is_company_amex_expense(expense):
+        return None
+
+    cuenta_id = (
+        getattr(documento, "cuenta_gastos_id", None)
+        or getattr(expense, "cuenta_gastos_id", None)
+    )
+    if cuenta_id is None:
+        # Legacy INFORME without CuentaDeGastos keeps its current persisted
+        # accounting behavior because there is no canonical beneficiary context.
+        return None
+
+    cuenta = await session.get(CuentaDeGastos, cuenta_id)
+    if cuenta is None:
+        raise ValueError("No se encontró la cuenta de gastos vinculada al Informe.")
+
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
+    account = await resolve_cuenta_debtor_account(session, cuenta, empleado)
+    if account is None:
+        beneficiary = str(getattr(empleado, "nombre", None) or "beneficiario").strip()
+        raise ValueError(
+            "Falta la subcuenta contable de deudor para "
+            f"{beneficiary}. No se usará la cuenta concentradora 2120-000-000."
+        )
+    return account
+
+
 async def assess_expense_coi_cleanup_ready(
     session: AsyncSession,
     expense: ExpenseReport,
@@ -64,6 +109,7 @@ async def build_expense_cfdi_for_export(
     expense: ExpenseReport,
     *,
     require_cleanup_ready: bool = True,
+    counterpart_override: Optional[CuentaContable] = None,
 ) -> ExpenseCFDI:
     """
     Build one ExpenseCFDI row using the same path as solicitudes a terceros / finanzas.
@@ -96,7 +142,8 @@ async def build_expense_cfdi_for_export(
     contra_account = preview.get("contra_account") or {}
 
     contra_codigo = str(
-        contra_account.get("codigo")
+        getattr(counterpart_override, "codigo", None)
+        or contra_account.get("codigo")
         or (contra_cuenta.codigo if contra_cuenta else "")
         or ""
     ).strip()
@@ -191,5 +238,6 @@ __all__ = [
     "assess_expense_coi_cleanup_ready",
     "build_expense_cfdi_for_export",
     "group_expense_cfdis_for_document",
+    "resolve_informe_counterpart_override",
     "load_expense_for_coi_export",
 ]
