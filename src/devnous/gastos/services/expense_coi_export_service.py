@@ -41,31 +41,52 @@ async def _resolve_informe_detail_counterpart(
 ) -> Optional[str]:
     """Resolve the beneficiary detail account for employee-paid report expenses.
 
-    Expense-report accounting is settled against the beneficiary's debtor
-    auxiliary, not a generic liability/header account. Company AMEX expenses
-    keep their own configured counterpart.
+    The resolution is cached on the request/session object by CuentaDeGastos so
+    a grouped COI policy does not repeat beneficiary and chart-account lookups
+    for every expense line.
     """
     cuenta_gastos_id = getattr(expense, "cuenta_gastos_id", None)
     if not cuenta_gastos_id or is_company_amex_expense(expense):
         return None
 
+    cache_attr = "_samchat_informe_counterpart_cache"
+    cache = getattr(session, cache_attr, None)
+    if cache is None:
+        cache = {}
+        try:
+            setattr(session, cache_attr, cache)
+        except (AttributeError, TypeError):
+            pass
+
+    cache_key = str(cuenta_gastos_id)
+    if cache_key in cache:
+        cached_code, cached_error = cache[cache_key]
+        if cached_error:
+            raise ValueError(cached_error)
+        return cached_code
+
     cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
     if cuenta is None:
-        raise ValueError(
+        error = (
             "El gasto pertenece a un Informe de Gastos sin cuenta vinculada válida."
         )
+        cache[cache_key] = (None, error)
+        raise ValueError(error)
 
     empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
     debtor_account = await resolve_cuenta_debtor_account(session, cuenta, empleado)
     code = str(getattr(debtor_account, "codigo", "") or "").strip()
     if code:
+        cache[cache_key] = (code, None)
         return code
 
     block = debtor_account_block_label_for_employee(empleado)
-    raise ValueError(
+    error = (
         "Falta subcuenta contable de detalle para el beneficiario del Informe "
         f"de Gastos ({block})."
     )
+    cache[cache_key] = (None, error)
+    raise ValueError(error)
 
 
 def group_expense_cfdis_for_document(
@@ -113,12 +134,15 @@ async def build_expense_cfdi_for_export(
 
     Requires persisted cleanup fields (cuenta, contrapartida, CFDI unless non-fiscal).
     """
-    ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
-    if require_cleanup_ready and not ready:
-        detail = (
-            "; ".join(issues) if issues else "Gasto pendiente de limpieza contable."
-        )
-        raise ValueError(detail)
+    if require_cleanup_ready:
+        ready, issues = await assess_expense_coi_cleanup_ready(session, expense)
+        if not ready:
+            detail = (
+                "; ".join(issues)
+                if issues
+                else "Gasto pendiente de limpieza contable."
+            )
+            raise ValueError(detail)
 
     cuenta_contable = getattr(expense, "cuenta_contable", None)
     contra_cuenta = getattr(expense, "contra_cuenta_contable", None)
