@@ -873,8 +873,24 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
         assignment = "Asignado" if doc_concept else "Sin asignar"
 
     allowed = _BUDGET_REQUESTED_DOCUMENT_STATES | _BUDGET_COMMITTED_DOCUMENT_STATES | _BUDGET_EFFECT_TERMINAL_DOCUMENT_STATES
-    if state in _BUDGET_NON_IMPACT_DOCUMENT_STATES or state not in allowed:
-        return {"amount": Decimal("0"), "assignment_label": assignment, "stage": "No afecta", "affects_budget": False}
+    is_derived_reimbursement = (
+        doc_type == "SOLICITUD"
+        and str(getattr(documento, "concepto_pago", "") or "")
+        .strip()
+        .lower()
+        .startswith("reembolso de saldo a favor")
+    )
+    if (
+        state in _BUDGET_NON_IMPACT_DOCUMENT_STATES
+        or state not in allowed
+        or is_derived_reimbursement
+    ):
+        return {
+            "amount": Decimal("0"),
+            "assignment_label": assignment,
+            "stage": "No afecta",
+            "affects_budget": False,
+        }
 
     if expenses:
         amount = sum((budget_expense_effect_amount(e) for e in assigned), Decimal("0"))

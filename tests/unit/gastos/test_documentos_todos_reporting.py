@@ -103,6 +103,21 @@ def test_nonimpact_document_states_do_not_affect_budget():
         assert row["monto_presupuestal_valor"] == Decimal("0")
 
 
+def test_derived_reimbursement_does_not_double_affect_budget():
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(
+            tipo="SOLICITUD",
+            estado="aprobado",
+            concepto_pago="Reembolso de saldo a favor - Informe IG-26001",
+            budget_concept_id=uuid4(),
+            monto_solicitado=Decimal("450.00"),
+            monto_total=Decimal("450.00"),
+        )
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("0")
+    assert row["asignacion_presupuestal"] == "Asignado"
+
+
 def test_informe_budget_impact_sums_only_assigned_lines():
     assigned = SimpleNamespace(budget_concept_id=uuid4(), gasto_cantidad=Decimal("116"), iva=Decimal("16"), hospedaje_impuesto_monto=0, propina_no_deducible=0, estado_gasto="activo", adjuntos=[])
     unassigned = SimpleNamespace(budget_concept_id=None, gasto_cantidad=Decimal("232"), iva=Decimal("32"), hospedaje_impuesto_monto=0, propina_no_deducible=0, estado_gasto="activo", adjuntos=[])
