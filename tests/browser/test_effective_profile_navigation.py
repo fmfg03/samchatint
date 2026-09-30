@@ -229,8 +229,8 @@ def test_direction_panel_exposes_direction_task_entry(
     assert response is not None
     assert response.status == 200
 
-    entry = page.locator('a[href="/direccion/tableros"]')
+    entry = page.locator('a[href="/direccion/inicio"]')
     assert entry.count() >= 1
     expect(entry.first).to_be_visible()
-    assert _focus_reaches_href(page, "/direccion/tableros", max_tabs=120)
+    assert _focus_reaches_href(page, "/direccion/inicio", max_tabs=120)
     _capture_profile(page, "direction-panel")

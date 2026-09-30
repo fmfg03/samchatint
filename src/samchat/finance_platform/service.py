@@ -115,10 +115,14 @@ async def build_finance_source_snapshot(
     year: int | None = None,
     month: int | None = None,
     limit: int = 300,
+    tournament_ids: list[str] | None = None,
+    documents_only: bool = False,
 ) -> dict[str, Any]:
     """Read current finance source rows and normalize them for UI projections."""
     from devnous.gastos.models import AccountingPoliza, Documento, ExpenseReport
 
+    if documents_only and tournament_ids is None:
+        raise ValueError("Document-only executive reads require explicit scope")
     period_year, period_month, start, end = _period_bounds(year, month)
 
     document_stmt = (
@@ -191,7 +195,29 @@ async def build_finance_source_snapshot(
         .limit(limit)
     )
 
+    if tournament_ids is not None:
+        # An empty authorized scope must return no rows, never a global read.
+        document_stmt = document_stmt.where(Documento.torneo_id.in_(tournament_ids))
+        document_stmt = document_stmt.limit(limit + 1)
+        if not documents_only:
+            raise ValueError("Scoped finance reads currently support documents only")
     documents = (await session.execute(document_stmt)).scalars().all()
+    if documents_only:
+        return {
+            "period": {"year": period_year, "month": period_month},
+            "documents": [
+                {**_serialize_document(d), "currency": getattr(d, "currency", None)}
+                for d in documents[:limit]
+            ],
+            "expenses": [],
+            "polizas": [],
+            "source_status": {
+                "document_scan_truncated": len(documents) > limit,
+                "document_scan_limit": limit,
+                "tournament_ids": sorted(set(tournament_ids)),
+                "polizas_available": False,
+            },
+        }
     expenses = (await session.execute(expense_stmt)).scalars().all()
     polizas = (await session.execute(poliza_stmt)).scalars().all()
     expenses_truncated = len(expenses) > limit
@@ -507,17 +533,22 @@ def build_finance_action_queue(snapshot: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
-    documents = list(snapshot.get("documents") or [])
-    polizas = list(snapshot.get("polizas") or [])
-    approved_unpaid = [
+def approved_unpaid_documents(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the complete canonical population before UI preview limits."""
+    return [
         row
-        for row in documents
+        for row in snapshot.get("documents") or []
         if _safe_str(row.get("estado")).lower()
         in {"aprobado", "en_proceso_pago"}
         and _safe_str(row.get("tipo")).upper() == "SOLICITUD"
         and not row.get("pagado_en")
     ]
+
+
+def _build_cash_control(snapshot: dict[str, Any]) -> dict[str, Any]:
+    documents = list(snapshot.get("documents") or [])
+    polizas = list(snapshot.get("polizas") or [])
+    approved_unpaid = approved_unpaid_documents(snapshot)
     paid_documents = [
         row
         for row in documents

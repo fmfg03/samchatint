@@ -150,7 +150,7 @@ NAVIGATION_INVENTORY = (
         test_path="/_test/panel/direction",
         section_label=None,
         label="Dirección",
-        href="/direccion/tableros",
+        href="/direccion/inicio",
         classification="canonical",
         route_owner="direction",
     ),
