@@ -211,7 +211,8 @@ def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
     assert "d.monto_total" in sql
     assert "d.monto_solicitado" in sql
     assert "COALESCE(d.monto_solicitado, d.monto_total, 0)" in sql
-    assert "d.cfdi_compartido_confirmado" in sql
+    assert "COALESCE(document_cfdi.total, 0) > 0" in sql
+    assert "d.cfdi_compartido_confirmado" not in sql
     assert "1.16" not in sql
 
 

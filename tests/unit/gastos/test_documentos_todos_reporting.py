@@ -88,6 +88,23 @@ def test_budget_impact_uses_cfdi_subtotal_less_discount_when_assigned():
     assert row["asignacion_presupuestal"] == "Asignado"
 
 
+def test_cfdi_request_prorates_budget_even_before_shared_flag_is_backfilled():
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(
+            cfdi_report_id=uuid4(),
+            cfdi_compartido_confirmado=False,
+            monto_solicitado=Decimal("580.00"),
+            monto_total=Decimal("580.00"),
+        ),
+        cfdi_report=SimpleNamespace(
+            subtotal=Decimal("1000.00"),
+            descuento=Decimal("0"),
+            total=Decimal("1160.00"),
+        ),
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("500.00")
+
+
 def test_unassigned_document_does_not_affect_budget():
     row = user_routes._documentos_todos_reporting_row_values(
         _doc(budget_concept_id=None, cfdi_report_id=uuid4()),

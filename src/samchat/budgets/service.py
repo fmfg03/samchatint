@@ -913,15 +913,16 @@ def budget_document_effect_snapshot(documento: Any, cfdi_report: Any = None) -> 
                 - _budget_decimal_amount(getattr(cfdi_report, "descuento", None)),
                 Decimal("0"),
             )
-            if bool(getattr(documento, "cfdi_compartido_confirmado", False)):
-                fiscal_total = _budget_decimal_amount(getattr(cfdi_report, "total", None))
-                applied = _budget_decimal_amount(
-                    getattr(documento, "monto_solicitado", None)
-                    if getattr(documento, "monto_solicitado", None) is not None
-                    else getattr(documento, "monto_total", None)
-                )
-                if fiscal_total > 0 and applied > 0:
-                    amount *= min(applied / fiscal_total, Decimal("1"))
+            fiscal_total = _budget_decimal_amount(
+                getattr(cfdi_report, "total", None)
+            )
+            applied = _budget_decimal_amount(
+                getattr(documento, "monto_solicitado", None)
+                if getattr(documento, "monto_solicitado", None) is not None
+                else getattr(documento, "monto_total", None)
+            )
+            if fiscal_total > 0 and applied > 0:
+                amount *= min(applied / fiscal_total, Decimal("1"))
         else:
             amount = _budget_decimal_amount(
                 getattr(documento, "monto_solicitado", None)
@@ -1006,11 +1007,18 @@ def _budget_document_base_amount_sql(document_alias: str = "d", cfdi_alias: str 
                 WHEN {cfdi}.subtotal IS NOT NULL THEN (
                     GREATEST(COALESCE({cfdi}.subtotal, 0) - COALESCE({cfdi}.descuento, 0), 0)
                     * CASE
-                        WHEN COALESCE({document}.cfdi_compartido_confirmado, FALSE)
-                          AND COALESCE({cfdi}.total, 0) > 0
-                        THEN LEAST(GREATEST(
-                            COALESCE({document}.monto_solicitado, {document}.monto_total, 0) / {cfdi}.total, 0
-                        ), 1)
+                        WHEN COALESCE({cfdi}.total, 0) > 0
+                        THEN LEAST(
+                            GREATEST(
+                                COALESCE(
+                                    {document}.monto_solicitado,
+                                    {document}.monto_total,
+                                    0
+                                ) / {cfdi}.total,
+                                0
+                            ),
+                            1
+                        )
                         ELSE 1
                     END
                 )
