@@ -195,6 +195,7 @@ def comprobante_response_headers(
         disp = f'inline; filename="{safe}"'
     return media_type, disp
 
+
 def _url_fetch_allowed(url: str) -> bool:
     try:
         p = urlparse(url.strip())
