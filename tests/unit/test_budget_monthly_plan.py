@@ -191,31 +191,42 @@ def test_budget_expense_base_sql_prefers_cfdi_subtotal_without_fixed_tax_rate():
     assert "/ 1.16" not in sql
 
 
-def test_budget_expense_base_sql_allocates_shared_cfdi_once():
+def test_budget_expense_base_sql_allocates_shared_cfdi_by_applied_amount():
     sql = _budget_expense_base_amount_sql("e", "cfdi")
-    net_base_index = sql.index(
-        "GREATEST(COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0), 0)"
-    )
-    denominator_index = sql.index("SELECT COUNT(*)")
-    propina_index = sql.index("+ COALESCE(e.propina_no_deducible, 0)")
-
-    assert "COALESCE(cfdi.subtotal, 0) - COALESCE(cfdi.descuento, 0)" in sql
+    assert "COALESCE(cfdi.total, 0)" in sql
+    assert "COALESCE(e.gasto_cantidad, 0)" in sql
+    assert "COALESCE(e.cfdi_compartido_confirmado, FALSE)" in sql
     assert "FROM expense_reports budget_cfdi_expense" in sql
-    assert "budget_cfdi_expense.cfdi_report_id = cfdi.id" in sql
-    assert "budget_cfdi_expense.estado_gasto != 'cancelado'" in sql
-    assert "/ GREATEST((" in sql
-    assert "), 1)" in sql
-    assert net_base_index < denominator_index < propina_index
+    assert "budget_cfdi_expense.id <> e.id" in sql
+    assert "SELECT COUNT(*)" not in sql
+    assert "FROM adjuntos budget_nd" in sql
+    assert "comprobante_no_deducible" in sql
 
 
 def test_budget_document_base_sql_uses_cfdi_without_assuming_tax_rate():
     sql = _budget_document_base_amount_sql("d", "document_cfdi")
-
     assert "document_cfdi.subtotal" in sql
     assert "document_cfdi.descuento" in sql
+    assert "document_cfdi.total" in sql
     assert "d.monto_total" in sql
     assert "d.monto_solicitado" in sql
+    assert "d.cfdi_compartido_confirmado" in sql
     assert "1.16" not in sql
+
+
+def test_budget_finance_aggregates_require_budget_assignment():
+    source = Path(budgets_service.__file__).read_text()
+    a = source.index("async def _build_budget_finance_comparison")
+    b = source.index("def _empty_budget_snapshot", a)
+    comparison = source[a:b]
+    a = source.index("async def _build_budget_finance_breakdowns")
+    b = source.index("async def list_budget_tournament_commitments", a)
+    breakdowns = source[a:b]
+    assert "d.budget_concept_id IS NOT NULL" in comparison
+    assert "COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL" in comparison
+    assert "d.budget_concept_id IS NOT NULL" in breakdowns
+    assert "COALESCE(e.budget_concept_id, d.budget_concept_id) IS NOT NULL" in breakdowns
+    assert "_budget_document_base_amount_sql('d', 'document_cfdi')" in comparison
 
 
 def test_budget_actual_queries_enforce_reconciliation_precedence():

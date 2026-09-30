@@ -35,6 +35,7 @@ from sqlalchemy.orm import aliased, selectinload, undefer
 
 from samchat.budgets.service import (
     attach_cuenta_contable_to_budget_lines,
+    budget_document_effect_snapshot,
     ensure_budget_schema,
     list_budget_lines,
     resolve_budget_tournament_context,
@@ -31515,50 +31516,8 @@ def _documentos_todos_reporting_description(documento: Documento) -> str:
 def _document_budget_impact_amount(
     documento: Documento, cfdi_report: Optional[CFDIReport] = None
 ) -> Decimal:
-    """Return the reporting amount, including approved per-partida exceptions."""
-
-    def _nonnegative(value: Any) -> Decimal:
-        try:
-            return max(Decimal(str(value)), Decimal("0"))
-        except (InvalidOperation, TypeError, ValueError):
-            return Decimal("0")
-
-    expenses = [
-        expense
-        for expense in (getattr(documento, "gastos", None) or [])
-        if getattr(expense, "estado_gasto", None) != "cancelado"
-    ]
-    if expenses:
-        total = Decimal("0")
-        for expense in expenses:
-            is_no_deductible = any(
-                getattr(adjunto, "activo", False)
-                and getattr(adjunto, "categoria", None) == "comprobante_no_deducible"
-                for adjunto in (getattr(expense, "adjuntos", None) or [])
-            )
-            expense_total = _nonnegative(getattr(expense, "gasto_cantidad", None))
-            if is_no_deductible:
-                total += expense_total
-                continue
-            total += max(
-                expense_total - _nonnegative(getattr(expense, "iva", None)),
-                Decimal("0"),
-            )
-            total += _nonnegative(getattr(expense, "hospedaje_impuesto_monto", None))
-            total += _nonnegative(getattr(expense, "propina_no_deducible", None))
-        return total
-
-    if cfdi_report is not None and getattr(cfdi_report, "subtotal", None) is not None:
-        return max(
-            _nonnegative(cfdi_report.subtotal)
-            - _nonnegative(getattr(cfdi_report, "descuento", None)),
-            Decimal("0"),
-        )
-    for field in ("monto_total", "monto_solicitado"):
-        value = getattr(documento, field, None)
-        if value is not None:
-            return _nonnegative(value)
-    return Decimal("0")
+    """Return the state-aware amount from the canonical budget service."""
+    return budget_document_effect_snapshot(documento, cfdi_report)["amount"]
 
 
 async def _document_cfdi_reports_by_id(
@@ -31580,7 +31539,7 @@ async def _document_cfdi_reports_by_id(
 
 
 def _document_budget_assignment_label(documento: Documento) -> str:
-    return "Asignado" if getattr(documento, "budget_concept_id", None) else "Sin asignar"
+    return budget_document_effect_snapshot(documento)["assignment_label"]
 
 
 def _document_total_reporting_amount(documento: Documento) -> Decimal:
@@ -31611,7 +31570,8 @@ def _documentos_todos_reporting_row_values(
         or getattr(cuenta, "fase", None)
         or "—"
     )
-    monto_presupuestal = _document_budget_impact_amount(documento, cfdi_report)
+    budget_effect = budget_document_effect_snapshot(documento, cfdi_report)
+    monto_presupuestal = budget_effect["amount"]
     return {
         "id": str(documento.id),
         "numero_referencia": getattr(documento, "numero_referencia", None) or "—",

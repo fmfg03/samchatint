@@ -45,6 +45,10 @@ def _doc(**overrides):
         "aprobado_en": None,
         "pagado_en": None,
         "cuenta_gastos_id": None,
+        "budget_concept_id": uuid4(),
+        "cfdi_report_id": None,
+        "cfdi_compartido_confirmado": False,
+        "gastos": [],
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -75,18 +79,38 @@ def test_documentos_todos_reporting_values_for_provider_solicitud():
     assert row["aprobador"] == "Finanzas"
 
 
-def test_budget_impact_uses_cfdi_subtotal_less_discount_and_marks_unassigned():
-    documento = _doc(budget_concept_id=None, cfdi_report_id=uuid4())
+def test_budget_impact_uses_cfdi_subtotal_less_discount_when_assigned():
     row = user_routes._documentos_todos_reporting_row_values(
-        documento,
-        cfdi_report=SimpleNamespace(
-            subtotal=Decimal("1000.00"), descuento=Decimal("125.50")
-        ),
+        _doc(cfdi_report_id=uuid4()),
+        cfdi_report=SimpleNamespace(subtotal=Decimal("1000.00"), descuento=Decimal("125.50"), total=Decimal("1014.42")),
     )
-
     assert row["monto_presupuestal_valor"] == Decimal("874.50")
-    assert row["monto_presupuestal"] == "$874.50"
+    assert row["asignacion_presupuestal"] == "Asignado"
+
+
+def test_unassigned_document_does_not_affect_budget():
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(budget_concept_id=None, cfdi_report_id=uuid4()),
+        cfdi_report=SimpleNamespace(subtotal=Decimal("1000.00"), descuento=Decimal("125.50"), total=Decimal("1014.42")),
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("0")
     assert row["asignacion_presupuestal"] == "Sin asignar"
+
+
+def test_nonimpact_document_states_do_not_affect_budget():
+    for state in ("rechazado", "borrador", "control_presupuestal"):
+        row = user_routes._documentos_todos_reporting_row_values(_doc(estado=state))
+        assert row["monto_presupuestal_valor"] == Decimal("0")
+
+
+def test_informe_budget_impact_sums_only_assigned_lines():
+    assigned = SimpleNamespace(budget_concept_id=uuid4(), gasto_cantidad=Decimal("116"), iva=Decimal("16"), hospedaje_impuesto_monto=0, propina_no_deducible=0, estado_gasto="activo", adjuntos=[])
+    unassigned = SimpleNamespace(budget_concept_id=None, gasto_cantidad=Decimal("232"), iva=Decimal("32"), hospedaje_impuesto_monto=0, propina_no_deducible=0, estado_gasto="activo", adjuntos=[])
+    row = user_routes._documentos_todos_reporting_row_values(
+        _doc(tipo="INFORME", budget_concept_id=None, gastos=[assigned, unassigned])
+    )
+    assert row["monto_presupuestal_valor"] == Decimal("100.00")
+    assert row["asignacion_presupuestal"] == "Parcial"
 
 
 def test_budget_impact_falls_back_to_total_without_cfdi_and_never_negative():
@@ -283,7 +307,7 @@ def test_consolidated_xlsx_includes_budget_impact_and_assignment_state():
     worksheet = load_workbook(BytesIO(response.body)).active
 
     assert worksheet["J1"].value == "Monto que afecta presupuesto"
-    assert worksheet["J2"].value == 90
+    assert worksheet["J2"].value == 0
     assert worksheet["K2"].value == "Sin asignar"
 
 
@@ -1970,7 +1994,7 @@ async def test_todos_page_and_xlsx_export_share_authorized_filter_values(monkeyp
     from openpyxl import load_workbook
 
     worksheet = load_workbook(BytesIO(response.body)).active
-    assert worksheet["J2"].value == 90
+    assert worksheet["J2"].value == 0
     assert worksheet["K2"].value == "Sin asignar"
 
 
