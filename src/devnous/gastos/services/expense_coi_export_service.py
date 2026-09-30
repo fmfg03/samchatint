@@ -8,9 +8,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models import ExpenseReport
+from ..models import CuentaDeGastos, ExpenseReport
+from .amex_expense_service import is_company_amex_expense
 from .coi_poliza_exporter import ExpenseCFDI
 from .expense_accounting_cleanup_service import build_cleanup_preview
+from .employee_debtor_accounting_service import (
+    debtor_account_block_label_for_employee,
+    resolve_cuenta_debtor_account,
+    resolve_cuenta_debtor_empleado,
+)
 from .expense_accounting_service import build_expense_accounting_preview
 
 _NON_FISCAL_ACCOUNT_NAMES = {
@@ -27,6 +33,39 @@ def _normalize_account_name(value: object) -> str:
 def allows_coi_without_cfdi(account: object) -> bool:
     name = _normalize_account_name(getattr(account, "nombre", None))
     return name in _NON_FISCAL_ACCOUNT_NAMES
+
+
+async def _resolve_informe_detail_counterpart(
+    session: AsyncSession,
+    expense: ExpenseReport,
+) -> Optional[str]:
+    """Resolve the beneficiary detail account for employee-paid report expenses.
+
+    Expense-report accounting is settled against the beneficiary's debtor
+    auxiliary, not a generic liability/header account. Company AMEX expenses
+    keep their own configured counterpart.
+    """
+    cuenta_gastos_id = getattr(expense, "cuenta_gastos_id", None)
+    if not cuenta_gastos_id or is_company_amex_expense(expense):
+        return None
+
+    cuenta = await session.get(CuentaDeGastos, cuenta_gastos_id)
+    if cuenta is None:
+        raise ValueError(
+            "El gasto pertenece a un Informe de Gastos sin cuenta vinculada válida."
+        )
+
+    empleado = await resolve_cuenta_debtor_empleado(session, cuenta)
+    debtor_account = await resolve_cuenta_debtor_account(session, cuenta, empleado)
+    code = str(getattr(debtor_account, "codigo", "") or "").strip()
+    if code:
+        return code
+
+    block = debtor_account_block_label_for_employee(empleado)
+    raise ValueError(
+        "Falta subcuenta contable de detalle para el beneficiario del Informe "
+        f"de Gastos ({block})."
+    )
 
 
 def group_expense_cfdis_for_document(
@@ -53,10 +92,14 @@ async def assess_expense_coi_cleanup_ready(
     session: AsyncSession,
     expense: ExpenseReport,
 ) -> Tuple[bool, List[str]]:
-    """True when the expense matches Centro de Limpieza 'Listo COI' after save."""
+    """True when the expense is safe to emit in a COI policy."""
     state = await build_cleanup_preview(session, expense)
     issues = list(state.get("issues") or [])
-    return state.get("status") == "Listo COI", issues
+    try:
+        await _resolve_informe_detail_counterpart(session, expense)
+    except ValueError as exc:
+        issues.append(str(exc))
+    return state.get("status") == "Listo COI" and not issues, issues
 
 
 async def build_expense_cfdi_for_export(
@@ -100,6 +143,11 @@ async def build_expense_cfdi_for_export(
         or (contra_cuenta.codigo if contra_cuenta else "")
         or ""
     ).strip()
+    informe_detail_counterpart = await _resolve_informe_detail_counterpart(
+        session, expense
+    )
+    if informe_detail_counterpart:
+        contra_codigo = informe_detail_counterpart
     if not contra_codigo:
         raise ValueError("Falta contrapartida persistida en el gasto.")
 
